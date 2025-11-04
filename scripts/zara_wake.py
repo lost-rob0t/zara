@@ -18,7 +18,7 @@ SAMPLE_RATE = 16000
 CHANNELS = 1
 PASSIVE_CHUNK_SEC = 2
 ACTIVE_CHUNK_SEC = 4
-WAKE_WORDS = ["zarathustra", "hey zara", "zara"]
+WAKE_WORDS = ["zarathustra", "hey zara", "zara", "sarah"]
 TIMEOUT_ACTIVE = 10
 
 PIDFILE = "/tmp/zara_wakeword.pid"
@@ -128,6 +128,7 @@ class WakeWordListener:
         except Exception as e:
             self.log(f"Prolog error: {e}")
 
+
     def run(self):
         self.log("🔥 Starting Wake Word Listener")
         self.log(f"Wake words: {', '.join(WAKE_WORDS)}")
@@ -163,12 +164,7 @@ class WakeWordListener:
             self.state = "ACTIVE"
             self.last_activity = time.time()
 
-            # Beep
-            subprocess.run(
-                ["paplay", "/usr/share/sounds/freedesktop/stereo/message.oga"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
+               
 
     def active_mode(self):
         """Transcribe and execute command"""
