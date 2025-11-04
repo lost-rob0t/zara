@@ -21,9 +21,6 @@
 
     packages.${system} = let
 
-      ################################
-      ## PROLOG ENGINE (Base package)
-      ################################
       zara-prolog = pkgs.stdenv.mkDerivation {
         pname = "zara-prolog";
         version = "1.0";
@@ -41,19 +38,11 @@
           cp -r $src/modules $out/share/zarathushtra/
           cp -r $src/scripts $out/share/zarathushtra/
 
-          # Create zara-handler wrapper that sets correct working directory
-          cat > $out/bin/zara-handler <<'EOF'
-#!/usr/bin/env bash
-cd "$out/share/zarathushtra"
-exec ${pkgs.swiProlog}/bin/swipl -q -s "$out/share/zarathushtra/zara_handler.pl" -- "$@"
-EOF
-          chmod +x $out/bin/zara-handler
-
           # zara-console (REPL)
           cat > $out/bin/zara-console <<'EOF'
 #!/usr/bin/env bash
-cd "$out/share/zarathushtra"
-exec ${pkgs.swiProlog}/bin/swipl -q -s "$out/share/zarathushtra/main.pl"
+cd ${placeholder "out"}/share/zarathushtra
+exec ${pkgs.swiProlog}/bin/swipl -q -s ${placeholder "out"}/share/zarathushtra/main.pl
 EOF
           chmod +x $out/bin/zara-console
         '';
@@ -76,15 +65,15 @@ EOF
           cp scripts/zara_wake.py $out/bin/.zara-wake-unwrapped
           chmod +x $out/bin/.zara-wake-unwrapped
 
-          # Patch the HANDLER_SCRIPT path
+          # Patch the PROLOG_MAIN path to point at zara-prolog package
           substituteInPlace $out/bin/.zara-wake-unwrapped \
-            --replace 'HANDLER_SCRIPT = Path(__file__).parent.parent / "zara_handler.pl"' \
-                      'HANDLER_SCRIPT = Path("${zara-prolog}/bin/zara-handler")'
+            --replace 'PROLOG_MAIN = Path(__file__).parent / "main.pl"' \
+                      'PROLOG_MAIN = Path("${zara-prolog}/share/zarathushtra/main.pl")'
 
           # Create wrapper with correct Python interpreter and environment
           makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara-wake \
             --add-flags $out/bin/.zara-wake-unwrapped \
-            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xdotool pkgs.pulseaudio ]} \
+            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xdotool pkgs.pulseaudio pkgs.swiProlog ]} \
             --set PYTHONPATH ${pythonLibs}/${python.sitePackages} \
             --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [ pkgs.libsndfile pkgs.portaudio ]}
         '';
@@ -116,9 +105,6 @@ EOF
         '';
       };
 
-      ################################
-      ## COMBINED PACKAGE
-      ################################
       zarathushtra = pkgs.buildEnv {
         name = "zarathushtra-full";
         paths = [ zara-prolog zara-wake zara-dictate ];
@@ -132,9 +118,6 @@ EOF
       default = zarathushtra;
     };
 
-    ################################
-    ## APPS
-    ################################
     apps.${system} = {
       zara-wake = {
         type = "app";
@@ -170,10 +153,16 @@ EOF
       ];
 
       shellHook = ''
-        echo "🔥 Zarathushtra DevShell"
+        echo "🔥 Zarathushstra DevShell"
         echo "Python + Whisper + SWI-Prolog ready"
         echo ""
-        echo "Run: python scripts/zara_wake.py"
+        echo "Commands:"
+        echo "  python scripts/zara_wake.py    # Direct dev run"
+        echo "  swipl -s main.pl               # Test REPL"
+        echo ""
+        echo "Build system:"
+        echo "  nix build                      # Build all"
+        echo "  nix run                        # Run wake listener"
       '';
     };
   };
