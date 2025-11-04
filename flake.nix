@@ -1,5 +1,5 @@
 {
-  description = "Zarathushtra – Voice + Prolog Engine";
+  description = "Zarathushtra – Simple voice asistant  ";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
@@ -48,9 +48,6 @@ EOF
         '';
       };
 
-      ################################
-      ## WAKE WORD LISTENER
-      ################################
       zara-wake = pkgs.stdenv.mkDerivation {
         pname = "zara-wake";
         version = "1.0";
@@ -79,9 +76,6 @@ EOF
         '';
       };
 
-      ################################
-      ## DICTATION
-      ################################
       zara-dictate = pkgs.stdenv.mkDerivation {
         pname = "zara-dictate";
         version = "1.0";
@@ -137,9 +131,6 @@ EOF
       };
     };
 
-    ################################
-    ## DEV SHELL
-    ################################
     devShells.${system}.default = pkgs.mkShell {
       name = "zarathushtra-dev-shell";
 
@@ -153,12 +144,11 @@ EOF
       ];
 
       shellHook = ''
-        echo "🔥 Zarathushstra DevShell"
         echo "Python + Whisper + SWI-Prolog ready"
         echo ""
         echo "Commands:"
         echo "  python scripts/zara_wake.py    # Direct dev run"
-        echo "  swipl -s main.pl               # Test REPL"
+        echo "  swipl -s main.pl               # Test REPL (zara console)"
         echo ""
         echo "Build system:"
         echo "  nix build                      # Build all"
