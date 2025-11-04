@@ -1,0 +1,40 @@
+* README
+This project was created using artificial intelligence.
+In fact, this README was created using the `zara-dictate` Python script.
+
+This project provides a NixOS flake with utilities.
+There is a command-line interface that lets you type natural text for commands, and there is `zara-dictate` — Zara Dictates — it's how you do voice-to-text.
+
+The `zarathustra` command lets you type text (natural language).
+`zara-voice` lets you voice your command.
+
+Zara is also able to work in a wake-word mode: simply say "zara" or "hey zara" and then state the command.
+
+Plans to enable TTS are down the road.
+I mostly created this with an LLM to generate a project to learn from. Now that it works, I don’t want it fucking it up.
+
+So I’ll slowly rework this with actual NLP — I need to learn DCG.
+Right now verb intents just look ahead `n` args for command handling.
+
+The schedule function is broken and only works with Org Mode.
+
+** zara-dictate
+~zara-dictate~ lets you type using your own voice. It uses Whisper.
+You can specify the number of Whisper workers and the number of parallel workers.
+
+I mostly use CPU only on an AMD Ryzen 3950X with the `tiny`/`small` models. In this section I was using the tiny model — you can get good results.
+
+I don’t currently have my GPU configured (not sure if I can with my 5500 as of writing to test GPU mode).
+
+** zara-wake
+Lets you say "open youtube" or any other command.
+
+** zara-console
+Main CLI interactive assistant entrypoint.
+
+* TODO IDEA BOX [0/5]
+** TODO Major refactor now that I understand the main NLP command loop
+** TODO ZaraAssistant class
+** TODO LLMClient
+** TODO PrologClient
+** TODO SkillRegistry?
