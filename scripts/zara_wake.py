@@ -16,8 +16,8 @@ from faster_whisper import WhisperModel
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
-PASSIVE_CHUNK_SEC = 2
-ACTIVE_CHUNK_SEC = 4
+PASSIVE_CHUNK_SEC = 3
+ACTIVE_CHUNK_SEC = 8
 WAKE_WORDS = ["zarathustra", "hey zara", "zara", "sarah"]
 TIMEOUT_ACTIVE = 10
 
@@ -26,6 +26,8 @@ LOGFILE = "/tmp/zara_wakeword.log"
 
 # Point to your main.pl, not a handler
 PROLOG_MAIN = Path(__file__).parent / "main.pl"
+
+
 
 
 class WakeWordListener:
@@ -164,7 +166,7 @@ class WakeWordListener:
             self.state = "ACTIVE"
             self.last_activity = time.time()
 
-               
+
 
     def active_mode(self):
         """Transcribe and execute command"""
