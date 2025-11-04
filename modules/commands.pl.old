@@ -1,0 +1,97 @@
+:- module(commands, [execute/2]).
+:- use_module('modules/update').
+:- use_module('../kb/config').
+
+% ============================================
+% Execution Layer
+% ============================================
+execute(greet, []) :-
+    format('Hello! How can I help you?~n'), !.
+
+execute(play, [Media]) :-
+    format('Playing: ~w~n', [Media]), !.
+
+execute(pause, []) :-
+    format('Pausing playback~n'), !.
+
+execute(call, [Contact]) :-
+    format('Calling: ~w~n', [Contact]), !.
+
+execute(text, [Contact, Message]) :-
+    format('Texting ~w: ~w~n', [Contact, Message]), !.
+
+execute(open, [AppName]) :-
+    open_app(AppName), !.
+
+execute(search, [Query]) :-
+    format('Searching for: ~w~n', [Query]), !.
+
+execute(ask, Args) :-
+    atomic_list_concat(Args, ' ', Query),
+    catch(
+        (llm_client:llm_query(Query, Response),
+         format('~n~w~n~n', [Response])),
+        Error,
+        format('LLM Error: ~w~n', [Error])
+    ), !.
+
+execute(say, Rest) :-
+    format('Executing ~w with args: ~w~n', [Rest]), !.
+
+execute(Intent, Args) :-
+    format('Executing ~w with args: ~w~n', [Intent, Args]), !.
+
+% ============================================
+% LLM Integration
+% ============================================
+llm_query(Query, Response) :-
+    % Get the directory of the current script
+    current_prolog_flag(argv, [Script|_]),
+    file_directory_name(Script, ScriptDir),
+    atomic_list_concat([ScriptDir, '/scripts/claude.sh'], ClaudeScript),
+    % Escape quotes in the query
+    atomic_list_concat(QueryParts, '"', Query),
+    atomic_list_concat(QueryParts, '\\"', EscapedQuery),
+    % Build the shell command
+    atomic_list_concat([ClaudeScript, ' "', EscapedQuery, '"'], Command),
+    % Execute and capture output
+    setup_call_cleanup(
+        open(pipe(Command), read, Stream),
+        read_stream_to_codes(Stream, Codes),
+        close(Stream)
+    ),
+    atom_codes(Response, Codes).
+
+% ============================================
+% App Opening System
+% ============================================
+% Main app opening logic
+open_app(AppName) :-
+    once((
+        % Try mapped apps first (e.g., youtube -> brave with URL)
+        ( kb_config:app_mapping(AppName, Command) ->
+            format('Opening ~w via: ~w~n', [AppName, Command]),
+            run_system_command(Command)
+        % Try direct apps (e.g., emacs -> emacs)
+        ; kb_config:direct_app(AppName) ->
+            format('Launching ~w directly~n', [AppName]),
+            atom_string(AppName, AppCmd),
+            run_system_command(AppCmd)
+        % Fallback: try to run it directly anyway
+        ; format('Attempting to launch ~w (not in config)~n', [AppName]),
+          atom_string(AppName, AppCmd),
+          run_system_command(AppCmd)
+        )
+    )), !.
+
+% Execute system command in background
+run_system_command(Command) :-
+    format('DEBUG: About to execute system command: ~w~n', [Command]),
+    catch(
+        (atomic_list_concat([Command, ' &'], FullCmd),
+         format('DEBUG: Full command: ~w~n', [FullCmd]),
+         shell(FullCmd),
+         format('DEBUG: Command executed~n')),
+        Error,
+        format('Failed to launch: ~w~n', [Error])
+    ), !.

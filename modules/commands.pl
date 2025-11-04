@@ -1,0 +1,124 @@
+% top of file
+:- module(commands, [execute/2]).
+:- use_module('../kb/config').
+:- use_module(library(process)).
+:- use_module('normalizer', [strip_fillers/2]).  % <- FIXED PATH
+% :- use_module('todo_capture').                   % Broken
+
+% ============================================
+% Execution Layer
+% ============================================
+execute(greet, []) :-
+    format('Hello! How can I help you?~n'), !.
+
+execute(play, [Media]) :-
+    format('Playing: ~w~n', [Media]), !.
+
+execute(pause, []) :-
+    format('Pausing playback~n'), !.
+
+execute(call, [Contact]) :-
+    format('Calling: ~w~n', [Contact]), !.
+
+execute(text, [Contact, Message]) :-
+    format('Texting ~w: ~w~n', [Contact, Message]), !.
+
+execute(open, [AppName]) :-
+    open_app(AppName), !.
+
+execute(search, [Query]) :-
+    format('Searching for: ~w~n', [Query]), !.
+
+execute(ask, Args) :-
+    atomic_list_concat(Args, ' ', Query),
+    catch(
+        (llm_client:llm_query(Query, Response),
+         format('~n~w~n~n', [Response])),
+        Error,
+        format('LLM Error: ~w~n', [Error])
+    ), !.
+
+% % TODO creation (no required date)
+% execute(todo, Args) :-
+%     atomic_list_concat(Args, ' ', Task),
+%     format('📝 Adding TODO: ~w~n', [Task]),
+%     todo_capture:capture_todo(Task), !.
+
+% % Reminder/Schedule (requires date prompt if missing)
+% execute(reminder, Args) :-
+%     atomic_list_concat(Args, ' ', Task),
+%     format('⏰ Setting Reminder: ~w~n', [Task]),
+%     todo_capture:capture_todo(Task), !.
+
+execute(schedule, Args) :-
+    delete(Args, reminder, Args1),
+    strip_fillers(Args1, Core),
+    ( Core = [] -> TaskStr = "unspecified task"
+    ; tokens_to_string(Core, TaskStr)
+    ),
+    format('⏰ Scheduling: ~w~n', [TaskStr]),
+    todo_capture:capture_todo(TaskStr), !.
+
+
+
+execute(say, Rest) :-
+    format('Executing ~w with args: ~w~n', [Rest]), !.
+
+execute(Intent, Args) :-
+    format('Executing ~w with args: ~w~n', [Intent, Args]), !.
+
+% ============================================
+% LLM Integration
+% ============================================
+llm_query(Query, Response) :-
+    % Get the directory of the current script
+    current_prolog_flag(argv, [Script|_]),
+    file_directory_name(Script, ScriptDir),
+    atomic_list_concat([ScriptDir, '/scripts/claude.sh'], ClaudeScript),
+    % Escape quotes in the query
+    atomic_list_concat(QueryParts, '"', Query),
+    atomic_list_concat(QueryParts, '\\"', EscapedQuery),
+    % Build the shell command
+    atomic_list_concat([ClaudeScript, ' "', EscapedQuery, '"'], Command),
+    % Execute and capture output
+    setup_call_cleanup(
+        open(pipe(Command), read, Stream),
+        read_stream_to_codes(Stream, Codes),
+        close(Stream)
+    ),
+    atom_codes(Response, Codes).
+
+% ============================================
+% App Opening System
+% ============================================
+% Main app opening logic
+open_app(AppName) :-
+    (   kb_config:app_mapping(AppName, Command)
+    ->  format('Opening ~w via: ~w~n', [AppName, Command]),
+        run_system_command(Command)
+    ;   kb_config:direct_app(AppName)
+    ->  format('Launching ~w directly~n', [AppName]),
+        atom_string(AppName, AppCmd),
+        run_system_command(AppCmd)
+    ;   format('Attempting to launch ~w (not in config)~n', [AppName]),
+        atom_string(AppName, AppCmd),
+        run_system_command(AppCmd)
+    ),
+    !.
+
+% Execute system command using process_create with shell wrapper
+run_system_command(Command) :-
+    catch(
+        process_create('/bin/sh', ['-c', Command], [
+            detached(true),
+            stdout(null),
+            stderr(null),
+            process(_)
+        ]),
+        Error,
+        format('Failed to launch: ~w~n', [Error])
+    ), !.
+
+tokens_to_string(Toks, S) :-
+    maplist(atom_string, Toks, Parts),
+    atomic_list_concat(Parts, ' ', S).
