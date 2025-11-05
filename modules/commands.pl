@@ -3,7 +3,8 @@
 :- use_module('../kb/config').
 :- use_module(library(process)).
 :- use_module('normalizer', [strip_fillers/2]).  % <- FIXED PATH
-% :- use_module('todo_capture').                   % Broken
+:- use_module(library(http/http_client)).
+                                % :- use_module('todo_capture').                   % Broken
 
 % ============================================
 % Execution Layer
@@ -26,17 +27,25 @@ execute(text, [Contact, Message]) :-
 execute(open, [AppName]) :-
     open_app(AppName), !.
 
-execute(search, [Query]) :-
-    format('Searching for: ~w~n', [Query]), !.
+execute(search, Args) :-
+    atomic_list_concat(Args, ' ', Query),
+    search_url(Query, URL),
+    format('Searching for: ~w~n', [Query]),
+    format(atom(Cmd), 'xdg-open "~w"', [URL]),
+    shell(Cmd), !.
 
 execute(ask, Args) :-
     atomic_list_concat(Args, ' ', Query),
-    catch(
-        (llm_client:llm_query(Query, Response),
-         format('~n~w~n~n', [Response])),
-        Error,
-        format('LLM Error: ~w~n', [Error])
-    ), !.
+    format('Chat history not yet implemented. Query was: ~w~n', [Query]), !.
+
+% execute(ask, Args) :-
+%     atomic_list_concat(Args, ' ', Query),
+%     catch(
+%         (llm_client:llm_query(Query, Response),
+%          format('~n~w~n~n', [Response])),
+%         Error,
+%         format('LLM Error: ~w~n', [Error])
+%     ), !.
 
 % % TODO creation (no required date)
 % execute(todo, Args) :-

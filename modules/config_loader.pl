@@ -2,7 +2,8 @@
     [
         load_user_config/0,
         ensure_user_config/0,
-        user_config_path/1
+        user_config_path/1,
+        search_url/2
     ]).
 
 :- use_module(library(filesex)).
@@ -11,13 +12,13 @@
 %
 %  Resolves ~/.config/zarathushtra/config.pl to absolute path
 user_config_path(Path) :-
-    expand_file_name('~/.config/zarathushtra/config.pl', [Path]).
+    expand_file_name('~/.zarathushtra/config.pl', [Path]).
 
 %% user_config_dir(-Dir) is det.
 %
 %  Gets the user config directory
 user_config_dir(Dir) :-
-    expand_file_name('~/.config/zarathushtra', [Dir]).
+    expand_file_name('~/.zarathushtra', [Dir]).
 
 %% ensure_user_config is det.
 %
@@ -113,3 +114,16 @@ reload_user_config :-
        )
     ; format('No user config to reload~n')
     ).
+
+search_url(Query, URL) :-
+    % 1. Get search template from user config (with default fallback)
+    (   kb_config:search_engine(Template)
+    ->  true
+    ;   Template = "https://duckduckgo.com/?q=~w"  % fallback
+    ),
+
+    % 2. URL-encode the query (crucial for special chars)
+    uri_encoded(query_value, Query, Encoded),
+
+    % 3. Format the template with encoded query
+    format(atom(URL), Template, [Encoded]).

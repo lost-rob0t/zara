@@ -19,6 +19,7 @@ CHANNELS = 1
 PASSIVE_CHUNK_SEC = 3
 ACTIVE_CHUNK_SEC = 8
 WAKE_WORDS = ["zarathustra", "hey zara", "zara", "sarah"]
+STOP_PHRASES = ["end", "end quote", "end zara", "stop conversation"]
 TIMEOUT_ACTIVE = 10
 
 PIDFILE = "/tmp/zara_wakeword.pid"
@@ -26,6 +27,30 @@ LOGFILE = "/tmp/zara_wakeword.log"
 
 # Point to your main.pl, not a handler
 PROLOG_MAIN = Path(__file__).parent / "main.pl"
+
+
+
+
+class Zara:
+    def __init__(self, whisper_model="tiny.en",
+                 device="cpu",
+                 chat_history=None,
+                 chat_router=None,
+                 settings={},
+                 ):
+        self.chat_history = chat_history or []
+        self.waker = WakeWordListener()
+        self.chat_router=None
+        self.prolog_client = None
+        self.llm = None
+        self.tools = {}
+        self.listener = WakeWordListener(whisper_model, device)
+    def normalize(self, text):
+        return text.lower()
+
+    def handle_text(self, text):
+        normalized = self.normalize(text)
+        self.chat_history.append()
 
 
 

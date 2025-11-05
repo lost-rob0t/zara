@@ -4,12 +4,15 @@
 :- use_module('../kb/intents').      % still provide DCG path if desired
 :- use_module('commands').
 :- use_module('llm_client').
+:- use_module('alert').
+:- use_module('zara_hooks').
 
 handle_command(String) :-
     format('DEBUG: Input string: "~w"~n', [String]),
     once((
         (   intent_resolver:resolve(String, Intent, Args)
         ->  format('DEBUG: Direct resolution - Intent: ~w, Args: ~w~n', [Intent, Args]),
+            zara_hooks:zara_reply(Intent),
             commands:execute(Intent, Args)
         ;   % LLM fallback: ask for a canonical command line
             format('DEBUG: Falling back to LLM rewrite~n'),

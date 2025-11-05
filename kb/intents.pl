@@ -36,9 +36,9 @@ verb_intent(unlock, unlock, 0).
 verb_intent(command, open, 0).
 
 % Navigation
-verb_intent(search, search, 1).
-verb_intent(find, search, 1).
-verb_intent(lookup, search, 1).
+verb_intent(search, search, rest).
+verb_intent(find, search, rest).
+verb_intent(lookup, search, rest).
 verb_intent(navigate, navigate, 1).
 verb_intent(goto, navigate, 1).
 
@@ -78,3 +78,7 @@ verb_intent(sched, schedule, rest).       % shorthand
 verb_intent(plan, schedule, rest).        % "plan to ..."
 verb_intent(set, schedule, rest).         % "set a reminder", "set task"
 verb_intent(task, schedule, rest).         % "set a reminder", "set task"
+
+% Timers
+verb_intent(timer, timer, 2).      % timer Duration Label
+verb_intent(alarm, alarm, 2).      % alarm Duration Label

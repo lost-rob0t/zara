@@ -3,7 +3,9 @@
         app_mapping/2,
         direct_app/1,
         todo_destination/1,
-        todo_context_mode/1
+        todo_context_mode/1,
+        search_engine/1
+
     ]).
 
 :- use_module('../modules/config_loader').
@@ -30,16 +32,16 @@ todo_context_mode(infer).
 % ============================================================
 % Common web services via Firefox
 
-app_mapping(youtube, "firefox --new-window https://youtube.com").
-app_mapping(github, "firefox --new-window https://github.com").
-app_mapping(reddit, "firefox --new-window https://reddit.com").
-app_mapping(gmail, "firefox --new-window https://gmail.com").
-app_mapping(maps, "firefox --new-window https://maps.google.com").
-app_mapping(translate, "firefox --new-window https://translate.google.com").
-app_mapping(calendar, "firefox --new-window https://calendar.google.com").
-app_mapping(drive, "firefox --new-window https://drive.google.com").
-app_mapping(twitter, "firefox --new-window https://twitter.com").
-app_mapping(linkedin, "firefox --new-window https://linkedin.com").
+app_mapping(youtube, "xdg-open --new-window https://youtube.com").
+app_mapping(github, "xdg-open --new-window https://github.com").
+app_mapping(reddit, "xdg-open --new-window https://reddit.com").
+app_mapping(gmail, "xdg-open --new-window https://gmail.com").
+app_mapping(maps, "xdg-open --new-window https://maps.google.com").
+app_mapping(translate, "xdg-open --new-window https://translate.google.com").
+app_mapping(calendar, "xdg-open --new-window https://calendar.google.com").
+app_mapping(drive, "xdg-open --new-window https://drive.google.com").
+app_mapping(twitter, "xdg-open --new-window https://twitter.com").
+app_mapping(linkedin, "xdg-open --new-window https://linkedin.com").
 
 % ============================================================
 % CORE APPLICATIONS
@@ -69,8 +71,8 @@ app_mapping(thunar, "thunar").
 app_mapping(pcmanfm, "pcmanfm").
 
 % Browser
-app_mapping(browser, "firefox").
-app_mapping(firefox, "firefox").
+app_mapping(browser, "xdg-open").
+app_mapping(xdg-open, "xdg-open").
 app_mapping(chrome, "google-chrome").
 app_mapping(chromium, "chromium").
 
@@ -85,9 +87,9 @@ app_mapping(vlc, "vlc").
 app_mapping(mpv, "mpv").
 
 % Media Services
-app_mapping(spotify, "firefox --new-window https://open.spotify.com").
-app_mapping(netflix, "firefox --new-window https://netflix.com").
-app_mapping(twitch, "firefox --new-window https://twitch.tv").
+app_mapping(spotify, "xdg-open --new-window https://open.spotify.com").
+app_mapping(netflix, "xdg-open --new-window https://netflix.com").
+app_mapping(twitch, "xdg-open --new-window https://twitch.tv").
 
 % ============================================================
 % COMMUNICATION
@@ -95,9 +97,9 @@ app_mapping(twitch, "firefox --new-window https://twitch.tv").
 
 app_mapping(email, "thunderbird").
 app_mapping(mail, "thunderbird").
-app_mapping(chat, "firefox --new-window https://discord.com/app").
-app_mapping(slack, "firefox --new-window https://slack.com").
-app_mapping(teams, "firefox --new-window https://teams.microsoft.com").
+app_mapping(chat, "xdg-open --new-window https://discord.com/app").
+app_mapping(slack, "xdg-open --new-window https://slack.com").
+app_mapping(teams, "xdg-open --new-window https://teams.microsoft.com").
 app_mapping(zoom, "zoom").
 
 % ============================================================
@@ -212,7 +214,7 @@ app_mapping(hibernate, "systemctl hibernate").
 % Applications that can be launched directly by name
 % without requiring an app_mapping entry
 
-direct_app(firefox).
+direct_app(xdg-open).
 direct_app(chrome).
 direct_app(chromium).
 direct_app(vim).
