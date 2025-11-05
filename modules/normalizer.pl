@@ -2,6 +2,7 @@
     [ normalize_string/2        % +Raw:string, -Tokens:list(atom)
     , strip_fillers/2           % +Tokens, -Core
     , detokenize/2              % +Tokens, -String
+    , is_filler/1               % +Token
     ]).
 
 :- use_module(library(dcg/basics)).

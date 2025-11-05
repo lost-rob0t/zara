@@ -1,7 +1,7 @@
 % Main entry point with config loading
 % ====================================
 
-:- use_module('modules/parser').
+:- use_module('modules/command_loop').
 :- use_module('modules/commands').
 :- use_module('kb/config').      % This automatically loads user config via initialization
 :- use_module('kb/intents').

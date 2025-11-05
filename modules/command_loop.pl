@@ -1,5 +1,4 @@
-:- module(parser, [handle_command/1]).
-
+:- module(command_loop, [handle_command/1]).
 :- use_module(intent_resolver).
 :- use_module('../kb/intents').      % still provide DCG path if desired
 :- use_module('commands').
@@ -10,8 +9,9 @@
 handle_command(String) :-
     format('DEBUG: Input string: "~w"~n', [String]),
     once((
-        (   intent_resolver:resolve(String, Intent, Args)
-        ->  format('DEBUG: Direct resolution - Intent: ~w, Args: ~w~n', [Intent, Args]),
+        (   intent_resolver:resolve(String, Intent, ArgsRaw)
+        ->  convert_number_atoms(ArgsRaw, Args),
+            format('DEBUG: Direct resolution - Intent: ~w, Args: ~w~n', [Intent, Args]),
             zara_hooks:zara_reply(Intent),
             commands:execute(Intent, Args)
         ;   % LLM fallback: ask for a canonical command line
@@ -21,7 +21,6 @@ handle_command(String) :-
             commands:execute(Intent2, Args2)
         )
     )).
-
 % ---- LLM rewriter (Smart tone S) ----
 rewrite_with_llm(UserInput, Intent, Args) :-
     format(string(Prompt),

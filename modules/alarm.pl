@@ -11,11 +11,9 @@
 timer_done(Name) :-
     alert("Zara", "Timer ~w has finished", [Name]).
 
-start_timer(Minutes) :-
-    Seconds is Minutes * 60,
+start_timer(Seconds) :-
     alarm(Seconds, timer_done(""), _Id, [remove(true)]).
 
 
-start_timer(Name, Minutes) :-
-    Seconds is Minutes * 60,
-    alarm(Seconds, timer_done(Name), Name, [remove(true)]).
+start_timer(Name, Seconds) :-
+    alarm(Seconds, timer_done(Name), _Id, [remove(true)]).
