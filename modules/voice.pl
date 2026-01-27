@@ -3,7 +3,7 @@
 :- use_module(library(process)).
 :- use_module(library(readutil)).
 :- use_module(llm_client).
-:- use_module('parser').
+:- use_module('command_loop').
 
 % Main voice recording and processing pipeline
 record_and_process :-
@@ -21,7 +21,7 @@ record_and_process :-
 transcribe_and_process(AudioFile) :-
     ( transcribe_audio(AudioFile, Text) ->
         format('Transcribed: "~w"~n', [Text]),
-        parser:handle_command(Text)
+        command_loop:handle_command(Text)
     ; format('Transcription failed.~n'),
       halt(1)
     ).

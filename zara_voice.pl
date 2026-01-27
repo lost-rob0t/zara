@@ -6,14 +6,15 @@
 :- use_module('kb/intents').
 :- use_module('kb/config').
 :- use_module('modules/commands').
-:- use_module('modules/parser').
+:- use_module('modules/command_loop').
 
 handle_input(Input) :-
     catch(
-        (parser:handle_command(Input), !),
+        (command_loop:handle_command(Input), !),
         Error,
         format('Error: ~w~n', [Error])
     ).
+
 
 zara_voice_main :-
     (   record_audio(Wav)

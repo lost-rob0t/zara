@@ -33,7 +33,7 @@ repl :-
 
 handle_input(Input) :-
     catch(
-        (parser:handle_command(Input), !),
+        (command_loop:handle_command(Input), !),
         Error,
         format('Error: ~w~n', [Error])
     ).

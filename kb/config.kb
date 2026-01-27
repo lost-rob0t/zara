@@ -1,0 +1,15 @@
+:- module(kb_user_intents, [verb_intent/3]).
+:- use_module('../modules/commands').
+
+
+% User can freely add, override or remove intents here.
+% This file is OPTIONAL and safe to edit.
+
+% Example customizations:
+% verb_intent("summon", play, 1).
+% verb_intent("spin", play, 1).
+% verb_intent("yo", greet, 0).
+% verb_intent("bro", greet, 0).
+%what is metaphysical, all this stuff i just became aware of after stoping many halcigenic drug like salvinorn a. it like when i look at others based on their actions i jus
+
+verb_intent("bro", greet, 0).

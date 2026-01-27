@@ -4,7 +4,9 @@
         direct_app/1,
         todo_destination/1,
         todo_context_mode/1,
-        search_engine/1
+        search_engine/1,
+        dictation_command/1,
+        dictation_stop_phrase/1
 
     ]).
 
@@ -26,6 +28,27 @@ todo_destination("~/todo.org").
 % Context inference mode for TODO categorization
 % Options: infer | infer_with_llm | llm_only
 todo_context_mode(infer).
+
+% Search engine template for the `search` intent.
+% Users can override this in ~/.zarathushtra/config.pl
+search_engine("https://duckduckgo.com/?q=~w").
+
+% ---- Dictation (zara-dictate) ----
+% Command used to start dictation. Users can override this in ~/.zarathushtra/config.pl
+% Examples:
+%   dictation_command("zara-dictate tiny cpu").
+%   dictation_command("zara-dictate small cpu 16 2 'end voice'").
+%   dictation_command("ZARA_STOP_PHRASE='end voice' zara-dictate small cpu").
+
+dictation_command("zara-dictate").
+
+% Spoken stop phrases (case-insensitive). Used by the Prolog intent matcher.
+% Add as many as you like; each fact is checked.
+dictation_stop_phrase("end voice").
+dictation_stop_phrase("stop voice").
+dictation_stop_phrase("stop voice mode").
+dictation_stop_phrase("stop dictation").
+dictation_stop_phrase("end dictation").
 
 % ============================================================
 % WEB APPLICATIONS

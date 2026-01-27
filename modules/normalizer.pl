@@ -149,69 +149,53 @@ slang_map(" wanna ", " want to ").
 slang_map(" gimme ", " give me ").
 slang_map(" rn ", " now ").
 
-% core contractions
-slang_map("it's", "it is").
-slang_map("that's", "that is").
-slang_map("there's", "there is").
-slang_map("what's", "what is").
-slang_map("who's", "who is").
-slang_map("let's", "let us").
-slang_map("we're", "we are").
-slang_map("they're", "they are").
-slang_map("isn't", "is not").
-slang_map("aren't", "are not").
-slang_map("doesn't", "does not").
-slang_map("didn't", "did not").
-slang_map("hasn't", "has not").
-slang_map("haven't", "have not").
-slang_map("hadn't", "had not").
-slang_map("shouldn't", "should not").
-slang_map("wouldn't", "would not").
-slang_map("couldn't", "could not").
+% Dictation / voice mode phrases (collapsed to tokens our intent KB already knows)
+% NOTE: include both "with spaces" and bare phrase forms so it matches
+% at string boundaries too (start/end of input).
+slang_map(" voice mode ", " voicemode ").
+slang_map("voice mode", "voicemode").
+slang_map(" mic mode ", " micmode ").
+slang_map("mic mode", "micmode").
 
-% texting slang (clean expansions)
-slang_map("idk", "i do not know").
-slang_map("imo", "in my opinion").
-slang_map("imho", "in my humble opinion").
-slang_map("irl", "in real life").
-slang_map("btw", "by the way").
-slang_map("ftw", "for the win").
-slang_map("fyi", "for your information").
-slang_map("asap", "as soon as possible").
-slang_map("nvm", "never mind").
-slang_map("omw", "on my way").
-slang_map("brb", "be right back").
-slang_map("bbl", "be back later").
-slang_map("bfn", "bye for now").
-slang_map("tbh", "to be honest").
-slang_map("rn", "right now").
-slang_map("thx", "thanks").
-slang_map("ty", "thank you").
-slang_map("yw", "you are welcome").
+% Start
+slang_map(" start voice mode ", " dictate ").
+slang_map("start voice mode", "dictate").
+slang_map(" start voice ", " dictate ").
+slang_map("start voice", "dictate").
+slang_map(" start dictation ", " dictate ").
+slang_map("start dictation", "dictate").
+slang_map(" start voice input ", " dictate ").
+slang_map("start voice input", "dictate").
 
-% phonetic/internet
-slang_map("cuz", "because").
-slang_map("bc", "because").
-slang_map("tho", "though").
-slang_map("tho.", "though").
-slang_map("w/", "with").
-slang_map("w/o", "without").
-slang_map("msg", "message").
-slang_map("dm", "message").
-slang_map("dms", "messages").
-slang_map("can't", "can not").
-slang_map("won't", "will not").
-slang_map("don't", "do not").
-slang_map("i'm", "i am").
-slang_map("you're", "you are").
-slang_map("u ", "you ").
-slang_map(" u", " you").
-slang_map("pls", "please").
-slang_map("plz", "please").
-slang_map(" gonna ", " going to ").
-slang_map(" wanna ", " want to ").
-slang_map(" gimme ", " give me ").
-slang_map(" rn ", " now ").
+slang_map(" enable voice mode ", " dictate ").
+slang_map("enable voice mode", "dictate").
+slang_map(" enable voice ", " dictate ").
+slang_map("enable voice", "dictate").
+slang_map(" enable dictation ", " dictate ").
+slang_map("enable dictation", "dictate").
+slang_map(" turn on voice mode ", " dictate ").
+slang_map("turn on voice mode", "dictate").
+slang_map(" turn on voice ", " dictate ").
+slang_map("turn on voice", "dictate").
+slang_map(" turn on dictation ", " dictate ").
+slang_map("turn on dictation", "dictate").
+
+% Stop
+slang_map(" stop voice mode ", " stopvoice ").
+slang_map("stop voice mode", "stopvoice").
+slang_map(" stop dictation ", " stopdictation ").
+slang_map("stop dictation", "stopdictation").
+slang_map(" stop voice ", " stopvoice ").
+slang_map("stop voice", "stopvoice").
+slang_map(" disable dictation ", " stopdictation ").
+slang_map("disable dictation", "stopdictation").
+slang_map(" disable voice ", " stopvoice ").
+slang_map("disable voice", "stopvoice").
+slang_map(" turn off voice mode ", " stopvoice ").
+slang_map("turn off voice mode", "stopvoice").
+slang_map(" turn off dictation ", " stopdictation ").
+slang_map("turn off dictation", "stopdictation").
+
 
 
 

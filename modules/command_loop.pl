@@ -25,7 +25,7 @@ handle_command(String) :-
 rewrite_with_llm(UserInput, Intent, Args) :-
     format(string(Prompt),
 "Rewrite the following user request into a single canonical command with:
-- intent: one of [greet, play, pause, stop, resume, next, skip, call, text, open, lock, unlock, search, navigate, ask]
+- intent: one of [greet, play, pause, stop, resume, next, skip, call, text, open, lock, unlock, search, navigate, ask, dictation_start, dictation_stop]
 - args: array of atoms/strings (1 or 2 as needed)
 - Only return compact JSON: {\"intent\":\"...\",\"args\":[...]}
 User: ~s", [UserInput]),

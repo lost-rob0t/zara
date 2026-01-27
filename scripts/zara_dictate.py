@@ -28,6 +28,14 @@ except Exception as e:
 PIDFILE = "/tmp/zara_dictation.pid"
 LOGFILE = "/tmp/zara_dictation.log"
 
+# Stop phrase support:
+# - Defaults: "end voice", "stop voice", "stop dictation"
+# - Override with env:
+#     ZARA_STOP_PHRASE="end voice"             (single)
+#     ZARA_STOP_PHRASES="end voice,stop voice" (comma-separated)
+# - Or pass as 5th arg: zara-dictate <model> <device> <threads?> <workers?> "end voice,stop voice"
+DEFAULT_STOP_PHRASES = ["end voice", "stop voice", "stop dictation"]
+
 SAMPLE_RATE = 16000
 CHANNELS = 1
 CHUNK_SECONDS = 10  # Reduced from 5 for lower latency
@@ -118,7 +126,16 @@ def type_text(text):
             log(f"Typing failed: {e}")
 
 
-def transcribe_worker(model, chunk):
+def _normalize_stop_phrase(s: str) -> str:
+    return " ".join(s.lower().strip().split())
+
+
+def _is_any_stop_phrase(text: str, stop_phrases: list[str]) -> bool:
+    norm = _normalize_stop_phrase(text)
+    return any(norm == _normalize_stop_phrase(p) for p in stop_phrases)
+
+
+def transcribe_worker(model, chunk, stop_phrases: list[str]):
     """Worker function for parallel transcription"""
     if chunk.ndim > 1:
         chunk = chunk[:, 0]
@@ -163,8 +180,41 @@ def transcribe_worker(model, chunk):
         return None
 
 
-def main(model_name="small", device="cpu", threads=None, workers=2):
-    log("Starting Zara Dictation Helper (Optimized)")
+def _parse_stop_phrases(stop_arg: str | None) -> list[str]:
+    if not stop_arg:
+        return []
+    parts = [p.strip() for p in stop_arg.split(",")]
+    return [p for p in parts if p]
+
+
+def _resolve_stop_phrases(cli_stop_arg: str | None) -> list[str]:
+    env_multi = os.getenv("ZARA_STOP_PHRASES")
+    env_single = os.getenv("ZARA_STOP_PHRASE")
+
+    phrases = []
+    phrases.extend(_parse_stop_phrases(env_multi))
+    if env_single:
+        phrases.append(env_single.strip())
+    phrases.extend(_parse_stop_phrases(cli_stop_arg))
+
+    if not phrases:
+        phrases = list(DEFAULT_STOP_PHRASES)
+
+    # normalize + dedupe
+    out = []
+    seen = set()
+    for p in phrases:
+        n = _normalize_stop_phrase(p)
+        if n and n not in seen:
+            seen.add(n)
+            out.append(p)
+    return out
+
+
+def main(model_name="small", device="cpu", threads=None, workers=2, stop_phrases=None):
+    if stop_phrases is None:
+        stop_phrases = list(DEFAULT_STOP_PHRASES)
+    log(f"Starting Zara Dictation Helper (Optimized); stop_phrases={stop_phrases!r}")
     write_pid()
 
     # Determine thread count for Whisper
@@ -219,6 +269,10 @@ def main(model_name="small", device="cpu", threads=None, workers=2):
                     try:
                         text = f.result(timeout=0.1)
                         if text:
+                            if _is_any_stop_phrase(text, stop_phrases):
+                                log(f"Stop phrase heard ({text!r}); stopping dictation")
+                                stop_event.set()
+                                break
                             log(f"Typed: {text}")
                             type_text(text + " ")
                     except Exception as e:
@@ -233,7 +287,7 @@ def main(model_name="small", device="cpu", threads=None, workers=2):
             if len(futures) < max_pending:
                 try:
                     chunk = chunk_queue.get(timeout=0.5)
-                    future = executor.submit(transcribe_worker, model, chunk)
+                    future = executor.submit(transcribe_worker, model, chunk, stop_phrases)
                     futures.append(future)
                 except queue.Empty:
                     continue
@@ -279,9 +333,12 @@ if __name__ == "__main__":
     device = sys.argv[2] if len(sys.argv) > 2 else "cpu"
     threads = int(sys.argv[3]) if len(sys.argv) > 3 else None
     workers = int(sys.argv[4]) if len(sys.argv) > 4 else 2
+    cli_stop = sys.argv[5] if len(sys.argv) > 5 else None
+
+    stop_phrases = _resolve_stop_phrases(cli_stop)
 
     try:
-        main(model, device, threads, workers)
+        main(model, device, threads, workers, stop_phrases=stop_phrases)
     except KeyboardInterrupt:
         stop_event.set()
         remove_pid()

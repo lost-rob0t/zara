@@ -2,6 +2,7 @@
 :- module(commands, [execute/2]).
 :- use_module('../kb/config').
 :- use_module(library(process)).
+:- use_module('dictate').
 :- use_module('normalizer', [strip_fillers/2]).  % <- FIXED PATH
 :- use_module(library(http/http_client)).
                                 % :- use_module('todo_capture').                   % Broken
@@ -34,6 +35,12 @@ execute(search, Args) :-
     format('Searching for: ~w~n', [Query]),
     format(atom(Cmd), 'xdg-open "~w"', [URL]),
     shell(Cmd), !.
+
+execute(dictation_start, _) :-
+    dictation:start_dictation, !.
+
+execute(dictation_stop, _) :-
+    dictation:stop_dictation, !.
 
 execute(ask, Args) :-
     atomic_list_concat(Args, ' ', Query),

@@ -8,6 +8,7 @@
 :- use_module(library(lists)).
 :- use_module(normalizer).
 :- use_module('../kb/intents').
+:- use_module('../kb/config').
 :- use_module('object_intents').
 
 %% ============================================================
@@ -16,13 +17,19 @@
 
 resolve(Raw, Intent, Args) :-
     normalizer:normalize_string(Raw, Toks0),
-    canonicalize_tokens(Toks0, Toks),
-    (
-        try_exact(Toks, Intent0, Args0)
-    ;   try_fuzzy(Toks, Intent0, Args0)
+    strip_fillers(Toks0, Core0),
+    (   stop_phrase(Core0)
+    ->  Intent = dictation_stop,
+        Args = []
+    ;   canonicalize_tokens(Toks0, Toks),
+        (
+            try_exact(Toks, Intent0, Args0)
+        ;   try_fuzzy(Toks, Intent0, Args0)
+        ),
+        object_intents:refine_intent(Intent0, Toks, Intent),
+        Args = Args0
     ),
-    object_intents:refine_intent(Intent0, Toks, Intent),
-    Args = Args0, !.
+    !.
 
 canonicalize_tokens(Toks0, Toks) :-
     strip_fillers(Toks0, Core0),
@@ -30,6 +37,12 @@ canonicalize_tokens(Toks0, Toks) :-
     -> Toks = [Verb|Rest]
     ; Toks = Core0
     ).
+
+stop_phrase(Tokens) :-
+    kb_config:dictation_stop_phrase(Phrase),
+    normalizer:normalize_string(Phrase, PhraseTokens),
+    Tokens == PhraseTokens,
+    !.
 
 %% ============================================================
 %% VERB MATCHING

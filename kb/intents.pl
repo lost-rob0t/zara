@@ -35,6 +35,34 @@ verb_intent(lock, lock, 0).
 verb_intent(unlock, unlock, 0).
 verb_intent(command, open, 0).
 
+% Dictation
+% Keep these as 0-arity so “start voice mode”, “enable dictation”, etc. can resolve
+% even if extra tokens follow.
+
+% Start
+verb_intent(dictate, dictation_start, 0).
+verb_intent(dictation, dictation_start, 0).
+verb_intent(voice, dictation_start, 0).
+verb_intent(voicemode, dictation_start, 0).
+verb_intent(voice_mode, dictation_start, 0).
+verb_intent(startvoicemode, dictation_start, 0).
+verb_intent(start_voice_mode, dictation_start, 0).
+verb_intent(mic, dictation_start, 0).
+verb_intent(micmode, dictation_start, 0).
+
+% Enable/start synonyms
+verb_intent(enable, dictation_start, 0).
+verb_intent(begin, dictation_start, 0).
+verb_intent(activate, dictation_start, 0).
+
+% Stop/disable synonyms
+verb_intent(stopdictation, dictation_stop, 0).
+verb_intent(stopvoice, dictation_stop, 0).
+verb_intent(disable, dictation_stop, 0).
+verb_intent(deactivate, dictation_stop, 0).
+verb_intent(end, dictation_stop, 0).
+verb_intent(quitdictation, dictation_stop, 0).
+
 % Navigation
 verb_intent(search, search, rest).
 verb_intent(find, search, rest).
