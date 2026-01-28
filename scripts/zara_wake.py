@@ -281,20 +281,22 @@ class WakeWordListener:
             return error_msg
 
     def send_response_to_prolog(self, title, message):
-        """Send response to Prolog for notification via alert module"""
+        """Send response notification via notify-send"""
         try:
-            # Escape quotes in message
-            escaped_msg = message.replace('"', '\\"').replace("'", "\\'")
+            import subprocess
 
-            # Call alert:alert/3 - alert(Title, Format, Args)
-            # Use ~w format for simple string display
-            query = f'alert:alert("{title}", "~w", ["{escaped_msg}"])'
-            self.log(f"Sending notification via Prolog: {title}")
+            self.log(f"Sending notification: {title}")
 
-            list(self.prolog.query(query))
+            # Call notify-send directly - it handles newlines and special chars
+            subprocess.run(
+                ["notify-send", "-u", "normal", title, message],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
 
         except Exception as e:
-            self.log(f"Failed to send Prolog notification: {e}")
+            self.log(f"Failed to send notification: {e}")
             # Fallback: log the message
             self.log(f"Response: {message[:200]}...")
 
