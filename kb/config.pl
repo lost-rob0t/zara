@@ -108,7 +108,7 @@ llm_provider(ollama).
 % Ollama: llama3.2, mistral, neural-chat, etc.
 % OpenAI: gpt-4o-mini, gpt-4, gpt-4-turbo
 % Anthropic: claude-sonnet-4-20250514, claude-opus-4-5-20251101
-llm_model("llama3.2").
+llm_model("llama3.2:latest").
 
 % API endpoint (optional, uses provider defaults if not specified)
 % Ollama default: http://localhost:11434/api/chat

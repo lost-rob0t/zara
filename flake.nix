@@ -10,12 +10,47 @@
     system = "x86_64-linux";
     pkgs = import nixpkgs { inherit system; };
 
-    python = pkgs.python311;
+    # FIX: you referenced `python` but never defined it
+    python = pkgs.python3;
+
+    # Build pyswip from GitHub (use the same python toolchain everywhere)
+    pyswip = python.pkgs.buildPythonPackage rec {
+      pname = "pyswip";
+      version = "0.3.1";
+      format = "pyproject";
+
+      src = pkgs.fetchFromGitHub {
+        owner = "yuce";
+        repo = "pyswip";
+        rev = "v${version}";
+        sha256 = "sha256-WmePtJ7MnGIyfQ6O3TaWGADkvRSyPLFbj2C8nbOLM3k=";
+      };
+
+      nativeBuildInputs = [
+        python.pkgs.setuptools
+        python.pkgs.wheel
+      ];
+
+      buildInputs = [ pkgs.swiProlog ];
+
+      doCheck = false;
+
+      meta = {
+        description = "PySwip is a Python-SWI-Prolog bridge";
+        homepage = "https://github.com/yuce/pyswip";
+      };
+    };
+
     pythonLibs = python.withPackages (p: [
       p.sounddevice
       p.numpy
       p.pynput
       p.faster-whisper
+      p.aiohttp
+      p.soundfile
+      pyswip
+      # Packages not in nixpkgs (install via pip if needed):
+      #   pip install anthropic openai
     ]);
   in {
 
@@ -57,6 +92,10 @@ EOF
 
         installPhase = ''
           mkdir -p $out/bin
+          mkdir -p $out/lib/python
+
+          # Copy the zara Python module
+          cp -r $src/zara $out/lib/python/
 
           # Copy the script
           cp scripts/zara_wake.py $out/bin/.zara-wake-unwrapped
@@ -64,15 +103,16 @@ EOF
 
           # Patch the PROLOG_MAIN path to point at zara-prolog package
           substituteInPlace $out/bin/.zara-wake-unwrapped \
-            --replace 'PROLOG_MAIN = Path(__file__).parent / "main.pl"' \
-                      'PROLOG_MAIN = Path("${zara-prolog}/share/zarathushtra/main.pl")'
+            --replace 'PROLOG_MAIN = pathlib.Path(__file__).parent / "main.pl"' \
+                      'PROLOG_MAIN = pathlib.Path("${zara-prolog}/share/zarathushtra/main.pl")'
 
           # Create wrapper with correct Python interpreter and environment
           makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara-wake \
             --add-flags $out/bin/.zara-wake-unwrapped \
             --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xdotool pkgs.pulseaudio pkgs.swiProlog ]} \
-            --set PYTHONPATH ${pythonLibs}/${python.sitePackages} \
-            --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [ pkgs.libsndfile pkgs.portaudio ]}
+            --set PYTHONPATH $out/lib/python:${pythonLibs}/${python.sitePackages} \
+            --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [ pkgs.libsndfile pkgs.portaudio ]} \
+            --set SWI_HOME_DIR ${pkgs.swiProlog}/lib/swipl
         '';
       };
 

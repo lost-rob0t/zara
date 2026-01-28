@@ -3,14 +3,6 @@
 % Core system intents and synonyms
 % verb_intent(Surface, Intent, Arity)
 
-% Greetings
-verb_intent(hello, greet, 0).
-verb_intent(hi, greet, 0).
-verb_intent(hey, greet, 0).
-verb_intent(greetings, greet, 0).
-verb_intent(howdy, greet, 0).
-verb_intent(ahoy, greet, 0).
-
 % Media Control
 verb_intent(play, play, 1).
 verb_intent(pause, pause, 0).
