@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  # CUDA-enabled Qwen3-TTS server (requires NVIDIA GPU)
+  qwen3-tts-cuda:
+    image: qwen3-tts_server:cuda
+    container_name: zara-qwen3-tts-cuda
+    ports:
+      - "7860:7860"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ./qwen3-tts-data/resources:/app/server/resources
+      - ./qwen3-tts-data/outputs:/app/server/outputs
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - QWEN_DEVICE=cuda:0
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:7860/docs || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    profiles:
+      - cuda
+
+  # CPU-only Qwen3-TTS server (no GPU required)
+  qwen3-tts-cpu:
+    image: qwen3-tts_server:cpu
+    container_name: zara-qwen3-tts-cpu
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./qwen3-tts-data/resources:/app/server/resources
+      - ./qwen3-tts-data/outputs:/app/server/outputs
+    environment:
+      - QWEN_DEVICE=cpu
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:7860/docs || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    profiles:
+      - cpu
