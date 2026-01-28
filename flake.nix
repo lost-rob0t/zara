@@ -219,6 +219,7 @@
         pkgs.portaudio
         pkgs.swiProlog
         pkgs.pulseaudio
+        pkgs.ffmpeg
       ];
 
       shellHook = ''
