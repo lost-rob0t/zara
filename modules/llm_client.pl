@@ -9,8 +9,9 @@
 :- use_module(dotenv).
 :- use_module('../kb/config').
 
-% Dynamic predicate for storing conversation history
+% Dynamic predicates for storing conversation history
 :- dynamic chat_history/2.  % chat_history(Timestamp, Messages)
+:- dynamic current_conversation/1.  % current_conversation(Messages)
 
 % Export public predicates
 :- export(llm_query/2).
@@ -22,8 +23,17 @@
 :- export(get_llm_provider/1).
 :- export(get_llm_model/1).
 :- export(get_llm_endpoint/1).
-:- discontiguous llm_client:llm_query_ollama_messages/2
+:- discontiguous llm_client:llm_query_ollama_messages/2.
 % Load .env on module load
+
+% Helper predicates for JSON conversion
+messages_to_json(Messages, JsonArray) :-
+    maplist(message_to_json, Messages, JsonTerms),
+    atomic_list_concat(JsonTerms, ", ", JsonContent),
+    format(atom(JsonArray), '[~w]', [JsonContent]).
+
+message_to_json(json([role=Role, content=Content]), JsonStr) :-
+    format(atom(JsonStr), '{"role": "~w", "content": "~w"}', [Role, Content]).
 
 
 % Get LLM provider configuration
@@ -110,9 +120,18 @@ llm_query_with_history(Prompt, Response) :-
     asserta(current_conversation(FinalMessages)).
 
 % Build conversation messages from history
-build_conversation_from_history(_Messages, _, System, [json([role=system, content=System])]).
 build_conversation_from_history(Messages, _Prompt, System, ConvMessages) :-
-    ConvMessages = [json([role=system, content=System])|Messages].
+    % Convert Prolog conversation format (user-Content, assistant-Response) 
+    % to JSON message format
+    prolog_messages_to_json(Messages, UserMessages),
+    append([json([role=system, content=System])], UserMessages, ConvMessages).
+
+% Convert Prolog message pairs to JSON format
+prolog_messages_to_json([], []).
+prolog_messages_to_json([user-Content|Rest], [json([role=user, content=Content])|JsonRest]) :-
+    prolog_messages_to_json(Rest, JsonRest).
+prolog_messages_to_json([assistant-Content|Rest], [json([role=assistant, content=Content])|JsonRest]) :-
+    prolog_messages_to_json(Rest, JsonRest).
 
 % Call LLM with message list
 call_llm_with_messages(Messages, Response) :-

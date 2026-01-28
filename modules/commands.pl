@@ -50,7 +50,7 @@ execute(dictation_stop, _) :-
 execute(ask, Args) :-
     atomic_list_concat(Args, ' ', Query),
     catch(
-        ( llm_client:llm_query(Query, Response),
+        ( llm_client:llm_query_with_history(Query, Response),
           format('~w~n', [Response])
         ),
         Error,
