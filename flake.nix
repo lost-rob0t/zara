@@ -72,14 +72,15 @@
           cp -r $src/kb $out/share/zarathushtra/
           cp -r $src/modules $out/share/zarathushtra/
           cp -r $src/scripts $out/share/zarathushtra/
+          cp -r $src/zara $out/share/zarathushtra/
 
-          # zara-console (REPL)
-          cat > $out/bin/zara-console <<'EOF'
-#!/usr/bin/env bash
-cd ${placeholder "out"}/share/zarathushtra
-exec ${pkgs.swiProlog}/bin/swipl -q -s ${placeholder "out"}/share/zarathushtra/main.pl
-EOF
-          chmod +x $out/bin/zara-console
+          # zara-console (Python wrapper)
+          makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara-console \
+            --add-flags "-m zara --console" \
+            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.swiProlog ]} \
+            --set PYTHONPATH $out/share/zarathushtra:${pythonLibs}/${python.sitePackages} \
+            --set SWI_HOME_DIR ${pkgs.swiProlog}/lib/swipl \
+            --run "cd $out/share/zarathushtra"
         '';
       };
 
@@ -125,26 +126,59 @@ EOF
 
         installPhase = ''
           mkdir -p $out/bin
+          mkdir -p $out/lib/python
 
-          # Copy the script
-          cp scripts/zara_dictate.py $out/bin/.zara-dictate-unwrapped
-          chmod +x $out/bin/.zara-dictate-unwrapped
+          # Copy the zara Python module
+          cp -r $src/zara $out/lib/python/
 
-          # Create wrapper with correct Python interpreter
+          # Create wrapper using Python module interface
           makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara-dictate \
-            --add-flags $out/bin/.zara-dictate-unwrapped \
+            --add-flags "-m zara --dictate" \
             --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xdotool ]} \
-            --set PYTHONPATH ${pythonLibs}/${python.sitePackages} \
+            --set PYTHONPATH $out/lib/python:${pythonLibs}/${python.sitePackages} \
             --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [ pkgs.libsndfile pkgs.portaudio ]}
+        '';
+      };
+
+      zara-cli = pkgs.stdenv.mkDerivation {
+        pname = "zara-cli";
+        version = "1.0";
+        src = ./.;
+
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+
+        installPhase = ''
+          mkdir -p $out/bin
+          mkdir -p $out/lib/python
+          mkdir -p $out/share/zarathushtra
+
+          # Copy the zara Python module
+          cp -r $src/zara $out/lib/python/
+
+          # Copy ALL Prolog sources with structure intact
+          cp $src/*.pl $out/share/zarathushtra/ 2>/dev/null || true
+          cp -r $src/kb $out/share/zarathushtra/
+          cp -r $src/modules $out/share/zarathushtra/
+          cp -r $src/scripts $out/share/zarathushtra/
+
+          # Create main zara wrapper
+          makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara \
+            --add-flags "-m zara" \
+            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xdotool pkgs.pulseaudio pkgs.swiProlog ]} \
+            --set PYTHONPATH $out/lib/python:$out/share/zarathushtra:${pythonLibs}/${python.sitePackages} \
+            --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [ pkgs.libsndfile pkgs.portaudio ]} \
+            --set SWI_HOME_DIR ${pkgs.swiProlog}/lib/swipl \
+            --run "cd $out/share/zarathushtra"
         '';
       };
 
       zarathushtra = pkgs.buildEnv {
         name = "zarathushtra-full";
-        paths = [ zara-prolog zara-wake zara-dictate ];
+        paths = [ zara-cli zara-prolog zara-wake zara-dictate ];
       };
 
     in {
+      zara-cli = zara-cli;
       zara-prolog = zara-prolog;
       zara-wake = zara-wake;
       zara-dictate = zara-dictate;
@@ -153,6 +187,10 @@ EOF
     };
 
     apps.${system} = {
+      zara = {
+        type = "app";
+        program = "${self.packages.${system}.zara-cli}/bin/zara";
+      };
       zara-wake = {
         type = "app";
         program = "${self.packages.${system}.zara-wake}/bin/zara-wake";
@@ -167,7 +205,7 @@ EOF
       };
       default = {
         type = "app";
-        program = "${self.packages.${system}.zara-wake}/bin/zara-wake";
+        program = "${self.packages.${system}.zara-cli}/bin/zara";
       };
     };
 

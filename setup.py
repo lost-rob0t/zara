@@ -42,7 +42,9 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "zara=zara_main:main",
+            "zara=zara.__main__:main",
+            "zara-console=zara.console:main",
+            "zara-dictate=zara.dictate:main",
         ],
     },
     include_package_data=True,
