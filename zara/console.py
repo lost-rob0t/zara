@@ -22,9 +22,19 @@ class ZaraConsole:
         self.logger = logging.getLogger(__name__)
 
         if main_file is None:
-            # Look for main.pl relative to this file
-            project_root = Path(__file__).parent.parent
-            main_file = project_root / "main.pl"
+            # Determine main.pl location
+            module_path = Path(__file__).resolve()
+
+            # Check if running from nix store
+            if "/nix/store" in str(module_path):
+                # In nix: /nix/store/HASH-zara-cli-1.0/lib/python/zara/console.py
+                # main.pl: /nix/store/HASH-zara-cli-1.0/share/zarathushtra/main.pl
+                nix_package_root = module_path.parents[3]  # Go up to package root
+                main_file = nix_package_root / "share" / "zarathushtra" / "main.pl"
+            else:
+                # Development mode: look relative to module
+                project_root = module_path.parent.parent
+                main_file = project_root / "main.pl"
 
         if not main_file.exists():
             raise FileNotFoundError(f"main.pl not found at {main_file}")
