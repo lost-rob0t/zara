@@ -3,6 +3,37 @@
 % Core system intents and synonyms
 % verb_intent(Surface, Intent, Arity)
 
+% Greetings
+verb_intent(hello, greet, 0).
+verb_intent(hi, greet, 0).
+verb_intent(hey, greet, 0).
+verb_intent(hey_there, greet, 0).
+verb_intent(hi_there, greet, 0).
+verb_intent(greetings, greet, 0).
+verb_intent(good_morning, greet, 0).
+verb_intent(good_afternoon, greet, 0).
+verb_intent(good_evening, greet, 0).
+verb_intent(howdy, greet, 0).
+verb_intent(yo, greet, 0).
+verb_intent(sup, greet, 0).
+verb_intent(what_s_up, greet, 0).
+verb_intent(wassup, greet, 0).
+verb_intent(hiya, greet, 0).
+verb_intent(hello_there, greet, 0).
+verb_intent(gday, greet, 0).
+verb_intent(good_day, greet, 0).
+verb_intent(hola, greet, 0).
+verb_intent(hey_zara, greet, 0).
+verb_intent(hi_zara, greet, 0).
+verb_intent(morning, greet, 0).
+verb_intent(evening, greet, 0).
+verb_intent(hey_you, greet, 0).
+verb_intent(hello_friend, greet, 0).
+verb_intent(greetings_human, greet, 0).
+verb_intent(salutations, greet, 0).
+verb_intent(hail, greet, 0).
+verb_intent(welcome, greet, 0).
+
 % Media Control
 verb_intent(play, play, 1).
 verb_intent(pause, pause, 0).
