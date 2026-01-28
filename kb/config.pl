@@ -1,17 +1,39 @@
+% ======================================================================
+% FILE: kb/config.pl
+% ======================================================================
+
 :- module(kb_config,
     [
         app_mapping/2,
         direct_app/1,
+
         todo_destination/1,
+        todo_destination_md/1,
         todo_context_mode/1,
+        todo_format/1,              % org | markdown
+        todo_template/2,            % todo_template(Format, TemplateString)
+
         search_engine/1,
         dictation_command/1,
-        dictation_stop_phrase/1
+        dictation_stop_phrase/1,
 
+        llm_provider/1,             % anthropic | openai | ollama
+        llm_model/1,                % model name/ID
+        llm_endpoint/1              % API endpoint URL
     ]).
 
 :- use_module('../modules/config_loader').
 :- discontiguous kb_config:app_mapping/2.
+:- discontiguous kb_config:direct_app/1.
+:- discontiguous kb_config:todo_destination/1.
+:- discontiguous kb_config:todo_destination_md/1.
+:- discontiguous kb_config:todo_context_mode/1.
+:- discontiguous kb_config:todo_format/1.
+:- discontiguous kb_config:todo_template/2.
+:- discontiguous kb_config:llm_provider/1.
+:- discontiguous kb_config:llm_model/1.
+:- discontiguous kb_config:llm_endpoint/1.
+
 :- initialization(config_loader:load_user_config).
 
 % ============================================================
@@ -19,52 +41,96 @@
 % ============================================================
 % This configuration provides sensible defaults that work across
 % most Linux distributions. Users can override these by creating
-% ~/.config/zarathushtra/config.pl with their own definitions.
+% ~/.zarathushtra/config.pl with their own definitions.
 
 % ---- TODO Settings ----
 % Where to store TODO entries (Org-mode format)
 todo_destination("~/todo.org").
 
+% Optional markdown destination (used when todo_format(markdown)).
+% If missing, markdown falls back to todo_destination/1.
+% todo_destination_md("~/todo.md").
+
 % Context inference mode for TODO categorization
 % Options: infer | infer_with_llm | llm_only
 todo_context_mode(infer).
+
+% Output format for todo capture templates
+% Options: org | markdown
+todo_format(org).
+
+% ---- TODO Template System ----
+% Placeholders you can use:
+%   {task} {tag} {category} {created}
+%   {scheduled}        -> e.g. "2026-01-30 15:00" or ""
+%   {scheduled_org}    -> e.g. "<2026-01-30 Tue 15:00>" or ""
+%   {scheduled_line}   -> org helper: "SCHEDULED: <...>\n" or ""
+%   {due_suffix}       -> markdown helper: " (due: 2026-01-30 15:00)" or ""
+%   {cursor}           -> marker string: "%%"
+
+todo_template(org,
+"* TODO {task} :{tag}:
+:PROPERTIES:
+:CREATED:  {created}
+:CATEGORY: {category}
+:END:
+{scheduled_line}{cursor}
+
+").
+
+todo_template(markdown,
+"- [ ] {task}{due_suffix}  <!-- tag:{tag} cat:{category} created:{created} -->
+  - {cursor}
+
+").
+
 
 % Search engine template for the `search` intent.
 % Users can override this in ~/.zarathushtra/config.pl
 search_engine("https://duckduckgo.com/?q=~w").
 
 % ---- Dictation (zara-dictate) ----
-% Command used to start dictation. Users can override this in ~/.zarathushtra/config.pl
-% Examples:
-%   dictation_command("zara-dictate tiny cpu").
-%   dictation_command("zara-dictate small cpu 16 2 'end voice'").
-%   dictation_command("ZARA_STOP_PHRASE='end voice' zara-dictate small cpu").
-
 dictation_command("zara-dictate").
 
 % Spoken stop phrases (case-insensitive). Used by the Prolog intent matcher.
-% Add as many as you like; each fact is checked.
 dictation_stop_phrase("end voice").
 dictation_stop_phrase("stop voice").
 dictation_stop_phrase("stop voice mode").
 dictation_stop_phrase("stop dictation").
 dictation_stop_phrase("end dictation").
 
+% ---- LLM Provider Configuration ----
+% Used by Python wake listener for conversational queries.
+% Options: anthropic | openai | ollama
+llm_provider(ollama).
+
+% Model name (provider-specific)
+% Ollama: llama3.2, mistral, neural-chat, etc.
+% OpenAI: gpt-4o-mini, gpt-4, gpt-4-turbo
+% Anthropic: claude-sonnet-4-20250514, claude-opus-4-5-20251101
+llm_model("llama3.2").
+
+% API endpoint (optional, uses provider defaults if not specified)
+% Ollama default: http://localhost:11434/api/chat
+% OpenAI default: https://api.openai.com/v1/chat/completions
+% Anthropic: handled by SDK (don't override)
+llm_endpoint("http://localhost:11434/api/chat").
+
 % ============================================================
 % WEB APPLICATIONS
 % ============================================================
-% Common web services via Firefox
+% Common web services via xdg-open
 
-app_mapping(youtube, "xdg-open --new-window https://youtube.com").
-app_mapping(github, "xdg-open --new-window https://github.com").
-app_mapping(reddit, "xdg-open --new-window https://reddit.com").
-app_mapping(gmail, "xdg-open --new-window https://gmail.com").
-app_mapping(maps, "xdg-open --new-window https://maps.google.com").
-app_mapping(translate, "xdg-open --new-window https://translate.google.com").
-app_mapping(calendar, "xdg-open --new-window https://calendar.google.com").
-app_mapping(drive, "xdg-open --new-window https://drive.google.com").
-app_mapping(twitter, "xdg-open --new-window https://twitter.com").
-app_mapping(linkedin, "xdg-open --new-window https://linkedin.com").
+app_mapping(youtube, "xdg-open https://youtube.com").
+app_mapping(github, "xdg-open https://github.com").
+app_mapping(reddit, "xdg-open https://reddit.com").
+app_mapping(gmail, "xdg-open https://gmail.com").
+app_mapping(maps, "xdg-open https://maps.google.com").
+app_mapping(translate, "xdg-open https://translate.google.com").
+app_mapping(calendar, "xdg-open https://calendar.google.com").
+app_mapping(drive, "xdg-open https://drive.google.com").
+app_mapping(twitter, "xdg-open https://twitter.com").
+app_mapping(linkedin, "xdg-open https://linkedin.com").
 
 % ============================================================
 % CORE APPLICATIONS
@@ -110,9 +176,9 @@ app_mapping(vlc, "vlc").
 app_mapping(mpv, "mpv").
 
 % Media Services
-app_mapping(spotify, "xdg-open --new-window https://open.spotify.com").
-app_mapping(netflix, "xdg-open --new-window https://netflix.com").
-app_mapping(twitch, "xdg-open --new-window https://twitch.tv").
+app_mapping(spotify, "xdg-open https://open.spotify.com").
+app_mapping(netflix, "xdg-open https://netflix.com").
+app_mapping(twitch, "xdg-open https://twitch.tv").
 
 % ============================================================
 % COMMUNICATION
@@ -120,9 +186,9 @@ app_mapping(twitch, "xdg-open --new-window https://twitch.tv").
 
 app_mapping(email, "thunderbird").
 app_mapping(mail, "thunderbird").
-app_mapping(chat, "xdg-open --new-window https://discord.com/app").
-app_mapping(slack, "xdg-open --new-window https://slack.com").
-app_mapping(teams, "xdg-open --new-window https://teams.microsoft.com").
+app_mapping(chat, "xdg-open https://discord.com/app").
+app_mapping(slack, "xdg-open https://slack.com").
+app_mapping(teams, "xdg-open https://teams.microsoft.com").
 app_mapping(zoom, "zoom").
 
 % ============================================================
@@ -196,7 +262,6 @@ app_mapping(screen_record, "simplescreenrecorder").
 % PACKAGE MANAGEMENT
 % ============================================================
 
-% Common package managers (will try to detect which one works)
 app_mapping(software, "gnome-software").
 app_mapping(packages, "gnome-software").
 app_mapping(updates, "gnome-software --mode=updates").
@@ -234,8 +299,6 @@ app_mapping(hibernate, "systemctl hibernate").
 % ============================================================
 % DIRECT APPS
 % ============================================================
-% Applications that can be launched directly by name
-% without requiring an app_mapping entry
 
 direct_app(xdg-open).
 direct_app(chrome).

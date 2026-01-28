@@ -1,16 +1,21 @@
-% top of file
+% ======================================================================
+% FILE: modules/commands.pl
+% ======================================================================
+
 :- module(commands, [execute/2]).
+
 :- use_module('../kb/config').
 :- use_module(library(process)).
 :- use_module('dictate').
-:- use_module('normalizer', [strip_fillers/2]).  % <- FIXED PATH
+:- use_module('normalizer', [strip_fillers/2]).
 :- use_module(library(http/http_client)).
-                                % :- use_module('todo_capture').                   % Broken
 :- use_module(alarm).
+:- use_module(todo_capture).   % <-- FIX: required for todo/reminder/schedule
 
 % ============================================
 % Execution Layer
 % ============================================
+
 execute(greet, []) :-
     format('Hello! How can I help you?~n'), !.
 
@@ -46,41 +51,31 @@ execute(ask, Args) :-
     atomic_list_concat(Args, ' ', Query),
     format('Chat history not yet implemented. Query was: ~w~n', [Query]), !.
 
-% execute(ask, Args) :-
-%     atomic_list_concat(Args, ' ', Query),
-%     catch(
-%         (llm_client:llm_query(Query, Response),
-%          format('~n~w~n~n', [Response])),
-%         Error,
-%         format('LLM Error: ~w~n', [Error])
-%     ), !.
+% ----------------------------------------------------------------------
+% TODO / Reminder / Schedule
+% ----------------------------------------------------------------------
 
-% % TODO creation (no required date)
-% execute(todo, Args) :-
-%     atomic_list_concat(Args, ' ', Task),
-%     format('📝 Adding TODO: ~w~n', [Task]),
-%     todo_capture:capture_todo(Task), !.
+execute(todo, Args) :-
+    strip_fillers(Args, Core),
+    tokens_to_string(Core, TaskStr),
+    todo_capture:capture_todo(TaskStr, ask_date(yes)),
+    !.
 
-% % Reminder/Schedule (requires date prompt if missing)
-% execute(reminder, Args) :-
-%     atomic_list_concat(Args, ' ', Task),
-%     format('⏰ Setting Reminder: ~w~n', [Task]),
-%     todo_capture:capture_todo(Task), !.
+execute(reminder, Args) :-
+    strip_fillers(Args, Core),
+    tokens_to_string(Core, TaskStr),
+    todo_capture:capture_todo(TaskStr, ask_date(yes)),
+    !.
 
 execute(schedule, Args) :-
-    delete(Args, reminder, Args1),
-    strip_fillers(Args1, Core),
-    ( Core = [] -> TaskStr = "unspecified task"
-    ; tokens_to_string(Core, TaskStr)
-    ),
-    format('⏰ Scheduling: ~w~n', [TaskStr]),
-    todo_capture:capture_todo(TaskStr), !.
+    strip_fillers(Args, Core),
+    tokens_to_string(Core, TaskStr),
+    todo_capture:capture_todo(TaskStr, ask_date(yes)),
+    !.
 
-
-
-%%======================
-%% Named Timers
-%%======================
+% ----------------------------------------------------------------------
+% Named Timers
+% ----------------------------------------------------------------------
 
 execute(timer, [_, Seconds, second, Name]) :-
     alarm:start_timer(Name, Seconds),
@@ -115,7 +110,6 @@ execute(timer, [_, Hours, hours, Name]) :-
     alarm:start_timer(Name, Seconds),
     format('⏳ Timer "~w" set for ~w hours (~w seconds)~n', [Name, Hours, Seconds]),
     !.
-
 
 % Timer in second (singular)
 execute(timer, [_, Seconds, second]) :-
