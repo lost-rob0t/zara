@@ -145,28 +145,28 @@ call_llm_with_messages(Messages, Response) :-
     ; throw(error(unsupported_provider, Provider))
     ).
 
-% Ollama implementation with message list
+% Ollama implementation with message list (using native HTTP client)
 llm_query_ollama_messages(Messages, Response) :-
     get_llm_model(Model),
     get_llm_endpoint(Endpoint),
     
-    % Convert message list to JSON array
-    messages_to_json(Messages, MessagesJson),
-    format(atom(RequestStr), '{"model": "~w", "messages": ~w, "stream": false}', [Model, MessagesJson]),
+    % Build request JSON
+    Request = json([
+        model=Model,
+        messages=Messages,
+        stream=false
+    ]),
     
-    format(atom(Cmd), 'curl -s -X POST ~w -H "Content-Type: application/json" -d \'~w\'', [Endpoint, RequestStr]),
-    
-    catch(
-        process_create('/bin/sh', ['-c', Cmd], [stdout(pipe(Out))]),
-        Error,
-        (format('Failed to create process: ~w~n', [Error]), fail)
+    % Make HTTP POST request using Prolog HTTP client
+    http_post(
+        Endpoint,
+        json(Request),
+        Reply,
+        [json_object(dict)]
     ),
     
-    read_string(Out, _, ResponseStr),
-    close(Out),
-    
-    atom_json_dict(ResponseStr, ResponseDict, []),
-    get_dict(message, ResponseDict, Message),
+    % Extract response
+    get_dict(message, Reply, Message),
     get_dict(content, Message, Response).
 
 % Anthropic implementation with message list
@@ -199,85 +199,39 @@ llm_query_anthropic_messages(Messages, Response) :-
     get_dict(content, Reply, [First|_]),
     get_dict(text, First, Response).
 
-% OpenAI implementation with message list (placeholder)
-llm_query_openai_messages(_Messages, _Response) :-
-    throw(error(not_implemented, 'OpenAI implementation not yet updated')).
-
-% Call LLM with message list
-call_llm_with_messages(Messages, Response) :-
-    get_llm_provider(Provider),
-    ( Provider = ollama ->
-        llm_query_ollama_messages(Messages, Response)
-    ; Provider = anthropic ->
-        llm_query_anthropic_messages(Messages, Response)
-    ; Provider = openai ->
-        llm_query_openai_messages(Messages, Response)
-    ; throw(error(unsupported_provider, Provider))
-    ).
-
-% Ollama implementation with message list
-llm_query_ollama_messages(Messages, Response) :-
-    get_llm_model(Model),
-    get_llm_endpoint(Endpoint),
-    
-    % Convert message list to JSON array
-    messages_to_json(Messages, MessagesJson),
-    format(atom(RequestStr), '{"model": "~w", "messages": ~w, "stream": false}', [Model, MessagesJson]),
-    
-    format(atom(Cmd), 'curl -s -X POST ~w -H "Content-Type: application/json" -d \'~w\'', [Endpoint, RequestStr]),
-    
-    catch(
-        process_create('/bin/sh', ['-c', Cmd], [stdout(pipe(Out))]),
-        Error,
-        (format('Failed to create process: ~w~n', [Error]), fail)
-    ),
-    
-    read_string(Out, _, ResponseStr),
-    close(Out),
-    
-    atom_json_dict(ResponseStr, ResponseDict, []),
-    get_dict(message, ResponseDict, Message),
-    get_dict(content, Message, Response).
-
-% Anthropic implementation with message list
-llm_query_anthropic_messages(Messages, Response) :-
+% OpenAI implementation with message list
+llm_query_openai_messages(Messages, Response) :-
     get_api_key(Key),
     get_llm_model(Model),
     atom_string(Key, KeyString),
+    get_llm_endpoint(Endpoint),
 
-    % Build request with message list
+    % OpenAI uses messages format
     Request = json([
         model=Model,
-        max_tokens=1024,
         messages=Messages,
-        stream=false
+        max_tokens=1024,
+        temperature=0.7
     ]),
 
-    % Make API call
     http_post(
-        'https://api.anthropic.com/v1/messages',
+        Endpoint,
         json(Request),
         Reply,
         [
-            request_header('x-api-key'=KeyString),
-            request_header('anthropic-version'='2023-06-01'),
+            request_header('Authorization'=("Bearer " + KeyString)),
+            request_header('Content-Type'='application/json'),
             json_object(dict)
         ]
     ),
 
-    % Extract response
-    get_dict(content, Reply, [First|_]),
-    get_dict(text, First, Response).
-
-% OpenAI implementation with message list (placeholder)
-llm_query_openai_messages(_Messages, _Response) :-
-    throw(error(not_implemented, 'OpenAI implementation not yet updated')).
+    get_dict(choices, Reply, [First|_]),
+    get_dict(message, First, Message),
+    get_dict(content, Message, Response).
 
 % ============================================================
-% Chat History Management
+% Legacy single-prompt implementations
 % ============================================================
-
-
 
 % Anthropic implementation
 llm_query_anthropic(Prompt, SystemPrompt, Response) :-
@@ -349,3 +303,7 @@ llm_query_ollama(Prompt, SystemPrompt, Response) :-
         json([role=user, content=Prompt])
     ],
     llm_query_ollama_messages(Messages, Response).
+
+% ============================================================
+% Chat History Management
+% ============================================================
