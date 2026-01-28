@@ -96,14 +96,10 @@ def main():
         sys.exit(console_main())
 
     elif args.voice:
-        # Single voice command mode
-        print("Voice mode: Record a command (4 seconds)")
-        # Use the zara_voice.pl script
-        import subprocess
-        project_root = Path(__file__).parent.parent
-        voice_script = project_root / "zara_voice.pl"
-        result = subprocess.run([str(voice_script)], cwd=project_root)
-        sys.exit(result.returncode)
+        # Single voice command mode - not implemented
+        print("Error: Voice mode is not currently implemented.", file=sys.stderr)
+        print("Use --dictate for continuous voice input instead.", file=sys.stderr)
+        sys.exit(1)
 
     elif args.dictate:
         # Continuous dictation mode
@@ -119,11 +115,8 @@ def main():
 
     elif args.wake:
         # Wake word listener mode
-        import subprocess
-        project_root = Path(__file__).parent.parent
-        wake_script = project_root / "scripts" / "zara_wake.py"
-        result = subprocess.run([sys.executable, str(wake_script)], cwd=project_root)
-        sys.exit(result.returncode)
+        from .wake import main as wake_main
+        sys.exit(wake_main())
 
     elif args.command:
         # Text command mode (default)
