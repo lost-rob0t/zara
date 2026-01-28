@@ -15,17 +15,14 @@
 %% PUBLIC API
 %% ============================================================
 
-resolve(Raw, Intent, Args) :-
+    resolve(Raw, Intent, Args) :-
     normalizer:normalize_string(Raw, Toks0),
     strip_fillers(Toks0, Core0),
     (   stop_phrase(Core0)
     ->  Intent = dictation_stop,
         Args = []
     ;   canonicalize_tokens(Toks0, Toks),
-        (
-            try_exact(Toks, Intent0, Args0)
-        ;   try_fuzzy(Toks, Intent0, Args0)
-        ),
+        try_exact(Toks, Intent0, Args0),
         object_intents:refine_intent(Intent0, Toks, Intent),
         Args = Args0
     ),
@@ -61,15 +58,7 @@ try_exact([Word|Rest], Intent, Args) :-
         )
     ; fail ).
 
-try_fuzzy([Word|Rest], Intent, Args) :-
-    findall(Surf-Int-Ar, kb_intents:verb_intent(Surf,Int,Ar), VS),
-    maplist(score_word(Word), VS, Scored),
-    sort(1, @=<, Scored, [Dist-(Surf-Intent-Arity)|_]),
-    Dist =< 2,
-    extract_args(Arity, Rest, Intent, Args).
 
-score_word(Word, Surf-Int-Ar, Dist-(Surf-Int-Ar)) :-
-    edit_distance(Word, Surf, Dist).
 
 %% ============================================================
 %% VERB SELECTION
@@ -77,23 +66,8 @@ score_word(Word, Surf-Int-Ar, Dist-(Surf-Int-Ar)) :-
 
 select_verb_head([W|Rs], W, Rs) :-
     kb_intents:verb_intent(W, _, _), !.
-select_verb_head([W|Rs], Verb, Tail) :-
-    findall(Surf, kb_intents:verb_intent(Surf,_,_), Surfs),
-    nearest(W, Surfs, Best, D),
-    D =< 1, !,
-    Verb = Best, Tail = Rs.
 select_verb_head([_|Rs], Verb, Tail) :-
     select_verb_head(Rs, Verb, Tail).
-
-nearest(W, [S|Ss], Best, D) :-
-    edit_distance(W,S,D0),
-    nearest_(W,Ss,S,D0,Best,D).
-
-nearest_(_, [], Best, D, Best, D).
-nearest_(W, [S|Ss], CurBest, CurD, Best, D) :-
-    edit_distance(W,S,D1),
-    (D1 < CurD -> nearest_(W,Ss,S,D1,Best,D)
-                ; nearest_(W,Ss,CurBest,CurD,Best,D)).
 
 
 %%============================================================
@@ -181,28 +155,4 @@ drop_preps([Prep|Preps], [H|T], Rest) :-
 drop_preps(Preps, [], []) :-
     Preps = [_|_].
 
-%% ============================================================
-%% EDIT DISTANCE (Levenshtein)
-%% ============================================================
 
-edit_distance(S1, S2, Distance) :-
-    atom_chars(S1, L1),
-    atom_chars(S2, L2),
-    length(L1, Len1),
-    length(L2, Len2),
-    levenshtein(L1, L2, Len1, Len2, Distance).
-
-levenshtein([], _, 0, Len2, Len2) :- !.
-levenshtein(_, [], Len1, 0, Len1) :- !.
-levenshtein([H|T1], [H|T2], Len1, Len2, Distance) :- !,
-    Len1_1 is Len1 - 1,
-    Len2_1 is Len2 - 1,
-    levenshtein(T1, T2, Len1_1, Len2_1, Distance).
-levenshtein([H1|T1], [H2|T2], Len1, Len2, Distance) :-
-    H1 \= H2,
-    Len1_1 is Len1 - 1,
-    Len2_1 is Len2 - 1,
-    levenshtein(T1, T2, Len1_1, Len2_1, D1),
-    levenshtein(T1, [H2|T2], Len1_1, Len2, D2),
-    levenshtein([H1|T1], T2, Len1, Len2_1, D3),
-    Distance is min(D1, min(D2, D3)) + 1.

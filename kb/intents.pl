@@ -23,6 +23,7 @@ verb_intent(sms, text, 2).
 verb_intent(open, open, 1).
 verb_intent(launch, open, 1).
 verb_intent(start, open, 1).
+verb_intent(run, open, 1).
 verb_intent(lock, lock, 0).
 verb_intent(unlock, unlock, 0).
 verb_intent(command, open, 0).
