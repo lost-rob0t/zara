@@ -32,7 +32,7 @@ object_intent(brightness, brightness_control).
   use it. Otherwise keep the RoughIntent.
 */
 
-refine_intent(Rough, Tokens, Final) :-
+refine_intent(_Rough, Tokens, Final) :-
     extract_object(Tokens, Object),
     object_intent(Object, Final).
 

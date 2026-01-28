@@ -142,7 +142,7 @@ extract_args(2, Rest, Intent, [A,B]) :-
     arg2(Intent, Rest, A, B), !.
 extract_args(rest, Rest, Intent, Args) :-
     Args = Rest.
-extract_args(_, Rest, _, Rest).
+extract_args(_, Rest, _Intent, Rest).
 
 arg1(play, Rest, Media) :-
     drop_preps([of,for,to,me,some], Rest, R1),

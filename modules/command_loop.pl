@@ -1,8 +1,9 @@
 :- module(command_loop, [handle_command/1]).
 :- use_module(intent_resolver, [convert_number_atoms/2]).
+:- use_module(llm_client, [llm_query/3, llm_query_with_history/2]).
 :- use_module('../kb/intents').      % still provide DCG path if desired
 :- use_module('commands').
-:- use_module('llm_client').
+
 :- use_module('alert').
 :- use_module('zara_hooks').
 
@@ -34,12 +35,8 @@ handle_command(String) :-
 % ---- LLM rewriter (Smart tone S) ----
 rewrite_with_llm(UserInput, Intent, Args) :-
     format(string(Prompt),
-"Rewrite the following user request into a single canonical command with:
-- intent: one of [greet, play, pause, stop, resume, next, skip, call, text, open, lock, unlock, search, navigate, ask, dictation_start, dictation_stop]
-- args: array of atoms/strings (1 or 2 as needed)
-- Only return compact JSON: {\"intent\":\"...\",\"args\":[...]}
-User: ~s", [UserInput]),
-    llm_client:llm_query(Prompt, Resp),
+"Rewrite the following user request into a single canonical command with:\n- intent: one of [greet, play, pause, stop, resume, next, skip, call, text, open, lock, unlock, search, navigate, ask, dictation_start, dictation_stop]\n- args: array of atoms/strings (1 or 2 as needed)\n- Only return compact JSON: {\"intent\":\"...\",\"args\":[...]}\nUser: ~w", [UserInput]),
+    llm_client:llm_query_with_history(Prompt, Resp),
     extract_json_intent(Resp, Intent, Args).
 
 % Extremely permissive JSON extractor

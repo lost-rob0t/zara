@@ -49,10 +49,9 @@ execute(dictation_stop, _) :-
 
 execute(ask, Args) :-
     atomic_list_concat(Args, ' ', Query),
-    format('Querying LLM: ~w~n', [Query]),
     catch(
         ( llm_client:llm_query(Query, Response),
-          format('LLM Response: ~w~n', [Response])
+          format('~w~n', [Response])
         ),
         Error,
         format('LLM Error: ~w~n', [Error])
