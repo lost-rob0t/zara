@@ -1,282 +1,232 @@
 """
 LangGraph-based conversation flow.
 
-Implements the conversation flow using LangGraph:
-1. Agent node: LLM decides whether to respond or call tools
-2. Tools node: Execute requested tools
-3. Routing: Conditionally route between agent → tools → agent or agent → end
+Key fix:
+- Uses a proper message reducer (add_messages) so ToolNode/appended messages
+  do NOT overwrite history. Without this, the state can end up containing only
+  ToolMessages, which Anthropic rejects with:
+    "tool_result ... must have a corresponding tool_use in the previous message"
+
+This module keeps a small validator to drop truly orphaned ToolMessages, but it
+does NOT delete valid tool traces just because they appear at the end.
 """
 
-from typing import Dict, Any, Literal, List
-from langchain_core.messages import ToolMessage, AIMessage, BaseMessage
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict, List, Literal, Optional, TypedDict, Annotated
+
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
-import logging
 
 logger = logging.getLogger(__name__)
+
+# ----------------------------------------------------------------------
+# LangGraph message reducer (critical)
+
+try:
+    # LangGraph >= 0.2 style
+    from langgraph.graph.message import add_messages  # type: ignore
+except Exception:  # pragma: no cover
+    try:
+        # Some versions export it here
+        from langgraph.graph import add_messages  # type: ignore
+    except Exception as e:  # pragma: no cover
+        raise ImportError(
+            "Could not import langgraph add_messages reducer. "
+            "Your langgraph version is missing message reducers."
+        ) from e
+
+
+class AgentState(TypedDict, total=False):
+    """Runtime state passed through the LangGraph workflow."""
+
+    # Conversation context
+    messages: Annotated[List[BaseMessage], add_messages]
+
+    # Metadata / loop control
+    step_count: int
+    max_steps: int
+
+    # Optional extras (kept for compatibility with existing callers)
+    user_input: str
+    response: Optional[str]
+    tool_calls: List[Dict[str, Any]]
+    tool_results: List[Dict[str, Any]]
+
+
+# ----------------------------------------------------------------------
+# Helpers
+
+def _tool_call_id(tool_call: Any) -> Optional[str]:
+    """
+    Tool call ids vary by provider / langchain version:
+    - dict: {"id": "..."}
+    - object: .id
+    """
+    if tool_call is None:
+        return None
+    if isinstance(tool_call, dict):
+        return tool_call.get("id")
+    return getattr(tool_call, "id", None)
 
 
 def validate_and_clean_messages(messages: List[BaseMessage]) -> List[BaseMessage]:
     """
-    Validate and clean message history to ensure it's compatible with Anthropic API.
+    Drop orphaned ToolMessages that would violate Anthropic's requirements.
 
-    Anthropic requires:
-    - Each ToolMessage must immediately follow an AIMessage with corresponding tool_calls
-    - No orphaned ToolMessages without matching tool_use_id
-    - Messages cannot start or end with orphaned ToolMessages
-
-    This function removes orphaned ToolMessages and ensures proper message structure.
-
-    Args:
-        messages: List of conversation messages
-
-    Returns:
-        Cleaned list of messages
+    Rule enforced:
+    - A ToolMessage is only valid if the immediately previous kept message is an
+      AIMessage that contains a tool_call id matching ToolMessage.tool_call_id.
     """
     if not messages:
-        return messages
+        return []
 
-    logger.info(f"[ValidateMessages] Starting validation of {len(messages)} messages")
-
-    cleaned = []
-    i = 0
-
-    while i < len(messages):
-        msg = messages[i]
-
-        # If it's a ToolMessage, check if previous message is AIMessage with matching tool_calls
+    cleaned: List[BaseMessage] = []
+    for idx, msg in enumerate(messages):
         if isinstance(msg, ToolMessage):
-            # Check if there's a previous message and it's an AIMessage with tool_calls
-            if (cleaned and
-                isinstance(cleaned[-1], AIMessage) and
-                hasattr(cleaned[-1], 'tool_calls') and
-                cleaned[-1].tool_calls):
+            if not cleaned:
+                logger.warning("[ValidateMessages] Dropping ToolMessage at start of history")
+                continue
 
-                # Check if this tool_call_id matches any tool_calls in the AIMessage
-                tool_call_ids = [tc['id'] for tc in cleaned[-1].tool_calls]
-                if hasattr(msg, 'tool_call_id') and msg.tool_call_id in tool_call_ids:
-                    # Valid ToolMessage, keep it
-                    cleaned.append(msg)
-                    logger.info(f"[ValidateMessages] Keeping valid ToolMessage with id {msg.tool_call_id}")
-                else:
-                    # Orphaned ToolMessage, skip it
-                    logger.warning(f"[ValidateMessages] Removing orphaned ToolMessage with non-matching id {getattr(msg, 'tool_call_id', 'unknown')}")
+            prev = cleaned[-1]
+            if not (isinstance(prev, AIMessage) and getattr(prev, "tool_calls", None)):
+                logger.warning("[ValidateMessages] Dropping ToolMessage with no preceding AI tool_use")
+                continue
+
+            wanted = {_tool_call_id(tc) for tc in prev.tool_calls}  # type: ignore[attr-defined]
+            wanted.discard(None)
+
+            tool_id = getattr(msg, "tool_call_id", None)
+            if tool_id and tool_id in wanted:
+                cleaned.append(msg)
             else:
-                # ToolMessage without preceding AIMessage with tool_calls, skip it
-                logger.warning(f"[ValidateMessages] Removing orphaned ToolMessage (no preceding AIMessage with tool_calls)")
-                if hasattr(msg, 'tool_call_id'):
-                    logger.warning(f"[ValidateMessages]   - Orphaned tool_call_id: {msg.tool_call_id}")
-        else:
-            # Not a ToolMessage, keep it
-            cleaned.append(msg)
-            logger.info(f"[ValidateMessages] Keeping {type(msg).__name__} at position {i}")
+                logger.warning(
+                    "[ValidateMessages] Dropping ToolMessage with non-matching id: %s (wanted=%s)",
+                    tool_id,
+                    sorted(wanted),
+                )
+            continue
 
-        i += 1
+        cleaned.append(msg)
 
-    # Remove trailing ToolMessages and their AIMessage
-    # These would become orphaned when we add a new HumanMessage
-    num_trailing_tools = 0
-    while cleaned and isinstance(cleaned[-1], ToolMessage):
-        cleaned.pop()
-        num_trailing_tools += 1
-
-    if num_trailing_tools > 0:
-        logger.warning(f"[ValidateMessages] Removed {num_trailing_tools} trailing ToolMessages")
-        # Also remove the AIMessage that requested these tools
-        if (cleaned and
-            isinstance(cleaned[-1], AIMessage) and
-            hasattr(cleaned[-1], 'tool_calls') and
-            cleaned[-1].tool_calls):
-            cleaned.pop()
-            logger.warning(f"[ValidateMessages] Also removed trailing AIMessage with tool_calls")
-
-    logger.info(f"[ValidateMessages] Cleaned {len(messages)} messages to {len(cleaned)} messages")
     return cleaned
 
 
+# ----------------------------------------------------------------------
+# Nodes
+
 def create_agent_node(llm_client, tool_registry):
-    """
-    Create the agent node function.
-
-    The agent node calls the LLM with the current conversation state.
-    LLM decides whether to use tools or provide a final response.
-
-    Args:
-        llm_client: LangChain ChatModel instance
-        tool_registry: ToolRegistry instance
-
-    Returns:
-        Callable agent node function
-    """
-    # Get tools in LangChain format
     tools = tool_registry.to_langchain_tools()
     llm_with_tools = llm_client.bind_tools(tools) if tools else llm_client
 
-    async def agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
-        """Agent node: Call LLM with current conversation history"""
-        # Log messages being sent to LLM
-        logger.info(f"[AgentNode] Calling LLM with {len(state['messages'])} messages")
-        for i, msg in enumerate(state["messages"]):
-            logger.info(f"[AgentNode]   Message {i}: {type(msg).__name__}")
-            if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                logger.info(f"[AgentNode]     - Has {len(msg.tool_calls)} tool_calls: {[tc['id'] for tc in msg.tool_calls]}")
-            if hasattr(msg, 'tool_call_id'):
-                logger.info(f"[AgentNode]     - Is ToolMessage with tool_call_id: {msg.tool_call_id}")
+    async def agent_node(state: AgentState) -> AgentState:
+        msgs = state.get("messages", [])
+        assert isinstance(msgs, list), "state['messages'] must be a list"
 
-        # Call LLM with conversation history (already cleaned in process_async)
-        response = await llm_with_tools.ainvoke(state["messages"])
+        # NOTE: history is cleaned in AgentManager; we keep logging here light.
+        logger.info("[AgentNode] Calling LLM with %d messages", len(msgs))
 
-        logger.info(f"[AgentNode] LLM response received: {type(response).__name__}")
-        if hasattr(response, 'tool_calls') and response.tool_calls:
-            logger.info(f"[AgentNode]   - Response has {len(response.tool_calls)} tool_calls")
+        response = await llm_with_tools.ainvoke(msgs)
 
-        # Add AI message to conversation
-        return {
-            "messages": [response],
-            "step_count": state["step_count"] + 1
-        }
+        logger.info("[AgentNode] LLM response type=%s", type(response).__name__)
+        if getattr(response, "tool_calls", None):
+            ids = [_tool_call_id(tc) for tc in response.tool_calls]  # type: ignore[attr-defined]
+            logger.info("[AgentNode] tool_calls=%s", [i for i in ids if i])
+
+        # With add_messages reducer, this APPENDS.
+        step_count = int(state.get("step_count", 0)) + 1
+        return {"messages": [response], "step_count": step_count}
 
     return agent_node
 
 
 def create_tools_node(tool_registry):
-    """
-    Create the tools node using LangGraph's ToolNode.
-
-    ToolNode automatically handles tool execution based on tool_calls
-    in the most recent AIMessage.
-
-    Args:
-        tool_registry: ToolRegistry instance
-
-    Returns:
-        ToolNode instance
-    """
-    # Get tools in LangChain format
     tools = tool_registry.to_langchain_tools()
-
-    # Use LangGraph's ToolNode which handles tool execution automatically
     return ToolNode(tools)
 
 
-def should_continue(state: Dict[str, Any]) -> Literal["tools", "end"]:
-    """
-    Routing function: Decide whether to call tools or end.
+def should_continue(state: AgentState) -> Literal["tools", "end"]:
+    msgs = state.get("messages", [])
+    assert isinstance(msgs, list) and msgs, "state['messages'] must be a non-empty list"
+    last = msgs[-1]
 
-    Checks the last message in the conversation:
-    - If it has tool_calls → route to "tools"
-    - Otherwise → route to "end"
+    step_count = int(state.get("step_count", 0))
+    max_steps = int(state.get("max_steps", 10))
 
-    Args:
-        state: Current agent state
+    # Hard stop to avoid infinite tool loops
+    if step_count >= max_steps:
+        logger.warning("[Routing] max_steps reached (%d >= %d); ending turn", step_count, max_steps)
+        return "end"
 
-    Returns:
-        "tools" to execute tools, "end" to finish
-    """
-    messages = state["messages"]
-    last_message = messages[-1]
-
-    # If LLM requested tool calls, route to tools
-    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+    if isinstance(last, AIMessage) and getattr(last, "tool_calls", None):
         return "tools"
 
-    # Otherwise, end the conversation turn
     return "end"
 
 
+# ----------------------------------------------------------------------
+# Graph + runner
+
 def create_agent_graph(llm_client, tool_registry):
-    """
-    Create the LangGraph agent graph.
-
-    Graph structure:
-        START → agent → [routing] → tools → agent
-                              ↓
-                             END
-
-    The graph loops between agent and tools until the agent
-    provides a final response without tool calls.
-
-    Args:
-        llm_client: LangChain ChatModel instance
-        tool_registry: ToolRegistry instance
-
-    Returns:
-        Compiled LangGraph graph
-    """
-    # Create nodes
     agent_node = create_agent_node(llm_client, tool_registry)
     tools_node = create_tools_node(tool_registry)
 
-    # Build graph
-    workflow = StateGraph(dict)
+    workflow = StateGraph(AgentState)
 
-    # Add nodes
     workflow.add_node("agent", agent_node)
     workflow.add_node("tools", tools_node)
 
-    # Set entry point
     workflow.set_entry_point("agent")
 
-    # Add conditional routing from agent
     workflow.add_conditional_edges(
         "agent",
         should_continue,
         {
             "tools": "tools",
-            "end": END
-        }
+            "end": END,
+        },
     )
 
-    # Add edge from tools back to agent
     workflow.add_edge("tools", "agent")
 
-    # Compile the graph
     return workflow.compile()
 
 
 async def run_conversation_loop(llm_client, tool_registry, state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Run conversation loop using LangGraph.
-
-    Flow:
-    - Creates a LangGraph agent graph
-    - Executes the graph with the initial state
-    - Graph automatically handles agent → tools → agent looping
-    - Returns when agent provides final response
-
-    Args:
-        llm_client: LangChain ChatModel instance
-        tool_registry: ToolRegistry instance
-        state: Agent state dict containing messages, step_count, max_steps, etc.
-
-    Returns:
-        Updated state dict with response and tool_results
+    Execute the graph until a final answer is produced or max_steps is hit.
     """
-    # Create the agent graph
     graph = create_agent_graph(llm_client, tool_registry)
+    result: Dict[str, Any] = await graph.ainvoke(state)
 
-    # Run the graph
-    result = await graph.ainvoke(state)
+    messages = result.get("messages", [])
+    if not messages:
+        result["response"] = "I'm not sure how to respond to that."
+        result["tool_results"] = []
+        return result
 
-    # Extract the final response from the last message
-    messages = result["messages"]
-    last_message = messages[-1]
+    last = messages[-1]
 
-    if isinstance(last_message, AIMessage):
-        result["response"] = last_message.content
+    # Prefer a final AIMessage without tool_calls
+    if isinstance(last, AIMessage) and not getattr(last, "tool_calls", None):
+        result["response"] = last.content
+    elif isinstance(last, AIMessage):
+        # We ended due to max_steps or some interruption
+        result["response"] = last.content or "I got stuck in a tool loop and had to stop."
     else:
         result["response"] = "I'm not sure how to respond to that."
 
-    # Collect tool results from ToolMessages in the conversation
     tool_results = []
     for msg in messages:
         if isinstance(msg, ToolMessage):
-            tool_results.append({
-                "tool": msg.name if hasattr(msg, "name") else "unknown",
-                "success": "Error" not in msg.content,
-                "result": msg.content
-            })
-
+            tool_results.append(
+                {
+                    "tool": getattr(msg, "name", "unknown"),
+                    "success": "Error" not in (msg.content or ""),
+                    "result": msg.content,
+                }
+            )
     result["tool_results"] = tool_results
-
     return result
