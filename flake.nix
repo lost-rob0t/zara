@@ -2,7 +2,7 @@
   description = "Zarathushtra – Simple voice asistant  ";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
 
   outputs = { self, nixpkgs, ... }:
@@ -10,7 +10,7 @@
     system = "x86_64-linux";
     pkgs = import nixpkgs { inherit system; };
 
-    # FIX: you referenced `python` but never defined it
+    # Use python3 (latest stable)
     python = pkgs.python3;
 
     # Build pyswip from GitHub (use the same python toolchain everywhere)
@@ -31,7 +31,7 @@
         python.pkgs.wheel
       ];
 
-      buildInputs = [ pkgs.swiProlog ];
+      buildInputs = [ pkgs.swi-prolog ];
 
       doCheck = false;
 
@@ -41,6 +41,38 @@
       };
     };
 
+
+    # # Build openai from PyPI
+    # openai = python.pkgs.buildPythonPackage rec {
+    #   pname = "openai";
+    #   version = "1.58.1";
+    #   format = "pyproject";
+
+    #   src = pkgs.fetchPypi {
+    #     inherit pname version;
+    #     hash = "sha256-9aA1/QHhQfx0P0sOAsQcpJvo+rCGbTtn9fKbT008CXM=";
+    #   };
+
+    #   nativeBuildInputs = [
+    #     python.pkgs.hatchling
+    #     python.pkgs.hatch-fancy-pypi-readme
+    #   ];
+
+    #   propagatedBuildInputs = with python.pkgs; [
+    #     httpx
+    #     pydantic
+    #     typing-extensions
+    #     tqdm
+    #   ];
+
+    #   doCheck = false;
+
+    #   meta = {
+    #     description = "OpenAI API client library";
+    #     homepage = "https://github.com/openai/openai-python";
+    #   };
+    # };
+
     pythonLibs = python.withPackages (p: [
       p.sounddevice
       p.numpy
@@ -48,9 +80,24 @@
       p.faster-whisper
       p.aiohttp
       p.soundfile
+      p.pyyaml
+      p.pydantic
+      p.httpx
+      p.tomli  # TOML parsing for config system
       pyswip
-      # Packages not in nixpkgs (install via pip if needed):
-      #   pip install anthropic openai
+      # LangChain + LangGraph for agent system
+      p.langchain
+      p.langchain-core
+      p.langgraph
+      p.langchain-anthropic
+      p.anthropic
+      p.langchain-openai
+      p.openai
+      p.langchain-ollama
+      p.ollama
+      # Testing
+      p.pytest
+      p.pytest-asyncio
     ]);
   in {
 
@@ -61,7 +108,7 @@
         version = "1.0";
         src = ./.;
 
-        buildInputs = [ pkgs.swiProlog pkgs.makeWrapper ];
+        buildInputs = [ pkgs.swi-prolog pkgs.makeWrapper ];
 
         installPhase = ''
           mkdir -p $out/share/zarathushtra
@@ -77,9 +124,9 @@
           # zara-console (Python wrapper)
           makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara-console \
             --add-flags "-m zara --console" \
-            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.swiProlog ]} \
+            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.swi-prolog ]} \
             --set PYTHONPATH $out/share/zarathushtra:${pythonLibs}/${python.sitePackages} \
-            --set SWI_HOME_DIR ${pkgs.swiProlog}/lib/swipl \
+            --set SWI_HOME_DIR ${pkgs.swi-prolog}/lib/swipl \
             --run "cd $out/share/zarathushtra"
         '';
       };
@@ -110,10 +157,10 @@
           # Create wrapper with correct Python interpreter and environment
           makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara-wake \
             --add-flags $out/bin/.zara-wake-unwrapped \
-            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xdotool pkgs.pulseaudio pkgs.swiProlog ]} \
+            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xdotool pkgs.pulseaudio pkgs.swi-prolog ]} \
             --set PYTHONPATH $out/lib/python:${pythonLibs}/${python.sitePackages} \
             --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [ pkgs.libsndfile pkgs.portaudio ]} \
-            --set SWI_HOME_DIR ${pkgs.swiProlog}/lib/swipl
+            --set SWI_HOME_DIR ${pkgs.swi-prolog}/lib/swipl
         '';
       };
 
@@ -164,10 +211,10 @@
           # Create main zara wrapper
           makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara \
             --add-flags "-m zara" \
-            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xdotool pkgs.pulseaudio pkgs.swiProlog ]} \
-            --set PYTHONPATH $out/lib/python:$out/share/zarathushtra:${pythonLibs}/${python.sitePackages} \
+            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xdotool pkgs.pulseaudio pkgs.swi-prolog ]} \
+            --set PYTHONPATH $out/lib/python:$out/share/zarathushtra:${pythonLibs  }/${python.sitePackages} \
             --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [ pkgs.libsndfile pkgs.portaudio ]} \
-            --set SWI_HOME_DIR ${pkgs.swiProlog}/lib/swipl \
+            --set SWI_HOME_DIR ${pkgs.swi-prolog}/lib/swipl \
             --run "cd $out/share/zarathushtra"
         '';
       };
@@ -217,13 +264,13 @@
         pkgs.xdotool
         pkgs.ffmpeg
         pkgs.portaudio
-        pkgs.swiProlog
+        pkgs.swi-prolog
         pkgs.pulseaudio
         pkgs.ffmpeg
       ];
 
       shellHook = ''
-        echo "Python + Whisper + SWI-Prolog ready"
+        echo "Python + Whisper + SWI-Prolog + LangChain ready"
         echo ""
         echo "Commands:"
         echo "  python scripts/zara_wake.py    # Direct dev run"
