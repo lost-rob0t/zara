@@ -13,7 +13,7 @@ handle_command(String) :-
         (   intent_resolver:resolve(String, Intent, ArgsRaw)
         ->  convert_number_atoms(ArgsRaw, Args),
             format('DEBUG: Direct resolution - Intent: ~w, Args: ~w~n', [Intent, Args]),
-            zara_hooks:zara_reply(Intent),
+            ( Intent \= ask -> zara_hooks:zara_reply(Intent) ; true ),
             (   catch(commands:execute(Intent, Args), Error,
                     (format('Prolog error: Caused by: ~w.~n', [Error]),
                      format('Routing to LLM for conversational response~n'),
@@ -23,12 +23,14 @@ handle_command(String) :-
                 format('DEBUG: Command execution failed, routing to LLM~n'),
                 rewrite_with_llm(String, Intent2, Args2),
                 format('DEBUG: LLM resolution - Intent: ~w, Args: ~w~n', [Intent2, Args2]),
+                ( Intent2 \= ask -> zara_hooks:zara_reply(Intent2) ; true ),
                 commands:execute(Intent2, Args2)
             )
         ;   % Initial resolution failed, LLM fallback: ask for a canonical command line
             format('DEBUG: Initial resolution failed, falling back to LLM rewrite~n'),
             rewrite_with_llm(String, Intent2, Args2),
             format('DEBUG: LLM resolution - Intent: ~w, Args: ~w~n', [Intent2, Args2]),
+            ( Intent2 \= ask -> zara_hooks:zara_reply(Intent2) ; true ),
             commands:execute(Intent2, Args2)
         )
     )).
