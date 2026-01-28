@@ -5,8 +5,8 @@ In fact, this README was created using the `zara-dictate` Python script.
 This project provides a NixOS flake with utilities.
 There is a command-line interface that lets you type natural text for commands, and there is `zara-dictate` — Zara Dictates — it's how you do voice-to-text.
 
-The `zarathustra` command lets you type text (natural language).
-`zara-voice` lets you voice your command.
+The `zara` command lets you type text (natural language).
+Use `zara --dictate` for voice-to-text input, or `zara --wake` for wake-word mode.
 
 Zara is also able to work in a wake-word mode: simply say "zara" or "hey zara" and then state the command.
 
