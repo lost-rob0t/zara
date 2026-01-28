@@ -34,7 +34,11 @@ resolve(Raw, Intent, Args) :-
 canonicalize_tokens(Toks0, Toks) :-
     strip_fillers(Toks0, Core0),
     ( select_verb_head(Core0, Verb, Rest)
-    -> Toks = [Verb|Rest]
+    -> ( member(Verb, [why, what, how, when, where, who]) ->
+        % For question words, keep them in args too
+        Toks = [Verb|Rest]
+    ; Toks = [Verb|Rest]
+    )
     ; Toks = Core0
     ).
 
@@ -50,7 +54,11 @@ stop_phrase(Tokens) :-
 
 try_exact([Word|Rest], Intent, Args) :-
     ( kb_intents:verb_intent(Word, Intent, Arity) ->
-        extract_args(Arity, Rest, Intent, Args)
+        ( Arity = rest, member(Word, [why, what, how, when, where, who]) ->
+            % For question words, include them in the args
+            Args = [Word|Rest]
+        ; extract_args(Arity, Rest, Intent, Args)
+        )
     ; fail ).
 
 try_fuzzy([Word|Rest], Intent, Args) :-
@@ -132,7 +140,8 @@ extract_args(1, Rest, Intent, [Arg]) :-
     arg1(Intent, Rest, Arg), !.
 extract_args(2, Rest, Intent, [A,B]) :-
     arg2(Intent, Rest, A, B), !.
-extract_args(rest, Rest, _, Rest).
+extract_args(rest, Rest, Intent, Args) :-
+    Args = Rest.
 extract_args(_, Rest, _, Rest).
 
 arg1(play, Rest, Media) :-
