@@ -8,7 +8,6 @@
 :- use_module(library(lists)).
 :- use_module(normalizer).
 :- use_module('../kb/intents').
-:- use_module('../kb/config').
 :- use_module('object_intents').
 
 %% ============================================================
