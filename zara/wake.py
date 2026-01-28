@@ -9,6 +9,7 @@ import os
 import time
 import asyncio
 import pathlib
+from typing import Optional, Tuple
 import numpy as np
 import sounddevice as sd
 import faster_whisper
@@ -18,6 +19,8 @@ from concurrent.futures import ThreadPoolExecutor
 # Import LLM client and ChatHistory
 from . import llm
 from .tts import TTSEngine
+from .agent import AgentManager
+from .config import get_config
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
@@ -31,20 +34,6 @@ PIDFILE = "/tmp/zara_wakeword.pid"
 LOGFILE = "/tmp/zara_wakeword.log"
 
 
-def load_llm_config():
-    """
-    Load LLM configuration from environment variables or Prolog config.
-    Falls back to defaults if not found.
-    """
-    provider = os.getenv("ZARA_LLM_PROVIDER", "ollama")
-    model = os.getenv("ZARA_LLM_MODEL")
-    endpoint = os.getenv("ZARA_LLM_ENDPOINT")
-
-    return {
-        "provider": provider,
-        "model": model,
-        "endpoint": endpoint
-    }
 
 
 def load_tts_config():
@@ -63,10 +52,11 @@ def load_tts_config():
 class WakeWordListener:
     def __init__(self, model="tiny.en", device="cpu", prolog_main_path=None, enable_tts=True):
         self.state = "PASSIVE"
-        self.audio_queue = asyncio.Queue()
-        self.stop_event = asyncio.Event()
+        self.audio_queue: Optional[asyncio.Queue] = None  # Will be created in async context
+        self.stop_event: Optional[asyncio.Event] = None  # Will be created in async context
         self.last_activity = time.time()
         self.enable_tts = enable_tts
+        self.loop: Optional[asyncio.AbstractEventLoop] = None  # Event loop reference for audio callback
 
         # Thread pool for CPU-bound operations
         self.executor = ThreadPoolExecutor(max_workers=4)
@@ -76,7 +66,12 @@ class WakeWordListener:
 
         # LLM client (lazy init on first conversational query)
         self.llm_client = None
-        self.llm_config = load_llm_config()
+        # Get config from config system
+        self.config = get_config()
+        self.llm_config = self.config.get_llm_config()
+
+        # Agent manager for conversation mode (lazy init)
+        self.agent_manager = None
 
         # TTS client (lazy init on first use)
         self.tts_client = None
@@ -87,15 +82,16 @@ class WakeWordListener:
         self.log("Initializing Prolog...")
 
         # Find main.pl
+        candidates = [
+            pathlib.Path.cwd() / "main.pl",
+            pathlib.Path(__file__).parent.parent / "main.pl",
+            pathlib.Path("/usr/share/zarathushtra/main.pl"),
+        ]
+
         if prolog_main_path:
             prolog_path = pathlib.Path(prolog_main_path)
         else:
             # Try multiple locations
-            candidates = [
-                pathlib.Path.cwd() / "main.pl",
-                pathlib.Path(__file__).parent.parent / "main.pl",
-                pathlib.Path("/usr/share/zarathushtra/main.pl"),
-            ]
             prolog_path = None
             for candidate in candidates:
                 if candidate.exists():
@@ -125,17 +121,18 @@ class WakeWordListener:
             f.write(f"[{ts}] {msg}\n")
         print(f"[{ts}] {msg}", flush=True)
 
-    def audio_callback(self, indata, frames, time_info, status):
+    def audio_callback(self, indata, _frames, _time_info, status):
         """Audio callback - runs in separate thread, needs thread-safe queue push"""
         if status:
             self.log(f"Audio: {status}")
 
         # Put audio in queue in a thread-safe way
-        # We'll use call_soon_threadsafe to put it in the async queue
-        asyncio.run_coroutine_threadsafe(
-            self.audio_queue.put(indata.copy()),
-            asyncio.get_event_loop()
-        )
+        # We need to use the stored loop reference since this runs in a different thread
+        if self.loop and self.audio_queue:
+            asyncio.run_coroutine_threadsafe(
+                self.audio_queue.put(indata.copy()),
+                self.loop
+            )
 
     async def transcribe_async(self, audio_data):
         """Run Whisper transcription in thread pool to avoid blocking"""
@@ -195,14 +192,50 @@ class WakeWordListener:
                     return parts[1].strip()
         return text.strip()
 
-    async def query_prolog_async(self, command_text):
+    def in_conversation_mode(self) -> bool:
+        """Check if currently in conversation mode"""
+        if self.agent_manager:
+            return self.agent_manager.conversation_manager.in_conversation
+        return False
+
+    def _ensure_agent_manager(self):
+        """Lazy initialize agent manager"""
+        if self.agent_manager is None:
+            self.log("Initializing agent manager for conversation mode")
+            config = get_config()
+            self.agent_manager = AgentManager(
+                config=config,
+                prolog_engine=self.prolog
+            )
+
+    async def speak_async(self, text):
+        """Speak text via TTS if enabled"""
+        if self.enable_tts:
+            await self.synthesize_and_play_async(text)
+
+    async def query_with_fallback_async(self, command_text: str) -> Tuple[bool, str]:
         """
-        Query Prolog intent resolver and executor in thread pool.
-        Returns: (needs_llm: bool, result: str)
+        Try Prolog first, fallback to conversation mode if:
+        1. Prolog resolution fails, OR
+        2. Already in conversation mode
+
+        Returns: (used_agent_mode, response)
         """
+        # Ensure agent manager exists
+        self._ensure_agent_manager()
+
+        # Check if we should go straight to conversation mode
+        if self.in_conversation_mode():
+            # Already in conversation, stay in it
+            self.log("In conversation mode, using agent")
+            self.log(f"Conversation history has {len(self.agent_manager.conversation_manager.conversation_history)} messages")
+            result = await self.agent_manager.process_async(command_text)
+            return (True, result["response"])
+
+        # Try Prolog first
         loop = asyncio.get_event_loop()
 
-        def _query_prolog():
+        def _try_prolog():
             try:
                 query = f"intent_resolver:resolve(\"{command_text}\", Intent, Args)"
                 self.log(f"Prolog query: {query}")
@@ -210,8 +243,8 @@ class WakeWordListener:
                 results = list(self.prolog.query(query))
 
                 if not results:
-                    self.log("Prolog resolution failed - routing to LLM")
-                    return (True, "Resolution failed")
+                    self.log("Prolog resolution failed")
+                    return (False, None)
 
                 result = results[0]
                 intent = result["Intent"]
@@ -220,8 +253,8 @@ class WakeWordListener:
                 self.log(f"Resolved: intent={intent}, args={args}")
 
                 if intent == "ask":
-                    self.log("Intent is 'ask' - routing to LLM")
-                    return (True, "LLM fallback requested")
+                    self.log("Intent is 'ask' - needs conversation")
+                    return (False, None)
 
                 exec_query = f"commands:execute({intent}, {args})"
                 self.log(f"Executing: {exec_query}")
@@ -229,15 +262,29 @@ class WakeWordListener:
                 exec_results = list(self.prolog.query(exec_query))
 
                 if exec_results is not None:
-                    return (False, f"Executed: {intent} {args}")
+                    return (True, f"Executed: {intent} {args}")
                 else:
-                    return (False, f"Execution failed for {intent}")
+                    return (False, None)
 
             except Exception as e:
                 self.log(f"Prolog error: {e}")
-                return (True, f"Prolog error: {str(e)}")
+                return (False, None)
 
-        return await loop.run_in_executor(self.executor, _query_prolog)
+        # Try Prolog execution
+        prolog_success, prolog_result = await loop.run_in_executor(self.executor, _try_prolog)
+
+        if prolog_success:
+            # Prolog handled it successfully
+            return (False, prolog_result)
+        else:
+            # Prolog failed, enter conversation mode
+            self.log("Prolog failed, entering conversation mode")
+            self.log(f"Clearing conversation history (had {len(self.agent_manager.conversation_manager.conversation_history)} messages)")
+            # Ensure clean start for new conversation
+            self.agent_manager.conversation_manager.enter_conversation()
+            self.agent_manager.conversation_manager.conversation_history.clear()
+            result = await self.agent_manager.process_async(command_text)
+            return (True, result["response"])
 
     async def query_llm_async(self, query_text):
         """Query LLM with chat history for conversational responses"""
@@ -265,7 +312,13 @@ class WakeWordListener:
             return error_msg
 
     async def synthesize_and_play_async(self, text):
-        """Synthesize text to speech and play it"""
+        """Synthesize text to speech and play it asynchronously without blocking"""
+        # Start synthesis and playback in background task so listen loop continues immediately
+        asyncio.create_task(self._synthesize_and_play_task(text))
+        self.log("TTS started (non-blocking)")
+
+    async def _synthesize_and_play_task(self, text):
+        """Internal task to synthesize and play audio without blocking main loop"""
         try:
             if self.tts_client is None:
                 self.log(f"Initializing TTS client: {self.tts_config['provider']}")
@@ -275,29 +328,37 @@ class WakeWordListener:
             audio_bytes = await self.tts_client.synthesize_async(text)
 
             if audio_bytes:
-                # Save to temp file and play in thread pool
-                import tempfile
-                import subprocess
-
-                loop = asyncio.get_event_loop()
-
-                def _play_audio():
-                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                        temp_file = f.name
-                        f.write(audio_bytes)
-
-                    try:
-                        subprocess.run(["aplay", temp_file], capture_output=True, check=True)
-                    finally:
-                        os.unlink(temp_file)
-
-                await loop.run_in_executor(self.executor, _play_audio)
-                self.log("Audio playback complete")
+                self.log("Playing audio...")
+                await self._play_audio_task(audio_bytes)
             else:
                 self.log("Failed to synthesize speech")
 
         except Exception as e:
             self.log(f"TTS error: {e}")
+
+    async def _play_audio_task(self, audio_bytes):
+        """Internal task to play audio without blocking main loop"""
+        try:
+            import soundfile as sf
+            import io
+
+            loop = asyncio.get_event_loop()
+
+            def _play():
+                # Read audio data from bytes
+                audio_io = io.BytesIO(audio_bytes)
+                data, samplerate = sf.read(audio_io)
+
+                # Play audio (non-blocking in sounddevice, but we run in executor to be safe)
+                sd.play(data, samplerate)
+                sd.wait()  # Wait for playback to complete
+
+            # Run playback in executor to avoid any blocking
+            await loop.run_in_executor(self.executor, _play)
+            self.log("Audio playback complete")
+
+        except Exception as e:
+            self.log(f"Audio playback error: {e}")
 
     async def send_response_async(self, title, message):
         """Send response via notification and optionally TTS"""
@@ -328,6 +389,13 @@ class WakeWordListener:
 
     async def run_async(self):
         """Main async event loop"""
+        # Store event loop reference for audio callback
+        self.loop = asyncio.get_event_loop()
+
+        # Create async primitives in the async context
+        self.audio_queue = asyncio.Queue()
+        self.stop_event = asyncio.Event()
+
         self.log("🔥 Starting Wake Word Listener (ASYNC)")
         self.log(f"Wake words: {', '.join(WAKE_WORDS)}")
 
@@ -363,7 +431,16 @@ class WakeWordListener:
             self.last_activity = time.time()
 
     async def active_mode_async(self):
-        """Transcribe and route command (Prolog first, LLM if needed)"""
+        """Transcribe and route command with conversation mode support"""
+        # Check conversation timeout
+        if self.in_conversation_mode():
+            if self.agent_manager.should_exit_conversation():
+                self.log("Conversation timeout, exiting conversation mode")
+                self.agent_manager.exit_conversation()
+                if self.enable_tts:
+                    await self.speak_async("Conversation ended")
+
+        # Check general activity timeout
         if time.time() - self.last_activity > TIMEOUT_ACTIVE:
             self.log("⏸️ Timeout - returning to passive")
             self.state = "PASSIVE"
@@ -383,32 +460,33 @@ class WakeWordListener:
 
         text_lower = text.lower()
 
-        if any(stop in text_lower for stop in ['stop', 'sleep', 'goodbye', 'never mind']):
-            self.log("Returning to passive mode")
-            self.state = "PASSIVE"
-            return
+        # Check for stop phrases
+        if any(phrase in text_lower for phrase in STOP_PHRASES):
+            if self.in_conversation_mode():
+                self.log("Exiting conversation mode")
+                self.agent_manager.exit_conversation()
+                if self.enable_tts:
+                    await self.speak_async("Conversation ended")
+                return
+            else:
+                self.log("Returning to passive mode")
+                self.state = "PASSIVE"
+                return
 
         command = self.strip_wake_word(text)
 
         if not command:
             return
 
-        needs_llm, prolog_result = await self.query_prolog_async(command)
+        # Process with Prolog-first fallback
+        used_agent, response = await self.query_with_fallback_async(command)
 
-        if needs_llm:
-            self.log("Routing to LLM for conversational response")
-            response = await self.query_llm_async(command)
+        # Speak response if using agent mode
+        if used_agent and self.enable_tts and response:
+            await self.speak_async(response)
 
-            self.chat_history.add_user_message(command)
-            self.chat_history.add_assistant_message(response)
-
-            await self.send_response_async("Zara", response)
-
-        else:
-            self.log(f"Prolog executed: {prolog_result}")
-
-            self.chat_history.add_user_message(command)
-            self.chat_history.add_assistant_message(prolog_result)
+        # Reset activity timeout
+        self.last_activity = time.time()
 
 
 def main(model="tiny.en", device="cpu", prolog_main_path=None, enable_tts=True):

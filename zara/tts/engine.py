@@ -72,7 +72,7 @@ class TTSEngine:
     def _init_qwen3(self):
         """Initialize Qwen3-TTS HTTP client"""
         self.qwen3_url = os.getenv("QWEN3_TTS_URL", "http://localhost:7860")
-        self.qwen3_voice = os.getenv("QWEN3_VOICE", "demo_speaker0")
+        self.qwen3_voice = os.getenv("QWEN3_VOICE", "zara")
         self.qwen3_client = None
 
     async def synthesize_async(self, text: str) -> Optional[bytes]:

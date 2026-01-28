@@ -7,9 +7,12 @@ Wraps console (text), voice, and dictate modes
 import sys
 import argparse
 from pathlib import Path
+from .config import init_config
 
 
 def main():
+    # Initialize configuration system
+    config = init_config()
     parser = argparse.ArgumentParser(
         prog="zara",
         description="Zarathustra Voice Assistant - Unified Interface",
@@ -43,6 +46,11 @@ def main():
         "--wake",
         action="store_true",
         help="Wake word listener mode"
+    )
+    mode_group.add_argument(
+        "--agent",
+        action="store_true",
+        help="Direct conversation mode with agent"
     )
 
     # Text command (default mode if no flags)
@@ -117,6 +125,11 @@ def main():
         # Wake word listener mode
         from .wake import main as wake_main
         sys.exit(wake_main())
+
+    elif args.agent:
+        # Direct conversation mode with agent
+        from .agent_cli import main as agent_main
+        sys.exit(agent_main())
 
     elif args.command:
         # Text command mode (default)

@@ -1,0 +1,114 @@
+#+TITLE: Bug Report - Anthropic API Tool Message Mismatch Error
+#+DATE: 2026-01-28
+
+* Problem Summary
+
+The Zara conversational agent crashes with an Anthropic API error when processing
+user queries in conversation mode. The error occurs when the conversation history
+contains orphaned ToolMessages that don't have corresponding tool_use blocks.
+
+* Error Message
+
+#+begin_src
+anthropic.BadRequestError: Error code: 400 - {'type': 'error', 'error':
+{'type': 'invalid_request_error', 'message': 'messages.0.content.0: unexpected
+`tool_use_id` found in `tool_result` blocks: toolu_016ZLGStcNLTDdab9H7xMy4y.
+Each `tool_result` block must have a corresponding `tool_use` block in the
+previous message.'}, 'request_id': 'req_011CXacVbDPTJ6wCBYize7hn'}
+#+end_src
+
+* Root Cause
+
+When the agent processes a user query that involves tool calling:
+1. LLM returns AIMessage with tool_calls
+2. Tools are executed, creating ToolMessages
+3. Conversation history is saved with: [AIMessage(with tool_calls), ToolMessage(s), AIMessage(final response)]
+4. On the NEXT conversation turn, the history is loaded
+5. When a new HumanMessage is added, the structure becomes invalid for Anthropic API
+
+The issue is that ToolMessages must IMMEDIATELY follow their corresponding AIMessage
+and be followed by the AI's response. Inserting a new HumanMessage between breaks
+this requirement.
+
+* Architecture Overview
+
+The conversation flow uses LangGraph:
+- =zara/agent/__init__.py= - AgentManager class, manages conversation state
+- =zara/agent/graph.py= - LangGraph conversation loop implementation
+- =zara/agent/conversation.py= - ConversationManager, tracks history
+- =zara/wake.py= - Entry point, calls AgentManager
+
+Conversation history is stored in:
+=self.agent_manager.conversation_manager.conversation_history=
+(a list of LangChain BaseMessage objects)
+
+* Current Failed Fix Attempt
+
+Added a =validate_and_clean_messages()= function in =zara/agent/graph.py= that:
+1. Removes orphaned ToolMessages without matching AIMessage
+2. Removes trailing ToolMessages + their AIMessage from history
+
+The function is called in =AgentManager.process_async()= before processing.
+
+However, the error STILL occurs, suggesting:
+- The cleaning logic is insufficient
+- The conversation history is being loaded from somewhere else
+- The messages are being corrupted during serialization/deserialization
+
+* Files to Review
+
+** Primary files with changes:
+- =zara/agent/__init__.py= - Added validation call and logging
+- =zara/agent/graph.py= - Added validate_and_clean_messages() function
+- =zara/wake.py= - Added logging for conversation history state
+
+** Related files (no changes, but part of the system):
+- =zara/agent/conversation.py= - ConversationManager class
+- =zara/agent/state.py= - State schema documentation
+
+* Specific Code Locations
+
+** Error occurs at:
+File: =zara/agent/graph.py=
+Function: =agent_node()=
+Line: ~127 (in ainvoke call to LLM)
+
+** Conversation history is loaded at:
+File: =zara/agent/__init__.py=
+Function: =process_async()=
+Lines: ~124-130 (where history is copied and cleaned)
+
+** Conversation history is saved at:
+File: =zara/agent/__init__.py=
+Function: =process_async()=
+Line: ~164 (where result["messages"] is saved back)
+
+* Key Questions to Investigate
+
+1. Is the conversation history being persisted to disk somewhere?
+2. Is there a cache or state being loaded from a previous session?
+3. Are messages being serialized/deserialized incorrectly?
+4. Does LangGraph maintain its own state that we're not cleaning?
+
+* Reproduction Steps
+
+1. Start the wake word listener: =python -m zara --mode wake=
+2. Say wake word: "Zara"
+3. Ask a question that triggers agent mode: "What is the meaning of life?"
+4. First query MAY work if it doesn't use tools
+5. Any subsequent query that uses tools OR follows a tool-using query will crash
+
+* Expected Behavior
+
+The conversation history should be properly cleaned before each turn to ensure:
+- No orphaned ToolMessages exist
+- Message structure is valid for Anthropic API
+- Conversation can continue across multiple turns
+
+* Debugging Info Needed
+
+Add logging to show:
+1. Full message history BEFORE cleaning
+2. Full message history AFTER cleaning
+3. Each message type, tool_call_ids, and tool_use_ids
+4. Where the corrupted history is coming from (disk? memory? LangGraph state?)
