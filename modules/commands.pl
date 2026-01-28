@@ -156,35 +156,14 @@ execute(Intent, Args) :-
     format('Executing ~w with args: ~w~n', [Intent, Args]), !.
 
 % ============================================
-% LLM Integration
-% ============================================
-llm_query(Query, Response) :-
-    % Get the directory of the current script
-    current_prolog_flag(argv, [Script|_]),
-    file_directory_name(Script, ScriptDir),
-    atomic_list_concat([ScriptDir, '/scripts/claude.sh'], ClaudeScript),
-    % Escape quotes in the query
-    atomic_list_concat(QueryParts, '"', Query),
-    atomic_list_concat(QueryParts, '\\"', EscapedQuery),
-    % Build the shell command
-    atomic_list_concat([ClaudeScript, ' "', EscapedQuery, '"'], Command),
-    % Execute and capture output
-    setup_call_cleanup(
-        open(pipe(Command), read, Stream),
-        read_stream_to_codes(Stream, Codes),
-        close(Stream)
-    ),
-    atom_codes(Response, Codes).
-
-% ============================================
 % App Opening System
 % ============================================
-% Main app opening logic
+
 open_app(AppName) :-
-    (   kb_config:app_mapping(AppName, Command)
+    (   once(kb_config:app_mapping(AppName, Command))
     ->  format('Opening ~w via: ~w~n', [AppName, Command]),
         run_system_command(Command)
-    ;   kb_config:direct_app(AppName)
+    ;   once(kb_config:direct_app(AppName))
     ->  format('Launching ~w directly~n', [AppName]),
         atom_string(AppName, AppCmd),
         run_system_command(AppCmd)
@@ -194,7 +173,6 @@ open_app(AppName) :-
     ),
     !.
 
-% Execute system command using process_create with shell wrapper
 run_system_command(Command) :-
     catch(
         process_create('/bin/sh', ['-c', Command], [
@@ -207,7 +185,7 @@ run_system_command(Command) :-
         format('Failed to launch: ~w~n', [Error])
     ), !.
 
+tokens_to_string([], "unspecified task") :- !.
 tokens_to_string(Toks, S) :-
     maplist(atom_string, Toks, Parts),
     atomic_list_concat(Parts, ' ', S).
-
