@@ -21,7 +21,7 @@ filler(just).
 filler(yo).
 filler(hey).
 filler(hi).
-filler(hello).
+% filler(hello).
 filler(uh).
 filler(um).
 filler(like).
@@ -57,7 +57,7 @@ filler(just).
 filler(yo).
 filler(hey).
 filler(hi).
-filler(hello).
+% filler(hello).
 filler(uh).
 filler(um).
 filler(like).
