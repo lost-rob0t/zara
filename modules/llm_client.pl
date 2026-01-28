@@ -3,6 +3,7 @@
 :- use_module(library(http/http_client)).
 :- use_module(library(http/json)).
 :- use_module(library(lists)).
+:- use_module(library(process)).
 :- use_module(dotenv).
 :- use_module('../kb/config').
 
@@ -68,23 +69,30 @@ llm_query(Prompt, SystemPrompt, Response) :-
     ; throw(error(unsupported_provider, Provider))
     ).
 
-% Ollama implementation
+% Ollama implementation using curl with process_create
 llm_query_ollama(Prompt, SystemPrompt, Response) :-
     get_llm_model(Model),
     get_llm_endpoint(Endpoint),
     
-    % Ollama uses messages format similar to OpenAI
-    Request = json([
-        model=Model,
-        messages=[
-            json([role=system, content=SystemPrompt]),
-            json([role=user, content=Prompt])
-        ],
-        stream=false
-    ]),
+    % Build request JSON as string
+    format(atom(RequestStr), '{"model": "~w", "messages": [{"role": "system", "content": "~w"}, {"role": "user", "content": "~w"}], "stream": false}', 
+           [Model, SystemPrompt, Prompt]),
     
-    http_post(Endpoint, json(Request), Reply, [json_object(dict)]),
-    get_dict(message, Reply, Message),
+    % Use process_create to call curl and capture output
+    format(atom(Cmd), 'curl -s -X POST ~w -H "Content-Type: application/json" -d \'~w\'', [Endpoint, RequestStr]),
+    
+    catch(
+        process_create('/bin/sh', ['-c', Cmd], [stdout(pipe(Out))]),
+        Error,
+        (format('Failed to create process: ~w~n', [Error]), fail)
+    ),
+    
+    read_string(Out, _, ResponseStr),
+    close(Out),
+    
+    % Parse JSON response and extract content
+    atom_json_dict(ResponseStr, ResponseDict, []),
+    get_dict(message, ResponseDict, Message),
     get_dict(content, Message, Response).
 
 % Anthropic implementation

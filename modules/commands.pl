@@ -49,7 +49,15 @@ execute(dictation_stop, _) :-
 
 execute(ask, Args) :-
     atomic_list_concat(Args, ' ', Query),
-    format('Chat history not yet implemented. Query was: ~w~n', [Query]), !.
+    format('Querying LLM: ~w~n', [Query]),
+    catch(
+        ( llm_client:llm_query(Query, Response),
+          format('LLM Response: ~w~n', [Response])
+        ),
+        Error,
+        format('LLM Error: ~w~n', [Error])
+    ),
+    !.
 
 % ----------------------------------------------------------------------
 % TODO / Reminder / Schedule
@@ -57,7 +65,10 @@ execute(ask, Args) :-
 
 execute(todo, Args) :-
     strip_fillers(Args, Core),
-    tokens_to_string(Core, TaskStr),
+    ( Core = [] ->
+        TaskStr = "unspecified task"
+    ; tokens_to_string(Core, TaskStr)
+    ),
     todo_capture:capture_todo(TaskStr, ask_date(yes)),
     !.
 
