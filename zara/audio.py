@@ -59,16 +59,53 @@ class AudioOutput:
     
     def play(self, audio_data: bytes):
         """Play audio data (blocking)"""
-        # Convert bytes to numpy array
-        # Assumes 16-bit PCM
-        audio_array = np.frombuffer(audio_data, dtype=np.int16)
-        
-        # Convert to float for sounddevice
-        audio_float = audio_array.astype(np.float32) / 32768.0
-        
-        # Play
-        sd.play(audio_float, samplerate=self.sample_rate)
-        sd.wait()
+        if not audio_data:
+            return
+            
+        try:
+            # Convert bytes to numpy array
+            # Try different formats that TTS might produce
+            try:
+                # Try 32-bit float first
+                audio_array = np.frombuffer(audio_data, dtype=np.float32)
+                audio_float = audio_array
+            except ValueError:
+                try:
+                    # Try 16-bit PCM
+                    audio_array = np.frombuffer(audio_data, dtype=np.int16)
+                    audio_float = audio_array.astype(np.float32) / 32768.0
+                except ValueError:
+                    # Try 24-bit or other format - interpret as bytes then convert
+                    audio_float = np.frombuffer(audio_data, dtype=np.uint8)
+                    audio_float = audio_float.astype(np.float32) / 255.0
+            
+            # Reshape if stereo
+            if len(audio_float) % 2 == 0 and audio_float.max() <= 1.0 and audio_float.min() >= -1.0:
+                # Might be stereo interleaved
+                try:
+                    audio_float = audio_float.reshape(-1, 2)
+                    if audio_float.shape[1] == 2:
+                        # Convert to mono for playback
+                        audio_float = np.mean(audio_float, axis=1)
+                except:
+                    pass  # Keep as mono if reshaping fails
+            
+            # Ensure we have valid audio data
+            if len(audio_float) == 0:
+                print("Warning: Empty audio data")
+                return
+                
+            # Play
+            sd.play(audio_float, samplerate=self.sample_rate)
+            sd.wait()
+            
+        except Exception as e:
+            print(f"Audio playback error: {e}")
+            print(f"Audio data length: {len(audio_data)} bytes")
+            print(f"Sample rate: {self.sample_rate}")
+            # Try to detect format
+            if len(audio_data) >= 4:
+                print(f"First 4 bytes: {audio_data[:4].hex()}")
     
     def play_async(self, audio_data: bytes):
         """Play audio in background thread"""
