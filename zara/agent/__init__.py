@@ -55,17 +55,31 @@ class AgentManager:
         if provider == "anthropic":
             from langchain_anthropic import ChatAnthropic
             api_key = llm_config.get("anthropic_api_key") or os.getenv("ANTHROPIC_API_KEY")
-            return ChatAnthropic(model=model or "claude-3-5-sonnet-20241022", api_key=api_key)
+            return ChatAnthropic(
+                model=model or "claude-3-5-sonnet-20241022",
+                api_key=api_key,
+                timeout=60.0,  # 60 second timeout
+                max_retries=2
+            )
 
         if provider == "openai":
             from langchain_openai import ChatOpenAI
             api_key = llm_config.get("openai_api_key") or os.getenv("OPENAI_API_KEY")
-            return ChatOpenAI(model=model or "gpt-4", api_key=api_key)
+            return ChatOpenAI(
+                model=model or "gpt-4",
+                api_key=api_key,
+                timeout=60.0,
+                max_retries=2
+            )
 
         if provider == "ollama":
             from langchain_ollama import ChatOllama
             base_url = endpoint.replace("/api/chat", "") if endpoint else "http://localhost:11434"
-            return ChatOllama(model=model or "llama3", base_url=base_url)
+            return ChatOllama(
+                model=model or "llama3",
+                base_url=base_url,
+                timeout=60.0
+            )
 
         raise ValueError(f"Unsupported LLM provider: {provider}")
 

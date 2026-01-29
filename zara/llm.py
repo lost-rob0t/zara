@@ -122,6 +122,7 @@ class LLMClient:
         max_tokens: int
     ) -> str:
         """Query Anthropic API"""
+        import time
 
         # Build messages
         messages = []
@@ -139,18 +140,22 @@ class LLMClient:
 
         # Make API call
         try:
+            start_time = time.time()
             response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=max_tokens,
                 system=system_prompt,
                 messages=messages
             )
+            elapsed = time.time() - start_time
+
+            print(f"[Anthropic] Response time: {elapsed:.2f}s (model: {self.model})")
 
             return response.content[0].text
 
         except Exception as e:
-            print(f"Anthropic API error: {e}")
-            return f"Error: {str(e)}"
+            print(f"Anthropic API error ({self.model}): {e}")
+            return f"Error ({self.model}): {str(e)}"
 
     async def _query_openai(
         self,
@@ -160,6 +165,7 @@ class LLMClient:
         max_tokens: int
     ) -> str:
         """Query OpenAI API"""
+        import time
 
         # Build messages
         messages = []
@@ -184,6 +190,7 @@ class LLMClient:
 
         # Make API call
         try:
+            start_time = time.time()
             async with aiohttp.ClientSession() as session:
                 headers = {
                     "Authorization": f"Bearer {self.api_key}",
@@ -201,18 +208,21 @@ class LLMClient:
                     json=payload,
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as response:
+                    elapsed = time.time() - start_time
+
                     if response.status != 200:
                         error_text = await response.text()
                         return f"OpenAI API error {response.status}: {error_text}"
 
                     data = await response.json()
+                    print(f"[OpenAI] Response time: {elapsed:.2f}s (model: {self.model})")
                     return data["choices"][0]["message"]["content"]
 
         except asyncio.TimeoutError:
-            return "Error: OpenAI API timeout (30s)"
+            return f"Error: {self.model} timeout (30s)"
         except Exception as e:
-            print(f"OpenAI API error: {e}")
-            return f"Error: {str(e)}"
+            print(f"OpenAI API error ({self.model}): {e}")
+            return f"Error ({self.model}): {str(e)}"
 
     async def _query_ollama(
         self,
@@ -222,6 +232,7 @@ class LLMClient:
         max_tokens: int
     ) -> str:
         """Query Ollama local API"""
+        import time
 
         # Build messages
         messages = []
@@ -246,6 +257,7 @@ class LLMClient:
 
         # Make API call
         try:
+            start_time = time.time()
             async with aiohttp.ClientSession() as session:
                 payload = {
                     "model": self.model,
@@ -258,20 +270,23 @@ class LLMClient:
                     json=payload,
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as response:
+                    elapsed = time.time() - start_time
+
                     if response.status != 200:
                         error_text = await response.text()
                         return f"Ollama API error {response.status}: {error_text}. Is Ollama running? (ollama serve)"
 
                     data = await response.json()
+                    print(f"[Ollama] Response time: {elapsed:.2f}s (model: {self.model})")
                     return data["message"]["content"]
 
         except aiohttp.ClientConnectorError:
-            return "Error: Cannot connect to Ollama. Is it running? Start with: ollama serve"
+            return f"Error: Cannot connect to Ollama ({self.model}). Is it running? Start with: ollama serve"
         except asyncio.TimeoutError:
-            return "Error: Ollama API timeout (30s)"
+            return f"Error: {self.model} timeout (30s)"
         except Exception as e:
-            print(f"Ollama API error: {e}")
-            return f"Error: {str(e)}"
+            print(f"Ollama API error ({self.model}): {e}")
+            return f"Error ({self.model}): {str(e)}"
 
     def _default_system_prompt(self) -> str:
         """Default system prompt for Zarathustra"""

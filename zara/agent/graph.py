@@ -122,14 +122,19 @@ def create_agent_node(llm_client, tool_registry):
     llm_with_tools = llm_client.bind_tools(tools) if tools else llm_client
 
     async def agent_node(state: AgentState) -> AgentState:
+        import time
+
         msgs = state.get("messages", [])
         assert isinstance(msgs, list), "state['messages'] must be a list"
 
         # NOTE: history is cleaned in AgentManager; we keep logging here light.
         logger.info("[AgentNode] Calling LLM with %d messages", len(msgs))
 
+        start_time = time.time()
         response = await llm_with_tools.ainvoke(msgs)
+        elapsed = time.time() - start_time
 
+        logger.info("[AgentNode] LLM response time: %.2f seconds", elapsed)
         logger.info("[AgentNode] LLM response type=%s", type(response).__name__)
         if getattr(response, "tool_calls", None):
             ids = [_tool_call_id(tc) for tc in response.tool_calls]  # type: ignore[attr-defined]

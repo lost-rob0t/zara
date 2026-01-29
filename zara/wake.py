@@ -21,6 +21,7 @@ from . import llm
 from .tts import TTSEngine
 from .agent import AgentManager
 from .config import get_config
+from .notifications import send_notification_async
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
@@ -363,20 +364,8 @@ class WakeWordListener:
     async def send_response_async(self, title, message):
         """Send response via notification and optionally TTS"""
         try:
-            import subprocess
-
-            loop = asyncio.get_event_loop()
-
-            def _send_notification():
-                subprocess.run(
-                    ["notify-send", "-u", "normal", title, message],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-
-            # Send notification in background
-            await loop.run_in_executor(self.executor, _send_notification)
+            # Send notification directly using async notify-send (fast, non-blocking)
+            await send_notification_async(title, message, urgency="normal")
             self.log(f"Sent notification: {title}")
 
             # If TTS is enabled, also speak the response
