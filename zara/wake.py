@@ -27,6 +27,9 @@ SAMPLE_RATE = 16000
 CHANNELS = 1
 PASSIVE_CHUNK_SEC = 3
 ACTIVE_CHUNK_SEC = 8
+SILENCE_THRESHOLD = 0.01  # RMS threshold for silence detection
+SILENCE_DURATION = 5.0  # Seconds of silence before considering speech complete
+MAX_RECORDING_DURATION = 30.0  # Maximum recording duration to prevent infinite recording
 WAKE_WORDS = ["zarathustra", "hey zara", "zara", "sarah"]
 STOP_PHRASES = ["end", "end quote", "end zara", "stop conversation"]
 TIMEOUT_ACTIVE = 10
@@ -170,6 +173,61 @@ class WakeWordListener:
                 continue
 
         return buffer[:target_frames] if buffer.shape[0] >= target_frames else None
+
+    async def collect_audio_until_silence(self):
+        """Collect audio until silence is detected (for active mode)"""
+        buffer = np.zeros((0, CHANNELS), dtype="float32")
+        silence_start = None
+        total_duration = 0.0
+
+        while not self.stop_event.is_set():
+            try:
+                data = await asyncio.wait_for(self.audio_queue.get(), timeout=0.5)
+                buffer = np.concatenate((buffer, data))
+
+                # Calculate RMS of the current chunk to detect silence
+                chunk_mono = data[:, 0] if data.ndim > 1 else data
+                rms = np.sqrt(np.mean(chunk_mono.astype(np.float32) ** 2))
+
+                # Update total duration
+                chunk_duration = len(data) / SAMPLE_RATE
+                total_duration += chunk_duration
+
+                # Check if we've exceeded max recording duration
+                if total_duration > MAX_RECORDING_DURATION:
+                    self.log(f"Max recording duration ({MAX_RECORDING_DURATION}s) reached, transcribing")
+                    break
+
+                # Detect speech vs silence
+                if rms > SILENCE_THRESHOLD:
+                    # Speech detected, reset silence timer
+                    silence_start = None
+                else:
+                    # Silence detected
+                    if silence_start is None:
+                        silence_start = time.time()
+                    else:
+                        # Check if we've had enough silence
+                        silence_elapsed = time.time() - silence_start
+                        if silence_elapsed >= SILENCE_DURATION:
+                            self.log(f"Silence detected for {silence_elapsed:.1f}s, transcribing")
+                            break
+
+            except asyncio.TimeoutError:
+                # Timeout counts as silence
+                if silence_start is None:
+                    silence_start = time.time()
+                else:
+                    silence_elapsed = time.time() - silence_start
+                    if silence_elapsed >= SILENCE_DURATION:
+                        self.log(f"Audio timeout after {silence_elapsed:.1f}s silence")
+                        break
+                continue
+
+        # Return buffer if we have enough audio
+        if buffer.shape[0] > SAMPLE_RATE * 0.5:  # At least 0.5 seconds
+            return buffer
+        return None
 
     async def clear_queue(self):
         """Drain audio queue to prevent stale data"""
@@ -435,7 +493,8 @@ class WakeWordListener:
             self.state = "PASSIVE"
             return
 
-        chunk = await self.collect_audio(ACTIVE_CHUNK_SEC)
+        # Use silence detection for more natural recording
+        chunk = await self.collect_audio_until_silence()
         if chunk is None:
             return
 
