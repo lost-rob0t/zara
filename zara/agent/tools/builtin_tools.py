@@ -43,9 +43,17 @@ class CalculatorTool(BaseTool):
     def description(self) -> str:
         return (
             "Evaluate mathematical expressions safely. "
-            "Input: expression as string (e.g. '2+2', '10*5', '2**8'). "
             "Supports: +, -, *, /, //, %, **"
         )
+
+    @property
+    def parameters(self):
+        return {
+            "expression": {
+                "type": "string",
+                "description": "Mathematical expression to evaluate (e.g. '2+2', '10*5', '2**8')"
+            }
+        }
 
     def execute(self, expression: str) -> str:
         """
@@ -134,9 +142,17 @@ class PrologBridgeTool(BaseTool):
     def description(self) -> str:
         return (
             "Query the Prolog knowledge base for commands and intents. "
-            "Input: Prolog query as string (e.g. 'command_loop:handle_command(\"open firefox\")'). "
             "Use this to execute commands or check if Prolog can handle something."
         )
+
+    @property
+    def parameters(self):
+        return {
+            "query": {
+                "type": "string",
+                "description": "Prolog query as string (e.g. 'command_loop:handle_command(\"open firefox\")')"
+            }
+        }
 
     def execute(self, query: str) -> str:
         """

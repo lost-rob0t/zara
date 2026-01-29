@@ -8,8 +8,11 @@
 
 
 
+% Note: timer_done is now handled by Python directly using notify-send
+% This predicate is kept for compatibility but does nothing
 timer_done(Name) :-
-    alert("Zara", "Timer ~w has finished", [Name]).
+    % Python handles notifications directly for faster response
+    format(user_error, 'Timer ~w finished (notification handled by Python)~n', [Name]).
 
 start_timer(Seconds) :-
     alarm(Seconds, timer_done(""), _Id, [remove(true)]).

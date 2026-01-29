@@ -64,8 +64,8 @@ load_on_startup = true
 [tools]
 # Enable/disable built-in tools
 calculator = true
-current_time = true
-prolog_query = true
+get_current_time = true
+query_prolog = true
 
 [modules]
 # Module/plugin search paths
@@ -184,8 +184,8 @@ class ZaraConfig:
             },
             "tools": {
                 "calculator": True,
-                "current_time": True,
-                "prolog_query": True
+                "get_current_time": True,
+                "query_prolog": True
             },
             "modules": {
                 "search_paths": ["~/.zarathushtra/plugins", "~/.zarathushtra/modules"],

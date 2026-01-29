@@ -121,7 +121,7 @@ def create_agent_node(llm_client, tool_registry):
     tools = tool_registry.to_langchain_tools()
     llm_with_tools = llm_client.bind_tools(tools) if tools else llm_client
 
-    async def agent_node(state: AgentState) -> AgentState:
+    async def agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         import time
 
         msgs = state.get("messages", [])
@@ -152,7 +152,7 @@ def create_tools_node(tool_registry):
     return ToolNode(tools)
 
 
-def should_continue(state: AgentState) -> Literal["tools", "end"]:
+def should_continue(state: Dict[str, Any]) -> Literal["tools", "end"]:
     msgs = state.get("messages", [])
     assert isinstance(msgs, list) and msgs, "state['messages'] must be a non-empty list"
     last = msgs[-1]
@@ -178,7 +178,7 @@ def create_agent_graph(llm_client, tool_registry):
     agent_node = create_agent_node(llm_client, tool_registry)
     tools_node = create_tools_node(tool_registry)
 
-    workflow = StateGraph(AgentState)
+    workflow = StateGraph(dict)
 
     workflow.add_node("agent", agent_node)
     workflow.add_node("tools", tools_node)

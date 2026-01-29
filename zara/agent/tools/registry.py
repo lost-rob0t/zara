@@ -6,7 +6,8 @@ LangChain format, and executes them by name.
 """
 
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import StructuredTool, tool
+from pydantic import BaseModel, Field, create_model
 from .base import BaseTool
 
 if TYPE_CHECKING:
@@ -91,12 +92,53 @@ class ToolRegistry:
         langchain_tools = []
 
         for tool in self._tools.values():
-            # Create LangChain StructuredTool from our BaseTool
-            lc_tool = StructuredTool.from_function(
-                func=tool.execute,
+            # Get tool parameters schema
+            params = tool.parameters
+
+            # Create Pydantic model for args_schema if parameters exist
+            if params:
+                # Convert JSON Schema-style parameters to Pydantic fields
+                fields = {}
+                for param_name, param_def in params.items():
+                    param_type = str  # Default type
+                    param_description = param_def.get("description", "")
+                    param_default = param_def.get("default", ...)
+
+                    # Map JSON Schema types to Python types
+                    if param_def.get("type") == "integer":
+                        param_type = int
+                    elif param_def.get("type") == "number":
+                        param_type = float
+                    elif param_def.get("type") == "boolean":
+                        param_type = bool
+
+                    fields[param_name] = (
+                        param_type,
+                        Field(default=param_default, description=param_description)
+                    )
+
+                # Create dynamic Pydantic model
+                args_schema = create_model(
+                    f"{tool.name}Schema",
+                    **fields
+                )
+            else:
+                # No parameters - create empty schema
+                args_schema = create_model(f"{tool.name}Schema")
+
+            # Create wrapper function that LangChain can call
+            # Important: Use default argument to capture tool by value, not reference
+            def make_tool_func(t=tool):
+                def tool_func(**kwargs):
+                    return t.execute(**kwargs)
+                return tool_func
+
+            # Create LangChain StructuredTool with proper schema
+            lc_tool = StructuredTool(
                 name=tool.name,
                 description=tool.description,
-                # args_schema can be added here if we want strict validation
+                func=make_tool_func(),
+                args_schema=args_schema,
             )
             langchain_tools.append(lc_tool)
 

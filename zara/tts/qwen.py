@@ -42,7 +42,7 @@ class Qwen3TTSClient:
     async def synthesize_speech(
         self,
         text: str,
-        voice: str = "styx",
+        voice: str = "zara",
         speed: float = 1.0
     ) -> Optional[bytes]:
         """
