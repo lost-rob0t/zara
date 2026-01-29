@@ -1,1 +1,8 @@
 /.env
+__pycache__/
+*.pyc
+*.pyo
+result
+result-*
+*.wav
+qwen3-tts-data/

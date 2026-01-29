@@ -95,6 +95,9 @@
       p.openai
       p.langchain-ollama
       p.ollama
+      # TTS providers
+      p.elevenlabs
+      p.edge-tts
       # Testing
       p.pytest
       p.pytest-asyncio
@@ -157,7 +160,7 @@
           # Create wrapper with correct Python interpreter and environment
           makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara-wake \
             --add-flags $out/bin/.zara-wake-unwrapped \
-            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xdotool pkgs.pulseaudio pkgs.swi-prolog ]} \
+            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xdotool pkgs.pulseaudio pkgs.swi-prolog pkgs.ffmpeg-full pkgs.mpv ]} \
             --set PYTHONPATH $out/lib/python:${pythonLibs}/${python.sitePackages} \
             --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [ pkgs.libsndfile pkgs.portaudio ]} \
             --set SWI_HOME_DIR ${pkgs.swi-prolog}/lib/swipl
@@ -262,11 +265,11 @@
       buildInputs = [
         pythonLibs
         pkgs.xdotool
-        pkgs.ffmpeg
+        pkgs.ffmpeg-full  # Includes ffplay for streaming audio
+        pkgs.mpv  # Alternative for streaming audio playback
         pkgs.portaudio
         pkgs.swi-prolog
         pkgs.pulseaudio
-        pkgs.ffmpeg
       ];
 
       shellHook = ''

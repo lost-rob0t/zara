@@ -41,10 +41,13 @@ LOGFILE = "/tmp/zara_wakeword.log"
 
 
 def load_tts_config():
-    """Load TTS configuration from environment variables"""
-    provider = os.getenv("ZARA_TTS_PROVIDER", "qwen3")
-    qwen3_url = os.getenv("QWEN3_TTS_URL", "http://localhost:7860")
-    qwen3_voice = os.getenv("QWEN3_VOICE", "demo_speaker0")
+    """Load TTS configuration from config system"""
+    config = get_config()
+    tts_cfg = config.get_section("tts")
+
+    provider = tts_cfg.get("provider", "qwen3")
+    qwen3_url = tts_cfg.get("endpoint", os.getenv("QWEN3_TTS_URL", "http://localhost:7860"))
+    qwen3_voice = tts_cfg.get("voice", os.getenv("QWEN3_VOICE", "demo_speaker0"))
 
     return {
         "provider": provider,
@@ -381,19 +384,91 @@ class WakeWordListener:
         try:
             if self.tts_client is None:
                 self.log(f"Initializing TTS client: {self.tts_config['provider']}")
-                self.tts_client = TTSEngine(provider=self.tts_config['provider'])
+                # TTSEngine expects a dict-like config, so we use the internal _config dict
+                config_dict = self.config._config if hasattr(self.config, '_config') else {}
+                self.tts_client = TTSEngine(provider=self.tts_config['provider'], config=config_dict)
 
-            self.log("Synthesizing speech...")
-            audio_bytes = await self.tts_client.synthesize_async(text)
-
-            if audio_bytes:
-                self.log("Playing audio...")
-                await self._play_audio_task(audio_bytes)
+            # Use streaming for 11labs, regular synthesis for others
+            if self.tts_config['provider'] == "11labs":
+                self.log("Synthesizing speech (streaming)...")
+                await self._play_streaming_audio_task(text)
             else:
-                self.log("Failed to synthesize speech")
+                self.log("Synthesizing speech...")
+                audio_bytes = await self.tts_client.synthesize_async(text)
+
+                if audio_bytes:
+                    self.log("Playing audio...")
+                    await self._play_audio_task(audio_bytes)
+                else:
+                    self.log("Failed to synthesize speech")
 
         except Exception as e:
             self.log(f"TTS error: {e}")
+
+    async def _play_streaming_audio_task(self, text):
+        """Play streaming audio as it arrives from TTS"""
+        try:
+            loop = asyncio.get_event_loop()
+
+            # Use ffplay or mpv for streaming playback (they can handle stdin streaming)
+            # Check which one is available
+            ffplay_check = await asyncio.create_subprocess_exec(
+                "which", "ffplay",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await ffplay_check.wait()
+
+            mpv_check = await asyncio.create_subprocess_exec(
+                "which", "mpv",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await mpv_check.wait()
+
+            # Prefer ffplay, fallback to mpv
+            if ffplay_check.returncode == 0:
+                player_cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", "-"]
+            elif mpv_check.returncode == 0:
+                player_cmd = ["mpv", "--no-video", "--no-terminal", "-"]
+            else:
+                self.log("No streaming player found (ffplay/mpv), falling back to non-streaming")
+                audio_bytes = await self.tts_client.synthesize_async(text)
+                if audio_bytes:
+                    await self._play_audio_task(audio_bytes)
+                return
+
+            # Start the player process
+            player_proc = await asyncio.create_subprocess_exec(
+                *player_cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            self.log("Streaming audio playback started...")
+
+            # Stream audio chunks to player
+            async for chunk in self.tts_client.synthesize_streaming_async(text):
+                if player_proc.stdin:
+                    player_proc.stdin.write(chunk)
+                    await player_proc.stdin.drain()
+
+            # Close stdin to signal end of stream
+            if player_proc.stdin:
+                player_proc.stdin.close()
+                await player_proc.stdin.wait_closed()
+
+            # Wait for player to finish
+            await player_proc.wait()
+            self.log("Streaming audio playback complete")
+
+        except Exception as e:
+            self.log(f"Streaming audio playback error: {e}")
+            # Cleanup player process if it's still running
+            if 'player_proc' in locals() and player_proc.returncode is None:
+                player_proc.kill()
+                await player_proc.wait()
 
     async def _play_audio_task(self, audio_bytes):
         """Internal task to play audio without blocking main loop"""
