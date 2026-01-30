@@ -34,7 +34,7 @@ LOGFILE = "/tmp/zara_dictation.log"
 #     ZARA_STOP_PHRASE="end voice"             (single)
 #     ZARA_STOP_PHRASES="end voice,stop voice" (comma-separated)
 # - Or pass as 5th arg: zara-dictate <model> <device> <threads?> <workers?> "end voice,stop voice"
-DEFAULT_STOP_PHRASES = ["end voice", "stop voice", "stop dictation"]
+DEFAULT_STOP_PHRASES = ["end voice", "stop voice", "stop dictation", "end dictation"]
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
@@ -135,6 +135,24 @@ def _is_any_stop_phrase(text: str, stop_phrases: list[str]) -> bool:
     return any(norm == _normalize_stop_phrase(p) for p in stop_phrases)
 
 
+def _strip_dictation_tokens(text: str, stop_phrases: list[str]) -> str:
+    if not text:
+        return ""
+    normalized = _normalize_stop_phrase(text)
+    wake_tokens = ["zara", "hey zara", "zarathustra"]
+    cleaned = normalized
+    for token in wake_tokens:
+        if cleaned.startswith(token):
+            cleaned = cleaned[len(token):].strip()
+            break
+    for stop in stop_phrases:
+        stop_norm = _normalize_stop_phrase(stop)
+        if cleaned.endswith(stop_norm):
+            cleaned = cleaned[: -len(stop_norm)].strip()
+            break
+    return cleaned
+
+
 def transcribe_worker(model, chunk, stop_phrases: list[str]):
     """Worker function for parallel transcription"""
     if chunk.ndim > 1:
@@ -219,7 +237,7 @@ def main(model_name="small", device="cpu", threads=None, workers=2, stop_phrases
 
     # Determine thread count for Whisper
     if threads is None:
-        threads = int(os.getenv("ZARA_THREADS", os.cpu_count()))
+        threads = int(os.getenv("ZARA_THREADS", os.cpu_count() or 1))
     log(f"Using {threads} Whisper threads, {workers} parallel workers")
 
     if device == "cpu":
@@ -273,8 +291,10 @@ def main(model_name="small", device="cpu", threads=None, workers=2, stop_phrases
                                 log(f"Stop phrase heard ({text!r}); stopping dictation")
                                 stop_event.set()
                                 break
-                            log(f"Typed: {text}")
-                            type_text(text + " ")
+                            cleaned = _strip_dictation_tokens(text, stop_phrases)
+                            if cleaned:
+                                log(f"Typed: {cleaned}")
+                                type_text(cleaned + " ")
                     except Exception as e:
                         log(f"Future error: {e}")
 

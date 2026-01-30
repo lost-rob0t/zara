@@ -90,8 +90,6 @@ todo_template(markdown,
 search_engine("https://duckduckgo.com/?q=~w").
 
 % ---- Dictation (zara-dictate) ----
-dictation_command("zara-dictate").
-
 % Spoken stop phrases (case-insensitive). Used by the Prolog intent matcher.
 dictation_stop_phrase("end voice").
 dictation_stop_phrase("stop voice").
@@ -100,6 +98,7 @@ dictation_stop_phrase("stop dictation").
 dictation_stop_phrase("end dictation").
 
 % ---- LLM Provider Configuration ----
+
 % Used by Python wake listener for conversational queries.
 % Options: anthropic | openai | ollama
 llm_provider(ollama).

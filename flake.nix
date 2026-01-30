@@ -88,6 +88,7 @@
       # LangChain + LangGraph for agent system
       p.langchain
       p.langchain-core
+      p.langchain-community
       p.langgraph
       p.langchain-anthropic
       p.anthropic

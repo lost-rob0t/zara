@@ -131,6 +131,13 @@ class PrologEngine:
         result = self.query_once(goal)
         self.logger.info(f"Intent result: {result}")
         return result
+
+    def is_conversation_stop(self, text: str) -> bool:
+        """Check whether text matches a conversation stop intent."""
+        result = self.resolve_intent(text)
+        if not result:
+            return False
+        return result.get("Intent") == "end_conversation"
     
     def start_timer(self, seconds: int, name: str = "") -> bool:
         """Start a timer using alarm module"""

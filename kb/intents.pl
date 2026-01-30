@@ -106,6 +106,20 @@ verb_intent(say, speak, rest).
 verb_intent(hello, python(say_hello), rest).
 verb_intent(greet, python(say_hello), rest).
 
+% Conversation stop phrases
+verb_intent(bye, end_conversation, 0).
+verb_intent(goodbye, end_conversation, 0).
+verb_intent(farewell, end_conversation, 0).
+verb_intent(see_you, end_conversation, 0).
+verb_intent(see_you_later, end_conversation, 0).
+verb_intent(end, end_conversation, 0).
+verb_intent(quit, end_conversation, 0).
+verb_intent(stop, end_conversation, 0).
+verb_intent(end_conversation, end_conversation, 0).
+verb_intent(stop_conversation, end_conversation, 0).
+verb_intent(end_session, end_conversation, 0).
+verb_intent(stop_session, end_conversation, 0).
+
 % Philosophy & deep questions
 verb_intent(what, ask, rest).
 verb_intent(why, ask, rest).

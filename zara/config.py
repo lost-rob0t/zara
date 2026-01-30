@@ -27,6 +27,10 @@ DEFAULT_CONFIG_TOML = """# Zarathushtra Configuration
 model_path = "~/.zarathushtra/models/wake.onnx"
 threshold = 0.5
 sample_rate = 16000
+# Optional phrases to end conversation mode
+stop_phrases = ["goodbye", "bye", "end conversation", "stop conversation", "end session", "stop session"]
+# Stop TTS playback when user starts speaking
+stop_tts_on_input = true
 
 [stt]
 # Speech-to-Text settings
@@ -158,7 +162,16 @@ class ZaraConfig:
             "wake": {
                 "model_path": "~/.zarathushtra/models/wake.onnx",
                 "threshold": 0.5,
-                "sample_rate": 16000
+                "sample_rate": 16000,
+                "stop_phrases": [
+                    "goodbye",
+                    "bye",
+                    "end conversation",
+                    "stop conversation",
+                    "end session",
+                    "stop session"
+                ],
+                "stop_tts_on_input": True
             },
             "stt": {
                 "provider": "faster-whisper",
