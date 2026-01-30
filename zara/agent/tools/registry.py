@@ -116,9 +116,12 @@ class ToolRegistry:
         Imports and registers standard tools like calculator, time, etc.
         Respects tool enable/disable configuration.
         """
+        from pathlib import Path
+
         from .builtin_tools import get_builtin_tools
 
-        all_tools = get_builtin_tools(self.prolog_engine)
+        repo_root = Path(__file__).resolve().parents[2]
+        all_tools = get_builtin_tools(self.prolog_engine, repo_root=repo_root)
 
         if self.config:
             tool_config = self.config.get_tool_config()

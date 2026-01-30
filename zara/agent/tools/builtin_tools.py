@@ -7,10 +7,13 @@ LangChain tool definitions used by the agent system.
 import ast
 import operator
 from datetime import datetime
+from pathlib import Path
 from typing import List
 
 from langchain_core.tools import StructuredTool, tool
 from pydantic import BaseModel, Field
+
+from .file_tools import build_file_tools
 
 
 class CalculatorArgs(BaseModel):
@@ -96,8 +99,10 @@ def build_prolog_tool(prolog_engine) -> StructuredTool:
     )
 
 
-def get_builtin_tools(prolog_engine=None) -> List[StructuredTool]:
+def get_builtin_tools(prolog_engine=None, repo_root: Path | None = None) -> List[StructuredTool]:
     tools: List[StructuredTool] = [calculator, get_current_time]
+
+    tools.extend(build_file_tools(repo_root))
 
     if prolog_engine is not None:
         tools.append(build_prolog_tool(prolog_engine))
