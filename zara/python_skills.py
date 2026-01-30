@@ -42,12 +42,10 @@ class PythonSkillRegistry:
     def register(self, name: str, func: Callable[[List[Any]], str]) -> None:
         self._skills[name] = func
 
-    def execute(self, skill_name: str, args: List[Any], prolog: Any = None) -> str:
+    def execute(self, skill_name: str, args: List[Any]) -> str:
         func = self._skills.get(skill_name)
         if func is None:
             raise NotImplementedError(f"Python skill '{skill_name}' is not implemented")
-        if prolog is not None:
-            return func(args, prolog=prolog)
         return func(args)
 
     def list_skills(self) -> List[str]:

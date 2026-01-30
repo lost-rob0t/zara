@@ -57,25 +57,14 @@ def search_todos(args: List[Any]) -> str:
 
 
 def schedule_todo(args: List[Any], prolog: Optional[PrologEngine] = None) -> str:
-    if not args:
-        return "Provide todo id or description and schedule time."
-
+    if len(args) < 2:
+        return "Provide todo id and schedule time."
     todo_id = _parse_int(args[0])
-    schedule_parts = args[1:]
     if todo_id is None:
-        schedule_text = _join_args(args)
-        if not schedule_text:
-            return "Which todo should I schedule?"
-        store = TodoStore()
-        matches = store.search_todos(schedule_text)
-        if not matches:
-            return "I couldn't find that todo. Which one should I schedule?"
-        todo_id = matches[0].id
-        schedule_parts = []
-
-    schedule_text = _join_args(schedule_parts)
+        return "Invalid todo id."
+    schedule_text = _join_args(args[1:])
     if not schedule_text:
-        return "When should I schedule it?"
+        return "Schedule time required."
     schedule_iso = _parse_time(schedule_text)
     if schedule_iso is None:
         return "Could not parse schedule time."

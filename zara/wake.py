@@ -407,12 +407,6 @@ class WakeWordListener:
                     return (False, "", False)
 
                 if intent == "ask":
-                    pending = self.prolog.get_pending_question()
-                    if pending:
-                        self.prolog.awaiting_answer = True
-                        prompt = pending.get("Prompt")
-                        return (True, str(prompt) if prompt else "", False)
-                    self.prolog.awaiting_answer = False
                     self.log("Intent is 'ask' - needs conversation")
                     return (False, "", True)
 
@@ -421,7 +415,7 @@ class WakeWordListener:
                     if self.session_id is None:
                         self.session_id = self.memory.start_session()
                     skill_args = list(args) if isinstance(args, list) else [args]
-                    response = python_skills.execute(skill_name, skill_args, prolog=self.prolog)
+                    response = python_skills.execute(skill_name, skill_args)
                     self.memory.add_message(self.session_id, "user", command_text)
                     self.memory.add_message(self.session_id, "assistant", response)
                     return (True, response, False)
@@ -447,6 +441,7 @@ class WakeWordListener:
         prolog_success, prolog_result, needs_agent = await loop.run_in_executor(self.executor, _try_prolog)
 
         if prolog_success:
+            # Prolog handled it successfully
             return (False, prolog_result)
 
         if not needs_agent:
@@ -704,48 +699,6 @@ class WakeWordListener:
             self.log(f"Failed to send response: {e}")
             self.log(f"Response: {message[:200]}...")
 
-    async def _resume_pending_intent(self, intent: Any, context: Any, answer: str) -> str:
-        merged_args = self._merge_pending_args(context, answer)
-        return self._execute_resolved_intent(intent, merged_args, answer)
-
-    def _merge_pending_args(self, context: Any, answer: str) -> List[Any]:
-        base_args: List[Any] = []
-        if isinstance(context, list):
-            base_args = list(context)
-        elif context is not None:
-            base_args = [context]
-        base_args = [arg for arg in base_args if str(arg).strip()]
-        answer_tokens = [tok for tok in answer.split() if tok.strip()]
-        if base_args and base_args[-1] in {"for", "to"}:
-            return base_args + answer_tokens
-        return base_args + answer_tokens
-
-    def _execute_resolved_intent(self, intent: Any, args: List[Any], command_text: str) -> str:
-        if intent == "end_conversation":
-            return ""
-
-        if isinstance(intent, str) and intent.startswith("python("):
-            skill_name = intent[len("python("):-1]
-            if self.session_id is None:
-                self.session_id = self.memory.start_session()
-            response = python_skills.execute(skill_name, args, prolog=self.prolog)
-            self.memory.add_message(self.session_id, "user", command_text)
-            self.memory.add_message(self.session_id, "assistant", response)
-            return response
-
-        exec_query = f"commands:execute({intent}, {args})"
-        self.log(f"Executing: {exec_query}")
-
-        exec_result = self.prolog.query_once(exec_query)
-        if exec_result is not None:
-            response_text = f"Executed: {intent} {args}"
-            if self.session_id is None:
-                self.session_id = self.memory.start_session()
-            self.memory.add_message(self.session_id, "user", command_text)
-            self.memory.add_message(self.session_id, "assistant", response_text)
-            return response_text
-        return ""
-
     async def run_async(self):
         """Main async event loop"""
         # Store event loop reference for audio callback
@@ -892,24 +845,6 @@ class WakeWordListener:
 
         if not command:
             return
-
-        pending = self.prolog.get_pending_question() if self.prolog.awaiting_answer else None
-        if pending and pending.get("Intent"):
-            if self.check_wake_word(command):
-                self.prolog.clear_pending_question()
-                self.prolog.awaiting_answer = False
-            else:
-                intent = pending.get("Intent")
-                missing = pending.get("Missing")
-                if missing:
-                    self.prolog.clear_pending_question()
-                    self.prolog.awaiting_answer = False
-                    response = await self._resume_pending_intent(intent, pending.get("Context"), command)
-                    if response:
-                        await self.send_response_async("Zara", response)
-                    self.last_activity = time.time()
-                    return
-                self.prolog.awaiting_answer = False
 
         # Process with Prolog-first fallback
         used_agent, response = await self.query_with_fallback_async(command)
