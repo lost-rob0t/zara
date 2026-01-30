@@ -72,6 +72,17 @@ load_on_startup = true
 calculator = true
 get_current_time = true
 query_prolog = true
+remember = true
+recall = true
+
+[memory]
+# Long-term memory settings
+enabled = true
+persist_directory = "~/.local/share/zarathushtra/chroma"
+collection_name = "zara_memory"
+embedding_model = "all-MiniLM-L6-v2"
+top_k = 5
+max_chars = 1200
 
 [modules]
 # Module/plugin search paths
@@ -200,7 +211,17 @@ class ZaraConfig:
             "tools": {
                 "calculator": True,
                 "get_current_time": True,
-                "query_prolog": True
+                "query_prolog": True,
+                "remember": True,
+                "recall": True
+            },
+            "memory": {
+                "enabled": True,
+                "persist_directory": "~/.local/share/zarathushtra/chroma",
+                "collection_name": "zara_memory",
+                "embedding_model": "all-MiniLM-L6-v2",
+                "top_k": 5,
+                "max_chars": 1200
             },
             "modules": {
                 "search_paths": ["~/.zarathushtra/plugins", "~/.zarathushtra/modules"],

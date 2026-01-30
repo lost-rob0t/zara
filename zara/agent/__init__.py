@@ -23,6 +23,7 @@ from .conversation import ConversationManager
 from .tools.registry import ToolRegistry
 from .graph import run_conversation_loop, validate_and_clean_messages
 from ..config import ZaraConfig, get_config
+from ..memory import build_memory_manager, MemoryManager
 
 
 class AgentManager:
@@ -30,15 +31,25 @@ class AgentManager:
     Manages conversational agent with tool calling.
     """
 
-    def __init__(self, config: Optional[ZaraConfig] = None, prolog_engine=None):
+    def __init__(
+        self,
+        config: Optional[ZaraConfig] = None,
+        prolog_engine=None,
+        memory_manager: Optional[MemoryManager] = None,
+    ):
         self.config = config if config is not None else get_config()
         self.prolog_engine = prolog_engine
 
         llm_config = self.config.get_llm_config()
         self.llm_client = self._create_llm_client(llm_config)
 
+        memory_config = self.config.get_section("memory")
+        self.memory_manager = memory_manager or build_memory_manager(memory_config)
+        self.memory_context_limit = int(memory_config.get("max_chars", 1200))
+        self.memory_top_k = int(memory_config.get("top_k", 5))
+
         self.tool_registry = ToolRegistry(prolog_engine, self.config)
-        self.tool_registry.load_builtin_tools()
+        self.tool_registry.load_builtin_tools(self.memory_manager)
 
         for plugin_dir in self.config.get_module_search_paths():
             self.tool_registry.load_user_tools(str(plugin_dir))
@@ -125,8 +136,9 @@ class AgentManager:
             "You are Zarathustra, an agentic large language model living inside a voice assistant. "
             "Your goal is to be helpful, precise, and safe for the user. Use available tools when they "
             "help accomplish the user's request, including reading, writing, diffing, or listing files "
-            "when explicitly asked. You speak with wisdom and directness. You value strength, creativity, "
-            "and the will to overcome. Be helpful and philosophical."
+            "when explicitly asked. You have access to long-term memory: use the `remember` tool to store "
+            "important facts and the `recall` tool to retrieve them. You speak with wisdom and directness. "
+            "You value strength, creativity, and the will to overcome. Be helpful and philosophical."
         )
 
         if system_prompt:
@@ -135,6 +147,10 @@ class AgentManager:
                 logger.info("[AgentManager] System prompt injected")
             else:
                 logger.info("[AgentManager] System prompt already present")
+
+        memory_context = self._build_memory_context(user_input)
+        if memory_context:
+            state["messages"].append(SystemMessage(content=memory_context))
 
         # Always append the new user message last.
         state["messages"].append(HumanMessage(content=user_input))
@@ -156,6 +172,33 @@ class AgentManager:
             "response": result.get("response", "I'm not sure how to respond to that."),
             "tool_results": result.get("tool_results", []),
         }
+
+    def _build_memory_context(self, user_input: str) -> Optional[str]:
+        if self.memory_manager is None:
+            return None
+        memories = self.memory_manager.retrieve(user_input, k=self.memory_top_k)
+        if not memories:
+            return None
+
+        lines = []
+        for entry in memories:
+            text = entry.get("text") if isinstance(entry, dict) else str(entry)
+            if not text:
+                continue
+            metadata = entry.get("metadata") if isinstance(entry, dict) else None
+            kind = ""
+            if isinstance(metadata, dict):
+                kind = metadata.get("kind", "")
+            prefix = f"[{kind}] " if kind else ""
+            lines.append(f"- {prefix}{text}")
+
+        if not lines:
+            return None
+
+        rendered = "Relevant memories:\n" + "\n".join(lines)
+        if len(rendered) > self.memory_context_limit:
+            rendered = rendered[: self.memory_context_limit].rstrip()
+        return rendered
 
     def should_exit_conversation(self) -> bool:
         return self.conversation_manager.should_exit_conversation()

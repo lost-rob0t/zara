@@ -23,7 +23,7 @@ from .config import get_config
 from .notifications import send_notification_async
 from .prolog_engine import PrologEngine
 from .python_skills import python_skills
-from .memory import MemoryManager
+from .memory import build_memory_manager
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
@@ -82,7 +82,8 @@ class WakeWordListener:
         self.agent_manager: Optional[AgentManager] = None
 
         # Memory manager for sessions
-        self.memory = MemoryManager()
+        memory_config = self.config.get_section("memory")
+        self.memory = build_memory_manager(memory_config)
         self.session_id: Optional[str] = self.memory.start_session()
 
         # TTS client (lazy init on first use)
@@ -297,7 +298,8 @@ class WakeWordListener:
             config = get_config()
             self.agent_manager = AgentManager(
                 config=config,
-                prolog_engine=self.prolog
+                prolog_engine=self.prolog,
+                memory_manager=self.memory,
             )
 
     async def speak_async(self, text):
@@ -631,7 +633,7 @@ class WakeWordListener:
             if self.agent_manager is not None and self.agent_manager.should_exit_conversation():
                 self.log("Conversation timeout, exiting conversation mode")
                 if self.session_id is not None:
-                    summary = self.memory.summarise_session(self.session_id)
+                    summary = self.memory.summarise_session(self.session_id, source="wake")
                     if summary:
                         self.log("Conversation summary stored")
                 self.session_id = self.memory.start_session()
@@ -671,7 +673,7 @@ class WakeWordListener:
             if self.in_conversation_mode():
                 self.log("Exiting conversation mode")
                 if self.session_id is not None:
-                    summary = self.memory.summarise_session(self.session_id)
+                    summary = self.memory.summarise_session(self.session_id, source="wake")
                     if summary:
                         self.log("Conversation summary stored")
                 self.session_id = self.memory.start_session()
@@ -699,7 +701,7 @@ class WakeWordListener:
             if self.in_conversation_mode():
                 self.log("Exiting conversation mode")
                 if self.session_id is not None:
-                    summary = self.memory.summarise_session(self.session_id)
+                    summary = self.memory.summarise_session(self.session_id, source="wake")
                     if summary:
                         self.log("Conversation summary stored")
                 self.session_id = self.memory.start_session()

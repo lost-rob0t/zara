@@ -109,7 +109,7 @@ class ToolRegistry:
         except Exception as e:
             raise Exception(f"Tool '{name}' execution failed: {str(e)}") from e
 
-    def load_builtin_tools(self):
+    def load_builtin_tools(self, memory_manager=None):
         """
         Load built-in example tools.
 
@@ -121,7 +121,11 @@ class ToolRegistry:
         from .builtin_tools import get_builtin_tools
 
         repo_root = Path(__file__).resolve().parents[2]
-        all_tools = get_builtin_tools(self.prolog_engine, repo_root=repo_root)
+        all_tools = get_builtin_tools(
+            self.prolog_engine,
+            repo_root=repo_root,
+            memory_manager=memory_manager,
+        )
 
         if self.config:
             tool_config = self.config.get_tool_config()
