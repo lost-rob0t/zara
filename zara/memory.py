@@ -92,17 +92,14 @@ class MemoryManager:
 
     def _setup_chroma(self, embedding_function: Optional[EmbeddingFunction]) -> None:
         self._embedding_function = embedding_function or self._build_embedding_function()
-        try:
-            client = self._build_client()
-            if self._embedding_function is not None:
-                self._collection = client.get_or_create_collection(
-                    name=self.collection_name,
-                    embedding_function=self._embedding_function,
-                )
-            else:
-                self._collection = client.get_or_create_collection(name=self.collection_name)
-        except Exception:
-            self._collection = None
+        client = self._build_client()
+        if self._embedding_function is not None:
+            self._collection = client.get_or_create_collection(
+                name=self.collection_name,
+                embedding_function=self._embedding_function,
+            )
+        else:
+            self._collection = client.get_or_create_collection(name=self.collection_name)
 
     def _build_client(self):
         if not self.persist_directory:
@@ -113,7 +110,10 @@ class MemoryManager:
 
     def _build_embedding_function(self) -> Optional[EmbeddingFunction]:
         memory_cfg = self.settings
-        backend = str(memory_cfg.get("embedding_backend", "ollama")).strip().lower()
+        backend = str(memory_cfg.get("embedding_backend", "onnx")).strip().lower()
+
+        if backend in {"onnx", "onnx_minilm", "onnx_minilm_l6_v2"}:
+            return embedding_functions.ONNXMiniLM_L6_V2()
 
         if backend == "ollama":
             model = str(memory_cfg.get("embedding_model", "nomic-embed-text")).strip() or "nomic-embed-text"
@@ -127,12 +127,9 @@ class MemoryManager:
             return _embed
 
         if backend == "sentence_transformers" and _EMBEDDING_FUNCTIONS_AVAILABLE:
-            try:
-                return embedding_functions.SentenceTransformerEmbeddingFunction(
-                    model_name=self.embedding_model
-                )
-            except Exception:
-                return None
+            return embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name=self.embedding_model
+            )
 
         return None
 
@@ -305,26 +302,23 @@ class MemoryManager:
             "created_at": datetime.utcnow().isoformat(),
         }
 
-        if self._collection is not None:
-            try:
-                self._collection.upsert(
-                    ids=[memory_id],
-                    documents=[text],
-                    metadatas=[metadata],
-                )
-                return memory_id
-            except Exception:
-                pass
+        if self._collection is None:
+            self._memories.append(
+                {
+                    "id": memory_id,
+                    "text": text,
+                    "metadata": {
+                        **metadata,
+                        "tags": tag_list,
+                    },
+                }
+            )
+            return memory_id
 
-        self._memories.append(
-            {
-                "id": memory_id,
-                "text": text,
-                "metadata": {
-                    **metadata,
-                    "tags": tag_list,
-                },
-            }
+        self._collection.upsert(
+            ids=[memory_id],
+            documents=[text],
+            metadatas=[metadata],
         )
         return memory_id
 

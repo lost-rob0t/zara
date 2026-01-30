@@ -80,6 +80,7 @@ recall = true
 enabled = true
 persist_directory = "~/.local/share/zarathushtra/chroma"
 collection_name = "zara_memory"
+embedding_backend = "onnx"
 embedding_model = "all-MiniLM-L6-v2"
 top_k = 5
 max_chars = 1200
@@ -219,6 +220,7 @@ class ZaraConfig:
                 "enabled": True,
                 "persist_directory": "~/.local/share/zarathushtra/chroma",
                 "collection_name": "zara_memory",
+                "embedding_backend": "onnx",
                 "embedding_model": "all-MiniLM-L6-v2",
                 "top_k": 5,
                 "max_chars": 1200
