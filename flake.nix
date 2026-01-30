@@ -147,26 +147,25 @@
         installPhase = ''
           mkdir -p $out/bin
           mkdir -p $out/lib/python
+          mkdir -p $out/share/zarathushtra
 
           # Copy the zara Python module
           cp -r $src/zara $out/lib/python/
 
-          # Copy the script
-          cp scripts/zara_wake.py $out/bin/.zara-wake-unwrapped
-          chmod +x $out/bin/.zara-wake-unwrapped
-
-          # Patch the PROLOG_MAIN path to point at zara-prolog package
-          substituteInPlace $out/bin/.zara-wake-unwrapped \
-            --replace 'PROLOG_MAIN = pathlib.Path(__file__).parent / "main.pl"' \
-                      'PROLOG_MAIN = pathlib.Path("${zara-prolog}/share/zarathushtra/main.pl")'
+          # Copy ALL Prolog sources with structure intact
+          cp $src/*.pl $out/share/zarathushtra/ 2>/dev/null || true
+          cp -r $src/kb $out/share/zarathushtra/
+          cp -r $src/modules $out/share/zarathushtra/
+          cp -r $src/scripts $out/share/zarathushtra/
 
           # Create wrapper with correct Python interpreter and environment
           makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara-wake \
-            --add-flags $out/bin/.zara-wake-unwrapped \
+            --add-flags "-m zara --wake" \
             --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xdotool pkgs.pulseaudio pkgs.swi-prolog pkgs.ffmpeg-full pkgs.mpv ]} \
-            --set PYTHONPATH $out/lib/python:${pythonLibs}/${python.sitePackages} \
+            --set PYTHONPATH $out/lib/python:$out/share/zarathushtra:${pythonLibs}/${python.sitePackages} \
             --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [ pkgs.libsndfile pkgs.portaudio ]} \
-            --set SWI_HOME_DIR ${pkgs.swi-prolog}/lib/swipl
+            --set SWI_HOME_DIR ${pkgs.swi-prolog}/lib/swipl \
+            --run "cd $out/share/zarathushtra"
         '';
       };
 
