@@ -1,4 +1,4 @@
-:- module(kb_intents, [verb_intent/3]).
+:- module(kb_intents, [verb_intent/3, python_skill_intent/3]).
 
 % Core system intents and synonyms
 % verb_intent(Surface, Intent, Arity)
@@ -103,8 +103,14 @@ verb_intent(explain, ask, rest).
 verb_intent(say, speak, rest).
 
 % Python skills
-verb_intent(hello, python(say_hello), rest).
-verb_intent(greet, python(say_hello), rest).
+python_skill_intent(hello, say_hello, rest).
+python_skill_intent(greet, say_hello, rest).
+python_skill_intent(weather, noaa_weather, rest).
+python_skill_intent(forecast, noaa_weather, rest).
+
+% Materialize python skill intents as verb_intent entries
+verb_intent(Word, python(Skill), Arity) :-
+    python_skill_intent(Word, Skill, Arity).
 
 % Conversation stop phrases
 verb_intent(bye, end_conversation, 0).
