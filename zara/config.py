@@ -81,10 +81,14 @@ query_prolog = true
 remember = true
 recall = true
 
+[database]
+# Shared SQLite database
+path = "~/.local/share/zarathushtra/zara.db"
+
 [todo]
-# Todo capture settings (org or markdown)
-path = "~/todo.org"
-format = "org"
+# Todo defaults
+default_status = "TODO"
+default_duration_minutes = 30
 
 [noaa]
 # NOAA weather defaults used by the NOAA plugin
@@ -248,9 +252,12 @@ class ZaraConfig:
                 "default_longitude": None,
                 "user_agent": "ZarathushtraWeather/1.0 (contact: you@example.com)"
             },
+            "database": {
+                "path": "~/.local/share/zarathushtra/zara.db"
+            },
             "todo": {
-                "path": "~/todo.org",
-                "format": "org"
+                "default_status": "TODO",
+                "default_duration_minutes": 30
             },
             "memory": {
                 "enabled": True,

@@ -3,6 +3,7 @@
 
 :- use_module('modules/command_loop').
 :- use_module('modules/commands').
+:- use_module('modules/todo_schedule').
 :- use_module('kb/config').      % This automatically loads user config via initialization
 :- use_module('kb/intents').
 :- use_module('modules/config_loader').
