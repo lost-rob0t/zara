@@ -75,6 +75,12 @@ query_prolog = true
 remember = true
 recall = true
 
+[noaa]
+# NOAA weather defaults used by the NOAA plugin
+# default_latitude = 39.7456
+# default_longitude = -97.0892
+# user_agent = "ZarathushtraWeather/1.0 (contact: you@example.com)"
+
 [memory]
 # Long-term memory settings
 enabled = true
@@ -103,6 +109,12 @@ model = "small"
 device = "cpu"
 workers = 2
 stop_phrases = ["end voice", "stop voice"]
+
+[noaa]
+# NOAA weather defaults used by the NOAA plugin
+# default_latitude = 39.7456
+# default_longitude = -97.0892
+# user_agent = "ZarathushtraWeather/1.0 (contact: you@example.com)"
 """
 
 
@@ -215,6 +227,11 @@ class ZaraConfig:
                 "query_prolog": True,
                 "remember": True,
                 "recall": True
+            },
+            "noaa": {
+                "default_latitude": None,
+                "default_longitude": None,
+                "user_agent": "ZarathushtraWeather/1.0 (contact: you@example.com)"
             },
             "memory": {
                 "enabled": True,

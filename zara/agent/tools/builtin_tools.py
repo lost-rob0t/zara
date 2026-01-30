@@ -15,6 +15,7 @@ from langchain_core.tools import StructuredTool, tool
 from pydantic import BaseModel, Field
 
 from .file_tools import build_file_tools
+from ...noaa import build_noaa_weather_tool
 
 
 class RememberArgs(BaseModel):
@@ -192,5 +193,9 @@ def get_builtin_tools(
 
     if prolog_engine is not None:
         tools.append(build_prolog_tool(prolog_engine))
+
+    noaa_tool = build_noaa_weather_tool()
+    if noaa_tool is not None:
+        tools.append(noaa_tool)
 
     return tools
