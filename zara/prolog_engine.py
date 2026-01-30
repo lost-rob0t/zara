@@ -26,6 +26,8 @@ class PrologEngine:
         self.prolog = Prolog()
         self.loaded_files = set()
         self.logger = logging.getLogger(__name__)
+        self.awaiting_answer = False
+        self.pending_question_id: Optional[int] = None
         
         if main_file:
             self.consult(main_file)
@@ -168,6 +170,39 @@ class PrologEngine:
         except Exception as e:
             self.logger.error(f"Config reload failed: {e}")
             return False
+
+    def set_pending_question(self, intent: str, missing: list[str], prompt: str, context: str) -> Optional[int]:
+        goal = (
+            "pending_question:set_pending_question"
+            f"({intent}, {missing}, \"{prompt}\", {context}, Id)"
+        )
+        result = self.query_once(goal)
+        if result and "Id" in result:
+            self.pending_question_id = result["Id"]
+            self.awaiting_answer = True
+            return int(result["Id"])
+        return None
+
+    def get_pending_question(self) -> Optional[Dict[str, Any]]:
+        if self.pending_question_id is not None:
+            goal = (
+                "pending_question:get_pending_question"
+                f"({self.pending_question_id}, Intent, Missing, Prompt, Context)"
+            )
+            return self.query_once(goal)
+        result = self.query_once(
+            "pending_question:get_latest_pending_question(Id, Intent, Missing, Prompt, Context)"
+        )
+        if result and "Id" in result:
+            self.pending_question_id = result["Id"]
+        return result
+
+    def clear_pending_question(self) -> None:
+        if self.pending_question_id is None:
+            return
+        self.query_once(f"pending_question:clear_pending_question({self.pending_question_id})")
+        self.pending_question_id = None
+        self.awaiting_answer = False
 
 
 def test_engine():

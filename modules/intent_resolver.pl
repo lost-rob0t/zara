@@ -9,6 +9,17 @@
 :- use_module(normalizer).
 :- use_module('../kb/intents').
 :- use_module('object_intents').
+:- use_module('pending_question').
+
+arg_spec(open, [target]).
+arg_spec(play, [media]).
+arg_spec(search, [query]).
+arg_spec(navigate, [destination]).
+arg_spec(text, [contact, message]).
+arg_spec(timer, [duration]).
+arg_spec(alarm, [duration]).
+arg_spec(capture_todo, [item]).
+arg_spec(schedule_todo, [item, schedule_time]).
 
 %% ============================================================
 %% PUBLIC API
@@ -19,8 +30,8 @@
     strip_fillers(Toks0, Core0),
     canonicalize_tokens(Toks0, Toks),
     try_exact(Toks, Intent0, Args0),
-    object_intents:refine_intent(Intent0, Toks, Intent),
-    Args = Args0,
+    object_intents:refine_intent(Intent0, Toks, Intent1),
+    maybe_request_args(Intent1, Args0, Intent, Args),
     !.
 
 canonicalize_tokens(Toks0, Toks) :-
@@ -98,6 +109,86 @@ normalize_unit(h, hours).
 %% ============================================================
 %% ARGUMENT EXTRACTION
 %% ============================================================
+
+maybe_request_args(open, Args, ask, [open_target]) :-
+    missing_open_target(Args),
+    pending_question:set_pending_question(open, [target], "What should I open?", Args, _).
+maybe_request_args(play, Args, ask, [play_target]) :-
+    missing_generic_arg(Args),
+    pending_question:set_pending_question(play, [media], "What should I play?", Args, _).
+maybe_request_args(search, Args, ask, [search_query]) :-
+    missing_generic_arg(Args),
+    pending_question:set_pending_question(search, [query], "What should I search for?", Args, _).
+maybe_request_args(navigate, Args, ask, [navigate_target]) :-
+    missing_generic_arg(Args),
+    pending_question:set_pending_question(navigate, [destination], "Where should I navigate?", Args, _).
+maybe_request_args(text, Args, ask, [text_message]) :-
+    missing_text_args(Args, MissingSlots),
+    MissingSlots \= [],
+    text_prompt(MissingSlots, Prompt),
+    pending_question:set_pending_question(text, MissingSlots, Prompt, Args, _).
+maybe_request_args(timer, Args, ask, [timer_duration]) :-
+    missing_timer_args(Args),
+    pending_question:set_pending_question(timer, [duration], "How long should the timer be?", Args, _).
+maybe_request_args(alarm, Args, ask, [alarm_duration]) :-
+    missing_timer_args(Args),
+    pending_question:set_pending_question(alarm, [duration], "When should I set the alarm for?", Args, _).
+maybe_request_args(python(capture_todo), Args, ask, [todo_item]) :-
+    missing_generic_arg(Args),
+    pending_question:set_pending_question(capture_todo, [item], "What should I add to your todos?", Args, _).
+maybe_request_args(python(schedule_todo), Args, ask, [schedule_item]) :-
+    schedule_missing_slots(Args, MissingSlots),
+    MissingSlots \= [],
+    schedule_prompt(MissingSlots, Prompt),
+    pending_question:set_pending_question(schedule_todo, MissingSlots, Prompt, Args, _).
+maybe_request_args(Intent, Args, Intent, Args).
+
+
+schedule_missing_slots(Args, MissingSlots) :-
+    schedule_args_split(Args, TodoTokens, TimeTokens),
+    missing_slots_for(TodoTokens, TimeTokens, MissingSlots).
+
+missing_slots_for([], [], [item, schedule_time]).
+missing_slots_for([], [_|_], [item]).
+missing_slots_for([_|_], [], [schedule_time]).
+missing_slots_for([_|_], [_|_], []).
+
+missing_open_target(Args) :-
+    missing_generic_arg(Args).
+
+missing_generic_arg(Args) :-
+    Args = []
+    ; Args = [''].
+
+missing_text_args([], [contact, message]).
+missing_text_args([''], [contact, message]).
+missing_text_args([_|[]], [message]).
+missing_text_args([_, ''|_], [message]).
+missing_text_args([_|_], []).
+
+missing_timer_args(Args) :-
+    missing_generic_arg(Args).
+
+text_prompt([contact, message], "Who should I text, and what should I say?").
+text_prompt([message], "What should I say in the text?").
+
+schedule_prompt([item, schedule_time], "Which todo should I schedule, and for when?").
+schedule_prompt([item], "Which todo should I schedule?").
+schedule_prompt([schedule_time], "When should I schedule it?").
+
+schedule_args_split([], [], []).
+schedule_args_split(Args, TodoTokens, TimeTokens) :-
+    append(TodoTokens, [to|TimeTokens], Args),
+    TodoTokens \= [],
+    TimeTokens \= [],
+    !.
+schedule_args_split(Args, TodoTokens, TimeTokens) :-
+    append(TodoTokens, [for|TimeTokens], Args),
+    TodoTokens \= [],
+    TimeTokens \= [],
+    !.
+schedule_args_split(Args, Args, []).
+
 
 extract_args(0, _, _, []).
 extract_args(1, Rest, Intent, [Arg]) :-
