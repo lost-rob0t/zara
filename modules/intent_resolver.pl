@@ -3,7 +3,7 @@
     canonicalize_tokens/2,
     convert_number_atoms/2
 ]).
-:- use_module('../modules/todo_capture').
+% todo_capture deprecated; Python skills handle todo capture.
 :- use_module('../modules/normalizer', [strip_fillers/2]).
 :- use_module(library(lists)).
 :- use_module(normalizer).

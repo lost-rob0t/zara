@@ -107,6 +107,21 @@ python_skill_intent(hello, say_hello, rest).
 python_skill_intent(greet, say_hello, rest).
 python_skill_intent(weather, noaa_weather, rest).
 python_skill_intent(forecast, noaa_weather, rest).
+python_skill_intent(todo, capture_todo, rest).
+python_skill_intent(add, capture_todo, rest).
+python_skill_intent(note, capture_todo, rest).
+python_skill_intent(remind, capture_todo, rest).
+python_skill_intent(remember, capture_todo, rest).
+python_skill_intent(reminder, capture_todo, rest).
+python_skill_intent(schedule, capture_todo, rest).
+python_skill_intent(sched, capture_todo, rest).
+python_skill_intent(plan, capture_todo, rest).
+python_skill_intent(set, capture_todo, rest).
+python_skill_intent(task, capture_todo, rest).
+python_skill_intent(list, list_todos, rest).
+python_skill_intent(todos, list_todos, rest).
+python_skill_intent(tasks, list_todos, rest).
+python_skill_intent(show, list_todos, rest).
 
 % Materialize python skill intents as verb_intent entries
 verb_intent(Word, python(Skill), Arity) :-
@@ -137,23 +152,7 @@ verb_intent(who, ask, rest).
 % ----------------------------------------------------------------------
 % TODO / Reminder / Scheduling
 % ----------------------------------------------------------------------
-
-% “add a todo”, “todo this”
-verb_intent(todo, todo, rest).
-verb_intent(add, todo, rest).             % "add task", "add a todo"
-verb_intent(note, todo, rest).            % "note to self ..."
-
-% “remind me…”
-verb_intent(remind, reminder, rest).
-verb_intent(remember, reminder, rest).    % "remember to ..."
-verb_intent(reminder, reminder, rest).
-
-% “schedule …”
-verb_intent(schedule, schedule, rest).
-verb_intent(sched, schedule, rest).       % shorthand
-verb_intent(plan, schedule, rest).        % "plan to ..."
-verb_intent(set, schedule, rest).         % "set a reminder", "set task"
-verb_intent(task, schedule, rest).         % "set a reminder", "set task"
+% Deprecated in Prolog. Routed to Python skills above.
 
 % Timers
 verb_intent(timer, timer, 2).      % timer Duration Label

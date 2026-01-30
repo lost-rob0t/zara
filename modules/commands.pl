@@ -10,7 +10,7 @@
 :- use_module('normalizer', [strip_fillers/2]).
 :- use_module(library(http/http_client)).
 :- use_module(alarm).
-:- use_module(todo_capture).   % <-- FIX: required for todo/reminder/schedule
+% todo_capture deprecated; Python skills handle todo capture.
 
 % ============================================
 % Execution Layer
@@ -66,27 +66,7 @@ execute(ask, Args) :-
 % ----------------------------------------------------------------------
 % TODO / Reminder / Schedule
 % ----------------------------------------------------------------------
-
-execute(todo, Args) :-
-    strip_fillers(Args, Core),
-    ( Core = [] ->
-        TaskStr = "unspecified task"
-    ; tokens_to_string(Core, TaskStr)
-    ),
-    todo_capture:capture_todo(TaskStr, ask_date(yes)),
-    !.
-
-execute(reminder, Args) :-
-    strip_fillers(Args, Core),
-    tokens_to_string(Core, TaskStr),
-    todo_capture:capture_todo(TaskStr, ask_date(yes)),
-    !.
-
-execute(schedule, Args) :-
-    strip_fillers(Args, Core),
-    tokens_to_string(Core, TaskStr),
-    todo_capture:capture_todo(TaskStr, ask_date(yes)),
-    !.
+% Deprecated in Prolog; Python skills handle todo capture.
 
 % ----------------------------------------------------------------------
 % Named Timers

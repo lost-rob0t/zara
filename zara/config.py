@@ -81,6 +81,11 @@ query_prolog = true
 remember = true
 recall = true
 
+[todo]
+# Todo capture settings (org or markdown)
+path = "~/todo.org"
+format = "org"
+
 [noaa]
 # NOAA weather defaults used by the NOAA plugin
 # default_latitude = 39.7456
@@ -242,6 +247,10 @@ class ZaraConfig:
                 "default_latitude": None,
                 "default_longitude": None,
                 "user_agent": "ZarathushtraWeather/1.0 (contact: you@example.com)"
+            },
+            "todo": {
+                "path": "~/todo.org",
+                "format": "org"
             },
             "memory": {
                 "enabled": True,

@@ -37,17 +37,24 @@ async def send_notification_async(
             "notify-send",
             "-u", urgency,
             "-t", str(timeout),
+            "--",
             title,
             message
         ]
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
         )
 
-        await proc.wait()
+        stdout_bytes, stderr_bytes = await proc.communicate()
+        if proc.returncode != 0:
+            stdout_text = stdout_bytes.decode("utf-8", errors="ignore").strip()
+            stderr_text = stderr_bytes.decode("utf-8", errors="ignore").strip()
+            detail = stderr_text or stdout_text
+            if detail:
+                logger.error("notify-send failed: %s", detail)
         return proc.returncode == 0
 
     except Exception as e:

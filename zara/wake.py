@@ -681,13 +681,21 @@ class WakeWordListener:
     async def send_response_async(self, title, message):
         """Send response via notification and optionally TTS"""
         try:
+            safe_message = message.strip() if message else ""
+            if not safe_message:
+                safe_message = "No response."
+
             # Send notification directly using async notify-send (fast, non-blocking)
-            await send_notification_async(title, message, urgency="normal")
-            self.log(f"Sent notification: {title}")
+            success = await send_notification_async(title, safe_message, urgency="normal")
+            if success:
+                self.log(f"Sent notification: {title}")
+            else:
+                self.log(f"Notification failed for: {title}")
+                self.log(f"Notification message: {safe_message[:200]}")
 
             # If TTS is enabled, also speak the response
             if self.enable_tts:
-                await self.synthesize_and_play_async(message)
+                await self.synthesize_and_play_async(safe_message)
 
         except Exception as e:
             self.log(f"Failed to send response: {e}")

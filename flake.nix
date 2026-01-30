@@ -84,6 +84,7 @@
       p.pydantic
       p.httpx
       p.tomli  # TOML parsing for config system
+      p.orgparse
       pyswip
       # LangChain + LangGraph for agent system
       p.langchain
