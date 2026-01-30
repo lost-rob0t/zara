@@ -138,6 +138,12 @@ class PrologEngine:
         if not result:
             return False
         return result.get("Intent") == "end_conversation"
+
+    def dictation_active(self) -> bool:
+        """Check whether dictation mode is currently active."""
+        result = self.query_once("dictation:dictation_active")
+        return result is not None
+
     
     def start_timer(self, seconds: int, name: str = "") -> bool:
         """Start a timer using alarm module"""

@@ -1,4 +1,4 @@
-:- module(dictation, [start_dictation/0, stop_dictation/0, dictation_status/0]).
+:- module(dictation, [start_dictation/0, stop_dictation/0, dictation_status/0, dictation_active/0, set_dictation_active/1]).
 
 :- use_module(library(process)).
 :- use_module(library(filesex)).
@@ -13,7 +13,8 @@ dictation_logfile('/tmp/zara_dictation.log').
 %  Resolves the full command used to start dictation.
 %  Users override this via kb_config:dictation_command/1.
 dictation_command_string(Command) :-
-    (   kb_config:dictation_command(Command0)
+    (   current_predicate(kb_config:dictation_command/1),
+        kb_config:dictation_command(Command0)
     ->  Command = Command0
     ;   Command = "zara-dictate"
     ).
@@ -30,7 +31,8 @@ bundled_dictation_script(Path) :-
 start_dictation :-
     dictation_pidfile(PIDFILE),
     ( exists_file(PIDFILE) ->
-        format("Dictation already running (pidfile ~w). Use stop_dictation/0 first.~n", [PIDFILE])
+        format("Dictation already running (pidfile ~w). Use stop_dictation/0 first.~n", [PIDFILE]),
+        set_dictation_active(true)
     ;
         dictation_logfile(LOGFILE),
         dictation_command_string(Command0),
@@ -52,7 +54,8 @@ start_dictation :-
         ( exists_file(PIDFILE) ->
             read_file_to_string(PIDFILE, S, []),
             string_trim(S, PIDStr),
-            format("Dictation started, pid: ~w~n", [PIDStr])
+            format("Dictation started, pid: ~w~n", [PIDStr]),
+            set_dictation_active(true)
         ;
             format("Failed to start dictation. See ~w~n", [LOGFILE])
         )
@@ -85,7 +88,8 @@ stop_dictation :-
         )
     ;
         format("No dictation pidfile found at ~w.~n", [PIDFILE])
-    ).
+    ),
+    set_dictation_active(false).
 
 dictation_status :-
     dictation_pidfile(PIDFILE),
@@ -96,6 +100,23 @@ dictation_status :-
     ;
         format("Dictation not running (no pidfile ~w).~n", [PIDFILE])
     ).
+
+%% dictation_active is semidet.
+%  True when dictation pidfile exists.
+%  Keeps wake loop from routing to Prolog/LLM while dictation runs.
+:- dynamic dictation_active_flag/1.
+
+dictation_active :-
+    dictation_active_flag(true).
+
+dictation_active_flag(false).
+
+set_dictation_active(true) :-
+    retractall(dictation_active_flag(_)),
+    assertz(dictation_active_flag(true)).
+set_dictation_active(false) :-
+    retractall(dictation_active_flag(_)),
+    assertz(dictation_active_flag(false)).
 
 % helper to shell-quote a path
 shell_quote(Str, Quoted) :-

@@ -45,7 +45,9 @@ execute(search, Args) :-
     shell(Cmd), !.
 
 execute(dictation_start, _) :-
-    dictation:start_dictation, !.
+    dictation:start_dictation,
+    dictation:set_dictation_active(true),
+    !.
 
 execute(dictation_stop, _) :-
     dictation:stop_dictation, !.

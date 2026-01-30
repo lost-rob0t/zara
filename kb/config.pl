@@ -15,7 +15,6 @@
 
         search_engine/1,
         dictation_command/1,
-        dictation_stop_phrase/1,
 
         llm_provider/1,             % anthropic | openai | ollama
         llm_model/1,                % model name/ID
@@ -88,14 +87,6 @@ todo_template(markdown,
 % Search engine template for the `search` intent.
 % Users can override this in ~/.zarathushtra/config.pl
 search_engine("https://duckduckgo.com/?q=~w").
-
-% ---- Dictation (zara-dictate) ----
-% Spoken stop phrases (case-insensitive). Used by the Prolog intent matcher.
-dictation_stop_phrase("end voice").
-dictation_stop_phrase("stop voice").
-dictation_stop_phrase("stop voice mode").
-dictation_stop_phrase("stop dictation").
-dictation_stop_phrase("end dictation").
 
 % ---- LLM Provider Configuration ----
 

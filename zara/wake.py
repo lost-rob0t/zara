@@ -153,6 +153,22 @@ class WakeWordListener:
         text_lower = text.lower()
         return any(phrase in text_lower for phrase in self.stop_phrases)
 
+    def _is_dictation_stop(self, tokens: list[str]) -> bool:
+        stop_phrases = {
+            ("stop", "dictation"),
+            ("end", "dictation"),
+            ("end", "quote"),
+            ("end", "quot"),
+            ("end", "quota"),
+            ("end", "quoting"),
+        }
+        normalized = tuple(tok.rstrip(".") for tok in tokens)
+        return normalized in stop_phrases
+
+    def _tokenize_for_match(self, text: str) -> list[str]:
+        normalized = "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in text.lower())
+        return normalized.split()
+
     async def _stop_tts(self):
         if self.tts_task and not self.tts_task.done():
             self.tts_task.cancel()
@@ -639,6 +655,10 @@ class WakeWordListener:
 
     async def passive_mode_async(self):
         """Listen for wake word"""
+        if self.prolog.dictation_active():
+            self.state = "ACTIVE"
+            return
+
         chunk = await self.collect_audio(PASSIVE_CHUNK_SEC)
         if chunk is None:
             return
@@ -668,10 +688,44 @@ class WakeWordListener:
                 self.state = "PASSIVE"
                 return
 
+        # If dictation is active, only watch for stop phrases
+        if self.prolog.dictation_active():
+            chunk = await self.collect_audio_until_silence()
+            if chunk is None:
+                return
+
+            text = await self.transcribe_async(chunk)
+            if not text or len(text) < 2:
+                return
+
+            self.log(f"📝 Dictation heard: '{text}'")
+            tokens = self._tokenize_for_match(text)
+            if self._is_dictation_stop(tokens):
+                self.log("Dictation stop detected while active")
+                self.prolog.query_once("dictation:stop_dictation")
+                self.state = "PASSIVE"
+            return
+
         # Check general activity timeout
         if time.time() - self.last_activity > TIMEOUT_ACTIVE:
             self.log("⏸️ Timeout - returning to passive")
             self.state = "PASSIVE"
+            return
+
+        # Use silence detection for more natural recording
+            chunk = await self.collect_audio_until_silence()
+            if chunk is None:
+                return
+
+            text = await self.transcribe_async(chunk)
+            if not text or len(text) < 2:
+                return
+
+            tokens = self._tokenize_for_match(text)
+            if self._is_dictation_stop(tokens):
+                self.log("Dictation stop detected while active")
+                self.prolog.query_once("dictation:stop_dictation")
+                self.state = "PASSIVE"
             return
 
         # Use silence detection for more natural recording

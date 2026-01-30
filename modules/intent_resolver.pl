@@ -1,7 +1,7 @@
 :- module(intent_resolver, [
     resolve/3,
     canonicalize_tokens/2,
-    convert_number_atoms/2   % <-- add this
+    convert_number_atoms/2
 ]).
 :- use_module('../modules/todo_capture').
 :- use_module('../modules/normalizer', [strip_fillers/2]).
@@ -17,14 +17,10 @@
     resolve(Raw, Intent, Args) :-
     normalizer:normalize_string(Raw, Toks0),
     strip_fillers(Toks0, Core0),
-    (   stop_phrase(Core0)
-    ->  Intent = dictation_stop,
-        Args = []
-    ;   canonicalize_tokens(Toks0, Toks),
-        try_exact(Toks, Intent0, Args0),
-        object_intents:refine_intent(Intent0, Toks, Intent),
-        Args = Args0
-    ),
+    canonicalize_tokens(Toks0, Toks),
+    try_exact(Toks, Intent0, Args0),
+    object_intents:refine_intent(Intent0, Toks, Intent),
+    Args = Args0,
     !.
 
 canonicalize_tokens(Toks0, Toks) :-
@@ -38,11 +34,6 @@ canonicalize_tokens(Toks0, Toks) :-
     ; Toks = Core0
     ).
 
-stop_phrase(Tokens) :-
-    kb_config:dictation_stop_phrase(Phrase),
-    normalizer:normalize_string(Phrase, PhraseTokens),
-    Tokens == PhraseTokens,
-    !.
 
 %% ============================================================
 %% VERB MATCHING
