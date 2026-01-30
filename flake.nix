@@ -101,6 +101,7 @@
       p.edge-tts
       # Memory
       p.chromadb
+      p.sentence-transformers
       # Testing
       p.pytest
       p.pytest-asyncio
