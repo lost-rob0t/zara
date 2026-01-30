@@ -12,13 +12,17 @@
 %
 %  Resolves ~/.config/zarathushtra/config.pl to absolute path
 user_config_path(Path) :-
-    expand_file_name('~/.zarathushtra/config.pl', [Path]).
+    user_config_dir(Dir),
+    directory_file_path(Dir, 'config.pl', Path).
 
 %% user_config_dir(-Dir) is det.
 %
 %  Gets the user config directory
 user_config_dir(Dir) :-
-    expand_file_name('~/.zarathushtra', [Dir]).
+    ( getenv('XDG_CONFIG_HOME', Xdg), Xdg \= ''
+    -> directory_file_path(Xdg, 'zarathushtra', Dir)
+    ; expand_file_name('~/.config/zarathushtra', [Dir])
+    ).
 
 %% ensure_user_config is det.
 %
