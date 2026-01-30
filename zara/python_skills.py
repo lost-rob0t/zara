@@ -101,6 +101,8 @@ def _list_markdown_todos(path: Path, statuses: Optional[Iterable[str]]) -> str:
             continue
         if statuses and status not in statuses:
             continue
+        if not statuses and status == "DONE":
+            continue
         text = stripped.split("]", 1)[-1].strip()
         results.append(f"- [{status}] {text}")
     if not results:
@@ -120,6 +122,8 @@ def _list_org_todos(path: Path, statuses: Optional[Iterable[str]]) -> str:
             continue
         status = status.upper()
         if statuses and status not in statuses:
+            continue
+        if not statuses and status == "DONE":
             continue
         heading = node.heading.strip() if node.heading else ""
         if not heading:
