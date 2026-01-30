@@ -273,7 +273,6 @@ class WakeWordListener:
                 config=config,
                 prolog_engine=self.prolog
             )
-            self.agent_manager.conversation_manager.enter_conversation()
 
     async def speak_async(self, text):
         """Speak text via TTS if enabled"""
@@ -288,37 +287,17 @@ class WakeWordListener:
 
         Returns: (used_agent_mode, response)
         """
-        # Ensure agent manager exists
-        self._ensure_agent_manager()
-
-        # Check if we should go straight to conversation mode
-        if self.in_conversation_mode():
-            # Already in conversation, stay in it
-            if self.agent_manager is None:
-                return (True, "")
-            self.log("In conversation mode, using agent")
-            self.log(f"Conversation history has {len(self.agent_manager.conversation_manager.conversation_history)} messages")
-            self.log(f"Voice input to LLM (conversation): {command_text!r}")
-            self.log(f"Voice input length (conversation): {len(command_text)}")
-            result = await self.agent_manager.process_async(command_text)
-            response_text = result.get("response", "")
-            if self.session_id is None:
-                self.session_id = self.memory.start_session()
-            self.memory.add_message(self.session_id, "user", command_text)
-            if response_text:
-                self.memory.add_message(self.session_id, "assistant", response_text)
-            return (True, response_text)
-
         # Try Prolog first
+        self.log("Attempting Prolog resolution before agent fallback")
         loop = asyncio.get_event_loop()
 
         def _try_prolog():
             try:
                 result = self.prolog.resolve_intent(command_text)
-
+                self.log(f"Command got: {command_text}")
                 if not result:
                     self.log("Prolog resolution failed")
-                    return (False, "")
+                    return (False, "", True)
 
                 intent = result.get("Intent")
                 args = result.get("Args", [])
@@ -327,7 +306,7 @@ class WakeWordListener:
 
                 if intent == "ask":
                     self.log("Intent is 'ask' - needs conversation")
-                    return (False, "")
+                    return (False, "", True)
 
                 if isinstance(intent, str) and intent.startswith("python("):
                     skill_name = intent[len("python("):-1]
@@ -337,7 +316,7 @@ class WakeWordListener:
                     response = python_skills.execute(skill_name, skill_args)
                     self.memory.add_message(self.session_id, "user", command_text)
                     self.memory.add_message(self.session_id, "assistant", response)
-                    return (True, response)
+                    return (True, response, False)
 
                 exec_query = f"commands:execute({intent}, {args})"
                 self.log(f"Executing: {exec_query}")
@@ -350,38 +329,44 @@ class WakeWordListener:
                         self.session_id = self.memory.start_session()
                     self.memory.add_message(self.session_id, "user", command_text)
                     self.memory.add_message(self.session_id, "assistant", response_text)
-                    return (True, response_text)
-                return (False, "")
+                    return (True, response_text, False)
+                return (False, "", True)
 
             except Exception as e:
                 self.log(f"Prolog error: {e}")
-                return (False, "")
+                return (False, "", True)
 
-        # Try Prolog execution
-        prolog_success, prolog_result = await loop.run_in_executor(self.executor, _try_prolog)
+        prolog_success, prolog_result, needs_agent = await loop.run_in_executor(self.executor, _try_prolog)
 
         if prolog_success:
             # Prolog handled it successfully
             return (False, prolog_result)
-        else:
-            # Prolog failed, enter conversation mode
-            if self.agent_manager is None:
-                return (True, "")
-            self.log("Prolog failed, entering conversation mode")
-            self.log(f"Clearing conversation history (had {len(self.agent_manager.conversation_manager.conversation_history)} messages)")
-            # Ensure clean start for new conversation
+
+        if not needs_agent:
+            return (False, "")
+
+        # Prolog failed or asked for conversation
+        self._ensure_agent_manager()
+        if self.agent_manager is None:
+            return (True, "")
+
+        if not self.in_conversation_mode():
+            self.log("Entering conversation mode after Prolog")
             self.agent_manager.conversation_manager.enter_conversation()
             self.agent_manager.conversation_manager.conversation_history.clear()
-            self.log(f"Voice input to LLM (fallback): {command_text!r}")
-            self.log(f"Voice input length (fallback): {len(command_text)}")
-            result = await self.agent_manager.process_async(command_text)
-            response_text = result.get("response", "")
-            if self.session_id is None:
-                self.session_id = self.memory.start_session()
-            self.memory.add_message(self.session_id, "user", command_text)
-            if response_text:
-                self.memory.add_message(self.session_id, "assistant", response_text)
-            return (True, response_text)
+
+        self.log("Using agent after Prolog fallback")
+        self.log(f"Conversation history has {len(self.agent_manager.conversation_manager.conversation_history)} messages")
+        self.log(f"Voice input to LLM (fallback): {command_text!r}")
+        self.log(f"Voice input length (fallback): {len(command_text)}")
+        result = await self.agent_manager.process_async(command_text)
+        response_text = result.get("response", "")
+        if self.session_id is None:
+            self.session_id = self.memory.start_session()
+        self.memory.add_message(self.session_id, "user", command_text)
+        if response_text:
+            self.memory.add_message(self.session_id, "assistant", response_text)
+        return (True, response_text)
 
     async def query_llm_async(self, query_text):
         """Query LLM with chat history for conversational responses"""

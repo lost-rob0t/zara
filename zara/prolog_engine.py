@@ -125,9 +125,12 @@ class PrologEngine:
     
     def resolve_intent(self, text: str) -> Optional[Dict[str, Any]]:
         """Resolve natural language to intent + args"""
-        escaped = text.replace("'", "\\'")
-        goal = f"intent_resolver:resolve('{escaped}', Intent, Args)"
-        return self.query_once(goal)
+        escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+        goal = f"intent_resolver:resolve(\"{escaped}\", Intent, Args)"
+        self.logger.info(f"Intent query: {goal}")
+        result = self.query_once(goal)
+        self.logger.info(f"Intent result: {result}")
+        return result
     
     def start_timer(self, seconds: int, name: str = "") -> bool:
         """Start a timer using alarm module"""
