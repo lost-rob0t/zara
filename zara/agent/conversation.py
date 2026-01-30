@@ -91,6 +91,7 @@ class ConversationManager:
         self.last_activity = None
         self.conversation_history.clear()
 
-    def update_activity(self):
+    def update_activity(self, grace_seconds: float = 0.0):
         """Update last activity timestamp (call on each user interaction)."""
-        self.last_activity = time.time()
+        grace = max(0.0, grace_seconds)
+        self.last_activity = time.time() + grace

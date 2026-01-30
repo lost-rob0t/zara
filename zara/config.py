@@ -59,6 +59,8 @@ endpoint = "http://localhost:11434/api/chat"
 # Conversational agent settings
 conversation_timeout = 60  # seconds
 max_steps = 10  # max agentic steps per turn
+# Extra grace period after TTS playback completes
+post_tts_silence_seconds = 5.0
 # System prompt (inline string or filepath)
 system_prompt = ""
 
@@ -215,7 +217,8 @@ class ZaraConfig:
             },
             "agent": {
                 "conversation_timeout": 60,
-                "max_steps": 10
+                "max_steps": 10,
+                "post_tts_silence_seconds": 5.0
             },
             "prolog": {
                 "main_file": "main.pl",

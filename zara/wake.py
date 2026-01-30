@@ -30,7 +30,7 @@ CHANNELS = 1
 PASSIVE_CHUNK_SEC = 3
 ACTIVE_CHUNK_SEC = 8
 SILENCE_THRESHOLD = 0.01  # RMS threshold for silence detection
-SILENCE_DURATION = 2.0  # Seconds of silence before considering speech complete
+SILENCE_DURATION = 5.0  # Seconds of silence before considering speech complete
 MAX_RECORDING_DURATION = 30.0  # Maximum recording duration to prevent infinite recording
 WAKE_WORDS = ["zarathustra", "hey zara", "zara", "sarah"]
 TIMEOUT_ACTIVE = 10
@@ -307,6 +307,21 @@ class WakeWordListener:
             return self.agent_manager.conversation_manager.in_conversation
         return False
 
+    def _apply_conversation_grace(self):
+        if self.agent_manager is None:
+            return
+        if not self.in_conversation_mode():
+            return
+        agent_config = self.config.get_section("agent")
+        configured_grace = agent_config.get("post_tts_silence_seconds", 0.0)
+        try:
+            configured_grace = float(configured_grace)
+        except (TypeError, ValueError):
+            configured_grace = 0.0
+        grace_seconds = max(SILENCE_DURATION, configured_grace)
+        self.agent_manager.conversation_manager.update_activity(grace_seconds=grace_seconds)
+        self.log(f"Conversation grace window: {grace_seconds:.1f}s")
+
     def _ensure_agent_manager(self):
         """Lazy initialize agent manager"""
         if self.agent_manager is None:
@@ -468,7 +483,11 @@ class WakeWordListener:
                 await self._play_streaming_audio_task(text, stop_event)
             else:
                 self.log("Synthesizing speech...")
-                audio_bytes = await self.tts_client.synthesize_async(text)
+                tts_client = self.tts_client
+                if tts_client is None:
+                    self.log("TTS client unavailable for synthesis")
+                    return
+                audio_bytes = await tts_client.synthesize_async(text)
 
                 if stop_event.is_set():
                     return
@@ -489,7 +508,11 @@ class WakeWordListener:
         player_proc = None
         try:
             # First: fetch a chunk so we don't start playback on empty TTS.
-            stream_iter = self.tts_client.synthesize_streaming_async(text)
+            tts_client = self.tts_client
+            if tts_client is None:
+                self.log("TTS client unavailable for streaming")
+                return
+            stream_iter = tts_client.synthesize_streaming_async(text)
 
             first_chunk = None
             async for chunk in stream_iter:
@@ -523,7 +546,11 @@ class WakeWordListener:
                 player_cmd = ["mpv", "--no-video", "--no-terminal", "-"]
             else:
                 self.log("No streaming player found (ffplay/mpv), falling back to non-streaming")
-                audio_bytes = await self.tts_client.synthesize_async(text)
+                fallback_client = self.tts_client
+                if fallback_client is None:
+                    self.log("TTS client unavailable for streaming fallback")
+                    return
+                audio_bytes = await fallback_client.synthesize_async(text)
                 if audio_bytes:
                     await self._play_audio_task(audio_bytes, stop_event)
                 else:
@@ -574,6 +601,7 @@ class WakeWordListener:
             if player_proc and player_proc.returncode is None:
                 player_proc.kill()
                 await player_proc.wait()
+            self._apply_conversation_grace()
 
     async def _play_audio_task(self, audio_bytes, stop_event: asyncio.Event):
         """Internal task to play audio without blocking main loop"""
@@ -608,6 +636,8 @@ class WakeWordListener:
             self.log("Audio playback cancelled")
         except Exception as e:
             self.log(f"Audio playback error: {e}")
+        finally:
+            self._apply_conversation_grace()
 
     async def send_response_async(self, title, message):
         """Send response via notification and optionally TTS"""

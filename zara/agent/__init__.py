@@ -98,9 +98,8 @@ class AgentManager:
         import logging
         logger = logging.getLogger(__name__)
 
-        self.conversation_manager.update_activity()
-
         agent_config = self.config.get_section("agent")
+        self.conversation_manager.update_activity()
         max_steps = int(agent_config.get("max_steps", 10))
 
         logger.info("[AgentManager] user_input=%r", user_input)
