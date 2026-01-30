@@ -43,9 +43,9 @@ verb_intent(next, next, 0).
 verb_intent(skip, skip, 0).
 
 % Communication
-verb_intent(call, call, 1).
-verb_intent(dial, call, 1).
-verb_intent(phone, call, 1).
+% verb_intent(call, call, 1).
+% verb_intent(dial, call, 1).
+% verb_intent(phone, call, 1).
 verb_intent(text, text, 2).
 verb_intent(message, text, 2).
 verb_intent(sms, text, 2).

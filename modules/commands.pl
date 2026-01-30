@@ -16,6 +16,9 @@
 % Execution Layer
 % ============================================
 
+% execute(call, [Contact]) :-
+%     format('Calling: ~w~n', [Contact]), !.
+
 execute(greet, []) :-
     format('Hello! How can I help you?~n'), !.
 
@@ -25,8 +28,8 @@ execute(play, [Media]) :-
 execute(pause, []) :-
     format('Pausing playback~n'), !.
 
-execute(call, [Contact]) :-
-    format('Calling: ~w~n', [Contact]), !.
+% execute(call, [Contact]) :-
+%     format('Calling: ~w~n', [Contact]), !.
 
 execute(text, [Contact, Message]) :-
     format('Texting ~w: ~w~n', [Contact, Message]), !.
