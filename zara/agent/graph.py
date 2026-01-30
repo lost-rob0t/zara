@@ -186,7 +186,7 @@ def create_agent_graph(llm_client, tool_registry):
     agent_node = create_agent_node(llm_client, tool_registry)
     tools_node = create_tools_node(tool_registry)
 
-    workflow = StateGraph(dict)
+    workflow = StateGraph(AgentState)
 
     workflow.add_node("agent", agent_node)
     workflow.add_node("tools", tools_node)
