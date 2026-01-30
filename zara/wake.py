@@ -472,6 +472,18 @@ class WakeWordListener:
         """Play streaming audio as it arrives from TTS"""
         player_proc = None
         try:
+            # First: fetch a chunk so we don't start playback on empty TTS.
+            stream_iter = self.tts_client.synthesize_streaming_async(text)
+
+            first_chunk = None
+            async for chunk in stream_iter:
+                first_chunk = chunk
+                break
+
+            if not first_chunk:
+                self.log("TTS streaming produced no audio")
+                return
+
             # Use ffplay or mpv for streaming playback (they can handle stdin streaming)
             # Check which one is available
             ffplay_check = await asyncio.create_subprocess_exec(
@@ -498,6 +510,8 @@ class WakeWordListener:
                 audio_bytes = await self.tts_client.synthesize_async(text)
                 if audio_bytes:
                     await self._play_audio_task(audio_bytes, stop_event)
+                else:
+                    self.log("Failed to synthesize speech")
                 return
 
             # Start the player process
@@ -511,10 +525,17 @@ class WakeWordListener:
 
             self.log("Streaming audio playback started...")
 
-            # Stream audio chunks to player
-            async for chunk in self.tts_client.synthesize_streaming_async(text):
+            # Write first chunk before consuming remainder
+            if player_proc.stdin:
+                player_proc.stdin.write(first_chunk)
+                await player_proc.stdin.drain()
+
+            # Stream remaining audio chunks to player
+            async for chunk in stream_iter:
                 if stop_event.is_set():
                     break
+                if not chunk:
+                    continue
                 if player_proc.stdin:
                     player_proc.stdin.write(chunk)
                     await player_proc.stdin.drain()
@@ -540,6 +561,10 @@ class WakeWordListener:
 
     async def _play_audio_task(self, audio_bytes, stop_event: asyncio.Event):
         """Internal task to play audio without blocking main loop"""
+        if not audio_bytes:
+            self.log("Skipping audio playback (no audio data)")
+            return
+
         try:
             import soundfile as sf
             import io

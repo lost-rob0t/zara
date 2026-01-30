@@ -6,6 +6,9 @@ import os
 import uuid
 from datetime import datetime
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+import json
+import urllib.request
+import urllib.error
 
 try:
     import chromadb
@@ -24,6 +27,41 @@ except Exception:
 EmbeddingFunction = Callable[[List[str]], List[List[float]]]
 
 
+def _normalize_ollama_base_url(url: str) -> str:
+    cleaned = (url or "").strip().rstrip("/")
+    if not cleaned:
+        return "http://localhost:11434"
+    if cleaned.endswith("/api/chat"):
+        return cleaned[: -len("/api/chat")]
+    if cleaned.endswith("/api/generate"):
+        return cleaned[: -len("/api/generate")]
+    if cleaned.endswith("/api/embeddings"):
+        return cleaned[: -len("/api/embeddings")]
+    return cleaned
+
+
+def _ollama_embed(texts: List[str], base_url: str, model: str) -> List[List[float]]:
+    url = _normalize_ollama_base_url(base_url) + "/api/embeddings"
+    vectors: List[List[float]] = []
+
+    for text in texts:
+        payload = json.dumps({"model": model, "prompt": text}).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        embedding = body.get("embedding")
+        if not isinstance(embedding, list) or not embedding:
+            raise ValueError("Invalid embedding response")
+        vectors.append([float(v) for v in embedding])
+
+    return vectors
+
+
 class MemoryManager:
     """Manage conversational memory sessions."""
 
@@ -35,6 +73,7 @@ class MemoryManager:
         enabled: bool = True,
         top_k: int = 5,
         embedding_function: Optional[EmbeddingFunction] = None,
+        settings: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.sessions: Dict[str, List[Tuple[str, str]]] = {}
         self.collection_name = collection_name
@@ -42,6 +81,7 @@ class MemoryManager:
         self.embedding_model = embedding_model
         self.enabled = enabled
         self.top_k = top_k
+        self.settings = settings or {}
         self._memories: List[Dict[str, Any]] = []
         self._collection = None
         self._embedding_function = None
@@ -72,28 +112,29 @@ class MemoryManager:
         return chromadb.PersistentClient(path=path)
 
     def _build_embedding_function(self) -> Optional[EmbeddingFunction]:
-        if _EMBEDDING_FUNCTIONS_AVAILABLE:
+        memory_cfg = self.settings
+        backend = str(memory_cfg.get("embedding_backend", "ollama")).strip().lower()
+
+        if backend == "ollama":
+            model = str(memory_cfg.get("embedding_model", "nomic-embed-text")).strip() or "nomic-embed-text"
+            base_url = str(memory_cfg.get("ollama_url") or memory_cfg.get("ollama_base_url") or "").strip()
+            if not base_url:
+                base_url = str(os.getenv("ZARA_MEMORY_OLLAMA_URL") or os.getenv("OLLAMA_HOST") or "").strip()
+
+            def _embed(texts: List[str]) -> List[List[float]]:
+                return _ollama_embed(texts, base_url=base_url, model=model)
+
+            return _embed
+
+        if backend == "sentence_transformers" and _EMBEDDING_FUNCTIONS_AVAILABLE:
             try:
                 return embedding_functions.SentenceTransformerEmbeddingFunction(
                     model_name=self.embedding_model
                 )
             except Exception:
-                return self._fallback_embedding_function()
-        return self._fallback_embedding_function()
+                return None
 
-    def _fallback_embedding_function(self) -> Optional[EmbeddingFunction]:
-        try:
-            from sentence_transformers import SentenceTransformer
-        except Exception:
-            return None
-
-        encoder = SentenceTransformer(self.embedding_model)
-
-        def _embed(texts: List[str]) -> List[List[float]]:
-            embeddings = encoder.encode(texts)
-            return embeddings.tolist()
-
-        return _embed
+        return None
 
     def start_session(self) -> str:
         session_id = str(uuid.uuid4())
@@ -323,8 +364,9 @@ def build_memory_manager(
     return MemoryManager(
         collection_name=settings.get("collection_name", "zara_memory"),
         persist_directory=settings.get("persist_directory"),
-        embedding_model=settings.get("embedding_model", "all-MiniLM-L6-v2"),
+        embedding_model=settings.get("embedding_model") or "nomic-embed-text",
         enabled=bool(settings.get("enabled", True)),
         top_k=int(settings.get("top_k", 5)),
         embedding_function=embedding_function,
+        settings=settings,
     )
