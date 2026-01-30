@@ -9,7 +9,7 @@ import os
 import time
 import asyncio
 import pathlib
-from typing import Optional, Tuple, Any, List
+from typing import Any, List, Optional, Tuple
 import numpy as np
 import sounddevice as sd
 import faster_whisper
@@ -685,7 +685,6 @@ class WakeWordListener:
             if not safe_message:
                 safe_message = "No response."
 
-            # Send notification directly using async notify-send (fast, non-blocking)
             success = await send_notification_async(title, safe_message, urgency="normal")
             if success:
                 self.log(f"Sent notification: {title}")
@@ -693,7 +692,6 @@ class WakeWordListener:
                 self.log(f"Notification failed for: {title}")
                 self.log(f"Notification message: {safe_message[:200]}")
 
-            # If TTS is enabled, also speak the response
             if self.enable_tts:
                 await self.synthesize_and_play_async(safe_message)
 
