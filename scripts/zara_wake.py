@@ -198,17 +198,6 @@ class WakeWordListener:
         text_lower = text.lower()
         return any(wake in text_lower for wake in WAKE_WORDS)
 
-    def strip_wake_word(self, text):
-        """Remove wake word from command"""
-        text_lower = text.lower()
-        for wake in WAKE_WORDS:
-            if wake in text_lower:
-                # Remove wake word and any leading/trailing noise
-                parts = text_lower.split(wake, 1)
-                if len(parts) > 1:
-                    return parts[1].strip()
-        return text.strip()
-
     def query_prolog(self, command_text):
         """
         Query Prolog intent resolver and executor.
@@ -366,8 +355,7 @@ class WakeWordListener:
             self.state = "PASSIVE"
             return
 
-        # Strip wake word if user repeated it
-        command = self.strip_wake_word(text)
+        command = text.strip()
 
         if not command:
             return

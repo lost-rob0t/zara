@@ -284,16 +284,6 @@ class WakeWordListener:
         text_lower = text.lower()
         return any(wake in text_lower for wake in WAKE_WORDS)
 
-    def strip_wake_word(self, text):
-        """Remove wake word from command"""
-        text_lower = text.lower()
-        for wake in WAKE_WORDS:
-            if wake in text_lower:
-                parts = text_lower.split(wake, 1)
-                if len(parts) > 1:
-                    return parts[1].strip()
-        return text.strip()
-
     def in_conversation_mode(self) -> bool:
         """Check if currently in conversation mode"""
         if self.agent_manager is not None:
@@ -695,7 +685,7 @@ class WakeWordListener:
             self.state = "PASSIVE"
             return
 
-        command = self.strip_wake_word(text)
+        command = text.strip()
 
         if not command:
             return
