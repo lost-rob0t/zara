@@ -29,8 +29,8 @@ SAMPLE_RATE = 16000
 CHANNELS = 1
 PASSIVE_CHUNK_SEC = 3
 ACTIVE_CHUNK_SEC = 8
-SILENCE_THRESHOLD = 0.01  # RMS threshold for silence detection
-SILENCE_DURATION = 5.0  # Seconds of silence before considering speech complete
+DEFAULT_SILENCE_THRESHOLD = 0.03  # RMS threshold for silence detection
+DEFAULT_SILENCE_DURATION = 5.0  # Seconds of silence before considering speech complete
 MAX_RECORDING_DURATION = 30.0  # Maximum recording duration to prevent infinite recording
 WAKE_WORDS = ["zarathustra", "hey zara", "zara", "sarah"]
 TIMEOUT_ACTIVE = 10
@@ -96,6 +96,18 @@ class WakeWordListener:
         wake_cfg = self.config.get_section("wake")
         self.stop_phrases = self._load_stop_phrases(wake_cfg.get("stop_phrases"))
         self.stop_on_interrupt = bool(wake_cfg.get("stop_tts_on_input", True))
+        self.silence_duration = self._parse_float(
+            wake_cfg.get("silence_duration", DEFAULT_SILENCE_DURATION),
+            DEFAULT_SILENCE_DURATION,
+        )
+        self.silence_threshold = self._parse_float(
+            wake_cfg.get("silence_threshold", DEFAULT_SILENCE_THRESHOLD),
+            DEFAULT_SILENCE_THRESHOLD,
+        )
+        self.silence_log_interval = self._parse_float(
+            wake_cfg.get("silence_log_interval", 0.5),
+            0.5,
+        )
 
         # Initialize Prolog engine
         self.log("Initializing Prolog...")
@@ -146,6 +158,12 @@ class WakeWordListener:
         if not phrases:
             phrases = ["goodbye", "bye", "end conversation", "stop conversation", "end session", "stop session"]
         return phrases
+
+    def _parse_float(self, value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
 
     def _is_conversation_stop(self, text: str) -> bool:
         if self.prolog.is_conversation_stop(text):
@@ -239,6 +257,8 @@ class WakeWordListener:
         buffer = np.zeros((0, CHANNELS), dtype="float32")
         silence_start = None
         total_duration = 0.0
+        speech_detected = False
+        last_log_time = 0.0
 
         while not self.stop_event.is_set():
             try:
@@ -258,29 +278,48 @@ class WakeWordListener:
                     self.log(f"Max recording duration ({MAX_RECORDING_DURATION}s) reached, transcribing")
                     break
 
+                now = time.time()
+                if now - last_log_time >= self.silence_log_interval:
+                    if speech_detected and silence_start is not None:
+                        elapsed = now - silence_start
+                        self.log(
+                            f"Silence check: rms={rms:.4f} threshold={self.silence_threshold:.3f} "
+                            f"elapsed={elapsed:.2f}s"
+                        )
+                    else:
+                        self.log(
+                            f"Silence check: rms={rms:.4f} threshold={self.silence_threshold:.3f}"
+                        )
+                    last_log_time = now
+
                 # Detect speech vs silence
-                if rms > SILENCE_THRESHOLD:
-                    # Speech detected, reset silence timer
+                if rms > self.silence_threshold:
+                    speech_detected = True
                     silence_start = None
                 else:
-                    # Silence detected
+                    if not speech_detected:
+                        continue
                     if silence_start is None:
                         silence_start = time.time()
                     else:
                         # Check if we've had enough silence
                         silence_elapsed = time.time() - silence_start
-                        if silence_elapsed >= SILENCE_DURATION:
-                            self.log(f"Silence detected for {silence_elapsed:.1f}s, transcribing")
+                        if silence_elapsed >= self.silence_duration:
+                            self.log(
+                                f"Silence detected after {silence_elapsed:.2f}s, transcribing"
+                            )
                             break
 
             except asyncio.TimeoutError:
-                # Timeout counts as silence
+                if not speech_detected:
+                    continue
+                # Timeout counts as silence only after speech
                 if silence_start is None:
                     silence_start = time.time()
                 else:
                     silence_elapsed = time.time() - silence_start
-                    if silence_elapsed >= SILENCE_DURATION:
-                        self.log(f"Audio timeout after {silence_elapsed:.1f}s silence")
+                    if silence_elapsed >= self.silence_duration:
+                        self.log(f"Audio timeout after {silence_elapsed:.2f}s silence")
                         break
                 continue
 
@@ -318,7 +357,7 @@ class WakeWordListener:
             configured_grace = float(configured_grace)
         except (TypeError, ValueError):
             configured_grace = 0.0
-        grace_seconds = max(SILENCE_DURATION, configured_grace)
+        grace_seconds = max(self.silence_duration, configured_grace)
         self.agent_manager.conversation_manager.update_activity(grace_seconds=grace_seconds)
         self.log(f"Conversation grace window: {grace_seconds:.1f}s")
 

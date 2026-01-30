@@ -31,6 +31,10 @@ sample_rate = 16000
 stop_phrases = ["goodbye", "bye", "end conversation", "stop conversation", "end session", "stop session"]
 # Stop TTS playback when user starts speaking
 stop_tts_on_input = true
+# Silence detection tuning (seconds)
+silence_duration = 5.0
+silence_threshold = 0.03
+silence_log_interval = 0.5
 
 [stt]
 # Speech-to-Text settings
@@ -197,7 +201,10 @@ class ZaraConfig:
                     "end session",
                     "stop session"
                 ],
-                "stop_tts_on_input": True
+                "stop_tts_on_input": True,
+                "silence_duration": 5.0,
+                "silence_threshold": 0.03,
+                "silence_log_interval": 0.5
             },
             "stt": {
                 "provider": "faster-whisper",
