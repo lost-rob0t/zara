@@ -102,6 +102,10 @@ verb_intent(explain, ask, rest).
 % Fun
 verb_intent(say, speak, rest).
 
+% Python skills
+verb_intent(hello, python(say_hello), rest).
+verb_intent(greet, python(say_hello), rest).
+
 % Philosophy & deep questions
 verb_intent(what, ask, rest).
 verb_intent(why, ask, rest).

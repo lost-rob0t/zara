@@ -105,7 +105,7 @@ def validate_and_clean_messages(messages: List[BaseMessage]) -> List[BaseMessage
                 logger.warning(
                     "[ValidateMessages] Dropping ToolMessage with non-matching id: %s (wanted=%s)",
                     tool_id,
-                    sorted(wanted),
+                    sorted([value for value in wanted if value is not None]),
                 )
             continue
 
@@ -129,6 +129,14 @@ def create_agent_node(llm_client, tool_registry):
 
         # NOTE: history is cleaned in AgentManager; we keep logging here light.
         logger.info("[AgentNode] Calling LLM with %d messages", len(msgs))
+        logger.info(
+            "[AgentNode] Message types=%s",
+            [type(m).__name__ for m in msgs[-6:]],
+        )
+        logger.info(
+            "[AgentNode] Last message preview=%r",
+            getattr(msgs[-1], "content", None),
+        )
 
         start_time = time.time()
         response = await llm_with_tools.ainvoke(msgs)

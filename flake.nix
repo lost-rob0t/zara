@@ -98,6 +98,8 @@
       # TTS providers
       p.elevenlabs
       p.edge-tts
+      # Memory
+      p.chromadb
       # Testing
       p.pytest
       p.pytest-asyncio
@@ -276,13 +278,19 @@
         echo "Python + Whisper + SWI-Prolog + LangChain ready"
         echo ""
         echo "Commands:"
-        echo "  python scripts/zara_wake.py    # Direct dev run"
-        echo "  swipl -s main.pl               # Test REPL (zara console)"
+        echo "  zara --wake                    # Wake listener"
+        echo "  zara --console                 # Console mode"
         echo ""
         echo "Build system:"
         echo "  nix build                      # Build all"
         echo "  nix run                        # Run wake listener"
       '';
+    };
+
+    flakeouts.${system} = {
+      packages = builtins.attrNames self.packages.${system};
+      apps = builtins.attrNames self.apps.${system};
+      devShells = builtins.attrNames self.devShells.${system};
     };
   };
 }

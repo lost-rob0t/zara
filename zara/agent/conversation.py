@@ -71,6 +71,7 @@ class ConversationManager:
         Returns:
             True if conversation has been inactive too long
         """
+        # TODO GPT can you add in the STOP word detection logic, aka END CONVERSAZTIOn, goodby, see you next time, ect
         if not self.in_conversation:
             return False
 

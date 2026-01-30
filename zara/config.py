@@ -55,6 +55,8 @@ endpoint = "http://localhost:11434/api/chat"
 # Conversational agent settings
 conversation_timeout = 60  # seconds
 max_steps = 10  # max agentic steps per turn
+# System prompt (inline string or filepath)
+system_prompt = ""
 
 [prolog]
 # Prolog engine settings
@@ -62,7 +64,7 @@ main_file = "main.pl"
 load_on_startup = true
 
 [tools]
-# Enable/disable built-in tools
+# Enable/disable LangChain tools
 calculator = true
 get_current_time = true
 query_prolog = true
@@ -304,6 +306,32 @@ class ZaraConfig:
             Dict mapping tool names to enabled status
         """
         return self.get_section("tools")
+
+    def get_agent_system_prompt(self) -> Optional[str]:
+        """
+        Get the agent system prompt.
+
+        If the value points to a file, read the prompt from disk.
+        """
+        agent_config = self.get_section("agent")
+        prompt_value = agent_config.get("system_prompt", "")
+        if not prompt_value:
+            return None
+
+        expanded = os.path.expanduser(os.path.expandvars(str(prompt_value)))
+        prompt_path = Path(expanded)
+        if not prompt_path.is_absolute():
+            candidate = self.config_dir / expanded
+            if candidate.exists():
+                prompt_path = candidate
+
+        if prompt_path.exists() and prompt_path.is_file():
+            try:
+                return prompt_path.read_text(encoding="utf-8")
+            except Exception:
+                return str(prompt_value)
+
+        return str(prompt_value)
 
     def reload(self):
         """Reload configuration from file."""

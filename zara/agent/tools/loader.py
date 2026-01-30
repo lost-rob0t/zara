@@ -1,5 +1,5 @@
 """
-Dynamic plugin loader for user-defined tools.
+Dynamic plugin loader for LangChain-style tools.
 
 Loads tool plugins from user directories at runtime.
 """
@@ -9,7 +9,7 @@ import sys
 import importlib.util
 from pathlib import Path
 from typing import List, Optional
-from .base import BaseTool
+from langchain_core.tools import BaseTool
 
 
 def load_plugins(plugin_dir: str, prolog_engine=None) -> List[BaseTool]:
@@ -18,7 +18,7 @@ def load_plugins(plugin_dir: str, prolog_engine=None) -> List[BaseTool]:
 
     Searches for Python files in plugin_dir and imports them.
     Each plugin file should define a register_tools() or register_skills()
-    function that returns a list of tool/skill instances.
+    function that returns a list of LangChain tool instances.
 
     Args:
         plugin_dir: Path to plugin directory

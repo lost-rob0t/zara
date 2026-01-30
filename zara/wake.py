@@ -9,11 +9,10 @@ import os
 import time
 import asyncio
 import pathlib
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any, List
 import numpy as np
 import sounddevice as sd
 import faster_whisper
-import pyswip
 from concurrent.futures import ThreadPoolExecutor
 
 # Import LLM client and ChatHistory
@@ -22,6 +21,9 @@ from .tts import TTSEngine
 from .agent import AgentManager
 from .config import get_config
 from .notifications import send_notification_async
+from .prolog_engine import PrologEngine
+from .python_skills import python_skills
+from .memory import MemoryManager
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
@@ -78,17 +80,19 @@ class WakeWordListener:
         self.llm_config = self.config.get_llm_config()
 
         # Agent manager for conversation mode (lazy init)
-        self.agent_manager = None
+        self.agent_manager: Optional[AgentManager] = None
+
+        # Memory manager for sessions
+        self.memory = MemoryManager()
+        self.session_id: Optional[str] = self.memory.start_session()
 
         # TTS client (lazy init on first use)
         self.tts_client = None
         self.tts_config = load_tts_config()
 
-        # Initialize Prolog
-        self.prolog = pyswip.Prolog()
+        # Initialize Prolog engine
         self.log("Initializing Prolog...")
 
-        # Find main.pl
         candidates = [
             pathlib.Path.cwd() / "main.pl",
             pathlib.Path(__file__).parent.parent / "main.pl",
@@ -98,7 +102,6 @@ class WakeWordListener:
         if prolog_main_path:
             prolog_path = pathlib.Path(prolog_main_path)
         else:
-            # Try multiple locations
             prolog_path = None
             for candidate in candidates:
                 if candidate.exists():
@@ -109,7 +112,8 @@ class WakeWordListener:
             raise FileNotFoundError(f"Could not find main.pl. Tried: {candidates}")
 
         self.log(f"Consulting Prolog: {prolog_path}")
-        self.prolog.consult(str(prolog_path))
+        self.prolog = PrologEngine(prolog_path)
+        self.log("Prolog engine ready")
 
         threads = os.cpu_count()
         self.log(f"Loading Whisper {model} (threads={threads})")
@@ -256,7 +260,7 @@ class WakeWordListener:
 
     def in_conversation_mode(self) -> bool:
         """Check if currently in conversation mode"""
-        if self.agent_manager:
+        if self.agent_manager is not None:
             return self.agent_manager.conversation_manager.in_conversation
         return False
 
@@ -269,6 +273,7 @@ class WakeWordListener:
                 config=config,
                 prolog_engine=self.prolog
             )
+            self.agent_manager.conversation_manager.enter_conversation()
 
     async def speak_async(self, text):
         """Speak text via TTS if enabled"""
@@ -289,48 +294,68 @@ class WakeWordListener:
         # Check if we should go straight to conversation mode
         if self.in_conversation_mode():
             # Already in conversation, stay in it
+            if self.agent_manager is None:
+                return (True, "")
             self.log("In conversation mode, using agent")
             self.log(f"Conversation history has {len(self.agent_manager.conversation_manager.conversation_history)} messages")
+            self.log(f"Voice input to LLM (conversation): {command_text!r}")
+            self.log(f"Voice input length (conversation): {len(command_text)}")
             result = await self.agent_manager.process_async(command_text)
-            return (True, result["response"])
+            response_text = result.get("response", "")
+            if self.session_id is None:
+                self.session_id = self.memory.start_session()
+            self.memory.add_message(self.session_id, "user", command_text)
+            if response_text:
+                self.memory.add_message(self.session_id, "assistant", response_text)
+            return (True, response_text)
 
         # Try Prolog first
         loop = asyncio.get_event_loop()
 
         def _try_prolog():
             try:
-                query = f"intent_resolver:resolve(\"{command_text}\", Intent, Args)"
-                self.log(f"Prolog query: {query}")
+                result = self.prolog.resolve_intent(command_text)
 
-                results = list(self.prolog.query(query))
-
-                if not results:
+                if not result:
                     self.log("Prolog resolution failed")
-                    return (False, None)
+                    return (False, "")
 
-                result = results[0]
-                intent = result["Intent"]
-                args = result["Args"]
+                intent = result.get("Intent")
+                args = result.get("Args", [])
 
                 self.log(f"Resolved: intent={intent}, args={args}")
 
                 if intent == "ask":
                     self.log("Intent is 'ask' - needs conversation")
-                    return (False, None)
+                    return (False, "")
+
+                if isinstance(intent, str) and intent.startswith("python("):
+                    skill_name = intent[len("python("):-1]
+                    if self.session_id is None:
+                        self.session_id = self.memory.start_session()
+                    skill_args = list(args) if isinstance(args, list) else [args]
+                    response = python_skills.execute(skill_name, skill_args)
+                    self.memory.add_message(self.session_id, "user", command_text)
+                    self.memory.add_message(self.session_id, "assistant", response)
+                    return (True, response)
 
                 exec_query = f"commands:execute({intent}, {args})"
                 self.log(f"Executing: {exec_query}")
 
-                exec_results = list(self.prolog.query(exec_query))
+                exec_result = self.prolog.query_once(exec_query)
 
-                if exec_results is not None:
-                    return (True, f"Executed: {intent} {args}")
-                else:
-                    return (False, None)
+                if exec_result is not None:
+                    response_text = f"Executed: {intent} {args}"
+                    if self.session_id is None:
+                        self.session_id = self.memory.start_session()
+                    self.memory.add_message(self.session_id, "user", command_text)
+                    self.memory.add_message(self.session_id, "assistant", response_text)
+                    return (True, response_text)
+                return (False, "")
 
             except Exception as e:
                 self.log(f"Prolog error: {e}")
-                return (False, None)
+                return (False, "")
 
         # Try Prolog execution
         prolog_success, prolog_result = await loop.run_in_executor(self.executor, _try_prolog)
@@ -340,13 +365,23 @@ class WakeWordListener:
             return (False, prolog_result)
         else:
             # Prolog failed, enter conversation mode
+            if self.agent_manager is None:
+                return (True, "")
             self.log("Prolog failed, entering conversation mode")
             self.log(f"Clearing conversation history (had {len(self.agent_manager.conversation_manager.conversation_history)} messages)")
             # Ensure clean start for new conversation
             self.agent_manager.conversation_manager.enter_conversation()
             self.agent_manager.conversation_manager.conversation_history.clear()
+            self.log(f"Voice input to LLM (fallback): {command_text!r}")
+            self.log(f"Voice input length (fallback): {len(command_text)}")
             result = await self.agent_manager.process_async(command_text)
-            return (True, result["response"])
+            response_text = result.get("response", "")
+            if self.session_id is None:
+                self.session_id = self.memory.start_session()
+            self.memory.add_message(self.session_id, "user", command_text)
+            if response_text:
+                self.memory.add_message(self.session_id, "assistant", response_text)
+            return (True, response_text)
 
     async def query_llm_async(self, query_text):
         """Query LLM with chat history for conversational responses"""
@@ -556,8 +591,13 @@ class WakeWordListener:
         """Transcribe and route command with conversation mode support"""
         # Check conversation timeout
         if self.in_conversation_mode():
-            if self.agent_manager.should_exit_conversation():
+            if self.agent_manager is not None and self.agent_manager.should_exit_conversation():
                 self.log("Conversation timeout, exiting conversation mode")
+                if self.session_id is not None:
+                    summary = self.memory.summarise_session(self.session_id)
+                    if summary:
+                        self.log("Conversation summary stored")
+                self.session_id = self.memory.start_session()
                 self.agent_manager.exit_conversation()
                 if self.enable_tts:
                     await self.speak_async("Conversation ended")
@@ -587,7 +627,13 @@ class WakeWordListener:
         if any(phrase in text_lower for phrase in STOP_PHRASES):
             if self.in_conversation_mode():
                 self.log("Exiting conversation mode")
-                self.agent_manager.exit_conversation()
+                if self.session_id is not None:
+                    summary = self.memory.summarise_session(self.session_id)
+                    if summary:
+                        self.log("Conversation summary stored")
+                self.session_id = self.memory.start_session()
+                if self.agent_manager is not None:
+                    self.agent_manager.exit_conversation()
                 if self.enable_tts:
                     await self.speak_async("Conversation ended")
                 return

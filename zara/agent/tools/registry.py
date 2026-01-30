@@ -1,14 +1,14 @@
 """
 Tool registry for agent function calling.
 
-Central registry that manages all available tools, converts them to
-LangChain format, and executes them by name.
+Uses LangChain tools directly. The old custom registry is deprecated.
 """
 
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
-from langchain_core.tools import StructuredTool, tool
-from pydantic import BaseModel, Field, create_model
-from .base import BaseTool
+from langchain_core.tools import BaseTool as LangChainTool
+
+
+
 
 if TYPE_CHECKING:
     from ...config import ZaraConfig
@@ -32,9 +32,9 @@ class ToolRegistry:
         """
         self.prolog_engine = prolog_engine
         self.config = config
-        self._tools: Dict[str, BaseTool] = {}
+        self._tools: Dict[str, LangChainTool] = {}
 
-    def register_tool(self, tool: BaseTool):
+    def register_tool(self, tool: LangChainTool):
         """
         Register a single tool.
 
@@ -49,7 +49,7 @@ class ToolRegistry:
 
         self._tools[tool.name] = tool
 
-    def register_tools(self, tools: List[BaseTool]):
+    def register_tools(self, tools: List[LangChainTool]):
         """
         Register multiple tools.
 
@@ -59,7 +59,7 @@ class ToolRegistry:
         for tool in tools:
             self.register_tool(tool)
 
-    def get_tool(self, name: str) -> Optional[BaseTool]:
+    def get_tool(self, name: str) -> Optional[LangChainTool]:
         """
         Get tool by name.
 
@@ -80,69 +80,9 @@ class ToolRegistry:
         """
         return list(self._tools.keys())
 
-    def to_langchain_tools(self) -> List[StructuredTool]:
-        """
-        Convert all registered tools to LangChain StructuredTool format.
-
-        This format is used by LLMs for function calling.
-
-        Returns:
-            List of LangChain StructuredTools
-        """
-        langchain_tools = []
-
-        for tool in self._tools.values():
-            # Get tool parameters schema
-            params = tool.parameters
-
-            # Create Pydantic model for args_schema if parameters exist
-            if params:
-                # Convert JSON Schema-style parameters to Pydantic fields
-                fields = {}
-                for param_name, param_def in params.items():
-                    param_type = str  # Default type
-                    param_description = param_def.get("description", "")
-                    param_default = param_def.get("default", ...)
-
-                    # Map JSON Schema types to Python types
-                    if param_def.get("type") == "integer":
-                        param_type = int
-                    elif param_def.get("type") == "number":
-                        param_type = float
-                    elif param_def.get("type") == "boolean":
-                        param_type = bool
-
-                    fields[param_name] = (
-                        param_type,
-                        Field(default=param_default, description=param_description)
-                    )
-
-                # Create dynamic Pydantic model
-                args_schema = create_model(
-                    f"{tool.name}Schema",
-                    **fields
-                )
-            else:
-                # No parameters - create empty schema
-                args_schema = create_model(f"{tool.name}Schema")
-
-            # Create wrapper function that LangChain can call
-            # Important: Use default argument to capture tool by value, not reference
-            def make_tool_func(t=tool):
-                def tool_func(**kwargs):
-                    return t.execute(**kwargs)
-                return tool_func
-
-            # Create LangChain StructuredTool with proper schema
-            lc_tool = StructuredTool(
-                name=tool.name,
-                description=tool.description,
-                func=make_tool_func(),
-                args_schema=args_schema,
-            )
-            langchain_tools.append(lc_tool)
-
-        return langchain_tools
+    def to_langchain_tools(self) -> List[LangChainTool]:
+        """Return the tools already registered in LangChain format."""
+        return list(self._tools.values())
 
     def execute_tool(self, name: str, **kwargs) -> str:
         """
@@ -164,7 +104,7 @@ class ToolRegistry:
             raise ValueError(f"Tool '{name}' not found")
 
         try:
-            result = tool.execute(**kwargs)
+            result = tool.invoke(kwargs)
             return str(result)
         except Exception as e:
             raise Exception(f"Tool '{name}' execution failed: {str(e)}") from e
@@ -178,15 +118,13 @@ class ToolRegistry:
         """
         from .builtin_tools import get_builtin_tools
 
-        # Get all available built-in tools
         all_tools = get_builtin_tools(self.prolog_engine)
 
-        # Filter based on config if available
         if self.config:
             tool_config = self.config.get_tool_config()
             tools_to_register = [
                 tool for tool in all_tools
-                if tool_config.get(tool.name, True)  # Default to enabled
+                if tool_config.get(tool.name, True)
             ]
         else:
             tools_to_register = all_tools

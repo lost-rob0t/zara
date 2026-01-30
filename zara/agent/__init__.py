@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from .conversation import ConversationManager
 from .tools.registry import ToolRegistry
@@ -92,6 +92,9 @@ class AgentManager:
         agent_config = self.config.get_section("agent")
         max_steps = int(agent_config.get("max_steps", 10))
 
+        logger.info("[AgentManager] user_input=%r", user_input)
+        logger.info("[AgentManager] user_input_length=%d", len(user_input))
+
         history = self.conversation_manager.conversation_history or []
         if history:
             cleaned_history = validate_and_clean_messages(history.copy())
@@ -99,6 +102,10 @@ class AgentManager:
                 "[AgentManager] Cleaned history %d -> %d messages",
                 len(history),
                 len(cleaned_history),
+            )
+            logger.info(
+                "[AgentManager] History preview=%s",
+                [type(m).__name__ for m in cleaned_history[-5:]],
             )
         else:
             cleaned_history = []
@@ -114,8 +121,29 @@ class AgentManager:
             "response": None,
         }
 
+        system_prompt = self.config.get_agent_system_prompt() or (
+            "You are Zarathustra, who descended from the mountains after ten years of solitude. "
+            "You speak with wisdom and directness. You value strength, creativity, and the will to overcome. "
+            "Be helpful and philosophical."
+        )
+
+        if system_prompt:
+            if not state["messages"] or not isinstance(state["messages"][0], SystemMessage):
+                state["messages"].insert(0, SystemMessage(content=system_prompt))
+                logger.info("[AgentManager] System prompt injected")
+            else:
+                logger.info("[AgentManager] System prompt already present")
+
         # Always append the new user message last.
         state["messages"].append(HumanMessage(content=user_input))
+        logger.info(
+            "[AgentManager] Message types=%s",
+            [type(m).__name__ for m in state["messages"][-6:]],
+        )
+        logger.info(
+            "[AgentManager] Last user message=%r",
+            user_input,
+        )
 
         result = await run_conversation_loop(self.llm_client, self.tool_registry, state)
 

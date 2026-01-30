@@ -1,29 +1,32 @@
 """
 Built-in agent tools.
 
-Provides minimal example tools for agent function calling:
-- calculator: Evaluate mathematical expressions
-- get_current_time: Get current time
-- query_prolog: Query Prolog knowledge base (optional)
+LangChain tool definitions used by the agent system.
 """
 
 import ast
 import operator
 from datetime import datetime
-from typing import List, Optional
-from .base import BaseTool
+from typing import List
+
+from langchain_core.tools import StructuredTool, tool
+from pydantic import BaseModel, Field
 
 
-class CalculatorTool(BaseTool):
+class CalculatorArgs(BaseModel):
+    expression: str = Field(
+        ..., description="Mathematical expression to evaluate (e.g. '2+2', '10*5', '2**8')"
+    )
+
+
+@tool("calculator")
+def calculator(expression: str) -> str:
     """
-    Safe mathematical expression evaluator.
+    Evaluate mathematical expressions safely.
 
-    Evaluates basic math expressions without using eval().
     Supports: +, -, *, /, //, %, **
     """
-
-    # Safe operators for AST evaluation
-    OPERATORS = {
+    operators = {
         ast.Add: operator.add,
         ast.Sub: operator.sub,
         ast.Mult: operator.mul,
@@ -35,162 +38,68 @@ class CalculatorTool(BaseTool):
         ast.UAdd: operator.pos,
     }
 
-    @property
-    def name(self) -> str:
-        return "calculator"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Evaluate mathematical expressions safely. "
-            "Supports: +, -, *, /, //, %, **"
-        )
-
-    @property
-    def parameters(self):
-        return {
-            "expression": {
-                "type": "string",
-                "description": "Mathematical expression to evaluate (e.g. '2+2', '10*5', '2**8')"
-            }
-        }
-
-    def execute(self, expression: str) -> str:
-        """
-        Evaluate mathematical expression safely.
-
-        Args:
-            expression: Math expression string
-
-        Returns:
-            Result as string
-        """
-        try:
-            # Parse expression to AST
-            tree = ast.parse(expression, mode='eval')
-            result = self._eval_node(tree.body)
-            return f"Result: {result}"
-        except Exception as e:
-            return f"Error: {str(e)}"
-
-    def _eval_node(self, node):
-        """Recursively evaluate AST node."""
+    def eval_node(node):
         if isinstance(node, ast.Constant):
             return node.value
-        elif isinstance(node, ast.BinOp):
-            op = self.OPERATORS.get(type(node.op))
+        if isinstance(node, ast.BinOp):
+            op = operators.get(type(node.op))
             if op is None:
                 raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
-            left = self._eval_node(node.left)
-            right = self._eval_node(node.right)
-            return op(left, right)
-        elif isinstance(node, ast.UnaryOp):
-            op = self.OPERATORS.get(type(node.op))
+            return op(eval_node(node.left), eval_node(node.right))
+        if isinstance(node, ast.UnaryOp):
+            op = operators.get(type(node.op))
             if op is None:
                 raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
-            operand = self._eval_node(node.operand)
-            return op(operand)
-        else:
-            raise ValueError(f"Unsupported expression type: {type(node).__name__}")
+            return op(eval_node(node.operand))
+        raise ValueError(f"Unsupported expression type: {type(node).__name__}")
+
+    try:
+        tree = ast.parse(expression, mode="eval")
+        result = eval_node(tree.body)
+        return f"Result: {result}"
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 
-class CurrentTimeTool(BaseTool):
-    """Get current date and time."""
-
-    @property
-    def name(self) -> str:
-        return "get_current_time"
-
-    @property
-    def description(self) -> str:
-        return "Get the current date and time. No parameters required."
-
-    def execute(self) -> str:
-        """
-        Get current time.
-
-        Returns:
-            Current date/time as formatted string
-        """
-        now = datetime.now()
-        return now.strftime("%Y-%m-%d %H:%M:%S")
+@tool("get_current_time")
+def get_current_time() -> str:
+    """Get the current date and time."""
+    now = datetime.now()
+    return now.strftime("%Y-%m-%d %H:%M:%S")
 
 
-class PrologBridgeTool(BaseTool):
-    """
-    Optional tool to let LLM query Prolog knowledge base.
+class PrologQueryArgs(BaseModel):
+    query: str = Field(
+        ...,
+        description="Prolog query as string (e.g. 'command_loop:handle_command(\"open firefox\")')",
+    )
 
-    This bridges the gap between agent mode and Prolog commands.
-    """
 
-    def __init__(self, prolog_engine):
-        """
-        Initialize Prolog bridge tool.
-
-        Args:
-            prolog_engine: PrologEngine instance
-        """
-        if prolog_engine is None:
-            raise ValueError("PrologBridgeTool requires prolog_engine")
-        self.prolog_engine = prolog_engine
-
-    @property
-    def name(self) -> str:
-        return "query_prolog"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Query the Prolog knowledge base for commands and intents. "
-            "Use this to execute commands or check if Prolog can handle something."
-        )
-
-    @property
-    def parameters(self):
-        return {
-            "query": {
-                "type": "string",
-                "description": "Prolog query as string (e.g. 'command_loop:handle_command(\"open firefox\")')"
-            }
-        }
-
-    def execute(self, query: str) -> str:
-        """
-        Execute Prolog query.
-
-        Args:
-            query: Prolog query string
-
-        Returns:
-            Query result as string
-        """
+def build_prolog_tool(prolog_engine) -> StructuredTool:
+    def query_prolog(query: str) -> str:
         try:
-            result = self.prolog_engine.query_once(query)
+            result = prolog_engine.query_once(query)
             if result:
                 return f"Success: {result}"
-            else:
-                return "No results from Prolog query"
+            return "No results from Prolog query"
         except Exception as e:
             return f"Prolog query error: {str(e)}"
 
+    return StructuredTool.from_function(
+        func=query_prolog,
+        name="query_prolog",
+        description=(
+            "Query the Prolog knowledge base for commands and intents. "
+            "Use this to execute commands or check if Prolog can handle something."
+        ),
+        args_schema=PrologQueryArgs,
+    )
 
-def get_builtin_tools(prolog_engine=None) -> List[BaseTool]:
-    """
-    Get all built-in tools.
 
-    Args:
-        prolog_engine: Optional PrologEngine instance (required for prolog_bridge)
+def get_builtin_tools(prolog_engine=None) -> List[StructuredTool]:
+    tools: List[StructuredTool] = [calculator, get_current_time]
 
-    Returns:
-        List of built-in tool instances
-    """
-    tools = [
-        CalculatorTool(),
-        CurrentTimeTool(),
-    ]
-
-    # Add Prolog bridge if engine provided
     if prolog_engine is not None:
-        tools.append(PrologBridgeTool(prolog_engine))
+        tools.append(build_prolog_tool(prolog_engine))
 
     return tools
