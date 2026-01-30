@@ -635,9 +635,8 @@ class WakeWordListener:
         # Process with Prolog-first fallback
         used_agent, response = await self.query_with_fallback_async(command)
 
-        # Speak response if using agent mode
-        if used_agent and self.enable_tts and response:
-            await self.speak_async(response)
+        if response:
+            await self.send_response_async("Zara", response)
 
         # Reset activity timeout
         self.last_activity = time.time()
