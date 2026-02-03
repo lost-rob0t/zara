@@ -18,7 +18,7 @@ from .file_tools import build_file_tools
 from .todo_tools import build_todo_tools
 from ...noaa import build_noaa_weather_tool
 
-
+# TODO Have LLM Save user prefs under "pref" tag
 class RememberArgs(BaseModel):
     text: str = Field(
         ..., description="Fact to store in long-term memory."
@@ -105,8 +105,8 @@ class PrologQueryArgs(BaseModel):
             "Default: run the main command pipeline first via "
             "'command_loop:handle_command(\"<user text>\")'. "
             "For lists, use findall/3 because the tool returns only one solution. "
-            "Example: 'command_loop:handle_command(\"open firefox\")' or "
-            "'findall(V-I-A, kb_intents:verb_intent(V, I, A), L)'."
+            "Example: 'command_loop:handle_command(\"open firefox\")' to handle a user command such as open or "
+            "'findall(V-I-A, kb_intents:verb_intent(V, I, A), L)' to list all intents when user asks you to list your skills."
         ),
     )
     
