@@ -179,6 +179,7 @@ class WakeWordListener:
             ("end", "quot"),
             ("end", "quota"),
             ("end", "quoting"),
+            ("disable", "disable")
         }
         normalized = tuple(tok.rstrip(".") for tok in tokens)
         return normalized in stop_phrases
