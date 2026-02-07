@@ -19,6 +19,8 @@ import gc
 
 from collections import deque
 
+from zara.audio import resolve_input_sample_rate, resample_audio
+
 try:
     from faster_whisper import WhisperModel
 except Exception as e:
@@ -34,9 +36,10 @@ LOGFILE = "/tmp/zara_dictation.log"
 #     ZARA_STOP_PHRASE="end voice"             (single)
 #     ZARA_STOP_PHRASES="end voice,stop voice" (comma-separated)
 # - Or pass as 5th arg: zara-dictate <model> <device> <threads?> <workers?> "end voice,stop voice"
-DEFAULT_STOP_PHRASES = ["end voice", "stop voice", "stop dictation", "end dictation"]
+DEFAULT_STOP_PHRASES = ["end voice", "stop voice", "stop dictation", "end dictation" "disable", "end quote"]
 
-SAMPLE_RATE = 16000
+TARGET_SAMPLE_RATE = 16000
+INPUT_SAMPLE_RATE = None
 CHANNELS = 1
 CHUNK_SECONDS = 10  # Reduced from 5 for lower latency
 
@@ -67,6 +70,18 @@ def log(msg):
     print(msg, flush=True)
 
 
+def _get_input_sample_rate() -> float:
+    global INPUT_SAMPLE_RATE
+    if INPUT_SAMPLE_RATE is None:
+        INPUT_SAMPLE_RATE, rate_note = resolve_input_sample_rate(
+            TARGET_SAMPLE_RATE,
+            channels=CHANNELS,
+        )
+        if rate_note:
+            log(rate_note)
+    return INPUT_SAMPLE_RATE
+
+
 def record_audio(q, stop_event):
     """Audio capture with queue overflow protection"""
     def callback(indata, frames, time_info, status):
@@ -82,7 +97,11 @@ def record_audio(q, stop_event):
             except:
                 pass
 
-    with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS, callback=callback):
+    with sd.InputStream(
+        samplerate=_get_input_sample_rate(),
+        channels=CHANNELS,
+        callback=callback,
+    ):
         while not stop_event.is_set():
             time.sleep(0.1)
 
@@ -90,7 +109,7 @@ def record_audio(q, stop_event):
 
 def chunk_audio(q, outq, stop_event):
     """Assemble audio chunks with no memory growth (deque instead of concat)"""
-    target_frames = int(CHUNK_SECONDS * SAMPLE_RATE)
+    target_frames = int(CHUNK_SECONDS * _get_input_sample_rate())
     buffer = deque()
 
     while not stop_event.is_set():
@@ -157,6 +176,9 @@ def transcribe_worker(model, chunk, stop_phrases: list[str]):
     """Worker function for parallel transcription"""
     if chunk.ndim > 1:
         chunk = chunk[:, 0]
+
+    if INPUT_SAMPLE_RATE and INPUT_SAMPLE_RATE != TARGET_SAMPLE_RATE:
+        chunk = resample_audio(chunk, INPUT_SAMPLE_RATE, TARGET_SAMPLE_RATE)
 
     audio_float = chunk.astype(np.float32)
 
@@ -234,6 +256,8 @@ def main(model_name="small", device="cpu", threads=None, workers=2, stop_phrases
         stop_phrases = list(DEFAULT_STOP_PHRASES)
     log(f"Starting Zara Dictation Helper (Optimized); stop_phrases={stop_phrases!r}")
     write_pid()
+
+    _get_input_sample_rate()
 
     # Determine thread count for Whisper
     if threads is None:
@@ -341,7 +365,17 @@ if __name__ == "__main__":
             print(f"Level: {rms:.4f} |{bars}", end='\r')
 
         try:
-            with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS, callback=test_callback):
+            INPUT_SAMPLE_RATE, rate_note = resolve_input_sample_rate(
+                TARGET_SAMPLE_RATE,
+                channels=CHANNELS,
+            )
+            if rate_note:
+                log(rate_note)
+            with sd.InputStream(
+                samplerate=INPUT_SAMPLE_RATE,
+                channels=CHANNELS,
+                callback=test_callback,
+            ):
                 while True:
                     time.sleep(0.1)
         except KeyboardInterrupt:

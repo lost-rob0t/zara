@@ -21,19 +21,20 @@ from .tts import TTSEngine
 from .agent import AgentManager
 from .config import get_config
 from .notifications import send_notification_async
+from .audio import resolve_input_sample_rate, resample_audio
 from .prolog_engine import PrologEngine
 from .python_skills import python_skills
 from .memory import build_memory_manager
 
-SAMPLE_RATE = 16000
+DEFAULT_SAMPLE_RATE = 16000
 CHANNELS = 1
 PASSIVE_CHUNK_SEC = 3
 ACTIVE_CHUNK_SEC = 8
-DEFAULT_SILENCE_THRESHOLD = 0.03  # RMS threshold for silence detection
+DEFAULT_SILENCE_THRESHOLD = 0.01  # RMS threshold for silence detection
 DEFAULT_SILENCE_DURATION = 5.0  # Seconds of silence before considering speech complete
 MAX_RECORDING_DURATION = 30.0  # Maximum recording duration to prevent infinite recording
 WAKE_WORDS = ["zarathustra", "hey zara", "zara", "sarah"]
-TIMEOUT_ACTIVE = 10
+TIMEOUT_ACTIVE = 5
 
 PIDFILE = "/tmp/zara_wakeword.pid"
 LOGFILE = "/tmp/zara_wakeword.log"
@@ -108,6 +109,17 @@ class WakeWordListener:
             wake_cfg.get("silence_log_interval", 0.5),
             0.5,
         )
+
+        self.target_sample_rate = self._parse_float(
+            wake_cfg.get("sample_rate", DEFAULT_SAMPLE_RATE),
+            DEFAULT_SAMPLE_RATE,
+        )
+        self.input_sample_rate, rate_note = resolve_input_sample_rate(
+            self.target_sample_rate,
+            channels=CHANNELS,
+        )
+        if rate_note:
+            self.log(rate_note)
 
         # Initialize Prolog engine
         self.log("Initializing Prolog...")
@@ -227,6 +239,13 @@ class WakeWordListener:
             else:
                 audio_data_mono = audio_data
 
+            if self.input_sample_rate != self.target_sample_rate:
+                audio_data_mono = resample_audio(
+                    audio_data_mono,
+                    self.input_sample_rate,
+                    self.target_sample_rate,
+                )
+
             segments, _ = self.model.transcribe(
                 audio_data_mono.astype(np.float32),
                 beam_size=1,
@@ -241,7 +260,7 @@ class WakeWordListener:
 
     async def collect_audio(self, seconds):
         """Collect audio for specified duration"""
-        target_frames = int(seconds * SAMPLE_RATE)
+        target_frames = int(seconds * self.input_sample_rate)
         buffer = np.zeros((0, CHANNELS), dtype="float32")
 
         while buffer.shape[0] < target_frames and not self.stop_event.is_set():
@@ -271,7 +290,7 @@ class WakeWordListener:
                 rms = np.sqrt(np.mean(chunk_mono.astype(np.float32) ** 2))
 
                 # Update total duration
-                chunk_duration = len(data) / SAMPLE_RATE
+                chunk_duration = len(data) / self.input_sample_rate
                 total_duration += chunk_duration
 
                 # Check if we've exceeded max recording duration
@@ -325,7 +344,7 @@ class WakeWordListener:
                 continue
 
         # Return buffer if we have enough audio
-        if buffer.shape[0] > SAMPLE_RATE * 0.5:  # At least 0.5 seconds
+        if buffer.shape[0] > self.input_sample_rate * 0.5:  # At least 0.5 seconds
             return buffer
         return None
 
@@ -716,7 +735,7 @@ class WakeWordListener:
             f.write(str(os.getpid()))
 
         with sd.InputStream(
-            samplerate=SAMPLE_RATE,
+            samplerate=self.input_sample_rate,
             channels=CHANNELS,
             callback=self.audio_callback
         ):
@@ -742,6 +761,7 @@ class WakeWordListener:
         text = await self.transcribe_async(chunk)
 
         if self.check_wake_word(text):
+            await send_notification_async("Zara", "Listening", "normal", 1000)
             self.log(f"🔥 Wake word detected")
             await self.clear_queue()
             self.state = "ACTIVE"

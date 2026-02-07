@@ -20,7 +20,8 @@ import pyswip
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 import zara.llm
 
-SAMPLE_RATE = 16000
+DEFAULT_SAMPLE_RATE = 16000
+INPUT_SAMPLE_RATE = None
 CHANNELS = 1
 PASSIVE_CHUNK_SEC = 3
 ACTIVE_CHUNK_SEC = 8
@@ -118,6 +119,7 @@ class WakeWordListener:
         self.audio_queue = queue.Queue()
         self.stop_event = threading.Event()
         self.last_activity = time.time()
+        self.input_sample_rate = _get_input_sample_rate()
 
         # Chat history for conversational context
         self.chat_history = zara.llm.ChatHistory(max_length=20)
@@ -163,6 +165,9 @@ class WakeWordListener:
         if audio_data.ndim > 1:
             audio_data = audio_data[:, 0]
 
+        if self.input_sample_rate != DEFAULT_SAMPLE_RATE:
+            audio_data = _resample_audio(audio_data, self.input_sample_rate, DEFAULT_SAMPLE_RATE)
+
         segments, _ = self.model.transcribe(
             audio_data.astype(np.float32),
             beam_size=1,
@@ -174,7 +179,7 @@ class WakeWordListener:
         return " ".join(seg.text.strip() for seg in segments).strip()
 
     def collect_audio(self, seconds):
-        target_frames = int(seconds * SAMPLE_RATE)
+        target_frames = int(seconds * self.input_sample_rate)
         buffer = np.zeros((0, CHANNELS), dtype="float32")
 
         while buffer.shape[0] < target_frames and not self.stop_event.is_set():
@@ -298,7 +303,7 @@ class WakeWordListener:
             f.write(str(os.getpid()))
 
         with sd.InputStream(
-            samplerate=SAMPLE_RATE,
+            samplerate=self.input_sample_rate,
             channels=CHANNELS,
             callback=self.audio_callback
         ):
@@ -402,3 +407,49 @@ def main():
 
 if __name__ == "__main__":
     main()
+def _get_input_sample_rate() -> float:
+    global INPUT_SAMPLE_RATE
+    if INPUT_SAMPLE_RATE is None:
+        try:
+            sd.check_input_settings(samplerate=DEFAULT_SAMPLE_RATE, channels=CHANNELS)
+            INPUT_SAMPLE_RATE = float(DEFAULT_SAMPLE_RATE)
+        except Exception as exc:
+            try:
+                device_id = sd.default.device[0]
+                info = sd.query_devices(device_id, "input")
+                INPUT_SAMPLE_RATE = float(info["default_samplerate"])
+                sd.check_input_settings(samplerate=INPUT_SAMPLE_RATE, channels=CHANNELS)
+                print(
+                    f"Audio input sample rate {DEFAULT_SAMPLE_RATE}Hz not supported; "
+                    f"falling back to device default {INPUT_SAMPLE_RATE}Hz",
+                    flush=True,
+                )
+            except Exception as fallback_exc:
+                INPUT_SAMPLE_RATE = float(DEFAULT_SAMPLE_RATE)
+                print(
+                    f"Audio input sample rate check failed; using configured {DEFAULT_SAMPLE_RATE}Hz. "
+                    f"Details: {exc}; fallback check error: {fallback_exc}",
+                    flush=True,
+                )
+    return INPUT_SAMPLE_RATE
+
+
+def _resample_audio(audio: np.ndarray, input_rate: float, target_rate: float) -> np.ndarray:
+    if input_rate == target_rate or audio.size == 0:
+        return audio
+
+    ratio = target_rate / input_rate
+    new_length = int(round(audio.shape[0] * ratio))
+    if new_length <= 0:
+        return audio[:0]
+
+    x_old = np.arange(audio.shape[0], dtype=np.float32)
+    x_new = np.linspace(0, audio.shape[0] - 1, new_length, dtype=np.float32)
+    if audio.ndim == 1:
+        return np.interp(x_new, x_old, audio).astype(np.float32)
+
+    channels = audio.shape[1]
+    resampled = []
+    for ch in range(channels):
+        resampled.append(np.interp(x_new, x_old, audio[:, ch]))
+    return np.stack(resampled, axis=1).astype(np.float32)

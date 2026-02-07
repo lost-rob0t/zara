@@ -88,6 +88,9 @@ todo_template(markdown,
 % Users can override this in ~/.zarathushtra/config.pl
 search_engine("https://duckduckgo.com/?q=~w").
 
+% Dictation command used by dictation module
+dictation_command("zara-dictate").
+
 % ---- LLM Provider Configuration ----
 
 % Used by Python wake listener for conversational queries.

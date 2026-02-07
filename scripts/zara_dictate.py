@@ -36,7 +36,8 @@ LOGFILE = "/tmp/zara_dictation.log"
 # - Or pass as 5th arg: zara-dictate <model> <device> <threads?> <workers?> "end voice,stop voice"
 DEFAULT_STOP_PHRASES = ["end voice", "stop voice", "stop dictation"]
 
-SAMPLE_RATE = 16000
+TARGET_SAMPLE_RATE = 16000
+INPUT_SAMPLE_RATE = None
 CHANNELS = 1
 CHUNK_SECONDS = 10  # Reduced from 5 for lower latency
 
@@ -67,6 +68,52 @@ def log(msg):
     print(msg, flush=True)
 
 
+def _get_input_sample_rate() -> float:
+    global INPUT_SAMPLE_RATE
+    if INPUT_SAMPLE_RATE is None:
+        try:
+            sd.check_input_settings(samplerate=TARGET_SAMPLE_RATE, channels=CHANNELS)
+            INPUT_SAMPLE_RATE = float(TARGET_SAMPLE_RATE)
+        except Exception as exc:
+            try:
+                device_id = sd.default.device[0]
+                info = sd.query_devices(device_id, "input")
+                INPUT_SAMPLE_RATE = float(info["default_samplerate"])
+                sd.check_input_settings(samplerate=INPUT_SAMPLE_RATE, channels=CHANNELS)
+                log(
+                    f"Audio input sample rate {TARGET_SAMPLE_RATE}Hz not supported; "
+                    f"falling back to device default {INPUT_SAMPLE_RATE}Hz"
+                )
+            except Exception as fallback_exc:
+                INPUT_SAMPLE_RATE = float(TARGET_SAMPLE_RATE)
+                log(
+                    f"Audio input sample rate check failed; using configured {TARGET_SAMPLE_RATE}Hz. "
+                    f"Details: {exc}; fallback check error: {fallback_exc}"
+                )
+    return INPUT_SAMPLE_RATE
+
+
+def _resample_audio(audio: np.ndarray, input_rate: float, target_rate: float) -> np.ndarray:
+    if input_rate == target_rate or audio.size == 0:
+        return audio
+
+    ratio = target_rate / input_rate
+    new_length = int(round(audio.shape[0] * ratio))
+    if new_length <= 0:
+        return audio[:0]
+
+    x_old = np.arange(audio.shape[0], dtype=np.float32)
+    x_new = np.linspace(0, audio.shape[0] - 1, new_length, dtype=np.float32)
+    if audio.ndim == 1:
+        return np.interp(x_new, x_old, audio).astype(np.float32)
+
+    channels = audio.shape[1]
+    resampled = []
+    for ch in range(channels):
+        resampled.append(np.interp(x_new, x_old, audio[:, ch]))
+    return np.stack(resampled, axis=1).astype(np.float32)
+
+
 def record_audio(q, stop_event):
     """Audio capture with queue overflow protection"""
     def callback(indata, frames, time_info, status):
@@ -82,7 +129,11 @@ def record_audio(q, stop_event):
             except:
                 pass
 
-    with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS, callback=callback):
+    with sd.InputStream(
+        samplerate=_get_input_sample_rate(),
+        channels=CHANNELS,
+        callback=callback,
+    ):
         while not stop_event.is_set():
             time.sleep(0.1)
 
@@ -90,7 +141,7 @@ def record_audio(q, stop_event):
 
 def chunk_audio(q, outq, stop_event):
     """Assemble audio chunks with no memory growth (deque instead of concat)"""
-    target_frames = int(CHUNK_SECONDS * SAMPLE_RATE)
+    target_frames = int(CHUNK_SECONDS * _get_input_sample_rate())
     buffer = deque()
 
     while not stop_event.is_set():
@@ -139,6 +190,9 @@ def transcribe_worker(model, chunk, stop_phrases: list[str]):
     """Worker function for parallel transcription"""
     if chunk.ndim > 1:
         chunk = chunk[:, 0]
+
+    if INPUT_SAMPLE_RATE and INPUT_SAMPLE_RATE != TARGET_SAMPLE_RATE:
+        chunk = _resample_audio(chunk, INPUT_SAMPLE_RATE, TARGET_SAMPLE_RATE)
 
     audio_float = chunk.astype(np.float32)
 
@@ -216,6 +270,8 @@ def main(model_name="small", device="cpu", threads=None, workers=2, stop_phrases
         stop_phrases = list(DEFAULT_STOP_PHRASES)
     log(f"Starting Zara Dictation Helper (Optimized); stop_phrases={stop_phrases!r}")
     write_pid()
+
+    _get_input_sample_rate()
 
     # Determine thread count for Whisper
     if threads is None:
@@ -321,7 +377,8 @@ if __name__ == "__main__":
             print(f"Level: {rms:.4f} |{bars}", end='\r')
 
         try:
-            with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS, callback=test_callback):
+            rate = _get_input_sample_rate()
+            with sd.InputStream(samplerate=rate, channels=CHANNELS, callback=test_callback):
                 while True:
                     time.sleep(0.1)
         except KeyboardInterrupt:

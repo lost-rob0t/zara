@@ -3,9 +3,65 @@ Audio I/O - capture and playback
 """
 
 import queue
+from typing import Optional, Tuple
 import numpy as np
 import sounddevice as sd
 from threading import Thread
+
+
+def resolve_input_sample_rate(
+    target_rate: float,
+    channels: int = 1,
+    device: Optional[int] = None,
+) -> Tuple[float, Optional[str]]:
+    try:
+        sd.check_input_settings(device=device, samplerate=target_rate, channels=channels)
+        return float(target_rate), None
+    except Exception as exc:
+        try:
+            device_id = device if device is not None else sd.default.device[0]
+            info = sd.query_devices(device_id, "input")
+            default_rate = float(info["default_samplerate"])
+        except Exception as dev_exc:
+            return float(target_rate), (
+                f"Audio input sample rate check failed; using configured {target_rate}Hz. "
+                f"Details: {exc}; device lookup error: {dev_exc}"
+            )
+
+        try:
+            sd.check_input_settings(device=device, samplerate=default_rate, channels=channels)
+            return default_rate, (
+                f"Audio input sample rate {target_rate}Hz not supported; "
+                f"falling back to device default {default_rate}Hz"
+            )
+        except Exception as fallback_exc:
+            return float(target_rate), (
+                f"Audio input sample rate check failed; using configured {target_rate}Hz. "
+                f"Details: {exc}; fallback check error: {fallback_exc}"
+            )
+
+
+def resample_audio(audio: np.ndarray, input_rate: float, target_rate: float) -> np.ndarray:
+    if input_rate == target_rate or audio.size == 0:
+        return audio
+
+    ratio = target_rate / input_rate
+    new_length = int(round(audio.shape[0] * ratio))
+    if new_length <= 0:
+        return audio[:0]
+
+    x_old = np.arange(audio.shape[0], dtype=np.float32)
+    x_new = np.linspace(0, audio.shape[0] - 1, new_length, dtype=np.float32)
+
+    if audio.ndim == 1:
+        resampled = np.interp(x_new, x_old, audio).astype(np.float32)
+        return resampled
+
+    channels = audio.shape[1]
+    resampled_channels = []
+    for ch in range(channels):
+        resampled_channels.append(np.interp(x_new, x_old, audio[:, ch]))
+    return np.stack(resampled_channels, axis=1).astype(np.float32)
 
 
 class AudioCapture:

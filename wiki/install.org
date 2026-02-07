@@ -1,0 +1,68 @@
+#+title: Install & Configuration
+#+author: Zarathushtra Project
+#+options: toc:2 num:nil
+
+* Goals
+This page covers installation and configuration paths for Zarathushtra.
+The project prefers Nix for repeatable environments and does not offer
+support for ad-hoc setups.
+
+* Nix (Recommended)
+** Requirements
+- Nix with flakes enabled
+- Network access for dependencies
+
+** Development shell
+#+begin_src sh
+nix develop
+#+end_src
+
+** Build all packages
+#+begin_src sh
+nix build
+#+end_src
+
+** Run entrypoints
+#+begin_src sh
+nix run
+nix run .#zara-wake
+nix run .#zara-console
+nix run .#zara-dictate
+#+end_src
+
+* Python (Unsupported)
+This repo ships a requirements file for reference only. It is not supported.
+Use it only if you fully understand the dependency set and how to provide
+SWI-Prolog, audio backends, and model assets outside Nix.
+
+#+begin_src sh
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+#+end_src
+
+* Configuration
+** Config file
+Zarathushtra reads configuration from:
+- ~/.config/zarathushtra/config.toml
+
+The file is created on first run. You can also provide a custom path when
+instantiating the config manager.
+
+** Key sections
+- [agent]: LLM settings, system prompt, and timeouts
+- [prolog]: main file and load-on-startup toggle
+- [tools]: tool enable/disable flags
+- [modules]: plugin search paths and autoload list
+- [wake], [stt], [tts], [dictate], [memory], [noaa]
+
+** Wake audio sample rate
+- =wake.sample_rate= sets the target rate for transcription.
+- If the input device does not support that rate, Zarathushtra falls back to the
+  device default and resamples audio to the target.
+
+** Example: set a custom system prompt
+#+begin_src toml
+[agent]
+system_prompt = "/home/you/.config/zarathushtra/system_prompt.txt"
+#+end_src
