@@ -10,8 +10,15 @@
 
 alert(Title, Urgency, Format, Args) :-
     format(string(Msg), Format, Args),
-    format(string(Cmd), "notify-send -u '~w' '~w' '~w'", [Urgency, Title, Msg]),
-    catch(shell(Cmd), Error, format(user_error, 'Alert failed: ~w~n', [Error])).
+    catch(
+        process_create(path('notify-send'),
+                       ['-u', Urgency, '--', Title, Msg],
+                       [detached(true)]),
+        Error,
+        ( format(user_error, 'Alert failed: ~w~n', [Error]),
+          fail
+        )
+    ).
 
 % Default urgency = normal
 alert(Title, Format, Args) :-

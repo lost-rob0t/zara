@@ -69,75 +69,17 @@ execute(ask, Args) :-
 % ----------------------------------------------------------------------
 % Deprecated in Prolog; Python skills handle todo capture.
 
-% ----------------------------------------------------------------------
-% Named Timers
-% ----------------------------------------------------------------------
-
-execute(timer, [_, Seconds, second, Name]) :-
+execute(timer, [Seconds, Name]) :-
     alarm:start_timer(Name, Seconds),
-    format('⏳ Timer "~w" set for ~w second~n', [Name, Seconds]),
+    ( Name == ''
+    -> format('⏳ Timer set for ~w seconds~n', [Seconds])
+    ; format('⏳ Timer "~w" set for ~w seconds~n', [Name, Seconds])
+    ),
     !.
 
-execute(timer, [_, Seconds, seconds, Name]) :-
-    alarm:start_timer(Name, Seconds),
-    format('⏳ Timer "~w" set for ~w seconds~n', [Name, Seconds]),
-    !.
-
-execute(timer, [_, Minute, minute, Name]) :-
-    Seconds is Minute * 60,
-    alarm:start_timer(Name, Seconds),
-    format('⏳ Timer "~w" set for ~w minute (~w seconds)~n', [Name, Minute, Seconds]),
-    !.
-
-execute(timer, [_, Minutes, minutes, Name]) :-
-    Seconds is Minutes * 60,
-    alarm:start_timer(Name, Seconds),
-    format('⏳ Timer "~w" set for ~w minutes (~w seconds)~n', [Name, Minutes, Seconds]),
-    !.
-
-execute(timer, [_, Hour, hour, Name]) :-
-    Seconds is Hour * 3600,
-    alarm:start_timer(Name, Seconds),
-    format('⏳ Timer "~w" set for ~w hour (~w seconds)~n', [Name, Hour, Seconds]),
-    !.
-
-execute(timer, [_, Hours, hours, Name]) :-
-    Seconds is Hours * 3600,
-    alarm:start_timer(Name, Seconds),
-    format('⏳ Timer "~w" set for ~w hours (~w seconds)~n', [Name, Hours, Seconds]),
-    !.
-
-% Timer in second (singular)
-execute(timer, [_, Seconds, second]) :-
-    alarm:start_timer(Seconds),
-    format('⏳ Timer set for ~w second~n', [Seconds]).
-
-% Timer in seconds (plural)
-execute(timer, [_, Seconds, seconds]) :-
-    alarm:start_timer(Seconds),
-    format('⏳ Timer set for ~w seconds~n', [Seconds]).
-
-% Timer in minute (singular)
-execute(timer, [_, Minute, minute]) :-
-    Seconds is Minute * 60,
-    alarm:start_timer(Seconds),
-    format('⏳ Timer set for ~w minute (~w seconds)~n', [Minute, Seconds]).
-
-% Timer in minutes (plural)
-execute(timer, [_, Minutes, minutes]) :-
-    Seconds is Minutes * 60,
-    alarm:start_timer(Seconds),
-    format('⏳ Timer set for ~w minutes (~w seconds)~n', [Minutes, Seconds]).
-
-execute(timer, [_, Hour, hour]) :-
-    Seconds is Hour * 3600,
-    alarm:start_timer(Seconds),
-    format('⏳ Timer set for ~w hour (~w seconds)~n', [Hour, Seconds]).
-
-execute(timer, [_, Hours, hours]) :-
-    Seconds is Hours * 3600,
-    alarm:start_timer(Seconds),
-    format('⏳ Timer set for ~w hours (~w seconds)~n', [Hours, Seconds]).
+execute(alarm, _) :-
+    format(user_error, 'Alarms are not supported.~n', []),
+    fail.
 
 execute(say, Rest) :-
     format('Executing ~w with args: ~w~n', [Rest]), !.
