@@ -8,7 +8,7 @@ initialization and module loading.
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 # Use tomllib (Python 3.11+) or fallback to tomli
 if sys.version_info >= (3, 11):
@@ -45,7 +45,7 @@ threads = 4
 
 [tts]
 # Text-to-Speech settings
-provider = "qwen"  # or "custom"
+provider = "qwen3"  # "local", "11labs", "edge", or "qwen3"
 model_path = ""
 sample_rate = 16000
 
@@ -125,12 +125,11 @@ device = "cpu"
 workers = 2
 stop_phrases = ["end voice", "stop voice"]
 
-[noaa]
-# NOAA weather defaults used by the NOAA plugin
-# default_latitude = 39.7456
-# default_longitude = -97.0892
-# user_agent = "ZarathushtraWeather/1.0 (contact: you@example.com)"
 """
+
+
+class ConfigError(RuntimeError):
+    """Raised when a configuration file cannot be loaded or validated."""
 
 
 class ZaraConfig:
@@ -185,100 +184,38 @@ class ZaraConfig:
             Parsed configuration dict
         """
         if tomllib is None:
-            print("Warning: tomli/tomllib not available, using defaults")
-            return self._get_default_config()
+            raise ConfigError("TOML support is unavailable; install tomli or use Python 3.11+")
 
         try:
             with open(self.config_file, "rb") as f:
-                return tomllib.load(f)
-        except Exception as e:
-            print(f"Warning: Failed to load config: {e}")
-            return self._get_default_config()
+                config = tomllib.load(f)
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            raise ConfigError(f"Failed to load config {self.config_file}: {error}") from error
 
-    def _get_default_config(self) -> Dict[str, Any]:
-        """Get default configuration as dict."""
-        return {
-            "wake": {
-                "model_path": "~/.zarathushtra/models/wake.onnx",
-                "threshold": 0.5,
-                "sample_rate": 16000,
-                "stop_phrases": [
-                    "goodbye",
-                    "bye",
-                    "end conversation",
-                    "stop conversation",
-                    "end session",
-                    "stop session"
-                ],
-                "stop_tts_on_input": True,
-                "silence_duration": 5.0,
-                "silence_threshold": 0.03,
-                "silence_log_interval": 0.5
-            },
-            "stt": {
-                "provider": "faster-whisper",
-                "model": "small",
-                "device": "cpu",
-                "threads": 4
-            },
-            "tts": {
-                "provider": "qwen",
-                "model_path": "",
-                "sample_rate": 16000
-            },
-            "llm": {
-                "provider": "ollama",
-                "model": "",
-                "endpoint": "http://localhost:11434/api/chat"
-            },
-            "agent": {
-                "conversation_timeout": 60,
-                "max_steps": 10,
-                "post_tts_silence_seconds": 5.0
-            },
-            "prolog": {
-                "main_file": "main.pl",
-                "load_on_startup": True
-            },
-            "tools": {
-                "calculator": True,
-                "get_current_time": True,
-                "query_prolog": True,
-                "remember": True,
-                "recall": True
-            },
-            "noaa": {
-                "default_latitude": None,
-                "default_longitude": None,
-                "user_agent": "ZarathushtraWeather/1.0 (contact: you@example.com)"
-            },
-            "database": {
-                "path": "~/.local/share/zarathushtra/zara.db"
-            },
-            "todo": {
-                "default_status": "TODO",
-                "default_duration_minutes": 30
-            },
-            "memory": {
-                "enabled": True,
-                "persist_directory": "~/.local/share/zarathushtra/chroma",
-                "collection_name": "zara_memory",
-                "embedding_backend": "onnx",
-                "embedding_model": "all-MiniLM-L6-v2",
-                "top_k": 5,
-                "max_chars": 1200
-            },
-            "modules": {
-                "search_paths": ["~/.zarathushtra/plugins", "~/.zarathushtra/modules"],
-                "autoload": []
-            },
-            "dictate": {
-                "model": "small",
-                "device": "cpu",
-                "workers": 2,
-                "stop_phrases": ["end voice", "stop voice"]
-            }
-        }
+        self._validate_config(config)
+        return config
+
+    def _validate_config(self, config: Dict[str, Any]) -> None:
+        tts_config = config.get("tts", {})
+        if not isinstance(tts_config, dict):
+            raise ConfigError("Invalid [tts] configuration: expected a TOML table")
+
+        provider = tts_config.get("provider", "qwen3")
+        if provider == "qwen":
+            provider = "qwen3"
+            tts_config["provider"] = provider
+
+        supported_providers = {"local", "11labs", "edge", "qwen3"}
+        if provider not in supported_providers:
+            choices = ", ".join(sorted(supported_providers))
+            raise ConfigError(f"Unsupported TTS provider {provider!r}; choose one of: {choices}")
+
+        if provider == "11labs":
+            required = ("elevenlabs_api_key", "elevenlabs_voice_id")
+            missing = [key for key in required if not tts_config.get(key)]
+            if missing:
+                fields = ", ".join(f"tts.{key}" for key in missing)
+                raise ConfigError(f"11labs TTS requires {fields}")
 
     def get(self, section: str, key: str, default: Any = None) -> Any:
         """
