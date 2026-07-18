@@ -1,5 +1,6 @@
 :- module(intent_resolver, [
     resolve/3,
+    resolve/4,
     canonicalize_tokens/2,
     convert_number_atoms/2
 ]).
@@ -15,20 +16,61 @@
 %% ============================================================
 
 resolve(Raw, Intent, Args) :-
+    resolve(Raw, passive, Intent, Args).
+
+resolve(Raw, State, Intent, Args) :-
     normalizer:normalize_string(Raw, Toks0),
     strip_fillers(Toks0, Core0),
-    ( memberchk(timer, Core0)
+    ( state_control(State, Core0, Intent)
+    -> Args = []
+    ; memberchk(timer, Core0)
     -> parse_timer_command(Core0, Args),
        Intent = timer
     ; memberchk(alarm, Core0)
     -> Intent = alarm,
        Args = []
+    ; Core0 = [hello|Rest]
+    -> Intent = python(say_hello),
+       Args = Rest
+    ; todo_search(Core0, SearchArgs)
+    -> Intent = python(search_todos),
+       Args = SearchArgs
     ; canonicalize_tokens(Toks0, Toks),
-      try_exact(Toks, Intent0, Args0),
-      object_intents:refine_intent(Intent0, Toks, Intent),
-      Args = Args0
+      resolve_canonical(Toks, Intent, Args)
     ),
     !.
+
+state_control(conversation, [Word|_], end_conversation) :-
+    memberchk(Word, [stop, end]).
+state_control(dictation, [Word|_], dictation_stop) :-
+    memberchk(Word, [stop, end, disable, deactivate]).
+state_control(passive, [stop|_], stop).
+state_control(passive, [end|_], end_conversation).
+
+todo_search([Word|Rest], Rest) :-
+    memberchk(Word, [search, find]),
+    member(TodoWord, Rest),
+    memberchk(TodoWord, [todo, todos, task, tasks]),
+    !.
+
+resolve_canonical(Toks, Intent, Args) :-
+    missing_slots(Toks, PendingIntent, Slots),
+    !,
+    Intent = pending(PendingIntent),
+    Args = Slots.
+resolve_canonical(Toks, Intent, Args) :-
+    try_exact(Toks, Intent0, Args0),
+    object_intents:refine_intent(Intent0, Toks, Intent),
+    Args = Args0.
+
+missing_slots([Word], open, [app]) :-
+    memberchk(Word, [open, launch, start, run]).
+missing_slots([Word], text, [contact, message]) :-
+    memberchk(Word, [text, message, sms]).
+missing_slots([Word, _], text, [message]) :-
+    memberchk(Word, [text, message, sms]).
+missing_slots([Word], python(schedule_todo), [task]) :-
+    memberchk(Word, [schedule, sched, plan, set]).
 
 parse_timer_command(Tokens, [Seconds, Name]) :-
     append(_, [timer|TimerTokens], Tokens),
