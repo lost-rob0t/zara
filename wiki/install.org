@@ -81,6 +81,10 @@ the bundled defaults live in =assets/sounds/= and play through =mpv=.
 Intent precedence is state-aware in Prolog through =resolve/4=. Conversation,
 dictation, and passive controls are distinct; missing command slots return a
 typed =pending(...)= result for the thin Python boundary to present.
+
+Agent history validation preserves complete contiguous tool-result groups in
+the originating AI tool-call order. Orphaned, duplicate, unknown, and
+cross-turn tool results are discarded before provider serialization.
 ** Config file
 Zarathushtra reads configuration from:
 - ~/.config/zarathushtra/config.toml

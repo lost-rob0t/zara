@@ -1,15 +1,4 @@
-"""
-LangGraph-based conversation flow.
-
-Key fix:
-- Uses a proper message reducer (add_messages) so ToolNode/appended messages
-  do NOT overwrite history. Without this, the state can end up containing only
-  ToolMessages, which Anthropic rejects with:
-    "tool_result ... must have a corresponding tool_use in the previous message"
-
-This module keeps a small validator to drop truly orphaned ToolMessages, but it
-does NOT delete valid tool traces just because they appear at the end.
-"""
+"""LangGraph-based conversation flow."""
 
 from __future__ import annotations
 
@@ -73,43 +62,54 @@ def _tool_call_id(tool_call: Any) -> Optional[str]:
 
 
 def validate_and_clean_messages(messages: List[BaseMessage]) -> List[BaseMessage]:
-    """
-    Drop orphaned ToolMessages that would violate Anthropic's requirements.
-
-    Rule enforced:
-    - A ToolMessage is only valid if the immediately previous kept message is an
-      AIMessage that contains a tool_call id matching ToolMessage.tool_call_id.
-    """
-    if not messages:
-        return []
-
+    """Preserve valid contiguous tool-result groups and drop invalid results."""
     cleaned: List[BaseMessage] = []
-    for idx, msg in enumerate(messages):
-        if isinstance(msg, ToolMessage):
-            if not cleaned:
-                logger.warning("[ValidateMessages] Dropping ToolMessage at start of history")
-                continue
-
-            prev = cleaned[-1]
-            if not (isinstance(prev, AIMessage) and getattr(prev, "tool_calls", None)):
-                logger.warning("[ValidateMessages] Dropping ToolMessage with no preceding AI tool_use")
-                continue
-
-            wanted = {_tool_call_id(tc) for tc in prev.tool_calls}  # type: ignore[attr-defined]
-            wanted.discard(None)
-
-            tool_id = getattr(msg, "tool_call_id", None)
-            if tool_id and tool_id in wanted:
-                cleaned.append(msg)
-            else:
-                logger.warning(
-                    "[ValidateMessages] Dropping ToolMessage with non-matching id: %s (wanted=%s)",
-                    tool_id,
-                    sorted([value for value in wanted if value is not None]),
-                )
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        if isinstance(message, ToolMessage):
+            logger.warning(
+                "[ValidateMessages] Dropping orphan ToolMessage at index %d with id=%s",
+                index,
+                getattr(message, "tool_call_id", None),
+            )
+            index += 1
             continue
 
-        cleaned.append(msg)
+        cleaned.append(message)
+        index += 1
+        if not isinstance(message, AIMessage) or not getattr(message, "tool_calls", None):
+            continue
+
+        call_ids = [
+            tool_id
+            for tool_id in (_tool_call_id(call) for call in message.tool_calls)
+            if tool_id is not None
+        ]
+        results: Dict[str, ToolMessage] = {}
+        while index < len(messages) and isinstance(messages[index], ToolMessage):
+            result = messages[index]
+            tool_id = getattr(result, "tool_call_id", None)
+            if not tool_id or tool_id not in call_ids:
+                logger.warning(
+                    "[ValidateMessages] Dropping unknown ToolMessage at index %d "
+                    "with id=%s; expected=%s",
+                    index,
+                    tool_id,
+                    call_ids,
+                )
+            elif tool_id in results:
+                logger.warning(
+                    "[ValidateMessages] Dropping duplicate ToolMessage at index %d "
+                    "with id=%s",
+                    index,
+                    tool_id,
+                )
+            else:
+                results[tool_id] = result
+            index += 1
+
+        cleaned.extend(results[tool_id] for tool_id in call_ids if tool_id in results)
 
     return cleaned
 
