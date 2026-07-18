@@ -150,23 +150,6 @@ class PrologEngine:
         return result is not None
 
     
-    def start_timer(self, seconds: int, name: str = "") -> bool:
-        """Start a timer using alarm module"""
-        try:
-            if name:
-                goal = f"alarm:start_timer('{name}', {seconds})"
-            else:
-                goal = f"alarm:start_timer({seconds})"
-            
-            result = self.query_once(goal)
-            if result is None:
-                return False
-            self.logger.info(f"Timer started: {seconds}s (name={name})")
-            return True
-        except Exception as e:
-            self.logger.error(f"Timer failed: {e}")
-            return False
-    
     def reload_config(self) -> bool:
         """Reload user configuration"""
         try:
@@ -194,10 +177,6 @@ def test_engine():
     print("\n=== Testing Intent Resolution ===")
     result = engine.resolve_intent("open firefox")
     print(f"Resolved: {result}")
-    
-    # Test timer
-    print("\n=== Testing Timer ===")
-    engine.start_timer(5, "test_timer")
     
     # Test app mapping query
     print("\n=== Testing App Mapping ===")

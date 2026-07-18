@@ -163,5 +163,5 @@ verb_intent(who, ask, rest).
 % Deprecated in Prolog. Routed to Python skills above.
 
 % Timers
-verb_intent(timer, timer, 2).      % timer Duration Label
-verb_intent(alarm, alarm, 2).      % alarm Duration Label
+verb_intent(timer, timer, rest).
+verb_intent(alarm, alarm, rest).
