@@ -277,6 +277,7 @@
       ];
 
       shellHook = ''
+        export PYTHONPATH="$PWD''${PYTHONPATH:+:$PYTHONPATH}"
         echo "Python + Whisper + SWI-Prolog + LangChain ready"
         echo ""
         echo "Commands:"

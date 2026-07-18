@@ -132,6 +132,11 @@ class PrologEngine:
         self.logger.info(f"Intent result: {result}")
         return result
 
+    def execute_intent(self, intent: str, args: List[Any]) -> bool:
+        """Execute a resolved intent and report whether its handler succeeded."""
+        result = self.query_once(f"commands:execute({intent}, {args})")
+        return result is not None
+
     def is_conversation_stop(self, text: str) -> bool:
         """Check whether text matches a conversation stop intent."""
         result = self.resolve_intent(text)
@@ -153,7 +158,9 @@ class PrologEngine:
             else:
                 goal = f"alarm:start_timer({seconds})"
             
-            self.query_once(goal)
+            result = self.query_once(goal)
+            if result is None:
+                return False
             self.logger.info(f"Timer started: {seconds}s (name={name})")
             return True
         except Exception as e:
@@ -163,8 +170,8 @@ class PrologEngine:
     def reload_config(self) -> bool:
         """Reload user configuration"""
         try:
-            self.query_once("config_loader:reload_user_config")
-            return True
+            result = self.query_once("config_loader:reload_user_config")
+            return result is not None
         except Exception as e:
             self.logger.error(f"Config reload failed: {e}")
             return False

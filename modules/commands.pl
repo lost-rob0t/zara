@@ -42,7 +42,7 @@ execute(search, Args) :-
     search_url(Query, URL),
     format('Searching for: ~w~n', [Query]),
     format(atom(Cmd), 'xdg-open "~w"', [URL]),
-    shell(Cmd), !.
+    run_system_command(Cmd), !.
 
 execute(dictation_start, _) :-
     dictation:start_dictation,
@@ -59,7 +59,9 @@ execute(ask, Args) :-
           format('~w~n', [Response])
         ),
         Error,
-        format('LLM Error: ~w~n', [Error])
+        ( format('LLM Error: ~w~n', [Error]),
+          fail
+        )
     ),
     !.
 
@@ -141,9 +143,6 @@ execute(timer, [_, Hours, hours]) :-
 execute(say, Rest) :-
     format('Executing ~w with args: ~w~n', [Rest]), !.
 
-execute(Intent, Args) :-
-    format('Executing ~w with args: ~w~n', [Intent, Args]), !.
-
 % ============================================
 % App Opening System
 % ============================================
@@ -168,11 +167,16 @@ run_system_command(Command) :-
             detached(true),
             stdout(null),
             stderr(null),
-            process(_)
+            process(Process)
         ]),
         Error,
-        format('Failed to launch: ~w~n', [Error])
-    ), !.
+        ( format('Failed to launch: ~w~n', [Error]),
+          fail
+        )
+    ),
+    process_wait(Process, Status, [timeout(0.5)]),
+    ( Status == exit(0) ; Status == timeout ),
+    !.
 
 tokens_to_string([], "unspecified task") :- !.
 tokens_to_string(Toks, S) :-

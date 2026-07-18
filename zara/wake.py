@@ -440,12 +440,8 @@ class WakeWordListener:
                     self.memory.add_message(self.session_id, "assistant", response)
                     return (True, response, False)
 
-                exec_query = f"commands:execute({intent}, {args})"
-                self.log(f"Executing: {exec_query}")
-
-                exec_result = self.prolog.query_once(exec_query)
-
-                if exec_result is not None:
+                self.log(f"Executing intent={intent}, args={args}")
+                if self.prolog.execute_intent(intent, args):
                     response_text = f"Executed: {intent} {args}"
                     if self.session_id is None:
                         self.session_id = self.memory.start_session()

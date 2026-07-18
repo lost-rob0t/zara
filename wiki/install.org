@@ -17,6 +17,15 @@ support for ad-hoc setups.
 nix develop
 #+end_src
 
+** Validation
+#+begin_src sh
+nix develop -c pytest
+nix develop -c scripts/test-command-routing.sh
+#+end_src
+
+The command-routing gate verifies that unsupported or failed Prolog handlers
+fall back without reporting a successful execution.
+
 ** Build all packages
 #+begin_src sh
 nix build
