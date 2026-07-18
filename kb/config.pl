@@ -15,6 +15,8 @@
 
         search_engine/1,
         dictation_command/1,
+        timer_sound/1,
+        alarm_sound/1,
 
         llm_provider/1,             % anthropic | openai | ollama
         llm_model/1,                % model name/ID
@@ -38,6 +40,8 @@
 :- dynamic todo_context_mode/1.
 :- dynamic search_engine/1.
 :- dynamic dictation_command/1.
+:- dynamic timer_sound/1.
+:- dynamic alarm_sound/1.
 :- dynamic llm_provider/1.
 :- dynamic llm_model/1.
 :- dynamic llm_endpoint/1.
@@ -99,6 +103,9 @@ search_engine("https://duckduckgo.com/?q=~w").
 
 % Dictation command used by dictation module
 dictation_command("zara-dictate").
+
+timer_sound("assets/sounds/timer.wav").
+alarm_sound("assets/sounds/alarm.wav").
 
 % ---- LLM Provider Configuration ----
 

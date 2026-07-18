@@ -5,4 +5,5 @@ __pycache__/
 result
 result-*
 *.wav
+!assets/sounds/*.wav
 qwen3-tts-data/
