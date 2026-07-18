@@ -6,7 +6,6 @@ test_root="$(mktemp -d)"
 trap 'rm -rf "$test_root"' EXIT
 
 export XDG_CONFIG_HOME="$test_root/config"
-export PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}"
+mkdir -p "$XDG_CONFIG_HOME/zarathushtra"
 
-swipl -q -g run_tests -t halt "$repo_root/t/commands.pl"
-pytest -q "$repo_root/t/test_command_routing.py"
+swipl -q -g run_tests -t halt "$repo_root/t/prolog_config.pl"

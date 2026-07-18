@@ -1,12 +1,15 @@
 :- module(config_loader,
     [
         load_user_config/0,
+        reload_user_config/0,
         ensure_user_config/0,
         user_config_path/1,
         search_url/2
     ]).
 
 :- use_module(library(filesex)).
+
+:- dynamic loaded_clause/1.
 
 %% user_config_path(-Path) is det.
 %
@@ -56,8 +59,8 @@ create_default_config(Path) :-
 write_default_config(Stream) :-
     writeln(Stream, '% Zarathushtra User Configuration'),
     writeln(Stream, '% ================================'),
-    writeln(Stream, '% This file is consulted AFTER the base config, so your facts here'),
-    writeln(Stream, '% will shadow/override the defaults.'),
+    writeln(Stream, '% Supported facts are validated and loaded into kb_config or kb_intents.'),
+    writeln(Stream, '% User facts take precedence over built-in defaults.'),
     writeln(Stream, '%'),
     writeln(Stream, '% Uncomment and modify as needed.'),
     writeln(Stream, ''),
@@ -78,7 +81,7 @@ write_default_config(Stream) :-
     writeln(Stream, '% direct_app(nmap).'),
     writeln(Stream, ''),
     writeln(Stream, '% ---- Custom Intent Verbs ----'),
-    writeln(Stream, '% Add your own voice commands (requires kb_intents module):'),
+    writeln(Stream, '% Add your own voice commands:'),
     writeln(Stream, '% verb_intent(hack, open, 1).'),
     writeln(Stream, '% verb_intent(scan, search, 1).'),
     writeln(Stream, '% verb_intent(exploit, ask, rest).'),
@@ -117,11 +120,8 @@ load_user_config :-
     ensure_user_config,
     user_config_path(Path),
     ( exists_file(Path)
-    -> catch(
-           consult(Path),
-           Error,
-           format('Warning: Failed to load user config ~w: ~w~n', [Path, Error])
-       )
+    -> read_user_config(Path, Facts),
+       replace_user_config(Facts)
     ; format('Warning: User config not found at ~w~n', [Path])
     ).
 
@@ -131,11 +131,72 @@ load_user_config :-
 reload_user_config :-
     user_config_path(Path),
     ( exists_file(Path)
-    -> ( make  % Reloads modified files
-       ; format('User config reloaded: ~w~n', [Path])
-       )
+    -> read_user_config(Path, Facts),
+       replace_user_config(Facts),
+       format('User config reloaded: ~w~n', [Path])
     ; format('No user config to reload~n')
     ).
+
+read_user_config(Path, Facts) :-
+    setup_call_cleanup(
+        open(Path, read, Stream),
+        read_user_terms(Stream, Path, Facts),
+        close(Stream)
+    ).
+
+read_user_terms(Stream, Path, Facts) :-
+    read_term(Stream, Term, [syntax_errors(error)]),
+    ( Term == end_of_file
+    -> Facts = []
+    ; validate_user_fact(Term, Module, Fact)
+    -> Facts = [Module-Fact | Rest],
+       read_user_terms(Stream, Path, Rest)
+    ; throw(error(domain_error(zarathushtra_user_config_fact, Term),
+                  context(Path, 'unsupported or invalid user configuration fact')))
+    ).
+
+replace_user_config(Facts) :-
+    forall(retract(loaded_clause(Ref)), erase(Ref)),
+    forall(member(Module-Fact, Facts),
+           ( asserta(Module:Fact, Ref),
+             assertz(loaded_clause(Ref))
+           )).
+
+validate_user_fact(Module:Term, Module, Fact) :-
+    memberchk(Module, [kb_config, kb_intents]),
+    validate_user_fact(Term, Module, Fact).
+validate_user_fact(app_mapping(Name, Command), kb_config, app_mapping(Name, Command)) :-
+    atom(Name),
+    text_value(Command).
+validate_user_fact(direct_app(Name), kb_config, direct_app(Name)) :-
+    atom(Name).
+validate_user_fact(search_engine(Template), kb_config, search_engine(Template)) :-
+    text_value(Template).
+validate_user_fact(dictation_command(Command), kb_config, dictation_command(Command)) :-
+    text_value(Command).
+validate_user_fact(llm_provider(Provider), kb_config, llm_provider(Provider)) :-
+    memberchk(Provider, [ollama, openai, anthropic]).
+validate_user_fact(llm_model(Model), kb_config, llm_model(Model)) :-
+    text_value(Model).
+validate_user_fact(llm_endpoint(Endpoint), kb_config, llm_endpoint(Endpoint)) :-
+    text_value(Endpoint).
+validate_user_fact(todo_destination(Path), kb_config, todo_destination(Path)) :-
+    text_value(Path).
+validate_user_fact(todo_context_mode(Mode), kb_config, todo_context_mode(Mode)) :-
+    memberchk(Mode, [infer, infer_with_llm, llm_only]).
+validate_user_fact(verb_intent(Surface, Intent, Arity), kb_intents,
+                   verb_intent(Surface, Intent, Arity)) :-
+    atom(Surface),
+    valid_intent(Intent),
+    ( Arity == rest ; integer(Arity), Arity >= 0 ).
+
+text_value(Value) :-
+    atom(Value) ; string(Value).
+
+valid_intent(Intent) :-
+    atom(Intent), !.
+valid_intent(python(Skill)) :-
+    atom(Skill).
 
 search_url(Query, URL) :-
     % 1. Get search template from user config (with default fallback)

@@ -1,5 +1,8 @@
 :- module(kb_intents, [verb_intent/3, python_skill_intent/3]).
 
+:- dynamic verb_intent/3.
+:- discontiguous verb_intent/3.
+
 % Core system intents and synonyms
 % verb_intent(Surface, Intent, Arity)
 
