@@ -1,27 +1,29 @@
-:- module(dictation, [start_dictation/0, stop_dictation/0, dictation_status/0, dictation_active/0, set_dictation_active/1]).
+:- module(dictation, [start_dictation/0, stop_dictation/0, dictation_status/0,
+                      dictation_active/0]).
 
 :- use_module(library(process)).
 :- use_module(library(filesex)).
 :- use_module(library(system)).
 :- use_module('../kb/config').
 
-dictation_pidfile('/tmp/zara_dictation.pid').
-dictation_logfile('/tmp/zara_dictation.log').
-
-%% dictation_command_string(-Command) is det.
-%
-%  Resolves the full command used to start dictation.
-%  Users override this via kb_config:dictation_command/1.
-dictation_command_string(Command) :-
-    (   current_predicate(kb_config:dictation_command/1),
-        kb_config:dictation_command(Command0)
-    ->  Command = Command0
-    ;   Command = "zara-dictate"
+dictation_pidfile(Path) :-
+    ( getenv('ZARA_DICTATION_PIDFILE', Configured), Configured \= ''
+    -> Path = Configured
+    ; Path = '/tmp/zara_dictation.pid'
     ).
 
-%% bundled_dictation_script(-Path) is det.
-%
-%  Fallback to repo-bundled script (useful in dev).
+dictation_logfile(Path) :-
+    ( getenv('ZARA_DICTATION_LOGFILE', Configured), Configured \= ''
+    -> Path = Configured
+    ; Path = '/tmp/zara_dictation.log'
+    ).
+
+dictation_command_string(Command) :-
+    ( once(kb_config:dictation_command(Configured))
+    -> Command = Configured
+    ; Command = "zara-dictate"
+    ).
+
 bundled_dictation_script(Path) :-
     prolog_load_context(directory, Here),
     directory_file_path(Here, '..', Root),
@@ -29,96 +31,89 @@ bundled_dictation_script(Path) :-
     directory_file_path(ScriptsDir, 'zara_dictate.py', Path).
 
 start_dictation :-
-    dictation_pidfile(PIDFILE),
-    ( exists_file(PIDFILE) ->
-        format("Dictation already running (pidfile ~w). Use stop_dictation/0 first.~n", [PIDFILE]),
-        set_dictation_active(true)
-    ;
-        dictation_logfile(LOGFILE),
-        dictation_command_string(Command0),
-        (   Command0 == "zara-dictate",
-            \+ exists_in_path('zara-dictate'),
-            bundled_dictation_script(ScriptPath),
-            exists_file(ScriptPath)
-        ->  format(string(Command), "python3 ~w", [ScriptPath])
-        ;   Command = Command0
-        ),
-        atomic_list_concat([
-            'nohup ',
-            Command,
-            ' >> ', LOGFILE,
-            ' 2>&1 & echo $! > ', PIDFILE
-        ], Cmd),
-        process_create(path(sh), ['-c', Cmd], [detached(true)]),
-        sleep(1),
-        ( exists_file(PIDFILE) ->
-            read_file_to_string(PIDFILE, S, []),
-            string_trim(S, PIDStr),
-            format("Dictation started, pid: ~w~n", [PIDStr]),
-            set_dictation_active(true)
-        ;
-            format("Failed to start dictation. See ~w~n", [LOGFILE]),
-            fail
-        )
+    ( live_dictation_process(Pid)
+    -> format("Dictation already running with pid ~w.~n", [Pid])
+    ; cleanup_pidfile,
+      launch_dictation(Pid),
+      sleep(0.1),
+      ( process_alive(Pid)
+      -> format("Dictation started, pid: ~w~n", [Pid])
+      ; cleanup_pidfile,
+        fail
+      )
     ).
 
-exists_in_path(Cmd) :-
-    format(string(Check), 'command -v ~w >/dev/null 2>&1', [Cmd]),
-    catch(shell(Check, 0), _, fail).
-
-string_trim(In, Out) :-
-    normalize_space(string(Out), In).
+launch_dictation(Pid) :-
+    dictation_command_string(Command0),
+    ( Command0 == "zara-dictate",
+      \+ exists_in_path('zara-dictate'),
+      bundled_dictation_script(ScriptPath),
+      exists_file(ScriptPath)
+    -> format(string(Command), "python3 ~w", [ScriptPath])
+    ; Command = Command0
+    ),
+    dictation_logfile(LogPath),
+    setup_call_cleanup(
+        open(LogPath, append, Log),
+        process_create(path(sh), ['-c', Command],
+                       [detached(true), stdout(stream(Log)), stderr(stream(Log)),
+                        process(Pid)]),
+        close(Log)
+    ),
+    write_pidfile(Pid).
 
 stop_dictation :-
-    dictation_pidfile(PIDFILE),
-    ( exists_file(PIDFILE) ->
-        catch(read_file_to_string(PIDFILE, S, []), _, S = ""),
-        string_trim(S, PIDStr),
-        ( PIDStr == "" ->
-            format("Pidfile ~w is empty. Removing it.~n", [PIDFILE]),
-            delete_file(PIDFILE)
-        ;
-            atomic_list_concat(['kill ', PIDStr], KillCmd),
-            (   catch(process_create(path(sh), ['-c', KillCmd], []), _, fail)
-            ->  true
-            ;   format("Warning: failed to kill pid ~w (already dead?)~n", [PIDStr])
-            ),
-            sleep(1),
-            ( exists_file(PIDFILE) -> delete_file(PIDFILE) ; true ),
-            format("Sent SIGTERM to pid ~w and removed pidfile.~n", [PIDStr])
-        )
-    ;
-        format("No dictation pidfile found at ~w.~n", [PIDFILE])
+    ( live_dictation_process(Pid)
+    -> catch(process_kill(Pid, term), _, true)
+    ; true
     ),
-    set_dictation_active(false).
+    cleanup_pidfile.
 
 dictation_status :-
-    dictation_pidfile(PIDFILE),
-    ( exists_file(PIDFILE) ->
-        read_file_to_string(PIDFILE, S, []),
-        string_trim(S, PIDStr),
-        format("Dictation appears running; pidfile ~w contains: ~w~n", [PIDFILE, PIDStr])
-    ;
-        format("Dictation not running (no pidfile ~w).~n", [PIDFILE])
+    ( live_dictation_process(Pid)
+    -> format("Dictation running with pid ~w.~n", [Pid])
+    ; writeln("Dictation not running.")
     ).
 
-%% dictation_active is semidet.
-%  True when dictation pidfile exists.
-%  Keeps wake loop from routing to Prolog/LLM while dictation runs.
-:- dynamic dictation_active_flag/1.
-
 dictation_active :-
-    dictation_active_flag(true).
+    live_dictation_process(_).
 
-dictation_active_flag(false).
+live_dictation_process(Pid) :-
+    read_pidfile(Pid),
+    ( process_alive(Pid)
+    -> true
+    ; cleanup_pidfile,
+      fail
+    ).
 
-set_dictation_active(true) :-
-    retractall(dictation_active_flag(_)),
-    assertz(dictation_active_flag(true)).
-set_dictation_active(false) :-
-    retractall(dictation_active_flag(_)),
-    assertz(dictation_active_flag(false)).
+read_pidfile(Pid) :-
+    dictation_pidfile(Path),
+    catch(read_file_to_string(Path, Contents, []), _, fail),
+    normalize_space(string(PidText), Contents),
+    catch(number_string(Pid, PidText), _, fail),
+    integer(Pid),
+    Pid > 0,
+    !.
+read_pidfile(_) :-
+    cleanup_pidfile,
+    fail.
 
-% helper to shell-quote a path
-shell_quote(Str, Quoted) :-
-    format(string(Quoted), "'~w'", [Str]).
+write_pidfile(Pid) :-
+    dictation_pidfile(Path),
+    setup_call_cleanup(
+        open(Path, write, Stream),
+        format(Stream, '~d', [Pid]),
+        close(Stream)
+    ).
+
+cleanup_pidfile :-
+    dictation_pidfile(Path),
+    ( exists_file(Path) -> catch(delete_file(Path), _, true) ; true ).
+
+process_alive(Pid) :-
+    format(atom(StatusPath), '/proc/~d/status', [Pid]),
+    catch(read_file_to_string(StatusPath, Status, []), _, fail),
+    \+ sub_string(Status, _, _, _, "State:\tZ").
+
+exists_in_path(Command) :-
+    absolute_file_name(path(Command), _, [access(execute), file_errors(fail)]).
