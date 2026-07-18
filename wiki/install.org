@@ -23,6 +23,7 @@ nix develop -c pytest
 nix develop -c scripts/test-command-routing.sh
 nix develop -c scripts/test-prolog-config.sh
 nix develop -c scripts/test-dictation-lifecycle.sh
+nix develop -c scripts/test-timers.sh
 #+end_src
 
 The command-routing gate verifies that unsupported or failed Prolog handlers
@@ -68,6 +69,10 @@ replace prior user overrides on reload.
 Dictation process state is determined from the configured PID file and live
 process. =ZARA_DICTATION_PIDFILE= and =ZARA_DICTATION_LOGFILE= can override the
 default paths for isolated environments.
+
+Timer parsing, unit conversion, scheduling, and completion notifications are
+implemented in Prolog. Timer commands use the canonical shape
+=[Seconds, Name]=; alarms remain explicitly unsupported.
 ** Config file
 Zarathushtra reads configuration from:
 - ~/.config/zarathushtra/config.toml

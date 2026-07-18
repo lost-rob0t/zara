@@ -11,7 +11,6 @@ def test_prolog_engine_propagates_failed_queries():
     engine.logger = MagicMock()
 
     assert engine.execute_intent("unknown", []) is False
-    assert engine.start_timer(5) is False
     assert engine.reload_config() is False
 
 
