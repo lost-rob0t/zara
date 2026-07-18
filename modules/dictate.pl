@@ -57,7 +57,8 @@ start_dictation :-
             format("Dictation started, pid: ~w~n", [PIDStr]),
             set_dictation_active(true)
         ;
-            format("Failed to start dictation. See ~w~n", [LOGFILE])
+            format("Failed to start dictation. See ~w~n", [LOGFILE]),
+            fail
         )
     ).
 
