@@ -68,9 +68,11 @@ with_fake_timer_runtime(Goal) :-
              plunit_timers:fake_schedule(Seconds, TimerGoal, Id)), SchedulerRef),
     asserta((alarm:completion_notifier(Name, Message) :-
              plunit_timers:record_notification(Name, Message)), NotifierRef),
+    asserta((sound:sound_player(_, _) :- true), PlayerRef),
     call_cleanup(Goal, (
         erase(SchedulerRef),
         erase(NotifierRef),
+        erase(PlayerRef),
         retractall(pending_timer(_, _)),
         retractall(notification(_, _))
     )).

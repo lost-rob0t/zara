@@ -2,12 +2,14 @@
 :- module(alarm, [timer_done/1, start_timer/1, start_timer/2]).
 :- use_module(library(time)).
 :- use_module(alert).
+:- use_module(sound).
 
 :- dynamic timer_scheduler/3.
 :- dynamic completion_notifier/2.
 
 timer_done(Name) :-
     timer_message(Name, Message),
+    ( sound:play_notification_sound(timer) -> true ; true ),
     once(completion_notifier(Name, Message)).
 
 start_timer(Seconds) :-
