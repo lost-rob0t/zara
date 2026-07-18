@@ -809,22 +809,6 @@ class WakeWordListener:
             return
 
         # Use silence detection for more natural recording
-            chunk = await self.collect_audio_until_silence()
-            if chunk is None:
-                return
-
-            text = await self.transcribe_async(chunk)
-            if not text or len(text) < 2:
-                return
-
-            tokens = self._tokenize_for_match(text)
-            if self._is_dictation_stop(tokens):
-                self.log("Dictation stop detected while active")
-                self.prolog.query_once("dictation:stop_dictation")
-                self.state = "PASSIVE"
-            return
-
-        # Use silence detection for more natural recording
         chunk = await self.collect_audio_until_silence()
         if chunk is None:
             return
