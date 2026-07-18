@@ -42,6 +42,12 @@ pip install -r requirements.txt
 #+end_src
 
 * Configuration
+
+Zara creates =~/.config/zarathushtra/config.toml= by default, or uses
+=$XDG_CONFIG_HOME/zarathushtra/config.toml= when =XDG_CONFIG_HOME= is set.
+Invalid TOML stops startup with the configuration path and parser diagnostic so
+user overrides are never silently discarded. The canonical Qwen TTS provider is
+=qwen3=; existing configurations using =qwen= remain supported as an alias.
 ** Config file
 Zarathushtra reads configuration from:
 - ~/.config/zarathushtra/config.toml

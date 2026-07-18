@@ -14,20 +14,20 @@ from .qwen import Qwen3TTSClient
 class TTSEngine:
 
     def __init__(self, provider: str = "local", config: Optional[dict] = None):
-        self.provider = provider
+        self.provider = "qwen3" if provider == "qwen" else provider
         self.config = config or {}
         self.qwen3_client = None
 
-        if provider == "local":
+        if self.provider == "local":
             self._init_local()
-        elif provider == "11labs":
+        elif self.provider == "11labs":
             self._init_elevenlabs()
-        elif provider == "edge":
+        elif self.provider == "edge":
             self._init_edge()
-        elif provider == "qwen3":
+        elif self.provider == "qwen3":
             self._init_qwen3()
         else:
-            raise ValueError(f"Unknown TTS provider: {provider}")
+            raise ValueError(f"Unknown TTS provider: {self.provider}")
 
     def _init_local(self):
         if subprocess.run(["which", "piper"], capture_output=True).returncode == 0:
