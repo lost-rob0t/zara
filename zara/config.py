@@ -105,6 +105,7 @@ embedding_backend = "onnx"
 embedding_model = "all-MiniLM-L6-v2"
 top_k = 5
 max_chars = 1200
+summary_max_chars = 4000
 
 [modules]
 # Module/plugin search paths

@@ -2,13 +2,16 @@
 Conversation memory manager with optional ChromaDB persistence.
 """
 
-import os
-import uuid
-from datetime import datetime
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 import json
+import logging
+import os
 import urllib.request
 import urllib.error
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 try:
     import chromadb
@@ -82,13 +85,26 @@ class MemoryManager:
         self.enabled = enabled
         self.top_k = top_k
         self.settings = settings or {}
+        self.summary_max_chars = int(self.settings.get("summary_max_chars", 4000))
         self._memories: List[Dict[str, Any]] = []
         self._collection = None
         self._embedding_function = None
         self.current_session_id: Optional[str] = None
+        self.health_status = "disabled" if not self.enabled else "local_fallback"
+        self.health_error: Optional[str] = None
 
-        if self.enabled and _CHROMADB_AVAILABLE:
+        if not self.enabled:
+            return
+        if not _CHROMADB_AVAILABLE:
+            self.health_error = "ChromaDB is unavailable"
+            logger.warning("[MemoryManager] %s; using local memory", self.health_error)
+            return
+
+        try:
             self._setup_chroma(embedding_function)
+            self.health_status = "persistent"
+        except Exception as error:
+            self._use_local_fallback(error)
 
     def _setup_chroma(self, embedding_function: Optional[EmbeddingFunction]) -> None:
         self._embedding_function = embedding_function or self._build_embedding_function()
@@ -133,6 +149,22 @@ class MemoryManager:
 
         return None
 
+    def _use_local_fallback(self, error: Exception) -> None:
+        self._collection = None
+        self._embedding_function = None
+        self.health_status = "local_fallback"
+        self.health_error = f"{type(error).__name__}: {error}"
+        logger.warning(
+            "[MemoryManager] Persistent memory unavailable (%s); using local memory",
+            self.health_error,
+        )
+
+    def get_health(self) -> Dict[str, Optional[str]]:
+        return {
+            "status": self.health_status,
+            "error": self.health_error,
+        }
+
     def start_session(self) -> str:
         session_id = str(uuid.uuid4())
         self.sessions[session_id] = []
@@ -152,14 +184,31 @@ class MemoryManager:
         if not messages:
             return None
 
-        summary = summary_text.strip() if summary_text else "\n".join(
-            f"{role}: {content}" for role, content in messages
+        if summary_text is not None:
+            summary = self._bounded_session_text(summary_text)
+            if summary:
+                self.store_session_summary(session_id, summary, source=source)
+            return summary
+
+        transcript = self._bounded_session_text(
+            "\n".join(f"{role}: {content}" for role, content in messages)
         )
+        if transcript:
+            self._store_memory(
+                text=transcript,
+                kind="transcript",
+                tags=["transcript"],
+                session_id=session_id,
+                source=source,
+            )
+        return transcript
 
-        if summary:
-            self.store_session_summary(session_id, summary, source=source)
-
-        return summary
+    def _bounded_session_text(self, text: str) -> str:
+        cleaned = (text or "").strip()
+        limit = max(0, self.summary_max_chars)
+        if not limit:
+            return ""
+        return cleaned[:limit].rstrip()
 
     def remember_fact(
         self,
@@ -182,10 +231,11 @@ class MemoryManager:
         summary_text: str,
         source: str = "wake",
     ) -> Optional[str]:
-        if not summary_text:
+        summary = self._bounded_session_text(summary_text)
+        if not summary:
             return None
         return self._store_memory(
-            text=summary_text,
+            text=summary,
             kind="summary",
             tags=["summary"],
             session_id=session_id,
@@ -211,7 +261,11 @@ class MemoryManager:
 
         if self._collection is None:
             return self._retrieve_local(query, limit, kinds, tag_list)
-        return self._retrieve_chroma(query, limit, kinds, tag_list)
+        try:
+            return self._retrieve_chroma(query, limit, kinds, tag_list)
+        except Exception as error:
+            self._use_local_fallback(error)
+            return self._retrieve_local(query, limit, kinds, tag_list)
 
     def _retrieve_chroma(
         self,
@@ -299,7 +353,7 @@ class MemoryManager:
             "tags": tag_string,
             "session_id": session_id or "",
             "source": source,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
         if self._collection is None:
@@ -315,12 +369,23 @@ class MemoryManager:
             )
             return memory_id
 
-        self._collection.upsert(
-            ids=[memory_id],
-            documents=[text],
-            metadatas=[metadata],
-        )
-        return memory_id
+        try:
+            self._collection.upsert(
+                ids=[memory_id],
+                documents=[text],
+                metadatas=[metadata],
+            )
+            return memory_id
+        except Exception as error:
+            self._use_local_fallback(error)
+            self._memories.append(
+                {
+                    "id": memory_id,
+                    "text": text,
+                    "metadata": {**metadata, "tags": tag_list},
+                }
+            )
+            return memory_id
 
     def _normalize_tags(self, tags: Optional[List[str]]) -> List[str]:
         if not tags:
