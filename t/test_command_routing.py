@@ -1,7 +1,7 @@
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from zara.prolog_engine import PrologEngine
+from zara.prolog_engine import IntentResult, PrologEngine
 from zara.wake import WakeWordListener
 
 
@@ -14,11 +14,10 @@ def test_prolog_engine_propagates_failed_queries():
     assert engine.reload_config() is False
 
 
-def test_failed_execution_falls_back_exactly_once():
+def build_listener(intent_result):
     listener = WakeWordListener.__new__(WakeWordListener)
     listener.prolog = MagicMock()
-    listener.prolog.resolve_intent.return_value = {"Intent": "open", "Args": ["missing"]}
-    listener.prolog.execute_intent.return_value = False
+    listener.prolog.resolve_intent.return_value = intent_result
     listener.executor = None
     listener.log = MagicMock()
     listener.session_id = None
@@ -28,9 +27,42 @@ def test_failed_execution_falls_back_exactly_once():
     listener.agent_manager.process_async = AsyncMock(return_value={"response": "fallback"})
     listener.agent_manager.conversation_manager.conversation_history = []
     listener.in_conversation_mode = MagicMock(return_value=False)
+    return listener
+
+
+def test_failed_execution_falls_back_exactly_once():
+    listener = build_listener(IntentResult("prolog", "open", ["missing"]))
+    listener.prolog.execute_intent.return_value = False
 
     used_agent, response = asyncio.run(listener.query_with_fallback_async("open missing"))
 
     assert (used_agent, response) == (True, "fallback")
     listener.prolog.execute_intent.assert_called_once_with("open", ["missing"])
+    listener.prolog.resolve_intent.assert_called_once_with(
+        "open missing", state="passive"
+    )
     listener.agent_manager.process_async.assert_awaited_once_with("open missing")
+
+
+def test_python_skill_result_executes_from_wake_mode():
+    listener = build_listener(IntentResult("python", "search_todos", ["milk"]))
+
+    with patch("zara.wake.python_skills.execute", return_value="found") as execute:
+        used_agent, response = asyncio.run(
+            listener.query_with_fallback_async("search todos milk")
+        )
+
+    assert (used_agent, response) == (False, "found")
+    execute.assert_called_once_with("search_todos", ["milk"])
+    listener.prolog.execute_intent.assert_not_called()
+    listener.agent_manager.process_async.assert_not_awaited()
+
+
+def test_pending_result_returns_clarification_without_execution():
+    listener = build_listener(IntentResult("pending", "open", ["app"]))
+
+    used_agent, response = asyncio.run(listener.query_with_fallback_async("open"))
+
+    assert (used_agent, response) == (False, "Please provide: app.")
+    listener.prolog.execute_intent.assert_not_called()
+    listener.agent_manager.process_async.assert_not_awaited()
