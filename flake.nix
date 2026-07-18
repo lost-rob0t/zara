@@ -128,11 +128,12 @@
           cp -r $src/modules $out/share/zarathushtra/
           cp -r $src/scripts $out/share/zarathushtra/
           cp -r $src/zara $out/share/zarathushtra/
+          cp -r $src/assets $out/share/zarathushtra/
 
           # zara-console (Python wrapper)
           makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara-console \
             --add-flags "-m zara --console" \
-            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.swi-prolog ]} \
+            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.swi-prolog pkgs.mpv ]} \
             --set PYTHONPATH $out/share/zarathushtra:${pythonLibs}/${python.sitePackages} \
             --set SWI_HOME_DIR ${pkgs.swi-prolog}/lib/swipl \
             --run "cd $out/share/zarathushtra"
@@ -159,6 +160,7 @@
           cp -r $src/kb $out/share/zarathushtra/
           cp -r $src/modules $out/share/zarathushtra/
           cp -r $src/scripts $out/share/zarathushtra/
+          cp -r $src/assets $out/share/zarathushtra/
 
           # Create wrapper with correct Python interpreter and environment
           makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara-wake \
@@ -214,11 +216,12 @@
           cp -r $src/kb $out/share/zarathushtra/
           cp -r $src/modules $out/share/zarathushtra/
           cp -r $src/scripts $out/share/zarathushtra/
+          cp -r $src/assets $out/share/zarathushtra/
 
           # Create main zara wrapper
           makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara \
             --add-flags "-m zara" \
-            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xdotool pkgs.pulseaudio pkgs.swi-prolog ]} \
+            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xdotool pkgs.pulseaudio pkgs.swi-prolog pkgs.mpv ]} \
             --set PYTHONPATH $out/lib/python:$out/share/zarathushtra:${pythonLibs  }/${python.sitePackages} \
             --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [ pkgs.libsndfile pkgs.portaudio ]} \
             --set SWI_HOME_DIR ${pkgs.swi-prolog}/lib/swipl \
