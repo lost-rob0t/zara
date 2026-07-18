@@ -1,41 +1,41 @@
-"""
-Qwen3-TTS HTTP Client
-Async client for the Qwen3-TTS server API
-"""
+"""Async Qwen3-TTS HTTP client."""
 
-import asyncio
-import aiohttp
-from typing import Optional
 from pathlib import Path
+from typing import Optional
+
+import aiohttp
 
 
 class Qwen3TTSClient:
-    """
-    Async HTTP client for Qwen3-TTS server
-    """
-
-    def __init__(self, base_url: str = "http://localhost:7860"):
+    def __init__(
+        self,
+        base_url: str = "http://localhost:7860",
+        total_timeout: float = 30.0,
+        connect_timeout: float = 5.0,
+        read_timeout: float = 20.0,
+    ):
         self.base_url = base_url.rstrip("/")
+        self.timeout = aiohttp.ClientTimeout(
+            total=total_timeout,
+            connect=connect_timeout,
+            sock_read=read_timeout,
+        )
         self.session: Optional[aiohttp.ClientSession] = None
 
     async def __aenter__(self):
-        """Async context manager entry"""
-        self.session = aiohttp.ClientSession()
+        await self._ensure_session()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit"""
-        if self.session:
-            await self.session.close()
+        await self.close()
 
-    async def _ensure_session(self):
-        """Ensure session exists"""
-        if self.session is None:
-            self.session = aiohttp.ClientSession()
+    async def _ensure_session(self) -> aiohttp.ClientSession:
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession(timeout=self.timeout)
+        return self.session
 
-    async def close(self):
-        """Close the session"""
-        if self.session:
+    async def close(self) -> None:
+        if self.session is not None:
             await self.session.close()
             self.session = None
 
@@ -43,186 +43,75 @@ class Qwen3TTSClient:
         self,
         text: str,
         voice: str = "zara",
-        speed: float = 1.0
-    ) -> Optional[bytes]:
-        """
-        Synthesize speech from text using specified voice
+        speed: float = 1.0,
+    ) -> bytes:
+        return await self._get_audio(
+            "synthesize_speech/",
+            {"text": text, "voice": voice, "speed": speed},
+        )
 
-        Args:
-            text: Text to synthesize
-            voice: Voice label (filename prefix in resources/)
-            speed: Speech speed multiplier (default: 1.0)
+    async def base_tts(self, text: str, speed: float = 1.0) -> bytes:
+        return await self._get_audio(
+            "base_tts/",
+            {"text": text, "speed": speed},
+        )
 
-        Returns:
-            Audio bytes (WAV format) or None on error
-        """
-        await self._ensure_session()
+    async def _get_audio(self, endpoint: str, params: dict) -> bytes:
+        session = await self._ensure_session()
+        async with session.get(f"{self.base_url}/{endpoint}", params=params) as response:
+            if response.status != 200:
+                detail = await response.text()
+                raise RuntimeError(f"Qwen3-TTS returned {response.status}: {detail}")
+            return await response.read()
 
-        try:
-            params = {
-                "text": text,
-                "voice": voice,
-                "speed": speed
-            }
+    async def upload_voice(self, audio_file_path: str, voice_label: str) -> dict:
+        path = Path(audio_file_path)
+        if not path.is_file():
+            return {"error": f"File not found: {audio_file_path}"}
 
-            url = f"{self.base_url}/synthesize_speech/"
-
-            async with self.session.get(url, params=params) as response:
-                if response.status == 200:
-                    return await response.read()
-                else:
-                    error_text = await response.text()
-                    print(f"Qwen3-TTS error: {response.status} - {error_text}")
-                    return None
-
-        except aiohttp.ClientError as e:
-            print(f"HTTP client error: {e}")
-            return None
-        except Exception as e:
-            print(f"Unexpected error in Qwen3 TTS: {e}")
-            return None
-
-    async def base_tts(self, text: str, speed: float = 1.0) -> Optional[bytes]:
-        """
-        Generate speech using default English voice
-
-        Args:
-            text: Text to synthesize
-            speed: Speech speed multiplier (default: 1.0)
-
-        Returns:
-            Audio bytes (WAV format) or None on error
-        """
-        await self._ensure_session()
-
-        try:
-            params = {
-                "text": text,
-                "speed": speed
-            }
-
-            url = f"{self.base_url}/base_tts/"
-
-            async with self.session.get(url, params=params) as response:
-                if response.status == 200:
-                    return await response.read()
-                else:
-                    error_text = await response.text()
-                    print(f"Qwen3-TTS error: {response.status} - {error_text}")
-                    return None
-
-        except aiohttp.ClientError as e:
-            print(f"HTTP client error: {e}")
-            return None
-        except Exception as e:
-            print(f"Unexpected error in Qwen3 TTS: {e}")
-            return None
-
-    async def upload_voice(
-        self,
-        audio_file_path: str,
-        voice_label: str
-    ) -> dict:
-        """
-        Upload an audio file to use as reference voice
-
-        Args:
-            audio_file_path: Path to audio file (wav, mp3, flac, ogg)
-            voice_label: Label/name for the voice
-
-        Returns:
-            Response dict with message or error
-        """
-        await self._ensure_session()
-
-        try:
-            path = Path(audio_file_path)
-            if not path.exists():
-                return {"error": f"File not found: {audio_file_path}"}
-
-            url = f"{self.base_url}/upload_audio/"
-
-            data = aiohttp.FormData()
-            data.add_field("audio_file_label", voice_label)
+        session = await self._ensure_session()
+        data = aiohttp.FormData()
+        data.add_field("audio_file_label", voice_label)
+        with path.open("rb") as audio_file:
             data.add_field(
                 "file",
-                open(audio_file_path, "rb"),
+                audio_file,
                 filename=path.name,
-                content_type="audio/mpeg"
+                content_type="audio/mpeg",
             )
-
-            async with self.session.post(url, data=data) as response:
+            async with session.post(
+                f"{self.base_url}/upload_audio/", data=data
+            ) as response:
                 if response.status == 200:
                     return await response.json()
-                else:
-                    error_text = await response.text()
-                    return {"error": f"{response.status} - {error_text}"}
-
-        except Exception as e:
-            return {"error": str(e)}
+                detail = await response.text()
+                return {"error": f"{response.status} - {detail}"}
 
     async def change_voice(
         self,
         audio_file_path: str,
-        reference_speaker: str
-    ) -> Optional[bytes]:
-        """
-        Convert the voice of an existing audio file
+        reference_speaker: str,
+    ) -> bytes:
+        path = Path(audio_file_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"File not found: {audio_file_path}")
 
-        Args:
-            audio_file_path: Path to audio file to convert
-            reference_speaker: Voice label to convert to
-
-        Returns:
-            Audio bytes (WAV format) or None on error
-        """
-        await self._ensure_session()
-
-        try:
-            path = Path(audio_file_path)
-            if not path.exists():
-                print(f"File not found: {audio_file_path}")
-                return None
-
-            url = f"{self.base_url}/change_voice/"
-
-            data = aiohttp.FormData()
-            data.add_field("reference_speaker", reference_speaker)
+        session = await self._ensure_session()
+        data = aiohttp.FormData()
+        data.add_field("reference_speaker", reference_speaker)
+        with path.open("rb") as audio_file:
             data.add_field(
                 "file",
-                open(audio_file_path, "rb"),
+                audio_file,
                 filename=path.name,
-                content_type="audio/wav"
+                content_type="audio/wav",
             )
-
-            async with self.session.post(url, data=data) as response:
-                if response.status == 200:
-                    return await response.read()
-                else:
-                    error_text = await response.text()
-                    print(f"Qwen3-TTS error: {response.status} - {error_text}")
-                    return None
-
-        except Exception as e:
-            print(f"Error in change_voice: {e}")
-            return None
-
-
-if __name__ == "__main__":
-    # Test the client
-    async def test():
-        async with Qwen3TTSClient() as client:
-            # Test basic TTS
-            audio = await client.base_tts("Thus spoke Zarathustra")
-
-            if audio:
-                print(f"Generated {len(audio)} bytes of audio")
-
-                # Save to file
-                with open("/tmp/test_qwen3.wav", "wb") as f:
-                    f.write(audio)
-                print("Saved to /tmp/test_qwen3.wav")
-            else:
-                print("Failed to generate audio")
-
-    asyncio.run(test())
+            async with session.post(
+                f"{self.base_url}/change_voice/", data=data
+            ) as response:
+                if response.status != 200:
+                    detail = await response.text()
+                    raise RuntimeError(
+                        f"Qwen3-TTS returned {response.status}: {detail}"
+                    )
+                return await response.read()
