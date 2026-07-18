@@ -6,6 +6,8 @@ Memory-safe with bounded queues, lower latency, parallel transcription.
 """
 
 import os
+import atexit
+import signal
 import sys
 import time
 import queue
@@ -27,8 +29,8 @@ except Exception as e:
     print("ERROR: faster-whisper not installed. Run: pip install faster-whisper", file=sys.stderr)
     sys.exit(1)
 
-PIDFILE = "/tmp/zara_dictation.pid"
-LOGFILE = "/tmp/zara_dictation.log"
+PIDFILE = os.getenv("ZARA_DICTATION_PIDFILE", "/tmp/zara_dictation.pid")
+LOGFILE = os.getenv("ZARA_DICTATION_LOGFILE", "/tmp/zara_dictation.log")
 
 # Stop phrase support:
 # - Defaults: "end voice", "stop voice", "stop dictation"
@@ -36,7 +38,14 @@ LOGFILE = "/tmp/zara_dictation.log"
 #     ZARA_STOP_PHRASE="end voice"             (single)
 #     ZARA_STOP_PHRASES="end voice,stop voice" (comma-separated)
 # - Or pass as 5th arg: zara-dictate <model> <device> <threads?> <workers?> "end voice,stop voice"
-DEFAULT_STOP_PHRASES = ["end voice", "stop voice", "stop dictation", "end dictation" "disable", "end quote"]
+DEFAULT_STOP_PHRASES = [
+    "end voice",
+    "stop voice",
+    "stop dictation",
+    "end dictation",
+    "disable",
+    "end quote",
+]
 
 TARGET_SAMPLE_RATE = 16000
 INPUT_SAMPLE_RATE = None
@@ -61,6 +70,14 @@ def remove_pid():
         os.remove(PIDFILE)
     except FileNotFoundError:
         pass
+
+
+atexit.register(remove_pid)
+
+
+def _handle_termination(signum, frame):
+    stop_event.set()
+    raise SystemExit(0)
 
 
 def log(msg):
@@ -344,6 +361,7 @@ def main(model_name="small", device="cpu", threads=None, workers=2, stop_phrases
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, _handle_termination)
     # List audio devices
     if len(sys.argv) > 1 and sys.argv[1] == "devices":
         print("Available audio input devices:\n")

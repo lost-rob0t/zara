@@ -32,6 +32,15 @@
 :- discontiguous kb_config:llm_provider/1.
 :- discontiguous kb_config:llm_model/1.
 :- discontiguous kb_config:llm_endpoint/1.
+:- dynamic app_mapping/2.
+:- dynamic direct_app/1.
+:- dynamic todo_destination/1.
+:- dynamic todo_context_mode/1.
+:- dynamic search_engine/1.
+:- dynamic dictation_command/1.
+:- dynamic llm_provider/1.
+:- dynamic llm_model/1.
+:- dynamic llm_endpoint/1.
 
 :- initialization(config_loader:load_user_config).
 

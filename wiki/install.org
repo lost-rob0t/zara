@@ -21,6 +21,8 @@ nix develop
 #+begin_src sh
 nix develop -c pytest
 nix develop -c scripts/test-command-routing.sh
+nix develop -c scripts/test-prolog-config.sh
+nix develop -c scripts/test-dictation-lifecycle.sh
 #+end_src
 
 The command-routing gate verifies that unsupported or failed Prolog handlers
@@ -57,6 +59,15 @@ Zara creates =~/.config/zarathushtra/config.toml= by default, or uses
 Invalid TOML stops startup with the configuration path and parser diagnostic so
 user overrides are never silently discarded. The canonical Qwen TTS provider is
 =qwen3=; existing configurations using =qwen= remain supported as an alias.
+
+Python runtime settings use =config.toml=. Prolog facts remain separate in
+=~/.config/zarathushtra/config.pl=. That Prolog file accepts only the generated
+fact forms; they are validated, installed into =kb_config= or =kb_intents=, and
+replace prior user overrides on reload.
+
+Dictation process state is determined from the configured PID file and live
+process. =ZARA_DICTATION_PIDFILE= and =ZARA_DICTATION_LOGFILE= can override the
+default paths for isolated environments.
 ** Config file
 Zarathushtra reads configuration from:
 - ~/.config/zarathushtra/config.toml

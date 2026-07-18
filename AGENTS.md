@@ -27,11 +27,17 @@ This file guides agentic coding assistants working in this repo.
 
 ## Tests
 - Run full test suite:
-  - `nix develop -c pytest`
+  - `nix develop -c bash -c 'pytest && for test_script in scripts/test-*.sh; do bash "$test_script"; done'`
 - Run a single test file:
   - `nix develop -c pytest t/test_agent.py`
 - Run a single test by node id:
   - `nix develop -c pytest t/test_agent.py::TestAgent::test_basic_flow`
+
+## CI/CD Test Gate
+- Always run the full test suite after any code, configuration, test, or documentation change.
+- Do not consider work complete unless every local test passes.
+- Pull requests and pushes to `master` must pass the GitHub Actions `test` job.
+- After pushing or opening a pull request, verify the CI test job passes; do not report the change as complete while CI is pending or failing.
 
 ## Lint / Formatting
 - No enforced linter in the repo; do not add one unless asked.
@@ -137,7 +143,8 @@ This file guides agentic coding assistants working in this repo.
 
 ## Tests Location
 - Python tests live in `t/`.
-- Use `pytest` to run them.
+- Shell integration and smoke tests live in `scripts/test-*.sh`.
+- Use the full test suite command under **Tests** for final verification.
 
 ## Structure Notes
 - `zara/` contains runtime Python modules.
