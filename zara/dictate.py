@@ -5,21 +5,21 @@ Zarathustra Dictation Helper - Optimized
 Memory-safe with bounded queues, lower latency, parallel transcription.
 """
 
-import atexit
 import os
-import queue
-import re
+import atexit
 import signal
-import shutil
-import subprocess
 import sys
 import time
-from collections import deque
-from concurrent.futures import Future, ThreadPoolExecutor
-from threading import Event, Thread, current_thread, main_thread
-
+import queue
+import subprocess
+import shutil
 import numpy as np
 import sounddevice as sd
+from threading import Thread, Event
+from concurrent.futures import ThreadPoolExecutor
+import gc
+
+from collections import deque
 
 from zara.audio import resolve_input_sample_rate, resample_audio
 
@@ -32,20 +32,27 @@ except Exception as e:
 PIDFILE = os.getenv("ZARA_DICTATION_PIDFILE", "/tmp/zara_dictation.pid")
 LOGFILE = os.getenv("ZARA_DICTATION_LOGFILE", "/tmp/zara_dictation.log")
 
-DEFAULT_STOP_PHRASES = (
+# Stop phrase support:
+# - Defaults: "end voice", "stop voice", "stop dictation"
+# - Override with env:
+#     ZARA_STOP_PHRASE="end voice"             (single)
+#     ZARA_STOP_PHRASES="end voice,stop voice" (comma-separated)
+# - Or pass as 5th arg: zara-dictate <model> <device> <threads?> <workers?> "end voice,stop voice"
+DEFAULT_STOP_PHRASES = [
     "end voice",
     "stop voice",
     "stop dictation",
     "end dictation",
     "disable",
     "end quote",
-)
+]
 
 TARGET_SAMPLE_RATE = 16000
 INPUT_SAMPLE_RATE = None
 CHANNELS = 1
-CHUNK_SECONDS = 10
+CHUNK_SECONDS = 10  # Reduced from 5 for lower latency
 
+# Bounded queues prevent memory bloat
 MAX_QUEUE_SIZE = 10
 USE_XDO = shutil.which("xdotool") is not None
 stop_event = Event()
@@ -97,7 +104,15 @@ def record_audio(q, stop_event):
     def callback(indata, frames, time_info, status):
         if status:
             log(f"Audio stream warning: {status}")
-        _put_latest(q, indata.copy())
+        try:
+            q.put_nowait(indata.copy())
+        except queue.Full:
+            # Drop oldest frame if queue is full (prevents backlog)
+            try:
+                q.get_nowait()
+                q.put_nowait(indata.copy())
+            except:
+                pass
 
     with sd.InputStream(
         samplerate=_get_input_sample_rate(),
@@ -126,23 +141,14 @@ def chunk_audio(q, outq, stop_event):
         while len(buffer) >= target_frames:
             chunk = np.array([buffer.popleft() for _ in range(target_frames)], dtype=np.float32)
 
-            _put_latest(outq, chunk)
-
-
-def _put_latest(target_queue, item) -> None:
-    try:
-        target_queue.put_nowait(item)
-    except queue.Full:
-        try:
-            target_queue.get_nowait()
-        except queue.Empty:
-            return
-        try:
-            target_queue.put_nowait(item)
-        except queue.Full:
-            return
-
-
+            try:
+                outq.put_nowait(chunk)
+            except queue.Full:
+                try:
+                    outq.get_nowait()
+                    outq.put_nowait(chunk)
+                except:
+                    pass
 def type_text(text):
     """Type text into focused window"""
     if USE_XDO:
@@ -157,8 +163,7 @@ def type_text(text):
 
 
 def _normalize_stop_phrase(s: str) -> str:
-    without_punctuation = re.sub(r"[^\w\s]", "", s.casefold())
-    return " ".join(without_punctuation.split())
+    return " ".join(s.lower().strip().split())
 
 
 def _is_any_stop_phrase(text: str, stop_phrases: list[str]) -> bool:
@@ -184,7 +189,7 @@ def _strip_dictation_tokens(text: str, stop_phrases: list[str]) -> str:
     return cleaned
 
 
-def transcribe_worker(model, chunk):
+def transcribe_worker(model, chunk, stop_phrases: list[str]):
     """Worker function for parallel transcription"""
     if chunk.ndim > 1:
         chunk = chunk[:, 0]
@@ -194,21 +199,23 @@ def transcribe_worker(model, chunk):
 
     audio_float = chunk.astype(np.float32)
 
+    # Silence detection - prevent hallucinations
     rms = np.sqrt(np.mean(audio_float**2))
-    log(f"Audio RMS: {rms:.4f}")
+    log(f"Audio RMS: {rms:.4f}")  # Debug: see audio levels
 
-    if rms < 0.001:
+    if rms < 0.001:  # Much lower threshold - only block dead silence
         log("Skipping: silence detected")
         return None
 
     try:
-        segments, _ = model.transcribe(
+        # Re-enable VAD to prevent hallucinations
+        segments, info = model.transcribe(
             audio_float,
             beam_size=1,
             vad_filter=True,
             language="en",
             condition_on_previous_text=False,
-            no_speech_threshold=0.4,
+            no_speech_threshold=0.4  # Lower threshold = more sensitive
         )
 
         texts = []
@@ -219,6 +226,7 @@ def transcribe_worker(model, chunk):
 
         result = " ".join(texts) if texts else None
 
+        # Only block if it's JUST a hallucination phrase alone
         if result and result.lower().strip() in ["thank you", "thanks", "thank you."]:
             log(f"Filtered hallucination: {result}")
             return None
@@ -236,200 +244,142 @@ def _parse_stop_phrases(stop_arg: str | None) -> list[str]:
     return [p for p in parts if p]
 
 
-def _resolve_stop_phrases(
-    configured_phrases: list[str] | tuple[str, ...] | str | None,
-) -> list[str]:
+def _resolve_stop_phrases(cli_stop_arg: str | None) -> list[str]:
     env_multi = os.getenv("ZARA_STOP_PHRASES")
     env_single = os.getenv("ZARA_STOP_PHRASE")
 
-    phrases: list[str] = []
+    phrases = []
     phrases.extend(_parse_stop_phrases(env_multi))
     if env_single:
         phrases.append(env_single.strip())
-    if isinstance(configured_phrases, str):
-        phrases.extend(_parse_stop_phrases(configured_phrases))
-    elif configured_phrases:
-        phrases.extend(configured_phrases)
+    phrases.extend(_parse_stop_phrases(cli_stop_arg))
 
     if not phrases:
         phrases = list(DEFAULT_STOP_PHRASES)
 
+    # normalize + dedupe
     out = []
     seen = set()
-    for phrase in phrases:
-        normalized = _normalize_stop_phrase(phrase)
-        if normalized and normalized not in seen:
-            seen.add(normalized)
-            out.append(normalized)
+    for p in phrases:
+        n = _normalize_stop_phrase(p)
+        if n and n not in seen:
+            seen.add(n)
+            out.append(p)
     return out
 
 
-def _commit_ready_transcriptions(
-    pending: dict[int, Future],
-    next_sequence: int,
-    stop_phrases: list[str],
-    run_stop_event: Event,
-    typing_sink=type_text,
-) -> int:
-    while next_sequence in pending and pending[next_sequence].done():
-        future = pending.pop(next_sequence)
-        try:
-            text = future.result()
-            if text and _is_any_stop_phrase(text, stop_phrases):
-                log(f"Stop phrase heard ({text!r}); stopping dictation")
-                run_stop_event.set()
-            elif text:
-                cleaned = _strip_dictation_tokens(text, stop_phrases)
-                if cleaned:
-                    log(f"Typed: {cleaned}")
-                    typing_sink(cleaned + " ")
-        except Exception as error:
-            log(f"Future error: {error}")
-        next_sequence += 1
-        if run_stop_event.is_set():
-            break
-    return next_sequence
-
-
-def _drain_queue(target_queue) -> None:
-    while True:
-        try:
-            target_queue.get_nowait()
-        except queue.Empty:
-            return
-
-
-def _reset_runtime_state() -> tuple[Event, queue.Queue, queue.Queue]:
-    global INPUT_SAMPLE_RATE, audio_queue, chunk_queue, stop_event
-    INPUT_SAMPLE_RATE = None
-    stop_event = Event()
-    audio_queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
-    chunk_queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
-    return stop_event, audio_queue, chunk_queue
-
-
 def main(model_name="small", device="cpu", threads=None, workers=2, stop_phrases=None):
-    run_stop_event, run_audio_queue, run_chunk_queue = _reset_runtime_state()
-    resolved_stop_phrases = _resolve_stop_phrases(stop_phrases)
-    started_threads: list[Thread] = []
-    executor = None
-    pending: dict[int, Future] = {}
-    previous_sigterm = None
+    if stop_phrases is None:
+        stop_phrases = list(DEFAULT_STOP_PHRASES)
+    log(f"Starting Zara Dictation Helper (Optimized); stop_phrases={stop_phrases!r}")
+    write_pid()
+
+    _get_input_sample_rate()
+
+    # Determine thread count for Whisper
+    if threads is None:
+        threads = int(os.getenv("ZARA_THREADS", os.cpu_count() or 1))
+    log(f"Using {threads} Whisper threads, {workers} parallel workers")
+
+    if device == "cpu":
+        compute = "int8"
+    elif device == "cuda":
+        compute = "float16"
+    else:
+        compute = "int8"
+
+    log(f"Loading Whisper model '{model_name}' on {device} ({compute=})")
 
     try:
-        if current_thread() is main_thread():
-            previous_sigterm = signal.getsignal(signal.SIGTERM)
-            signal.signal(signal.SIGTERM, _handle_termination)
-
-        log(
-            "Starting Zara Dictation Helper (Optimized); "
-            f"stop_phrases={resolved_stop_phrases!r}"
+        model = WhisperModel(
+            model_name,
+            device=device,
+            compute_type=compute,
+            num_workers=threads
         )
-        write_pid()
-        _get_input_sample_rate()
-
-        if threads is None:
-            threads = int(os.getenv("ZARA_THREADS", os.cpu_count() or 1))
-        log(f"Using {threads} Whisper threads, {workers} parallel workers")
-
-        compute = "float16" if device == "cuda" else "int8"
-        log(f"Loading Whisper model '{model_name}' on {device} ({compute=})")
-        try:
-            model = WhisperModel(
-                model_name,
-                device=device,
-                compute_type=compute,
-                num_workers=threads,
-            )
-        except Exception as error:
-            log(f"Failed with compute_type={compute}: {error}")
-            log("Retrying with compute_type='int8'")
-            model = WhisperModel(
-                model_name,
-                device=device,
-                compute_type="int8",
-                num_workers=threads,
-            )
-
-        recorder = Thread(
-            target=record_audio,
-            args=(run_audio_queue, run_stop_event),
-            daemon=True,
+    except Exception as e:
+        log(f"Failed with compute_type={compute}: {e}")
+        log("Retrying with compute_type='int8'")
+        model = WhisperModel(
+            model_name,
+            device=device,
+            compute_type="int8",
+            num_workers=threads
         )
-        recorder.start()
-        started_threads.append(recorder)
-        chunker = Thread(
-            target=chunk_audio,
-            args=(run_audio_queue, run_chunk_queue, run_stop_event),
-            daemon=True,
-        )
-        chunker.start()
-        started_threads.append(chunker)
 
-        executor = ThreadPoolExecutor(max_workers=workers)
-        max_pending = workers * 2
-        next_submit = 0
-        next_commit = 0
+    # Start audio pipeline
+    rec_thread = Thread(target=record_audio, args=(audio_queue, stop_event), daemon=True)
+    ch_thread = Thread(target=chunk_audio, args=(audio_queue, chunk_queue, stop_event), daemon=True)
+    rec_thread.start()
+    ch_thread.start()
 
-        while not run_stop_event.is_set():
-            next_commit = _commit_ready_transcriptions(
-                pending,
-                next_commit,
-                resolved_stop_phrases,
-                run_stop_event,
-            )
-            if run_stop_event.is_set():
-                break
-            if len(pending) >= max_pending:
+    # Use ThreadPoolExecutor for parallel transcription
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = []
+        max_pending = workers * 2  # Limit pending jobs
+
+        while not stop_event.is_set():
+
+            # Process finished futures in-place to avoid memory buildup
+            i = 0
+            while i < len(futures):
+                f = futures[i]
+                if f.done():
+                    try:
+                        text = f.result(timeout=0.1)
+                        if text:
+                            if _is_any_stop_phrase(text, stop_phrases):
+                                log(f"Stop phrase heard ({text!r}); stopping dictation")
+                                stop_event.set()
+                                break
+                            cleaned = _strip_dictation_tokens(text, stop_phrases)
+                            if cleaned:
+                                log(f"Typed: {cleaned}")
+                                type_text(cleaned + " ")
+                    except Exception as e:
+                        log(f"Future error: {e}")
+
+                    del futures[i]   # Remove reference to allow GC
+                    gc.collect()      # Force cleanup to keep RAM flat
+                else:
+                    i += 1
+
+            # Pull new chunks only if room
+            if len(futures) < max_pending:
+                try:
+                    chunk = chunk_queue.get(timeout=0.5)
+                    future = executor.submit(transcribe_worker, model, chunk, stop_phrases)
+                    futures.append(future)
+                except queue.Empty:
+                    continue
+            else:
                 time.sleep(0.05)
-                continue
-            try:
-                chunk = run_chunk_queue.get(timeout=0.5)
-            except queue.Empty:
-                continue
-            pending[next_submit] = executor.submit(
-                transcribe_worker,
-                model,
-                chunk,
-            )
-            next_submit += 1
-    finally:
-        run_stop_event.set()
-        for future in pending.values():
-            future.cancel()
-        if executor is not None:
-            executor.shutdown(wait=True, cancel_futures=True)
-        for worker_thread in started_threads:
-            worker_thread.join()
-        _drain_queue(run_audio_queue)
-        _drain_queue(run_chunk_queue)
-        remove_pid()
-        if previous_sigterm is not None:
-            signal.signal(signal.SIGTERM, previous_sigterm)
-        _reset_runtime_state()
-        log("Dictation stopped.")
 
-    return 0
+    remove_pid()
+    log("Dictation stopped.")
 
 
-def cli_main(argv=None) -> int:
-    arguments = list(sys.argv[1:] if argv is None else argv)
-    if arguments and arguments[0] == "devices":
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, _handle_termination)
+    # List audio devices
+    if len(sys.argv) > 1 and sys.argv[1] == "devices":
         print("Available audio input devices:\n")
         devices = sd.query_devices()
         for i, dev in enumerate(devices):
             if dev['max_input_channels'] > 0:
                 print(f"{i}: {dev['name']} (inputs: {dev['max_input_channels']})")
         print("\nSet device with: export SD_DEVICE=<number>")
-        return 0
+        sys.exit(0)
 
-    if arguments and arguments[0] == "test":
+    # Test mode: just show audio levels
+    if len(sys.argv) > 1 and sys.argv[1] == "test":
         print("Audio level test mode - speak into your mic")
         print("Press Ctrl+C to stop\n")
 
         def test_callback(indata, frames, time_info, status):
             rms = np.sqrt(np.mean(indata**2))
-            bars = "#" * int(rms * 500)
+            bars = "#" * int(rms * 500)  # Visual level meter
             print(f"Level: {rms:.4f} |{bars}", end='\r')
 
         try:
@@ -448,20 +398,20 @@ def cli_main(argv=None) -> int:
                     time.sleep(0.1)
         except KeyboardInterrupt:
             print("\nTest complete")
-            return 0
+            sys.exit(0)
 
-    model = arguments[0] if len(arguments) > 0 else "small"
-    device = arguments[1] if len(arguments) > 1 else "cpu"
-    threads = int(arguments[2]) if len(arguments) > 2 else None
-    workers = int(arguments[3]) if len(arguments) > 3 else 2
-    cli_stop = arguments[4] if len(arguments) > 4 else None
+    # Normal mode
+    model = sys.argv[1] if len(sys.argv) > 1 else "small"
+    device = sys.argv[2] if len(sys.argv) > 2 else "cpu"
+    threads = int(sys.argv[3]) if len(sys.argv) > 3 else None
+    workers = int(sys.argv[4]) if len(sys.argv) > 4 else 2
+    cli_stop = sys.argv[5] if len(sys.argv) > 5 else None
+
+    stop_phrases = _resolve_stop_phrases(cli_stop)
 
     try:
-        return main(model, device, threads, workers, stop_phrases=cli_stop)
+        main(model, device, threads, workers, stop_phrases=stop_phrases)
     except KeyboardInterrupt:
+        stop_event.set()
+        remove_pid()
         log("Interrupted by user.")
-        return 130
-
-
-if __name__ == "__main__":
-    raise SystemExit(cli_main())

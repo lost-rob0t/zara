@@ -127,8 +127,7 @@ autoload = []
 model = "small"
 device = "cpu"
 workers = 2
-# Leave empty to use the canonical defaults in zara.dictate.
-stop_phrases = []
+stop_phrases = ["end voice", "stop voice"]
 
 """
 

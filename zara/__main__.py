@@ -110,12 +110,9 @@ def main():
         sys.exit(1)
 
     elif args.dictate:
-        from .config import get_config
+        # Continuous dictation mode
         from .dictate import main as dictate_main
-        if args.stop_phrases:
-            stop_phrases = args.stop_phrases.split(",")
-        else:
-            stop_phrases = get_config().get_section("dictate").get("stop_phrases")
+        stop_phrases = args.stop_phrases.split(",") if args.stop_phrases else None
         sys.exit(dictate_main(
             model_name=args.model,
             device=args.device,
