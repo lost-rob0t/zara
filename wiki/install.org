@@ -26,6 +26,7 @@ nix develop -c scripts/test-prolog-config.sh
 nix develop -c scripts/test-dictation-lifecycle.sh
 nix develop -c scripts/test-file-tools.sh
 nix develop -c scripts/test-process-safety.sh
+nix develop -c scripts/test-prolog-engine.sh
 nix develop -c scripts/test-timers.sh
 #+end_src
 
@@ -102,6 +103,15 @@ the bundled defaults live in =assets/sounds/= and play through =mpv=.
 Intent precedence is state-aware in Prolog through =resolve/4=. Conversation,
 dictation, and passive controls are distinct; missing command slots return a
 typed =pending(...)= result for the thin Python boundary to present.
+
+=PrologEngine= raises =PrologStartupError= when its main program cannot be
+consulted and =PrologQueryError= for runtime or syntax failures. A logical
+no-solution remains =None=, so it cannot be confused with an engine failure.
+PySWIP uses a process-wide SWI-Prolog runtime: Zara serializes every consult and
+query across all =PrologEngine= instances. Lazy query iterators retain that
+runtime lock until exhausted or explicitly closed. User-derived strings, atoms,
+and lists pass through the engine's constrained term serializers before a goal
+is submitted.
 
 The Prolog command loop emits a short =acknowledgement= event before resolution
 or execution, followed by one =command_result(Status, Intent, Args, Detail)=
