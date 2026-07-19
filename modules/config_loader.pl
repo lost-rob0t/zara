@@ -89,6 +89,9 @@ write_default_config(Stream) :-
     writeln(Stream, '% dictation_command(["zara-dictate", "small", "cpu", "16", "2"]).'),
     writeln(Stream, ''),
     writeln(Stream, '% ---- Timer and Alarm Sounds ----'),
+    writeln(Stream, '% Use the unquoted atom disabled to turn either sound off:'),
+    writeln(Stream, '% timer_sound(disabled).'),
+    writeln(Stream, '% alarm_sound(disabled).'),
     writeln(Stream, '% timer_sound("/path/to/timer.wav").'),
     writeln(Stream, '% alarm_sound("/path/to/alarm.wav").'),
     writeln(Stream, ''),
@@ -171,10 +174,10 @@ validate_user_fact(search_engine(Template), kb_config, search_engine(Template)) 
     text_value(Template).
 validate_user_fact(dictation_command(Command), kb_config, dictation_command(Command)) :-
     command_argv(Command, _, _).
-validate_user_fact(timer_sound(Path), kb_config, timer_sound(Path)) :-
-    text_value(Path).
-validate_user_fact(alarm_sound(Path), kb_config, alarm_sound(Path)) :-
-    text_value(Path).
+validate_user_fact(timer_sound(Setting), kb_config, timer_sound(Setting)) :-
+    sound_setting(Setting).
+validate_user_fact(alarm_sound(Setting), kb_config, alarm_sound(Setting)) :-
+    sound_setting(Setting).
 validate_user_fact(llm_provider(Provider), kb_config, llm_provider(Provider)) :-
     memberchk(Provider, [ollama, openai, anthropic]).
 validate_user_fact(llm_model(Model), kb_config, llm_model(Model)) :-
@@ -193,6 +196,16 @@ validate_user_fact(verb_intent(Surface, Intent, Arity), kb_intents,
 
 text_value(Value) :-
     atom(Value) ; string(Value).
+
+sound_setting(disabled).
+sound_setting(Path) :-
+    text_value(Path),
+    Path \== disabled,
+    Path \== true,
+    Path \== false,
+    text_string(Path, Text),
+    Text \= "",
+    Text \= "disabled".
 
 command_argv(Command, Executable, Args) :-
     is_list(Command),
