@@ -7,3 +7,10 @@ result-*
 *.wav
 !assets/sounds/*.wav
 qwen3-tts-data/
+build/
+dist/
+*.egg-info/
+.eggs/
+.tox/
+.mypy_cache/
+.pytest_cache/

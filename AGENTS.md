@@ -16,7 +16,7 @@ This file guides agentic coding assistants working in this repo.
   - `nix develop`
 - Build all packages:
   - `nix build`
-- Run default app (CLI):
+- Run default app (CLI; prints help with no args):
   - `nix run`
 - Run wake listener app:
   - `nix run .#zara-wake`
@@ -24,14 +24,18 @@ This file guides agentic coding assistants working in this repo.
   - `nix run .#zara-console`
 - Run dictation mode:
   - `nix run .#zara-dictate`
+- Run agent conversation mode (no `nix run` app defined; use the entrypoint):
+  - `nix develop -c zara-agent` after `pip install -e .`, or run `nix build` and call the `zara` wrapper with `--agent`
 
 ## Tests
 - Run full test suite:
   - `nix develop -c bash -c 'pytest && for test_script in scripts/test-*.sh; do bash "$test_script"; done'`
+- Run the same suite as flake checks (pytest, scripts, syntax, Prolog load, wrappers):
+  - `nix flake check`
 - Run a single test file:
-  - `nix develop -c pytest t/test_agent.py`
+  - `nix develop -c pytest t/test_agent_history.py`
 - Run a single test by node id:
-  - `nix develop -c pytest t/test_agent.py::TestAgent::test_basic_flow`
+  - `nix develop -c pytest t/test_agent_history.py::test_multiple_results_survive_in_call_order`
 
 ## CI/CD Test Gate
 - Always run the full test suite after any code, configuration, test, or documentation change.
@@ -110,8 +114,8 @@ This file guides agentic coding assistants working in this repo.
 - For tool failures, keep the LLM response from crashing.
 
 ## Files to Respect
-- `spec_zara_inital_fixes.org` describes the system design.
-- Keep the implementation aligned with that spec.
+- The roadmap lives in issue #1 (ZARA-000) and `wiki/`.
+- Keep the implementation aligned with that roadmap and the wiki pages.
 
 ## Cursor / Copilot Rules
 - No `.cursor/rules/`, `.cursorrules`, or `.github/copilot-instructions.md` found.

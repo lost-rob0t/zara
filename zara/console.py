@@ -15,6 +15,37 @@ except ImportError:
     from prolog_engine import PrologEngine
 
 
+def find_main_pl() -> Optional[Path]:
+    """Locate ``main.pl`` across the supported install surfaces.
+
+    The Nix packages ship Prolog under ``$out/share/zarathushtra/``; pip
+    wheels install the same layout under ``<sys.prefix>/share/zarathushtra/``;
+    editable checkouts keep ``main.pl`` at the project root. We probe each
+    surface in order and return the first match.
+    """
+    module_path = Path(__file__).resolve()
+
+    candidates = []
+
+    if "/nix/store" in str(module_path):
+        nix_package_root = module_path.parents[3]
+        candidates.append(nix_package_root / "share" / "zarathushtra" / "main.pl")
+
+    # pip-installed wheel: data_files land under <sys.prefix>/share/zarathushtra/
+    candidates.append(Path(sys.prefix) / "share" / "zarathushtra" / "main.pl")
+
+    # System install location used by the historical Linux layout.
+    candidates.append(Path("/usr/share/zarathushtra/main.pl"))
+
+    # Editable / project checkout: main.pl sits next to the zara package.
+    candidates.append(module_path.parent.parent / "main.pl")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 class ZaraConsole:
     """Text interface to Zarathustra assistant"""
 
@@ -22,22 +53,12 @@ class ZaraConsole:
         self.logger = logging.getLogger(__name__)
 
         if main_file is None:
-            # Determine main.pl location
-            module_path = Path(__file__).resolve()
+            main_file = find_main_pl()
 
-            # Check if running from nix store
-            if "/nix/store" in str(module_path):
-                # In nix: /nix/store/HASH-zara-cli-1.0/lib/python/zara/console.py
-                # main.pl: /nix/store/HASH-zara-cli-1.0/share/zarathushtra/main.pl
-                nix_package_root = module_path.parents[3]  # Go up to package root
-                main_file = nix_package_root / "share" / "zarathushtra" / "main.pl"
-            else:
-                # Development mode: look relative to module
-                project_root = module_path.parent.parent
-                main_file = project_root / "main.pl"
-
-        if not main_file.exists():
-            raise FileNotFoundError(f"main.pl not found at {main_file}")
+        if main_file is None or not main_file.exists():
+            raise FileNotFoundError(
+                "main.pl not found; tried Nix store, sys.prefix, /usr/share, and project root"
+            )
 
         self.logger.info(f"Loading Prolog from: {main_file}")
         self.engine = PrologEngine(main_file)
