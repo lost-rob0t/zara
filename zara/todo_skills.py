@@ -191,8 +191,5 @@ def _check_overlap(
     schedule_iso: str,
     existing_times: Iterable[str],
 ) -> bool:
-    existing_atoms = [f"'{time}'" for time in existing_times if time]
-    schedule_atom = f"'{schedule_iso}'"
-    query = f"todo_schedule:no_overlap({schedule_atom}, [{', '.join(existing_atoms)}])"
-    result = prolog.query_once(query)
-    return result is None
+    scheduled_times = [time for time in existing_times if time]
+    return not prolog.schedule_has_no_overlap(schedule_iso, scheduled_times)

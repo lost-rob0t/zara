@@ -21,16 +21,20 @@ nix develop
 #+begin_src sh
 nix develop -c pytest
 nix develop -c scripts/test-command-routing.sh
+nix develop -c scripts/test-replies.sh
 nix develop -c scripts/test-prolog-config.sh
 nix develop -c scripts/test-dictation-lifecycle.sh
 nix develop -c scripts/test-file-tools.sh
 nix develop -c scripts/test-llm-clients.sh
 nix develop -c scripts/test-process-safety.sh
+nix develop -c scripts/test-prolog-engine.sh
 nix develop -c scripts/test-timers.sh
 #+end_src
 
-The command-routing gate verifies that unsupported or failed Prolog handlers
-fall back without reporting a successful execution.
+The command-routing gate verifies that unsupported Prolog handlers do not report
+a successful execution. The reply gate verifies that the noncommittal
+acknowledgement precedes execution and that structured success and failure
+results reach both notification and TTS sinks.
 
 ** Build all packages
 #+begin_src sh
@@ -113,6 +117,24 @@ Intent precedence is state-aware in Prolog through =resolve/4=. Conversation,
 dictation, and passive controls are distinct; missing command slots return a
 typed =pending(...)= result for the thin Python boundary to present.
 
+=PrologEngine= raises =PrologStartupError= when its main program cannot be
+consulted and =PrologQueryError= for runtime or syntax failures. A logical
+no-solution remains =None=, so it cannot be confused with an engine failure.
+PySWIP uses a process-wide SWI-Prolog runtime: Zara serializes every consult and
+query across all =PrologEngine= instances. Lazy query iterators retain that
+runtime lock until exhausted or explicitly closed. User-derived strings, atoms,
+and lists pass through the engine's constrained term serializers before a goal
+is submitted.
+
+The Prolog command loop emits a short =acknowledgement= event before resolution
+or execution, followed by one =command_result(Status, Intent, Args, Detail)=
+event after execution. Final reply text uses the resolved arguments, and failed
+handlers produce failure text instead of a completion claim. Concise replies are
+the default. Set =ZARA_RICH_REPLIES=1= to include optional philosophical phrases.
+Set =ZARA_REPLY_TTS_COMMAND= to an executable name when Prolog replies should
+also be sent to a TTS command; reply sink failures never determine command
+success.
+
 Agent history validation preserves complete contiguous tool-result groups in
 the originating AI tool-call order. Orphaned, duplicate, unknown, and
 cross-turn tool results are discarded before provider serialization.
@@ -142,6 +164,12 @@ instantiating the config manager.
 - =wake.sample_rate= sets the target rate for transcription.
 - If the input device does not support that rate, Zarathushtra falls back to the
   device default and resamples audio to the target.
+- =wake.audio_queue_chunks= bounds the real-time callback buffer. When full, the
+  oldest chunk is dropped so current audio wins.
+- =wake.first_speech_timeout= returns a wake with no speech to passive mode.
+- =wake.silence_duration= ends an utterance after speech followed by silence.
+- =wake.max_utterance_duration= caps continuous speech or noise. Conversation
+  mode separately uses =agent.conversation_timeout= as its inactivity deadline.
 
 ** Example: set a custom system prompt
 #+begin_src toml

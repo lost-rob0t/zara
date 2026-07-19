@@ -9,7 +9,9 @@ import os
 import time
 import asyncio
 import pathlib
-from typing import Any, List, Optional, Tuple
+import queue
+import threading
+from typing import Any, Optional, Tuple
 import numpy as np
 import sounddevice as sd
 import faster_whisper
@@ -29,10 +31,10 @@ from .memory import build_memory_manager
 DEFAULT_SAMPLE_RATE = 16000
 CHANNELS = 1
 PASSIVE_CHUNK_SEC = 3
-ACTIVE_CHUNK_SEC = 8
 DEFAULT_SILENCE_THRESHOLD = 0.01  # RMS threshold for silence detection
 DEFAULT_SILENCE_DURATION = 5.0  # Seconds of silence before considering speech complete
 MAX_RECORDING_DURATION = 30.0  # Maximum recording duration to prevent infinite recording
+DEFAULT_AUDIO_QUEUE_CHUNKS = 32
 WAKE_WORDS = ["zarathustra", "hey zara", "zara", "sarah"]
 TIMEOUT_ACTIVE = 5
 
@@ -61,11 +63,18 @@ def load_tts_config():
 class WakeWordListener:
     def __init__(self, model="tiny.en", device="cpu", prolog_main_path=None, enable_tts=True):
         self.state = "PASSIVE"
-        self.audio_queue: Optional[asyncio.Queue] = None  # Will be created in async context
-        self.stop_event: Optional[asyncio.Event] = None  # Will be created in async context
-        self.last_activity = time.time()
+        self.audio_queue: Optional[queue.Queue] = None
+        self.audio_ready: Optional[asyncio.Event] = None
+        self.stop_event: Optional[asyncio.Event] = None
+        self._shutdown_requested = threading.Event()
+        self._audio_notification_lock = threading.Lock()
+        self._audio_notification_pending = False
+        self._audio_epoch = 0
+        self.dropped_audio_chunks = 0
+        self.collection_status = "idle"
+        self._clock = time.monotonic
         self.enable_tts = enable_tts
-        self.loop: Optional[asyncio.AbstractEventLoop] = None  # Event loop reference for audio callback
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
 
         # Thread pool for CPU-bound operations
         self.executor = ThreadPoolExecutor(max_workers=4)
@@ -109,6 +118,18 @@ class WakeWordListener:
         self.silence_log_interval = self._parse_float(
             wake_cfg.get("silence_log_interval", 0.5),
             0.5,
+        )
+        self.first_speech_timeout = self._positive_float(
+            wake_cfg.get("first_speech_timeout", TIMEOUT_ACTIVE),
+            TIMEOUT_ACTIVE,
+        )
+        self.max_utterance_duration = self._positive_float(
+            wake_cfg.get("max_utterance_duration", MAX_RECORDING_DURATION),
+            MAX_RECORDING_DURATION,
+        )
+        self.audio_queue_chunks = self._positive_int(
+            wake_cfg.get("audio_queue_chunks", DEFAULT_AUDIO_QUEUE_CHUNKS),
+            DEFAULT_AUDIO_QUEUE_CHUNKS,
         )
 
         self.target_sample_rate = self._parse_float(
@@ -170,6 +191,17 @@ class WakeWordListener:
         except (TypeError, ValueError):
             return default
 
+    def _positive_float(self, value: Any, default: float) -> float:
+        parsed = self._parse_float(value, default)
+        return parsed if parsed > 0 else default
+
+    def _positive_int(self, value: Any, default: int) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return default
+        return parsed if parsed > 0 else default
+
     def _is_conversation_stop(self, text: str) -> bool:
         state = "conversation" if self.in_conversation_mode() else "passive"
         return self.prolog.is_conversation_stop(text, state=state)
@@ -191,17 +223,83 @@ class WakeWordListener:
         self.tts_player_proc = None
 
     def audio_callback(self, indata, _frames, _time_info, status):
-        """Audio callback - runs in separate thread, needs thread-safe queue push"""
+        """Push the newest audio into the bounded real-time buffer."""
         if status:
             self.log(f"Audio: {status}")
 
-        # Put audio in queue in a thread-safe way
-        # We need to use the stored loop reference since this runs in a different thread
-        if self.loop and self.audio_queue:
-            asyncio.run_coroutine_threadsafe(
-                self.audio_queue.put(indata.copy()),
-                self.loop
-            )
+        if self._shutdown_requested.is_set() or self.audio_queue is None:
+            return
+
+        item = (self._audio_epoch, indata.copy())
+        try:
+            self.audio_queue.put_nowait(item)
+        except queue.Full:
+            try:
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self.audio_queue.put_nowait(item)
+            except queue.Full:
+                return
+            self.dropped_audio_chunks += 1
+
+        if self.loop is None:
+            return
+        with self._audio_notification_lock:
+            if self._audio_notification_pending:
+                return
+            self._audio_notification_pending = True
+        self.loop.call_soon_threadsafe(self._signal_audio_ready)
+
+    def _signal_audio_ready(self):
+        with self._audio_notification_lock:
+            self._audio_notification_pending = False
+        if self.audio_ready is not None:
+            self.audio_ready.set()
+
+    def request_stop(self):
+        """Stop producers and wake every pending audio collector."""
+        self._shutdown_requested.set()
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(self._signal_stop)
+
+    def _signal_stop(self):
+        if self.stop_event is not None:
+            self.stop_event.set()
+        if self.audio_ready is not None:
+            self.audio_ready.set()
+
+    def _stopping(self) -> bool:
+        return self._shutdown_requested.is_set() or (
+            self.stop_event is not None and self.stop_event.is_set()
+        )
+
+    async def _next_audio(self, deadline: Optional[float] = None):
+        while not self._stopping():
+            if self.audio_ready is not None:
+                self.audio_ready.clear()
+            try:
+                epoch, data = self.audio_queue.get_nowait()
+            except queue.Empty:
+                if deadline is not None and self._clock() >= deadline:
+                    return None
+                if self.audio_ready is None:
+                    await asyncio.sleep(0)
+                    continue
+                timeout = 0.1
+                if deadline is not None:
+                    timeout = min(timeout, max(0.0, deadline - self._clock()))
+                    if timeout == 0:
+                        return None
+                try:
+                    await asyncio.wait_for(self.audio_ready.wait(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    pass
+                continue
+            if epoch == self._audio_epoch:
+                return data
+        return None
 
     async def transcribe_async(self, audio_data):
         """Run Whisper transcription in thread pool to avoid blocking"""
@@ -237,98 +335,119 @@ class WakeWordListener:
         target_frames = int(seconds * self.input_sample_rate)
         buffer = np.zeros((0, CHANNELS), dtype="float32")
 
-        while buffer.shape[0] < target_frames and not self.stop_event.is_set():
-            try:
-                data = await asyncio.wait_for(self.audio_queue.get(), timeout=0.5)
-                buffer = np.concatenate((buffer, data))
-            except asyncio.TimeoutError:
-                continue
+        while buffer.shape[0] < target_frames and not self._stopping():
+            data = await self._next_audio()
+            if data is None:
+                break
+            buffer = np.concatenate((buffer, data))
 
         return buffer[:target_frames] if buffer.shape[0] >= target_frames else None
 
-    async def collect_audio_until_silence(self):
+    async def collect_audio_until_silence(self, first_speech_timeout=None):
         """Collect audio until silence is detected (for active mode)"""
         buffer = np.zeros((0, CHANNELS), dtype="float32")
         silence_start = None
-        total_duration = 0.0
+        utterance_deadline = None
         speech_detected = False
         last_log_time = 0.0
+        if first_speech_timeout is None:
+            first_speech_timeout = self.first_speech_timeout
+        else:
+            first_speech_timeout = max(
+                0.0,
+                self._parse_float(first_speech_timeout, self.first_speech_timeout),
+            )
+        deadline = self._clock() + first_speech_timeout
+        self.collection_status = "waiting_for_speech"
 
-        while not self.stop_event.is_set():
-            try:
-                data = await asyncio.wait_for(self.audio_queue.get(), timeout=0.5)
-                buffer = np.concatenate((buffer, data))
-
-                # Calculate RMS of the current chunk to detect silence
-                chunk_mono = data[:, 0] if data.ndim > 1 else data
-                rms = np.sqrt(np.mean(chunk_mono.astype(np.float32) ** 2))
-
-                # Update total duration
-                chunk_duration = len(data) / self.input_sample_rate
-                total_duration += chunk_duration
-
-                # Check if we've exceeded max recording duration
-                if total_duration > MAX_RECORDING_DURATION:
-                    self.log(f"Max recording duration ({MAX_RECORDING_DURATION}s) reached, transcribing")
-                    break
-
-                now = time.time()
-                if now - last_log_time >= self.silence_log_interval:
-                    if speech_detected and silence_start is not None:
-                        elapsed = now - silence_start
-                        self.log(
-                            f"Silence check: rms={rms:.4f} threshold={self.silence_threshold:.3f} "
-                            f"elapsed={elapsed:.2f}s"
-                        )
-                    else:
-                        self.log(
-                            f"Silence check: rms={rms:.4f} threshold={self.silence_threshold:.3f}"
-                        )
-                    last_log_time = now
-
-                # Detect speech vs silence
-                if rms > self.silence_threshold:
-                    speech_detected = True
-                    silence_start = None
-                else:
-                    if not speech_detected:
-                        continue
-                    if silence_start is None:
-                        silence_start = time.time()
-                    else:
-                        # Check if we've had enough silence
-                        silence_elapsed = time.time() - silence_start
-                        if silence_elapsed >= self.silence_duration:
-                            self.log(
-                                f"Silence detected after {silence_elapsed:.2f}s, transcribing"
-                            )
-                            break
-
-            except asyncio.TimeoutError:
+        while not self._stopping():
+            data = await self._next_audio(deadline)
+            now = self._clock()
+            if data is None:
+                if self._stopping():
+                    self.collection_status = "stopped"
+                    return None
                 if not speech_detected:
-                    continue
-                # Timeout counts as silence only after speech
-                if silence_start is None:
-                    silence_start = time.time()
-                else:
-                    silence_elapsed = time.time() - silence_start
-                    if silence_elapsed >= self.silence_duration:
-                        self.log(f"Audio timeout after {silence_elapsed:.2f}s silence")
-                        break
-                continue
+                    self.collection_status = "first_speech_timeout"
+                    return None
+                self.collection_status = (
+                    "max_utterance"
+                    if (
+                        utterance_deadline is not None
+                        and utterance_deadline <= silence_start + self.silence_duration
+                    )
+                    else "silence"
+                )
+                break
 
-        # Return buffer if we have enough audio
-        if buffer.shape[0] > self.input_sample_rate * 0.5:  # At least 0.5 seconds
+            buffer = np.concatenate((buffer, data))
+            chunk_mono = data[:, 0] if data.ndim > 1 else data
+            rms = np.sqrt(np.mean(chunk_mono.astype(np.float32) ** 2))
+
+            if (
+                speech_detected
+                and buffer.shape[0] >= self.max_utterance_duration * self.input_sample_rate
+            ):
+                self.collection_status = "max_utterance"
+                break
+            if (
+                not speech_detected
+                and buffer.shape[0] >= first_speech_timeout * self.input_sample_rate
+            ):
+                self.collection_status = "first_speech_timeout"
+                return None
+
+            if now - last_log_time >= self.silence_log_interval:
+                self.log(f"Silence check: rms={rms:.4f} threshold={self.silence_threshold:.3f}")
+                last_log_time = now
+
+            if rms > self.silence_threshold:
+                if not speech_detected:
+                    speech_detected = True
+                    self.collection_status = "recording"
+                    utterance_deadline = now + self.max_utterance_duration
+                silence_start = now
+                deadline = min(
+                    utterance_deadline,
+                    silence_start + self.silence_duration,
+                )
+            elif speech_detected:
+                deadline = min(
+                    utterance_deadline,
+                    silence_start + self.silence_duration,
+                )
+
+            if speech_detected and now >= deadline:
+                self.collection_status = (
+                    "max_utterance"
+                    if utterance_deadline <= silence_start + self.silence_duration
+                    else "silence"
+                )
+                break
+
+        if self._stopping():
+            self.collection_status = "stopped"
+            return None
+        if speech_detected and buffer.shape[0] > self.input_sample_rate * 0.5:
             return buffer
         return None
 
-    async def clear_queue(self):
+    def clear_queue(self):
         """Drain audio queue to prevent stale data"""
-        while not self.audio_queue.empty():
+        if self.audio_queue is None:
+            return
+        while True:
             try:
                 self.audio_queue.get_nowait()
-            except asyncio.QueueEmpty:
+            except queue.Empty:
                 break
+
+    def transition_to(self, state: str):
+        if state == self.state:
+            return
+        self._audio_epoch += 1
+        self.clear_queue()
+        self.state = state
 
     def check_wake_word(self, text):
         text_lower = text.lower()
@@ -713,11 +832,10 @@ class WakeWordListener:
 
     async def run_async(self):
         """Main async event loop"""
-        # Store event loop reference for audio callback
-        self.loop = asyncio.get_event_loop()
-
-        # Create async primitives in the async context
-        self.audio_queue = asyncio.Queue()
+        self.loop = asyncio.get_running_loop()
+        self._shutdown_requested.clear()
+        self.audio_queue = queue.Queue(maxsize=self.audio_queue_chunks)
+        self.audio_ready = asyncio.Event()
         self.stop_event = asyncio.Event()
 
         self.log("🔥 Starting Wake Word Listener (ASYNC)")
@@ -726,24 +844,26 @@ class WakeWordListener:
         with open(PIDFILE, "w") as f:
             f.write(str(os.getpid()))
 
-        with sd.InputStream(
-            samplerate=self.input_sample_rate,
-            channels=CHANNELS,
-            callback=self.audio_callback
-        ):
-            while not self.stop_event.is_set():
-                if self.state == "PASSIVE":
-                    await self.passive_mode_async()
-                elif self.state == "ACTIVE":
-                    await self.active_mode_async()
-
-        pathlib.Path(PIDFILE).unlink(missing_ok=True)
-        self.log("Stopped")
+        try:
+            with sd.InputStream(
+                samplerate=self.input_sample_rate,
+                channels=CHANNELS,
+                callback=self.audio_callback
+            ):
+                while not self._stopping():
+                    if self.state == "PASSIVE":
+                        await self.passive_mode_async()
+                    elif self.state == "ACTIVE":
+                        await self.active_mode_async()
+        finally:
+            self.request_stop()
+            pathlib.Path(PIDFILE).unlink(missing_ok=True)
+            self.log("Stopped")
 
     async def passive_mode_async(self):
         """Listen for wake word"""
         if self.prolog.dictation_active():
-            self.state = "ACTIVE"
+            self.transition_to("ACTIVE")
             return
 
         chunk = await self.collect_audio(PASSIVE_CHUNK_SEC)
@@ -755,25 +875,34 @@ class WakeWordListener:
         if self.check_wake_word(text):
             await send_notification_async("Zara", "Listening", "normal", 1000)
             self.log(f"🔥 Wake word detected")
-            await self.clear_queue()
-            self.state = "ACTIVE"
-            self.last_activity = time.time()
+            self.transition_to("ACTIVE")
+
+    async def _end_timed_out_conversation(self):
+        self.log("Conversation timeout, exiting conversation mode")
+        if self.session_id is not None:
+            summary = self.memory.summarise_session(self.session_id, source="wake")
+            if summary:
+                self.log("Conversation summary stored")
+        self.session_id = self.memory.start_session()
+        self.agent_manager.exit_conversation()
+        if self.enable_tts:
+            await self.speak_async("Conversation ended")
+        self.transition_to("PASSIVE")
+
+    def _conversation_timeout_remaining(self) -> Optional[float]:
+        if not self.in_conversation_mode() or self.agent_manager is None:
+            return None
+        manager = self.agent_manager.conversation_manager
+        if manager.last_activity is None:
+            return float(manager.timeout_seconds)
+        return max(0.0, manager.timeout_seconds - (time.time() - manager.last_activity))
 
     async def active_mode_async(self):
         """Transcribe and route command with conversation mode support"""
         # Check conversation timeout
         if self.in_conversation_mode():
             if self.agent_manager is not None and self.agent_manager.should_exit_conversation():
-                self.log("Conversation timeout, exiting conversation mode")
-                if self.session_id is not None:
-                    summary = self.memory.summarise_session(self.session_id, source="wake")
-                    if summary:
-                        self.log("Conversation summary stored")
-                self.session_id = self.memory.start_session()
-                self.agent_manager.exit_conversation()
-                if self.enable_tts:
-                    await self.speak_async("Conversation ended")
-                self.state = "PASSIVE"
+                await self._end_timed_out_conversation()
                 return
 
         # If dictation is active, only watch for stop phrases
@@ -791,18 +920,28 @@ class WakeWordListener:
             if intent and intent.kind == "prolog" and intent.name == "dictation_stop":
                 self.log("Dictation stop detected while active")
                 self.prolog.query_once("dictation:stop_dictation")
-                self.state = "PASSIVE"
+                self.transition_to("PASSIVE")
             return
 
-        # Check general activity timeout
-        if time.time() - self.last_activity > TIMEOUT_ACTIVE:
-            self.log("⏸️ Timeout - returning to passive")
-            self.state = "PASSIVE"
-            return
-
-        # Use silence detection for more natural recording
-        chunk = await self.collect_audio_until_silence()
+        conversation_timeout = self._conversation_timeout_remaining()
+        first_speech_timeout = (
+            conversation_timeout
+            if conversation_timeout is not None
+            else self.first_speech_timeout
+        )
+        chunk = await self.collect_audio_until_silence(first_speech_timeout)
         if chunk is None:
+            if self.collection_status == "stopped":
+                return
+            if (
+                conversation_timeout is not None
+                and self.agent_manager is not None
+                and self.agent_manager.should_exit_conversation()
+            ):
+                await self._end_timed_out_conversation()
+                return
+            self.log("⏸️ No speech - returning to passive")
+            self.transition_to("PASSIVE")
             return
 
         text = await self.transcribe_async(chunk)
@@ -814,7 +953,6 @@ class WakeWordListener:
             await self._stop_tts()
 
         self.log(f"📝 Heard: '{text}'")
-        self.last_activity = time.time()
 
         text_lower = text.lower()
 
@@ -832,10 +970,10 @@ class WakeWordListener:
                     self.agent_manager.exit_conversation()
                 if self.enable_tts:
                     await self.speak_async("Conversation ended")
-                self.state = "PASSIVE"
+                self.transition_to("PASSIVE")
                 return
             self.log("Returning to passive mode")
-            self.state = "PASSIVE"
+            self.transition_to("PASSIVE")
             return
 
         command = text.strip()
@@ -860,13 +998,11 @@ class WakeWordListener:
                     self.agent_manager.exit_conversation()
                 if self.enable_tts:
                     await self.speak_async("Conversation ended")
-            self.state = "PASSIVE"
+            self.transition_to("PASSIVE")
             return
 
         await self.send_response_async("Zara", response)
 
-        # Reset activity timeout
-        self.last_activity = time.time()
 
 
 def main(model="tiny.en", device="cpu", prolog_main_path=None, enable_tts=True):
@@ -882,9 +1018,10 @@ def main(model="tiny.en", device="cpu", prolog_main_path=None, enable_tts=True):
         try:
             await listener.run_async()
         except KeyboardInterrupt:
-            listener.stop_event.set()
+            listener.request_stop()
             listener.log("Interrupted")
         finally:
+            listener.request_stop()
             listener.executor.shutdown(wait=True)
             if listener.llm_client:
                 await listener.llm_client.close()

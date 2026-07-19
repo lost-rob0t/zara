@@ -44,7 +44,7 @@ def test_active_mode_captures_one_command():
 
         asyncio.run(listener.active_mode_async())
 
-    listener.collect_audio_until_silence.assert_awaited_once_with()
+    listener.collect_audio_until_silence.assert_awaited_once_with(5.0)
     listener.transcribe_async.assert_awaited_once()
     listener.query_with_fallback_async.assert_awaited_once_with("open firefox")
     listener.send_response_async.assert_awaited_once_with("Zara", "Opened Firefox")
