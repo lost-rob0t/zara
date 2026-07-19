@@ -23,6 +23,7 @@ nix develop -c pytest
 nix develop -c scripts/test-command-routing.sh
 nix develop -c scripts/test-prolog-config.sh
 nix develop -c scripts/test-dictation-lifecycle.sh
+nix develop -c scripts/test-process-safety.sh
 nix develop -c scripts/test-timers.sh
 #+end_src
 
@@ -78,6 +79,13 @@ replace prior user overrides on reload.
 Dictation process state is determined from the configured PID file and live
 process. =ZARA_DICTATION_PIDFILE= and =ZARA_DICTATION_LOGFILE= can override the
 default paths for isolated environments.
+
+Prolog application and dictation commands should be configured as executable
+and argument lists, for example =app_mapping(browser, ["xdg-open",
+"https://example.com"])= and =dictation_command(["zara-dictate", "small"])=.
+Legacy whitespace-only strings remain accepted when every token uses the
+constrained command character set. Shell syntax is rejected, and runtime
+launches never interpolate command text through a shell.
 
 Timer parsing, unit conversion, scheduling, and completion notifications are
 implemented in Prolog. Timer commands use the canonical shape

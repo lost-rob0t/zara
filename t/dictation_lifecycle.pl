@@ -56,7 +56,7 @@ test(empty_pid_is_cleaned, [setup(reset_dictation), cleanup(reset_dictation)]) :
 
 test(already_dead_process_fails_start,
      [setup(reset_dictation), cleanup(reset_dictation), fail]) :-
-    with_command("exit 0", dictation:start_dictation).
+    with_command(["true"], dictation:start_dictation).
 
 test(cleanup_after_launch_exception, [setup(reset_dictation), cleanup(reset_dictation)]) :-
     getenv('ZARA_DICTATION_LOGFILE', OriginalLog),

@@ -102,7 +102,7 @@ todo_template(markdown,
 search_engine("https://duckduckgo.com/?q=~w").
 
 % Dictation command used by dictation module
-dictation_command("zara-dictate").
+dictation_command(["zara-dictate"]).
 
 timer_sound("assets/sounds/timer.wav").
 alarm_sound("assets/sounds/alarm.wav").
@@ -232,7 +232,7 @@ app_mapping(pycharm, "pycharm").
 app_mapping(intellij, "idea").
 
 % Version Control
-app_mapping(git, "x-terminal-emulator -e 'git status; bash'").
+app_mapping(git, ["x-terminal-emulator", "-e", "git", "status"]).
 app_mapping(gitk, "gitk").
 
 % Databases

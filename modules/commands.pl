@@ -5,6 +5,7 @@
 :- module(commands, [execute/2]).
 
 :- use_module('../kb/config').
+:- use_module('config_loader', [command_argv/3, search_url/2]).
 :- use_module(library(process)).
 :- use_module('dictate').
 :- use_module('normalizer', [strip_fillers/2]).
@@ -41,8 +42,7 @@ execute(search, Args) :-
     atomic_list_concat(Args, ' ', Query),
     search_url(Query, URL),
     format('Searching for: ~w~n', [Query]),
-    format(atom(Cmd), 'xdg-open "~w"', [URL]),
-    run_system_command(Cmd), !.
+    launch_process('xdg-open', ["--", URL]), !.
 
 execute(dictation_start, _) :-
     dictation:start_dictation,
@@ -91,20 +91,22 @@ execute(say, Rest) :-
 open_app(AppName) :-
     (   once(kb_config:app_mapping(AppName, Command))
     ->  format('Opening ~w via: ~w~n', [AppName, Command]),
-        run_system_command(Command)
+        command_argv(Command, Executable, Args),
+        launch_process(Executable, Args)
     ;   once(kb_config:direct_app(AppName))
     ->  format('Launching ~w directly~n', [AppName]),
-        atom_string(AppName, AppCmd),
-        run_system_command(AppCmd)
+        launch_process(AppName, [])
     ;   format('Attempting to launch ~w (not in config)~n', [AppName]),
-        atom_string(AppName, AppCmd),
-        run_system_command(AppCmd)
+        launch_process(AppName, [])
     ),
     !.
 
-run_system_command(Command) :-
+launch_process(Executable, Args) :-
+    atom(Executable),
+    is_list(Args),
+    process_executable(Executable, ProcessExecutable),
     catch(
-        process_create('/bin/sh', ['-c', Command], [
+        process_create(ProcessExecutable, Args, [
             detached(true),
             stdout(null),
             stderr(null),
@@ -116,8 +118,18 @@ run_system_command(Command) :-
         )
     ),
     process_wait(Process, Status, [timeout(0.5)]),
-    ( Status == exit(0) ; Status == timeout ),
+    launch_status(Executable, Status),
     !.
+
+launch_status(_, exit(0)).
+launch_status(_, timeout).
+launch_status(Executable, Status) :-
+    format(user_error, 'Failed to launch ~w: ~w~n', [Executable, Status]),
+    fail.
+
+process_executable(Executable, Executable) :-
+    sub_atom(Executable, _, _, _, '/'), !.
+process_executable(Executable, path(Executable)).
 
 tokens_to_string([], "unspecified task") :- !.
 tokens_to_string(Toks, S) :-

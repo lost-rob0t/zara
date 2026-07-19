@@ -5,6 +5,7 @@
 :- use_module(library(filesex)).
 :- use_module(library(system)).
 :- use_module('../kb/config').
+:- use_module('config_loader', [command_argv/3]).
 
 dictation_pidfile(Path) :-
     ( getenv('ZARA_DICTATION_PIDFILE', Configured), Configured \= ''
@@ -16,12 +17,6 @@ dictation_logfile(Path) :-
     ( getenv('ZARA_DICTATION_LOGFILE', Configured), Configured \= ''
     -> Path = Configured
     ; Path = '/tmp/zara_dictation.log'
-    ).
-
-dictation_command_string(Command) :-
-    ( once(kb_config:dictation_command(Configured))
-    -> Command = Configured
-    ; Command = "zara-dictate"
     ).
 
 bundled_dictation_script(Path) :-
@@ -39,23 +34,33 @@ start_dictation :-
       ( process_alive(Pid)
       -> format("Dictation started, pid: ~w~n", [Pid])
       ; cleanup_pidfile,
+        process_wait(Pid, Status, [timeout(0)]),
+        format(user_error, "Dictation failed to start: ~w~n", [Status]),
         fail
       )
     ).
 
 launch_dictation(Pid) :-
-    dictation_command_string(Command0),
-    ( Command0 == "zara-dictate",
+    ( once(kb_config:dictation_command(Configured))
+    -> command_argv(Configured, ConfiguredExecutable, ConfiguredArgs)
+    ; ConfiguredExecutable = 'zara-dictate',
+      ConfiguredArgs = []
+    ),
+    ( ConfiguredExecutable == 'zara-dictate',
+      ConfiguredArgs == [],
       \+ exists_in_path('zara-dictate'),
       bundled_dictation_script(ScriptPath),
       exists_file(ScriptPath)
-    -> format(string(Command), "python3 ~w", [ScriptPath])
-    ; Command = Command0
+    -> Executable = python3,
+       Args = [ScriptPath]
+    ; Executable = ConfiguredExecutable,
+      Args = ConfiguredArgs
     ),
+    process_executable(Executable, ProcessExecutable),
     dictation_logfile(LogPath),
     setup_call_cleanup(
         open(LogPath, append, Log),
-        process_create(path(sh), ['-c', Command],
+        process_create(ProcessExecutable, Args,
                        [detached(true), stdout(stream(Log)), stderr(stream(Log)),
                         process(Pid)]),
         close(Log)
@@ -117,3 +122,7 @@ process_alive(Pid) :-
 
 exists_in_path(Command) :-
     absolute_file_name(path(Command), _, [access(execute), file_errors(fail)]).
+
+process_executable(Executable, Executable) :-
+    sub_atom(Executable, _, _, _, '/'), !.
+process_executable(Executable, path(Executable)).

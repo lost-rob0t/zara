@@ -4,7 +4,8 @@
         reload_user_config/0,
         ensure_user_config/0,
         user_config_path/1,
-        search_url/2
+        search_url/2,
+        command_argv/3
     ]).
 
 :- use_module(library(filesex)).
@@ -70,11 +71,8 @@ write_default_config(Stream) :-
     writeln(Stream, ''),
     writeln(Stream, '% ---- Custom App Mappings ----'),
     writeln(Stream, '% Override existing apps or add new ones:'),
-    writeln(Stream, '% app_mapping(editor, "code").'),
-    writeln(Stream, '% app_mapping(music, "spotify").'),
-    writeln(Stream, '% app_mapping(recon, "maltego").'),
-    writeln(Stream, '% app_mapping(burp, "burpsuite").'),
-    writeln(Stream, '% app_mapping(metasploit, "msfconsole").'),
+    writeln(Stream, '% app_mapping(editor, ["code"]).'),
+    writeln(Stream, '% app_mapping(browser, ["xdg-open", "https://example.com"]).'),
     writeln(Stream, ''),
     writeln(Stream, '% ---- Custom Direct Apps ----'),
     writeln(Stream, '% direct_app(wireshark).'),
@@ -88,7 +86,7 @@ write_default_config(Stream) :-
     writeln(Stream, ''),
     writeln(Stream, '% ---- Dictation (zara-dictate) ----'),
     writeln(Stream, '% Configure how zara-dictate is launched:'),
-    writeln(Stream, '% dictation_command("zara-dictate small cpu 16 2").'),
+    writeln(Stream, '% dictation_command(["zara-dictate", "small", "cpu", "16", "2"]).'),
     writeln(Stream, ''),
     writeln(Stream, '% ---- Timer and Alarm Sounds ----'),
     writeln(Stream, '% timer_sound("/path/to/timer.wav").'),
@@ -109,12 +107,7 @@ write_default_config(Stream) :-
     writeln(Stream, '% llm_model("claude-sonnet-4-20250514").'),
     writeln(Stream, ''),
     writeln(Stream, '% ---- OSINT/Security Shortcuts ----'),
-    writeln(Stream, '% app_mapping(shodan, "brave --new-window https://shodan.io").'),
-    writeln(Stream, '% app_mapping(censys, "brave --new-window https://search.censys.io").'),
-    writeln(Stream, '% app_mapping(virustotal, "brave --new-window https://virustotal.com").'),
-    writeln(Stream, '% app_mapping(maltego, "maltego").'),
-    writeln(Stream, '% app_mapping(recon_ng, "recon-ng").'),
-    writeln(Stream, '% app_mapping(theharvester, "theHarvester").'),
+    writeln(Stream, '% app_mapping(shodan, ["brave", "--new-window", "https://shodan.io"]).'),
     writeln(Stream, '').
 
 %% load_user_config is det.
@@ -171,13 +164,13 @@ validate_user_fact(Module:Term, Module, Fact) :-
     validate_user_fact(Term, Module, Fact).
 validate_user_fact(app_mapping(Name, Command), kb_config, app_mapping(Name, Command)) :-
     atom(Name),
-    text_value(Command).
+    command_argv(Command, _, _).
 validate_user_fact(direct_app(Name), kb_config, direct_app(Name)) :-
     atom(Name).
 validate_user_fact(search_engine(Template), kb_config, search_engine(Template)) :-
     text_value(Template).
 validate_user_fact(dictation_command(Command), kb_config, dictation_command(Command)) :-
-    text_value(Command).
+    command_argv(Command, _, _).
 validate_user_fact(timer_sound(Path), kb_config, timer_sound(Path)) :-
     text_value(Path).
 validate_user_fact(alarm_sound(Path), kb_config, alarm_sound(Path)) :-
@@ -200,6 +193,55 @@ validate_user_fact(verb_intent(Surface, Intent, Arity), kb_intents,
 
 text_value(Value) :-
     atom(Value) ; string(Value).
+
+command_argv(Command, Executable, Args) :-
+    is_list(Command),
+    !,
+    Command = [ExecutableValue|ArgValues],
+    text_value(ExecutableValue),
+    maplist(text_value, ArgValues),
+    executable_atom(ExecutableValue, Executable),
+    maplist(expand_command_arg, ArgValues, Args).
+command_argv(Command, Executable, Args) :-
+    text_value(Command),
+    text_string(Command, CommandString),
+    split_string(CommandString, " \t", " \t", Parts),
+    Parts = [ExecutableString|ArgStrings],
+    maplist(constrained_command_token, Parts),
+    executable_atom(ExecutableString, Executable),
+    maplist(expand_command_arg, ArgStrings, Args).
+
+text_string(Value, String) :-
+    ( string(Value) -> String = Value ; atom_string(Value, String) ).
+
+executable_atom(Value, Executable) :-
+    text_string(Value, ExecutableString),
+    ExecutableString \= "",
+    \+ sub_string(ExecutableString, 0, 1, _, "-"),
+    atom_string(Executable, ExecutableString),
+    file_base_name(Executable, Base),
+    \+ memberchk(Base, [sh, bash, dash, zsh, ksh, fish]).
+
+constrained_command_token(Token) :-
+    string_codes(Token, Codes),
+    Codes \= [],
+    maplist(constrained_command_code, Codes).
+
+constrained_command_code(Code) :-
+    code_type(Code, alnum), !.
+constrained_command_code(Code) :-
+    memberchk(Code, `-_./:@%+=,~?&#`).
+
+expand_command_arg(Value, Arg) :-
+    text_string(Value, String),
+    ( String = "~"
+    ; sub_string(String, 0, 2, _, "~/")
+    ),
+    !,
+    expand_file_name(String, [Expanded]),
+    atom_string(Expanded, Arg).
+expand_command_arg(Value, Arg) :-
+    text_string(Value, Arg).
 
 valid_intent(Intent) :-
     atom(Intent), !.
