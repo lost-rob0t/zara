@@ -72,6 +72,25 @@ def test_provider_specific_fields_are_validated(tmp_path):
 @pytest.mark.parametrize(
     "setting",
     [
+        'provider = "unknown"',
+        "connect_timeout = 0",
+        "read_timeout = false",
+        "total_timeout = -1",
+        "max_retries = -1",
+        "history_limit = 0",
+    ],
+)
+def test_llm_bounds_are_validated(tmp_path, setting):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f'[tts]\nprovider = "qwen3"\n\n[llm]\n{setting}\n')
+
+    with pytest.raises(ConfigError, match="LLM|llm"):
+        ZaraConfig(str(config_path))
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
         'file_tools = "yes"',
         "file_tools = 1",
     ],

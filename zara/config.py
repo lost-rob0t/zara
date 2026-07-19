@@ -60,6 +60,11 @@ total_timeout = 30.0
 provider = "ollama"  # "anthropic", "openai", or "ollama"
 model = ""  # Leave empty for provider defaults
 endpoint = "http://localhost:11434/api/chat"
+connect_timeout = 5.0
+read_timeout = 20.0
+total_timeout = 30.0
+max_retries = 2
+history_limit = 20
 
 # API keys (can also be set via environment variables)
 # anthropic_api_key = ""
@@ -232,6 +237,21 @@ class ZaraConfig:
                 fields = ", ".join(f"tts.{key}" for key in missing)
                 raise ConfigError(f"11labs TTS requires {fields}")
 
+        llm_config = config.get("llm", {})
+        if not isinstance(llm_config, dict):
+            raise ConfigError("Invalid [llm] configuration: expected a TOML table")
+        llm_provider = llm_config.get("provider", "ollama")
+        if llm_provider not in {"anthropic", "openai", "ollama"}:
+            raise ConfigError(f"Unsupported LLM provider {llm_provider!r}")
+        for key in ("connect_timeout", "read_timeout", "total_timeout"):
+            value = llm_config.get(key, 1.0)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+                raise ConfigError(f"llm.{key} must be a positive number")
+        for key, minimum in (("max_retries", 0), ("history_limit", 1)):
+            value = llm_config.get(key, minimum)
+            if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                raise ConfigError(f"llm.{key} must be an integer of at least {minimum}")
+
         tools_config = config.get("tools", {})
         if not isinstance(tools_config, dict):
             raise ConfigError("Invalid [tools] configuration: expected a TOML table")
@@ -304,7 +324,12 @@ class ZaraConfig:
             "model": model if model else None,
             "endpoint": endpoint if endpoint else None,
             "anthropic_api_key": anthropic_key if anthropic_key else None,
-            "openai_api_key": openai_key if openai_key else None
+            "openai_api_key": openai_key if openai_key else None,
+            "connect_timeout": float(llm_config.get("connect_timeout", 5.0)),
+            "read_timeout": float(llm_config.get("read_timeout", 20.0)),
+            "total_timeout": float(llm_config.get("total_timeout", 30.0)),
+            "max_retries": int(llm_config.get("max_retries", 2)),
+            "history_limit": int(llm_config.get("history_limit", 20)),
         }
 
     def get_module_search_paths(self) -> List[Path]:

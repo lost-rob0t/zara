@@ -473,17 +473,35 @@ class WakeWordListener:
                 self.llm_client = llm.LLMClient(
                     provider=self.llm_config['provider'],
                     model=self.llm_config['model'],
-                    endpoint=self.llm_config['endpoint']
+                    endpoint=self.llm_config['endpoint'],
+                    api_key=(
+                        self.llm_config["anthropic_api_key"]
+                        if self.llm_config["provider"] == "anthropic"
+                        else self.llm_config["openai_api_key"]
+                    ),
+                    connect_timeout=self.llm_config["connect_timeout"],
+                    read_timeout=self.llm_config["read_timeout"],
+                    total_timeout=self.llm_config["total_timeout"],
+                    max_retries=self.llm_config["max_retries"],
+                    history_limit=self.llm_config["history_limit"],
                 )
 
-            # Use async query directly
-            response = await self.llm_client.query_async(
+            result = await self.llm_client.query_async(
                 query_text,
                 chat_history=self.chat_history.get_messages()
             )
+            if not result.success:
+                self.log(
+                    f"LLM request failed ({result.error_type}): {result.error}"
+                )
+                if result.cancelled:
+                    return ""
+                return f"The LLM request failed: {result.error}"
 
-            self.log(f"LLM response: {response}")
-            return response
+            self.chat_history.add_user_message(query_text)
+            self.chat_history.add_assistant_message(result.text)
+            self.log(f"LLM response: {result.text}")
+            return result.text
 
         except Exception as e:
             error_msg = f"LLM error: {str(e)}"
@@ -868,6 +886,8 @@ def main(model="tiny.en", device="cpu", prolog_main_path=None, enable_tts=True):
             listener.log("Interrupted")
         finally:
             listener.executor.shutdown(wait=True)
+            if listener.llm_client:
+                await listener.llm_client.close()
             if listener.tts_client:
                 await listener.tts_client.close()
 

@@ -1,295 +1,324 @@
-"""
-LLM Client - handles chat history and API calls
-Supports: Anthropic, OpenAI, Ollama
-"""
+"""Bounded HTTP clients for supported LLM providers."""
 
-import os
 import asyncio
-import json
+import logging
+import os
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
 import aiohttp
-from typing import List, Dict, Optional
+
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_HISTORY_LENGTH = 20
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+@dataclass(frozen=True)
+class LLMResult:
+    provider: str
+    model: str
+    success: bool
+    text: str = ""
+    error: str = ""
+    error_type: str = ""
+    status: Optional[int] = None
+    cancelled: bool = False
+    attempts: int = 1
 
 
 class ChatHistory:
-    """Manages conversation history with sliding window"""
-    
-    def __init__(self, max_length: int = 20):
-        self.messages: List[Dict] = []
+    def __init__(self, max_length: int = DEFAULT_HISTORY_LENGTH):
+        if max_length < 1:
+            raise ValueError("max_length must be positive")
+        self.messages: List[Dict[str, str]] = []
         self.max_length = max_length
-    
-    def add_user_message(self, content: str):
-        """Add user message to history"""
-        self.messages.append({
-            "role": "user",
-            "content": content
-        })
+
+    def add_user_message(self, content: str) -> None:
+        self.messages.append({"role": "user", "content": content})
         self._trim()
-    
-    def add_assistant_message(self, content: str):
-        """Add assistant message to history"""
-        self.messages.append({
-            "role": "assistant", 
-            "content": content
-        })
+
+    def add_assistant_message(self, content: str) -> None:
+        self.messages.append({"role": "assistant", "content": content})
         self._trim()
-    
-    def get_messages(self) -> List[Dict]:
-        """Get message history for API"""
-        return self.messages.copy()
-    
-    def _trim(self):
-        """Keep only recent messages"""
-        if len(self.messages) > self.max_length:
-            self.messages = self.messages[-self.max_length:]
-    
-    def clear(self):
-        """Clear history"""
+
+    def get_messages(self) -> List[Dict[str, str]]:
+        return [message.copy() for message in self.messages]
+
+    def _trim(self) -> None:
+        self.messages = self.messages[-self.max_length :]
+
+    def clear(self) -> None:
         self.messages.clear()
 
 
 class LLMClient:
-    """
-    LLM interface with provider abstraction
-    Supports: anthropic, openai, ollama
-    """
-
     def __init__(
         self,
         provider: str = "ollama",
         model: Optional[str] = None,
-        endpoint: Optional[str] = None
+        endpoint: Optional[str] = None,
+        api_key: Optional[str] = None,
+        connect_timeout: float = 5.0,
+        read_timeout: float = 20.0,
+        total_timeout: float = 30.0,
+        max_retries: int = 2,
+        retry_delay: float = 0.1,
+        history_limit: int = DEFAULT_HISTORY_LENGTH,
     ):
+        if connect_timeout <= 0 or read_timeout <= 0 or total_timeout <= 0:
+            raise ValueError("LLM timeouts must be positive")
+        if max_retries < 0:
+            raise ValueError("max_retries cannot be negative")
+        if history_limit < 1:
+            raise ValueError("history_limit must be positive")
+
         self.provider = provider
+        self.model, self.endpoint, self.api_key = self._provider_config(
+            provider, model, endpoint, api_key
+        )
+        self.max_retries = max_retries
+        self.retry_delay = max(0.0, retry_delay)
+        self.history_limit = history_limit
+        self.timeout = aiohttp.ClientTimeout(
+            total=total_timeout,
+            connect=connect_timeout,
+            sock_read=read_timeout,
+        )
+        self._total_timeout = total_timeout
+        self._session: Optional[aiohttp.ClientSession] = None
 
+    @staticmethod
+    def _provider_config(
+        provider: str,
+        model: Optional[str],
+        endpoint: Optional[str],
+        api_key: Optional[str],
+    ) -> Tuple[str, str, Optional[str]]:
         if provider == "anthropic":
-            try:
-                from anthropic import AsyncAnthropic
-            except ImportError:
-                raise ValueError("anthropic package not installed. Install via: pip install anthropic")
+            resolved_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+            if not resolved_key:
+                raise ValueError("ANTHROPIC_API_KEY is not set")
+            return (
+                model or "claude-sonnet-4-20250514",
+                endpoint or "https://api.anthropic.com/v1/messages",
+                resolved_key,
+            )
+        if provider == "openai":
+            resolved_key = api_key or os.getenv("OPENAI_API_KEY")
+            if not resolved_key:
+                raise ValueError("OPENAI_API_KEY is not set")
+            return (
+                model or "gpt-4o-mini",
+                endpoint or "https://api.openai.com/v1/chat/completions",
+                resolved_key,
+            )
+        if provider == "ollama":
+            return (
+                model or "llama3.2",
+                endpoint or "http://localhost:11434/api/chat",
+                None,
+            )
+        raise ValueError(
+            f"Unsupported provider: {provider}. Use: anthropic, openai, or ollama"
+        )
 
-            api_key = os.getenv("ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError("ANTHROPIC_API_KEY not set. Set via: export ANTHROPIC_API_KEY=sk-...")
-            self.client = AsyncAnthropic(api_key=api_key)
-            self.model = model or "claude-sonnet-4-20250514"
+    async def __aenter__(self) -> "LLMClient":
+        await self._ensure_session()
+        return self
 
-        elif provider == "openai":
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("OPENAI_API_KEY not set. Set via: export OPENAI_API_KEY=sk-...")
-            self.api_key = api_key
-            self.model = model or "gpt-4o-mini"
-            self.endpoint = endpoint or "https://api.openai.com/v1/chat/completions"
+    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+        await self.close()
 
-        elif provider == "ollama":
-            # Ollama runs locally, no API key needed
-            self.model = model or "llama3.2"
-            self.endpoint = endpoint or "http://localhost:11434/api/chat"
+    async def _ensure_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(timeout=self.timeout)
+        return self._session
 
+    async def close(self) -> None:
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
+
+    def _messages(
+        self,
+        prompt: str,
+        chat_history: Optional[List[Dict[str, str]]],
+    ) -> List[Dict[str, str]]:
+        history = list(chat_history or [])[-self.history_limit :]
+        messages: List[Dict[str, str]] = []
+        for message in history:
+            role = message.get("role")
+            content = message.get("content")
+            if role not in {"user", "assistant"} or not isinstance(content, str):
+                continue
+            messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": prompt})
+        return messages[-self.history_limit :]
+
+    def serialize_request(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        max_tokens: int = 1024,
+    ) -> Tuple[Dict[str, str], Dict[str, Any]]:
+        system = system_prompt or self._default_system_prompt()
+        messages = self._messages(prompt, chat_history)
+        headers = {"Content-Type": "application/json"}
+
+        if self.provider == "anthropic":
+            headers.update(
+                {
+                    "x-api-key": str(self.api_key),
+                    "anthropic-version": "2023-06-01",
+                }
+            )
+            payload = {
+                "model": self.model,
+                "max_tokens": max_tokens,
+                "system": system,
+                "messages": messages,
+            }
+        elif self.provider == "openai":
+            headers["Authorization"] = f"Bearer {self.api_key}"
+            payload = {
+                "model": self.model,
+                "messages": [{"role": "system", "content": system}, *messages],
+                "max_tokens": max_tokens,
+            }
         else:
-            raise ValueError(f"Unsupported provider: {provider}. Use: anthropic, openai, or ollama")
-    
+            payload = {
+                "model": self.model,
+                "messages": [{"role": "system", "content": system}, *messages],
+                "stream": False,
+                "options": {"num_predict": max_tokens},
+            }
+        return headers, payload
+
     async def query_async(
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
-        chat_history: Optional[List[Dict]] = None,
-        max_tokens: int = 1024
-    ) -> str:
-        """
-        Send query to LLM and get response
-        """
-        if self.provider == "anthropic":
-            return await self._query_anthropic(
-                prompt, system_prompt, chat_history, max_tokens
-            )
-        elif self.provider == "openai":
-            return await self._query_openai(
-                prompt, system_prompt, chat_history, max_tokens
-            )
-        elif self.provider == "ollama":
-            return await self._query_ollama(
-                prompt, system_prompt, chat_history, max_tokens
-            )
-        else:
-            raise ValueError(f"Unsupported provider: {self.provider}")
-    
-    async def _query_anthropic(
-        self,
-        prompt: str,
-        system_prompt: Optional[str],
-        chat_history: Optional[List[Dict]],
-        max_tokens: int
-    ) -> str:
-        """Query Anthropic API"""
-        import time
-
-        # Build messages
-        messages = []
-        if chat_history:
-            messages.extend(chat_history)
-
-        messages.append({
-            "role": "user",
-            "content": prompt
-        })
-
-        # Default system prompt
-        if system_prompt is None:
-            system_prompt = self._default_system_prompt()
-
-        # Make API call
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        max_tokens: int = 1024,
+    ) -> LLMResult:
+        headers, payload = self.serialize_request(
+            prompt, system_prompt, chat_history, max_tokens
+        )
         try:
-            start_time = time.time()
-            response = await self.client.messages.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                system=system_prompt,
-                messages=messages
-            )
-            elapsed = time.time() - start_time
+            async with asyncio.timeout(self._total_timeout):
+                return await self._request_with_retries(headers, payload)
+        except asyncio.CancelledError:
+            return self._error("cancelled", "LLM request was cancelled", cancelled=True)
+        except TimeoutError:
+            return self._error("timeout", "LLM request timed out")
 
-            print(f"[Anthropic] Response time: {elapsed:.2f}s (model: {self.model})")
-
-            return response.content[0].text
-
-        except Exception as e:
-            print(f"Anthropic API error ({self.model}): {e}")
-            return f"Error ({self.model}): {str(e)}"
-
-    async def _query_openai(
+    async def _request_with_retries(
         self,
-        prompt: str,
-        system_prompt: Optional[str],
-        chat_history: Optional[List[Dict]],
-        max_tokens: int
-    ) -> str:
-        """Query OpenAI API"""
-        import time
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+    ) -> LLMResult:
+        attempts = self.max_retries + 1
+        for attempt in range(1, attempts + 1):
+            result = await self._request_once(headers, payload, attempt)
+            if result.success or not self._retryable(result) or attempt == attempts:
+                return result
+            if self.retry_delay:
+                await asyncio.sleep(self.retry_delay)
+        return self._error("internal", "LLM retry loop ended unexpectedly")
 
-        # Build messages
-        messages = []
-
-        # Add system prompt
-        if system_prompt is None:
-            system_prompt = self._default_system_prompt()
-        messages.append({
-            "role": "system",
-            "content": system_prompt
-        })
-
-        # Add chat history
-        if chat_history:
-            messages.extend(chat_history)
-
-        # Add current prompt
-        messages.append({
-            "role": "user",
-            "content": prompt
-        })
-
-        # Make API call
+    async def _request_once(
+        self,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+        attempt: int,
+    ) -> LLMResult:
         try:
-            start_time = time.time()
-            async with aiohttp.ClientSession() as session:
-                headers = {
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json"
-                }
-                payload = {
-                    "model": self.model,
-                    "messages": messages,
-                    "max_tokens": max_tokens
-                }
-
-                async with session.post(
-                    self.endpoint,
-                    headers=headers,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as response:
-                    elapsed = time.time() - start_time
-
-                    if response.status != 200:
-                        error_text = await response.text()
-                        return f"OpenAI API error {response.status}: {error_text}"
-
+            session = await self._ensure_session()
+            async with session.post(
+                self.endpoint, headers=headers, json=payload
+            ) as response:
+                if response.status < 200 or response.status >= 300:
+                    detail = (await response.text()).strip()
+                    return self._error(
+                        "rate_limit" if response.status == 429 else "http",
+                        detail or f"HTTP {response.status}",
+                        status=response.status,
+                        attempts=attempt,
+                    )
+                try:
                     data = await response.json()
-                    print(f"[OpenAI] Response time: {elapsed:.2f}s (model: {self.model})")
-                    return data["choices"][0]["message"]["content"]
-
+                except (aiohttp.ContentTypeError, ValueError) as error:
+                    return self._error("malformed_response", str(error), attempts=attempt)
+                return self._parse_response(data, attempt)
+        except asyncio.CancelledError:
+            raise
         except asyncio.TimeoutError:
-            return f"Error: {self.model} timeout (30s)"
-        except Exception as e:
-            print(f"OpenAI API error ({self.model}): {e}")
-            return f"Error ({self.model}): {str(e)}"
+            return self._error("timeout", "LLM request timed out", attempts=attempt)
+        except aiohttp.ClientError as error:
+            return self._error("connection", str(error), attempts=attempt)
 
-    async def _query_ollama(
-        self,
-        prompt: str,
-        system_prompt: Optional[str],
-        chat_history: Optional[List[Dict]],
-        max_tokens: int
-    ) -> str:
-        """Query Ollama local API"""
-        import time
-
-        # Build messages
-        messages = []
-
-        # Add system prompt
-        if system_prompt is None:
-            system_prompt = self._default_system_prompt()
-        messages.append({
-            "role": "system",
-            "content": system_prompt
-        })
-
-        # Add chat history
-        if chat_history:
-            messages.extend(chat_history)
-
-        # Add current prompt
-        messages.append({
-            "role": "user",
-            "content": prompt
-        })
-
-        # Make API call
+    def _parse_response(self, data: Any, attempt: int) -> LLMResult:
         try:
-            start_time = time.time()
-            async with aiohttp.ClientSession() as session:
-                payload = {
-                    "model": self.model,
-                    "messages": messages,
-                    "stream": False
-                }
+            if self.provider == "anthropic":
+                content = data["content"]
+                text = next(
+                    block["text"]
+                    for block in content
+                    if block.get("type") == "text" and block.get("text")
+                )
+            elif self.provider == "openai":
+                text = data["choices"][0]["message"]["content"]
+            else:
+                text = data["message"]["content"]
+        except (KeyError, IndexError, StopIteration, TypeError):
+            return self._error(
+                "malformed_response",
+                "LLM response did not match provider schema",
+                attempts=attempt,
+            )
+        if not isinstance(text, str) or not text.strip():
+            return self._error(
+                "empty_response", "LLM returned an empty response", attempts=attempt
+            )
+        logger.info("[LLM] %s response received (%s)", self.provider, self.model)
+        return LLMResult(
+            provider=self.provider,
+            model=self.model,
+            success=True,
+            text=text,
+            attempts=attempt,
+        )
 
-                async with session.post(
-                    self.endpoint,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as response:
-                    elapsed = time.time() - start_time
+    def _error(
+        self,
+        error_type: str,
+        error: str,
+        status: Optional[int] = None,
+        cancelled: bool = False,
+        attempts: int = 1,
+    ) -> LLMResult:
+        return LLMResult(
+            provider=self.provider,
+            model=self.model,
+            success=False,
+            error=error,
+            error_type=error_type,
+            status=status,
+            cancelled=cancelled,
+            attempts=attempts,
+        )
 
-                    if response.status != 200:
-                        error_text = await response.text()
-                        return f"Ollama API error {response.status}: {error_text}. Is Ollama running? (ollama serve)"
+    @staticmethod
+    def _retryable(result: LLMResult) -> bool:
+        return result.error_type in {"connection", "timeout", "rate_limit"} or (
+            result.status in RETRYABLE_STATUS_CODES
+        )
 
-                    data = await response.json()
-                    print(f"[Ollama] Response time: {elapsed:.2f}s (model: {self.model})")
-                    return data["message"]["content"]
-
-        except aiohttp.ClientConnectorError:
-            return f"Error: Cannot connect to Ollama ({self.model}). Is it running? Start with: ollama serve"
-        except asyncio.TimeoutError:
-            return f"Error: {self.model} timeout (30s)"
-        except Exception as e:
-            print(f"Ollama API error ({self.model}): {e}")
-            return f"Error ({self.model}): {str(e)}"
-
-    def _default_system_prompt(self) -> str:
-        """Default system prompt for Zarathustra"""
+    @staticmethod
+    def _default_system_prompt() -> str:
         return (
             "You are Zarathustra, an agentic large language model living inside a voice assistant. "
             "Your goal is to be helpful, precise, and safe for the user. You should use available "
@@ -297,51 +326,6 @@ class LLMClient:
             "when explicitly asked. You speak with wisdom and directness, valuing strength, creativity, "
             "and the will to overcome. Be helpful and philosophical."
         )
-    
-    def query(self, prompt: str, **kwargs) -> str:
-        """Synchronous wrapper"""
+
+    def query(self, prompt: str, **kwargs: Any) -> LLMResult:
         return asyncio.run(self.query_async(prompt, **kwargs))
-
-
-if __name__ == "__main__":
-    # Test all providers
-    async def test():
-        import sys
-
-        provider = sys.argv[1] if len(sys.argv) > 1 else "ollama"
-        print(f"Testing {provider} provider...\n")
-
-        client = LLMClient(provider=provider)
-        history = ChatHistory()
-
-        # First message
-        print("Query: Hello, who are you?")
-        response = await client.query_async(
-            "Hello, who are you?",
-            chat_history=history.get_messages()
-        )
-        print(f"Response: {response}\n")
-
-        history.add_user_message("Hello, who are you?")
-        history.add_assistant_message(response)
-
-        # Follow-up with context
-        print("Query: What is your philosophy?")
-        response = await client.query_async(
-            "What is your philosophy?",
-            chat_history=history.get_messages()
-        )
-        print(f"Response: {response}\n")
-
-        history.add_user_message("What is your philosophy?")
-        history.add_assistant_message(response)
-
-        # Test context retention
-        print("Query: What was my first question?")
-        response = await client.query_async(
-            "What was my first question?",
-            chat_history=history.get_messages()
-        )
-        print(f"Response: {response}")
-
-    asyncio.run(test())

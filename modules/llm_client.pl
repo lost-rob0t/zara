@@ -1,309 +1,293 @@
-:- module(llm_client, [llm_query/2, llm_query/3, llm_query_with_history/2]).
+:- module(llm_client, [
+    llm_query/2,
+    llm_query/3,
+    llm_query_result/3,
+    llm_query_with_history/2,
+    llm_query_with_history_result/2,
+    serialize_llm_request/7,
+    reset_llm_history/0,
+    close_llm_client/0,
+    get_llm_provider/1,
+    get_llm_model/1,
+    get_llm_endpoint/1
+]).
 
 :- use_module(library(http/http_client)).
+:- use_module(library(http/http_open), [http_open/3, http_close_keep_alive/1]).
 :- use_module(library(http/json)).
 :- use_module(library(lists)).
-:- use_module(library(process)).
-:- use_module(library(filesex)).
-:- use_module(library(files)).
-:- use_module(dotenv).
+:- use_module(library(time)).
 :- use_module('../kb/config').
 
-% Dynamic predicates for storing conversation history
-:- dynamic chat_history/2.  % chat_history(Timestamp, Messages)
-:- dynamic current_conversation/1.  % current_conversation(Messages)
+:- dynamic current_conversation/1.
+:- dynamic llm_timeouts/3.
+:- dynamic llm_retry_limit/1.
 
-% Export public predicates
-:- export(llm_query/2).
-:- export(llm_query/3).
-:- export(llm_query_with_history/2).
-:- export(get_llm_provider/1).
-:- export(get_llm_model/1).
-:- export(get_llm_endpoint/1).
-:- export(get_llm_provider/1).
-:- export(get_llm_model/1).
-:- export(get_llm_endpoint/1).
-:- discontiguous llm_client:llm_query_ollama_messages/2.
-% Load .env on module load
+llm_timeouts(5.0, 20.0, 30.0).
+llm_retry_limit(2).
+history_limit(20).
 
-% Helper predicates for JSON conversion
-messages_to_json(Messages, JsonArray) :-
-    maplist(message_to_json, Messages, JsonTerms),
-    atomic_list_concat(JsonTerms, ", ", JsonContent),
-    format(atom(JsonArray), '[~w]', [JsonContent]).
-
-message_to_json(json([role=Role, content=Content]), JsonStr) :-
-    format(atom(JsonStr), '{"role": "~w", "content": "~w"}', [Role, Content]).
-
-
-% Get LLM provider configuration
 get_llm_provider(Provider) :-
     kb_config:llm_provider(Provider), !.
 get_llm_provider(anthropic) :-
-    % Default fallback
     format(user_error, 'Warning: llm_provider not configured, defaulting to anthropic~n', []).
 
 get_llm_model(Model) :-
     kb_config:llm_model(Model), !.
 get_llm_model("claude-sonnet-4-20250514") :-
-    % Default fallback for Anthropic
     format(user_error, 'Warning: llm_model not configured, using default~n', []).
 
 get_llm_endpoint(Endpoint) :-
     kb_config:llm_endpoint(Endpoint), !.
 get_llm_endpoint(Endpoint) :-
-    % Provide defaults based on provider
     get_llm_provider(Provider),
-    ( Provider = ollama ->
-        Endpoint = "http://localhost:11434/api/chat"
-    ; Provider = openai ->
-        Endpoint = "https://api.openai.com/v1/chat/completions"
-    ; Provider = anthropic ->
-        throw(error(no_endpoint_needed, 'Anthropic uses SDK'))
-    ).
+    default_endpoint(Provider, Endpoint).
 
-% Get API key from environment (Anthropic/OpenAI)
-get_api_key(Key) :-
-    get_llm_provider(Provider),
-    ( Provider = anthropic ->
-        getenv('ANTHROPIC_API_KEY', Key)
-    ; Provider = openai ->
-        getenv('OPENAI_API_KEY', Key)
-    ; throw(error(no_api_key_needed, 'Ollama does not require API key'))
-    ),
-    !.
-get_api_key(_) :-
-    throw(error(missing_api_key, 'API key not set in environment')).
+default_endpoint(ollama, "http://localhost:11434/api/chat").
+default_endpoint(openai, "https://api.openai.com/v1/chat/completions").
+default_endpoint(anthropic, "https://api.anthropic.com/v1/messages").
 
-% Default system prompt
+provider_endpoint(anthropic, Endpoint) :-
+    ( getenv('ZARA_ANTHROPIC_ENDPOINT', Value), Value \== ''
+    -> atom_string(Value, Endpoint)
+    ; default_endpoint(anthropic, Endpoint)
+    ), !.
+provider_endpoint(_, Endpoint) :-
+    get_llm_endpoint(Endpoint).
+
+get_api_key(anthropic, Key) :-
+    getenv('ANTHROPIC_API_KEY', Key), Key \== '', !.
+get_api_key(openai, Key) :-
+    getenv('OPENAI_API_KEY', Key), Key \== '', !.
+get_api_key(Provider, _) :-
+    throw(error(missing_api_key(Provider), _)).
+
 default_system_prompt("You are Zarathustra, a wise and concise assistant. Be helpful, direct, and philosophical when appropriate.").
 
-% LLM query with default system prompt
 llm_query(Prompt, Response) :-
     default_system_prompt(System),
     llm_query(Prompt, System, Response).
 
-% LLM query with custom system prompt
 llm_query(Prompt, System, Response) :-
-    get_llm_provider(Provider),
-    ( Provider = anthropic ->
-        llm_query_anthropic(Prompt, System, Response)
-    ; Provider = ollama ->
-        llm_query_ollama(Prompt, System, Response)
-    ; Provider = openai ->
-        llm_query_openai(Prompt, System, Response)
-    ; throw(error(unknown_provider, Provider))
-    ).
+    llm_query_result(Prompt, System, Result),
+    unwrap_llm_result(Result, Response).
 
-% LLM query with conversation history
+llm_query_result(Prompt, System, Result) :-
+    Messages = [_{role:user, content:Prompt}],
+    call_provider(System, Messages, Result).
+
 llm_query_with_history(Prompt, Response) :-
+    llm_query_with_history_result(Prompt, Result),
+    unwrap_llm_result(Result, Response).
+
+llm_query_with_history_result(Prompt, Result) :-
     default_system_prompt(System),
-    
-    % Add user message to current conversation
-    get_time(_Stamp),
-    ( current_conversation(Messages) ->
-        retractall(current_conversation(_)),
-        append(Messages, [user-Prompt], NewMessages)
-    ; NewMessages = [user-Prompt]
-    ),
-    asserta(current_conversation(NewMessages)),
-    
-    % Build conversation messages for LLM
-    build_conversation_from_history(NewMessages, Prompt, System, ConvMessages),
-    
-    % Get LLM response
-    call_llm_with_messages(ConvMessages, Response),
-    
-    % Add assistant response to conversation
-    append(NewMessages, [assistant-Response], FinalMessages),
+    ( current_conversation(History) -> true ; History = [] ),
+    append(History, [user-Prompt], WithPrompt0),
+    trim_history(WithPrompt0, WithPrompt),
+    history_messages(WithPrompt, Messages),
+    call_provider(System, Messages, Result),
+    store_successful_turn(Result, WithPrompt).
+
+store_successful_turn(llm_result(success, Response), WithPrompt) :-
+    append(WithPrompt, [assistant-Response], Complete0),
+    trim_history(Complete0, Complete),
     retractall(current_conversation(_)),
-    asserta(current_conversation(FinalMessages)).
+    asserta(current_conversation(Complete)), !.
+store_successful_turn(_, _).
 
-% Build conversation messages from history
-build_conversation_from_history(Messages, _Prompt, System, ConvMessages) :-
-    % Convert Prolog conversation format (user-Content, assistant-Response) 
-    % to JSON message format
-    prolog_messages_to_json(Messages, UserMessages),
-    append([json([role=system, content=System])], UserMessages, ConvMessages).
+reset_llm_history :-
+    retractall(current_conversation(_)).
 
-% Convert Prolog message pairs to JSON format
-prolog_messages_to_json([], []).
-prolog_messages_to_json([user-Content|Rest], [json([role=user, content=Content])|JsonRest]) :-
-    prolog_messages_to_json(Rest, JsonRest).
-prolog_messages_to_json([assistant-Content|Rest], [json([role=assistant, content=Content])|JsonRest]) :-
-    prolog_messages_to_json(Rest, JsonRest).
+trim_history(Messages, Trimmed) :-
+    history_limit(Limit),
+    length(Messages, Length),
+    Drop is max(0, Length - Limit),
+    length(Prefix, Drop),
+    append(Prefix, Trimmed, Messages), !.
 
-% Call LLM with message list
-call_llm_with_messages(Messages, Response) :-
+history_messages([], []).
+history_messages([Role-Content|Rest], [_{role:Role, content:Content}|Messages]) :-
+    memberchk(Role, [user, assistant]),
+    history_messages(Rest, Messages).
+
+call_provider(System, Messages, Result) :-
     get_llm_provider(Provider),
-    ( Provider = ollama ->
-        llm_query_ollama_messages(Messages, Response)
-    ; Provider = anthropic ->
-        llm_query_anthropic_messages(Messages, Response)
-    ; Provider = openai ->
-        llm_query_openai_messages(Messages, Response)
-    ; throw(error(unsupported_provider, Provider))
+    get_llm_model(Model),
+    provider_endpoint(Provider, Endpoint),
+    provider_key(Provider, KeyResult),
+    ( KeyResult = key(Key)
+    -> serialize_llm_request(Provider, Model, Key, System, Messages, Headers, Request),
+       request_provider(Provider, Endpoint, Headers, Request, Result)
+    ; KeyResult = error(Error),
+      Result = llm_result(error, Error)
     ).
 
-% Ollama implementation with message list (using native HTTP client)
-llm_query_ollama_messages(Messages, Response) :-
-    get_llm_model(Model),
-    get_llm_endpoint(Endpoint),
-    
-    % Build request JSON
-    Request = json([
-        model=Model,
-        messages=Messages,
-        stream=false
-    ]),
-    
-    % Make HTTP POST request using Prolog HTTP client
-    http_post(
-        Endpoint,
-        json(Request),
-        Reply,
-        [json_object(dict)]
-    ),
-    
-    % Extract response
-    get_dict(message, Reply, Message),
-    get_dict(content, Message, Response).
+provider_key(ollama, key("")) :- !.
+provider_key(Provider, Result) :-
+    catch(get_api_key(Provider, Key), Error, true),
+    ( var(Error)
+    -> text_string(Key, KeyString), Result = key(KeyString)
+    ; Result = error(llm_error(authentication, "API key is not set", none))
+    ).
 
-% Anthropic implementation with message list
-llm_query_anthropic_messages(Messages, Response) :-
-    get_api_key(Key),
-    get_llm_model(Model),
-    atom_string(Key, KeyString),
-
-    % Build request with message list
-    Request = json([
-        model=Model,
-        max_tokens=1024,
-        messages=Messages,
-        stream=false
-    ]),
-
-    % Make API call
-    http_post(
-        'https://api.anthropic.com/v1/messages',
-        json(Request),
-        Reply,
-        [
-            request_header('x-api-key'=KeyString),
-            request_header('anthropic-version'='2023-06-01'),
-            json_object(dict)
-        ]
-    ),
-
-    % Extract response
-    get_dict(content, Reply, [First|_]),
-    get_dict(text, First, Response).
-
-% OpenAI implementation with message list
-llm_query_openai_messages(Messages, Response) :-
-    get_api_key(Key),
-    get_llm_model(Model),
-    atom_string(Key, KeyString),
-    get_llm_endpoint(Endpoint),
-
-    % OpenAI uses messages format
-    Request = json([
-        model=Model,
-        messages=Messages,
-        max_tokens=1024,
-        temperature=0.7
-    ]),
-
-    http_post(
-        Endpoint,
-        json(Request),
-        Reply,
-        [
-            request_header('Authorization'=("Bearer " + KeyString)),
-            request_header('Content-Type'='application/json'),
-            json_object(dict)
-        ]
-    ),
-
-    get_dict(choices, Reply, [First|_]),
-    get_dict(message, First, Message),
-    get_dict(content, Message, Response).
-
-% ============================================================
-% Legacy single-prompt implementations
-% ============================================================
-
-% Anthropic implementation
-llm_query_anthropic(Prompt, SystemPrompt, Response) :-
-    get_api_key(Key),
-    get_llm_model(Model),
-    atom_string(Key, KeyString),
-
-    % Build request with system prompt
-    Request = json([
-        model=Model,
-        max_tokens=1024,
-        system=SystemPrompt,
-        messages=[json([role=user, content=Prompt])]
-    ]),
-
-    % Make API call
-    http_post(
-        'https://api.anthropic.com/v1/messages',
-        json(Request),
-        Reply,
-        [
-            request_header('x-api-key'=KeyString),
-            request_header('anthropic-version'='2023-06-01'),
-            json_object(dict)
-        ]
-    ),
-
-    % Extract response
-    get_dict(content, Reply, [First|_]),
-    get_dict(text, First, Response).
-
-% OpenAI implementation
-llm_query_openai(Prompt, SystemPrompt, Response) :-
-    get_api_key(Key),
-    get_llm_model(Model),
-    atom_string(Key, KeyString),
-    get_llm_endpoint(Endpoint),
-
-    % OpenAI uses messages format
-    Request = json([
-        model=Model,
-        messages=[
-            json([role=system, content=SystemPrompt]),
-            json([role=user, content=Prompt])
-        ],
-        max_tokens=1024,
-        temperature=0.7
-    ]),
-
-    http_post(
-        Endpoint,
-        json(Request),
-        Reply,
-        [
-            request_header('Authorization'=("Bearer " + KeyString)),
-            request_header('Content-Type'='application/json'),
-            json_object(dict)
-        ]
-    ),
-
-    get_dict(choices, Reply, [First|_]),
-    get_dict(message, First, Message),
-    get_dict(content, Message, Response).
-
-% Ollama implementation with prompt and system
-llm_query_ollama(Prompt, SystemPrompt, Response) :-
-    Messages = [
-        json([role=system, content=SystemPrompt]),
-        json([role=user, content=Prompt])
+serialize_llm_request(anthropic, Model, Key, System, Messages, Headers, Request) :-
+    text_string(Key, KeyString),
+    Headers = [
+        'x-api-key'=KeyString,
+        'anthropic-version'="2023-06-01"
     ],
-    llm_query_ollama_messages(Messages, Response).
+    Request = _{
+        model:Model,
+        max_tokens:1024,
+        system:System,
+        messages:Messages
+    }.
+serialize_llm_request(openai, Model, Key, System, Messages, Headers, Request) :-
+    text_string(Key, KeyString),
+    format(string(Authorization), 'Bearer ~s', [KeyString]),
+    Headers = ['Authorization'=Authorization],
+    Request = _{
+        model:Model,
+        messages:[_{role:system, content:System}|Messages],
+        max_tokens:1024
+    }.
+serialize_llm_request(ollama, Model, _, System, Messages, Headers, Request) :-
+    Headers = [],
+    Request = _{
+        model:Model,
+        messages:[_{role:system, content:System}|Messages],
+        stream:false,
+        options:_{num_predict:1024}
+    }.
 
-% ============================================================
-% Chat History Management
-% ============================================================
+request_provider(Provider, Endpoint, Headers, Request, Result) :-
+    llm_timeouts(_, _, TotalTimeout),
+    catch(
+        call_with_time_limit(
+            TotalTimeout,
+            request_with_retries(Provider, Endpoint, Headers, Request, 0, Result)
+        ),
+        Error,
+        request_exception_result(Error, Result)
+    ).
+
+request_with_retries(Provider, Endpoint, Headers, Request, Attempt, Result) :-
+    request_once(Endpoint, Headers, Request, Outcome),
+    ( retry_outcome(Outcome), llm_retry_limit(MaxRetries), Attempt < MaxRetries
+    -> NextAttempt is Attempt + 1,
+       request_with_retries(Provider, Endpoint, Headers, Request, NextAttempt, Result)
+    ; outcome_result(Provider, Outcome, Result)
+    ).
+
+request_once(Endpoint, Headers, Request, Outcome) :-
+    llm_timeouts(ConnectTimeout, ReadTimeout, _TotalTimeout),
+    maplist(header_option, Headers, HeaderOptions),
+    append(
+        [
+            method(post),
+            post(json(Request)),
+            status_code(Status),
+            timeout(ReadTimeout),
+            connection('Keep-Alive')
+        ],
+        HeaderOptions,
+        Options
+    ),
+    catch(
+        setup_call_cleanup(
+            call_with_time_limit(
+                ConnectTimeout,
+                http_open(Endpoint, Stream, Options)
+            ),
+            json_read_dict(Stream, Reply),
+            close(Stream)
+        ),
+        Error,
+        Outcome = exception(Error)
+    ),
+    ( var(Outcome) -> Outcome = response(Status, Reply) ; true ).
+
+header_option(Name=Value, request_header(Name=Value)).
+
+retry_outcome(response(Status, _)) :-
+    memberchk(Status, [429, 500, 502, 503, 504]).
+retry_outcome(exception(Error)) :-
+    retryable_exception(Error).
+
+retryable_exception(time_limit_exceeded).
+retryable_exception(error(timeout_error(_, _), _)).
+retryable_exception(error(socket_error(_), _)).
+retryable_exception(error(io_error(_, _), _)).
+
+outcome_result(Provider, response(Status, Reply), Result) :-
+    ( between(200, 299, Status)
+    -> parse_provider_response(Provider, Reply, Result)
+    ; Status =:= 429
+    -> Result = llm_result(error, llm_error(rate_limit, "Provider rate limit", Status))
+    ; Result = llm_result(error, llm_error(http, "Provider HTTP error", Status))
+    ).
+outcome_result(_, exception(Error), Result) :-
+    request_exception_result(Error, Result).
+
+request_exception_result(
+    time_limit_exceeded,
+    llm_result(error, llm_error(timeout, "LLM request timed out", none))
+) :- !.
+request_exception_result(Error, llm_result(error, llm_error(connection, Message, none))) :-
+    retryable_exception(Error),
+    term_string(Error, Message), !.
+request_exception_result(Error, llm_result(error, llm_error(malformed_response, Message, none))) :-
+    term_string(Error, Message).
+
+parse_provider_response(anthropic, Reply, Result) :-
+    ( get_dict(content, Reply, Content),
+      member(Block, Content),
+      get_dict(type, Block, "text"),
+      get_dict(text, Block, Text)
+    -> response_text_result(Text, Result)
+    ; Result = llm_result(
+          error,
+          llm_error(malformed_response, "Anthropic response schema mismatch", none)
+      )
+    ).
+parse_provider_response(openai, Reply, Result) :-
+    ( get_dict(choices, Reply, [First|_]),
+      get_dict(message, First, Message),
+      get_dict(content, Message, Text)
+    -> response_text_result(Text, Result)
+    ; Result = llm_result(
+          error,
+          llm_error(malformed_response, "OpenAI response schema mismatch", none)
+      )
+    ).
+parse_provider_response(ollama, Reply, Result) :-
+    ( get_dict(message, Reply, Message),
+      get_dict(content, Message, Text)
+    -> response_text_result(Text, Result)
+    ; Result = llm_result(
+          error,
+          llm_error(malformed_response, "Ollama response schema mismatch", none)
+      )
+    ).
+
+response_text_result(Text, Result) :-
+    text_string(Text, TextString),
+    ( TextString == ""
+    -> Result = llm_result(
+           error,
+           llm_error(empty_response, "Provider returned an empty response", none)
+       )
+    ; Result = llm_result(success, TextString)
+    ).
+
+unwrap_llm_result(llm_result(success, Response), Response).
+unwrap_llm_result(llm_result(error, Error), _) :-
+    throw(error(Error, _)).
+
+text_string(Value, String) :-
+    ( string(Value) -> String = Value ; atom_string(Value, String) ).
+
+close_llm_client :-
+    http_close_keep_alive(_),
+    reset_llm_history.
