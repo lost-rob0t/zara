@@ -14,6 +14,9 @@ def test_default_config_is_valid_toml():
     assert parsed["tools"]["file_tools"] is False
     assert parsed["file_tools"]["readable_roots"] == ["."]
     assert parsed["file_tools"]["writable_roots"] == ["."]
+    assert parsed["wake"]["audio_queue_chunks"] == 32
+    assert parsed["wake"]["first_speech_timeout"] == 5.0
+    assert parsed["wake"]["max_utterance_duration"] == 30.0
 
 
 def test_first_run_creates_parseable_config(monkeypatch, tmp_path):
