@@ -7,8 +7,7 @@ LangChain tool definitions used by the agent system.
 import ast
 import operator
 from datetime import datetime
-from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_core.tools import StructuredTool, tool
 
@@ -217,12 +216,13 @@ def build_prolog_tool(prolog_engine) -> StructuredTool:
 
 def get_builtin_tools(
     prolog_engine=None,
-    repo_root: Path | None = None,
     memory_manager=None,
+    file_tool_config: Optional[Dict[str, Any]] = None,
 ) -> List[StructuredTool]:
     tools: List[StructuredTool] = [calculator, get_current_time]
 
-    tools.extend(build_file_tools(repo_root))
+    if file_tool_config is not None:
+        tools.extend(build_file_tools(**file_tool_config))
     tools.extend(build_todo_tools())
 
     remember_tool = build_remember_tool(memory_manager)

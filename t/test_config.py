@@ -11,6 +11,9 @@ def test_default_config_is_valid_toml():
 
     assert parsed["tts"]["provider"] == "qwen3"
     assert list(parsed).count("noaa") == 1
+    assert parsed["tools"]["file_tools"] is False
+    assert parsed["file_tools"]["readable_roots"] == ["."]
+    assert parsed["file_tools"]["writable_roots"] == ["."]
 
 
 def test_first_run_creates_parseable_config(monkeypatch, tmp_path):
@@ -63,4 +66,37 @@ def test_provider_specific_fields_are_validated(tmp_path):
     config_path.write_text('[tts]\nprovider = "11labs"\n')
 
     with pytest.raises(ConfigError, match="tts.elevenlabs_api_key"):
+        ZaraConfig(str(config_path))
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        'file_tools = "yes"',
+        "file_tools = 1",
+    ],
+)
+def test_file_tool_toggle_must_be_boolean(tmp_path, setting):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f'[tts]\nprovider = "qwen3"\n\n[tools]\n{setting}\n')
+
+    with pytest.raises(ConfigError, match="tools.file_tools"):
+        ZaraConfig(str(config_path))
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        'readable_roots = "foo"',
+        "writable_roots = []",
+        "max_bytes = 0",
+    ],
+)
+def test_file_tool_policy_config_is_validated(tmp_path, setting):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        f'[tts]\nprovider = "qwen3"\n\n[file_tools]\n{setting}\n'
+    )
+
+    with pytest.raises(ConfigError, match="file_tools"):
         ZaraConfig(str(config_path))
