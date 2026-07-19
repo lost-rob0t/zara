@@ -14,3 +14,4 @@ dist/
 .tox/
 .mypy_cache/
 .pytest_cache/
+t/fixtures/audio/

@@ -19,23 +19,15 @@ nix develop
 
 ** Validation
 #+begin_src sh
-nix develop -c pytest
-nix develop -c scripts/test-command-routing.sh
-nix develop -c scripts/test-replies.sh
-nix develop -c scripts/test-prolog-config.sh
-nix develop -c scripts/test-dictation-lifecycle.sh
-nix develop -c scripts/test-file-tools.sh
-nix develop -c scripts/test-llm-clients.sh
-nix develop -c scripts/test-process-safety.sh
-nix develop -c scripts/test-prolog-engine.sh
-nix develop -c scripts/test-timers.sh
-nix develop -c scripts/test-packaging.sh
+nix develop -c bash scripts/test-all.sh
+nix flake check
 #+end_src
 
-=nix flake check= runs every check derivation in =flake.nix= (pytest, the
-shell integration scripts, Python syntax compilation, Prolog load, and an
-installed-wrapper smoke test) and is the single command CI uses to gate the
-repository.
+=nix develop -c bash scripts/test-all.sh= is the single-command regression
+gate (ZARA-021) that runs every test phase in fail-fast order with isolated
+HOME/XDG: Python compile/import, Prolog load, pytest, security scripts,
+and packaging checks. =nix flake check= runs the same core checks as Nix
+derivations.
 
 The command-routing gate verifies that unsupported Prolog handlers do not report
 a successful execution. The reply gate verifies that the noncommittal
