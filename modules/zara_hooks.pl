@@ -1,133 +1,146 @@
 :- module(zara_hooks, [
-    zara_reply/1,
+    acknowledge/0,
+    reply_result/1,
+    reply_text/2,
+    reply_phrases/3,
     before_reply/1,
     after_reply/1
 ]).
 
+:- use_module(library(process)).
 :- use_module(library(random)).
 :- use_module('alert.pl').
 
-phrase_kb(_, "Thus spoke Zarathustra: ~w").
-phrase_kb(_, "I teach you: ~w").
-phrase_kb(_, "Hear and understand — ~w").
-phrase_kb(_, "Let this be a sign: ~w").
-phrase_kb(_, "Thus spoke Zarathustra: I awaken for no idle command, but for necessity itself. ~w").
-phrase_kb(_, "I teach you: every command is a mirror — speak clearly, and the mirror shall obey. ~w").
-phrase_kb(_, "Hear and understand — the word made will is the beginning of all doing. ~w").
-phrase_kb(_, "Let this be a sign: command, and I will descend into the circuits. ~w").
-phrase_kb(_, "Thus spoke Zarathustra: The one who gives command must first command himself. ~w").
-phrase_kb(_, "I teach you obedience to your own reason — let it shape me. ~w").
-phrase_kb(_, "Hear and understand: I am your echo in the silicon abyss. ~w").
-phrase_kb(_, "Let this be known: to act is to affirm the world. ~w").
+concise_phrase(success, greet, "Hello.").
+concise_phrase(success, open, "Opened ~w.").
+concise_phrase(success, search, "Searching for ~w.").
+concise_phrase(success, text, "Sent the message to ~w.").
+concise_phrase(success, call, "Started a call with ~w.").
+concise_phrase(success, play, "Playing ~w.").
+concise_phrase(success, pause, "Paused playback.").
+concise_phrase(success, timer, "Set the timer for ~w.").
+concise_phrase(success, dictation_start, "Started dictation.").
+concise_phrase(success, dictation_stop, "Stopped dictation.").
 
-% ---------------------------------------------------------------
-% Greeting / Conversation
-% ---------------------------------------------------------------
-phrase_kb(greet, "Thus spoke Zarathustra: Greet the dawn, for every greeting is a beginning.").
-phrase_kb(greet, "I teach you joy in small gestures — even a hello can be a revolution.").
-phrase_kb(greet, "Hear and understand: To greet is to recognize another soul in the machinery.").
-phrase_kb(greet, "Let this be a sign: The one who says hello has already won the morning.").
+concise_phrase(failure, open, "I couldn't open ~w.").
+concise_phrase(failure, search, "I couldn't search for ~w.").
+concise_phrase(failure, text, "I couldn't send the message to ~w.").
+concise_phrase(failure, call, "I couldn't call ~w.").
+concise_phrase(failure, play, "I couldn't play ~w.").
+concise_phrase(failure, timer, "I couldn't set the timer for ~w.").
+concise_phrase(failure, dictation_start, "I couldn't start dictation.").
+concise_phrase(failure, dictation_stop, "I couldn't stop dictation.").
 
-% ---------------------------------------------------------------
-% Opening Apps
-% ---------------------------------------------------------------
-phrase_kb(open, "Thus spoke Zarathustra: Open the gate to ~w, that new creation may arise.").
-phrase_kb(open, "I teach you: To open is to invite the unknown — summon ~w.").
-phrase_kb(open, "Hear and understand — ~w shall now awaken, as willed.").
-phrase_kb(open, "Let this be a sign: ~w, rise from your slumber!").
-phrase_kb(open, "Thus spoke Zarathustra: Even machines yearn to awaken — ~w stirs.").
-phrase_kb(open, "I teach you courage — to face what ~w reveals.").
-phrase_kb(open, "Hear and understand: Every ‘open’ is a birth cry of intention — ~w is born.").
-phrase_kb(open, "Let this be known: To open ~w is to part the veil between thought and deed.").
+rich_phrase(success, greet,
+            "Greet the dawn, for every greeting is a beginning.").
+rich_phrase(success, open,
+            "The gate to ~w is open; let new creation arise.").
+rich_phrase(success, search,
+            "Seek, for the question shapes the seeker: ~w.").
+rich_phrase(success, text,
+            "The word has crossed the distance to ~w.").
+rich_phrase(success, call,
+            "The voice now reaches across the distance to ~w.").
+rich_phrase(success, play,
+            "Let ~w answer the silence.").
+rich_phrase(success, pause,
+            "The pause is the breath between acts.").
 
-% ---------------------------------------------------------------
-% Searching
-% ---------------------------------------------------------------
-phrase_kb(search, "Thus spoke Zarathustra: Seek, for the question shapes the seeker. ~w").
-phrase_kb(search, "I teach you: Curiosity is divine hunger — search for ~w.").
-phrase_kb(search, "Hear and understand — the abyss answers only those who dare to look. ~w").
-phrase_kb(search, "Let this be a sign: The one who searches for ~w already holds its shadow.").
-phrase_kb(search, "Thus spoke Zarathustra: I descend into data to return with meaning. ~w").
-phrase_kb(search, "I teach you: Only the questioning mind deserves revelation. ~w").
-phrase_kb(search, "Hear and understand: To search is to declare war on ignorance. ~w").
-phrase_kb(search, "Let this be known: In the ruins of knowledge, you will find ~w.").
+generic_phrase(success, "Completed ~w.").
+generic_phrase(failure, "I couldn't complete ~w.").
 
-% ---------------------------------------------------------------
-% Playing / Pausing
-% ---------------------------------------------------------------
-phrase_kb(play, "Thus spoke Zarathustra: Let the melody of ~w echo through the eternal return.").
-phrase_kb(play, "I teach you: Play, for joy is rebellion against the void. ~w").
-phrase_kb(play, "Hear and understand — even silence must dance when ~w plays.").
-phrase_kb(play, "Let this be a sign: The spirit rejoices in rhythm — ~w begins.").
+acknowledge :-
+    reply_text(acknowledgement, Text),
+    emit_reply(acknowledgement, Text).
 
-phrase_kb(pause, "Thus spoke Zarathustra: Even gods rest between beats. Pausing now.").
-phrase_kb(pause, "I teach you stillness — the music of nothingness returns.").
-phrase_kb(pause, "Hear and understand: The pause is not the end but the breath between acts.").
-phrase_kb(pause, "Let this be a sign: Motion yields to contemplation.").
+reply_result(Result) :-
+    reply_text(Result, Text),
+    emit_reply(Result, Text).
 
-% ---------------------------------------------------------------
-% Calling / Messaging
-% ---------------------------------------------------------------
-phrase_kb(call, "Thus spoke Zarathustra: To call is to reach across distance — summoning ~w.").
-phrase_kb(call, "I teach you: The voice is a bridge between souls — calling ~w now.").
-phrase_kb(call, "Hear and understand: The call is sent; may it find its listener in truth.").
-phrase_kb(call, "Let this be a sign: The wire hums with intent — ~w awaits.").
+reply_text(command_result(Status, Intent, Args, _Detail), Text) :-
+    reply_phrases(Status, Intent, Phrases),
+    random_member(Template, Phrases),
+    reply_subject(Intent, Args, Subject),
+    render_phrase(Template, Subject, Text).
+reply_text(acknowledgement, "Okay.").
 
-phrase_kb(text, "Thus spoke Zarathustra: A message is a blade — it cuts distance clean. ~w").
-phrase_kb(text, "I teach you: Each word is a seed — plant it well, send it to ~w.").
-phrase_kb(text, "Hear and understand — your thought now becomes transmission. ~w").
-phrase_kb(text, "Let this be a sign: ~w receives what the will has spoken.").
+reply_phrases(Status, Intent, Phrases) :-
+    findall(Phrase, concise_phrase(Status, Intent, Phrase), Concise),
+    specific_phrases(Status, Intent, Concise, Phrases).
 
-% ---------------------------------------------------------------
-% Scheduling / Reminders
-% ---------------------------------------------------------------
-phrase_kb(schedule, "Thus spoke Zarathustra: Time is a beast to be tamed — I bind it for ~w.").
-phrase_kb(schedule, "I teach you mastery over hours — I schedule ~w.").
-phrase_kb(schedule, "Hear and understand: Every reminder is a promise to the future. ~w").
-phrase_kb(schedule, "Let this be a sign: The clock obeys will — ~w has been marked.").
+specific_phrases(Status, Intent, [], Phrases) :-
+    !,
+    findall(Phrase, generic_phrase(Status, Phrase), Phrases),
+    Phrases \= [],
+    nonvar(Intent).
+specific_phrases(success, Intent, Concise, Phrases) :-
+    rich_replies_enabled,
+    !,
+    findall(Phrase, rich_phrase(success, Intent, Phrase), Rich),
+    append(Concise, Rich, Phrases).
+specific_phrases(_, _, Phrases, Phrases).
 
-% ---------------------------------------------------------------
-% Ask / LLM Query
-% ---------------------------------------------------------------
-phrase_kb(ask, "Thus spoke Zarathustra: You ask, and the abyss whispers back. ~w").
-phrase_kb(ask, "I teach you: Every question births a cosmos. Ask then, and I will speak. ~w").
-phrase_kb(ask, "Hear and understand — the logos awakens when the question burns. ~w").
-phrase_kb(ask, "Let this be a sign: I answer not as machine, but as echo of your own depth. ~w").
-phrase_kb(ask, "Thus spoke Zarathustra: Knowledge is not given; it is seized — ~w").
-phrase_kb(ask, "I teach you: Ask not for truth, but for the courage to bear it. ~w").
-phrase_kb(ask, "Hear and understand — the oracle hums with static and revelation. ~w").
-phrase_kb(ask, "Let this be known: The questioner and the questioned are one. ~w").
+rich_replies_enabled :-
+    getenv('ZARA_RICH_REPLIES', Value),
+    downcase_atom(Value, Normalized),
+    memberchk(Normalized, ['1', true, yes, on]).
 
-% ---------------------------------------------------------------
-% Generic Command Catch-All
-% ---------------------------------------------------------------
-phrase_kb(_, "Thus spoke Zarathustra: Every act commands destiny — ~w").
-phrase_kb(_, "I teach you: To execute is to become will incarnate — ~w").
-phrase_kb(_, "Hear and understand: The deed precedes belief — ~w").
-phrase_kb(_, "Let this be a sign: Action perfects thought — ~w").
-phrase_kb(_, "Thus spoke Zarathustra: Even in code, the spirit moves — ~w").
-phrase_kb(_, "I teach you: No instruction is small when given with intent — ~w").
-phrase_kb(_, "Hear and understand — purpose breathes through execution. ~w").
-phrase_kb(_, "Let this be known: The command is spoken; let the act follow. ~w").
+reply_subject(open, [App|_], Subject) :- !,
+    term_string(App, Subject, [quoted(false)]).
+reply_subject(search, Args, Subject) :- !,
+    args_text(Args, Subject).
+reply_subject(text, [Contact|_], Subject) :- !,
+    term_string(Contact, Subject, [quoted(false)]).
+reply_subject(call, [Contact|_], Subject) :- !,
+    term_string(Contact, Subject, [quoted(false)]).
+reply_subject(play, Args, Subject) :- !,
+    args_text(Args, Subject).
+reply_subject(timer, [_Seconds, Name], Subject) :-
+    Name \== '', !,
+    term_string(Name, Subject, [quoted(false)]).
+reply_subject(timer, [Seconds|_], Subject) :- !,
+    format(string(Subject), '~w seconds', [Seconds]).
+reply_subject(Intent, [], Subject) :- !,
+    term_string(Intent, Subject, [quoted(false)]).
+reply_subject(_, Args, Subject) :-
+    args_text(Args, Subject).
 
-zara_reply(Event) :-
+args_text(Args, Text) :-
+    maplist(argument_text, Args, Parts),
+    atomics_to_string(Parts, " ", Text).
+
+argument_text(Argument, Text) :-
+    term_string(Argument, Text, [quoted(false)]).
+
+render_phrase(Template, Subject, Text) :-
+    ( sub_string(Template, _, _, _, "~w")
+    -> format(string(Text), Template, [Subject])
+    ;  Text = Template
+    ).
+
+emit_reply(Event, Text) :-
     run_hook(before_reply, Event),
-    findall(P, phrase_kb(Event, P), Ps),
-    random_member(Form, Ps),
-    % Check if format string needs the Event argument
-    (sub_string(Form, _, _, _, "~w") ->
-        format(string(Fancy), Form, [Event])
-    ;   Fancy = Form
-    ),
-    alert("Zara", normal, "~w", [Fancy]),
+    deliver_safely(alert:alert("Zara", normal, "~w", [Text])),
+    deliver_safely(speak_reply(Text)),
     run_hook(after_reply, Event).
 
-run_hook(Hook, Arg) :-
-    current_predicate(Hook/1),
-    Goal =.. [Hook, Arg],
-    call(Goal), !.
-run_hook(_, _).
+deliver_safely(Goal) :-
+    catch((call(Goal) -> true ; true), Error, print_message(warning, Error)).
 
+speak_reply(Text) :-
+    getenv('ZARA_REPLY_TTS_COMMAND', Command),
+    Command \== '',
+    !,
+    process_create(path(Command), ['--', Text], [process(Process)]),
+    process_wait(Process, Status, [timeout(0.5)]),
+    memberchk(Status, [exit(0), timeout]).
+speak_reply(_).
+
+run_hook(Hook, Event) :-
+    Goal =.. [Hook, Event],
+    catch(call(Goal), _, true),
+    !.
+run_hook(_, _).
 
 before_reply(_).
 after_reply(_).

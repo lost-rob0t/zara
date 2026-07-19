@@ -21,6 +21,7 @@ nix develop
 #+begin_src sh
 nix develop -c pytest
 nix develop -c scripts/test-command-routing.sh
+nix develop -c scripts/test-replies.sh
 nix develop -c scripts/test-prolog-config.sh
 nix develop -c scripts/test-dictation-lifecycle.sh
 nix develop -c scripts/test-file-tools.sh
@@ -28,8 +29,10 @@ nix develop -c scripts/test-process-safety.sh
 nix develop -c scripts/test-timers.sh
 #+end_src
 
-The command-routing gate verifies that unsupported or failed Prolog handlers
-fall back without reporting a successful execution.
+The command-routing gate verifies that unsupported Prolog handlers do not report
+a successful execution. The reply gate verifies that the noncommittal
+acknowledgement precedes execution and that structured success and failure
+results reach both notification and TTS sinks.
 
 ** Build all packages
 #+begin_src sh
@@ -99,6 +102,15 @@ the bundled defaults live in =assets/sounds/= and play through =mpv=.
 Intent precedence is state-aware in Prolog through =resolve/4=. Conversation,
 dictation, and passive controls are distinct; missing command slots return a
 typed =pending(...)= result for the thin Python boundary to present.
+
+The Prolog command loop emits a short =acknowledgement= event before resolution
+or execution, followed by one =command_result(Status, Intent, Args, Detail)=
+event after execution. Final reply text uses the resolved arguments, and failed
+handlers produce failure text instead of a completion claim. Concise replies are
+the default. Set =ZARA_RICH_REPLIES=1= to include optional philosophical phrases.
+Set =ZARA_REPLY_TTS_COMMAND= to an executable name when Prolog replies should
+also be sent to a TTS command; reply sink failures never determine command
+success.
 
 Agent history validation preserves complete contiguous tool-result groups in
 the originating AI tool-call order. Orphaned, duplicate, unknown, and

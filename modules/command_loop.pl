@@ -1,50 +1,56 @@
-:- module(command_loop, [handle_command/1]).
-:- use_module(intent_resolver, [convert_number_atoms/2]).
-:- use_module(llm_client, [llm_query/3, llm_query_with_history/2]).
-:- use_module('../kb/intents').      % still provide DCG path if desired
-:- use_module('commands').
+:- module(command_loop, [
+    handle_command/1,
+    execute_resolved/3
+]).
 
-:- use_module('alert').
+:- use_module(intent_resolver, [convert_number_atoms/2]).
+:- use_module(llm_client, [llm_query_with_history/2]).
+:- use_module('../kb/intents').
+:- use_module('commands').
 :- use_module('zara_hooks').
 
 handle_command(String) :-
+    zara_hooks:acknowledge,
     format('DEBUG: Input string: "~w"~n', [String]),
-    once((
-        (   intent_resolver:resolve(String, Intent, ArgsRaw)
-        ->  convert_number_atoms(ArgsRaw, Args),
-            format('DEBUG: Direct resolution - Intent: ~w, Args: ~w~n', [Intent, Args]),
-            ( Intent \= ask -> zara_hooks:zara_reply(Intent) ; true ),
-            (   catch(commands:execute(Intent, Args), Error,
-                    (format('Prolog error: Caused by: ~w.~n', [Error]),
-                     format('Routing to LLM for conversational response~n'),
-                     fail))
-            ->  true
-            ;   % Execution failed, fall back to LLM
-                format('DEBUG: Command execution failed, routing to LLM~n'),
-                rewrite_with_llm(String, Intent2, Args2),
-                format('DEBUG: LLM resolution - Intent: ~w, Args: ~w~n', [Intent2, Args2]),
-                ( Intent2 \= ask -> zara_hooks:zara_reply(Intent2) ; true ),
-                commands:execute(Intent2, Args2)
-            )
-        ;   % Initial resolution failed, LLM fallback: ask for a canonical command line
-            format('DEBUG: Initial resolution failed, falling back to LLM rewrite~n'),
-            rewrite_with_llm(String, Intent2, Args2),
-            format('DEBUG: LLM resolution - Intent: ~w, Args: ~w~n', [Intent2, Args2]),
-            ( Intent2 \= ask -> zara_hooks:zara_reply(Intent2) ; true ),
-            commands:execute(Intent2, Args2)
-        )
-    )).
-% ---- LLM rewriter (Smart tone S) ----
+    once(resolve_command(String, Intent, Args)),
+    format('DEBUG: Resolved - Intent: ~w, Args: ~w~n', [Intent, Args]),
+    execute_resolved(Intent, Args, Result),
+    Result = command_result(success, Intent, Args, none).
+
+resolve_command(String, Intent, Args) :-
+    intent_resolver:resolve(String, Intent, ArgsRaw),
+    !,
+    convert_number_atoms(ArgsRaw, Args).
+resolve_command(String, Intent, Args) :-
+    format('DEBUG: Initial resolution failed, falling back to LLM rewrite~n'),
+    rewrite_with_llm(String, Intent, Args).
+
+execute_resolved(Intent, Args, Result) :-
+    execution_result(Intent, Args, Result),
+    zara_hooks:reply_result(Result).
+
+execution_result(Intent, Args, Result) :-
+    catch(
+        ( commands:execute(Intent, Args)
+        -> Result = command_result(success, Intent, Args, none)
+        ;  Result = command_result(failure, Intent, Args, failed)
+        ),
+        Error,
+        Result = command_result(failure, Intent, Args, exception(Error))
+    ).
+
 rewrite_with_llm(UserInput, Intent, Args) :-
     format(string(Prompt),
 "Rewrite the following user request into a single canonical command with:\n- intent: one of [greet, play, pause, stop, resume, next, skip, call, text, open, lock, unlock, search, navigate, ask, dictation_start, dictation_stop]\n- args: array of atoms/strings (1 or 2 as needed)\n- Only return compact JSON: {\"intent\":\"...\",\"args\":[...]}\nUser: ~w", [UserInput]),
     llm_client:llm_query_with_history(Prompt, Resp),
     extract_json_intent(Resp, Intent, Args).
 
-% Extremely permissive JSON extractor
 extract_json_intent(Resp, Intent, Args) :-
-    catch((
-        atom_json_dict(Resp, D, []),
-        Intent = D.intent,
-        Args = D.args
-    ), _, (Intent=ask, Args=[Resp])).
+    catch(
+        ( atom_json_dict(Resp, Dict, []),
+          Intent = Dict.intent,
+          Args = Dict.args
+        ),
+        _,
+        (Intent = ask, Args = [Resp])
+    ).
