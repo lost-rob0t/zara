@@ -120,15 +120,18 @@ class ToolRegistry:
 
         from .builtin_tools import get_builtin_tools
 
-        repo_root = Path(__file__).resolve().parents[2]
+        repo_root = Path(__file__).resolve().parents[3]
+        tool_config = self.config.get_tool_config() if self.config else {}
+        file_tool_config = None
+        if self.config and tool_config.get("file_tools", False):
+            file_tool_config = self.config.get_file_tool_config(repo_root)
         all_tools = get_builtin_tools(
             self.prolog_engine,
-            repo_root=repo_root,
             memory_manager=memory_manager,
+            file_tool_config=file_tool_config,
         )
 
         if self.config:
-            tool_config = self.config.get_tool_config()
             tools_to_register = [
                 tool for tool in all_tools
                 if tool_config.get(tool.name, True)

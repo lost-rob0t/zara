@@ -23,6 +23,7 @@ nix develop -c pytest
 nix develop -c scripts/test-command-routing.sh
 nix develop -c scripts/test-prolog-config.sh
 nix develop -c scripts/test-dictation-lifecycle.sh
+nix develop -c scripts/test-file-tools.sh
 nix develop -c scripts/test-process-safety.sh
 nix develop -c scripts/test-timers.sh
 #+end_src
@@ -102,6 +103,12 @@ typed =pending(...)= result for the thin Python boundary to present.
 Agent history validation preserves complete contiguous tool-result groups in
 the originating AI tool-call order. Orphaned, duplicate, unknown, and
 cross-turn tool results are discarded before provider serialization.
+
+Agent file tools are disabled by default with =tools.file_tools = false=. To
+enable them, set that value to =true= and configure =file_tools.readable_roots=,
+=file_tools.writable_roots=, and =file_tools.max_bytes=. Relative roots resolve
+from the repository root. Paths outside those roots, symlinks, and special files
+are rejected; writes require explicit overwrite permission and are atomic.
 ** Config file
 Zarathushtra reads configuration from:
 - ~/.config/zarathushtra/config.toml

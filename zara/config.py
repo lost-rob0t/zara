@@ -10,6 +10,9 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+
+DEFAULT_FILE_TOOL_MAX_BYTES = 20000
+
 # Use tomllib (Python 3.11+) or fallback to tomli
 if sys.version_info >= (3, 11):
     import tomllib
@@ -83,6 +86,13 @@ get_current_time = true
 query_prolog = true
 remember = true
 recall = true
+file_tools = false
+
+[file_tools]
+# File tools are disabled above by default. Relative roots use the repository root.
+readable_roots = ["."]
+writable_roots = ["."]
+max_bytes = 20000
 
 [database]
 # Shared SQLite database
@@ -222,6 +232,27 @@ class ZaraConfig:
                 fields = ", ".join(f"tts.{key}" for key in missing)
                 raise ConfigError(f"11labs TTS requires {fields}")
 
+        tools_config = config.get("tools", {})
+        if not isinstance(tools_config, dict):
+            raise ConfigError("Invalid [tools] configuration: expected a TOML table")
+        if not isinstance(tools_config.get("file_tools", False), bool):
+            raise ConfigError("tools.file_tools must be true or false")
+
+        file_config = config.get("file_tools", {})
+        if not isinstance(file_config, dict):
+            raise ConfigError("Invalid [file_tools] configuration: expected a TOML table")
+        for key in ("readable_roots", "writable_roots"):
+            roots = file_config.get(key, ["."])
+            if (
+                not isinstance(roots, list)
+                or not roots
+                or any(not isinstance(root, str) or not root for root in roots)
+            ):
+                raise ConfigError(f"file_tools.{key} must be a non-empty string list")
+        max_bytes = file_config.get("max_bytes", DEFAULT_FILE_TOOL_MAX_BYTES)
+        if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 1:
+            raise ConfigError("file_tools.max_bytes must be a positive integer")
+
     def get(self, section: str, key: str, default: Any = None) -> Any:
         """
         Get configuration value.
@@ -327,6 +358,23 @@ class ZaraConfig:
             Dict mapping tool names to enabled status
         """
         return self.get_section("tools")
+
+    def get_file_tool_config(self, repo_root: Path) -> Dict[str, Any]:
+        file_config = self.get_section("file_tools")
+
+        def expand_roots(key: str) -> List[Path]:
+            roots = []
+            for value in file_config.get(key, ["."]):
+                expanded = Path(os.path.expanduser(os.path.expandvars(value)))
+                roots.append(expanded if expanded.is_absolute() else repo_root / expanded)
+            return roots
+
+        return {
+            "base_dir": repo_root,
+            "readable_roots": expand_roots("readable_roots"),
+            "writable_roots": expand_roots("writable_roots"),
+            "max_bytes": file_config.get("max_bytes", DEFAULT_FILE_TOOL_MAX_BYTES),
+        }
 
     def get_agent_system_prompt(self) -> Optional[str]:
         """
