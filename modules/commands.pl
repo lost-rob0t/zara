@@ -46,6 +46,7 @@ execute(search, Args) :-
 
 execute(dictation_start, _) :-
     dictation:start_dictation,
+    dictation:set_dictation_active(true),
     !.
 
 execute(dictation_stop, _) :-
