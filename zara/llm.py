@@ -267,13 +267,15 @@ class LLMClient:
                 text = next(
                     block["text"]
                     for block in content
-                    if block.get("type") == "text" and block.get("text")
+                    if isinstance(block, dict)
+                    and block.get("type") == "text"
+                    and block.get("text")
                 )
             elif self.provider == "openai":
                 text = data["choices"][0]["message"]["content"]
             else:
                 text = data["message"]["content"]
-        except (KeyError, IndexError, StopIteration, TypeError):
+        except (AttributeError, KeyError, IndexError, StopIteration, TypeError):
             return self._error(
                 "malformed_response",
                 "LLM response did not match provider schema",
@@ -328,4 +330,10 @@ class LLMClient:
         )
 
     def query(self, prompt: str, **kwargs: Any) -> LLMResult:
-        return asyncio.run(self.query_async(prompt, **kwargs))
+        async def query_and_close() -> LLMResult:
+            try:
+                return await self.query_async(prompt, **kwargs)
+            finally:
+                await self.close()
+
+        return asyncio.run(query_and_close())

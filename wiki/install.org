@@ -81,7 +81,9 @@ Python client reuses one HTTP session until shutdown; Prolog uses bounded
 keep-alive connections. Provider failures remain typed until the user-facing
 boundary, so an HTTP or protocol error is never stored as assistant text.
 Anthropic and OpenAI credentials come from =ANTHROPIC_API_KEY= and
-=OPENAI_API_KEY=, or the existing matching =[llm]= key settings.
+=OPENAI_API_KEY=, or the existing matching =[llm]= key settings. Leave
+=[llm].endpoint= empty to use the selected provider's default endpoint; set it
+only for an explicit compatible proxy or local service.
 
 Python runtime settings use =config.toml=. Prolog facts remain separate in
 =~/.config/zarathushtra/config.pl=. That Prolog file accepts only the generated

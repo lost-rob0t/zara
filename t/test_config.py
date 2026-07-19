@@ -10,6 +10,7 @@ def test_default_config_is_valid_toml():
     parsed = tomllib.loads(DEFAULT_CONFIG_TOML)
 
     assert parsed["tts"]["provider"] == "qwen3"
+    assert parsed["llm"]["endpoint"] == ""
     assert list(parsed).count("noaa") == 1
     assert parsed["tools"]["file_tools"] is False
     assert parsed["file_tools"]["readable_roots"] == ["."]
@@ -86,6 +87,38 @@ def test_llm_bounds_are_validated(tmp_path, setting):
 
     with pytest.raises(ConfigError, match="LLM|llm"):
         ZaraConfig(str(config_path))
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_remote_provider_does_not_inherit_ollama_default_endpoint(
+    monkeypatch, tmp_path, provider
+):
+    monkeypatch.delenv("ZARA_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("ZARA_LLM_ENDPOINT", raising=False)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[tts]\nprovider = "qwen3"\n\n'
+        f'[llm]\nprovider = "{provider}"\n'
+        'endpoint = "http://localhost:11434/api/chat"\n'
+    )
+
+    config = ZaraConfig(str(config_path))
+
+    assert config.get_llm_config()["endpoint"] is None
+
+
+def test_remote_provider_preserves_explicit_custom_endpoint(monkeypatch, tmp_path):
+    monkeypatch.delenv("ZARA_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("ZARA_LLM_ENDPOINT", raising=False)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[tts]\nprovider = "qwen3"\n\n'
+        '[llm]\nprovider = "openai"\nendpoint = "http://proxy.test/v1/chat"\n'
+    )
+
+    config = ZaraConfig(str(config_path))
+
+    assert config.get_llm_config()["endpoint"] == "http://proxy.test/v1/chat"
 
 
 @pytest.mark.parametrize(

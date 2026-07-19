@@ -52,6 +52,13 @@ provider_endpoint(anthropic, Endpoint) :-
     -> atom_string(Value, Endpoint)
     ; default_endpoint(anthropic, Endpoint)
     ), !.
+provider_endpoint(openai, Endpoint) :-
+    get_llm_endpoint(Configured),
+    default_endpoint(ollama, OllamaDefault),
+    ( Configured == OllamaDefault
+    -> default_endpoint(openai, Endpoint)
+    ; Endpoint = Configured
+    ), !.
 provider_endpoint(_, Endpoint) :-
     get_llm_endpoint(Endpoint).
 
@@ -195,22 +202,38 @@ request_once(Endpoint, Headers, Request, Outcome) :-
         Options
     ),
     catch(
+        call_with_time_limit(
+            ConnectTimeout,
+            http_open(Endpoint, Stream, Options)
+        ),
+        OpenError,
+        Outcome = exception(OpenError)
+    ),
+    ( var(Outcome)
+    -> read_response(Stream, Status, Outcome)
+    ; true
+    ).
+
+read_response(Stream, Status, Outcome) :-
+    catch(
         setup_call_cleanup(
-            call_with_time_limit(
-                ConnectTimeout,
-                http_open(Endpoint, Stream, Options)
-            ),
+            true,
             json_read_dict(Stream, Reply),
             close(Stream)
         ),
-        Error,
-        Outcome = exception(Error)
+        ReadError,
+        true
     ),
-    ( var(Outcome) -> Outcome = response(Status, Reply) ; true ).
+    ( var(ReadError)
+    -> Outcome = response(Status, Reply)
+    ; Outcome = response_error(Status, ReadError)
+    ).
 
 header_option(Name=Value, request_header(Name=Value)).
 
 retry_outcome(response(Status, _)) :-
+    memberchk(Status, [429, 500, 502, 503, 504]).
+retry_outcome(response_error(Status, _)) :-
     memberchk(Status, [429, 500, 502, 503, 504]).
 retry_outcome(exception(Error)) :-
     retryable_exception(Error).
@@ -229,6 +252,16 @@ outcome_result(Provider, response(Status, Reply), Result) :-
     ).
 outcome_result(_, exception(Error), Result) :-
     request_exception_result(Error, Result).
+outcome_result(_, response_error(Status, Error), Result) :-
+    ( Status =:= 429
+    -> Result = llm_result(
+           error,
+           llm_error(rate_limit, "Provider rate limit", Status)
+       )
+    ; between(200, 299, Status)
+    -> request_exception_result(Error, Result)
+    ; Result = llm_result(error, llm_error(http, "Provider HTTP error", Status))
+    ).
 
 request_exception_result(
     time_limit_exceeded,

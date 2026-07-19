@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 
 DEFAULT_FILE_TOOL_MAX_BYTES = 20000
+DEFAULT_OLLAMA_ENDPOINT = "http://localhost:11434/api/chat"
 
 # Use tomllib (Python 3.11+) or fallback to tomli
 if sys.version_info >= (3, 11):
@@ -59,7 +60,7 @@ total_timeout = 30.0
 # LLM provider for agent mode
 provider = "ollama"  # "anthropic", "openai", or "ollama"
 model = ""  # Leave empty for provider defaults
-endpoint = "http://localhost:11434/api/chat"
+endpoint = ""
 connect_timeout = 5.0
 read_timeout = 20.0
 total_timeout = 30.0
@@ -313,7 +314,14 @@ class ZaraConfig:
         # Override with environment variables if set
         provider = os.getenv("ZARA_LLM_PROVIDER", llm_config.get("provider", "ollama"))
         model = os.getenv("ZARA_LLM_MODEL", llm_config.get("model", ""))
-        endpoint = os.getenv("ZARA_LLM_ENDPOINT", llm_config.get("endpoint", ""))
+        endpoint_override = os.getenv("ZARA_LLM_ENDPOINT")
+        endpoint = endpoint_override or llm_config.get("endpoint", "")
+        if (
+            not endpoint_override
+            and provider != "ollama"
+            and endpoint == DEFAULT_OLLAMA_ENDPOINT
+        ):
+            endpoint = ""
 
         # Get API keys from config or environment
         anthropic_key = os.getenv("ANTHROPIC_API_KEY", llm_config.get("anthropic_api_key", ""))

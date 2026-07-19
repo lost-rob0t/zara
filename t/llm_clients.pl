@@ -57,7 +57,9 @@ fake_llm_handler(Request) :-
 
 fake_reply(rate_limit, Count) :-
     Count < 3, !,
-    reply_json_dict(_{error:"slow down"}, [status(429)]).
+    format(
+        'Status: 429 Too Many Requests\r\nContent-type: text/plain\r\n\r\nslow down'
+    ).
 fake_reply(timeout, _) :-
     sleep(0.2),
     reply_json_dict(_{message:_{content:"late"}}).
@@ -118,7 +120,8 @@ test(provider_round_trips, [forall(member(Provider-Expected, [
 test(anthropic_history_uses_top_level_system) :-
     configure_provider(anthropic, success),
     llm_query_with_history_result("hello", llm_result(success, _)),
-    captured_request(_, Body),
+    captured_request(Request, Body),
+    assertion(memberchk(x_api_key('literal-key'), Request)),
     assertion(Body.system \== ""),
     assertion(\+ member(_{role:"system"}, Body.messages)).
 
@@ -127,6 +130,14 @@ test(openai_authorization_is_literal) :-
     llm_query_result("hello", "system", llm_result(success, _)),
     captured_request(Request, _),
     assertion(memberchk(authorization('Bearer literal-key'), Request)).
+
+test(openai_does_not_inherit_ollama_default_endpoint) :-
+    retractall(kb_config:llm_provider(_)),
+    asserta(kb_config:llm_provider(openai)),
+    retractall(kb_config:llm_endpoint(_)),
+    asserta(kb_config:llm_endpoint("http://localhost:11434/api/chat")),
+    llm_client:provider_endpoint(openai, Endpoint),
+    assertion(Endpoint == "https://api.openai.com/v1/chat/completions").
 
 test(rate_limit_retries_are_bounded) :-
     configure_provider(openai, rate_limit),

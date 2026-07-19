@@ -69,6 +69,16 @@ def test_provider_golden_requests(provider):
         assert payload["options"] == {"num_predict": 77}
 
 
+def test_timeout_dimensions_are_configured_independently():
+    client = make_client(
+        "ollama", connect_timeout=1.0, read_timeout=2.0, total_timeout=3.0
+    )
+
+    assert client.timeout.connect == 1.0
+    assert client.timeout.sock_read == 2.0
+    assert client.timeout.total == 3.0
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider", "response", "expected"),
@@ -140,6 +150,25 @@ async def test_rate_limit_retries_are_bounded():
 
 
 @pytest.mark.asyncio
+async def test_rate_limit_exhaustion_remains_typed():
+    requests = 0
+
+    async def handler(request):
+        nonlocal requests
+        requests += 1
+        return web.Response(text="slow down", status=429)
+
+    async with fake_server(handler) as endpoint:
+        client = make_client("openai", endpoint=endpoint, max_retries=1)
+        result = await client.query_async("hello")
+        await client.close()
+
+    assert not result.success and not result.text
+    assert result.error_type == "rate_limit" and result.status == 429
+    assert result.attempts == 2 and requests == 2
+
+
+@pytest.mark.asyncio
 async def test_timeout_is_typed_and_bounded():
     async def handler(request):
         await asyncio.sleep(1)
@@ -203,6 +232,20 @@ async def test_invalid_responses_are_not_successful_text(response, error_type):
 
     assert not result.success and not result.text
     assert result.error_type == error_type
+
+
+@pytest.mark.asyncio
+async def test_malformed_anthropic_block_is_typed():
+    async def handler(request):
+        return web.json_response({"content": ["not-a-block"]})
+
+    async with fake_server(handler) as endpoint:
+        client = make_client("anthropic", endpoint=endpoint)
+        result = await client.query_async("hello")
+        await client.close()
+
+    assert not result.success and not result.text
+    assert result.error_type == "malformed_response"
 
 
 @pytest.mark.asyncio
