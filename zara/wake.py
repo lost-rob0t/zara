@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Import LLM client and ChatHistory
 from . import llm
-from .tts import TTSEngine
+from .tts import PlaybackResult, TTSEngine
 from .agent import AgentManager
 from .config import get_config
 from .notifications import send_notification_async
@@ -93,9 +93,10 @@ class WakeWordListener:
         self.tts_task: Optional[asyncio.Task] = None
         self.tts_stop_event: Optional[asyncio.Event] = None
         self.tts_player_proc = None
+        self.tts_lock = asyncio.Lock()
+        self.last_tts_status: Optional[PlaybackResult] = None
 
         wake_cfg = self.config.get_section("wake")
-        self.stop_phrases = self._load_stop_phrases(wake_cfg.get("stop_phrases"))
         self.stop_on_interrupt = bool(wake_cfg.get("stop_tts_on_input", True))
         self.silence_duration = self._parse_float(
             wake_cfg.get("silence_duration", DEFAULT_SILENCE_DURATION),
@@ -163,14 +164,6 @@ class WakeWordListener:
             f.write(f"[{ts}] {msg}\n")
         print(f"[{ts}] {msg}", flush=True)
 
-    def _load_stop_phrases(self, config_phrases) -> List[str]:
-        phrases = []
-        if isinstance(config_phrases, list):
-            phrases.extend([str(p).strip() for p in config_phrases if str(p).strip()])
-        if not phrases:
-            phrases = ["goodbye", "bye", "end conversation", "stop conversation", "end session", "stop session"]
-        return phrases
-
     def _parse_float(self, value: Any, default: float) -> float:
         try:
             return float(value)
@@ -178,40 +171,21 @@ class WakeWordListener:
             return default
 
     def _is_conversation_stop(self, text: str) -> bool:
-        if self.prolog.is_conversation_stop(text):
-            return True
-        text_lower = text.lower()
-        return any(phrase in text_lower for phrase in self.stop_phrases)
-
-    def _is_dictation_stop(self, tokens: list[str]) -> bool:
-        stop_phrases = {
-            ("stop", "dictation"),
-            ("end", "dictation"),
-            ("end", "quote"),
-            ("end", "quot"),
-            ("end", "quota"),
-            ("end", "quoting"),
-            ("disable", "disable")
-        }
-        normalized = tuple(tok.rstrip(".") for tok in tokens)
-        return normalized in stop_phrases
-
-    def _tokenize_for_match(self, text: str) -> list[str]:
-        normalized = "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in text.lower())
-        return normalized.split()
+        state = "conversation" if self.in_conversation_mode() else "passive"
+        return self.prolog.is_conversation_stop(text, state=state)
 
     async def _stop_tts(self):
+        if self.tts_stop_event is not None:
+            self.tts_stop_event.set()
+        if self.tts_player_proc and self.tts_player_proc.returncode is None:
+            self.tts_player_proc.kill()
+            await self.tts_player_proc.wait()
         if self.tts_task and not self.tts_task.done():
             self.tts_task.cancel()
             try:
                 await self.tts_task
             except asyncio.CancelledError:
                 pass
-        if self.tts_stop_event is not None:
-            self.tts_stop_event.set()
-        if self.tts_player_proc and self.tts_player_proc.returncode is None:
-            self.tts_player_proc.kill()
-            await self.tts_player_proc.wait()
         self.tts_task = None
         self.tts_stop_event = None
         self.tts_player_proc = None
@@ -408,17 +382,18 @@ class WakeWordListener:
         # Try Prolog first
         self.log("Attempting Prolog resolution before agent fallback")
         loop = asyncio.get_event_loop()
+        resolution_state = "conversation" if self.in_conversation_mode() else "passive"
 
         def _try_prolog():
             try:
-                result = self.prolog.resolve_intent(command_text)
+                result = self.prolog.resolve_intent(command_text, state=resolution_state)
                 self.log(f"Command got: {command_text}")
                 if not result:
                     self.log("Prolog resolution failed")
                     return (False, "", True)
 
-                intent = result.get("Intent")
-                args = result.get("Args", [])
+                intent = result.name
+                args = result.args
 
                 self.log(f"Resolved: intent={intent}, args={args}")
 
@@ -430,8 +405,12 @@ class WakeWordListener:
                     self.log("Intent is 'ask' - needs conversation")
                     return (False, "", True)
 
-                if isinstance(intent, str) and intent.startswith("python("):
-                    skill_name = intent[len("python("):-1]
+                if result.kind == "pending":
+                    required = ", ".join(str(slot) for slot in args)
+                    return (True, f"Please provide: {required}.", False)
+
+                if result.kind == "python":
+                    skill_name = intent
                     if self.session_id is None:
                         self.session_id = self.memory.start_session()
                     skill_args = list(args) if isinstance(args, list) else [args]
@@ -512,170 +491,105 @@ class WakeWordListener:
             return error_msg
 
     async def synthesize_and_play_async(self, text):
-        """Synthesize text to speech and play it asynchronously without blocking"""
-        # Start synthesis and playback in background task so listen loop continues immediately
-        if self.tts_stop_event is not None:
-            self.tts_stop_event.set()
-        self.tts_stop_event = asyncio.Event()
-        self.tts_task = asyncio.create_task(self._synthesize_and_play_task(text, self.tts_stop_event))
+        """Replace any active utterance and start the new one."""
+        async with self.tts_lock:
+            await self._stop_tts()
+            self.tts_stop_event = asyncio.Event()
+            self.tts_task = asyncio.create_task(
+                self._synthesize_and_play_task(text, self.tts_stop_event)
+            )
         self.log("TTS started (non-blocking)")
+        return self.tts_task
 
-    async def _synthesize_and_play_task(self, text, stop_event: asyncio.Event):
-        """Internal task to synthesize and play audio without blocking main loop"""
+    async def _synthesize_and_play_task(
+        self,
+        text,
+        stop_event: asyncio.Event,
+    ) -> PlaybackResult:
         try:
             if self.tts_client is None:
                 self.log(f"Initializing TTS client: {self.tts_config['provider']}")
-                # TTSEngine expects a dict-like config, so we use the internal _config dict
                 config_dict = self.config._config if hasattr(self.config, '_config') else {}
                 self.tts_client = TTSEngine(provider=self.tts_config['provider'], config=config_dict)
 
             if stop_event.is_set():
-                return
-
-            # Use streaming for 11labs, regular synthesis for others
-            if self.tts_config['provider'] == "11labs":
-                self.log("Synthesizing speech (streaming)...")
-                await self._play_streaming_audio_task(text, stop_event)
+                status = PlaybackResult(
+                    provider=self.tts_config["provider"],
+                    success=False,
+                    error="Playback cancelled",
+                    cancelled=True,
+                )
             else:
                 self.log("Synthesizing speech...")
-                tts_client = self.tts_client
-                if tts_client is None:
-                    self.log("TTS client unavailable for synthesis")
-                    return
-                audio_bytes = await tts_client.synthesize_async(text)
-
-                if stop_event.is_set():
-                    return
-
-                if audio_bytes:
+                synthesis = await self.tts_client.synthesize_async(text)
+                if not synthesis.success:
+                    status = PlaybackResult(
+                        provider=synthesis.provider,
+                        success=False,
+                        error=synthesis.error,
+                        cancelled=synthesis.cancelled,
+                    )
+                elif stop_event.is_set():
+                    status = PlaybackResult(
+                        provider=synthesis.provider,
+                        success=False,
+                        error="Playback cancelled",
+                        cancelled=True,
+                    )
+                else:
                     self.log("Playing audio...")
-                    await self._play_audio_task(audio_bytes, stop_event)
-                else:
-                    self.log("Failed to synthesize speech")
+                    status = await self._play_audio_task(
+                        synthesis.audio,
+                        synthesis.audio_format,
+                        stop_event,
+                    )
 
         except asyncio.CancelledError:
-            self.log("TTS task cancelled")
+            status = PlaybackResult(
+                provider=self.tts_config["provider"],
+                success=False,
+                error="Playback cancelled",
+                cancelled=True,
+            )
         except Exception as e:
-            self.log(f"TTS error: {e}")
-
-    async def _play_streaming_audio_task(self, text, stop_event: asyncio.Event):
-        """Play streaming audio as it arrives from TTS"""
-        player_proc = None
-        try:
-            # First: fetch a chunk so we don't start playback on empty TTS.
-            tts_client = self.tts_client
-            if tts_client is None:
-                self.log("TTS client unavailable for streaming")
-                return
-            stream_iter = tts_client.synthesize_streaming_async(text)
-
-            first_chunk = None
-            async for chunk in stream_iter:
-                first_chunk = chunk
-                break
-
-            if not first_chunk:
-                self.log("TTS streaming produced no audio")
-                return
-
-            # Use ffplay or mpv for streaming playback (they can handle stdin streaming)
-            # Check which one is available
-            ffplay_check = await asyncio.create_subprocess_exec(
-                "which", "ffplay",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+            status = PlaybackResult(
+                provider=self.tts_config["provider"],
+                success=False,
+                error=str(e),
             )
-            await ffplay_check.wait()
+        self.last_tts_status = status
+        if status.success:
+            self.log("Audio playback complete")
+        else:
+            self.log(f"TTS failed: {status.error}")
+        return status
 
-            mpv_check = await asyncio.create_subprocess_exec(
-                "which", "mpv",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+    async def _play_audio_task(
+        self,
+        audio_bytes: bytes,
+        audio_format: Optional[str],
+        stop_event: asyncio.Event,
+    ) -> PlaybackResult:
+        provider = self.tts_config["provider"]
+        if not audio_bytes or audio_format not in {"wav", "mp3"}:
+            return PlaybackResult(
+                provider=provider,
+                success=False,
+                error="Audio is empty or has an unsupported format",
             )
-            await mpv_check.wait()
-
-            # Prefer ffplay, fallback to mpv
-            if ffplay_check.returncode == 0:
-                player_cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", "-"]
-            elif mpv_check.returncode == 0:
-                player_cmd = ["mpv", "--no-video", "--no-terminal", "-"]
-            else:
-                self.log("No streaming player found (ffplay/mpv), falling back to non-streaming")
-                fallback_client = self.tts_client
-                if fallback_client is None:
-                    self.log("TTS client unavailable for streaming fallback")
-                    return
-                audio_bytes = await fallback_client.synthesize_async(text)
-                if audio_bytes:
-                    await self._play_audio_task(audio_bytes, stop_event)
-                else:
-                    self.log("Failed to synthesize speech")
-                return
-
-            # Start the player process
-            player_proc = await asyncio.create_subprocess_exec(
-                *player_cmd,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            self.tts_player_proc = player_proc
-
-            self.log("Streaming audio playback started...")
-
-            # Write first chunk before consuming remainder
-            if player_proc.stdin:
-                player_proc.stdin.write(first_chunk)
-                await player_proc.stdin.drain()
-
-            # Stream remaining audio chunks to player
-            async for chunk in stream_iter:
-                if stop_event.is_set():
-                    break
-                if not chunk:
-                    continue
-                if player_proc.stdin:
-                    player_proc.stdin.write(chunk)
-                    await player_proc.stdin.drain()
-
-            # Close stdin to signal end of stream
-            if player_proc.stdin:
-                player_proc.stdin.close()
-                await player_proc.stdin.wait_closed()
-
-            # Wait for player to finish
-            await player_proc.wait()
-            self.log("Streaming audio playback complete")
-
-        except asyncio.CancelledError:
-            self.log("Streaming audio playback cancelled")
-        except Exception as e:
-            self.log(f"Streaming audio playback error: {e}")
-        finally:
-            self.tts_player_proc = None
-            if player_proc and player_proc.returncode is None:
-                player_proc.kill()
-                await player_proc.wait()
-            self._apply_conversation_grace()
-
-    async def _play_audio_task(self, audio_bytes, stop_event: asyncio.Event):
-        """Internal task to play audio without blocking main loop"""
-        if not audio_bytes:
-            self.log("Skipping audio playback (no audio data)")
-            return
 
         try:
+            if audio_format == "mp3":
+                return await self._play_mp3(audio_bytes, stop_event)
+
             import soundfile as sf
             import io
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             def _play():
-                # Read audio data from bytes
                 audio_io = io.BytesIO(audio_bytes)
                 data, samplerate = sf.read(audio_io)
-
-                # Play audio (non-blocking in sounddevice, but we run in executor to be safe)
                 sd.play(data, samplerate)
                 while sd.get_stream().active:
                     if stop_event.is_set():
@@ -683,16 +597,80 @@ class WakeWordListener:
                         break
                     time.sleep(0.05)
 
-            # Run playback in executor to avoid any blocking
             await loop.run_in_executor(self.executor, _play)
-            self.log("Audio playback complete")
-
+            if stop_event.is_set():
+                return PlaybackResult(
+                    provider=provider,
+                    success=False,
+                    error="Playback cancelled",
+                    cancelled=True,
+                )
+            return PlaybackResult(provider=provider, success=True)
         except asyncio.CancelledError:
-            self.log("Audio playback cancelled")
+            return PlaybackResult(
+                provider=provider,
+                success=False,
+                error="Playback cancelled",
+                cancelled=True,
+            )
         except Exception as e:
-            self.log(f"Audio playback error: {e}")
+            return PlaybackResult(provider=provider, success=False, error=str(e))
         finally:
             self._apply_conversation_grace()
+
+    async def _play_mp3(
+        self,
+        audio_bytes: bytes,
+        stop_event: asyncio.Event,
+    ) -> PlaybackResult:
+        provider = self.tts_config["provider"]
+        process = await asyncio.create_subprocess_exec(
+            "mpv",
+            "--no-video",
+            "--no-terminal",
+            "--really-quiet",
+            "-",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        self.tts_player_proc = process
+        playback = asyncio.create_task(process.communicate(audio_bytes))
+        stopped = asyncio.create_task(stop_event.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {playback, stopped},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if stopped in done:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+                playback.cancel()
+                await asyncio.gather(playback, return_exceptions=True)
+                return PlaybackResult(
+                    provider=provider,
+                    success=False,
+                    error="Playback cancelled",
+                    cancelled=True,
+                )
+            _, stderr = await playback
+            if process.returncode != 0:
+                detail = stderr.decode(errors="replace").strip()
+                return PlaybackResult(
+                    provider=provider,
+                    success=False,
+                    error=detail or f"mpv exited with {process.returncode}",
+                )
+            return PlaybackResult(provider=provider, success=True)
+        finally:
+            stopped.cancel()
+            await asyncio.gather(stopped, return_exceptions=True)
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+            if self.tts_player_proc is process:
+                self.tts_player_proc = None
 
     async def send_response_async(self, title, message):
         """Send response via notification and optionally TTS"""
@@ -791,8 +769,8 @@ class WakeWordListener:
                 return
 
             self.log(f"📝 Dictation heard: '{text}'")
-            tokens = self._tokenize_for_match(text)
-            if self._is_dictation_stop(tokens):
+            intent = self.prolog.resolve_intent(text, state="dictation")
+            if intent and intent.kind == "prolog" and intent.name == "dictation_stop":
                 self.log("Dictation stop detected while active")
                 self.prolog.query_once("dictation:stop_dictation")
                 self.state = "PASSIVE"

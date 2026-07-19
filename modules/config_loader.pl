@@ -90,6 +90,10 @@ write_default_config(Stream) :-
     writeln(Stream, '% Configure how zara-dictate is launched:'),
     writeln(Stream, '% dictation_command("zara-dictate small cpu 16 2").'),
     writeln(Stream, ''),
+    writeln(Stream, '% ---- Timer and Alarm Sounds ----'),
+    writeln(Stream, '% timer_sound("/path/to/timer.wav").'),
+    writeln(Stream, '% alarm_sound("/path/to/alarm.wav").'),
+    writeln(Stream, ''),
     writeln(Stream, '% ---- LLM Provider (for conversational queries) ----'),
     writeln(Stream, '% Choose provider: ollama (default, local) | openai | anthropic'),
     writeln(Stream, '% llm_provider(ollama).'),
@@ -174,6 +178,10 @@ validate_user_fact(search_engine(Template), kb_config, search_engine(Template)) 
     text_value(Template).
 validate_user_fact(dictation_command(Command), kb_config, dictation_command(Command)) :-
     text_value(Command).
+validate_user_fact(timer_sound(Path), kb_config, timer_sound(Path)) :-
+    text_value(Path).
+validate_user_fact(alarm_sound(Path), kb_config, alarm_sound(Path)) :-
+    text_value(Path).
 validate_user_fact(llm_provider(Provider), kb_config, llm_provider(Provider)) :-
     memberchk(Provider, [ollama, openai, anthropic]).
 validate_user_fact(llm_model(Model), kb_config, llm_model(Model)) :-

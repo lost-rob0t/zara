@@ -85,9 +85,6 @@ verb_intent(activate, dictation_start, 0).
 % Stop/disable synonyms
 verb_intent(stopdictation, dictation_stop, 0).
 verb_intent(stopvoice, dictation_stop, 0).
-verb_intent(disable, dictation_stop, 0).
-verb_intent(deactivate, dictation_stop, 0).
-verb_intent(end, dictation_stop, 0).
 verb_intent(quitdictation, dictation_stop, 0).
 
 % Navigation
@@ -106,7 +103,6 @@ verb_intent(explain, ask, rest).
 verb_intent(say, speak, rest).
 
 % Python skills
-python_skill_intent(hello, say_hello, rest).
 python_skill_intent(greet, say_hello, rest).
 python_skill_intent(weather, noaa_weather, rest).
 python_skill_intent(forecast, noaa_weather, rest).
@@ -127,8 +123,6 @@ python_skill_intent(tasks, list_todos, rest).
 python_skill_intent(show, list_todos, rest).
 python_skill_intent(edit, edit_todo, rest).
 python_skill_intent(update, edit_todo, rest).
-python_skill_intent(search, search_todos, rest).
-python_skill_intent(find, search_todos, rest).
 python_skill_intent(export, export_todos, rest).
 
 % Materialize python skill intents as verb_intent entries
@@ -141,9 +135,7 @@ verb_intent(goodbye, end_conversation, 0).
 verb_intent(farewell, end_conversation, 0).
 verb_intent(see_you, end_conversation, 0).
 verb_intent(see_you_later, end_conversation, 0).
-verb_intent(end, end_conversation, 0).
 verb_intent(quit, end_conversation, 0).
-verb_intent(stop, end_conversation, 0).
 verb_intent(end_conversation, end_conversation, 0).
 verb_intent(stop_conversation, end_conversation, 0).
 verb_intent(end_session, end_conversation, 0).
@@ -163,5 +155,5 @@ verb_intent(who, ask, rest).
 % Deprecated in Prolog. Routed to Python skills above.
 
 % Timers
-verb_intent(timer, timer, 2).      % timer Duration Label
-verb_intent(alarm, alarm, 2).      % alarm Duration Label
+verb_intent(timer, timer, rest).
+verb_intent(alarm, alarm, rest).

@@ -48,6 +48,9 @@ threads = 4
 provider = "qwen3"  # "local", "11labs", "edge", or "qwen3"
 model_path = ""
 sample_rate = 16000
+connect_timeout = 5.0
+read_timeout = 20.0
+total_timeout = 30.0
 
 [llm]
 # LLM provider for agent mode
@@ -105,6 +108,7 @@ embedding_backend = "onnx"
 embedding_model = "all-MiniLM-L6-v2"
 top_k = 5
 max_chars = 1200
+summary_max_chars = 4000
 
 [modules]
 # Module/plugin search paths
@@ -123,7 +127,8 @@ autoload = []
 model = "small"
 device = "cpu"
 workers = 2
-stop_phrases = ["end voice", "stop voice"]
+# Leave empty to use the canonical defaults in zara.dictate.
+stop_phrases = []
 
 """
 

@@ -6,9 +6,10 @@ Maintains persistent connection to SWI-Prolog via PySWIP.
 Handles queries, state management, and multi-solution iteration.
 """
 
-from pathlib import Path
-from typing import List, Dict, Any, Optional, Iterator
 import logging
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Iterator, List, Optional
 
 try:
     from pyswip import Prolog, Query
@@ -17,6 +18,42 @@ except ImportError as e:
     raise ImportError(
         "PySWIP not installed. Install with: pip install pyswip"
     ) from e
+
+
+@dataclass(frozen=True)
+class IntentResult:
+    kind: str
+    name: str
+    args: List[Any]
+
+
+def _compound_parts(value: Any) -> Optional[tuple[str, List[Any]]]:
+    if isinstance(value, str) and value.endswith(")"):
+        separator = value.find("(")
+        if separator > 0:
+            return value[:separator], [value[separator + 1:-1]]
+
+    name = getattr(value, "name", None)
+    args = getattr(value, "args", None)
+    if isinstance(name, str) and args is not None:
+        return name, list(args)
+    return None
+
+
+def adapt_intent_result(result: Dict[str, Any]) -> IntentResult:
+    value = result.get("Intent")
+    args = list(result.get("Args", []))
+    compound = _compound_parts(value)
+    if compound is None:
+        return IntentResult("prolog", str(value), args)
+
+    functor, values = compound
+    inner = values[0] if values else ""
+    if functor == "python":
+        return IntentResult("python", str(inner), args)
+    if functor == "pending":
+        return IntentResult("pending", str(inner), args)
+    return IntentResult("prolog", str(value), args)
 
 
 class PrologEngine:
@@ -123,49 +160,34 @@ class PrologEngine:
         result = self.query_once(f"kb_config:app_mapping({app_name}, Cmd)")
         return result.get("Cmd") if result else None
     
-    def resolve_intent(self, text: str) -> Optional[Dict[str, Any]]:
+    def resolve_intent(self, text: str, state: str = "passive") -> Optional[IntentResult]:
         """Resolve natural language to intent + args"""
+        if state not in {"passive", "conversation", "dictation"}:
+            raise ValueError(f"Unsupported intent state: {state}")
         escaped = text.replace("\\", "\\\\").replace('"', '\\"')
-        goal = f"intent_resolver:resolve(\"{escaped}\", Intent, Args)"
+        goal = f'intent_resolver:resolve("{escaped}", {state}, Intent, Args)'
         self.logger.info(f"Intent query: {goal}")
         result = self.query_once(goal)
         self.logger.info(f"Intent result: {result}")
-        return result
+        return adapt_intent_result(result) if result else None
 
     def execute_intent(self, intent: str, args: List[Any]) -> bool:
         """Execute a resolved intent and report whether its handler succeeded."""
         result = self.query_once(f"commands:execute({intent}, {args})")
         return result is not None
 
-    def is_conversation_stop(self, text: str) -> bool:
+    def is_conversation_stop(self, text: str, state: str = "conversation") -> bool:
         """Check whether text matches a conversation stop intent."""
-        result = self.resolve_intent(text)
+        result = self.resolve_intent(text, state=state)
         if not result:
             return False
-        return result.get("Intent") == "end_conversation"
+        return result.kind == "prolog" and result.name == "end_conversation"
 
     def dictation_active(self) -> bool:
         """Check whether dictation mode is currently active."""
         result = self.query_once("dictation:dictation_active")
         return result is not None
 
-    
-    def start_timer(self, seconds: int, name: str = "") -> bool:
-        """Start a timer using alarm module"""
-        try:
-            if name:
-                goal = f"alarm:start_timer('{name}', {seconds})"
-            else:
-                goal = f"alarm:start_timer({seconds})"
-            
-            result = self.query_once(goal)
-            if result is None:
-                return False
-            self.logger.info(f"Timer started: {seconds}s (name={name})")
-            return True
-        except Exception as e:
-            self.logger.error(f"Timer failed: {e}")
-            return False
     
     def reload_config(self) -> bool:
         """Reload user configuration"""
@@ -194,10 +216,6 @@ def test_engine():
     print("\n=== Testing Intent Resolution ===")
     result = engine.resolve_intent("open firefox")
     print(f"Resolved: {result}")
-    
-    # Test timer
-    print("\n=== Testing Timer ===")
-    engine.start_timer(5, "test_timer")
     
     # Test app mapping query
     print("\n=== Testing App Mapping ===")

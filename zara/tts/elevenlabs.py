@@ -6,7 +6,7 @@ Uses the official elevenlabs Python SDK for streaming audio synthesis.
 
 from __future__ import annotations
 
-from typing import Optional, AsyncIterator
+from typing import Optional
 from elevenlabs.client import ElevenLabs
 from elevenlabs.types import VoiceSettings
 import asyncio
@@ -23,8 +23,13 @@ def _ensure_client(api_key: str) -> ElevenLabs:
 
 
 async def close() -> None:
-    """Close the client (placeholder for compatibility)"""
     global _client
+    if _client is not None:
+        close_method = getattr(_client, "close", None)
+        if callable(close_method):
+            result = close_method()
+            if asyncio.iscoroutine(result):
+                await result
     _client = None
 
 
@@ -80,58 +85,3 @@ async def synthesize(text: str, tts_cfg: dict) -> bytes:
         return b''.join(audio_generator)
 
     return await loop.run_in_executor(None, _convert)
-
-
-async def synthesize_streaming(text: str, tts_cfg: dict) -> AsyncIterator[bytes]:
-    """
-    Streaming synthesis - yields audio chunks as they're received.
-    This reduces latency as playback can start before the entire audio is generated.
-
-    Usage:
-        async for chunk in synthesize_streaming("Hello world", config):
-            # Play or process chunk immediately
-            pass
-    """
-    assert isinstance(text, str) and text, "text must be a non-empty string"
-    assert isinstance(tts_cfg, dict), "tts_cfg must be a dict"
-
-    api_key = tts_cfg.get("elevenlabs_api_key")
-    voice_id = tts_cfg.get("elevenlabs_voice_id")
-    model_id = tts_cfg.get("elevenlabs_model_id", "eleven_turbo_v2_5")
-    output_format = tts_cfg.get("elevenlabs_output_format", "mp3_44100_128")
-    optimize_latency = tts_cfg.get("elevenlabs_optimize_streaming_latency", 3)
-
-    assert api_key, "tts.elevenlabs_api_key missing in config"
-    assert voice_id, "tts.elevenlabs_voice_id missing in config"
-
-    client = _ensure_client(api_key)
-    voice_settings = _get_voice_settings(tts_cfg)
-
-    # Run the streaming in executor since SDK is sync
-    loop = asyncio.get_event_loop()
-
-    def _stream():
-        return client.text_to_speech.stream(
-            voice_id=voice_id,
-            text=text,
-            model_id=model_id,
-            output_format=output_format,
-            voice_settings=voice_settings,
-            optimize_streaming_latency=optimize_latency
-        )
-
-    # Get the iterator in executor
-    audio_stream = await loop.run_in_executor(None, _stream)
-
-    # Yield chunks asynchronously
-    def _get_next(iterator):
-        try:
-            return next(iterator)
-        except StopIteration:
-            return None
-
-    while True:
-        chunk = await loop.run_in_executor(None, _get_next, audio_stream)
-        if chunk is None:
-            break
-        yield chunk

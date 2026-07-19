@@ -1,5 +1,6 @@
 :- module(intent_resolver, [
     resolve/3,
+    resolve/4,
     canonicalize_tokens/2,
     convert_number_atoms/2
 ]).
@@ -14,14 +15,94 @@
 %% PUBLIC API
 %% ============================================================
 
-    resolve(Raw, Intent, Args) :-
+resolve(Raw, Intent, Args) :-
+    resolve(Raw, passive, Intent, Args).
+
+resolve(Raw, State, Intent, Args) :-
     normalizer:normalize_string(Raw, Toks0),
     strip_fillers(Toks0, Core0),
-    canonicalize_tokens(Toks0, Toks),
+    ( state_control(State, Core0, Intent)
+    -> Args = []
+    ; memberchk(timer, Core0)
+    -> parse_timer_command(Core0, Args),
+       Intent = timer
+    ; memberchk(alarm, Core0)
+    -> Intent = alarm,
+       Args = []
+    ; Core0 = [hello|Rest]
+    -> Intent = python(say_hello),
+       Args = Rest
+    ; todo_search(Core0, SearchArgs)
+    -> Intent = python(search_todos),
+       Args = SearchArgs
+    ; canonicalize_tokens(Toks0, Toks),
+      resolve_canonical(Toks, Intent, Args)
+    ),
+    !.
+
+state_control(conversation, [Word|_], end_conversation) :-
+    memberchk(Word, [stop, end]).
+state_control(dictation, [Word|_], dictation_stop) :-
+    memberchk(Word, [stop, end, disable, deactivate]).
+state_control(passive, [stop|_], stop).
+state_control(passive, [end|_], end_conversation).
+
+todo_search([Word|Rest], Rest) :-
+    memberchk(Word, [search, find]),
+    member(TodoWord, Rest),
+    memberchk(TodoWord, [todo, todos, task, tasks]),
+    !.
+
+resolve_canonical(Toks, Intent, Args) :-
+    missing_slots(Toks, PendingIntent, Slots),
+    !,
+    Intent = pending(PendingIntent),
+    Args = Slots.
+resolve_canonical(Toks, Intent, Args) :-
     try_exact(Toks, Intent0, Args0),
     object_intents:refine_intent(Intent0, Toks, Intent),
-    Args = Args0,
+    Args = Args0.
+
+missing_slots([Word], open, [app]) :-
+    memberchk(Word, [open, launch, start, run]).
+missing_slots([Word], text, [contact, message]) :-
+    memberchk(Word, [text, message, sms]).
+missing_slots([Word, _], text, [message]) :-
+    memberchk(Word, [text, message, sms]).
+missing_slots([Word], python(schedule_todo), [task]) :-
+    memberchk(Word, [schedule, sched, plan, set]).
+
+parse_timer_command(Tokens, [Seconds, Name]) :-
+    append(_, [timer|TimerTokens], Tokens),
+    append(NameBefore, [AmountToken, UnitToken|NameAfter], TimerTokens),
+    number_token(AmountToken, Amount),
+    Amount >= 0,
+    normalize_unit(UnitToken, Unit),
+    unit_seconds(Unit, Amount, Seconds),
+    append(NameBefore, NameAfter, NameTokens0),
+    exclude(timer_name_label, NameTokens0, NameTokens),
+    timer_name(NameTokens, Name),
     !.
+
+number_token(Number, Number) :-
+    number(Number), !.
+number_token(Token, Number) :-
+    atom(Token),
+    catch(atom_number(Token, Number), _, fail).
+
+unit_seconds(seconds, Amount, Amount).
+unit_seconds(minutes, Amount, Seconds) :-
+    Seconds is Amount * 60.
+unit_seconds(hours, Amount, Seconds) :-
+    Seconds is Amount * 3600.
+
+timer_name_label(called).
+timer_name_label(named).
+timer_name_label(for).
+
+timer_name([], '').
+timer_name(Tokens, Name) :-
+    atomic_list_concat(Tokens, ' ', Name).
 
 canonicalize_tokens(Toks0, Toks) :-
     strip_fillers(Toks0, Core0),
@@ -67,7 +148,7 @@ convert_number_atoms([], []).
 
 convert_number_atoms([Tok|Rest], [Num|ParsedRest]) :-
     atom(Tok),
-    atom_number(Tok, Num),
+    catch(atom_number(Tok, Num), _, fail),
     convert_number_atoms(Rest, ParsedRest).
 
 convert_number_atoms([Tok|Rest], [Tok|ParsedRest]) :-
@@ -93,6 +174,7 @@ normalize_unit(s, seconds).
 normalize_unit(hours, hours).
 normalize_unit(hour, hours).
 normalize_unit(hr, hours).
+normalize_unit(hrs, hours).
 normalize_unit(h, hours).
 
 %% ============================================================
@@ -104,7 +186,7 @@ extract_args(1, Rest, Intent, [Arg]) :-
     arg1(Intent, Rest, Arg), !.
 extract_args(2, Rest, Intent, [A,B]) :-
     arg2(Intent, Rest, A, B), !.
-extract_args(rest, Rest, Intent, Args) :-
+extract_args(rest, Rest, _Intent, Args) :-
     Args = Rest.
 extract_args(_, Rest, _Intent, Rest).
 
@@ -120,11 +202,6 @@ arg1(resume, _, _) :-
     fail.
 arg1(_, Rest, X) :-
     head_atom(Rest, X).
-% Timer
-arg1(timer, Rest, Duration) :-
-    extract_number(Rest, Duration), !.
-arg1(alarm, Rest, Duration) :-
-    extract_number(Rest, Duration), !.
 
 arg2(text, [Contact|MsgParts], Contact, Message) :-
     atomic_list_concat(MsgParts, ' ', Message), !.
@@ -144,5 +221,3 @@ drop_preps([Prep|Preps], [H|T], Rest) :-
     (H = Prep -> drop_preps(Preps, T, Rest) ; Rest = [H|T]).
 drop_preps(Preps, [], []) :-
     Preps = [_|_].
-
-
