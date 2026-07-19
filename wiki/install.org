@@ -60,6 +60,9 @@ Zara creates =~/.config/zarathushtra/config.toml= by default, or uses
 Invalid TOML stops startup with the configuration path and parser diagnostic so
 user overrides are never silently discarded. The canonical Qwen TTS provider is
 =qwen3=; existing configurations using =qwen= remain supported as an alias.
+All providers return declared WAV or MP3 data through a structured synthesis
+result. =[tts].connect_timeout=, =read_timeout=, and =total_timeout= bound remote
+work. Starting a new utterance cancels and replaces the active playback.
 
 Python runtime settings use =config.toml=. Prolog facts remain separate in
 =~/.config/zarathushtra/config.pl=. That Prolog file accepts only the generated
@@ -81,6 +84,10 @@ the bundled defaults live in =assets/sounds/= and play through =mpv=.
 Intent precedence is state-aware in Prolog through =resolve/4=. Conversation,
 dictation, and passive controls are distinct; missing command slots return a
 typed =pending(...)= result for the thin Python boundary to present.
+
+Agent history validation preserves complete contiguous tool-result groups in
+the originating AI tool-call order. Orphaned, duplicate, unknown, and
+cross-turn tool results are discarded before provider serialization.
 ** Config file
 Zarathushtra reads configuration from:
 - ~/.config/zarathushtra/config.toml
@@ -94,6 +101,8 @@ instantiating the config manager.
 - [tools]: tool enable/disable flags
 - [modules]: plugin search paths and autoload list
 - [wake], [stt], [tts], [dictate], [memory], [noaa]
+- Memory falls back to process-local storage when ChromaDB or its embedding backend fails. The manager reports =disabled=, =persistent=, or =local_fallback= through =get_health()=.
+- =[memory].summary_max_chars= bounds stored session summaries and transcripts. Raw session capture is stored as =transcript=; only caller-supplied summaries are stored as =summary=.
 
 ** Wake audio sample rate
 - =wake.sample_rate= sets the target rate for transcription.

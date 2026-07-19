@@ -15,6 +15,8 @@ Important behavior:
 from __future__ import annotations
 
 import os
+import uuid
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -24,7 +26,6 @@ from .tools.registry import ToolRegistry
 from .graph import run_conversation_loop, validate_and_clean_messages
 from ..config import ZaraConfig, get_config
 from ..memory import build_memory_manager, MemoryManager
-from datetime import datetime
 
 class AgentManager:
     """
@@ -171,9 +172,14 @@ class AgentManager:
             else:
                 logger.info("[AgentManager] System prompt already present")
 
+        memory_context_message = None
         memory_context = self._build_memory_context(user_input)
         if memory_context:
-            state["messages"].append(SystemMessage(content=memory_context))
+            memory_context_message = SystemMessage(
+                content=memory_context,
+                id=f"memory-context-{uuid.uuid4()}",
+            )
+            state["messages"].insert(1, memory_context_message)
 
         # Always append the new user message last.
         state["messages"].append(HumanMessage(content=user_input))
@@ -188,8 +194,14 @@ class AgentManager:
 
         result = await run_conversation_loop(self.llm_client, self.tool_registry, state)
 
-        # Persist full message history (now correct because graph uses add_messages).
-        self.conversation_manager.conversation_history = result.get("messages", [])
+        result_messages = result.get("messages", [])
+        if memory_context_message is not None:
+            result_messages = [
+                message
+                for message in result_messages
+                if getattr(message, "id", None) != memory_context_message.id
+            ]
+        self.conversation_manager.conversation_history = result_messages
 
         return {
             "response": result.get("response", "I'm not sure how to respond to that."),
