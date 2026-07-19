@@ -29,7 +29,13 @@ nix develop -c scripts/test-llm-clients.sh
 nix develop -c scripts/test-process-safety.sh
 nix develop -c scripts/test-prolog-engine.sh
 nix develop -c scripts/test-timers.sh
+nix develop -c scripts/test-packaging.sh
 #+end_src
+
+=nix flake check= runs every check derivation in =flake.nix= (pytest, the
+shell integration scripts, Python syntax compilation, Prolog load, and an
+installed-wrapper smoke test) and is the single command CI uses to gate the
+repository.
 
 The command-routing gate verifies that unsupported Prolog handlers do not report
 a successful execution. The reply gate verifies that the noncommittal
@@ -55,15 +61,23 @@ phrases with =[dictate].stop_phrases=, =--stop-phrases=,
 punctuation. Parallel transcription remains enabled, while text is committed in
 capture order.
 
-* Python (Unsupported)
-This repo ships a requirements file for reference only. It is not supported.
+* Python (Best-effort, unsupported)
+Nix is the only supported install surface. A =setup.py= and =MANIFEST.in=
+are shipped as a best-effort companion: =pip install .= from a checkout
+installs the Python modules and console scripts (=zara=, =zara-wake=,
+=zara-console=, =zara-dictate=, =zara-agent=) plus the Prolog resources
+under =<sys.prefix>/share/zarathushtra/=. The runtime looks for =main.pl=
+in the project root (editable installs), the Nix store, that
+=<sys.prefix>/share/zarathushtra/= location, and =/usr/share/zarathushtra=.
+
 Use it only if you fully understand the dependency set and how to provide
-SWI-Prolog, audio backends, and model assets outside Nix.
+SWI-Prolog, audio backends, and model assets outside Nix. There is no
+=requirements.txt=; the dependency set lives in =setup.py= and =flake.nix=.
 
 #+begin_src sh
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install .
 #+end_src
 
 * Configuration

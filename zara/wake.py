@@ -6,6 +6,7 @@ Fully async for maximum responsiveness
 """
 
 import os
+import sys
 import time
 import asyncio
 import pathlib
@@ -149,6 +150,7 @@ class WakeWordListener:
         candidates = [
             pathlib.Path.cwd() / "main.pl",
             pathlib.Path(__file__).parent.parent / "main.pl",
+            pathlib.Path(sys.prefix) / "share" / "zarathushtra" / "main.pl",
             pathlib.Path("/usr/share/zarathushtra/main.pl"),
         ]
 
