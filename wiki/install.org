@@ -60,6 +60,9 @@ Zara creates =~/.config/zarathushtra/config.toml= by default, or uses
 Invalid TOML stops startup with the configuration path and parser diagnostic so
 user overrides are never silently discarded. The canonical Qwen TTS provider is
 =qwen3=; existing configurations using =qwen= remain supported as an alias.
+All providers return declared WAV or MP3 data through a structured synthesis
+result. =[tts].connect_timeout=, =read_timeout=, and =total_timeout= bound remote
+work. Starting a new utterance cancels and replaces the active playback.
 
 Python runtime settings use =config.toml=. Prolog facts remain separate in
 =~/.config/zarathushtra/config.pl=. That Prolog file accepts only the generated

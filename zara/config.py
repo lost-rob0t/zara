@@ -48,6 +48,9 @@ threads = 4
 provider = "qwen3"  # "local", "11labs", "edge", or "qwen3"
 model_path = ""
 sample_rate = 16000
+connect_timeout = 5.0
+read_timeout = 20.0
+total_timeout = 30.0
 
 [llm]
 # LLM provider for agent mode
