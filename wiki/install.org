@@ -129,6 +129,12 @@ instantiating the config manager.
 - =wake.sample_rate= sets the target rate for transcription.
 - If the input device does not support that rate, Zarathushtra falls back to the
   device default and resamples audio to the target.
+- =wake.audio_queue_chunks= bounds the real-time callback buffer. When full, the
+  oldest chunk is dropped so current audio wins.
+- =wake.first_speech_timeout= returns a wake with no speech to passive mode.
+- =wake.silence_duration= ends an utterance after speech followed by silence.
+- =wake.max_utterance_duration= caps continuous speech or noise. Conversation
+  mode separately uses =agent.conversation_timeout= as its inactivity deadline.
 
 ** Example: set a custom system prompt
 #+begin_src toml

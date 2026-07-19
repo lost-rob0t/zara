@@ -38,6 +38,11 @@ stop_tts_on_input = true
 silence_duration = 5.0
 silence_threshold = 0.03
 silence_log_interval = 0.5
+# Return to passive mode if nobody speaks after a wake word
+first_speech_timeout = 5.0
+# Hard cap for a single utterance and buffered callback chunks
+max_utterance_duration = 30.0
+audio_queue_chunks = 32
 
 [stt]
 # Speech-to-Text settings
