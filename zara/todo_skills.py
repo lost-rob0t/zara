@@ -4,15 +4,16 @@ Python skills for todo management.
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime
 from typing import Any, Iterable, List, Optional
 
 from .config import get_config
-from .prolog_engine import PrologEngine
-from .todo_storage import DEFAULT_STATUSES, TodoRecord, TodoStore
-
-logger = logging.getLogger(__name__)
+from .todo_storage import (
+    DEFAULT_DURATION_MINUTES,
+    DEFAULT_STATUSES,
+    TodoRecord,
+    TodoStore,
+)
 
 
 def capture_todo(args: List[Any]) -> str:
@@ -47,6 +48,14 @@ def edit_todo(args: List[Any]) -> str:
     return "Todo updated."
 
 
+def complete_todo(args: List[Any]) -> str:
+    return _set_todo_status(args, "DONE", "Todo completed.")
+
+
+def reopen_todo(args: List[Any]) -> str:
+    return _set_todo_status(args, "TODO", "Todo reopened.")
+
+
 def search_todos(args: List[Any]) -> str:
     query = _join_args(args)
     if not query:
@@ -56,7 +65,7 @@ def search_todos(args: List[Any]) -> str:
     return _format_todos(todos, store)
 
 
-def schedule_todo(args: List[Any], prolog: Optional[PrologEngine] = None) -> str:
+def schedule_todo(args: List[Any]) -> str:
     if len(args) < 2:
         return "Provide todo id and schedule time."
     todo_id = _parse_int(args[0])
@@ -69,15 +78,24 @@ def schedule_todo(args: List[Any], prolog: Optional[PrologEngine] = None) -> str
     if schedule_iso is None:
         return "Could not parse schedule time."
     store = TodoStore()
-    existing = [occurrence for _, occurrence in store.list_occurrences()]
-    if schedule_iso in existing:
+    todo = store.get_todo(todo_id)
+    if todo is None:
+        return "Todo not found."
+    default_duration = _default_duration_minutes()
+    duration = todo.duration_minutes or default_duration
+    if store.schedule_conflicts(
+        schedule_iso,
+        duration,
+        exclude_todo_id=todo_id,
+        default_duration_minutes=default_duration,
+    ):
         return "Schedule conflict detected."
-    if prolog is not None:
-        overlap = _check_overlap(prolog, schedule_iso, existing)
-        if overlap:
-            return "Schedule conflict detected."
     try:
-        store.update_todo(todo_id, scheduled_at=schedule_iso)
+        store.update_todo(
+            todo_id,
+            scheduled_at=schedule_iso,
+            duration_minutes=duration,
+        )
     except ValueError:
         return "Todo not found."
     return "Todo scheduled."
@@ -141,6 +159,20 @@ def _default_status() -> str:
     return status if status in DEFAULT_STATUSES else "TODO"
 
 
+def _default_duration_minutes() -> int:
+    value = get_config().get_section("todo").get(
+        "default_duration_minutes",
+        DEFAULT_DURATION_MINUTES,
+    )
+    if isinstance(value, bool):
+        return DEFAULT_DURATION_MINUTES
+    try:
+        duration = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_DURATION_MINUTES
+    return duration if duration > 0 else DEFAULT_DURATION_MINUTES
+
+
 def _normalize_statuses(args: Iterable[Any]) -> Optional[List[str]]:
     items = list(args)
     if not items:
@@ -186,10 +218,14 @@ def _parse_time(text: str) -> Optional[str]:
     return None
 
 
-def _check_overlap(
-    prolog: PrologEngine,
-    schedule_iso: str,
-    existing_times: Iterable[str],
-) -> bool:
-    scheduled_times = [time for time in existing_times if time]
-    return not prolog.schedule_has_no_overlap(schedule_iso, scheduled_times)
+def _set_todo_status(args: List[Any], status: str, success: str) -> str:
+    if not args:
+        return "Provide todo id."
+    todo_id = _parse_int(args[0])
+    if todo_id is None:
+        return "Invalid todo id."
+    try:
+        TodoStore().update_todo(todo_id, status=status)
+    except ValueError:
+        return "Todo not found."
+    return success
