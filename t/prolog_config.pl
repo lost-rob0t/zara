@@ -13,7 +13,7 @@ test(all_supported_overrides_and_reload) :-
         'direct_app(custom_app).',
         'search_engine("https://example.test/?q=~w").',
         'dictation_command("custom-dictate").',
-        'timer_sound("/tmp/custom-timer.wav").',
+        'timer_sound(disabled).',
         'alarm_sound("/tmp/custom-alarm.wav").',
         'llm_provider(openai).',
         'llm_model("custom-model").',
@@ -26,7 +26,7 @@ test(all_supported_overrides_and_reload) :-
     once(kb_config:direct_app(custom_app)),
     once(kb_config:search_engine("https://example.test/?q=~w")),
     once(kb_config:dictation_command("custom-dictate")),
-    once(kb_config:timer_sound("/tmp/custom-timer.wav")),
+    once(kb_config:timer_sound(disabled)),
     once(kb_config:alarm_sound("/tmp/custom-alarm.wav")),
     once(kb_config:llm_provider(openai)),
     once(kb_config:llm_model("custom-model")),
@@ -50,5 +50,18 @@ test(unsafe_command_string_is_rejected,
     config_loader:user_config_path(Path),
     write_config(Path, 'app_mapping(browser, "safe; touch marker").\n'),
     config_loader:reload_user_config.
+
+test(invalid_sound_setting_is_rejected,
+     [ forall(invalid_sound_config(Config)),
+       throws(error(domain_error(zarathushtra_user_config_fact, _), _))
+     ]) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, Config),
+    config_loader:reload_user_config.
+
+invalid_sound_config('timer_sound(false).\n').
+invalid_sound_config('timer_sound("").\n').
+invalid_sound_config('timer_sound(["tone.wav"]).\n').
+invalid_sound_config('timer_sound("disabled").\n').
 
 :- end_tests(prolog_config).

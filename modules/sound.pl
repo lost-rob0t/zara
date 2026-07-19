@@ -6,6 +6,9 @@
 :- dynamic sound_player/2.
 
 play_notification_sound(Kind) :-
+    configured_sound(Kind, disabled),
+    !.
+play_notification_sound(Kind) :-
     configured_sound(Kind, ConfiguredPath),
     absolute_file_name(ConfiguredPath, Path,
                        [access(read), file_errors(fail)]),

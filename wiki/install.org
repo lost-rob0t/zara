@@ -111,7 +111,10 @@ implemented in Prolog. Timer commands use the canonical shape
 
 Timer and alarm sounds are separate Prolog settings in =config.pl=:
 =timer_sound/1= and =alarm_sound/1=. Both accept a readable audio-file path;
-the bundled defaults live in =assets/sounds/= and play through =mpv=.
+the bundled defaults live in =assets/sounds/= and play through =mpv=. Set
+=timer_sound(disabled).= or =alarm_sound(disabled).= with the unquoted atom to
+disable either sound without resolving its path or starting the player. Quoted
+="disabled"= and other non-path values are rejected.
 
 Intent precedence is state-aware in Prolog through =resolve/4=. Conversation,
 dictation, and passive controls are distinct; missing command slots return a
