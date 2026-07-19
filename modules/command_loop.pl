@@ -12,10 +12,29 @@
 handle_command(String) :-
     zara_hooks:acknowledge,
     format('DEBUG: Input string: "~w"~n', [String]),
-    once(resolve_command(String, Intent, Args)),
+    resolution_result(String, Resolution),
+    handle_resolution(Resolution).
+
+handle_resolution(resolved(Intent, Args)) :-
     format('DEBUG: Resolved - Intent: ~w, Args: ~w~n', [Intent, Args]),
     execute_resolved(Intent, Args, Result),
     Result = command_result(success, Intent, Args, none).
+handle_resolution(Result) :-
+    Result = command_result(failure, command_resolution, _, _),
+    zara_hooks:reply_result(Result),
+    fail.
+
+resolution_result(String, Result) :-
+    catch(
+        ( once(resolve_command(String, Intent, Args))
+        -> Result = resolved(Intent, Args)
+        ;  Result = command_result(failure, command_resolution,
+                                   [String], failed)
+        ),
+        Error,
+        Result = command_result(failure, command_resolution,
+                                [String], exception(Error))
+    ).
 
 resolve_command(String, Intent, Args) :-
     intent_resolver:resolve(String, Intent, ArgsRaw),

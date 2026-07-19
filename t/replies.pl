@@ -26,6 +26,16 @@ test(failure_has_structured_result) :-
     assertion(Result == command_result(failure, no_such_intent,
                                        [target], failed)).
 
+test(resolution_failure_has_structured_result) :-
+    setup_call_cleanup(
+        asserta(kb_config:llm_provider(reply_test_failure), Ref),
+        ( command_loop:resolution_result("xyzzy quux", Result),
+          assertion(Result = command_result(
+              failure, command_resolution, ["xyzzy quux"], exception(_)))
+        ),
+        erase(Ref)
+    ).
+
 test(open_reply_uses_app_argument) :-
     without_rich_replies((
         zara_hooks:reply_text(
@@ -52,6 +62,14 @@ test(failure_does_not_masquerade_as_success) :-
         zara_hooks:reply_text(
             command_result(failure, open, [firefox], failed), Text),
         assertion(Text == "I couldn't open firefox.")
+    )).
+
+test(resolution_failure_uses_input) :-
+    without_rich_replies((
+        zara_hooks:reply_text(
+            command_result(failure, command_resolution,
+                           ["xyzzy quux"], failed), Text),
+        assertion(Text == "I couldn't understand xyzzy quux.")
     )).
 
 test(specific_phrases_exclude_generic_fallback) :-

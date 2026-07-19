@@ -9,6 +9,7 @@
 
 :- use_module(library(process)).
 :- use_module(library(random)).
+:- use_module(library(time)).
 :- use_module('alert.pl').
 
 concise_phrase(success, greet, "Hello.").
@@ -30,6 +31,7 @@ concise_phrase(failure, play, "I couldn't play ~w.").
 concise_phrase(failure, timer, "I couldn't set the timer for ~w.").
 concise_phrase(failure, dictation_start, "I couldn't start dictation.").
 concise_phrase(failure, dictation_stop, "I couldn't stop dictation.").
+concise_phrase(failure, command_resolution, "I couldn't understand ~w.").
 
 rich_phrase(success, greet,
             "Greet the dawn, for every greeting is a beginning.").
@@ -68,11 +70,10 @@ reply_phrases(Status, Intent, Phrases) :-
     findall(Phrase, concise_phrase(Status, Intent, Phrase), Concise),
     specific_phrases(Status, Intent, Concise, Phrases).
 
-specific_phrases(Status, Intent, [], Phrases) :-
+specific_phrases(Status, _Intent, [], Phrases) :-
     !,
     findall(Phrase, generic_phrase(Status, Phrase), Phrases),
-    Phrases \= [],
-    nonvar(Intent).
+    Phrases \= [].
 specific_phrases(success, Intent, Concise, Phrases) :-
     rich_replies_enabled,
     !,
@@ -132,9 +133,22 @@ speak_reply(Text) :-
     Command \== '',
     !,
     process_create(path(Command), ['--', Text], [process(Process)]),
-    process_wait(Process, Status, [timeout(0.5)]),
-    memberchk(Status, [exit(0), timeout]).
+    bounded_speech_wait(Process, Status),
+    Status == exit(0).
 speak_reply(_).
+
+bounded_speech_wait(Process, Status) :-
+    catch(
+        call_with_time_limit(0.5, process_wait(Process, Status)),
+        time_limit_exceeded,
+        ( terminate_speech_process(Process),
+          Status = timeout
+        )
+    ).
+
+terminate_speech_process(Process) :-
+    catch(process_kill(Process, kill), _, true),
+    catch(process_wait(Process, _), _, true).
 
 run_hook(Hook, Event) :-
     Goal =.. [Hook, Event],
