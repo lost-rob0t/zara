@@ -25,6 +25,7 @@ nix develop -c scripts/test-replies.sh
 nix develop -c scripts/test-prolog-config.sh
 nix develop -c scripts/test-dictation-lifecycle.sh
 nix develop -c scripts/test-file-tools.sh
+nix develop -c scripts/test-llm-clients.sh
 nix develop -c scripts/test-process-safety.sh
 nix develop -c scripts/test-prolog-engine.sh
 nix develop -c scripts/test-timers.sh
@@ -75,6 +76,18 @@ user overrides are never silently discarded. The canonical Qwen TTS provider is
 All providers return declared WAV or MP3 data through a structured synthesis
 result. =[tts].connect_timeout=, =read_timeout=, and =total_timeout= bound remote
 work. Starting a new utterance cancels and replaces the active playback.
+
+The Python and Prolog LLM clients serialize Anthropic, OpenAI, and Ollama
+requests according to each provider's protocol. Configure
+=[llm].connect_timeout=, =read_timeout=, =total_timeout=, =max_retries=, and
+=history_limit= to bound remote work and retained conversation context. The
+Python client reuses one HTTP session until shutdown; Prolog uses bounded
+keep-alive connections. Provider failures remain typed until the user-facing
+boundary, so an HTTP or protocol error is never stored as assistant text.
+Anthropic and OpenAI credentials come from =ANTHROPIC_API_KEY= and
+=OPENAI_API_KEY=, or the existing matching =[llm]= key settings. Leave
+=[llm].endpoint= empty to use the selected provider's default endpoint; set it
+only for an explicit compatible proxy or local service.
 
 Python runtime settings use =config.toml=. Prolog facts remain separate in
 =~/.config/zarathushtra/config.pl=. That Prolog file accepts only the generated
