@@ -27,4 +27,4 @@ jobs:
         uses: cachix/install-nix-action@v31
 
       - name: Run all tests
-        run: nix develop -c bash -c 'pytest && for test_script in scripts/test-*.sh; do bash "$test_script"; done'
+        run: nix develop -c bash scripts/test-all.sh

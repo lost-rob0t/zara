@@ -28,8 +28,8 @@ This file guides agentic coding assistants working in this repo.
   - `nix develop -c zara-agent` after `pip install -e .`, or run `nix build` and call the `zara` wrapper with `--agent`
 
 ## Tests
-- Run full test suite:
-  - `nix develop -c bash -c 'pytest && for test_script in scripts/test-*.sh; do bash "$test_script"; done'`
+- Run full test suite (single command, ZARA-021 gate):
+  - `nix develop -c bash scripts/test-all.sh`
 - Run the same suite as flake checks (pytest, scripts, syntax, Prolog load, wrappers):
   - `nix flake check`
 - Run a single test file:
