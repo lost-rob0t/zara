@@ -42,6 +42,12 @@ nix run .#zara-console
 nix run .#zara-dictate
 #+end_src
 
+Dictation stop phrases use the canonical table in =zara.dictate=. Configure
+phrases with =[dictate].stop_phrases=, =--stop-phrases=,
+=ZARA_STOP_PHRASE=, or =ZARA_STOP_PHRASES=. Matching ignores case, spacing, and
+punctuation. Parallel transcription remains enabled, while text is committed in
+capture order.
+
 * Python (Unsupported)
 This repo ships a requirements file for reference only. It is not supported.
 Use it only if you fully understand the dependency set and how to provide
