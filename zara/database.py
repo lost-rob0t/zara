@@ -8,9 +8,10 @@ import logging
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Iterator, Optional, Sequence
 
 from .config import get_config
 
@@ -26,7 +27,7 @@ class Migration:
 class DatabaseManager:
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._connection: Optional[sqlite3.Connection] = None
         self._migrations: dict[int, Migration] = {}
 
@@ -63,6 +64,19 @@ class DatabaseManager:
             cursor = conn.execute(statement, params)
             conn.commit()
             return cursor
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        conn = self.connect()
+        with self._lock:
+            try:
+                conn.execute("BEGIN")
+                yield conn
+            except Exception:
+                conn.rollback()
+                raise
+            else:
+                conn.commit()
 
     def fetch_all(self, statement: str, params: Sequence[object] | None = None) -> list[sqlite3.Row]:
         cursor = self.execute(statement, params)

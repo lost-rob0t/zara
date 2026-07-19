@@ -144,6 +144,20 @@ enable them, set that value to =true= and configure =file_tools.readable_roots=,
 =file_tools.writable_roots=, and =file_tools.max_bytes=. Relative roots resolve
 from the repository root. Paths outside those roots, symlinks, and special files
 are rejected; writes require explicit overwrite permission and are atomic.
+
+Todo records are validated and updated transactionally with their tags and
+generated occurrences. Storage updates use =PRESERVE= (leave unchanged), a new
+value (change), or =CLEAR= (remove an optional value); recurring todos must clear
+both their schedule and repeater when unscheduled. Statuses are =TODO=, =NEXT=,
+=WAITING=, =SOMEDAY=, =DONE=, and =CANCELED=, and priorities are =A=, =B=, or =C=.
+
+Repeaters support only =+Nmin=, =+Nh=, =+Nd=, =+Nw=, =+Nm=, and =+Ny= with a
+positive integer =N=. Month and year recurrences use calendar boundaries and
+clamp to the last valid day while retaining the original day for later
+occurrences. Scheduling uses half-open =[start, end)= intervals and task duration;
+back-to-back tasks are allowed, while any positive overlap with an active todo
+or generated recurrence is rejected. Missing durations use
+=todo.default_duration_minutes=, which defaults to 30.
 ** Config file
 Zarathushtra reads configuration from:
 - ~/.config/zarathushtra/config.toml

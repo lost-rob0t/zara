@@ -9,9 +9,11 @@ from typing import Any, Callable, Dict, List
 from .noaa import get_noaa_weather
 from .todo_skills import (
     capture_todo,
+    complete_todo,
     edit_todo,
     export_todos,
     list_todos,
+    reopen_todo,
     schedule_todo,
     search_todos,
 )
@@ -32,7 +34,9 @@ class PythonSkillRegistry:
             "say_hello": say_hello,
             "noaa_weather": noaa_weather,
             "capture_todo": capture_todo,
+            "complete_todo": complete_todo,
             "list_todos": list_todos,
+            "reopen_todo": reopen_todo,
             "edit_todo": edit_todo,
             "search_todos": search_todos,
             "schedule_todo": schedule_todo,

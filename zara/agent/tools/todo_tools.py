@@ -11,9 +11,11 @@ from pydantic import BaseModel, Field
 
 from ...todo_skills import (
     capture_todo,
+    complete_todo,
     edit_todo,
     export_todos,
     list_todos,
+    reopen_todo,
     schedule_todo,
     search_todos,
 )
@@ -33,6 +35,10 @@ class TodoAddArgs(BaseModel):
 class TodoEditArgs(BaseModel):
     todo_id: int = Field(..., description="Todo id to update.")
     new_text: str = Field(..., description="New todo title.")
+
+
+class TodoIdArgs(BaseModel):
+    todo_id: int = Field(..., description="Todo id to update.")
 
 
 class TodoSearchArgs(BaseModel):
@@ -66,6 +72,18 @@ def edit_todo_tool(todo_id: int, new_text: str) -> str:
     return edit_todo([str(todo_id), new_text])
 
 
+@tool("complete_todo", args_schema=TodoIdArgs)
+def complete_todo_tool(todo_id: int) -> str:
+    """Mark an existing todo complete."""
+    return complete_todo([str(todo_id)])
+
+
+@tool("reopen_todo", args_schema=TodoIdArgs)
+def reopen_todo_tool(todo_id: int) -> str:
+    """Reopen a completed todo."""
+    return reopen_todo([str(todo_id)])
+
+
 @tool("search_todos", args_schema=TodoSearchArgs)
 def search_todos_tool(query: str) -> str:
     """Search todos by text."""
@@ -89,6 +107,8 @@ def build_todo_tools() -> list[StructuredTool]:
         list_todos_tool,
         add_todo_tool,
         edit_todo_tool,
+        complete_todo_tool,
+        reopen_todo_tool,
         search_todos_tool,
         schedule_todo_tool,
         export_todos_tool,
