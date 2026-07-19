@@ -1,40 +1,247 @@
-* README
-This project was created using artificial intelligence.
-In fact, this README was created using the `zara-dictate` Python script.
+#+title: Zara
 
-This project provides a NixOS flake with utilities.
-There is a command-line interface that lets you type natural text for commands, and there is `zara-dictate` — Zara Dictates — it's how you do voice-to-text.
+* Zara
+Zara is my attempt to build the desktop assistant I actually want instead of another Alexa clone or a Python demo that prints "Hello, world."
 
-The `zara` command lets you type text (natural language).
-Use `zara --dictate` for voice-to-text input, or `zara --wake` for wake-word mode.
+It takes text or speech, tries to resolve it through Prolog first, and only falls back to an LLM when deterministic routing does not know what to do.
 
-Zara is also able to work in a wake-word mode: simply say "zara" or "hey zara" and then state the command.
+Most assistants are LLM-first. Zara is not supposed to be.
 
-Plans to enable TTS are down the road.
-I mostly created this with an LLM to generate a project to learn from. Now that it works, I don’t want it fucking it up.
+This project was created using artificial intelligence. The original README was dictated using the ~zara-dictate~ Python script. I am leaving that fact in here because pretending otherwise would be bullshit.
 
-So I’ll slowly rework this with actual NLP — I need to learn DCG.
-Right now verb intents just look ahead `n` args for command handling.
+A lot of this repository was generated before I fully understood how I wanted the system designed. Some of it works. Some of it is clever. Some of it is obvious AI slop. Now that the useful parts work, the rule is to repair it slowly, add deterministic tests, and stop agents from casually rewriting working code.
 
-The schedule function is broken and only works with Org Mode.
+This is a Linux/NixOS desktop-assistant testbed built from:
 
-** zara-dictate
-~zara-dictate~ lets you type using your own voice. It uses Whisper.
-You can specify the number of Whisper workers and the number of parallel workers.
+- Python for orchestration, audio, tools, agent execution, and desktop integration
+- SWI-Prolog for intent resolution, rules, and deterministic command routing
+- faster-whisper for speech-to-text and dictation
+- LangGraph/LangChain for agent mode and tool execution
+- Ollama, Anthropic, and OpenAI-compatible LLM paths
+- local, Edge, ElevenLabs, and Qwen3 TTS providers
+- optional Chroma-based long-term memory
+- Nix for packaging the whole pile into reproducible commands
 
-I mostly use CPU only on an AMD Ryzen 3950X with the `tiny`/`small` models. In this section I was using the tiny model — you can get good results.
+It is not a finished product or a clean framework. It is a working experimental assistant with a dependency-ordered repair queue.
 
-I don’t currently have my GPU configured (not sure if I can with my 5500 as of writing to test GPU mode).
+* The important design
+The intended runtime path is:
 
-** zara-wake
-Lets you say "open youtube" or any other command.
+#+begin_example
+text / console / wake audio
+          |
+          v
+   Prolog intent resolver
+      |             |
+      |             +--> unresolved or conversational
+      |                         |
+      v                         v
+Prolog command         LangGraph agent / LLM
+or python(Name)          tools / memory / TTS
+      |
+      v
+PythonSkillRegistry
+#+end_example
 
-** zara-console
-Main CLI interactive assistant entrypoint.
+Prolog decides what the command means. Python performs Python-side skills and system integration. The LLM is the fallback for conversation and tool-using work, not the universal parser for every command.
 
-* TODO IDEA BOX [0/5]
-** TODO Major refactor now that I understand the main NLP command loop
-** TODO ZaraAssistant class
-** TODO LLMClient
-** TODO PrologClient
-** TODO SkillRegistry?
+The current Python skill registry includes:
+
+- NOAA weather
+- todo capture
+- todo listing
+- todo editing
+- todo search
+- todo scheduling
+- todo export
+- a basic hello skill used for routing/tests
+
+* Command surface
+| Command | Purpose | Current state |
+|---+---+---|
+| ~zara "open firefox"~ | Execute one natural-language text command | Implemented |
+| ~zara --console~ | Interactive text REPL | Implemented |
+| ~zara --dictate~ | Continuous Whisper dictation into the active window | Implemented |
+| ~zara --wake~ | Wake-word assistant mode | Implemented |
+| ~zara --agent~ | Talk directly to the conversational agent | Implemented |
+| ~zara --voice~ | One-shot voice command | Not implemented |
+
+The flake also exposes separate commands/apps:
+
+- ~zara-console~
+- ~zara-dictate~
+- ~zara-wake~
+- ~zara~
+
+* Run it with Nix
+The flake is currently hard-coded for ~x86_64-linux~. Making the packaging metadata and platform support sane is already tracked in the repair queue.
+
+#+begin_src sh
+nix develop
+nix develop -c pytest
+nix build
+#+end_src
+
+Run the explicit apps instead of assuming the default app knows which mode you want:
+
+#+begin_src sh
+nix run .#zara -- "open firefox"
+nix run .#zara-console
+nix run .#zara-dictate -- --model small --workers 2
+nix run .#zara-wake
+nix run .#zara -- --agent
+#+end_src
+
+The first run creates the main configuration file at:
+
+#+begin_example
+~/.config/zarathushtra/config.toml
+#+end_example
+
+The configuration controls wake timing, STT, TTS, LLM provider, agent limits, Prolog startup, tools, file-tool roots, todo defaults, memory, module paths, and dictation.
+
+File tools are disabled by default. When enabled, readable and writable roots are explicit instead of granting the model arbitrary filesystem access.
+
+* zara-dictate
+~zara-dictate~ lets me type using my own voice. It records audio, transcribes it with Whisper, and types the resulting text into the active desktop window.
+
+The dictation pipeline supports:
+
+- selectable Whisper model
+- CPU or CUDA device selection
+- configurable Whisper threads
+- parallel transcription workers
+- configurable stop phrases
+- ordered output even when transcription workers finish out of order
+- cleanup of PID files, queues, threads, and executors on exit
+
+Example:
+
+#+begin_src sh
+zara --dictate \
+  --model small \
+  --device cpu \
+  --threads 16 \
+  --workers 2 \
+  --stop-phrases "end dictation,disable"
+#+end_src
+
+I mostly run this CPU-only on an AMD Ryzen 3950X with the ~tiny~ and ~small~ models. ~tiny~ is fast and usable. ~small~ is slower but generally less stupid.
+
+My RX 5500 is not used by the current CLI. The device switch currently exposes ~cpu~ and ~cuda~, not ROCm.
+
+* zara-wake
+Wake mode listens for Zara, enters an active command/conversation state, records the utterance, routes the transcript, and optionally speaks the result.
+
+The normal interaction is:
+
+1. Say "zara" or "hey zara".
+2. State the command or question.
+3. Prolog gets the first attempt.
+4. The agent handles it when Prolog cannot.
+5. TTS speaks the result when enabled.
+
+Wake mode has bounded audio buffering and separate deadlines for first speech, silence, maximum utterance length, and conversation inactivity. Stale audio is discarded when state changes instead of leaking into the next turn.
+
+Configured stop phrases can end conversation mode. Speech input can also interrupt current TTS playback.
+
+* zara-console
+~zara-console~ is the interactive text entrypoint. It is the easiest way to inspect command routing without debugging microphone state at the same time.
+
+#+begin_src sh
+zara --console
+#+end_src
+
+* zara-agent
+~zara --agent~ bypasses normal Prolog-first command handling and opens the conversational agent directly.
+
+The agent stack currently supports:
+
+- Ollama
+- Anthropic
+- OpenAI-compatible providers
+- LangChain tools
+- Prolog queries as tools
+- optional long-term memory
+- TTS integration
+
+This does not mean every provider path is equally mature. Provider contracts, timeouts, authentication, cancellation, and session reuse are part of the active repair work.
+
+* TTS exists now
+The old README said TTS was a future plan. That is no longer true.
+
+Current configured provider names are:
+
+- ~local~
+- ~edge~
+- ~11labs~
+- ~qwen3~
+
+TTS failures are supposed to remain bounded and not kill the wake loop. Playback is single-flight so a replacement response does not talk over stale audio.
+
+* Conversation, memory, and context
+These are separate things and should stay separate:
+
+- Conversation history is the actual sequence of user/assistant turns.
+- Memory is derived or retrieved long-term information.
+- Context is the final bounded message set sent to a model for one turn.
+
+The repository already has conversation state and memory code, but context manipulation is not centralized enough yet.
+
+[[https://github.com/lost-rob0t/zara/issues/51][ZARA-031]] tracks the proper context system:
+
+- one ~ContextManager~ owns context assembly and mutation
+- complete tool-call/result groups stay atomic
+- transient memory and skill context do not pollute stored transcripts
+- configurable ~truncate~ mode drops the oldest complete turns
+- configurable ~compress~ mode replaces old chat with one summary system message and removes the compacted source messages
+- Python, Prolog, and Python/Prolog integration rules become selectively loaded ~SKILL.md~ files
+- adding a new skill-file type does not require another hard-coded routing chain
+
+Manipulating context is core assistant behavior. It should have contracts, budgets, tests, and an audit trail like any other subsystem.
+
+* What is still busted or unfinished
+- ~zara --voice~ is a stub.
+- Todo scheduling and recurrence semantics are still under repair.
+- Packaging, entrypoints, dependency metadata, and branch-era duplicate implementations are being reconciled.
+- The full deterministic test/script gate is not finished yet.
+- Wake/STT/LLM/TTS is not yet a real streaming full-duplex pipeline.
+- Context management still needs the dedicated subsystem described above.
+- The current natural-language command grammar is still crude compared with the DCG-based system I want.
+
+Do not read "implemented" as "production ready."
+
+* Why Prolog and DCGs
+Right now some verb intents still amount to looking ahead a fixed number of arguments and mapping the result to a command. It works well enough to prove the routing model, but it is not the final parser.
+
+I want to replace more of that with actual NLP built from Prolog DCGs, typed intent results, explicit command contracts, and state-aware precedence.
+
+The point is not to make Prolog cosplay as an LLM. The point is to use deterministic grammar and rules where deterministic grammar and rules are better.
+
+* Development rules
+The repair order lives in [[https://github.com/lost-rob0t/zara/issues/1][ZARA-000]].
+
+Current rules:
+
+- do not commit repair work directly to ~master~
+- one issue per branch
+- one focused draft PR per issue
+- every behavior change gets regression coverage
+- every issue provides a non-interactive test script
+- baseline test command is ~nix develop -c pytest~
+- correctness and bounded resource use come before latency optimization
+
+This project was AI-made. That is not a quality badge. It is the reason the repository now has explicit repair issues, security boundaries, deterministic tests, and rules stopping the next model from context-hogging the whole codebase and "improving" it into a different program.
+
+* Roadmap
+** DONE Prolog-first command routing
+** DONE Python skill registry
+** DONE Continuous Whisper dictation
+** DONE Wake-word and conversation mode prototype
+** DONE Agent, tools, memory, and TTS prototypes
+** TODO Finish the ordered correctness/security repair queue
+** TODO Centralize context management and add Python/Prolog skill files
+** TODO Replace crude intent parsing with more DCG-based NLP
+** TODO Build the bounded actor-style real-time turn coordinator
+** TODO Move STT, LLM, and TTS onto a true streaming duplex pipeline
+** TODO Prove it with deterministic tests and long-running soak tests
