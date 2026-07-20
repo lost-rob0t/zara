@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 from .qwen import Qwen3TTSClient
 
@@ -27,6 +27,21 @@ class PlaybackResult:
     success: bool
     error: Optional[str] = None
     cancelled: bool = False
+
+
+@dataclass(frozen=True)
+class StreamChunk:
+    """A chunk of streamed audio with metadata."""
+    provider: str
+    audio: bytes
+    audio_format: str
+    first_chunk: bool = False
+    error: Optional[str] = None
+
+
+def supports_streaming(provider: str) -> bool:
+    """Return True if ``provider`` supports streaming synthesis."""
+    return provider in {"11labs", "edge"}
 
 
 class TTSEngine:
@@ -117,6 +132,79 @@ class TTSEngine:
     def synthesize(self, text: str) -> SynthesisResult:
         return asyncio.run(self.synthesize_async(text))
 
+    async def synthesize_stream(self, text: str) -> AsyncIterator[StreamChunk]:
+        """Stream audio chunks as they arrive from the provider.
+
+        Falls back to a single non-streaming chunk for providers that
+        do not support streaming (local, qwen3). The first chunk is
+        flagged so the caller can begin playback immediately.
+        """
+        if not text or not text.strip():
+            yield StreamChunk(
+                provider=self.provider,
+                audio=b"",
+                audio_format="mp3" if self.provider in {"11labs", "edge"} else "wav",
+                error="Text is empty",
+            )
+            return
+
+        if self.provider == "11labs":
+            async for chunk in self._stream_elevenlabs(text):
+                yield chunk
+            return
+
+        if self.provider == "edge":
+            async for chunk in self._stream_edge(text):
+                yield chunk
+            return
+
+        # Non-streaming providers: synthesise then emit one chunk.
+        try:
+            audio, audio_format = await asyncio.wait_for(
+                self._synthesize_provider(text),
+                timeout=self.total_timeout,
+            )
+        except asyncio.TimeoutError:
+            yield StreamChunk(
+                provider=self.provider,
+                audio=b"",
+                audio_format="wav",
+                error=f"Synthesis timed out after {self.total_timeout:g} seconds",
+            )
+            return
+        except asyncio.CancelledError:
+            yield StreamChunk(
+                provider=self.provider,
+                audio=b"",
+                audio_format="wav",
+                error="Synthesis cancelled",
+            )
+            return
+        except Exception as error:
+            yield StreamChunk(
+                provider=self.provider,
+                audio=b"",
+                audio_format="wav",
+                error=str(error),
+            )
+            return
+
+        if not audio or not self._valid_audio(audio, audio_format):
+            yield StreamChunk(
+                provider=self.provider,
+                audio=b"",
+                audio_format=audio_format,
+                error="Provider returned empty or invalid audio",
+            )
+            return
+
+        yield StreamChunk(
+            provider=self.provider,
+            audio=audio,
+            audio_format=audio_format,
+            first_chunk=True,
+        )
+
     async def _synthesize_provider(self, text: str) -> tuple[bytes, str]:
         if self.provider == "local":
             return await self._synthesize_local(text)
@@ -127,6 +215,92 @@ class TTSEngine:
         if self.provider == "qwen3":
             return await self._synthesize_qwen3(text)
         raise RuntimeError(f"Unsupported TTS provider: {self.provider}")
+
+    async def _stream_elevenlabs(self, text: str) -> AsyncIterator[StreamChunk]:
+        from . import elevenlabs
+
+        tts_config = self.config.get("tts", {}) or {}
+        first = True
+        try:
+            async for chunk in elevenlabs.synthesize_stream(text, tts_config):
+                if chunk:
+                    yield StreamChunk(
+                        provider=self.provider,
+                        audio=chunk,
+                        audio_format="mp3",
+                        first_chunk=first,
+                    )
+                    first = False
+        except asyncio.CancelledError:
+            yield StreamChunk(
+                provider=self.provider,
+                audio=b"",
+                audio_format="mp3",
+                error="Synthesis cancelled",
+            )
+            raise
+        except Exception as error:
+            yield StreamChunk(
+                provider=self.provider,
+                audio=b"",
+                audio_format="mp3",
+                error=str(error),
+            )
+        finally:
+            await elevenlabs.close()
+
+    async def _stream_edge(self, text: str) -> AsyncIterator[StreamChunk]:
+        """edge-tts has no native chunked async API; synthesise then chunk."""
+        try:
+            audio, audio_format = await asyncio.wait_for(
+                self._synthesize_edge(text),
+                timeout=self.total_timeout,
+            )
+        except asyncio.TimeoutError:
+            yield StreamChunk(
+                provider=self.provider,
+                audio=b"",
+                audio_format="mp3",
+                error=f"Synthesis timed out after {self.total_timeout:g} seconds",
+            )
+            return
+        except asyncio.CancelledError:
+            yield StreamChunk(
+                provider=self.provider,
+                audio=b"",
+                audio_format="mp3",
+                error="Synthesis cancelled",
+            )
+            return
+        except Exception as error:
+            yield StreamChunk(
+                provider=self.provider,
+                audio=b"",
+                audio_format="mp3",
+                error=str(error),
+            )
+            return
+
+        if not audio or not self._valid_audio(audio, audio_format):
+            yield StreamChunk(
+                provider=self.provider,
+                audio=b"",
+                audio_format=audio_format,
+                error="Provider returned empty or invalid audio",
+            )
+            return
+
+        chunk_size = 8192
+        first = True
+        for offset in range(0, len(audio), chunk_size):
+            piece = audio[offset:offset + chunk_size]
+            yield StreamChunk(
+                provider=self.provider,
+                audio=piece,
+                audio_format="mp3",
+                first_chunk=first,
+            )
+            first = False
 
     async def _synthesize_local(self, text: str) -> tuple[bytes, str]:
         if self.local_engine == "piper":

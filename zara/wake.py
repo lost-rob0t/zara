@@ -21,7 +21,8 @@ from concurrent.futures import ThreadPoolExecutor
 # Import LLM client and ChatHistory
 from . import llm
 from . import command_gate
-from .tts import PlaybackResult, TTSEngine
+from .acknowledgement import AcknowledgementConfig, AcknowledgementPlayer
+from .tts import PlaybackResult, TTSEngine, supports_streaming
 from .agent import AgentManager
 from .config import get_config
 from .notifications import send_notification_async
@@ -156,6 +157,10 @@ class WakeWordListener:
         if rate_note:
             self.log(rate_note)
 
+        # Acknowledgement player (immediate ack before STT/Prolog/LLM)
+        self.ack_player: Optional[AcknowledgementPlayer] = None
+        self._init_ack_player(wake_cfg)
+
         # Initialize Prolog engine
         self.log("Initializing Prolog...")
 
@@ -193,6 +198,58 @@ class WakeWordListener:
             compute_type="int8", num_workers=threads
         )
 
+    def _init_ack_player(self, wake_cfg: dict) -> None:
+        """Build the AcknowledgementPlayer from config and pre-warm clips."""
+        ack_cfg = wake_cfg.get("acknowledgement", {}) or {}
+        if not ack_cfg.get("enabled", True):
+            self.ack_player = AcknowledgementPlayer(
+                config=AcknowledgementConfig(enabled=False)
+            )
+            return
+
+        phrases_raw = ack_cfg.get("phrases", []) or []
+        phrases = tuple(dict.fromkeys(str(p) for p in phrases_raw if p))
+        provider = ack_cfg.get("provider", self.tts_config.get("provider", "edge"))
+        voice = ack_cfg.get("voice", "")
+        if not voice:
+            tts_section = self.config.get_section("tts")
+            voice = (
+                tts_section.get("elevenlabs_voice_id")
+                if provider == "11labs"
+                else tts_section.get("edge_voice", "en-US-AriaNeural")
+            )
+        volume = self._parse_float(ack_cfg.get("volume", 1.0), 1.0)
+
+        config = AcknowledgementConfig(
+            enabled=True,
+            phrase=ack_cfg.get("phrase", "Okay"),
+            phrases=phrases,
+            provider=provider,
+            voice=voice,
+            volume=volume,
+        )
+
+        tts_engine_for_ack: Optional[TTSEngine] = None
+        if provider not in ("edge",):
+            try:
+                config_dict = (
+                    self.config._config if hasattr(self.config, "_config") else {}
+                )
+                tts_engine_for_ack = TTSEngine(provider=provider, config=config_dict)
+            except Exception as error:
+                self.log(f"Ack TTS engine init failed, using edge fallback: {error}")
+
+        self.ack_player = AcknowledgementPlayer(config=config, tts_engine=tts_engine_for_ack)
+        try:
+            self.ack_player.initialize()
+            if self.ack_player.has_audio:
+                self.log(f"Ack player ready: source={self.ack_player.source}")
+            else:
+                self.log("Ack player initialized without audio (will be silent)")
+        except Exception as error:
+            self.log(f"Ack player init failed: {error}")
+            self.ack_player = AcknowledgementPlayer(config=AcknowledgementConfig(enabled=False))
+
     def log(self, msg):
         ts = time.strftime("%H:%M:%S")
         with open(LOGFILE, "a") as f:
@@ -218,7 +275,18 @@ class WakeWordListener:
 
     def _is_conversation_stop(self, text: str) -> bool:
         state = "conversation" if self.in_conversation_mode() else "passive"
-        return self.prolog.is_conversation_stop(text, state=state)
+        if self.prolog.is_conversation_stop(text, state=state):
+            return True
+        text_lower = text.lower().strip()
+        if not self.in_conversation_mode():
+            return False
+        for wake in WAKE_WORDS:
+            if wake in text_lower:
+                return True
+        for stop in ("disable", "end", "goodbye"):
+            if text_lower == stop or text_lower.startswith(stop + " "):
+                return True
+        return False
 
     def _new_latency_trace(self, consume_cold: bool = True) -> Optional[LatencyTrace]:
         if not getattr(self, "latency_enabled", False):
@@ -236,7 +304,42 @@ class WakeWordListener:
             trace = self._new_latency_trace()
         return trace
 
+    def _play_acknowledgement(self, turn_id: str) -> None:
+        """Fire the immediate acknowledgement clip for this turn."""
+        ack_player = getattr(self, "ack_player", None)
+        if ack_player is None:
+            return
+        try:
+            result = ack_player.play(turn_id)
+            if result.played:
+                trace = getattr(self, "current_latency_trace", None)
+                if trace is not None:
+                    trace.record(
+                        "ack_first_audio",
+                        provider=ack_player.source or "unknown",
+                        observable_proxy=True,
+                    )
+                    trace.flush()
+                self.log(f"Playing acknowledgement: '{result.phrase}' (source={result.source})")
+            elif result.suppressed:
+                self.log(f"Ack suppressed for turn {turn_id}")
+            elif result.error:
+                self.log(f"Ack skipped: {result.error}")
+        except Exception as error:
+            self.log(f"Ack playback error: {error}")
+
+    def _stop_acknowledgement(self) -> None:
+        """Stop acknowledgement playback (barge-in / TTS takeover)."""
+        ack_player = getattr(self, "ack_player", None)
+        if ack_player is None:
+            return
+        try:
+            ack_player.stop()
+        except Exception as error:
+            self.log(f"Ack stop error: {error}")
+
     async def _stop_tts(self):
+        self._stop_acknowledgement()
         if self.tts_stop_event is not None:
             self.tts_stop_event.set()
         if self.tts_player_proc and self.tts_player_proc.returncode is None:
@@ -258,6 +361,7 @@ class WakeWordListener:
         self.tts_player_proc = None
 
     async def _interrupt_tts(self, trace: Optional[LatencyTrace]) -> None:
+        self._stop_acknowledgement()
         task = getattr(self, "tts_task", None)
         if task is None or task.done():
             return
@@ -527,11 +631,11 @@ class WakeWordListener:
         if not self.in_conversation_mode():
             return
         agent_config = self.config.get_section("agent")
-        configured_grace = agent_config.get("post_tts_silence_seconds", 0.0)
+        configured_grace = agent_config.get("post_tts_silence_seconds", 2.0)
         try:
             configured_grace = float(configured_grace)
         except (TypeError, ValueError):
-            configured_grace = 0.0
+            configured_grace = 2.0
         grace_seconds = max(self.silence_duration, configured_grace)
         self.agent_manager.conversation_manager.update_activity(grace_seconds=grace_seconds)
         self.log(f"Conversation grace window: {grace_seconds:.1f}s")
@@ -739,6 +843,7 @@ class WakeWordListener:
     async def synthesize_and_play_async(self, text):
         """Replace any active utterance and start the new one."""
         trace = getattr(self, "current_latency_trace", None)
+        self._stop_acknowledgement()
         async with self.tts_lock:
             await self._stop_tts()
             self.tts_stop_event = asyncio.Event()
@@ -778,35 +883,40 @@ class WakeWordListener:
                         provider=self.tts_config["provider"],
                         text_length=len(text),
                     )
-                synthesis = await self.tts_client.synthesize_async(text)
-                if not synthesis.success:
-                    status = PlaybackResult(
-                        provider=synthesis.provider,
-                        success=False,
-                        error=synthesis.error,
-                        cancelled=synthesis.cancelled,
-                    )
-                elif stop_event.is_set():
-                    status = PlaybackResult(
-                        provider=synthesis.provider,
-                        success=False,
-                        error="Playback cancelled",
-                        cancelled=True,
+                if supports_streaming(self.tts_config["provider"]):
+                    status = await self._stream_synthesize_and_play(
+                        text, stop_event, trace
                     )
                 else:
-                    if trace is not None:
-                        trace.record(
-                            "tts_first_chunk",
+                    synthesis = await self.tts_client.synthesize_async(text)
+                    if not synthesis.success:
+                        status = PlaybackResult(
                             provider=synthesis.provider,
-                            buffered_proxy=True,
+                            success=False,
+                            error=synthesis.error,
+                            cancelled=synthesis.cancelled,
                         )
-                    self.log("Playing audio...")
-                    status = await self._play_audio_task(
-                        synthesis.audio,
-                        synthesis.audio_format,
-                        stop_event,
-                        trace,
-                    )
+                    elif stop_event.is_set():
+                        status = PlaybackResult(
+                            provider=synthesis.provider,
+                            success=False,
+                            error="Playback cancelled",
+                            cancelled=True,
+                        )
+                    else:
+                        if trace is not None:
+                            trace.record(
+                                "tts_first_chunk",
+                                provider=synthesis.provider,
+                                buffered_proxy=True,
+                            )
+                        self.log("Playing audio...")
+                        status = await self._play_audio_task(
+                            synthesis.audio,
+                            synthesis.audio_format,
+                            stop_event,
+                            trace,
+                        )
 
         except asyncio.CancelledError:
             status = PlaybackResult(
@@ -835,6 +945,126 @@ class WakeWordListener:
                 )
             trace.flush()
         return status
+
+    async def _stream_synthesize_and_play(
+        self,
+        text: str,
+        stop_event: asyncio.Event,
+        trace: Optional[LatencyTrace] = None,
+    ) -> PlaybackResult:
+        """Stream synthesis chunks to mpv stdin so playback starts early."""
+        provider = self.tts_config["provider"]
+        self.tts_playback_active = True
+        process: Optional[asyncio.subprocess.Process] = None
+        first_chunk_seen = False
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "mpv",
+                "--no-video",
+                "--no-terminal",
+                "--really-quiet",
+                "--cache=yes",
+                "--cache-secs=0.2",
+                "-",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            self.tts_player_proc = process
+
+            writer_done = asyncio.Event()
+
+            async def _pump():
+                try:
+                    async for chunk in self.tts_client.synthesize_stream(text):
+                        if stop_event.is_set() or process.returncode is not None:
+                            break
+                        if chunk.error:
+                            self.log(f"Stream chunk error: {chunk.error}")
+                            break
+                        if not chunk.audio:
+                            continue
+                        if not first_chunk_seen and chunk.first_chunk:
+                            if trace is not None:
+                                trace.record(
+                                    "tts_first_chunk",
+                                    provider=chunk.provider,
+                                    buffered_proxy=True,
+                                )
+                                trace.record(
+                                    "tts_first_playback",
+                                    audio_format=chunk.audio_format,
+                                    observable_proxy=True,
+                                )
+                            self.log("Streaming playback started")
+                        process.stdin.write(chunk.audio)
+                        await process.stdin.drain()
+                    if process.stdin and not process.stdin.is_closing():
+                        process.stdin.close()
+                        try:
+                            await process.stdin.wait_closed()
+                        except Exception:
+                            pass
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    self.log(f"Stream pump error: {error}")
+                finally:
+                    writer_done.set()
+
+            pump_task = asyncio.create_task(_pump())
+            stopped = asyncio.create_task(stop_event.wait())
+            writer_task = asyncio.create_task(writer_done.wait())
+
+            done, _ = await asyncio.wait(
+                {pump_task, stopped, writer_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if stopped in done:
+                pump_task.cancel()
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+                await asyncio.gather(pump_task, return_exceptions=True)
+                return PlaybackResult(
+                    provider=provider,
+                    success=False,
+                    error="Playback cancelled",
+                    cancelled=True,
+                )
+
+            await pump_task
+            _, stderr = await process.communicate()
+            if process.returncode != 0:
+                detail = stderr.decode(errors="replace").strip()
+                return PlaybackResult(
+                    provider=provider,
+                    success=False,
+                    error=detail or f"mpv exited with {process.returncode}",
+                )
+            return PlaybackResult(provider=provider, success=True)
+        except asyncio.CancelledError:
+            return PlaybackResult(
+                provider=provider,
+                success=False,
+                error="Playback cancelled",
+                cancelled=True,
+            )
+        except Exception as error:
+            return PlaybackResult(provider=provider, success=False, error=str(error))
+        finally:
+            self.tts_playback_active = False
+            stopped.cancel()
+            await asyncio.gather(stopped, return_exceptions=True)
+            if process is not None and process.returncode is None:
+                process.kill()
+                await process.wait()
+            if self.tts_player_proc is process:
+                self.tts_player_proc = None
+            self._apply_conversation_grace()
 
     async def _play_audio_task(
         self,
@@ -1104,6 +1334,14 @@ class WakeWordListener:
             self.log("⏸️ No speech - returning to passive")
             self.transition_to("PASSIVE")
             return
+
+        # Immediate acknowledgement: play pre-generated clip before STT/Prolog/LLM.
+        turn_id = (
+            self.current_latency_trace.trace_id
+            if self.current_latency_trace is not None
+            else f"turn-{int(time.time() * 1000)}"
+        )
+        self._play_acknowledgement(turn_id)
 
         text = await self.transcribe_async(chunk)
 
