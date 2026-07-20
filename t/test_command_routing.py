@@ -66,3 +66,47 @@ def test_pending_result_returns_clarification_without_execution():
     assert (used_agent, response) == (False, "Please provide: app.")
     listener.prolog.execute_intent.assert_not_called()
     listener.agent_manager.process_async.assert_not_awaited()
+
+
+def test_non_command_utterance_skips_prolog_entirely():
+    listener = build_listener(None)
+
+    used_agent, response = asyncio.run(
+        listener.query_with_fallback_async("why is the sky blue")
+    )
+
+    assert (used_agent, response) == (True, "fallback")
+    listener.prolog.resolve_intent.assert_not_called()
+    listener.prolog.execute_intent.assert_not_called()
+    listener.agent_manager.process_async.assert_awaited_once_with(
+        "why is the sky blue"
+    )
+
+
+def test_non_command_utterance_does_not_skip_prolog_for_command_shaped_input():
+    listener = build_listener(IntentResult("prolog", "open", ["firefox"]))
+    listener.prolog.execute_intent.return_value = True
+
+    used_agent, response = asyncio.run(
+        listener.query_with_fallback_async("open firefox")
+    )
+
+    assert used_agent is False
+    assert "Executed" in response
+    listener.prolog.resolve_intent.assert_called_once_with(
+        "open firefox", state="passive"
+    )
+
+
+def test_conversation_stop_phrase_still_goes_through_prolog():
+    listener = build_listener(IntentResult("prolog", "end_conversation", []))
+
+    used_agent, response = asyncio.run(
+        listener.query_with_fallback_async("goodbye")
+    )
+
+    assert (used_agent, response) == (False, "")
+    listener.prolog.resolve_intent.assert_called_once_with(
+        "goodbye", state="passive"
+    )
+    listener.agent_manager.process_async.assert_not_awaited()
