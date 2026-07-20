@@ -37,8 +37,8 @@ stop_phrases = ["goodbye", "bye", "end conversation", "stop conversation", "end 
 # Stop TTS playback when user starts speaking
 stop_tts_on_input = true
 # Silence detection tuning (seconds)
-silence_duration = 5.0
-silence_threshold = 0.03
+silence_duration = 1.5
+silence_threshold = 0.02
 silence_log_interval = 0.5
 # Return to passive mode if nobody speaks after a wake word
 first_speech_timeout = 5.0
@@ -49,7 +49,12 @@ audio_queue_chunks = 32
 # Immediate acknowledgement (ZARA-025)
 [wake.acknowledgement]
 enabled = true
+# Default single phrase (kept for backward compatibility)
 phrase = "Okay"
+# Multiple phrase variants rotated round-robin across turns.
+# Clips are pre-generated at startup and cached in
+# $XDG_CACHE_HOME/zarathushtra/acknowledgement-<provider>-<voice>-<phrase>-<hash>.wav
+phrases = ["Okay", "Let me think about that", "One sec", "Got it", "Sure", "Hmm, let me see"]
 provider = "edge"
 voice = "en-US-AriaNeural"
 volume = 1.0
@@ -94,10 +99,11 @@ history_limit = 20
 
 [agent]
 # Conversational agent settings
-conversation_timeout = 60  # seconds
+conversation_timeout = 3600  # seconds (60 minutes grace window)
+# Short grace period after TTS playback completes before the listener
+# returns to passive mode. Keep small so the user can respond quickly.
+post_tts_silence_seconds = 2.0
 max_steps = 10  # max agentic steps per turn
-# Extra grace period after TTS playback completes
-post_tts_silence_seconds = 5.0
 # System prompt (inline string or filepath)
 system_prompt = ""
 

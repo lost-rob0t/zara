@@ -39,6 +39,14 @@ def build_listener(queue_size=8, sample_rate=10):
     listener.silence_log_interval = 100.0
     listener._clock = FakeClock(0.0)
     listener.log = lambda _message: None
+    listener.ack_player = None
+    listener.current_latency_trace = None
+    listener.tts_task = None
+    listener.tts_stop_event = None
+    listener.tts_player_proc = None
+    listener.tts_playback_active = False
+    listener.tts_lock = asyncio.Lock()
+    listener.stop_on_interrupt = False
     return listener
 
 

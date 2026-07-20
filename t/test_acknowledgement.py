@@ -28,6 +28,7 @@ from zara.acknowledgement import (
     DEFAULT_FIXTURE_PATH,
     _cache_dir,
     _cache_path,
+    _detect_output_sample_rate,
 )
 
 
@@ -63,10 +64,11 @@ def test_cache_hit_skips_tts(tmp_path):
 
     import wave
     import struct
+    target_rate = _detect_output_sample_rate()
     with wave.open(str(cache), "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
-        wf.setframerate(16000)
+        wf.setframerate(target_rate)
         wf.writeframes(struct.pack("h" * 512, *([1000] * 512)))
 
     player = AcknowledgementPlayer(
