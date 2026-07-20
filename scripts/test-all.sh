@@ -46,7 +46,7 @@ export PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}"
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR" "$XDG_DATA_HOME"
 
 # --- Artifact directory --------------------------------------------------
-ARTIFACT_DIR="${ARTIFACT_DIR:-$TEST_ROOT/artifacts}"
+export ARTIFACT_DIR="${ARTIFACT_DIR:-$TEST_ROOT/artifacts}"
 mkdir -p "$ARTIFACT_DIR"
 
 PHASE_COUNT=0
@@ -137,7 +137,14 @@ phase_security_scripts() {
 
 run_phase "Config/process/file-tool security scripts" phase_security_scripts
 
-# --- Phase 5: Packaging/Nix checks ----------------------------------------
+# --- Phase 5: Deterministic latency budgets -------------------------------
+phase_latency() {
+  bash "$repo_root/scripts/test-latency-metrics.sh"
+}
+
+run_phase "Deterministic latency budgets" phase_latency
+
+# --- Phase 6: Packaging/Nix checks ----------------------------------------
 phase_packaging() {
   bash "$repo_root/scripts/test-packaging.sh"
   bash "$repo_root/scripts/test-canonical-paths.sh"

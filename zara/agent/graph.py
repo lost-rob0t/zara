@@ -43,6 +43,7 @@ class AgentState(TypedDict, total=False):
     response: Optional[str]
     tool_calls: List[Dict[str, Any]]
     tool_results: List[Dict[str, Any]]
+    latency_trace: Any
 
 
 # ----------------------------------------------------------------------
@@ -138,9 +139,33 @@ def create_agent_node(llm_client, tool_registry):
             getattr(msgs[-1], "content", None),
         )
 
-        start_time = time.time()
+        trace = state.get("latency_trace")
+        request_index = int(state.get("step_count", 0))
+        if trace is not None:
+            trace.record(
+                "llm_request",
+                provider=type(llm_client).__name__,
+                request_index=request_index,
+            )
+        start_time = time.monotonic()
         response = await llm_with_tools.ainvoke(msgs)
-        elapsed = time.time() - start_time
+        elapsed = time.monotonic() - start_time
+
+        if trace is not None:
+            # ainvoke() buffers a complete AIMessage. Record the observable
+            # completion boundary as an explicit buffered first-token proxy.
+            trace.record(
+                "llm_first_token",
+                provider=type(llm_client).__name__,
+                request_index=request_index,
+                buffered_proxy=True,
+            )
+            trace.record(
+                "llm_final_token",
+                provider=type(llm_client).__name__,
+                request_index=request_index,
+            )
+            trace.flush()
 
         logger.info("[AgentNode] LLM response time: %.2f seconds", elapsed)
         logger.info("[AgentNode] LLM response type=%s", type(response).__name__)

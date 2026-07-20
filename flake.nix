@@ -233,6 +233,26 @@
                 touch $out
               '';
 
+            # Enforce deterministic fixture latency budgets and retain the
+            # JSONL/percentile report as the check output.
+            latency = pkgs.runCommand "zara-check-latency"
+              {
+                nativeBuildInputs = [ pythonLibs pkgs.swi-prolog ];
+                src = ./.;
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export XDG_CONFIG_HOME=$HOME/.config
+                export XDG_RUNTIME_DIR=$(mktemp -d)
+                export SWI_HOME_DIR=${pkgs.swi-prolog}/lib/swipl
+                cp -r $src $out-src
+                chmod -R u+w $out-src
+                cd $out-src
+                export PYTHONPATH="$out-src''${PYTHONPATH:+:$PYTHONPATH}"
+                export ARTIFACT_DIR=$out
+                bash scripts/test-latency-metrics.sh
+              '';
+
             # Exercise the installed Nix wrappers with isolated HOME and
             # mocked hardware so the package layout is verified end-to-end.
             wrappers = pkgs.runCommand "zara-check-wrappers"
