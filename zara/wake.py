@@ -280,12 +280,16 @@ class WakeWordListener:
         text_lower = text.lower().strip()
         if not self.in_conversation_mode():
             return False
-        for wake in WAKE_WORDS:
-            if wake in text_lower:
-                return True
-        for stop in ("disable", "end", "goodbye"):
-            if text_lower == stop or text_lower.startswith(stop + " "):
-                return True
+        words = text_lower.split()
+        if len(words) <= 2:
+            for wake in WAKE_WORDS:
+                if text_lower == wake:
+                    return True
+            for stop in ("disable", "end", "goodbye", "bye", "stop"):
+                if text_lower == stop:
+                    return True
+                if len(words) == 2 and words[0] in WAKE_WORDS and words[1] == stop:
+                    return True
         return False
 
     def _new_latency_trace(self, consume_cold: bool = True) -> Optional[LatencyTrace]:
@@ -623,6 +627,27 @@ class WakeWordListener:
         """Check if currently in conversation mode"""
         if self.agent_manager is not None:
             return self.agent_manager.conversation_manager.in_conversation
+        return False
+
+    async def _monitor_speech_during_llm(self) -> bool:
+        """Monitor for user speech while LLM is processing.
+
+        Returns True if speech was detected (barge-in), False if the
+        monitor was cancelled (LLM completed first).
+        """
+        if self.audio_queue is None:
+            await asyncio.sleep(0.1)
+            return False
+        while not self._stopping():
+            deadline = self._clock() + 0.2
+            data = await self._next_audio(deadline=deadline)
+            if data is None:
+                continue
+            chunk_mono = data[:, 0] if data.ndim > 1 else data
+            rms = np.sqrt(np.mean(chunk_mono.astype(np.float32) ** 2))
+            if rms > self.silence_threshold:
+                self.log(f"🔊 Barge-in during LLM (rms={rms:.4f})")
+                return True
         return False
 
     def _apply_conversation_grace(self):
@@ -1384,8 +1409,39 @@ class WakeWordListener:
         if not command:
             return
 
-        # Process with Prolog-first fallback
-        used_agent, response = await self.query_with_fallback_async(command)
+        # Process with Prolog-first fallback, with barge-in monitoring.
+        # If the user starts speaking during LLM processing, cancel the
+        # request and loop back to collect the new utterance.
+        query_task = asyncio.create_task(
+            self.query_with_fallback_async(command)
+        )
+        monitor_task = asyncio.create_task(self._monitor_speech_during_llm())
+
+        done, pending = await asyncio.wait(
+            {query_task, monitor_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if monitor_task in done and monitor_task.result():
+            query_task.cancel()
+            try:
+                await query_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            monitor_task.cancel()
+            self.log("🔄 Barge-in: cancelling LLM, restarting turn")
+            self._stop_acknowledgement()
+            await self._stop_tts()
+            self.transition_to("ACTIVE")
+            return
+
+        monitor_task.cancel()
+        try:
+            await monitor_task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+        used_agent, response = await query_task
 
         if not response:
             if used_agent:

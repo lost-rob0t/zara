@@ -53,12 +53,35 @@ DEFAULT_ACK_PHRASES = (
     "Sure",
     "Hmm, let me see",
 )
-DEFAULT_FIXTURE_PATH = Path(__file__).resolve().parent.parent / "assets" / "sounds" / "acknowledgement.wav"
 
 # Fallback sample rate if device detection fails. 44100 Hz is universally
 # supported by virtually all audio output devices, unlike 16000 Hz which
 # fails on many ALSA configurations.
 ACK_FALLBACK_SAMPLE_RATE = 44100
+
+
+def _resolve_fixture_path() -> Path:
+    """Resolve the bundled acknowledgement.wav across install layouts.
+
+    Checks (in order): repo root, ``<sys.prefix>/share/zarathushtra``,
+    ``/usr/share/zarathushtra``. Falls back to the path next to this
+    module (which works in dev shells and pip installs).
+    """
+    import sys
+
+    candidates = [
+        Path.cwd() / "assets" / "sounds" / "acknowledgement.wav",
+        Path(__file__).resolve().parent.parent / "assets" / "sounds" / "acknowledgement.wav",
+        Path(sys.prefix) / "share" / "zarathushtra" / "assets" / "sounds" / "acknowledgement.wav",
+        Path("/usr/share/zarathushtra/assets/sounds/acknowledgement.wav"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[1]
+
+
+DEFAULT_FIXTURE_PATH = _resolve_fixture_path()
 
 
 def _detect_output_sample_rate() -> int:
@@ -223,15 +246,22 @@ class AcknowledgementPlayer:
             logger.warning("[Ack] no clips loaded; acknowledgement will be silent")
 
     def _load_or_generate(self, phrase: str) -> Optional[_VariantClip]:
+        target_rate = _detect_output_sample_rate()
         cache = _cache_path(
             self.config.provider, self.config.voice, phrase
         )
         if cache.exists():
             clip = self._load_wav(cache, phrase, source="cache")
             if clip is not None:
-                return clip
+                if clip.sample_rate == target_rate:
+                    return clip
+                logger.info(
+                    "[Ack] cached clip for %r is %d Hz but device wants %d Hz; regenerating",
+                    phrase, clip.sample_rate, target_rate,
+                )
+                cache.unlink(missing_ok=True)
 
-        clip = self._generate_via_tts(phrase, cache)
+        clip = self._generate_via_tts(phrase, cache, target_rate)
         if clip is not None:
             return clip
 
@@ -266,15 +296,18 @@ class AcknowledgementPlayer:
     def _load_fixture(self, path: Path) -> Optional[_VariantClip]:
         return self._load_wav(path, self.config.phrase, source="fixture")
 
-    def _generate_via_tts(self, phrase: str, cache_path: Path) -> Optional[_VariantClip]:
+    def _generate_via_tts(
+        self, phrase: str, cache_path: Path, target_sample_rate: Optional[int] = None
+    ) -> Optional[_VariantClip]:
         """Generate acknowledgement audio via the configured TTS provider.
 
         Writes the result to ``cache_path`` so subsequent restarts load
         from the cache without invoking the provider again.
         """
-        sample_rate = _detect_output_sample_rate()
+        if target_sample_rate is None:
+            target_sample_rate = _detect_output_sample_rate()
         if self._tts_engine is None:
-            return self._generate_edge_tts(phrase, cache_path, sample_rate)
+            return self._generate_edge_tts(phrase, cache_path, target_sample_rate)
 
         try:
             loop = asyncio.new_event_loop()
@@ -287,7 +320,7 @@ class AcknowledgementPlayer:
                 return None
 
             pcm_bytes, decoded_rate = self._normalise_to_pcm(
-                synthesis.audio, synthesis.audio_format, sample_rate
+                synthesis.audio, synthesis.audio_format, target_sample_rate
             )
             if not pcm_bytes:
                 logger.warning(
