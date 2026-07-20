@@ -52,6 +52,13 @@ provider = "faster-whisper"  # or "whisper"
 model = "small"
 device = "cpu"  # or "cuda"
 threads = 4
+# Streaming VAD (Silero) parameters — 512 samples = 32 ms at 16 kHz
+vad_threshold = 0.5
+min_speech_ms = 128        # ~4 chunks before speech_started
+trailing_silence_ms = 512  # ~16 chunks after speech to trigger speech_ended
+max_utterance_ms = 30000   # hard cap on utterance length
+no_speech_timeout_ms = 5000
+partial_transcript_ms = 1000  # partial transcription interval
 
 [tts]
 # Text-to-Speech settings

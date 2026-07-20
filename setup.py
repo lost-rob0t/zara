@@ -105,6 +105,7 @@ setup(
         "chromadb>=0.5",
         "sentence-transformers>=2.5",
         "pykka>=3.1",
+        "pysilero-vad>=3.0",
         "pytest>=7.0",
         "pytest-asyncio>=0.23",
     ],
