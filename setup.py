@@ -104,6 +104,7 @@ setup(
         "ollama>=0.1",
         "chromadb>=0.5",
         "sentence-transformers>=2.5",
+        "pykka>=3.1",
         "pytest>=7.0",
         "pytest-asyncio>=0.23",
     ],

@@ -75,6 +75,8 @@
             # Memory
             p.chromadb
             p.sentence-transformers
+            # Actor framework for real-time turn coordinator
+            p.pykka
             # Testing
             p.pytest
             p.pytest-asyncio
