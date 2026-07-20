@@ -1389,14 +1389,13 @@ class WakeWordListener:
             self.transition_to("PASSIVE")
             return
 
-        # Immediate acknowledgement: play pre-generated clip before STT/Prolog/LLM.
+        # Immediate acknowledgement: play pre-generated clip after speech
+        # ends, but only once transcription confirms real speech (not noise).
         turn_id = (
             self.current_latency_trace.trace_id
             if self.current_latency_trace is not None
             else f"turn-{int(time.time() * 1000)}"
         )
-        await asyncio.sleep(0.3)
-        self._play_acknowledgement(turn_id)
 
         text = await self.transcribe_async(chunk)
 
@@ -1406,6 +1405,9 @@ class WakeWordListener:
 
         if not text or len(text) < 3:
             return
+
+        await asyncio.sleep(0.3)
+        self._play_acknowledgement(turn_id)
 
         if self.stop_on_interrupt:
             await self._stop_tts()
