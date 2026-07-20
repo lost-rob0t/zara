@@ -313,6 +313,9 @@ class WakeWordListener:
         ack_player = getattr(self, "ack_player", None)
         if ack_player is None:
             return
+        if getattr(self, "tts_playback_active", False):
+            self.log("Ack skipped: TTS playback still active")
+            return
         try:
             result = ack_player.play(turn_id)
             if result.played:
@@ -988,12 +991,13 @@ class WakeWordListener:
                 "--no-video",
                 "--no-terminal",
                 "--really-quiet",
+                "--no-config",
                 "--cache=yes",
                 "--cache-secs=0.2",
                 "-",
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
             )
             self.tts_player_proc = process
 
@@ -1062,13 +1066,12 @@ class WakeWordListener:
                 )
 
             await pump_task
-            _, stderr = await process.communicate()
-            if process.returncode != 0:
-                detail = stderr.decode(errors="replace").strip()
+            await process.communicate()
+            if process.returncode is not None and process.returncode != 0:
                 return PlaybackResult(
                     provider=provider,
                     success=False,
-                    error=detail or f"mpv exited with {process.returncode}",
+                    error=f"mpv exited with {process.returncode}",
                 )
             return PlaybackResult(provider=provider, success=True)
         except asyncio.CancelledError:
@@ -1166,10 +1169,11 @@ class WakeWordListener:
             "--no-video",
             "--no-terminal",
             "--really-quiet",
+            "--no-config",
             "-",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
         self.tts_player_proc = process
         if trace is not None:
@@ -1197,13 +1201,12 @@ class WakeWordListener:
                     error="Playback cancelled",
                     cancelled=True,
                 )
-            _, stderr = await playback
-            if process.returncode != 0:
-                detail = stderr.decode(errors="replace").strip()
+            await playback
+            if process.returncode is not None and process.returncode != 0:
                 return PlaybackResult(
                     provider=provider,
                     success=False,
-                    error=detail or f"mpv exited with {process.returncode}",
+                    error=f"mpv exited with {process.returncode}",
                 )
             return PlaybackResult(provider=provider, success=True)
         finally:
