@@ -647,9 +647,9 @@ class WakeWordListener:
             await asyncio.sleep(0.1)
             return False
 
-        barge_in_threshold = max(self.silence_threshold * 3.0, 0.05)
+        barge_in_threshold = max(self.silence_threshold * 5.0, 0.08)
         consecutive_hits = 0
-        cooldown_deadline = self._clock() + 1.5
+        cooldown_deadline = self._clock() + 3.0
 
         while not self._stopping():
             deadline = self._clock() + 0.2
@@ -1092,7 +1092,13 @@ class WakeWordListener:
                 )
 
             await pump_task
-            await process.communicate()
+            if process.returncode is None:
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=60.0)
+                except asyncio.TimeoutError:
+                    self.log("mpv playback timed out, killing")
+                    process.kill()
+                    await process.wait()
             if process.returncode is not None and process.returncode != 0:
                 return PlaybackResult(
                     provider=provider,
