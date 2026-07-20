@@ -7,6 +7,7 @@ initialization and module loading.
 
 import os
 import sys
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -84,6 +85,18 @@ max_steps = 10  # max agentic steps per turn
 post_tts_silence_seconds = 5.0
 # System prompt (inline string or filepath)
 system_prompt = ""
+
+[latency]
+# Structured voice-turn metrics. XDG_STATE_HOME is used when metrics_path is empty.
+enabled = true
+metrics_path = ""
+
+[latency.budgets]
+# Deterministic local fixture gates. Provider LLM latency is report-only.
+wake_to_ack_first_audio_p95_ms = 350
+speech_end_to_final_transcript_p95_ms = 700
+first_text_chunk_to_first_tts_audio_p95_ms = 500
+barge_in_to_playback_stop_p95_ms = 200
 
 [prolog]
 # Prolog engine settings
@@ -279,6 +292,37 @@ class ZaraConfig:
         if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 1:
             raise ConfigError("file_tools.max_bytes must be a positive integer")
 
+        latency_config = config.get("latency", {})
+        if not isinstance(latency_config, dict):
+            raise ConfigError("Invalid [latency] configuration: expected a TOML table")
+        if not isinstance(latency_config.get("enabled", True), bool):
+            raise ConfigError("latency.enabled must be true or false")
+        metrics_file = latency_config.get("metrics_path", "")
+        if not isinstance(metrics_file, str):
+            raise ConfigError("latency.metrics_path must be a string")
+        budgets = latency_config.get("budgets", {})
+        if not isinstance(budgets, dict):
+            raise ConfigError("Invalid [latency.budgets] configuration: expected a TOML table")
+        allowed_budgets = {
+            "wake_to_ack_first_audio_p95_ms",
+            "speech_end_to_final_transcript_p95_ms",
+            "first_text_chunk_to_first_tts_audio_p95_ms",
+            "barge_in_to_playback_stop_p95_ms",
+        }
+        unknown_budgets = sorted(set(budgets) - allowed_budgets)
+        if unknown_budgets:
+            raise ConfigError(
+                "Unknown latency budget(s): " + ", ".join(unknown_budgets)
+            )
+        for key, value in budgets.items():
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+            ):
+                raise ConfigError(f"latency.budgets.{key} must be a positive number")
+
     def get(self, section: str, key: str, default: Any = None) -> Any:
         """
         Get configuration value.
@@ -343,6 +387,15 @@ class ZaraConfig:
             "total_timeout": float(llm_config.get("total_timeout", 30.0)),
             "max_retries": int(llm_config.get("max_retries", 2)),
             "history_limit": int(llm_config.get("history_limit", 20)),
+        }
+
+    def get_latency_config(self) -> Dict[str, Any]:
+        """Return structured latency metric settings and deterministic budgets."""
+        latency_config = self.get_section("latency")
+        return {
+            "enabled": bool(latency_config.get("enabled", True)),
+            "metrics_path": latency_config.get("metrics_path", ""),
+            "budgets": dict(latency_config.get("budgets", {})),
         }
 
     def get_module_search_paths(self) -> List[Path]:

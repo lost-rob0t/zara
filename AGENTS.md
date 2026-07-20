@@ -97,6 +97,8 @@ This file guides agentic coding assistants working in this repo.
 - Only fall back to LLM conversation mode when Prolog fails or returns `ask`.
 - Maintain conversation history via `ConversationManager`.
 - Log voice input before sending to the agent for debugging.
+- Preserve the latency trace ID across wake, STT, routing, LLM, TTS, and cancellation stages.
+- Structured latency metrics must never contain transcript text, prompts, credentials, or audio bytes.
 
 ## Memory
 - Use `MemoryManager` for session storage and summaries.

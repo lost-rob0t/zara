@@ -9,6 +9,7 @@ recursive-include kb *
 recursive-include modules *.pl
 recursive-include assets *
 recursive-include scripts *.sh
+recursive-include scripts *.py
 recursive-include t *.py *.pl
 recursive-include wiki *.org
 recursive-include zara *.py *.pl *.toml

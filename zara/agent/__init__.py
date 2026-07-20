@@ -26,6 +26,7 @@ from .tools.registry import ToolRegistry
 from .graph import run_conversation_loop, validate_and_clean_messages
 from ..config import ZaraConfig, get_config
 from ..memory import build_memory_manager, MemoryManager
+from ..latency import LatencyTrace
 
 class AgentManager:
     """
@@ -126,7 +127,11 @@ class AgentManager:
 
         raise ValueError(f"Unsupported LLM provider: {provider}")
 
-    async def process_async(self, user_input: str) -> Dict[str, Any]:
+    async def process_async(
+        self,
+        user_input: str,
+        latency_trace: Optional[LatencyTrace] = None,
+    ) -> Dict[str, Any]:
         import logging
         logger = logging.getLogger(__name__)
 
@@ -161,6 +166,7 @@ class AgentManager:
             "step_count": 0,
             "max_steps": max_steps,
             "response": None,
+            "latency_trace": latency_trace,
         }
 
         system_prompt = self._build_system_prompt() 

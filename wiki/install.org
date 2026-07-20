@@ -26,8 +26,33 @@ nix flake check
 =nix develop -c bash scripts/test-all.sh= is the single-command regression
 gate (ZARA-021) that runs every test phase in fail-fast order with isolated
 HOME/XDG: Python compile/import, Prolog load, pytest, security scripts,
-and packaging checks. =nix flake check= runs the same core checks as Nix
+deterministic latency budgets, and packaging checks. =nix flake check= runs the same core checks as Nix
 derivations.
+
+** Voice latency metrics
+Wake mode records monotonic, structured events in JSONL without transcript
+text, prompts, credentials, or audio bytes. The default path is
+=$XDG_STATE_HOME/zarathushtra/latency.jsonl=, falling back to
+=~/.local/state/zarathushtra/latency.jsonl=. Override it with
+=[latency].metrics_path= or disable metrics with =[latency].enabled = false=.
+
+Deterministic local p95 budgets live under =[latency.budgets]=. The default
+gate covers wake-to-ack audio, speech-end-to-final-transcript, first text
+chunk-to-first TTS audio, and interruption-to-playback-stop. Provider LLM
+latency is measured and reported but has no global hard-coded budget.
+
+#+begin_src sh
+nix develop -c bash scripts/test-latency-metrics.sh
+python scripts/benchmark-voice.py \
+  --jsonl /tmp/voice-latency.jsonl \
+  --report /tmp/voice-latency-report.json
+#+end_src
+
+The benchmark uses fixture providers and separates cold and warm cohorts. It
+reports p50, p95, p99, and the dominant stage for every turn. Current LangChain
+and TTS provider APIs buffer complete responses; production =llm_first_token=
+and =tts_first_chunk= events therefore carry =buffered_proxy=true=. They are
+observable completion proxies, not claims of true streaming latency.
 
 The command-routing gate verifies that unsupported Prolog handlers do not report
 a successful execution. The reply gate verifies that the noncommittal

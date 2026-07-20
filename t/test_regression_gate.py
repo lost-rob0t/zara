@@ -66,6 +66,7 @@ def test_gate_phase_order_is_deterministic():
         "Prolog resolver corpus",
         "Pytest suite",
         "Config/process/file-tool security scripts",
+        "Deterministic latency budgets",
         "Packaging/Nix checks",
     ]
     positions = []
@@ -104,7 +105,7 @@ def test_gate_fails_on_failing_subscript():
         )
         fake_gate.chmod(0o755)
         result = subprocess.run(
-            [str(fake_gate)], capture_output=True, text=True
+            ["bash", str(fake_gate)], capture_output=True, text=True
         )
         assert result.returncode != 0, "gate must fail on failing command"
         assert "should not reach here" not in result.stdout
@@ -124,7 +125,7 @@ def test_gate_cleanup_occurs_after_failure():
             "false\n"
         )
         fake_gate.chmod(0o755)
-        subprocess.run([str(fake_gate)], capture_output=True)
+        subprocess.run(["bash", str(fake_gate)], capture_output=True)
         temp_dir_path = pathlib.Path(marker.read_text().strip())
         assert not temp_dir_path.exists(), (
             "temp dir must be cleaned up after gate failure"

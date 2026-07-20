@@ -18,6 +18,8 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      ARTIFACT_DIR: ${{ github.workspace }}/artifacts
 
     steps:
       - name: Check out repository
@@ -28,3 +30,11 @@ jobs:
 
       - name: Run all tests
         run: nix develop -c bash scripts/test-all.sh
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-artifacts
+          path: artifacts/
+          if-no-files-found: warn
