@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Import LLM client and ChatHistory
 from . import llm
+from . import command_gate
 from .tts import PlaybackResult, TTSEngine
 from .agent import AgentManager
 from .config import get_config
@@ -565,78 +566,94 @@ class WakeWordListener:
         resolution_state = "conversation" if self.in_conversation_mode() else "passive"
         trace = getattr(self, "current_latency_trace", None)
 
-        def _try_prolog():
-            try:
-                result = self.prolog.resolve_intent(command_text, state=resolution_state)
-                self.log(f"Command got: {command_text}")
-                if not result:
-                    self.log("Prolog resolution failed")
+        # Heuristic gate: skip Prolog entirely for non-command utterances to
+        # avoid intent hijacking and reduce latency. The LLM can still call
+        # the `query_prolog` tool when the user's input is in fact a command.
+        if not command_gate.looks_like_command(command_text):
+            if trace is not None:
+                trace.record("prolog_result", status="skipped_non_command")
+                trace.record("route_selected", route="agent_skipped_prolog")
+                trace.flush()
+            self.log(
+                "Non-command utterance; skipping Prolog, routing to LLM"
+            )
+            prolog_success = False
+            prolog_result = ""
+            needs_agent = True
+        else:
+
+            def _try_prolog():
+                try:
+                    result = self.prolog.resolve_intent(command_text, state=resolution_state)
+                    self.log(f"Command got: {command_text}")
+                    if not result:
+                        self.log("Prolog resolution failed")
+                        if trace is not None:
+                            trace.record("prolog_result", status="no_match")
+                        return (False, "", True)
+
+                    intent = result.name
+                    args = result.args
+
+                    self.log(f"Resolved: intent={intent}, args={args}")
+
+                    if intent == "end_conversation":
+                        self.log("Stop intent resolved by Prolog")
+                        if trace is not None:
+                            trace.record("prolog_result", status="resolved")
+                            trace.record("route_selected", route="prolog_stop")
+                        return (False, "", False)
+
+                    if intent == "ask":
+                        self.log("Intent is 'ask' - needs conversation")
+                        if trace is not None:
+                            trace.record("prolog_result", status="ask")
+                        return (False, "", True)
+
+                    if result.kind == "pending":
+                        required = ", ".join(str(slot) for slot in args)
+                        if trace is not None:
+                            trace.record("prolog_result", status="pending")
+                            trace.record("route_selected", route="pending")
+                        return (True, f"Please provide: {required}.", False)
+
+                    if result.kind == "python":
+                        skill_name = intent
+                        if self.session_id is None:
+                            self.session_id = self.memory.start_session()
+                        skill_args = list(args) if isinstance(args, list) else [args]
+                        response = python_skills.execute(skill_name, skill_args)
+                        self.memory.add_message(self.session_id, "user", command_text)
+                        self.memory.add_message(self.session_id, "assistant", response)
+                        if trace is not None:
+                            trace.record("prolog_result", status="python_skill")
+                            trace.record("route_selected", route="python")
+                        return (True, response, False)
+
+                    self.log(f"Executing intent={intent}, args={args}")
+                    if self.prolog.execute_intent(intent, args):
+                        response_text = f"Executed: {intent} {args}"
+                        if self.session_id is None:
+                            self.session_id = self.memory.start_session()
+                        self.memory.add_message(self.session_id, "user", command_text)
+                        self.memory.add_message(self.session_id, "assistant", response_text)
+                        if trace is not None:
+                            trace.record("prolog_result", status="executed")
+                            trace.record("route_selected", route="prolog")
+                        return (True, response_text, False)
                     if trace is not None:
-                        trace.record("prolog_result", status="no_match")
+                        trace.record("prolog_result", status="execution_failed")
                     return (False, "", True)
 
-                intent = result.name
-                args = result.args
-
-                self.log(f"Resolved: intent={intent}, args={args}")
-
-                if intent == "end_conversation":
-                    self.log("Stop intent resolved by Prolog")
+                except Exception as e:
+                    self.log(f"Prolog error: {e}")
                     if trace is not None:
-                        trace.record("prolog_result", status="resolved")
-                        trace.record("route_selected", route="prolog_stop")
-                    return (False, "", False)
-
-                if intent == "ask":
-                    self.log("Intent is 'ask' - needs conversation")
-                    if trace is not None:
-                        trace.record("prolog_result", status="ask")
+                        trace.record("prolog_result", status="error")
                     return (False, "", True)
 
-                if result.kind == "pending":
-                    required = ", ".join(str(slot) for slot in args)
-                    if trace is not None:
-                        trace.record("prolog_result", status="pending")
-                        trace.record("route_selected", route="pending")
-                    return (True, f"Please provide: {required}.", False)
-
-                if result.kind == "python":
-                    skill_name = intent
-                    if self.session_id is None:
-                        self.session_id = self.memory.start_session()
-                    skill_args = list(args) if isinstance(args, list) else [args]
-                    response = python_skills.execute(skill_name, skill_args)
-                    self.memory.add_message(self.session_id, "user", command_text)
-                    self.memory.add_message(self.session_id, "assistant", response)
-                    if trace is not None:
-                        trace.record("prolog_result", status="python_skill")
-                        trace.record("route_selected", route="python")
-                    return (True, response, False)
-
-                self.log(f"Executing intent={intent}, args={args}")
-                if self.prolog.execute_intent(intent, args):
-                    response_text = f"Executed: {intent} {args}"
-                    if self.session_id is None:
-                        self.session_id = self.memory.start_session()
-                    self.memory.add_message(self.session_id, "user", command_text)
-                    self.memory.add_message(self.session_id, "assistant", response_text)
-                    if trace is not None:
-                        trace.record("prolog_result", status="executed")
-                        trace.record("route_selected", route="prolog")
-                    return (True, response_text, False)
-                if trace is not None:
-                    trace.record("prolog_result", status="execution_failed")
-                return (False, "", True)
-
-            except Exception as e:
-                self.log(f"Prolog error: {e}")
-                if trace is not None:
-                    trace.record("prolog_result", status="error")
-                return (False, "", True)
-
-        prolog_success, prolog_result, needs_agent = await loop.run_in_executor(self.executor, _try_prolog)
-        if trace is not None:
-            trace.flush()
+            prolog_success, prolog_result, needs_agent = await loop.run_in_executor(self.executor, _try_prolog)
+            if trace is not None:
+                trace.flush()
 
         if prolog_success:
             # Prolog handled it successfully
