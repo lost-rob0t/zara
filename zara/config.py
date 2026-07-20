@@ -46,6 +46,14 @@ first_speech_timeout = 5.0
 max_utterance_duration = 30.0
 audio_queue_chunks = 32
 
+# Immediate acknowledgement (ZARA-025)
+[wake.acknowledgement]
+enabled = true
+phrase = "Okay"
+provider = "edge"
+voice = "en-US-AriaNeural"
+volume = 1.0
+
 [stt]
 # Speech-to-Text settings
 provider = "faster-whisper"  # or "whisper"
