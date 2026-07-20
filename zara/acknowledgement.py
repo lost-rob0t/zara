@@ -170,6 +170,7 @@ class _VariantClip:
     audio_bytes: bytes
     sample_rate: int
     source: str
+    audio_format: str = "wav"
 
 
 class AcknowledgementPlayer:
@@ -250,6 +251,18 @@ class AcknowledgementPlayer:
         cache = _cache_path(
             self.config.provider, self.config.voice, phrase
         )
+        mp3_cache = cache.with_suffix(".mp3")
+        if mp3_cache.exists():
+            mp3_bytes = mp3_cache.read_bytes()
+            if mp3_bytes:
+                logger.info("[Ack] loaded %r from mp3 cache: %s", phrase, mp3_cache)
+                return _VariantClip(
+                    phrase=phrase,
+                    audio_bytes=mp3_bytes,
+                    sample_rate=target_rate,
+                    source="cache",
+                    audio_format="mp3",
+                )
         if cache.exists():
             clip = self._load_wav(cache, phrase, source="cache")
             if clip is not None:
@@ -301,8 +314,9 @@ class AcknowledgementPlayer:
     ) -> Optional[_VariantClip]:
         """Generate acknowledgement audio via the configured TTS provider.
 
-        Writes the result to ``cache_path`` so subsequent restarts load
-        from the cache without invoking the provider again.
+        For mp3 providers (11labs, edge), stores the raw mp3 so playback
+        goes through mpv's high-quality internal resampling instead of
+        Python linear interpolation.
         """
         if target_sample_rate is None:
             target_sample_rate = _detect_output_sample_rate()
@@ -318,6 +332,21 @@ class AcknowledgementPlayer:
             if not synthesis.success or not synthesis.audio:
                 logger.warning("[Ack] TTS synthesis failed for %r: %s", phrase, synthesis.error)
                 return None
+
+            if synthesis.audio_format == "mp3":
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache_path.with_suffix(".mp3").write_bytes(synthesis.audio)
+                logger.info(
+                    "[Ack] generated %r via %s (mp3) and cached at %s",
+                    phrase, synthesis.provider, cache_path.with_suffix(".mp3"),
+                )
+                return _VariantClip(
+                    phrase=phrase,
+                    audio_bytes=synthesis.audio,
+                    sample_rate=target_sample_rate,
+                    source=f"tts:{synthesis.provider}",
+                    audio_format="mp3",
+                )
 
             pcm_bytes, decoded_rate = self._normalise_to_pcm(
                 synthesis.audio, synthesis.audio_format, target_sample_rate
@@ -339,6 +368,7 @@ class AcknowledgementPlayer:
                 audio_bytes=pcm_bytes,
                 sample_rate=decoded_rate,
                 source=f"tts:{synthesis.provider}",
+                audio_format="wav",
             )
         except Exception as error:
             logger.warning("[Ack] TTS generation error for %r: %s", phrase, error)
@@ -629,25 +659,66 @@ class AcknowledgementPlayer:
     def _play_thread(self, clip: _VariantClip) -> None:
         try:
             self._is_playing = True
-            import sounddevice as sd
-            import numpy as np
-
-            samples = np.frombuffer(clip.audio_bytes, dtype=np.int16)
-            if self.config.volume != 1.0:
-                samples = (
-                    samples.astype(np.float32) * self.config.volume
-                ).clip(-32768, 32767).astype(np.int16)
-            sd.play(samples, clip.sample_rate)
-            while sd.get_stream().active:
-                if self._stop_event.is_set():
-                    sd.stop()
-                    break
-                import time
-                time.sleep(0.01)
+            if clip.audio_format == "mp3":
+                self._play_mp3_mpv(clip)
+            else:
+                self._play_wav_sounddevice(clip)
         except Exception as error:
             logger.warning("[Ack] playback error: %s", error)
         finally:
             self._is_playing = False
+
+    def _play_mp3_mpv(self, clip: _VariantClip) -> None:
+        """Play mp3 via mpv for high-quality audio (no Python resampling)."""
+        import subprocess
+        import tempfile
+        import os
+
+        fd, tmp_path = tempfile.mkstemp(suffix=".mp3")
+        try:
+            os.write(fd, clip.audio_bytes)
+            os.close(fd)
+            proc = subprocess.Popen(
+                [
+                    "mpv", "--no-video", "--no-terminal", "--really-quiet",
+                    "--no-config",
+                    "--audio-channels=mono",
+                    f"--volume={int(self.config.volume * 100)}",
+                    tmp_path,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            while proc.poll() is None:
+                if self._stop_event.is_set():
+                    proc.kill()
+                    proc.wait()
+                    break
+                import time
+                time.sleep(0.01)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def _play_wav_sounddevice(self, clip: _VariantClip) -> None:
+        """Play wav via sounddevice at the clip's native rate."""
+        import sounddevice as sd
+        import numpy as np
+
+        samples = np.frombuffer(clip.audio_bytes, dtype=np.int16)
+        if self.config.volume != 1.0:
+            samples = (
+                samples.astype(np.float32) * self.config.volume
+            ).clip(-32768, 32767).astype(np.int16)
+        sd.play(samples, clip.sample_rate)
+        while sd.get_stream().active:
+            if self._stop_event.is_set():
+                sd.stop()
+                break
+            import time
+            time.sleep(0.01)
 
     def stop(self) -> None:
         """Stop the current acknowledgement playback (for barge-in)."""

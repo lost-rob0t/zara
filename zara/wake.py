@@ -637,20 +637,46 @@ class WakeWordListener:
 
         Returns True if speech was detected (barge-in), False if the
         monitor was cancelled (LLM completed first).
+
+        Uses a higher threshold (3x silence_threshold) to avoid false
+        positives from background noise and ack echo. Requires 2
+        consecutive frames above threshold before triggering. A 1.5s
+        cooldown after the last ack playback prevents echo false-positives.
         """
         if self.audio_queue is None:
             await asyncio.sleep(0.1)
             return False
+
+        barge_in_threshold = max(self.silence_threshold * 3.0, 0.05)
+        consecutive_hits = 0
+        cooldown_deadline = self._clock() + 1.5
+
         while not self._stopping():
             deadline = self._clock() + 0.2
             data = await self._next_audio(deadline=deadline)
             if data is None:
+                consecutive_hits = 0
                 continue
+
+            now = self._clock()
+            if now < cooldown_deadline:
+                consecutive_hits = 0
+                continue
+
             chunk_mono = data[:, 0] if data.ndim > 1 else data
             rms = np.sqrt(np.mean(chunk_mono.astype(np.float32) ** 2))
-            if rms > self.silence_threshold:
-                self.log(f"🔊 Barge-in during LLM (rms={rms:.4f})")
-                return True
+
+            if rms > barge_in_threshold:
+                consecutive_hits += 1
+                if consecutive_hits >= 2:
+                    self.log(
+                        f"🔊 Barge-in during LLM (rms={rms:.4f}, "
+                        f"threshold={barge_in_threshold:.4f})"
+                    )
+                    return True
+            else:
+                consecutive_hits = 0
+
         return False
 
     def _apply_conversation_grace(self):
@@ -1369,6 +1395,7 @@ class WakeWordListener:
             if self.current_latency_trace is not None
             else f"turn-{int(time.time() * 1000)}"
         )
+        await asyncio.sleep(0.3)
         self._play_acknowledgement(turn_id)
 
         text = await self.transcribe_async(chunk)
@@ -1435,6 +1462,9 @@ class WakeWordListener:
             self.log("🔄 Barge-in: cancelling LLM, restarting turn")
             self._stop_acknowledgement()
             await self._stop_tts()
+            ack_player = getattr(self, "ack_player", None)
+            if ack_player is not None:
+                ack_player.reset()
             self.transition_to("ACTIVE")
             return
 
