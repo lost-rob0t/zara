@@ -146,7 +146,19 @@ def _put_latest(target_queue, item) -> None:
 def type_text(text):
     """Type text into focused window"""
     if USE_XDO:
-        subprocess.run(["xdotool", "type", "--delay", "0", "--clearmodifiers", text])
+        result = subprocess.run(
+            ["xdotool", "type", "--delay", "0", "--clearmodifiers", text],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.decode(errors="replace").strip()
+            log(f"xdotool type failed (rc={result.returncode}): {detail or 'no stderr'}")
+            try:
+                from pynput.keyboard import Controller
+                kb = Controller()
+                kb.type(text)
+            except Exception as fallback_error:
+                log(f"Typing failed (xdotool+fallback): {fallback_error}")
     else:
         try:
             from pynput.keyboard import Controller

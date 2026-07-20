@@ -13,14 +13,18 @@ def type_text(text: str):
     """
     # Try xdotool first (fastest, most reliable on Linux)
     if shutil.which("xdotool"):
-        subprocess.run([
-            "xdotool", "type", 
+        import subprocess
+        result = subprocess.run([
+            "xdotool", "type",
             "--delay", "0",
             "--clearmodifiers",
             text
-        ])
-        return
-    
+        ], capture_output=True)
+        if result.returncode == 0:
+            return
+        detail = result.stderr.decode(errors="replace").strip()
+        print(f"xdotool type failed (rc={result.returncode}): {detail or 'no stderr'}")
+
     # Fallback to pynput
     try:
         from pynput.keyboard import Controller
