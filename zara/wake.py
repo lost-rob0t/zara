@@ -22,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from . import llm
 from . import command_gate
 from .acknowledgement import AcknowledgementConfig, AcknowledgementPlayer
+from .streaming_stt import StreamingVAD, VADConfig, VAD_CHUNK_SAMPLES, VAD_SAMPLE_RATE, SpeechStarted
 from .tts import PlaybackResult, TTSEngine, supports_streaming
 from .agent import AgentManager
 from .config import get_config
@@ -633,49 +634,61 @@ class WakeWordListener:
         return False
 
     async def _monitor_speech_during_llm(self) -> bool:
-        """Monitor for user speech while LLM is processing.
+        """Monitor for user speech while LLM is processing using Silero VAD.
 
         Returns True if speech was detected (barge-in), False if the
         monitor was cancelled (LLM completed first).
 
-        Uses a higher threshold (3x silence_threshold) to avoid false
-        positives from background noise and ack echo. Requires 2
-        consecutive frames above threshold before triggering. A 1.5s
-        cooldown after the last ack playback prevents echo false-positives.
+        Uses Silero VAD (via StreamingVAD) with an elevated threshold
+        (0.7) and 6 consecutive speech frames to distinguish real user
+        speech from ack/TTS echo and background noise.
         """
         if self.audio_queue is None:
             await asyncio.sleep(0.1)
             return False
 
-        barge_in_threshold = max(self.silence_threshold * 5.0, 0.08)
-        consecutive_hits = 0
-        cooldown_deadline = self._clock() + 3.0
+        vad = StreamingVAD(
+            VADConfig(
+                vad_threshold=0.7,
+                min_speech_frames=6,
+                trailing_silence_frames=16,
+                max_utterance_frames=938,
+                no_speech_timeout_frames=312,
+                pre_speech_buffer_chunks=10,
+            )
+        )
+        vad.start_turn("barge-in")
+
+        chunk_buffer: list[np.ndarray] = []
+        buffer_target = VAD_CHUNK_SAMPLES
 
         while not self._stopping():
             deadline = self._clock() + 0.2
             data = await self._next_audio(deadline=deadline)
             if data is None:
-                consecutive_hits = 0
                 continue
 
-            now = self._clock()
-            if now < cooldown_deadline:
-                consecutive_hits = 0
-                continue
+            mono = data[:, 0] if data.ndim > 1 else data
 
-            chunk_mono = data[:, 0] if data.ndim > 1 else data
-            rms = np.sqrt(np.mean(chunk_mono.astype(np.float32) ** 2))
+            if self.input_sample_rate != VAD_SAMPLE_RATE:
+                mono = resample_audio(mono, self.input_sample_rate, VAD_SAMPLE_RATE)
 
-            if rms > barge_in_threshold:
-                consecutive_hits += 1
-                if consecutive_hits >= 2:
-                    self.log(
-                        f"🔊 Barge-in during LLM (rms={rms:.4f}, "
-                        f"threshold={barge_in_threshold:.4f})"
-                    )
-                    return True
-            else:
-                consecutive_hits = 0
+            chunk_buffer.append(mono)
+            available = sum(len(c) for c in chunk_buffer)
+
+            while available >= buffer_target:
+                combined = np.concatenate(chunk_buffer) if len(chunk_buffer) > 1 else chunk_buffer[0]
+                vad_chunk = combined[:buffer_target]
+                remainder = combined[buffer_target:]
+                chunk_buffer = [remainder] if len(remainder) > 0 else []
+
+                events = vad.feed(vad_chunk)
+                for event in events:
+                    if isinstance(event, SpeechStarted):
+                        self.log("🔊 Barge-in during LLM (VAD speech detected)")
+                        return True
+
+                available = sum(len(c) for c in chunk_buffer)
 
         return False
 
