@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+export PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}"
+
 runtime_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/zara-pulse-${$}"
 mkdir -p "$runtime_dir"
 chmod 700 "$runtime_dir"
