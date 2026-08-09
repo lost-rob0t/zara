@@ -102,6 +102,8 @@ class PulseInputStream:
 
         command = [
             parec,
+            f"--client-name={_PULSE_APPLICATION_NAME}",
+            f"--stream-name={_PULSE_APPLICATION_NAME} microphone",
             "--format=s16le",
             f"--rate={self.samplerate}",
             f"--channels={self.channels}",
