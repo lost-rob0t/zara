@@ -67,7 +67,7 @@ def load_tts_config():
 
 
 class WakeWordListener:
-    def __init__(self, model="base.en", device="cpu", prolog_main_path=None, enable_tts=True):
+    def __init__(self, model="tiny.en", device="cpu", prolog_main_path=None, enable_tts=True):
         self.state = "PASSIVE"
         self.audio_queue: Optional[queue.Queue] = None
         self.audio_ready: Optional[asyncio.Event] = None
@@ -484,11 +484,11 @@ class WakeWordListener:
             segments, _ = self.model.transcribe(
                 audio_data_mono.astype(np.float32),
                 beam_size=1,
-                vad_filter=not wake_mode,
+                vad_filter=True,
                 language="en",
                 initial_prompt="Zara. Hey Zara. Zarathustra." if wake_mode else None,
                 condition_on_previous_text=not wake_mode,
-                no_speech_threshold=0.8 if wake_mode else 0.5,
+                no_speech_threshold=0.5,
             )
 
             return " ".join(seg.text.strip() for seg in segments).strip()
