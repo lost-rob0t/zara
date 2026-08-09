@@ -38,3 +38,79 @@ jobs:
           name: regression-artifacts
           path: artifacts/
           if-no-files-found: warn
+
+  shared-mic:
+    name: shared mic / ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu 24.04
+            image: ubuntu:24.04
+            python: python3
+          - name: Arch Linux
+            image: archlinux:latest
+            python: python
+
+    container:
+      image: ${{ matrix.image }}
+
+    steps:
+      - name: Install distro audio stack
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if command -v apt-get >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              ca-certificates \
+              git \
+              build-essential \
+              libffi-dev \
+              libportaudio2 \
+              portaudio19-dev \
+              pulseaudio \
+              pulseaudio-utils \
+              python3 \
+              python3-pip \
+              python3-venv
+          else
+            pacman -Syu --noconfirm \
+              base-devel \
+              ca-certificates \
+              git \
+              libffi \
+              portaudio \
+              pulseaudio \
+              python \
+              python-pip
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Python audio dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ${{ matrix.python }} -m venv .venv
+          .venv/bin/python -m pip install --disable-pip-version-check --upgrade pip
+          .venv/bin/python -m pip install --disable-pip-version-check numpy sounddevice pytest
+
+      - name: Run audio unit tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PYTHONPATH="$GITHUB_WORKSPACE"
+          .venv/bin/python -m pytest -q t/test_audio_shared_input.py
+
+      - name: Run Discord-style concurrent capture probe
+        shell: bash
+        run: |
+          set -euxo pipefail
+          id zara >/dev/null 2>&1 || useradd --create-home --shell /bin/bash zara
+          chown -R zara:zara "$GITHUB_WORKSPACE"
+          su zara -s /bin/bash -c "cd '$GITHUB_WORKSPACE' && HOME=/home/zara RUNNER_TEMP=/tmp PATH='$GITHUB_WORKSPACE/.venv/bin':\$PATH bash scripts/test-linux-shared-audio.sh"
