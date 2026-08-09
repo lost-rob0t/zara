@@ -30,6 +30,8 @@ def start_discord_fixture(source: str) -> subprocess.Popen:
     return subprocess.Popen(
         [
             parec,
+            "--client-name=DiscordFixture",
+            "--stream-name=DiscordFixture microphone",
             "--format=s16le",
             "--rate=48000",
             "--channels=1",
