@@ -36,7 +36,6 @@ from .latency import JSONLMetricsSink, LatencyTrace, metrics_path
 DEFAULT_SAMPLE_RATE = 16000
 CHANNELS = 1
 PASSIVE_CHUNK_SEC = 3
-PASSIVE_OVERLAP_SEC = 0.75
 DEFAULT_SILENCE_THRESHOLD = 0.01  # RMS threshold for silence detection
 DEFAULT_SILENCE_DURATION = 5.0  # Seconds of silence before considering speech complete
 MAX_RECORDING_DURATION = 30.0  # Maximum recording duration to prevent infinite recording
@@ -464,7 +463,7 @@ class WakeWordListener:
                 return data
         return None
 
-    async def transcribe_async(self, audio_data, *, wake_mode: bool = False):
+    async def transcribe_async(self, audio_data):
         """Run Whisper transcription in thread pool to avoid blocking"""
         loop = asyncio.get_event_loop()
 
@@ -486,9 +485,7 @@ class WakeWordListener:
                 beam_size=1,
                 vad_filter=True,
                 language="en",
-                initial_prompt="Zara. Hey Zara. Zarathustra." if wake_mode else None,
-                condition_on_previous_text=not wake_mode,
-                no_speech_threshold=0.5,
+                no_speech_threshold=0.5
             )
 
             return " ".join(seg.text.strip() for seg in segments).strip()
@@ -1328,15 +1325,7 @@ class WakeWordListener:
         if chunk is None:
             return
 
-        overlap_frames = int(PASSIVE_OVERLAP_SEC * self.input_sample_rate)
-        previous_tail = getattr(self, "_passive_tail", None)
-        self._passive_tail = chunk[-overlap_frames:].copy()
-        window = (
-            np.concatenate((previous_tail, chunk))
-            if previous_tail is not None
-            else chunk
-        )
-        text = await self.transcribe_async(window, wake_mode=True)
+        text = await self.transcribe_async(chunk)
 
         if self.check_wake_word(text):
             self._latency_cold_start = False
