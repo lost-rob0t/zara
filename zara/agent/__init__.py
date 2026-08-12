@@ -131,6 +131,7 @@ class AgentManager:
         user_input: str,
         latency_trace: Optional[LatencyTrace] = None,
         turn_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         import logging
         logger = logging.getLogger(__name__)
@@ -149,6 +150,7 @@ class AgentManager:
                 turn_id = f"agent-{uuid.uuid4().hex}"
 
         logger.info("[AgentManager] turn_id=%s", turn_id)
+        logger.info("[AgentManager] conversation_id=%s", conversation_id)
         logger.info("[AgentManager] user_input=%r", user_input)
         logger.info("[AgentManager] user_input_length=%d", len(user_input))
 
@@ -170,6 +172,7 @@ class AgentManager:
 
         state: Dict[str, Any] = {
             "turn_id": turn_id,
+            "conversation_id": conversation_id,
             "user_input": user_input,
             "messages": cleaned_history,
             "tool_calls": [],
@@ -224,6 +227,7 @@ class AgentManager:
             "response": result.get("response", "I'm not sure how to respond to that."),
             "tool_results": result.get("tool_results", []),
             "turn_id": turn_id,
+            "conversation_id": conversation_id,
         }
 
     def _build_memory_context(self, user_input: str) -> Optional[str]:
