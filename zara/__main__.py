@@ -122,7 +122,7 @@ def main():
     if args.desktop:
         from .desktop.app import main as desktop_main
 
-        sys.exit(desktop_main())
+        sys.exit(desktop_main([sys.argv[0]]))
 
     elif args.console:
         from .console import main as console_main
