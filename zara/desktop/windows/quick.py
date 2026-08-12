@@ -165,6 +165,7 @@ class QuickCopilotWindow(QWidget):
         self.composer = QuickComposer()
         self.composer.setPlaceholderText("Ask Zara…")
         self.composer.setMaximumHeight(120)
+        self.setFocusProxy(self.composer)
         self.send_button = QPushButton("Send")
         self.stop_button = QPushButton("Stop")
 
@@ -310,10 +311,8 @@ class QuickCopilotWindow(QWidget):
         self.show()
         if self.isMinimized():
             self.showNormal()
-        self.raise_()
-        self.activateWindow()
-        self.composer.setFocus(Qt.FocusReason.ShortcutFocusReason)
-        QTimer.singleShot(0, self.composer.setFocus)
+        self._focus_composer()
+        QTimer.singleShot(0, self._focus_composer)
 
     def toggle_visibility(self) -> None:
         if self.isVisible():
@@ -338,7 +337,7 @@ class QuickCopilotWindow(QWidget):
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt API
         super().showEvent(event)
-        QTimer.singleShot(0, self.composer.setFocus)
+        QTimer.singleShot(0, self._focus_composer)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt API
         if event.key() == Qt.Key.Key_Escape:
@@ -346,6 +345,16 @@ class QuickCopilotWindow(QWidget):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def _focus_composer(self) -> None:
+        if not self.isVisible():
+            return
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            app.setActiveWindow(self)
+        self.raise_()
+        self.activateWindow()
+        self.composer.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
 
     def _request_expand(self) -> None:
         self.expand_requested.emit(self.current_conversation_id)
