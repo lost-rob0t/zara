@@ -1589,12 +1589,13 @@ def _launch_pet_overlay():
     """Spawn the pet overlay as a subprocess so it runs its own Qt loop.
 
     The wake process publishes pet events over ZMQ; the overlay subprocess
-    subscribes and reacts. Dies with the parent.
+    subscribes and reacts. Dies with the parent. stderr is inherited so
+    overlay errors are visible alongside the wake log.
     """
     import subprocess
     import sys
     return subprocess.Popen(
         [sys.executable, "-m", "zara", "--pets"],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=None,
     )

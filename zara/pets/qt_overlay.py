@@ -230,6 +230,18 @@ def run_overlay(
     window = PetWindow()
     window.show()
 
+    # --- Show/hide + settings helpers (defined before the tray uses them) -
+    def _toggle_visibility() -> None:
+        if window.isVisible():
+            window.hide()
+        else:
+            window.show()
+            window.raise_()
+
+    def _open_settings() -> None:
+        from .qt_settings import run_settings_dialog
+        run_settings_dialog(settings)
+
     # --- System tray ----------------------------------------------------
     tray = QSystemTrayIcon()
     tray_icon = _make_tray_icon(cell_w, cell_h, sprite_image, scale)
@@ -261,17 +273,6 @@ def run_overlay(
         return menu
 
     tray.setContextMenu(_tray_menu())
-
-    def _toggle_visibility() -> None:
-        if window.isVisible():
-            window.hide()
-        else:
-            window.show()
-            window.raise_()
-
-    def _open_settings() -> None:
-        from .qt_settings import run_settings_dialog
-        run_settings_dialog(settings)
 
     # --- Pet state actor + ZMQ subscriber -------------------------------
     from .actor import PetStateActor
