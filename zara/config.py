@@ -50,9 +50,14 @@ enabled = true
 # Default single phrase (kept for backward compatibility)
 phrase = "Okay"
 # Multiple phrase variants rotated round-robin across turns.
-# Clips are pre-generated at startup and cached in
+# Cached clips load immediately; missing variants warm in the background under
 # $XDG_CACHE_HOME/zarathushtra/acknowledgement-<provider>-<voice>-<phrase>-<hash>.wav
-phrases = ["Okay", "Let me think about that", "One sec", "Got it", "Sure", "Hmm, let me see"]
+phrases = [
+    "Okay", "Sure", "All right", "Got it", "One sec", "One moment",
+    "Just a moment", "Give me a second", "Let me see", "Let me check",
+    "Let me think", "Checking now", "Thinking", "Hmm, one sec",
+    "Right, let me see", "I hear you", "On it", "Let's see",
+]
 provider = "edge"
 voice = "en-US-AriaNeural"
 volume = 1.0
@@ -130,6 +135,8 @@ get_current_time = true
 query_prolog = true
 remember = true
 recall = true
+memory_list = true
+forget = true
 file_tools = false
 
 [file_tools]

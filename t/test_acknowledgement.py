@@ -25,7 +25,9 @@ from zara.acknowledgement import (
     AcknowledgementConfig,
     AcknowledgementPlayer,
     DEFAULT_ACK_PHRASE,
+    DEFAULT_ACK_PHRASES,
     DEFAULT_FIXTURE_PATH,
+    _VariantClip,
     _cache_dir,
     _cache_path,
     _detect_output_sample_rate,
@@ -37,6 +39,7 @@ def isolated_xdg(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     inactive_stream = MagicMock(active=False)
     with (
+        patch.object(AcknowledgementPlayer, "_generate_edge_tts", return_value=None),
         patch("sounddevice.play"),
         patch("sounddevice.get_stream", return_value=inactive_stream),
         patch("sounddevice.stop"),
@@ -140,11 +143,55 @@ def test_cancelled_turn_does_not_play():
 
 
 def test_acknowledgement_phrase_contains_no_success_wording():
-    config = AcknowledgementConfig(enabled=True)
-    phrase = config.phrase.lower()
     forbidden = ["done", "executed", "completed", "success", "finished", "confirmed"]
-    for word in forbidden:
-        assert word not in phrase, f"acknowledgement phrase must not contain '{word}'"
+    for phrase in DEFAULT_ACK_PHRASES:
+        for word in forbidden:
+            assert word not in phrase.lower()
+
+
+def test_default_acknowledgements_have_many_variants():
+    phrases = AcknowledgementConfig().effective_phrases()
+
+    assert phrases == DEFAULT_ACK_PHRASES
+    assert len(phrases) >= 15
+    assert len(set(phrases)) == len(phrases)
+
+
+def test_custom_single_phrase_remains_supported():
+    config = AcknowledgementConfig(phrase="Ready when you are")
+
+    assert config.effective_phrases() == ("Ready when you are",)
+
+
+def test_acknowledgement_variants_rotate_across_turns():
+    player = AcknowledgementPlayer()
+    player._clips = [
+        _VariantClip(phrase, b"\x00\x00", 16000, "test")
+        for phrase in DEFAULT_ACK_PHRASES[:4]
+    ]
+    player._play_thread = MagicMock()
+
+    phrases = [player.play(f"turn-{index}").phrase for index in range(4)]
+
+    assert phrases == list(DEFAULT_ACK_PHRASES[:4])
+
+
+def test_missing_variants_warm_without_blocking_initialization():
+    config = AcknowledgementConfig(phrases=("Okay", "Sure", "One sec"))
+    player = AcknowledgementPlayer(config=config)
+    player._load_cached = MagicMock(return_value=None)
+    player._generate_variant = MagicMock(
+        return_value=_VariantClip("Okay", b"\x00\x00", 16000, "test")
+    )
+    player._warm_variants = MagicMock()
+
+    player.initialize()
+    player._warmup_thread.join(timeout=1)
+
+    player._generate_variant.assert_called_once_with("Okay")
+    player._warm_variants.assert_called_once_with(("Sure", "One sec"))
+    assert player.variant_count == 1
+    assert player.pending_variant_count == 2
 
 
 def test_play_returns_immediately_without_blocking():

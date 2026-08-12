@@ -9,12 +9,15 @@ import zara.memory as memory_module
 from zara.agent import AgentManager
 from zara.agent.conversation import ConversationManager
 from zara.memory import MemoryManager
+from zara.agent.tools.builtin_tools import build_forget_tool, build_memory_list_tool
 
 
 class FakeCollection:
-    def __init__(self, query_error=None):
+    def __init__(self, query_error=None, delete_error=None):
         self.query_error = query_error
+        self.delete_error = delete_error
         self.upserts = []
+        self.deleted_ids = []
 
     def query(self, **kwargs):
         if self.query_error:
@@ -28,6 +31,22 @@ class FakeCollection:
 
     def upsert(self, **kwargs):
         self.upserts.append(kwargs)
+
+    def get(self, **_kwargs):
+        return {
+            "ids": [item["ids"][0] for item in self.upserts],
+            "documents": [item["documents"][0] for item in self.upserts],
+            "metadatas": [item["metadatas"][0] for item in self.upserts],
+        }
+
+    def delete(self, ids):
+        if self.delete_error:
+            raise self.delete_error
+        self.deleted_ids.extend(ids)
+        selected = set(ids)
+        self.upserts = [
+            item for item in self.upserts if item["ids"][0] not in selected
+        ]
 
 
 class FakeClient:
@@ -153,6 +172,111 @@ def test_direct_session_summary_is_bounded(monkeypatch):
     manager.store_session_summary("session", "123456789")
 
     assert manager._memories[0]["text"] == "12345"
+
+
+def test_local_recall_matches_meaningful_query_terms(monkeypatch):
+    monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", False)
+    manager = MemoryManager()
+    manager.remember_fact("My favorite color is blue")
+
+    results = manager.retrieve("what is my favorite color")
+
+    assert [entry["text"] for entry in results] == ["My favorite color is blue"]
+
+
+def test_duplicate_facts_reuse_existing_memory(monkeypatch):
+    monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", False)
+    manager = MemoryManager()
+
+    first_id = manager.remember_fact("My favorite color is blue")
+    second_id = manager.remember_fact("  my FAVORITE color is blue  ")
+
+    assert second_id == first_id
+    assert len(manager.list_memories()) == 1
+
+
+def test_forget_matching_memory_preserves_unrelated_records(monkeypatch):
+    monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", False)
+    manager = MemoryManager()
+    manager.remember_fact("My favorite color is blue")
+    manager.remember_fact("My dog's name is Pixel")
+
+    deleted = manager.forget(query="forget everything about my favorite color")
+
+    assert deleted == 1
+    assert [entry["text"] for entry in manager.list_memories()] == [
+        "My dog's name is Pixel"
+    ]
+
+
+def test_forget_current_session_clears_records_and_buffer(monkeypatch):
+    monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", False)
+    manager = MemoryManager()
+    session_id = manager.start_session()
+    manager.add_message(session_id, "user", "private conversation")
+    manager.remember_fact("Session fact", session_id=session_id)
+    manager.remember_fact("Unrelated fact", session_id="other-session")
+
+    deleted = manager.forget(session_id=session_id)
+
+    assert deleted == 1
+    assert session_id not in manager.sessions
+    assert manager.current_session_id is None
+    assert [entry["text"] for entry in manager.list_memories()] == [
+        "Unrelated fact"
+    ]
+
+
+def test_persistent_forget_deletes_exact_backend_ids(monkeypatch):
+    collection = FakeCollection()
+    install_chroma(monkeypatch, FakeClient(collection))
+    manager = MemoryManager(embedding_function=lambda texts: [[1.0] for _ in texts])
+    target_id = manager.remember_fact("Forget this favorite color")
+    manager.remember_fact("Keep this dog's name")
+
+    deleted = manager.forget(memory_id=target_id)
+
+    assert deleted == 1
+    assert collection.deleted_ids == [target_id]
+    assert [entry["text"] for entry in manager.list_memories()] == [
+        "Keep this dog's name"
+    ]
+
+
+def test_persistent_forget_reports_delete_failure(monkeypatch):
+    collection = FakeCollection(delete_error=RuntimeError("backend refused"))
+    install_chroma(monkeypatch, FakeClient(collection))
+    manager = MemoryManager(embedding_function=lambda texts: [[1.0] for _ in texts])
+    memory_id = manager.remember_fact("Do not pretend this was deleted")
+
+    with pytest.raises(memory_module.MemoryOperationError, match="backend refused"):
+        manager.forget(memory_id=memory_id)
+
+
+def test_forget_tool_requires_confirmation_for_all_memories(monkeypatch):
+    monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", False)
+    manager = MemoryManager()
+    manager.remember_fact("A private fact")
+    tool = build_forget_tool(manager)
+
+    refused = tool.invoke({"all_memories": True, "confirm": False})
+    deleted = tool.invoke({"all_memories": True, "confirm": True})
+
+    assert "Refusing" in refused
+    assert deleted == "Permanently deleted 1 memory."
+    assert manager.list_memories() == []
+
+
+def test_memory_list_tool_exposes_ids_for_targeted_deletion(monkeypatch):
+    monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", False)
+    manager = MemoryManager()
+    memory_id = manager.remember_fact("A visible fact")
+    tool = build_memory_list_tool(manager)
+
+    result = tool.invoke({"limit": 20})
+
+    assert memory_id in result
+    assert "A visible fact" in result
 
 
 @pytest.mark.asyncio

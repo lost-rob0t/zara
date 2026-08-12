@@ -7,7 +7,7 @@ LangChain tool definitions used by the agent system.
 import ast
 import operator
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from langchain_core.tools import StructuredTool, tool
 
@@ -17,7 +17,6 @@ from .file_tools import build_file_tools
 from .todo_tools import build_todo_tools
 from ...noaa import build_noaa_weather_tool
 
-# TODO Have LLM Save user prefs under "pref" tag
 class RememberArgs(BaseModel):
     text: str = Field(
         ..., description="Fact to store in long-term memory."
@@ -38,6 +37,34 @@ class RecallArgs(BaseModel):
         ge=1,
         le=20,
     )
+
+
+class ForgetArgs(BaseModel):
+    query: Optional[str] = Field(
+        default=None,
+        description="Text or subject identifying memories to delete.",
+    )
+    memory_id: Optional[str] = Field(
+        default=None,
+        description="Exact memory ID to delete.",
+    )
+    current_session: bool = Field(
+        default=False,
+        description="Delete memories and buffered messages from the current session.",
+    )
+    all_memories: bool = Field(
+        default=False,
+        description="Delete every stored memory and session buffer.",
+    )
+    confirm: bool = Field(
+        default=False,
+        description="Must be true when all_memories is true and the user explicitly requested it.",
+    )
+
+
+class MemoryListArgs(BaseModel):
+    limit: int = Field(20, ge=1, le=50)
+    kind: Optional[Literal["fact", "summary", "transcript"]] = None
 
 
 class CalculatorArgs(BaseModel):
@@ -152,7 +179,9 @@ def build_recall_tool(memory_manager) -> Optional[StructuredTool]:
             if isinstance(metadata, dict):
                 kind = metadata.get("kind", "")
             prefix = f"[{kind}] " if kind else ""
-            lines.append(f"- {prefix}{text}")
+            memory_id = entry.get("id", "") if isinstance(entry, dict) else ""
+            identifier = f"(id: {memory_id}) " if memory_id else ""
+            lines.append(f"- {identifier}{prefix}{text}")
 
         if not lines:
             return "No relevant memories found."
@@ -160,6 +189,81 @@ def build_recall_tool(memory_manager) -> Optional[StructuredTool]:
         return "\n".join(lines)
 
     return recall
+
+
+def build_memory_list_tool(memory_manager) -> Optional[StructuredTool]:
+    if memory_manager is None:
+        return None
+
+    @tool("memory_list", args_schema=MemoryListArgs)
+    def memory_list(limit: int = 20, kind: Optional[str] = None) -> str:
+        """List recent long-term memories so the user can inspect stored data."""
+        kinds = [kind] if kind else None
+        try:
+            memories = memory_manager.list_memories(
+                limit=int(limit),
+                include_kinds=kinds,
+            )
+        except Exception as error:
+            return f"Memory listing failed: {error}"
+        if not memories:
+            return "No memories stored."
+        return "\n".join(
+            f"- (id: {entry.get('id', '')}) "
+            f"[{entry.get('metadata', {}).get('kind', '')}] {entry.get('text', '')}"
+            for entry in memories
+        )
+
+    return memory_list
+
+
+def build_forget_tool(memory_manager) -> Optional[StructuredTool]:
+    if memory_manager is None:
+        return None
+
+    @tool("forget", args_schema=ForgetArgs)
+    def forget(
+        query: Optional[str] = None,
+        memory_id: Optional[str] = None,
+        current_session: bool = False,
+        all_memories: bool = False,
+        confirm: bool = False,
+    ) -> str:
+        """Permanently delete a targeted memory, current session, or all memories."""
+        if all_memories and not confirm:
+            return "Refusing to delete all memories without explicit confirmation."
+        selectors = sum(
+            bool(value)
+            for value in (memory_id, (query or "").strip(), current_session, all_memories)
+        )
+        if selectors != 1:
+            return "Choose exactly one target: query, memory ID, current session, or all memories."
+
+        session_id = None
+        if current_session:
+            session_id = getattr(memory_manager, "current_session_id", None)
+            if not session_id:
+                return "There is no current memory session to forget."
+
+        try:
+            deleted = memory_manager.forget(
+                memory_id=memory_id,
+                query=query,
+                session_id=session_id,
+                all_memories=all_memories,
+            )
+        except Exception as error:
+            return f"Memory deletion failed: {error}"
+        if deleted == 0:
+            if current_session:
+                return "Current memory session cleared."
+            if all_memories:
+                return "All memory sessions cleared; no stored memories matched."
+            return "No matching memories found."
+        noun = "memory" if deleted == 1 else "memories"
+        return f"Permanently deleted {deleted} {noun}."
+
+    return forget
 
 
 def build_prolog_tool(prolog_engine) -> StructuredTool:
@@ -232,6 +336,14 @@ def get_builtin_tools(
     recall_tool = build_recall_tool(memory_manager)
     if recall_tool is not None:
         tools.append(recall_tool)
+
+    memory_list_tool = build_memory_list_tool(memory_manager)
+    if memory_list_tool is not None:
+        tools.append(memory_list_tool)
+
+    forget_tool = build_forget_tool(memory_manager)
+    if forget_tool is not None:
+        tools.append(forget_tool)
 
     if prolog_engine is not None:
         tools.append(build_prolog_tool(prolog_engine))

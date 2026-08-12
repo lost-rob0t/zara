@@ -13,6 +13,8 @@ def test_default_config_is_valid_toml():
     assert parsed["llm"]["endpoint"] == ""
     assert list(parsed).count("noaa") == 1
     assert parsed["tools"]["file_tools"] is False
+    assert parsed["tools"]["memory_list"] is True
+    assert parsed["tools"]["forget"] is True
     assert parsed["file_tools"]["readable_roots"] == ["."]
     assert parsed["file_tools"]["writable_roots"] == ["."]
     assert parsed["wake"]["audio_queue_chunks"] == 32
@@ -21,6 +23,7 @@ def test_default_config_is_valid_toml():
     assert "silence_threshold" not in parsed["wake"]
     assert parsed["stt"]["trailing_silence_ms"] == 320
     assert parsed["stt"]["pre_speech_buffer_chunks"] == 10
+    assert len(parsed["wake"]["acknowledgement"]["phrases"]) >= 15
 
 
 def test_first_run_creates_parseable_config(monkeypatch, tmp_path):

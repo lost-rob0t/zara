@@ -5,6 +5,7 @@ Conversation memory manager with optional ChromaDB persistence.
 import json
 import logging
 import os
+import re
 import urllib.request
 import urllib.error
 import uuid
@@ -28,6 +29,18 @@ except Exception:
     _EMBEDDING_FUNCTIONS_AVAILABLE = False
 
 EmbeddingFunction = Callable[[List[str]], List[List[float]]]
+
+_SEARCH_STOP_WORDS = {
+    "a", "an", "and", "are", "about", "do", "for", "from", "how", "i",
+    "in", "is", "it", "me", "my", "of", "on", "please", "that", "the",
+    "to", "was", "what", "when", "where", "who", "why", "with", "you",
+    "anything", "everything", "forget", "forgot", "forgotten", "know", "knew",
+    "memory", "memories", "remember", "remembered",
+}
+
+
+class MemoryOperationError(RuntimeError):
+    """Raised when a memory mutation cannot be completed safely."""
 
 
 def _normalize_ollama_base_url(url: str) -> str:
@@ -267,6 +280,120 @@ class MemoryManager:
             self._use_local_fallback(error)
             return self._retrieve_local(query, limit, kinds, tag_list)
 
+    def list_memories(
+        self,
+        limit: int = 50,
+        include_kinds: Optional[Iterable[str]] = None,
+        tags: Optional[List[str]] = None,
+        session_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """List stored memories newest-first without semantic ranking."""
+        if not self.enabled:
+            return []
+        kinds = set(include_kinds) if include_kinds else None
+        tag_list = self._normalize_tags(tags)
+        records = self._all_records(require_persistent=True)
+        matches = [
+            record
+            for record in records
+            if self._matches_filters(record.get("metadata", {}), kinds, tag_list)
+            and (
+                session_id is None
+                or record.get("metadata", {}).get("session_id") == session_id
+            )
+        ]
+        matches.sort(
+            key=lambda record: record.get("metadata", {}).get("created_at", ""),
+            reverse=True,
+        )
+        return matches[:max(0, int(limit))]
+
+    def forget(
+        self,
+        *,
+        memory_id: Optional[str] = None,
+        query: Optional[str] = None,
+        session_id: Optional[str] = None,
+        all_memories: bool = False,
+        include_kinds: Optional[Iterable[str]] = None,
+        tags: Optional[List[str]] = None,
+    ) -> int:
+        """Permanently delete memories selected by one explicit scope."""
+        selectors = sum(
+            bool(value)
+            for value in (memory_id, (query or "").strip(), session_id, all_memories)
+        )
+        if selectors != 1:
+            raise ValueError("Choose exactly one memory deletion scope")
+        if not self.enabled:
+            return 0
+
+        kinds = set(include_kinds) if include_kinds else None
+        tag_list = self._normalize_tags(tags)
+        records = self._all_records(require_persistent=True)
+        selected_ids = []
+        for record in records:
+            metadata = record.get("metadata", {})
+            if not self._matches_filters(metadata, kinds, tag_list):
+                continue
+            if memory_id and record.get("id") != memory_id:
+                continue
+            if session_id and metadata.get("session_id") != session_id:
+                continue
+            if query and not self._text_matches_query(record.get("text", ""), query):
+                continue
+            selected_ids.append(record.get("id"))
+
+        selected_ids = [memory_id for memory_id in selected_ids if memory_id]
+        if self._collection is not None and selected_ids:
+            try:
+                self._collection.delete(ids=selected_ids)
+            except Exception as error:
+                raise MemoryOperationError(
+                    f"Persistent memory deletion failed: {error}"
+                ) from error
+
+        selected = set(selected_ids)
+        self._memories = [
+            record for record in self._memories if record.get("id") not in selected
+        ]
+        if session_id:
+            self.sessions.pop(session_id, None)
+            if self.current_session_id == session_id:
+                self.current_session_id = None
+        if all_memories:
+            self.sessions.clear()
+            self.current_session_id = None
+        return len(selected_ids)
+
+    def _all_records(self, require_persistent: bool = False) -> List[Dict[str, Any]]:
+        if self._collection is None:
+            if require_persistent and self.persist_directory and self.health_error:
+                raise MemoryOperationError(
+                    "Persistent memory is unavailable"
+                )
+            return [dict(record) for record in self._memories]
+        try:
+            result = self._collection.get(include=["documents", "metadatas"])
+            ids = result.get("ids") or []
+            documents = result.get("documents") or []
+            metadatas = result.get("metadatas") or []
+            return [
+                {
+                    "id": memory_id,
+                    "text": documents[index] if index < len(documents) else "",
+                    "metadata": metadatas[index] if index < len(metadatas) else {},
+                }
+                for index, memory_id in enumerate(ids)
+            ]
+        except Exception as error:
+            if require_persistent:
+                raise MemoryOperationError(
+                    f"Persistent memory could not be read: {error}"
+                ) from error
+            self._use_local_fallback(error)
+            return [dict(record) for record in self._memories]
+
     def _retrieve_chroma(
         self,
         query: str,
@@ -307,7 +434,8 @@ class MemoryManager:
         kinds: Optional[set[str]],
         tags: List[str],
     ) -> List[Dict[str, Any]]:
-        query_lower = query.lower()
+        query_lower = self._normalize_text(query)
+        query_terms = self._search_terms(query)
         entries = []
         for record in self._memories:
             metadata = record.get("metadata", {})
@@ -316,15 +444,22 @@ class MemoryManager:
             text = record.get("text", "")
             if not text:
                 continue
-            score = text.lower().count(query_lower)
-            if score == 0:
-                continue
+            normalized_text = self._normalize_text(text)
+            phrase_hits = normalized_text.count(query_lower)
+            if phrase_hits:
+                score = -float(phrase_hits)
+            else:
+                text_terms = set(self._search_terms(text))
+                overlap = len(set(query_terms) & text_terms)
+                if overlap == 0:
+                    continue
+                score = -(overlap / max(1, len(set(query_terms))))
             entries.append(
                 {
                     "id": record.get("id"),
                     "text": text,
                     "metadata": metadata,
-                    "score": -float(score),
+                    "score": score,
                 }
             )
 
@@ -344,6 +479,11 @@ class MemoryManager:
         text = (text or "").strip()
         if not text:
             return None
+
+        if kind == "fact":
+            duplicate_id = self._find_duplicate_fact(text)
+            if duplicate_id is not None:
+                return duplicate_id
 
         memory_id = str(uuid.uuid4())
         tag_list = self._normalize_tags(tags)
@@ -386,6 +526,41 @@ class MemoryManager:
                 }
             )
             return memory_id
+
+    def _find_duplicate_fact(self, text: str) -> Optional[str]:
+        normalized = self._normalize_text(text)
+        try:
+            records = self._all_records()
+        except Exception:
+            return None
+        for record in records:
+            metadata = record.get("metadata", {})
+            if metadata.get("kind") != "fact":
+                continue
+            if self._normalize_text(record.get("text", "")) == normalized:
+                return record.get("id")
+        return None
+
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        return " ".join((text or "").casefold().split())
+
+    @classmethod
+    def _search_terms(cls, text: str) -> List[str]:
+        words = re.findall(r"[\w'-]+", cls._normalize_text(text))
+        meaningful = [
+            word for word in words if len(word) > 1 and word not in _SEARCH_STOP_WORDS
+        ]
+        return meaningful or words
+
+    @classmethod
+    def _text_matches_query(cls, text: str, query: str) -> bool:
+        normalized_text = cls._normalize_text(text)
+        normalized_query = cls._normalize_text(query)
+        if normalized_query and normalized_query in normalized_text:
+            return True
+        query_terms = set(cls._search_terms(query))
+        return bool(query_terms) and query_terms.issubset(set(cls._search_terms(text)))
 
     def _normalize_tags(self, tags: Optional[List[str]]) -> List[str]:
         if not tags:
