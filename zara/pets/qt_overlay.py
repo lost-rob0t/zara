@@ -152,19 +152,18 @@ def run_overlay(
     class PetWindow(QWidget):
         def __init__(self) -> None:
             super().__init__()
-            # Frameless + always-on-top. We do NOT use Qt.Tool because on
-            # tiling WMs (qtile) it constrains the window to one screen
-            # and prevents dragging across monitors. Instead we set the
-            # X11 utility window type via the attribute, which makes the
-            # WM show the window on all workspaces without the screen
-            # constraint that Qt.Tool imposes.
+            # Qt.Tool gives _NET_WM_WINDOW_TYPE_UTILITY which makes qtile
+            # show the window on ALL workspaces and keep it above tiling
+            # windows. We keep it despite the earlier cross-screen drag
+            # issue, which is fixed below by re-homing the window to the
+            # screen under the cursor during drag.
             self.setWindowFlags(
                 Qt.FramelessWindowHint
                 | Qt.WindowStaysOnTopHint
+                | Qt.Tool
             )
             self.setAttribute(Qt.WA_TranslucentBackground, True)
             self.setAttribute(Qt.WA_ShowWithoutActivating, True)
-            self.setAttribute(Qt.WA_X11NetWmWindowTypeUtility, True)
             self.setFocusPolicy(Qt.StrongFocus)
             self.setFixedSize(int(cell_w * scale), int(cell_h * scale))
             self.move(x, y)
@@ -217,7 +216,16 @@ def run_overlay(
                                 self._apply_drag_animation(new_pos)
                                 self._update_frame()
                         self._drag_origin = new_pos
+                    # Move the window. On multi-monitor setups qtile
+                    # constrains a Qt.Tool window to its current screen.
+                    # Re-home the window handle to the screen under the
+                    # cursor so the drag can cross monitors.
+                    target = app.screenAt(event.globalPos())
+                    if target is not None and hasattr(self, "windowHandle") and self.windowHandle() is not None:
+                        if self.windowHandle().screen() is not target:
+                            self.windowHandle().setScreen(target)
                     self.move(event.globalPos() - self._drag_offset)
+                    self.raise_()
 
         def _apply_drag_animation(self, global_pos) -> None:
             moving_right = global_pos.x() > self._drag_origin.x()
