@@ -17,6 +17,7 @@ from .models import (
 )
 
 _CONVERSATION_MIGRATION_VERSION = 2
+_INTERRUPTED_ERROR = "Interrupted when Zara stopped."
 
 
 def _now_iso() -> str:
@@ -263,19 +264,29 @@ class ConversationStore:
         ]
 
     def load_state(self, conversation_id: str) -> ConversationState:
+        """Load durable history and recover work that cannot still be live.
+
+        Runtime turn ownership is process-local to ``RuntimeHost``. If Zara is
+        constructing a fresh ``ConversationState`` from SQLite, a previously
+        persisted pending/streaming row cannot represent a live turn in this
+        service instance. Mark it interrupted instead of restoring a phantom
+        ``active_turn_id`` that would leave Send disabled forever after a crash
+        or restart.
+        """
         conversation = self.get_conversation(conversation_id)
         if conversation is None:
             raise KeyError(conversation_id)
         messages = self.load_messages(conversation_id)
-        active_turn_id = None
-        for message in reversed(messages):
-            if message.turn_id and message.status in {MessageStatus.PENDING, MessageStatus.STREAMING}:
-                active_turn_id = message.turn_id
-                break
+        for message in messages:
+            if message.status in {MessageStatus.PENDING, MessageStatus.STREAMING}:
+                message.status = MessageStatus.CANCELLED
+                if not message.error:
+                    message.error = _INTERRUPTED_ERROR
+                self.save_message(message)
         return ConversationState(
             conversation=conversation,
             messages=messages,
-            active_turn_id=active_turn_id,
+            active_turn_id=None,
         )
 
 
