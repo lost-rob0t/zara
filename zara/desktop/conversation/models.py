@@ -52,6 +52,7 @@ class ConversationState:
     conversation: ConversationRecord
     messages: list[MessageRecord] = field(default_factory=list)
     active_turn_id: Optional[str] = None
+    cancel_request_id: Optional[str] = None
 
     @property
     def provider(self) -> str:
