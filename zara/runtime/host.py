@@ -151,16 +151,11 @@ class RuntimeHost:
             state = self._state
             loop = self._loop
 
-            # Explicit Quit must remain reliable even before backend startup
-            # completes. Queue it for the initial startup coroutine instead of
-            # making the Qt caller poll or block. During a later runtime
-            # restart, _startup_future is already complete and this shortcut is
-            # intentionally not used.
-            if (
-                state is RuntimeHostState.STARTING
-                and isinstance(command, ShutdownRuntime)
-                and not self._startup_future.done()
-            ):
+            # Explicit Quit remains reliable while either initial startup or an
+            # explicit restart is in progress. The STARTING -> RUNNING decision
+            # takes this queue under the same lock, so a request cannot fall
+            # into a transition race.
+            if state is RuntimeHostState.STARTING and isinstance(command, ShutdownRuntime):
                 future: concurrent.futures.Future = concurrent.futures.Future()
                 self._startup_shutdown_requests.append((command, future))
                 return future
@@ -260,6 +255,7 @@ class RuntimeHost:
             startup_error = error
             with self._state_lock:
                 self._state = RuntimeHostState.DEGRADED
+                shutdown_requests = self._take_startup_shutdown_requests_locked()
             self._publisher(
                 events.RuntimeError(
                     reason=f"runtime startup failed: {error}",
@@ -269,8 +265,12 @@ class RuntimeHost:
             )
             if not self._startup_future.done():
                 self._startup_future.set_exception(error)
+        else:
+            with self._state_lock:
+                shutdown_requests = self._take_startup_shutdown_requests_locked()
+                if not shutdown_requests:
+                    self._state = RuntimeHostState.RUNNING
 
-        shutdown_requests = self._take_startup_shutdown_requests()
         if shutdown_requests:
             if startup_error is None and not self._startup_future.done():
                 self._startup_future.set_exception(
@@ -281,8 +281,6 @@ class RuntimeHost:
             return
 
         if startup_error is None:
-            with self._state_lock:
-                self._state = RuntimeHostState.RUNNING
             self._publisher(events.RuntimeStarted(label="runtime-host"))
             if not self._startup_future.done():
                 self._startup_future.set_result(None)
@@ -323,13 +321,18 @@ class RuntimeHost:
                     )
                 )
 
+    def _take_startup_shutdown_requests_locked(
+        self,
+    ) -> list[tuple[ShutdownRuntime, concurrent.futures.Future]]:
+        requests = self._startup_shutdown_requests
+        self._startup_shutdown_requests = []
+        return requests
+
     def _take_startup_shutdown_requests(
         self,
     ) -> list[tuple[ShutdownRuntime, concurrent.futures.Future]]:
         with self._state_lock:
-            requests = self._startup_shutdown_requests
-            self._startup_shutdown_requests = []
-            return requests
+            return self._take_startup_shutdown_requests_locked()
 
     def _fail_startup_shutdown_requests(self, error: BaseException) -> None:
         for _, future in self._take_startup_shutdown_requests():
@@ -524,13 +527,26 @@ class RuntimeHost:
 
         try:
             await self._start_backend()
-        except Exception:
+        except Exception as error:
             with self._state_lock:
                 self._state = RuntimeHostState.DEGRADED
-            raise
+                shutdown_requests = self._take_startup_shutdown_requests_locked()
+            if shutdown_requests:
+                await self._complete_startup_shutdown_requests(shutdown_requests)
+            raise error
 
         with self._state_lock:
-            self._state = RuntimeHostState.RUNNING
+            shutdown_requests = self._take_startup_shutdown_requests_locked()
+            if not shutdown_requests:
+                self._state = RuntimeHostState.RUNNING
+
+        if shutdown_requests:
+            await self._complete_startup_shutdown_requests(shutdown_requests)
+            return CommandReceipt(
+                request_id=command.request_id,
+                detail="runtime restart interrupted by shutdown",
+            )
+
         self._publisher(events.RuntimeStarted(label="runtime-host"))
         return CommandReceipt(request_id=command.request_id, detail="runtime restarted")
 
