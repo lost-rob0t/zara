@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 
-from PySide6.QtCore import QCoreApplication, QObject, QThread, Slot
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtCore import QObject, QThread, Slot
+from PySide6.QtWidgets import QApplication
 
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.runtime import bridge as runtime_bridge
@@ -51,8 +55,10 @@ class Receiver(QObject):
         self.failure_thread = QThread.currentThread()
 
 
-def app() -> QCoreApplication:
-    return QCoreApplication.instance() or QCoreApplication([])
+def app() -> QApplication:
+    instance = QApplication.instance()
+    assert instance is None or isinstance(instance, QApplication)
+    return instance or QApplication([])
 
 
 def process_until(predicate, timeout: float = 5.0) -> bool:
