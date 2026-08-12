@@ -108,6 +108,17 @@ def _overlay_window_flags(Qt, platform_name: str):
     return flags | Qt.Tool
 
 
+def _queued_state_dispatcher(callback):
+    from PySide6.QtCore import QObject, Signal, Qt
+
+    class StateDispatcher(QObject):
+        state_changed = Signal(object, object)
+
+    dispatcher = StateDispatcher()
+    dispatcher.state_changed.connect(callback, Qt.QueuedConnection)
+    return dispatcher
+
+
 def run_overlay(
     settings: PetSettings,
     pet_manifest: PetManifest,
@@ -373,7 +384,8 @@ def run_overlay(
                 QSystemTrayIcon.Information, 3000)
         overlay_state["last_emotion"] = state
 
-    actor = PetStateActor.start(subscriber=_on_state)
+    state_dispatcher = _queued_state_dispatcher(_on_state)
+    actor = PetStateActor.start(subscriber=state_dispatcher.state_changed.emit)
     runtime_bridge.register_actor(actor)
 
     subscriber = PetSubscriber(on_event=lambda p: _dispatch_payload(p, actor))

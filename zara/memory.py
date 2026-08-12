@@ -16,9 +16,13 @@ logger = logging.getLogger(__name__)
 
 try:
     import chromadb
+    from chromadb.config import Settings as ChromaSettings
+    from chromadb.telemetry.product import ProductTelemetryClient, ProductTelemetryEvent
+    from overrides import override
     _CHROMADB_AVAILABLE = True
 except ImportError:
     chromadb = None
+    ChromaSettings = None
     _CHROMADB_AVAILABLE = False
 
 try:
@@ -41,6 +45,13 @@ _SEARCH_STOP_WORDS = {
 
 class MemoryOperationError(RuntimeError):
     """Raised when a memory mutation cannot be completed safely."""
+
+
+if _CHROMADB_AVAILABLE:
+    class NoOpProductTelemetry(ProductTelemetryClient):
+        @override
+        def capture(self, event: ProductTelemetryEvent) -> None:
+            return None
 
 
 def _normalize_ollama_base_url(url: str) -> str:
@@ -131,11 +142,16 @@ class MemoryManager:
             self._collection = client.get_or_create_collection(name=self.collection_name)
 
     def _build_client(self):
+        client_settings = ChromaSettings(
+            anonymized_telemetry=False,
+            chroma_product_telemetry_impl="zara.memory.NoOpProductTelemetry",
+            chroma_telemetry_impl="zara.memory.NoOpProductTelemetry",
+        )
         if not self.persist_directory:
-            return chromadb.Client()
+            return chromadb.Client(settings=client_settings)
         path = os.path.expanduser(os.path.expandvars(self.persist_directory))
         os.makedirs(path, exist_ok=True)
-        return chromadb.PersistentClient(path=path)
+        return chromadb.PersistentClient(path=path, settings=client_settings)
 
     def _build_embedding_function(self) -> Optional[EmbeddingFunction]:
         memory_cfg = self.settings

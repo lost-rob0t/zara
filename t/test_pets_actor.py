@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 import pykka
 
 from zara.pets import PetState
 from zara.pets import events
 from zara.pets.actor import PetStateActor, _GetState
+from zara.pets.qt_overlay import _queued_state_dispatcher
 
 
 @pytest.fixture(autouse=True)
@@ -115,6 +118,26 @@ def test_subscriber_receives_state_changes():
     ref.stop()
     states = [s for s, _ in seen]
     assert PetState.RUNNING in states
+
+
+def test_qt_state_dispatcher_runs_subscriber_on_qt_thread():
+    from PySide6.QtCore import QCoreApplication
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    main_thread = threading.get_ident()
+    callback_threads = []
+    dispatcher = _queued_state_dispatcher(
+        lambda state, labels: callback_threads.append(threading.get_ident())
+    )
+    ref = PetStateActor.start(subscriber=dispatcher.state_changed.emit)
+
+    ref.tell(events.ModelStarted())
+    ref.ask(_GetState(), timeout=5)
+    app.processEvents()
+    ref.stop()
+
+    assert callback_threads
+    assert set(callback_threads) == {main_thread}
 
 
 def test_repeated_identical_events_do_not_restart():
