@@ -200,13 +200,27 @@ def run_overlay(
                     if not overlay_state["dragging"]:
                         overlay_state["dragging"] = True
                         overlay_state["pre_drag_state"] = controller.state
-                        # Play the "drag" animation (the run-right row)
-                        # if the sprite provides one. The pet runs only
-                        # while being carried — never on tasks.
-                        if pet_manifest.animation_for("drag") is not None:
-                            controller.set_animation("drag")
+                        self._apply_drag_animation(event.globalPos())
                         self._update_frame()
+                    else:
+                        new_pos = event.globalPos()
+                        if new_pos.x() != self._drag_origin.x():
+                            moving_right = new_pos.x() > self._drag_origin.x()
+                            want = "drag" if moving_right else "drag-left"
+                            current = controller._override_animation.name if controller._override_animation else None
+                            if current != want and pet_manifest.animation_for(want) is not None:
+                                self._apply_drag_animation(new_pos)
+                                self._update_frame()
+                        self._drag_origin = new_pos
                     self.move(event.globalPos() - self._drag_offset)
+
+        def _apply_drag_animation(self, global_pos) -> None:
+            moving_right = global_pos.x() > self._drag_origin.x()
+            name = "drag" if moving_right else "drag-left"
+            if pet_manifest.animation_for(name) is not None:
+                controller.set_animation(name)
+            elif pet_manifest.animation_for("drag") is not None:
+                controller.set_animation("drag")
 
         def mouseReleaseEvent(self, event) -> None:
             if event.button() == Qt.LeftButton:

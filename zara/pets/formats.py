@@ -80,7 +80,7 @@ V2_HEIGHT = 2288
 CHATGPT_ROW_TO_STATE: Dict[int, str] = {
     0: "idle",
     1: "drag",           # run right — physical movement, not task work
-    2: "drag",           # run left — collapsed onto drag (first wins)
+    2: "drag-left",      # run left — paired with drag for bidirectional carry
     3: "idle",           # wave (idle flourish)
     4: "idle",           # jump (idle flourish)
     5: "blocked",        # failure reaction
