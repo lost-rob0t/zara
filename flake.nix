@@ -94,7 +94,7 @@
             p.wheel
           ]);
 
-          # Shared derivation builder for the four Zara runtime packages.
+          # Shared derivation builder for the Zara runtime packages.
           mkZaraPackage = { pname, binaryName ? pname, addFlags, withProlog ? true, extraPath ? [ ], }:
             pkgs.stdenv.mkDerivation {
               inherit pname;
@@ -134,6 +134,12 @@
             pname = "zara-cli";
             binaryName = "zara";
             addFlags = "-m zara";
+            extraPath = [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full ];
+          };
+
+          zara-desktop = mkZaraPackage {
+            pname = "zara-desktop";
+            addFlags = "-m zara.desktop.app";
             extraPath = [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full ];
           };
 
@@ -183,8 +189,20 @@
 
           zarathushtra = pkgs.buildEnv {
             name = "zarathushtra-full";
-            paths = [ zara-cli zara-prolog zara-wake zara-dictate ];
+            paths = [ zara-cli zara-desktop zara-prolog zara-wake zara-dictate ];
           };
+
+          # Development wrappers intentionally execute the working checkout,
+          # not the immutable package copy in the Nix store.
+          zara-dev = pkgs.writeShellScriptBin "zara" ''
+            export PYTHONPATH="$PWD''${PYTHONPATH:+:$PYTHONPATH}"
+            exec ${pythonLibs}/bin/python -m zara "$@"
+          '';
+
+          zara-desktop-dev = pkgs.writeShellScriptBin "zara-desktop" ''
+            export PYTHONPATH="$PWD''${PYTHONPATH:+:$PYTHONPATH}"
+            exec ${pythonLibs}/bin/python -m zara.desktop.app "$@"
+          '';
 
           checks = {
             # Run the Python test suite. The source tree is read-only in the
@@ -268,7 +286,7 @@
             # mocked hardware so the package layout is verified end-to-end.
             wrappers = pkgs.runCommand "zara-check-wrappers"
               {
-                nativeBuildInputs = [ zara-cli zara-wake zara-dictate zara-prolog pkgs.bash ];
+                nativeBuildInputs = [ zara-cli zara-desktop zara-wake zara-dictate zara-prolog pkgs.bash ];
                 src = ./.;
               }
               ''
@@ -282,15 +300,19 @@
                 set +e
                 zara >$HOME/cli.out 2>&1
                 cli_rc=$?
+                zara --help >$HOME/cli-help.out 2>&1
                 zara-wake --help >$HOME/wake.out 2>&1 || true
                 zara-console --help >$HOME/console.out 2>&1 || true
                 zara-dictate --help >$HOME/dictate.out 2>&1 || true
                 set -e
                 test "$cli_rc" -eq 1
                 grep -q "Zarathustra Voice Assistant" $HOME/cli.out
+                grep -q -- "--desktop" $HOME/cli-help.out
                 grep -q "usage:" $HOME/wake.out
                 grep -q "usage:" $HOME/console.out
                 grep -q "usage:" $HOME/dictate.out
+                command -v zara-desktop >/dev/null
+                test -x "$(command -v zara-desktop)"
                 touch $out
               '';
           };
@@ -298,6 +320,7 @@
         {
           packages = {
             zara-cli = zara-cli;
+            zara-desktop = zara-desktop;
             zara-prolog = zara-prolog;
             zara-wake = zara-wake;
             zara-dictate = zara-dictate;
@@ -309,6 +332,10 @@
             zara = {
               type = "app";
               program = "${zara-cli}/bin/zara";
+            };
+            zara-desktop = {
+              type = "app";
+              program = "${zara-desktop}/bin/zara-desktop";
             };
             zara-wake = {
               type = "app";
@@ -333,6 +360,8 @@
 
             buildInputs = [
               pythonLibs
+              zara-dev
+              zara-desktop-dev
               pkgs.xdotool
               pkgs.ffmpeg-full  # Includes ffplay for streaming audio
               pkgs.mpv  # Alternative for streaming audio playback
@@ -346,12 +375,16 @@
               echo "Python + Whisper + SWI-Prolog + LangChain ready"
               echo ""
               echo "Commands:"
+              echo "  zara-desktop                   # Native desktop / Quick Copilot"
+              echo "  zara --desktop                 # Same canonical desktop entry point"
               echo "  zara --wake                    # Wake listener"
               echo "  zara --console                 # Console mode"
               echo "  zara --dictate                 # Dictation mode"
               echo "  zara --agent                   # Direct agent conversation"
               echo ""
               echo "Build system:"
+              echo "  nix build .#zara-desktop      # Build native desktop package"
+              echo "  nix run .#zara-desktop        # Run native desktop / Quick Copilot"
               echo "  nix build                     # Build all packages"
               echo "  nix run                       # Run default CLI (prints help with no args)"
               echo "  nix run .#zara-wake           # Run wake listener"

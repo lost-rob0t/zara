@@ -18,6 +18,7 @@ def main():
         description="Zarathustra Voice Assistant - Unified Interface",
         epilog="Examples:\n"
                "  zara 'open firefox'           # Execute text command\n"
+               "  zara --desktop                # Native desktop / Quick Copilot\n"
                "  zara --console                # Interactive REPL\n"
                "  zara --voice                  # One-shot voice command\n"
                "  zara --dictate                # Continuous dictation mode\n"
@@ -27,6 +28,11 @@ def main():
 
     # Mode selection (mutually exclusive)
     mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--desktop",
+        action="store_true",
+        help="Start the native desktop Copilot"
+    )
     mode_group.add_argument(
         "--console",
         action="store_true",
@@ -112,7 +118,11 @@ def main():
     args = parser.parse_args()
 
     # Determine mode
-    if args.console:
+    if args.desktop:
+        from .desktop.app import main as desktop_main
+        sys.exit(desktop_main([sys.argv[0]]))
+
+    elif args.console:
         # Interactive console mode
         from .console import main as console_main
         sys.exit(console_main())

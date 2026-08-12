@@ -43,9 +43,22 @@ def create_application(
     return app, controller
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
-    app, controller = create_application(argv)
+def start_desktop(
+    argv: Optional[Sequence[str]] = None,
+    *,
+    host: Optional[RuntimeHost] = None,
+    summon_quick: bool = True,
+) -> tuple[QApplication, DesktopController]:
+    """Start the canonical desktop runtime and expose a visible UI surface."""
+    app, controller = create_application(argv, host=host)
     controller.start()
+    if summon_quick:
+        controller.show_quick_copilot()
+    return app, controller
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    app, _controller = start_desktop(argv)
     return int(app.exec())
 
 
