@@ -123,6 +123,16 @@ def output_ready(label: Optional[str] = None) -> None:
     _tell_and_publish(events.OutputReady(label=label), "OutputReady", label=label)
 
 
+def response_text(text: str = "", label: Optional[str] = None) -> None:
+    """Send Zara's response text to the pet for speech bubble display."""
+    truncated = len(text) > 280
+    payload_text = text[:280] if truncated else text
+    _tell_and_publish(
+        events.ResponseText(text=payload_text, truncated=truncated, label=label),
+        "ResponseText", text=payload_text, truncated=truncated, label=label,
+    )
+
+
 def output_seen(label: Optional[str] = None) -> None:
     _tell_and_publish(events.OutputSeen(label=label), "OutputSeen", label=label)
 

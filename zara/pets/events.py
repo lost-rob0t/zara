@@ -121,6 +121,14 @@ class BackgroundCompleted(PetEvent):
 # Lifecycle ----------------------------------------------------------------
 
 @dataclass(frozen=True)
+class ResponseText(PetEvent):
+    """Zara's spoken/text response — shown in the pet's speech bubble."""
+
+    text: str = ""
+    truncated: bool = False
+
+
+@dataclass(frozen=True)
 class OutputReady(PetEvent):
     """Output is available but not yet seen by the user."""
 

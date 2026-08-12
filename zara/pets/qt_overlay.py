@@ -55,6 +55,9 @@ _PAYLOAD_MAP = {
         kind=p.get("kind", "approval"), label=p.get("label")),
     "UserResponded": lambda p: events.UserResponded(label=p.get("label")),
     "OutputReady": lambda p: events.OutputReady(label=p.get("label")),
+    "ResponseText": lambda p: events.ResponseText(
+        text=p.get("text", ""), truncated=p.get("truncated", False),
+        label=p.get("label")),
     "OutputSeen": lambda p: events.OutputSeen(label=p.get("label")),
     "TaskCancelled": lambda p: events.TaskCancelled(label=p.get("label")),
     "RuntimeIdle": lambda p: events.RuntimeIdle(label=p.get("label")),
@@ -149,18 +152,20 @@ def run_overlay(
     class PetWindow(QWidget):
         def __init__(self) -> None:
             super().__init__()
-            # Frameless + always-on-top + no taskbar entry. We avoid
-            # Qt.Tool here because some compositors withdraw tool windows
-            # when the app loses focus, which caused blinking.
+            # Frameless + always-on-top + Tool (so the WM treats it as a
+            # utility/pet window that appears on ALL workspaces — critical
+            # for qtile/i3/bspwm where a normal window only shows on one
+            # workspace). Qt.Tool also keeps it off the taskbar. On tiling
+            # WMs (qtile) this does NOT cause the withdraw-on-focus-loss
+            # blink that Mutter/KWin exhibited.
             self.setWindowFlags(
                 Qt.FramelessWindowHint
                 | Qt.WindowStaysOnTopHint
-                | Qt.WindowDoesNotAcceptFocus
+                | Qt.Tool
             )
             self.setAttribute(Qt.WA_TranslucentBackground, True)
             self.setAttribute(Qt.WA_ShowWithoutActivating, True)
-            self.setAttribute(Qt.WA_NoSystemBackground, True)
-            self.setFocusPolicy(Qt.NoFocus)
+            self.setFocusPolicy(Qt.StrongFocus)
             self.setFixedSize(int(cell_w * scale), int(cell_h * scale))
             self.move(x, y)
             self._drag_offset: Optional[QPoint] = None
@@ -239,7 +244,18 @@ def run_overlay(
                 self._moved = False
 
         def _show_context_menu(self, pos) -> None:
-            _build_context_menu(self, pos).exec_(pos)
+            menu = QMenu(self)
+            open_action = menu.addAction("Open Zarathushtra")
+            menu.addSeparator()
+            tuck_action = menu.addAction("Tuck Away")
+            action = menu.exec_(pos)
+            if action is open_action:
+                if on_request_focus is not None:
+                    on_request_focus()
+            elif action is tuck_action:
+                window.hide()
+                settings.update(enabled=False)
+                settings.save()
 
     window = PetWindow()
     window.show()
