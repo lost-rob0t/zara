@@ -67,18 +67,25 @@ V2_ROWS = 11
 V2_WIDTH = 1536
 V2_HEIGHT = 2288
 
-# Row index -> Zarathushtra state name. Rows 0-8 are the nine standard
-# action rows documented by ChatGPT/Codex. V2 adds two rows of look-
-# direction cells that are not mapped to a state animation.
+# Row index -> Zarathushtra animation name. Rows 0-8 are the nine
+# standard action rows documented by ChatGPT/Codex:
+#   0 idle, 1 run-right, 2 run-left, 3 wave, 4 jump,
+#   5 failure reaction, 6 waiting, 7 active work/processing, 8 review.
+#
+# Row 7 (active work) maps to the ``running`` *state* (task work). Row 1
+# (run-right) is physical movement — we map it to a separate ``drag``
+# animation used only while the user carries the window, so the pet
+# "runs" when moved but does NOT run on tasks. V2's extra rows (9, 10)
+# are look-direction cells not mapped to a state animation.
 CHATGPT_ROW_TO_STATE: Dict[int, str] = {
     0: "idle",
-    1: "running",        # run right
-    2: "running",        # run left
-    3: "idle",           # wave (treated as idle flourish)
-    4: "idle",           # jump (treated as idle flourish)
+    1: "drag",           # run right — physical movement, not task work
+    2: "drag",           # run left — collapsed onto drag (first wins)
+    3: "idle",           # wave (idle flourish)
+    4: "idle",           # jump (idle flourish)
     5: "blocked",        # failure reaction
     6: "needs-input",    # waiting
-    7: "running",        # active work / processing
+    7: "running",        # active work / processing (the task animation)
     8: "ready",          # review / inspection
 }
 

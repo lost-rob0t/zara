@@ -1542,8 +1542,13 @@ class WakeWordListener:
 
 
 
-def main(model="tiny.en", device="cpu", prolog_main_path=None, enable_tts=True):
+def main(model="tiny.en", device="cpu", prolog_main_path=None, enable_tts=True,
+         with_pets=False):
     """Main entry point for wake word listener"""
+    pet_proc = None
+    if with_pets:
+        pet_proc = _launch_pet_overlay()
+
     listener = WakeWordListener(
         model=model,
         device=device,
@@ -1569,5 +1574,27 @@ def main(model="tiny.en", device="cpu", prolog_main_path=None, enable_tts=True):
         asyncio.run(run_with_cleanup())
     except KeyboardInterrupt:
         pass
+    finally:
+        if pet_proc is not None:
+            pet_proc.terminate()
+            try:
+                pet_proc.wait(timeout=3)
+            except Exception:
+                pet_proc.kill()
 
     return 0
+
+
+def _launch_pet_overlay():
+    """Spawn the pet overlay as a subprocess so it runs its own Qt loop.
+
+    The wake process publishes pet events over ZMQ; the overlay subprocess
+    subscribes and reacts. Dies with the parent.
+    """
+    import subprocess
+    import sys
+    return subprocess.Popen(
+        [sys.executable, "-m", "zara", "--pets"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )

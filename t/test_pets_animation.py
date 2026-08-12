@@ -215,6 +215,44 @@ def test_selected_pet_persistence(tmp_path):
     assert loaded.state.selected_pet == "my-imported-pet"
 
 
+def test_set_animation_plays_named_non_state_animation():
+    clock = _FakeClock()
+    ctrl = AnimationController(_manifest(), clock=clock)
+    # "drag" is not in the default _manifest(); set_animation no-ops and
+    # the controller stays on idle.
+    assert ctrl.set_animation("drag") is False
+    assert ctrl.current_frame() == (0, 0)
+
+
+def test_set_animation_with_drag_row_present():
+    manifest = _manifest()
+    # Add a drag animation at row 1 (run-right) like the ChatGPT importer does.
+    manifest.animations.append(
+        Animation(name="drag", row=1, frames=8, fps=8.0, loop=True)
+    )
+    clock = _FakeClock()
+    ctrl = AnimationController(manifest, clock=clock)
+    assert ctrl.set_animation("drag") is True
+    clock.advance(0.25)
+    row, col = ctrl.current_frame()
+    assert row == 1
+    assert col == 2
+
+
+def test_set_state_after_override_restores_state_animation():
+    manifest = _manifest()
+    manifest.animations.append(
+        Animation(name="drag", row=1, frames=8, fps=8.0, loop=True)
+    )
+    clock = _FakeClock()
+    ctrl = AnimationController(manifest, clock=clock)
+    ctrl.set_state(PetState.RUNNING)
+    ctrl.set_animation("drag")
+    assert ctrl.current_frame()[0] == 1
+    ctrl.set_state(PetState.RUNNING)
+    assert ctrl.current_frame()[0] == 1  # running row
+
+
 def test_pet_window_state_from_dict_handles_none():
     state = PetWindowState.from_dict({})
     assert state.x is None

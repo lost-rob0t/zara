@@ -200,7 +200,11 @@ def run_overlay(
                     if not overlay_state["dragging"]:
                         overlay_state["dragging"] = True
                         overlay_state["pre_drag_state"] = controller.state
-                        controller.set_state(PetState.RUNNING)
+                        # Play the "drag" animation (the run-right row)
+                        # if the sprite provides one. The pet runs only
+                        # while being carried — never on tasks.
+                        if pet_manifest.animation_for("drag") is not None:
+                            controller.set_animation("drag")
                         self._update_frame()
                     self.move(event.globalPos() - self._drag_offset)
 
@@ -210,6 +214,8 @@ def run_overlay(
                     settings.update(x=self.x(), y=self.y())
                     settings.save()
                     overlay_state["dragging"] = False
+                    # set_state clears the drag override and returns to
+                    # the pre-drag state's animation timeline.
                     controller.set_state(overlay_state["pre_drag_state"])
                     self._update_frame()
                 else:

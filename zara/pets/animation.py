@@ -63,6 +63,7 @@ class AnimationController:
         self._clock = clock
         self._state: PetState = PetState.IDLE
         self._animation: Optional[Animation] = manifest.animation_for(PetState.IDLE.value)
+        self._override_animation: Optional[Animation] = None
         self._anim_start: float = self._clock()
         self._last_row: Optional[int] = None
         self._last_col: Optional[int] = None
@@ -89,10 +90,27 @@ class AnimationController:
         when ``state`` equals the current state we keep the current
         animation timeline so a re-emitted event does not jump the frame.
         """
-        if state is self._state:
+        if state is self._state and not self._override_animation:
             return False
         self._state = state
+        self._override_animation = None
         self._animation = self.manifest.animation_for(state.value)
+        self._anim_start = self._clock()
+        self._pending_non_loop_done = False
+        return True
+
+    def set_animation(self, name: str) -> bool:
+        """Play an arbitrary named animation (e.g. 'drag').
+
+        Used for non-state animations like the drag/movement row that
+        aren't part of the five-state model. Pass the state name back to
+        ``set_state`` to return to normal state-driven playback.
+        """
+        anim = self.manifest.animation_for(name)
+        if anim is None:
+            return False
+        self._override_animation = anim
+        self._animation = anim
         self._anim_start = self._clock()
         self._pending_non_loop_done = False
         return True
