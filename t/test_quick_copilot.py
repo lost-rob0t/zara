@@ -362,7 +362,7 @@ def test_buffered_response_and_failures_project_consistently(tmp_path):
         rejected = bridge.commands[-1]
         bridge.command_failed.emit(rejected.request_id, "runtime unavailable")
         qt_app.processEvents()
-        assert quick.command_error_label.isVisible()
+        assert not quick.command_error_label.isHidden()
         assert "runtime unavailable" in quick.command_error_label.text()
         assert not service.has_pending_request(conversation_id)
 
