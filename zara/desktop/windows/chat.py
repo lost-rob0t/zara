@@ -51,6 +51,7 @@ class FullChatWindow(QWidget):
         self._current_conversation_id: Optional[str] = None
         self._message_widgets: dict[str, MessageWidget] = {}
         self._cancel_request_id: Optional[str] = None
+        self._cancel_conversation_id: Optional[str] = None
 
         self.setWindowTitle("Zara")
         self.setMinimumSize(760, 520)
@@ -291,11 +292,19 @@ class FullChatWindow(QWidget):
 
     def cancel_active_turn(self) -> None:
         state = self.conversations.get_state(self.current_conversation_id)
-        if not state.active_turn_id or self._cancel_request_id is not None:
+        if not state.active_turn_id or state.cancel_request_id is not None:
             return
         command = CancelTurn(turn_id=state.active_turn_id)
+        state.cancel_request_id = command.request_id
         self._cancel_request_id = command.request_id
-        self.stop_button.setEnabled(False)
+        self._cancel_conversation_id = self.current_conversation_id
+        self._sync_controls()
+        self.conversation_changed.emit(
+            ConversationUpdate(
+                conversation_id=self.current_conversation_id,
+                active_turn_changed=True,
+            )
+        )
         self.bridge.submit(command)
 
     def apply_conversation_update(self, update: Optional[ConversationUpdate]) -> None:
@@ -310,7 +319,7 @@ class FullChatWindow(QWidget):
     ) -> None:
         request_id = getattr(receipt, "request_id", None)
         if request_id == self._cancel_request_id:
-            self._cancel_request_id = None
+            self._clear_owned_cancellation()
         self.apply_conversation_update(update)
 
     def handle_command_failed(
@@ -320,7 +329,7 @@ class FullChatWindow(QWidget):
         update: Optional[ConversationUpdate] = None,
     ) -> None:
         if request_id == self._cancel_request_id:
-            self._cancel_request_id = None
+            self._clear_owned_cancellation()
             self.command_error_label.setText(message or "Cancellation failed")
             self.command_error_label.show()
             self._sync_controls()
@@ -432,9 +441,20 @@ class FullChatWindow(QWidget):
         pending = self.conversations.has_pending_request(self.current_conversation_id)
         active = bool(state.active_turn_id)
         if not active:
-            self._cancel_request_id = None
+            state.cancel_request_id = None
         self.send_button.setEnabled(not pending and not active)
-        self.stop_button.setEnabled(active and self._cancel_request_id is None)
+        self.stop_button.setEnabled(active and state.cancel_request_id is None)
+
+    def _clear_owned_cancellation(self) -> None:
+        if self._cancel_conversation_id is not None:
+            try:
+                state = self.conversations.get_state(self._cancel_conversation_id)
+            except KeyError:
+                state = None
+            if state is not None and state.cancel_request_id == self._cancel_request_id:
+                state.cancel_request_id = None
+        self._cancel_request_id = None
+        self._cancel_conversation_id = None
 
     def _select_history_id(self, conversation_id: str) -> None:
         for index in range(self.history_list.count()):
