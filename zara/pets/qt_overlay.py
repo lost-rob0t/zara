@@ -228,8 +228,8 @@ def run_overlay(
                     settings.update(x=self.x(), y=self.y())
                     settings.save()
                     overlay_state["dragging"] = False
-                    # set_state clears the drag override and returns to
-                    # the pre-drag state's animation timeline.
+                    base_x[0] = self.x()
+                    base_y[0] = self.y()
                     controller.set_state(overlay_state["pre_drag_state"])
                     self._update_frame()
                 else:
@@ -243,6 +243,8 @@ def run_overlay(
 
     window = PetWindow()
     window.show()
+    base_x = [window.x()]
+    base_y = [window.y()]
 
     # --- Show/hide + settings helpers (defined before the tray uses them) -
     def _toggle_visibility() -> None:
@@ -335,8 +337,25 @@ def run_overlay(
             logger.debug("[PetOverlay] dispatch failed for %s", event_name, exc_info=True)
 
     # --- Timers ---------------------------------------------------------
+    import math
+    bob_phase = [0.0]
+
     def _animation_tick() -> None:
-        if controller.frame_changed() and not overlay_state["dragging"]:
+        if overlay_state["dragging"]:
+            return
+        # Physical movement while "running" (thinking/responding): a gentle
+        # vertical bob so the sprite is visibly active, not just cycling
+        # sprite frames. needs-input gets a smaller anxious jitter.
+        state = controller.state
+        if state is PetState.RUNNING or state is PetState.NEEDS_INPUT:
+            bob_phase[0] += 0.15
+            amplitude = 6 if state is PetState.RUNNING else 3
+            bob = int(amplitude * math.sin(bob_phase[0]))
+            window.move(base_x[0], base_y[0] + bob)
+        else:
+            if window.y() != base_y[0] or window.x() != base_x[0]:
+                window.move(base_x[0], base_y[0])
+        if controller.frame_changed():
             window._update_frame()
 
     anim_timer = QTimer()
