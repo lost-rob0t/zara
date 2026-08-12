@@ -123,6 +123,7 @@ setup(
             "zara-dictate=zara.dictate:main",
             "zara-agent=zara.agent_cli:main",
             "zara-pets=zara.pets.cli:main",
+            "zara-desktop=zara.desktop.app:main",
         ],
     },
     include_package_data=True,
