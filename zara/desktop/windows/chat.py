@@ -1,0 +1,417 @@
+"""Persistent full-chat PySide6 surface driven only by RuntimeHost events/commands."""
+
+from __future__ import annotations
+
+from typing import Optional
+
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QCloseEvent
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QScrollArea,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
+
+from zara.desktop.chat_widgets import ChatComposer, MessageWidget
+from zara.desktop.conversation import ConversationService, ConversationUpdate
+from zara.desktop.qt_bridge import QtRuntimeBridge
+from zara.desktop.state import DesktopStatus, INITIAL_STATUS
+from zara.runtime.commands import CancelTurn, CommandReceipt, SubmitTurn
+
+
+class FullChatWindow(QWidget):
+    """Native durable conversation surface shared with future Quick Copilot."""
+
+    restart_requested = Signal()
+    diagnostics_requested = Signal()
+
+    def __init__(
+        self,
+        bridge: QtRuntimeBridge,
+        conversations: ConversationService,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.bridge = bridge
+        self.conversations = conversations
+        self._allow_close = False
+        self._status = INITIAL_STATUS
+        self._current_conversation_id: Optional[str] = None
+        self._message_widgets: dict[str, MessageWidget] = {}
+        self._cancel_request_id: Optional[str] = None
+
+        self.setWindowTitle("Zara")
+        self.setMinimumSize(760, 520)
+        self.resize(980, 700)
+
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Search chats")
+        self.history_list = QListWidget()
+        self.new_chat_button = QPushButton("New chat")
+        self.rename_button = QPushButton("Rename")
+
+        sidebar_buttons = QHBoxLayout()
+        sidebar_buttons.addWidget(self.new_chat_button)
+        sidebar_buttons.addWidget(self.rename_button)
+
+        sidebar = QWidget()
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.addWidget(self.search_edit)
+        sidebar_layout.addWidget(self.history_list, 1)
+        sidebar_layout.addLayout(sidebar_buttons)
+
+        self.title_label = QLabel("Zara")
+        self.title_label.setObjectName("zaraConversationTitle")
+        self.provider_label = QLabel("Provider: runtime default")
+        self.provider_label.setObjectName("zaraProviderStatus")
+        self.runtime_status_label = QLabel()
+        self.runtime_status_label.setObjectName("zaraRuntimeStatus")
+        self.runtime_detail_label = QLabel()
+        self.runtime_detail_label.setObjectName("zaraRuntimeDetail")
+        self.runtime_detail_label.setWordWrap(True)
+        self.command_error_label = QLabel()
+        self.command_error_label.setObjectName("zaraCommandError")
+        self.command_error_label.setWordWrap(True)
+        self.command_error_label.hide()
+
+        self.restart_button = QPushButton("Restart Runtime")
+        self.diagnostics_button = QPushButton("Diagnostics")
+
+        header_top = QHBoxLayout()
+        header_top.addWidget(self.title_label, 1)
+        header_top.addWidget(self.provider_label)
+
+        runtime_row = QHBoxLayout()
+        runtime_row.addWidget(self.runtime_status_label)
+        runtime_row.addStretch(1)
+        runtime_row.addWidget(self.restart_button)
+        runtime_row.addWidget(self.diagnostics_button)
+
+        self.message_container = QWidget()
+        self.message_layout = QVBoxLayout(self.message_container)
+        self.message_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.message_layout.setContentsMargins(8, 8, 8, 8)
+        self.message_layout.setSpacing(8)
+
+        self.message_scroll = QScrollArea()
+        self.message_scroll.setWidgetResizable(True)
+        self.message_scroll.setWidget(self.message_container)
+
+        self.composer = ChatComposer()
+        self.composer.setPlaceholderText("Message Zara…")
+        self.composer.setMaximumHeight(150)
+        self.send_button = QPushButton("Send")
+        self.stop_button = QPushButton("Stop")
+        self.stop_button.setEnabled(False)
+
+        composer_buttons = QVBoxLayout()
+        composer_buttons.addWidget(self.send_button)
+        composer_buttons.addWidget(self.stop_button)
+        composer_buttons.addStretch(1)
+
+        composer_row = QHBoxLayout()
+        composer_row.addWidget(self.composer, 1)
+        composer_row.addLayout(composer_buttons)
+
+        conversation = QWidget()
+        conversation_layout = QVBoxLayout(conversation)
+        conversation_layout.addLayout(header_top)
+        conversation_layout.addLayout(runtime_row)
+        conversation_layout.addWidget(self.runtime_detail_label)
+        conversation_layout.addWidget(self.command_error_label)
+        conversation_layout.addWidget(self.message_scroll, 1)
+        conversation_layout.addLayout(composer_row)
+
+        splitter = QSplitter()
+        splitter.addWidget(sidebar)
+        splitter.addWidget(conversation)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([220, 760])
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(splitter)
+
+        self.search_edit.textChanged.connect(self.refresh_history)
+        self.history_list.itemActivated.connect(self._activate_history_item)
+        self.history_list.currentItemChanged.connect(self._history_selection_changed)
+        self.new_chat_button.clicked.connect(self.new_chat)
+        self.rename_button.clicked.connect(lambda _checked=False: self.rename_current())
+        self.composer.submit_requested.connect(self.submit_current_text)
+        self.send_button.clicked.connect(self.submit_current_text)
+        self.stop_button.clicked.connect(self.cancel_active_turn)
+        self.restart_button.clicked.connect(self.restart_requested.emit)
+        self.diagnostics_button.clicked.connect(self.diagnostics_requested.emit)
+
+        self.bridge.runtime_event.connect(self._on_runtime_envelope)
+        self.bridge.command_completed.connect(self._on_command_completed)
+        self.bridge.command_failed.connect(self._on_command_failed)
+
+        self.set_status(INITIAL_STATUS)
+        self._open_initial_conversation()
+
+    @property
+    def status(self) -> DesktopStatus:
+        return self._status
+
+    @property
+    def current_conversation_id(self) -> str:
+        assert self._current_conversation_id is not None
+        return self._current_conversation_id
+
+    @property
+    def message_widgets(self) -> dict[str, MessageWidget]:
+        return dict(self._message_widgets)
+
+    def set_status(self, status: DesktopStatus) -> None:
+        self._status = status
+        self.runtime_status_label.setText(status.state.value.replace("-", " ").title())
+        self.runtime_detail_label.setText(status.detail or "Zara is ready.")
+        self.restart_button.setEnabled(status.state.value != "starting")
+
+    def show_raised(self) -> None:
+        self.show()
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self.composer.setFocus()
+
+    def toggle_visibility(self) -> None:
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show_raised()
+
+    def prepare_for_quit(self) -> None:
+        self._allow_close = True
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
+        if self._allow_close:
+            event.accept()
+            return
+        self.hide()
+        event.ignore()
+
+    def new_chat(self) -> None:
+        state = self.conversations.create_conversation()
+        self.load_conversation(state.conversation.id)
+        self.refresh_history()
+        self.composer.setFocus()
+
+    def load_conversation(self, conversation_id: str) -> None:
+        state = self.conversations.get_state(conversation_id)
+        self._current_conversation_id = conversation_id
+        self.title_label.setText(state.conversation.title)
+        self._update_provider_label()
+        self.command_error_label.hide()
+        self._render_current()
+        self._sync_controls()
+        self._select_history_id(conversation_id)
+
+    def rename_current(self, title: Optional[str] = None) -> None:
+        if title is None:
+            state = self.conversations.get_state(self.current_conversation_id)
+            title, accepted = QInputDialog.getText(
+                self,
+                "Rename chat",
+                "Title",
+                text=state.conversation.title,
+            )
+            if not accepted:
+                return
+        try:
+            update = self.conversations.rename_conversation(self.current_conversation_id, title)
+        except ValueError:
+            return
+        self._render_update(update)
+        self.refresh_history()
+
+    def refresh_history(self, query: Optional[str] = None) -> None:
+        if query is None:
+            query = self.search_edit.text()
+        records = self.conversations.list_conversations(query)
+        current_id = self._current_conversation_id
+        self.history_list.blockSignals(True)
+        self.history_list.clear()
+        for record in records:
+            item = QListWidgetItem(record.title)
+            item.setData(Qt.ItemDataRole.UserRole, record.id)
+            self.history_list.addItem(item)
+            if record.id == current_id:
+                self.history_list.setCurrentItem(item)
+        self.history_list.blockSignals(False)
+
+    def submit_current_text(self) -> None:
+        text = self.composer.toPlainText().strip()
+        if not text:
+            return
+        state = self.conversations.get_state(self.current_conversation_id)
+        if state.active_turn_id or self.conversations.has_pending_request(self.current_conversation_id):
+            return
+
+        command = SubmitTurn(text=text, conversation_id=self.current_conversation_id)
+        _, update = self.conversations.add_user_message(
+            self.current_conversation_id,
+            text,
+            request_id=command.request_id,
+        )
+        self.composer.clear()
+        self.command_error_label.hide()
+        self._render_update(update)
+        self._sync_controls()
+        self.bridge.submit(command)
+
+    def cancel_active_turn(self) -> None:
+        state = self.conversations.get_state(self.current_conversation_id)
+        if not state.active_turn_id or self._cancel_request_id is not None:
+            return
+        command = CancelTurn(turn_id=state.active_turn_id)
+        self._cancel_request_id = command.request_id
+        self.stop_button.setEnabled(False)
+        self.bridge.submit(command)
+
+    def _open_initial_conversation(self) -> None:
+        history = self.conversations.list_conversations(limit=1)
+        if history:
+            self.load_conversation(history[0].id)
+        else:
+            state = self.conversations.create_conversation()
+            self.load_conversation(state.conversation.id)
+        self.refresh_history()
+
+    def _activate_history_item(self, item: QListWidgetItem) -> None:
+        conversation_id = item.data(Qt.ItemDataRole.UserRole)
+        if conversation_id:
+            self.load_conversation(str(conversation_id))
+
+    def _history_selection_changed(
+        self,
+        current: Optional[QListWidgetItem],
+        _previous: Optional[QListWidgetItem],
+    ) -> None:
+        if current is None:
+            return
+        conversation_id = current.data(Qt.ItemDataRole.UserRole)
+        if conversation_id and str(conversation_id) != self._current_conversation_id:
+            self.load_conversation(str(conversation_id))
+
+    def _on_runtime_envelope(self, envelope) -> None:
+        event = getattr(envelope, "event", None)
+        if event is None:
+            return
+        update = self.conversations.apply_event(event)
+        if update is not None and update.conversation_id == self._current_conversation_id:
+            self._render_update(update)
+        self._sync_controls()
+
+    def _on_command_completed(self, receipt) -> None:
+        if not isinstance(receipt, CommandReceipt):
+            return
+        if receipt.request_id == self._cancel_request_id:
+            self._cancel_request_id = None
+        update = self.conversations.bind_receipt(receipt)
+        if update is not None and update.conversation_id == self._current_conversation_id:
+            self._render_update(update)
+        self._sync_controls()
+
+    def _on_command_failed(self, request_id: str, message: str) -> None:
+        if request_id == self._cancel_request_id:
+            self._cancel_request_id = None
+            self.command_error_label.setText(message or "Cancellation failed")
+            self.command_error_label.show()
+            self._sync_controls()
+            return
+        update = self.conversations.mark_command_failed(request_id, message)
+        if update is not None and update.conversation_id == self._current_conversation_id:
+            self.command_error_label.setText(message or "Message could not be sent")
+            self.command_error_label.show()
+            self._render_update(update)
+        self._sync_controls()
+
+    def _render_update(self, update: ConversationUpdate) -> None:
+        if update.conversation_id != self._current_conversation_id:
+            return
+        state = self.conversations.get_state(update.conversation_id)
+        if update.full_reload:
+            self._render_current()
+        else:
+            for message_id in update.message_ids:
+                message = state.message_by_id(message_id)
+                if message is None:
+                    continue
+                widget = self._message_widgets.get(message_id)
+                if widget is None:
+                    widget = MessageWidget(message)
+                    self._message_widgets[message_id] = widget
+                    self.message_layout.addWidget(widget)
+                else:
+                    widget.set_message(message)
+        if update.metadata_changed:
+            self.title_label.setText(state.conversation.title)
+            self._update_provider_label()
+        self._scroll_to_bottom()
+
+    def _render_current(self) -> None:
+        while self.message_layout.count():
+            item = self.message_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._message_widgets.clear()
+        state = self.conversations.get_state(self.current_conversation_id)
+        for message in state.messages:
+            widget = MessageWidget(message)
+            self._message_widgets[message.id] = widget
+            self.message_layout.addWidget(widget)
+        self.title_label.setText(state.conversation.title)
+        self._update_provider_label()
+        self._scroll_to_bottom()
+
+    def _update_provider_label(self) -> None:
+        if self._current_conversation_id is None:
+            self.provider_label.setText("Provider: runtime default")
+            return
+        state = self.conversations.get_state(self.current_conversation_id)
+        provider = state.provider or "runtime default"
+        suffix = f" / {state.model}" if state.model else ""
+        self.provider_label.setText(f"Provider: {provider}{suffix}")
+
+    def _sync_controls(self) -> None:
+        if self._current_conversation_id is None:
+            self.send_button.setEnabled(False)
+            self.stop_button.setEnabled(False)
+            return
+        state = self.conversations.get_state(self.current_conversation_id)
+        pending = self.conversations.has_pending_request(self.current_conversation_id)
+        active = bool(state.active_turn_id)
+        self.send_button.setEnabled(not pending and not active)
+        self.stop_button.setEnabled(active and self._cancel_request_id is None)
+
+    def _select_history_id(self, conversation_id: str) -> None:
+        for index in range(self.history_list.count()):
+            item = self.history_list.item(index)
+            if str(item.data(Qt.ItemDataRole.UserRole)) == conversation_id:
+                self.history_list.blockSignals(True)
+                self.history_list.setCurrentItem(item)
+                self.history_list.blockSignals(False)
+                return
+
+    def _scroll_to_bottom(self) -> None:
+        QTimer.singleShot(
+            0,
+            lambda: self.message_scroll.verticalScrollBar().setValue(
+                self.message_scroll.verticalScrollBar().maximum()
+            ),
+        )
+
+
+__all__ = ["FullChatWindow"]

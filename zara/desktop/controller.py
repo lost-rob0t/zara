@@ -8,6 +8,7 @@ from typing import Callable, Optional
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
+from zara.desktop.conversation import ConversationService, ConversationStore
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.state import (
     DesktopRuntimeState,
@@ -16,7 +17,7 @@ from zara.desktop.state import (
     reduce_runtime_event,
 )
 from zara.desktop.tray import ZaraTray
-from zara.desktop.windows import DesktopStatusWindow
+from zara.desktop.windows import FullChatWindow
 from zara.runtime.commands import RestartRuntime, ShutdownRuntime
 from zara.runtime.host import RuntimeHost
 
@@ -33,14 +34,24 @@ class DesktopController(QObject):
         bridge: QtRuntimeBridge,
         *,
         tray_factory: Callable[[], ZaraTray] = ZaraTray,
-        window_factory: Callable[[], DesktopStatusWindow] = DesktopStatusWindow,
+        window_factory: Optional[Callable[[], object]] = None,
+        conversation_service: Optional[ConversationService] = None,
     ) -> None:
         super().__init__(app)
         self.app = app
         self.host = host
         self.bridge = bridge
         self.tray = tray_factory()
-        self.window = window_factory()
+
+        if window_factory is None:
+            self.conversation_service = conversation_service or ConversationService(ConversationStore())
+            self.window = FullChatWindow(self.bridge, self.conversation_service)
+        else:
+            # Tests/embedders can still provide a shell-compatible window
+            # without causing desktop conversation storage side effects.
+            self.conversation_service = conversation_service
+            self.window = window_factory()
+
         self.status = INITIAL_STATUS
 
         self._started = False
