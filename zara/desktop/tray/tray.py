@@ -12,14 +12,11 @@ from zara.desktop.state import DesktopRuntimeState, DesktopStatus
 
 
 class ZaraTray(QSystemTrayIcon):
-    """Small capability-derived tray for the desktop shell.
-
-    The tray deliberately exposes only actions implemented by the current P0
-    shell. Voice, chat history, Pets, and other future capabilities are added
-    by their own issues instead of shipping dead menu entries.
-    """
+    """Capability-derived canonical tray for the native desktop shell."""
 
     toggle_requested = Signal()
+    quick_requested = Signal()
+    full_chat_requested = Signal()
     restart_requested = Signal()
     diagnostics_requested = Signal()
     quit_requested = Signal()
@@ -40,9 +37,13 @@ class ZaraTray(QSystemTrayIcon):
         self.setToolTip("Zara — starting")
 
         menu = QMenu()
-        self.open_action = QAction("Open Zara", menu)
-        self.open_action.triggered.connect(self.toggle_requested.emit)
+        self.open_action = QAction("Ask Zara", menu)
+        self.open_action.triggered.connect(self._request_quick)
         menu.addAction(self.open_action)
+
+        self.full_chat_action = QAction("Open Full Chat", menu)
+        self.full_chat_action.triggered.connect(self.full_chat_requested.emit)
+        menu.addAction(self.full_chat_action)
         menu.addSeparator()
 
         self.status_action = QAction("Status: starting", menu)
@@ -82,9 +83,6 @@ class ZaraTray(QSystemTrayIcon):
         self.status_action.setText(f"Status: {state_text}")
         detail = status.detail.strip()
         self.setToolTip(f"Zara — {detail or state_text}")
-
-        # Restart is useful for runtime failures/disconnects, but not while an
-        # earlier restart/start operation is already in progress.
         self.restart_action.setEnabled(status.state is not DesktopRuntimeState.STARTING)
 
     def set_restarting(self) -> None:
@@ -95,6 +93,10 @@ class ZaraTray(QSystemTrayIcon):
             )
         )
 
+    def _request_quick(self) -> None:
+        self.quick_requested.emit()
+        self.toggle_requested.emit()
+
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason is QSystemTrayIcon.ActivationReason.Trigger:
-            self.toggle_requested.emit()
+            self._request_quick()
