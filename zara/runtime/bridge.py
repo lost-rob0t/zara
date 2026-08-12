@@ -137,6 +137,9 @@ class RuntimeEventBus:
         if not isinstance(event, events.RuntimeEvent):
             raise TypeError("runtime event bus accepts RuntimeEvent instances only")
 
+        # Sequence assignment and queue delivery share one critical section.
+        # Otherwise concurrent publishers could allocate sequence 1/2 and then
+        # enqueue them in the reverse order after the lock was released.
         with self._lock:
             self._sequence += 1
             envelope = EventEnvelope(
@@ -146,12 +149,12 @@ class RuntimeEventBus:
             )
             subscriptions = tuple(self._subscriptions.values())
             sinks = tuple(self._legacy_sinks.items())
-
-        for subscription in subscriptions:
-            subscription._put(envelope)
+            for subscription in subscriptions:
+                subscription._put(envelope)
 
         # Compatibility sinks must be tiny adapters only. A bad adapter is
-        # never allowed to fail the assistant turn.
+        # never allowed to fail the assistant turn. Execute them outside the
+        # bus lock so slow legacy transports cannot block subscription changes.
         for name, sink in sinks:
             try:
                 sink(event)
