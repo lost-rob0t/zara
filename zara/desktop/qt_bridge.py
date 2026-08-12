@@ -64,6 +64,8 @@ class QtRuntimeBridge(QObject):
         request_id = command.request_id
 
         def completed(done: concurrent.futures.Future) -> None:
+            if self._closed:
+                return
             try:
                 receipt = done.result()
             except Exception as error:
