@@ -32,6 +32,7 @@ class FullChatWindow(QWidget):
 
     restart_requested = Signal()
     diagnostics_requested = Signal()
+    conversation_changed = Signal(object)
 
     def __init__(
         self,
@@ -209,6 +210,13 @@ class FullChatWindow(QWidget):
         state = self.conversations.create_conversation()
         self.load_conversation(state.conversation.id)
         self.refresh_history()
+        self.conversation_changed.emit(
+            ConversationUpdate(
+                conversation_id=state.conversation.id,
+                metadata_changed=True,
+                full_reload=True,
+            )
+        )
         self.composer.setFocus()
 
     def open_conversation(self, conversation_id: str) -> None:
@@ -243,6 +251,7 @@ class FullChatWindow(QWidget):
             return
         self._render_update(update)
         self.refresh_history()
+        self.conversation_changed.emit(update)
 
     def refresh_history(self, query: Optional[str] = None) -> None:
         if query is None:
@@ -277,6 +286,7 @@ class FullChatWindow(QWidget):
         self.command_error_label.hide()
         self._render_update(update)
         self._sync_controls()
+        self.conversation_changed.emit(update)
         self.bridge.submit(command)
 
     def cancel_active_turn(self) -> None:
