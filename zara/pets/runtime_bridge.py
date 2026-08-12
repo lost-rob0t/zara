@@ -1,12 +1,9 @@
-"""Runtime event bridge — emits domain events to the pet.
+"""Zarathushtra Pets compatibility transport for generic runtime events.
 
-Two paths:
-1. In-process: if a PetStateActor is registered (the overlay and the
-   runtime share a process), events are told directly to the actor.
-2. Cross-process: events are also published via ZMQ PUB/SUB so a
-   separately-running ``zara --pets`` overlay receives them.
-
-When neither is active, calls are no-ops with negligible overhead.
+The canonical event definition now lives in :mod:`zara.runtime.events`.  This
+module keeps the existing in-process PetStateActor and cross-process ZMQ
+transport working while legacy runtime call sites migrate to
+``zara.runtime.bridge``.
 """
 
 from __future__ import annotations
@@ -15,8 +12,11 @@ import logging
 import weakref
 from typing import Optional
 
-from . import events
+from zara.runtime import bridge as runtime_bridge
+from zara.runtime import events as runtime_events
+
 from .ipc import PetPublisher
+from .runtime_adapter import adapt_runtime_event
 
 logger = logging.getLogger(__name__)
 
@@ -51,102 +51,92 @@ def _publish(event_name: str, **kwargs) -> None:
         pub.publish(event_name, **kwargs)
 
 
-def _tell_and_publish(event: events.PetEvent, event_name: str, **kwargs) -> None:
-    # In-process actor (shared process case).
+def _consume_runtime_event(event: runtime_events.RuntimeEvent) -> None:
+    dispatch = adapt_runtime_event(event)
+    if dispatch is None:
+        return
+
     ref = _actor_ref() if _actor_ref is not None else None
     if ref is not None:
         try:
-            ref.tell(event)
+            ref.tell(dispatch.event)
         except Exception:
-            logger.debug("[PetBridge] tell failed for %r", event, exc_info=True)
-    # Cross-process (ZMQ) — always also publish so a separate overlay picks up.
-    logger.debug("[PetBridge] publishing %s %s", event_name, kwargs)
-    _publish(event_name, **kwargs)
+            logger.debug("[PetBridge] tell failed for %r", dispatch.event, exc_info=True)
+
+    logger.debug("[PetBridge] publishing %s %s", dispatch.event_name, dispatch.payload)
+    _publish(dispatch.event_name, **dispatch.payload)
+
+
+# Named registration is idempotent: module reloads replace the same adapter
+# instead of accumulating duplicate deliveries.
+runtime_bridge.register_legacy_sink("zarathushtra-pets", _consume_runtime_event)
+
+
+# Legacy compatibility publishers -----------------------------------------
+#
+# Keep the old call surface while wake.py and third-party code migrate. Every
+# call now enters the canonical generic event stream first.
 
 
 def model_started(label: Optional[str] = None) -> None:
-    _tell_and_publish(events.ModelStarted(label=label), "ModelStarted", label=label)
+    runtime_bridge.model_started(label=label)
 
 
 def model_streaming(label: Optional[str] = None) -> None:
-    _tell_and_publish(events.ModelStreaming(label=label), "ModelStreaming", label=label)
+    runtime_bridge.model_streaming(label=label)
 
 
 def model_completed(success: bool = True, label: Optional[str] = None) -> None:
-    _tell_and_publish(
-        events.ModelCompleted(success=success, label=label),
-        "ModelCompleted", success=success, label=label,
-    )
+    runtime_bridge.model_completed(success=success, label=label)
 
 
 def model_failed(reason: str = "", label: Optional[str] = None) -> None:
-    _tell_and_publish(
-        events.ModelFailed(reason=reason, label=label),
-        "ModelFailed", reason=reason, label=label,
-    )
+    runtime_bridge.model_failed(reason=reason, label=label)
 
 
 def tool_started(label: Optional[str] = None) -> None:
-    _tell_and_publish(events.ToolStarted(label=label), "ToolStarted", label=label)
+    runtime_bridge.tool_started(label=label)
 
 
 def tool_completed(success: bool = True, label: Optional[str] = None) -> None:
-    _tell_and_publish(
-        events.ToolCompleted(success=success, label=label),
-        "ToolCompleted", success=success, label=label,
-    )
+    runtime_bridge.tool_completed(success=success, label=label)
 
 
 def agent_started(label: Optional[str] = None) -> None:
-    _tell_and_publish(events.AgentStarted(label=label), "AgentStarted", label=label)
+    runtime_bridge.agent_started(label=label)
 
 
 def agent_completed(success: bool = True, label: Optional[str] = None) -> None:
-    _tell_and_publish(
-        events.AgentCompleted(success=success, label=label),
-        "AgentCompleted", success=success, label=label,
-    )
+    runtime_bridge.agent_completed(success=success, label=label)
 
 
 def user_input_required(kind: str = "approval", label: Optional[str] = None) -> None:
-    _tell_and_publish(
-        events.UserInputRequired(kind=kind, label=label),
-        "UserInputRequired", kind=kind, label=label,
-    )
+    runtime_bridge.user_input_required(kind=kind, label=label)
 
 
 def user_responded(label: Optional[str] = None) -> None:
-    _tell_and_publish(events.UserResponded(label=label), "UserResponded", label=label)
+    runtime_bridge.user_responded(label=label)
 
 
 def output_ready(label: Optional[str] = None) -> None:
-    _tell_and_publish(events.OutputReady(label=label), "OutputReady", label=label)
+    runtime_bridge.output_ready(label=label)
 
 
 def response_text(text: str = "", label: Optional[str] = None) -> None:
-    """Send Zara's response text to the pet for speech bubble display."""
-    truncated = len(text) > 280
-    payload_text = text[:280] if truncated else text
-    _tell_and_publish(
-        events.ResponseText(text=payload_text, truncated=truncated, label=label),
-        "ResponseText", text=payload_text, truncated=truncated, label=label,
-    )
+    runtime_bridge.response_text(text=text, label=label)
 
 
 def output_seen(label: Optional[str] = None) -> None:
-    _tell_and_publish(events.OutputSeen(label=label), "OutputSeen", label=label)
+    runtime_bridge.output_seen(label=label)
 
 
 def task_cancelled(label: Optional[str] = None) -> None:
-    _tell_and_publish(events.TaskCancelled(label=label), "TaskCancelled", label=label)
+    runtime_bridge.task_cancelled(label=label)
 
 
 def runtime_idle(label: Optional[str] = None) -> None:
-    _tell_and_publish(events.RuntimeIdle(label=label), "RuntimeIdle", label=label)
+    runtime_bridge.runtime_idle(label=label)
 
 
 def provider_unavailable(reason: str = "", label: Optional[str] = None) -> None:
-    _tell_and_publish(
-        events.ProviderUnavailable(reason=reason, label=label),
-        "ProviderUnavailable", reason=reason, label=label,
-    )
+    runtime_bridge.provider_unavailable(reason=reason, label=label)
