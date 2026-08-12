@@ -18,7 +18,7 @@ from zara.desktop.state import (
 )
 from zara.desktop.tray import ZaraTray
 from zara.desktop.windows import FullChatWindow, QuickCopilotWindow
-from zara.runtime.commands import RestartRuntime, ShutdownRuntime
+from zara.runtime.commands import CommandReceipt, RestartRuntime, ShutdownRuntime
 from zara.runtime.host import RuntimeHost
 
 
@@ -46,7 +46,11 @@ class DesktopController(QObject):
 
         if window_factory is None:
             self.conversation_service = conversation_service or ConversationService(ConversationStore())
-            self.window = FullChatWindow(self.bridge, self.conversation_service)
+            self.window = FullChatWindow(
+                self.bridge,
+                self.conversation_service,
+                manage_runtime_events=False,
+            )
             self.quick_window = QuickCopilotWindow(
                 self.bridge,
                 self.conversation_service,
@@ -115,8 +119,8 @@ class DesktopController(QObject):
     def open_full_chat(self, conversation_id: Optional[str] = None) -> None:
         """Show Full Chat, optionally selecting one durable conversation."""
         if conversation_id:
-            self.window.load_conversation(conversation_id)
-            self.window.refresh_history()
+            self.window.open_conversation(conversation_id)
+            return
         self.window.show_raised()
 
     def expand_quick_to_full_chat(self, conversation_id: Optional[str] = None) -> None:
@@ -161,12 +165,21 @@ class DesktopController(QObject):
         if event is None:
             return
         self._set_status(reduce_runtime_event(self.status, event))
+        update = None
+        if self.conversation_service is not None:
+            update = self.conversation_service.apply_event(event)
+            self.window.apply_conversation_update(update)
         if self.quick_window is not None:
             self.quick_window.sync_from_shared_state(event)
 
     def _on_command_completed(self, receipt) -> None:
+        update = None
+        if self.conversation_service is not None and isinstance(receipt, CommandReceipt):
+            update = self.conversation_service.bind_receipt(receipt)
+            self.window.handle_command_completed(receipt, update)
         if self.quick_window is not None:
             self.quick_window.handle_command_completed(receipt)
+
         request_id = getattr(receipt, "request_id", None)
         if request_id == self._quit_request_id:
             self._quit_request_id = None
@@ -176,8 +189,13 @@ class DesktopController(QObject):
             self._restart_request_id = None
 
     def _on_command_failed(self, request_id: str, message: str) -> None:
+        update = None
+        if self.conversation_service is not None:
+            update = self.conversation_service.mark_command_failed(request_id, message)
+            self.window.handle_command_failed(request_id, message, update)
         if self.quick_window is not None:
             self.quick_window.handle_command_failed(request_id, message)
+
         if request_id == self._quit_request_id:
             self._quit_request_id = None
             self._finalize_quit()
