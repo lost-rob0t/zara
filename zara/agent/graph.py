@@ -125,6 +125,13 @@ def create_agent_node(llm_client, tool_registry):
     async def agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         import time
 
+        # Emit a pet model.started event so the overlay reflects LLM work.
+        try:
+            from zara.pets import runtime_bridge
+            runtime_bridge.model_started(label="llm")
+        except Exception:
+            pass
+
         msgs = state.get("messages", [])
         assert isinstance(msgs, list), "state['messages'] must be a list"
 
@@ -175,6 +182,12 @@ def create_agent_node(llm_client, tool_registry):
 
         # With add_messages reducer, this APPENDS.
         step_count = int(state.get("step_count", 0)) + 1
+        # Emit pet completion event.
+        try:
+            from zara.pets import runtime_bridge
+            runtime_bridge.model_completed(success=True, label="llm")
+        except Exception:
+            pass
         return {"messages": [response], "step_count": step_count}
 
     return agent_node

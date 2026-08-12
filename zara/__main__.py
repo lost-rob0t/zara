@@ -52,6 +52,16 @@ def main():
         action="store_true",
         help="Direct conversation mode with agent"
     )
+    mode_group.add_argument(
+        "--pets",
+        action="store_true",
+        help="Launch the desktop pet overlay"
+    )
+    mode_group.add_argument(
+        "--pets-settings",
+        action="store_true",
+        help="Open the Pets settings dialog"
+    )
 
     # Text command (default mode if no flags)
     parser.add_argument(
@@ -133,6 +143,14 @@ def main():
         # Direct conversation mode with agent
         from .agent_cli import main as agent_main
         sys.exit(agent_main())
+
+    elif args.pets:
+        from .pets.cli import main_overlay
+        sys.exit(main_overlay())
+
+    elif args.pets_settings:
+        from .pets.cli import main_settings
+        sys.exit(main_settings())
 
     elif args.command:
         # Text command mode (default)

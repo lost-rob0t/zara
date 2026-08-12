@@ -77,9 +77,11 @@
             p.sentence-transformers
             # Actor framework for real-time turn coordinator
             p.pykka
-            # Streaming VAD (Silero VAD via GGML C extension)
-            p.pysilero-vad
-            # Testing
+# Streaming VAD (Silero VAD via GGML C extension)
+          p.pysilero-vad
+          # Desktop pet overlay (PySide6/Qt6)
+          p.pyside6
+          # Testing
             p.pytest
             p.pytest-asyncio
             # Packaging metadata sanity checks

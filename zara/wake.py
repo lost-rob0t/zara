@@ -846,6 +846,13 @@ class WakeWordListener:
             self.agent_manager.conversation_manager.enter_conversation()
             self.agent_manager.conversation_manager.conversation_history.clear()
 
+        # Emit pet agent.started so the overlay reflects the conversation.
+        try:
+            from .pets import runtime_bridge
+            runtime_bridge.agent_started(label="agent")
+        except Exception:
+            pass
+
         self.log("Using agent after Prolog fallback")
         self.log(f"Conversation history has {len(self.agent_manager.conversation_manager.conversation_history)} messages")
         self.log(f"Voice input to LLM (fallback): {command_text!r}")
@@ -865,6 +872,12 @@ class WakeWordListener:
         self.memory.add_message(self.session_id, "user", command_text)
         if response_text:
             self.memory.add_message(self.session_id, "assistant", response_text)
+        # Emit pet completion so the overlay shows ready.
+        try:
+            from .pets import runtime_bridge
+            runtime_bridge.agent_completed(success=True, label="agent")
+        except Exception:
+            pass
         return (True, response_text)
 
     async def query_llm_async(self, query_text):

@@ -1,0 +1,40 @@
+#+TITLE: Zarathushtra Pets
+#+OPTIONS: toc:nil
+
+* Overview
+
+Zarathushtra Pets are optional animated desktop companions that reflect
+the live state of the Zara runtime. They are built natively in Python
+with PySide6/Qt6 — no Electron or Node.js required.
+
+* Enabling
+
+Run =zara --pets-settings= to open the settings dialog, or =zara --pets=
+to launch the overlay directly.
+
+* States
+
+| State        | Priority | Meaning                                  |
+|--------------+----------+------------------------------------------|
+| needs-input  |        4 | Waiting for approval/confirmation        |
+| blocked      |        3 | Fatal failure / provider unavailable     |
+| ready        |        2 | Finished with unseen output               |
+| running      |        1 | Model/tool/agent/indexing/search active   |
+| idle         |        0 | No active operation                       |
+
+* Import
+
+- *Import Pet...* — import a Zarathushtra-native =pet.json= package.
+- *Import ChatGPT Pet...* — import a ChatGPT V1 (1536×1872) or V2
+  (1536×2288 with =pet.json=) sprite.
+- *Import from ChatGPT...* — discover and import pets from local
+  ChatGPT/Codex application data (read-only).
+
+* Storage
+
+- Pets: =$XDG_DATA_HOME/zarathushtra/pets/<pet-id>/=
+- Runtime state: =$XDG_CONFIG_HOME/zarathushtra/pet-state.json=
+
+* See also
+
+- [[file:../docs/pets.md][Full Pets documentation]]
