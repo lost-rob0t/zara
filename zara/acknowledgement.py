@@ -5,16 +5,15 @@ After wake/turn acceptance, plays a short acknowledgement such as
 continue.
 
 Production flow:
-1. On startup, check ``$XDG_CACHE_HOME/zarathushtra/`` for previously
-   cached clips keyed by ``provider-voice-phrase``.
-2. If not cached, generate via the configured TTS provider (edge-tts,
-   elevenlabs, qwen3) and write to the XDG cache directory so subsequent
-   restarts are instant.
+1. On startup, load clips from ``$XDG_CACHE_HOME/zarathushtra/`` keyed by
+   ``provider-voice-phrase``.
+2. If none are cached, generate one clip synchronously so acknowledgement
+   stays available. Warm and cache the remaining variants in the background.
 3. If TTS generation fails, fall back to the bundled fixture at
    ``assets/sounds/acknowledgement.wav``.
 
-Multiple phrase variants are generated at startup and rotated
-round-robin across turns so the acknowledgement does not feel repetitive.
+Multiple phrase variants rotate round-robin across turns so the
+acknowledgement does not feel repetitive.
 
 The acknowledgement is:
 - **Immediate**: starts before STT, Prolog, or LLM work.
@@ -47,11 +46,23 @@ logger = logging.getLogger(__name__)
 DEFAULT_ACK_PHRASE = "Okay"
 DEFAULT_ACK_PHRASES = (
     "Okay",
-    "Let me think about that",
-    "One sec",
-    "Got it",
     "Sure",
-    "Hmm, let me see",
+    "All right",
+    "Got it",
+    "One sec",
+    "One moment",
+    "Just a moment",
+    "Give me a second",
+    "Let me see",
+    "Let me check",
+    "Let me think",
+    "Checking now",
+    "Thinking",
+    "Hmm, one sec",
+    "Right, let me see",
+    "I hear you",
+    "On it",
+    "Let's see",
 )
 
 # Fallback sample rate if device detection fails. 44100 Hz is universally
@@ -150,6 +161,8 @@ class AcknowledgementConfig:
         """Return the phrase variants to generate, in stable order."""
         if self.phrases:
             return tuple(dict.fromkeys(self.phrases))
+        if self.phrase == DEFAULT_ACK_PHRASE:
+            return DEFAULT_ACK_PHRASES
         return (self.phrase,)
 
 
@@ -176,9 +189,9 @@ class _VariantClip:
 class AcknowledgementPlayer:
     """Plays a pre-generated acknowledgement audio clip without blocking.
 
-    On ``initialize()``, the player generates (or loads from cache) one
-    clip per configured phrase variant. Variants are rotated
-    round-robin across turns.
+    On ``initialize()``, the player loads every cached phrase and ensures at
+    least one clip is available. Missing variants warm in the background and
+    join the round-robin rotation as they become ready.
 
     1. Checks the XDG cache for a previously generated clip matching the
        configured provider+voice+phrase.
@@ -202,9 +215,11 @@ class AcknowledgementPlayer:
         self._clips: list[_VariantClip] = []
         self._played_turns: set[str] = set()
         self._playback_thread: Optional[threading.Thread] = None
+        self._warmup_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
         self._variant_cursor = 0
+        self._pending_variants = 0
         self._is_playing = False
         self._source: str = ""
 
@@ -221,8 +236,17 @@ class AcknowledgementPlayer:
             return
 
         phrases = self.config.effective_phrases()
+        missing = []
         for phrase in phrases:
-            clip = self._load_or_generate(phrase)
+            clip = self._load_cached(phrase)
+            if clip is not None:
+                self._clips.append(clip)
+            else:
+                missing.append(phrase)
+
+        if not self._clips and missing:
+            phrase = missing.pop(0)
+            clip = self._generate_variant(phrase)
             if clip is not None:
                 self._clips.append(clip)
 
@@ -246,11 +270,29 @@ class AcknowledgementPlayer:
         else:
             logger.warning("[Ack] no clips loaded; acknowledgement will be silent")
 
-    def _load_or_generate(self, phrase: str) -> Optional[_VariantClip]:
+        if missing:
+            self._pending_variants = len(missing)
+            self._warmup_thread = threading.Thread(
+                target=self._warm_variants,
+                args=(tuple(missing),),
+                name="ack-warmup",
+                daemon=True,
+            )
+            self._warmup_thread.start()
+
+    def _warm_variants(self, phrases: tuple[str, ...]) -> None:
+        for phrase in phrases:
+            clip = self._generate_variant(phrase)
+            if clip is not None:
+                with self._lock:
+                    if all(existing.phrase != phrase for existing in self._clips):
+                        self._clips.append(clip)
+            with self._lock:
+                self._pending_variants -= 1
+
+    def _load_cached(self, phrase: str) -> Optional[_VariantClip]:
         target_rate = _detect_output_sample_rate()
-        cache = _cache_path(
-            self.config.provider, self.config.voice, phrase
-        )
+        cache = _cache_path(self.config.provider, self.config.voice, phrase)
         mp3_cache = cache.with_suffix(".mp3")
         if mp3_cache.exists():
             mp3_bytes = mp3_cache.read_bytes()
@@ -263,27 +305,23 @@ class AcknowledgementPlayer:
                     source="cache",
                     audio_format="mp3",
                 )
-        if cache.exists():
-            clip = self._load_wav(cache, phrase, source="cache")
-            if clip is not None:
-                if clip.sample_rate == target_rate:
-                    return clip
-                logger.info(
-                    "[Ack] cached clip for %r is %d Hz but device wants %d Hz; regenerating",
-                    phrase, clip.sample_rate, target_rate,
-                )
-                cache.unlink(missing_ok=True)
-
-        clip = self._generate_via_tts(phrase, cache, target_rate)
-        if clip is not None:
+        if not cache.exists():
+            return None
+        clip = self._load_wav(cache, phrase, source="cache")
+        if clip is not None and clip.sample_rate == target_rate:
             return clip
+        if clip is not None:
+            logger.info(
+                "[Ack] cached clip for %r is %d Hz but device wants %d Hz; regenerating",
+                phrase, clip.sample_rate, target_rate,
+            )
+            cache.unlink(missing_ok=True)
+        return None
 
-        fixture = (
-            Path(self.config.fixture_path)
-            if self.config.fixture_path
-            else DEFAULT_FIXTURE_PATH
-        )
-        return self._load_wav(fixture, phrase, source="fixture")
+    def _generate_variant(self, phrase: str) -> Optional[_VariantClip]:
+        target_rate = _detect_output_sample_rate()
+        cache = _cache_path(self.config.provider, self.config.voice, phrase)
+        return self._generate_via_tts(phrase, cache, target_rate)
 
     def _load_wav(
         self, path: Path, phrase: str, source: str
@@ -607,6 +645,14 @@ class AcknowledgementPlayer:
     @property
     def source(self) -> str:
         return self._source
+
+    @property
+    def variant_count(self) -> int:
+        return len(self._clips)
+
+    @property
+    def pending_variant_count(self) -> int:
+        return self._pending_variants
 
     def _next_clip(self) -> Optional[_VariantClip]:
         if not self._clips:

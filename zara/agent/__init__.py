@@ -81,7 +81,7 @@ class AgentManager:
 
         Questions, statements, chitchat, philosophy, explanations, and free-form chat are NOT commands. Answer directly in natural language. Do NOT call `query_prolog` for these. Do NOT call tools "just in case" — that adds latency and hijacks the conversation.
 
-        Only use `remember`/`recall`/`calculator`/file tools when the user explicitly asks for that capability.
+        Only use `remember`, `recall`, `memory_list`, `forget`, `calculator`, or file tools when the user explicitly asks for that capability. Only set `forget.all_memories=true` and `confirm=true` when the user clearly asked to forget everything.
 
         # Style
 
