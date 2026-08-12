@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from zara.desktop.chat_widgets import ChatComposer, MessageWidget
-from zara.desktop.conversation import ConversationService
+from zara.desktop.conversation import ConversationService, ConversationUpdate
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.state import DesktopStatus, INITIAL_STATUS
 from zara.runtime.commands import CancelTurn, SubmitTurn
@@ -93,6 +93,7 @@ class QuickCopilotWindow(QWidget):
     """Keyboard-first projection over the shared ConversationService."""
 
     expand_requested = Signal(str)
+    conversation_changed = Signal(object)
 
     def __init__(
         self,
@@ -215,6 +216,13 @@ class QuickCopilotWindow(QWidget):
     def new_chat(self) -> None:
         state = self.conversations.create_conversation()
         self.bind_conversation(state.conversation.id)
+        self.conversation_changed.emit(
+            ConversationUpdate(
+                conversation_id=state.conversation.id,
+                metadata_changed=True,
+                full_reload=True,
+            )
+        )
         self.composer.setFocus()
 
     def submit_current_text(self) -> None:
@@ -226,7 +234,7 @@ class QuickCopilotWindow(QWidget):
             return
 
         command = SubmitTurn(text=text, conversation_id=self.current_conversation_id)
-        self.conversations.add_user_message(
+        _, update = self.conversations.add_user_message(
             self.current_conversation_id,
             text,
             request_id=command.request_id,
@@ -235,6 +243,7 @@ class QuickCopilotWindow(QWidget):
         self.composer.clear()
         self.command_error_label.hide()
         self.sync_from_shared_state()
+        self.conversation_changed.emit(update)
         self.bridge.submit(command)
 
     def cancel_active_turn(self) -> None:
