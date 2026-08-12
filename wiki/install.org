@@ -173,6 +173,14 @@ Agent history validation preserves complete contiguous tool-result groups in
 the originating AI tool-call order. Orphaned, duplicate, unknown, and
 cross-turn tool results are discarded before provider serialization.
 
+Wake command routing first checks explicit command verbs. If speech recognition
+drops the verb from a one- or two-word app target, Zara checks the canonical
+Prolog =app_mapping/2= table and can recover, for example, =YouTube.= as
+=open youtube=. Unknown targets remain conversational and go to the LLM.
+Repeated wake phrases are stripped from longer active utterances. A standalone
+=Zara.= clears stale conversation context and immediately listens for the next
+command without sending the wake phrase to the LLM.
+
 Agent file tools are disabled by default with =tools.file_tools = false=. To
 enable them, set that value to =true= and configure =file_tools.readable_roots=,
 =file_tools.writable_roots=, and =file_tools.max_bytes=. Relative roots resolve

@@ -120,7 +120,8 @@ async def test_stop_phrase_exits_conversation_mode():
 
 
 @pytest.mark.asyncio
-async def test_wake_word_alone_exits_conversation():
+@pytest.mark.parametrize("transcript", ["zara", "Zara.", "hey Zara!", "Sarah?"])
+async def test_wake_word_alone_rearms_without_llm(transcript):
     listener = build_listener()
     listener.state = "ACTIVE"
     listener.prolog = MagicMock()
@@ -139,13 +140,17 @@ async def test_wake_word_alone_exits_conversation():
     enqueue(listener, chunk)
     listener._clock = FakeClock(0.0, 0.0, 2.0)
 
-    listener.transcribe_async = AsyncMock(return_value="zara")
+    listener.transcribe_async = AsyncMock(return_value=transcript)
     listener._play_acknowledgement = MagicMock()
+    listener.query_with_fallback_async = AsyncMock()
 
     await listener.active_mode_async()
 
     listener.agent_manager.exit_conversation.assert_called_once()
-    assert listener.state == "PASSIVE"
+    listener.query_with_fallback_async.assert_not_awaited()
+    listener._play_acknowledgement.assert_not_called()
+    listener.speak_async.assert_not_awaited()
+    assert listener.state == "ACTIVE"
 
 
 @pytest.mark.asyncio
@@ -179,6 +184,9 @@ async def test_wake_word_in_longer_utterance_does_not_exit():
     await listener.active_mode_async()
 
     listener.agent_manager.exit_conversation.assert_not_called()
+    listener.query_with_fallback_async.assert_awaited_once_with(
+        "what is the weather"
+    )
 
 
 @pytest.mark.asyncio

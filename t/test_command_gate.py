@@ -2,7 +2,7 @@
 
 import pytest
 
-from zara.command_gate import looks_like_command
+from zara.command_gate import looks_like_command, target_only_candidate
 
 
 @pytest.mark.parametrize(
@@ -122,3 +122,17 @@ def test_looks_like_command_case_insensitive():
     assert looks_like_command("OPEN FIREFOX") is True
     assert looks_like_command("Open Firefox") is True
     assert looks_like_command("oPeN fIrEfOx") is True
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("YouTube.", "youtube"),
+        ("Google Chrome", "google_chrome"),
+        ("open YouTube", None),
+        ("why YouTube is useful", None),
+        ("", None),
+    ],
+)
+def test_target_only_candidate(text, expected):
+    assert target_only_candidate(text) == expected

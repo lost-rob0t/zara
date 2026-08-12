@@ -83,6 +83,38 @@ def test_non_command_utterance_skips_prolog_entirely():
     )
 
 
+def test_known_target_only_utterance_recovers_missing_open_verb():
+    listener = build_listener(IntentResult("prolog", "open", ["youtube"]))
+    listener.in_conversation_mode.return_value = True
+    listener.prolog.get_app_mapping.return_value = "xdg-open https://youtube.com"
+    listener.prolog.execute_intent.return_value = True
+
+    used_agent, response = asyncio.run(
+        listener.query_with_fallback_async("YouTube.")
+    )
+
+    assert used_agent is False
+    assert "Executed" in response
+    listener.prolog.get_app_mapping.assert_called_once_with("youtube")
+    listener.prolog.resolve_intent.assert_called_once_with(
+        "open youtube", state="conversation"
+    )
+    listener.agent_manager.process_async.assert_not_awaited()
+
+
+def test_unknown_target_only_utterance_stays_conversational():
+    listener = build_listener(None)
+    listener.prolog.get_app_mapping.return_value = None
+
+    used_agent, response = asyncio.run(
+        listener.query_with_fallback_async("Nietzsche.")
+    )
+
+    assert (used_agent, response) == (True, "fallback")
+    listener.prolog.resolve_intent.assert_not_called()
+    listener.agent_manager.process_async.assert_awaited_once_with("Nietzsche.")
+
+
 def test_non_command_utterance_does_not_skip_prolog_for_command_shaped_input():
     listener = build_listener(IntentResult("prolog", "open", ["firefox"]))
     listener.prolog.execute_intent.return_value = True
