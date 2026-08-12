@@ -341,9 +341,6 @@ class WakeWordListener:
             return False
         words = text_lower.split()
         if len(words) <= 2:
-            for wake in WAKE_WORDS:
-                if text_lower == wake:
-                    return True
             for stop in ("disable", "end", "goodbye", "bye", "stop"):
                 if text_lower == stop:
                     return True
@@ -754,6 +751,24 @@ class WakeWordListener:
         # Try Prolog first
         self.log("Attempting Prolog resolution before agent fallback")
         loop = asyncio.get_event_loop()
+        if not command_gate.looks_like_command(command_text):
+            target = command_gate.target_only_candidate(command_text)
+            if target is not None:
+                try:
+                    mapping = await loop.run_in_executor(
+                        self.executor,
+                        self.prolog.get_app_mapping,
+                        target,
+                    )
+                except Exception as error:
+                    self.log(f"Target-only command lookup failed: {error}")
+                    mapping = None
+                if mapping is not None:
+                    recovered = f"open {target}"
+                    self.log(
+                        f"Recovered target-only command: {command_text!r} -> {recovered!r}"
+                    )
+                    command_text = recovered
         resolution_state = "conversation" if self.in_conversation_mode() else "passive"
         trace = getattr(self, "current_latency_trace", None)
 
@@ -1471,6 +1486,29 @@ class WakeWordListener:
                 self.transition_to("PASSIVE")
                 return
             text = await self.transcribe_async(chunk)
+
+        repeated_wake_command = self._wake_command(text or "")
+        if repeated_wake_command is not None:
+            if repeated_wake_command:
+                self.log(
+                    f"Repeated wake phrase stripped from active input: {text!r}"
+                )
+                text = repeated_wake_command
+            else:
+                self.log("Standalone wake phrase; clearing conversation context and listening")
+                if self.in_conversation_mode():
+                    if self.session_id is not None:
+                        summary = self.memory.summarise_session(
+                            self.session_id,
+                            source="wake",
+                        )
+                        if summary:
+                            self.log("Conversation summary stored")
+                    self.session_id = self.memory.start_session()
+                    if self.agent_manager is not None:
+                        self.agent_manager.exit_conversation()
+                self.current_latency_trace = None
+                return
 
         # Immediate acknowledgement: play pre-generated clip after speech
         # ends, but only once transcription confirms real speech (not noise).

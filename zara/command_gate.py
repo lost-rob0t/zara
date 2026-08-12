@@ -6,18 +6,17 @@ user utterance before falling back to the LLM. For conversational turns
 Prolog intents (e.g. ``ask``) hijack the conversation before the LLM had
 a chance to respond.
 
-This module exposes a tiny, dependency-free heuristic: a curated set of
-command trigger verbs. If the first content word of the user input is in
-this set, Prolog resolution is worthwhile. Otherwise the wake loop skips
-Prolog entirely and hands the turn to the LLM, which can still call the
-``query_prolog`` tool to execute commands when the user's intent is in
-fact a command.
+This module exposes dependency-free routing signals: a curated set of command
+trigger verbs and a conservative target-only candidate extractor. The wake
+loop can validate a short target against Prolog app mappings when speech
+recognition drops a leading verb, while longer conversational text still
+skips Prolog and reaches the LLM directly.
 """
 
 from __future__ import annotations
 
 import re
-from typing import FrozenSet
+from typing import FrozenSet, Optional
 
 
 # Verbs that signal a command-style utterance. Sourced from
@@ -115,3 +114,13 @@ def looks_like_command(text: str, look_words: int = 3) -> bool:
         return False
     head = tokens[:look_words]
     return any(tok in COMMAND_TRIGGER_WORDS for tok in head)
+
+
+def target_only_candidate(text: str, max_words: int = 2) -> Optional[str]:
+    """Return a normalized short target that may have lost its command verb."""
+    tokens = _tokens(text)
+    if not tokens or len(tokens) > max_words:
+        return None
+    if any(token in COMMAND_TRIGGER_WORDS for token in tokens):
+        return None
+    return "_".join(tokens)
