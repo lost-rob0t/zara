@@ -35,6 +35,8 @@ class AgentState(TypedDict, total=False):
 
     # Conversation context
     messages: Annotated[List[BaseMessage], add_messages]
+    turn_id: str
+    conversation_id: Optional[str]
 
     # Metadata / loop control
     step_count: int
@@ -127,7 +129,13 @@ def create_agent_node(llm_client, tool_registry):
     async def agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         import time
 
-        runtime_bridge.model_started(label="llm")
+        turn_id = state.get("turn_id")
+        conversation_id = state.get("conversation_id")
+        runtime_bridge.model_started(
+            label="llm",
+            turn_id=turn_id,
+            conversation_id=conversation_id,
+        )
 
         msgs = state.get("messages", [])
         assert isinstance(msgs, list), "state['messages'] must be a list"
@@ -155,7 +163,12 @@ def create_agent_node(llm_client, tool_registry):
         try:
             response = await llm_with_tools.ainvoke(msgs)
         except Exception as error:
-            runtime_bridge.model_failed(reason=str(error), label="llm")
+            runtime_bridge.model_failed(
+                reason=str(error),
+                label="llm",
+                turn_id=turn_id,
+                conversation_id=conversation_id,
+            )
             raise
         elapsed = time.monotonic() - start_time
 
@@ -183,7 +196,12 @@ def create_agent_node(llm_client, tool_registry):
 
         # With add_messages reducer, this APPENDS.
         step_count = int(state.get("step_count", 0)) + 1
-        runtime_bridge.model_completed(success=True, label="llm")
+        runtime_bridge.model_completed(
+            success=True,
+            label="llm",
+            turn_id=turn_id,
+            conversation_id=conversation_id,
+        )
         return {"messages": [response], "step_count": step_count}
 
     return agent_node
