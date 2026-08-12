@@ -56,6 +56,8 @@ class DesktopController(QObject):
                 self.conversation_service,
                 initial_conversation_id=self.window.current_conversation_id,
             )
+            self.window.conversation_changed.connect(self._on_surface_conversation_changed)
+            self.quick_window.conversation_changed.connect(self._on_surface_conversation_changed)
             self.quick_window.expand_requested.connect(self.expand_quick_to_full_chat)
         else:
             self.conversation_service = conversation_service
@@ -159,6 +161,15 @@ class DesktopController(QObject):
         self._quit_request_id = command.request_id
         self.tray.quit_action.setEnabled(False)
         self.bridge.submit(command)
+
+    def _on_surface_conversation_changed(self, update) -> None:
+        if self.conversation_service is None:
+            return
+        self.window.apply_conversation_update(update)
+        if getattr(update, "metadata_changed", False) or getattr(update, "full_reload", False):
+            self.window.refresh_history()
+        if self.quick_window is not None:
+            self.quick_window.sync_from_shared_state()
 
     def _on_runtime_envelope(self, envelope) -> None:
         event = getattr(envelope, "event", None)
