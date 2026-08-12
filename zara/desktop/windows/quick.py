@@ -114,6 +114,7 @@ class QuickCopilotWindow(QWidget):
         self._message_widgets: dict[str, MessageWidget] = {}
         self._rendered_message_ids: tuple[str, ...] = ()
         self._cancel_request_id: Optional[str] = None
+        self._cancel_conversation_id: Optional[str] = None
         self._submit_request_id: Optional[str] = None
 
         self.setWindowTitle("Ask Zara")
@@ -248,11 +249,19 @@ class QuickCopilotWindow(QWidget):
 
     def cancel_active_turn(self) -> None:
         state = self.conversations.get_state(self.current_conversation_id)
-        if not state.active_turn_id or self._cancel_request_id is not None:
+        if not state.active_turn_id or state.cancel_request_id is not None:
             return
         command = CancelTurn(turn_id=state.active_turn_id)
+        state.cancel_request_id = command.request_id
         self._cancel_request_id = command.request_id
-        self.stop_button.setEnabled(False)
+        self._cancel_conversation_id = self.current_conversation_id
+        self._sync_controls()
+        self.conversation_changed.emit(
+            ConversationUpdate(
+                conversation_id=self.current_conversation_id,
+                active_turn_changed=True,
+            )
+        )
         self.bridge.submit(command)
 
     def set_status(self, status: DesktopStatus) -> None:
@@ -278,7 +287,7 @@ class QuickCopilotWindow(QWidget):
     def handle_command_completed(self, receipt: object) -> None:
         request_id = getattr(receipt, "request_id", None)
         if request_id == self._cancel_request_id:
-            self._cancel_request_id = None
+            self._clear_owned_cancellation()
         if request_id == self._submit_request_id:
             self._submit_request_id = None
         self.sync_from_shared_state()
@@ -286,7 +295,7 @@ class QuickCopilotWindow(QWidget):
     def handle_command_failed(self, request_id: str, message: str) -> None:
         relevant = False
         if request_id == self._cancel_request_id:
-            self._cancel_request_id = None
+            self._clear_owned_cancellation()
             relevant = True
         if request_id == self._submit_request_id:
             self._submit_request_id = None
@@ -374,9 +383,20 @@ class QuickCopilotWindow(QWidget):
         pending = self.conversations.has_pending_request(self.current_conversation_id)
         active = bool(state.active_turn_id)
         if not active:
-            self._cancel_request_id = None
+            state.cancel_request_id = None
         self.send_button.setEnabled(not pending and not active)
-        self.stop_button.setEnabled(active and self._cancel_request_id is None)
+        self.stop_button.setEnabled(active and state.cancel_request_id is None)
+
+    def _clear_owned_cancellation(self) -> None:
+        if self._cancel_conversation_id is not None:
+            try:
+                state = self.conversations.get_state(self._cancel_conversation_id)
+            except KeyError:
+                state = None
+            if state is not None and state.cancel_request_id == self._cancel_request_id:
+                state.cancel_request_id = None
+        self._cancel_request_id = None
+        self._cancel_conversation_id = None
 
     def _scroll_to_bottom(self) -> None:
         QTimer.singleShot(
