@@ -17,6 +17,20 @@
           # Use python3 (latest stable)
           python = pkgs.python3;
 
+          fontConfig = pkgs.writeText "zara-fonts.conf" ''
+            <?xml version="1.0"?>
+            <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+            <fontconfig>
+              <dir>/usr/share/fonts</dir>
+              <dir>/run/current-system/sw/share/X11/fonts</dir>
+              <dir>${pkgs.dejavu_fonts}/share/fonts/truetype</dir>
+              <dir prefix="xdg">fonts</dir>
+              <include ignore_missing="yes">${pkgs.fontconfig.out}/etc/fonts/conf.d</include>
+              <cachedir prefix="xdg">fontconfig</cachedir>
+              <cachedir>/var/cache/fontconfig</cachedir>
+            </fontconfig>
+          '';
+
           # Build pyswip from GitHub (use the same python toolchain everywhere)
           pyswip = python.pkgs.buildPythonPackage rec {
             pname = "pyswip";
@@ -125,6 +139,7 @@
                   --prefix PATH : ${pkgs.lib.makeBinPath ([ pkgs.swi-prolog pkgs.mpv ] ++ extraPath)} \
                   --set PYTHONPATH $out/lib/python${if withProlog then ":$out/share/zarathushtra" else ""}:${pythonLibs}/${python.sitePackages} \
                   --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [ pkgs.libsndfile pkgs.portaudio ]} \
+                  --set FONTCONFIG_FILE ${fontConfig} \
                   ${if withProlog then "--set SWI_HOME_DIR ${pkgs.swi-prolog}/lib/swipl" else ""} \
                   --run "${if withProlog then "cd $out/share/zarathushtra" else ""}"
               '';
@@ -182,6 +197,7 @@
                 --add-flags "-m zara --console" \
                 --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.swi-prolog pkgs.mpv ]} \
                 --set PYTHONPATH $out/share/zarathushtra:${pythonLibs}/${python.sitePackages} \
+                --set FONTCONFIG_FILE ${fontConfig} \
                 --set SWI_HOME_DIR ${pkgs.swi-prolog}/lib/swipl \
                 --run "cd $out/share/zarathushtra"
             '';
@@ -357,6 +373,7 @@
 
           devShells.default = pkgs.mkShell {
             name = "zarathushtra-dev-shell";
+            FONTCONFIG_FILE = fontConfig;
 
             buildInputs = [
               pythonLibs

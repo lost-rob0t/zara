@@ -59,10 +59,14 @@ class FakeClient:
 
 def install_chroma(monkeypatch, client):
     monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", True)
+    monkeypatch.setattr(memory_module, "ChromaSettings", SimpleNamespace)
     monkeypatch.setattr(
         memory_module,
         "chromadb",
-        SimpleNamespace(Client=lambda: client, PersistentClient=lambda path: client),
+        SimpleNamespace(
+            Client=lambda **kwargs: client,
+            PersistentClient=lambda path, **kwargs: client,
+        ),
     )
 
 
@@ -71,7 +75,9 @@ def test_disabled_memory_does_not_initialize_backend(monkeypatch):
     monkeypatch.setattr(
         memory_module,
         "chromadb",
-        SimpleNamespace(Client=lambda: pytest.fail("backend should not initialize")),
+        SimpleNamespace(
+            Client=lambda **kwargs: pytest.fail("backend should not initialize")
+        ),
     )
 
     manager = MemoryManager(enabled=False)
@@ -88,7 +94,7 @@ def test_chroma_client_failure_uses_local_fallback(monkeypatch, caplog):
     monkeypatch.setattr(
         memory_module.chromadb,
         "Client",
-        lambda: (_ for _ in ()).throw(RuntimeError("client unavailable")),
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("client unavailable")),
     )
 
     manager = MemoryManager(embedding_function=lambda texts: [[1.0] for _ in texts])
@@ -96,6 +102,25 @@ def test_chroma_client_failure_uses_local_fallback(monkeypatch, caplog):
     assert manager.health_status == "local_fallback"
     assert "client unavailable" in manager.health_error
     assert "using local memory" in caplog.text
+
+
+def test_chroma_uses_noop_product_telemetry(monkeypatch):
+    captured = {}
+
+    def build_settings(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(**kwargs)
+
+    install_chroma(monkeypatch, FakeClient(FakeCollection()))
+    monkeypatch.setattr(memory_module, "ChromaSettings", build_settings)
+
+    MemoryManager(embedding_function=lambda texts: [[1.0] for _ in texts])
+
+    assert captured == {
+        "anonymized_telemetry": False,
+        "chroma_product_telemetry_impl": "zara.memory.NoOpProductTelemetry",
+        "chroma_telemetry_impl": "zara.memory.NoOpProductTelemetry",
+    }
 
 
 def test_embedding_initialization_failure_uses_local_fallback(monkeypatch):
