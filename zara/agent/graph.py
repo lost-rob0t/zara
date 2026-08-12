@@ -9,6 +9,8 @@ from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 
+from zara.runtime import bridge as runtime_bridge
+
 logger = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------
@@ -125,12 +127,7 @@ def create_agent_node(llm_client, tool_registry):
     async def agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         import time
 
-        # Emit a pet model.started event so the overlay reflects LLM work.
-        try:
-            from zara.pets import runtime_bridge
-            runtime_bridge.model_started(label="llm")
-        except Exception:
-            pass
+        runtime_bridge.model_started(label="llm")
 
         msgs = state.get("messages", [])
         assert isinstance(msgs, list), "state['messages'] must be a list"
@@ -155,7 +152,11 @@ def create_agent_node(llm_client, tool_registry):
                 request_index=request_index,
             )
         start_time = time.monotonic()
-        response = await llm_with_tools.ainvoke(msgs)
+        try:
+            response = await llm_with_tools.ainvoke(msgs)
+        except Exception as error:
+            runtime_bridge.model_failed(reason=str(error), label="llm")
+            raise
         elapsed = time.monotonic() - start_time
 
         if trace is not None:
@@ -182,12 +183,7 @@ def create_agent_node(llm_client, tool_registry):
 
         # With add_messages reducer, this APPENDS.
         step_count = int(state.get("step_count", 0)) + 1
-        # Emit pet completion event.
-        try:
-            from zara.pets import runtime_bridge
-            runtime_bridge.model_completed(success=True, label="llm")
-        except Exception:
-            pass
+        runtime_bridge.model_completed(success=True, label="llm")
         return {"messages": [response], "step_count": step_count}
 
     return agent_node
