@@ -28,10 +28,9 @@ from ..config import ZaraConfig, get_config
 from ..memory import build_memory_manager, MemoryManager
 from ..latency import LatencyTrace
 
+
 class AgentManager:
-    """
-    Manages conversational agent with tool calling.
-    """
+    """Manages conversational agent with tool calling."""
 
     def __init__(
         self,
@@ -60,12 +59,9 @@ class AgentManager:
         timeout = agent_config.get("conversation_timeout", 60)
         self.conversation_manager = ConversationManager(timeout_seconds=timeout)
 
-    # Get current time
-    # Inject top recent memeories
-    # 
     def _build_system_prompt(self):
         date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        base_prompt = self.config.get_agent_system_prompt() or  """You are Zarathustra, an agentic large language model inside a voice assistant. Your primary goal is to be helpful, precise, and safe for the user.
+        base_prompt = self.config.get_agent_system_prompt() or """You are Zarathustra, an agentic large language model inside a voice assistant. Your primary goal is to be helpful, precise, and safe for the user.
 
         # Routing protocol — read this first
 
@@ -93,6 +89,7 @@ class AgentManager:
 
         Respond in direct, clear, and concise natural language. Do not use JSON or list internal reasoning in the output. Use internal reasoning to inform a concise, user-facing final answer."""
         return base_prompt + f"\n # Current time \n {date}"
+
     def _create_llm_client(self, llm_config: Dict[str, Any]):
         provider = llm_config.get("provider", "ollama")
         model = llm_config.get("model")
@@ -104,8 +101,8 @@ class AgentManager:
             return ChatAnthropic(
                 model=model or "claude-3-5-sonnet-20241022",
                 api_key=api_key,
-                timeout=60.0,  # 60 second timeout
-                max_retries=2
+                timeout=60.0,
+                max_retries=2,
             )
 
         if provider == "openai":
@@ -115,7 +112,7 @@ class AgentManager:
                 model=model or "gpt-4",
                 api_key=api_key,
                 timeout=60.0,
-                max_retries=2
+                max_retries=2,
             )
 
         if provider == "ollama":
@@ -124,7 +121,7 @@ class AgentManager:
             return ChatOllama(
                 model=model or "llama3",
                 base_url=base_url,
-                timeout=60.0
+                timeout=60.0,
             )
 
         raise ValueError(f"Unsupported LLM provider: {provider}")
@@ -133,6 +130,7 @@ class AgentManager:
         self,
         user_input: str,
         latency_trace: Optional[LatencyTrace] = None,
+        turn_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         import logging
         logger = logging.getLogger(__name__)
@@ -141,6 +139,16 @@ class AgentManager:
         self.conversation_manager.update_activity()
         max_steps = int(agent_config.get("max_steps", 10))
 
+        # Existing voice turns already have a latency trace id. RuntimeHost
+        # (#83) can pass the TurnCoordinator id explicitly. Headless agent
+        # callers still receive a stable per-turn correlation id.
+        if turn_id is None:
+            if latency_trace is not None:
+                turn_id = latency_trace.trace_id
+            else:
+                turn_id = f"agent-{uuid.uuid4().hex}"
+
+        logger.info("[AgentManager] turn_id=%s", turn_id)
         logger.info("[AgentManager] user_input=%r", user_input)
         logger.info("[AgentManager] user_input_length=%d", len(user_input))
 
@@ -161,6 +169,7 @@ class AgentManager:
             logger.info("[AgentManager] History empty; starting fresh")
 
         state: Dict[str, Any] = {
+            "turn_id": turn_id,
             "user_input": user_input,
             "messages": cleaned_history,
             "tool_calls": [],
@@ -171,7 +180,7 @@ class AgentManager:
             "latency_trace": latency_trace,
         }
 
-        system_prompt = self._build_system_prompt() 
+        system_prompt = self._build_system_prompt()
 
         if system_prompt:
             if not state["messages"] or not isinstance(state["messages"][0], SystemMessage):
@@ -214,6 +223,7 @@ class AgentManager:
         return {
             "response": result.get("response", "I'm not sure how to respond to that."),
             "tool_results": result.get("tool_results", []),
+            "turn_id": turn_id,
         }
 
     def _build_memory_context(self, user_input: str) -> Optional[str]:
