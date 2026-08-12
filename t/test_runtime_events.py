@@ -4,7 +4,9 @@ import pathlib
 import threading
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 
+from zara.agent.graph import create_agent_node
 from zara.pets import events as pet_events
 from zara.pets.runtime_adapter import adapt_runtime_event
 from zara.runtime import bridge as runtime_bridge
@@ -179,6 +181,39 @@ def test_response_text_compatibility_publisher_truncates_at_boundary():
     assert len(event.text) == 280
     assert event.truncated is True
     assert event.label == "Zara"
+
+
+@pytest.mark.asyncio
+async def test_agent_node_emits_turn_correlated_model_events():
+    class FakeRegistry:
+        def to_langchain_tools(self):
+            return []
+
+    class FakeLLM:
+        async def ainvoke(self, _messages):
+            return AIMessage(content="done")
+
+    node = create_agent_node(FakeLLM(), FakeRegistry())
+    subscription = runtime_bridge.subscribe()
+    try:
+        await node(
+            {
+                "messages": [HumanMessage(content="hello")],
+                "step_count": 0,
+                "turn_id": "turn-0042",
+                "conversation_id": "conversation-7",
+            }
+        )
+        emitted = [envelope.event for envelope in subscription.drain()]
+    finally:
+        subscription.close()
+
+    assert [type(event) for event in emitted] == [
+        events.AssistantStarted,
+        events.AssistantComplete,
+    ]
+    assert all(event.turn_id == "turn-0042" for event in emitted)
+    assert all(event.conversation_id == "conversation-7" for event in emitted)
 
 
 def test_agent_graph_no_longer_depends_on_pet_runtime_bridge():
