@@ -28,7 +28,7 @@ from zara.runtime.commands import CancelTurn, CommandReceipt, SubmitTurn
 
 
 class FullChatWindow(QWidget):
-    """Native durable conversation surface shared with future Quick Copilot."""
+    """Native durable conversation surface shared with Quick Copilot."""
 
     restart_requested = Signal()
     diagnostics_requested = Signal()
@@ -38,10 +38,13 @@ class FullChatWindow(QWidget):
         bridge: QtRuntimeBridge,
         conversations: ConversationService,
         parent: Optional[QWidget] = None,
+        *,
+        manage_runtime_events: bool = True,
     ) -> None:
         super().__init__(parent)
         self.bridge = bridge
         self.conversations = conversations
+        self._manage_runtime_events = manage_runtime_events
         self._allow_close = False
         self._status = INITIAL_STATUS
         self._current_conversation_id: Optional[str] = None
@@ -151,9 +154,10 @@ class FullChatWindow(QWidget):
         self.restart_button.clicked.connect(self.restart_requested.emit)
         self.diagnostics_button.clicked.connect(self.diagnostics_requested.emit)
 
-        self.bridge.runtime_event.connect(self._on_runtime_envelope)
-        self.bridge.command_completed.connect(self._on_command_completed)
-        self.bridge.command_failed.connect(self._on_command_failed)
+        if self._manage_runtime_events:
+            self.bridge.runtime_event.connect(self._on_runtime_envelope)
+            self.bridge.command_completed.connect(self._on_command_completed)
+            self.bridge.command_failed.connect(self._on_command_failed)
 
         self.set_status(INITIAL_STATUS)
         self._open_initial_conversation()
@@ -206,6 +210,11 @@ class FullChatWindow(QWidget):
         self.load_conversation(state.conversation.id)
         self.refresh_history()
         self.composer.setFocus()
+
+    def open_conversation(self, conversation_id: str) -> None:
+        self.load_conversation(conversation_id)
+        self.refresh_history()
+        self.show_raised()
 
     def load_conversation(self, conversation_id: str) -> None:
         state = self.conversations.get_state(conversation_id)
@@ -279,6 +288,38 @@ class FullChatWindow(QWidget):
         self.stop_button.setEnabled(False)
         self.bridge.submit(command)
 
+    def apply_conversation_update(self, update: Optional[ConversationUpdate]) -> None:
+        if update is not None and update.conversation_id == self._current_conversation_id:
+            self._render_update(update)
+        self._sync_controls()
+
+    def handle_command_completed(
+        self,
+        receipt: object,
+        update: Optional[ConversationUpdate] = None,
+    ) -> None:
+        request_id = getattr(receipt, "request_id", None)
+        if request_id == self._cancel_request_id:
+            self._cancel_request_id = None
+        self.apply_conversation_update(update)
+
+    def handle_command_failed(
+        self,
+        request_id: str,
+        message: str,
+        update: Optional[ConversationUpdate] = None,
+    ) -> None:
+        if request_id == self._cancel_request_id:
+            self._cancel_request_id = None
+            self.command_error_label.setText(message or "Cancellation failed")
+            self.command_error_label.show()
+            self._sync_controls()
+            return
+        if update is not None and update.conversation_id == self._current_conversation_id:
+            self.command_error_label.setText(message or "Message could not be sent")
+            self.command_error_label.show()
+        self.apply_conversation_update(update)
+
     def _open_initial_conversation(self) -> None:
         history = self.conversations.list_conversations(limit=1)
         if history:
@@ -308,34 +349,20 @@ class FullChatWindow(QWidget):
         event = getattr(envelope, "event", None)
         if event is None:
             return
-        update = self.conversations.apply_event(event)
-        if update is not None and update.conversation_id == self._current_conversation_id:
-            self._render_update(update)
-        self._sync_controls()
+        self.apply_conversation_update(self.conversations.apply_event(event))
 
     def _on_command_completed(self, receipt) -> None:
         if not isinstance(receipt, CommandReceipt):
             return
-        if receipt.request_id == self._cancel_request_id:
-            self._cancel_request_id = None
         update = self.conversations.bind_receipt(receipt)
-        if update is not None and update.conversation_id == self._current_conversation_id:
-            self._render_update(update)
-        self._sync_controls()
+        self.handle_command_completed(receipt, update)
 
     def _on_command_failed(self, request_id: str, message: str) -> None:
         if request_id == self._cancel_request_id:
-            self._cancel_request_id = None
-            self.command_error_label.setText(message or "Cancellation failed")
-            self.command_error_label.show()
-            self._sync_controls()
+            self.handle_command_failed(request_id, message)
             return
         update = self.conversations.mark_command_failed(request_id, message)
-        if update is not None and update.conversation_id == self._current_conversation_id:
-            self.command_error_label.setText(message or "Message could not be sent")
-            self.command_error_label.show()
-            self._render_update(update)
-        self._sync_controls()
+        self.handle_command_failed(request_id, message, update)
 
     def _render_update(self, update: ConversationUpdate) -> None:
         if update.conversation_id != self._current_conversation_id:
@@ -358,6 +385,7 @@ class FullChatWindow(QWidget):
         if update.metadata_changed:
             self.title_label.setText(state.conversation.title)
             self._update_provider_label()
+            self.refresh_history()
         self._scroll_to_bottom()
 
     def _render_current(self) -> None:
@@ -393,6 +421,8 @@ class FullChatWindow(QWidget):
         state = self.conversations.get_state(self.current_conversation_id)
         pending = self.conversations.has_pending_request(self.current_conversation_id)
         active = bool(state.active_turn_id)
+        if not active:
+            self._cancel_request_id = None
         self.send_button.setEnabled(not pending and not active)
         self.stop_button.setEnabled(active and self._cancel_request_id is None)
 
