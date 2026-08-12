@@ -1,4 +1,4 @@
-"""Persistent pet settings (enabled, selected pet, position, scale, reduced motion).
+"""Persistent assistant and pet overlay settings.
 
 Uses Zarathushtra's existing XDG-aware application data locations. A
 single ``pet-state.json`` under ``$XDG_CONFIG_HOME/zarathushtra/`` holds
@@ -32,6 +32,7 @@ def _config_dir() -> Path:
 class PetWindowState:
     """Persisted runtime state of the pet overlay."""
 
+    assistant_name: str = "Zara"
     selected_pet: str = "zara-default"
     x: Optional[int] = None
     y: Optional[int] = None
@@ -45,7 +46,9 @@ class PetWindowState:
 
     @classmethod
     def from_dict(cls, data: dict) -> "PetWindowState":
+        assistant_name = str(data.get("assistant_name", "Zara")).strip() or "Zara"
         return cls(
+            assistant_name=assistant_name,
             selected_pet=str(data.get("selected_pet", "zara-default")),
             x=int(data["x"]) if data.get("x") is not None else None,
             y=int(data["y"]) if data.get("y") is not None else None,

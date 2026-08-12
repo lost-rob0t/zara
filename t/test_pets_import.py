@@ -70,6 +70,11 @@ def test_import_chatgpt_v1_sprite(fixtures):
     assert manifest.animation_for("needs-input") is not None
     assert manifest.animation_for("ready") is not None
     assert manifest.animation_for("blocked") is not None
+    assert manifest.animation_for("idle").frames == 6
+    assert manifest.animation_for("drag").frames == 8
+    assert manifest.animation_for("wave").frames == 4
+    assert manifest.animation_for("jump").frames == 5
+    assert manifest.animation_for("running").frames == 6
     # Installed into managed storage.
     installed = load_pet(manifest.id)
     assert installed is not None
@@ -81,6 +86,13 @@ def test_import_chatgpt_v2_package(fixtures):
     assert manifest.source_format == "chatgpt-v2"
     assert manifest.frame_geometry.rows == 11
     assert manifest.metadata.get("chatgpt_sprite_version") == 2
+    assert manifest.animation_for("wave").row == 3
+    assert manifest.animation_for("idle").frames == 6
+    assert manifest.animation_for("wave").loop is False
+    assert manifest.animation_for("jump").row == 4
+    assert manifest.animation_for("jump").loop is False
+    assert manifest.look_frame(0) == (9, 0)
+    assert manifest.look_frame(15) == (10, 7)
     installed = load_pet(manifest.id)
     assert installed is not None
 

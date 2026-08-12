@@ -171,6 +171,21 @@ class PetManifest:
                 return anim
         return None
 
+    def look_frame(self, direction_index: int) -> Optional[tuple[int, int]]:
+        rows = self.metadata.get("look_direction_rows")
+        if not isinstance(rows, list) or len(rows) != 2:
+            return None
+        if not isinstance(direction_index, int) or isinstance(direction_index, bool):
+            return None
+        index = direction_index % 16
+        row = rows[0] if index < 8 else rows[1]
+        col = index if index < 8 else index - 8
+        if not isinstance(row, int) or isinstance(row, bool):
+            return None
+        if not (0 <= row < self.frame_geometry.rows):
+            return None
+        return row, col
+
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
         data["anchor"] = list(self.anchor)

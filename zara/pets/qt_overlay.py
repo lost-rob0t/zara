@@ -16,11 +16,10 @@ PySide6 is imported lazily inside ``run_overlay``.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Callable, Optional
 
 from . import events, runtime_bridge
-from .animation import AnimationController
+from .animation import AnimationController, look_direction_index
 from .geometry import ScreenRect, recover_position
 from .ipc import PetSubscriber
 from .manifest import PetManifest
@@ -102,14 +101,27 @@ def _reduced_motion_enabled(preference: str) -> bool:
     return False
 
 
+def _overlay_window_flags(Qt, platform_name: str):
+    flags = Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+    if platform_name.lower() == "xcb":
+        return flags | Qt.X11BypassWindowManagerHint
+    return flags | Qt.Tool
+
+
 def run_overlay(
     settings: PetSettings,
     pet_manifest: PetManifest,
     on_request_focus: Optional[Callable[[], None]] = None,
 ) -> int:
     from PySide6.QtCore import Qt, QTimer, QPoint
-    from PySide6.QtGui import QPixmap, QPainter, QImage, QIcon, QAction
-    from PySide6.QtWidgets import QApplication, QWidget, QMenu, QSystemTrayIcon
+    from PySide6.QtGui import QPixmap, QPainter, QImage, QAction, QCursor
+    from PySide6.QtWidgets import (
+        QApplication,
+        QLabel,
+        QMenu,
+        QSystemTrayIcon,
+        QWidget,
+    )
 
     app = QApplication.instance() or QApplication([])
     app.setQuitOnLastWindowClosed(False)
@@ -120,6 +132,7 @@ def run_overlay(
     x, y = recover_position(saved_x, saved_y, screens, default=(100, 100))
     scale = float(settings.state.scale or 1.0)
     reduced = _reduced_motion_enabled(settings.state.reduced_motion)
+    assistant_name = settings.state.assistant_name
 
     sprite_path = sprite_path_for(pet_manifest)
     sprite_image = QImage(str(sprite_path))
@@ -152,24 +165,15 @@ def run_overlay(
     class PetWindow(QWidget):
         def __init__(self) -> None:
             super().__init__()
-            # Qt.Tool gives _NET_WM_WINDOW_TYPE_UTILITY which makes qtile
-            # show the window on ALL workspaces and keep it above tiling
-            # windows. We keep it despite the earlier cross-screen drag
-            # issue, which is fixed below by re-homing the window to the
-            # screen under the cursor during drag.
-            self.setWindowFlags(
-                Qt.FramelessWindowHint
-                | Qt.WindowStaysOnTopHint
-                | Qt.Tool
-            )
+            self.setWindowFlags(_overlay_window_flags(Qt, app.platformName()))
             self.setAttribute(Qt.WA_TranslucentBackground, True)
             self.setAttribute(Qt.WA_ShowWithoutActivating, True)
-            self.setFocusPolicy(Qt.StrongFocus)
+            self.setFocusPolicy(Qt.NoFocus)
             self.setFixedSize(int(cell_w * scale), int(cell_h * scale))
             self.move(x, y)
             self._drag_offset: Optional[QPoint] = None
-            self._drag_origin: Optional[QPoint] = None
-            self._moved = False
+            self._press_origin: Optional[QPoint] = None
+            self._last_drag_pos: Optional[QPoint] = None
             self._current_pixmap: Optional[QPixmap] = None
             self._update_frame()
 
@@ -181,58 +185,42 @@ def run_overlay(
         def paintEvent(self, event) -> None:
             painter = QPainter(self)
             painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-            # Compositing: clear to transparent first so stale pixels from
-            # the previous frame don't smear on compositors that don't
-            # auto-clear translucent windows.
-            painter.setCompositionMode(QPainter.CompositionMode_Source)
-            painter.fillRect(self.rect(), Qt.transparent)
-            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
             if self._current_pixmap is not None:
                 painter.drawPixmap(self.rect(), self._current_pixmap)
 
         def mousePressEvent(self, event) -> None:
             if event.button() == Qt.LeftButton:
                 self._drag_offset = event.globalPos() - self.frameGeometry().topLeft()
-                self._drag_origin = event.globalPos()
-                self._moved = False
+                self._press_origin = event.globalPos()
+                self._last_drag_pos = event.globalPos()
             elif event.button() == Qt.RightButton:
                 self._show_context_menu(event.globalPos())
 
         def mouseMoveEvent(self, event) -> None:
-            if self._drag_offset is not None and (event.buttons() & Qt.LeftButton):
-                if (event.globalPos() - self._drag_origin).manhattanLength() > DRAG_THRESHOLD:
-                    if not overlay_state["dragging"]:
-                        overlay_state["dragging"] = True
-                        overlay_state["pre_drag_state"] = controller.state
-                        self._apply_drag_animation(event.globalPos())
-                        self._update_frame()
-                    else:
-                        new_pos = event.globalPos()
-                        if new_pos.x() != self._drag_origin.x():
-                            moving_right = new_pos.x() > self._drag_origin.x()
-                            want = "drag" if moving_right else "drag-left"
-                            current = controller._override_animation.name if controller._override_animation else None
-                            if current != want and pet_manifest.animation_for(want) is not None:
-                                self._apply_drag_animation(new_pos)
-                                self._update_frame()
-                        self._drag_origin = new_pos
-                    # Move the window. On multi-monitor setups qtile
-                    # constrains a Qt.Tool window to its current screen.
-                    # Re-home the window handle to the screen under the
-                    # cursor so the drag can cross monitors.
-                    target = app.screenAt(event.globalPos())
-                    if target is not None and hasattr(self, "windowHandle") and self.windowHandle() is not None:
-                        if self.windowHandle().screen() is not target:
-                            self.windowHandle().setScreen(target)
-                    self.move(event.globalPos() - self._drag_offset)
-                    self.raise_()
+            if self._drag_offset is None or not (event.buttons() & Qt.LeftButton):
+                return
+            global_pos = event.globalPos()
+            if not overlay_state["dragging"]:
+                if self._press_origin is None:
+                    return
+                if (global_pos - self._press_origin).manhattanLength() <= DRAG_THRESHOLD:
+                    return
+                overlay_state["dragging"] = True
+                overlay_state["pre_drag_state"] = controller.state
+            self._apply_drag_animation(global_pos)
+            self._last_drag_pos = global_pos
+            self.move(global_pos - self._drag_offset)
+            self.raise_()
+            self._update_frame()
 
         def _apply_drag_animation(self, global_pos) -> None:
-            moving_right = global_pos.x() > self._drag_origin.x()
+            previous = self._last_drag_pos or global_pos
+            moving_right = global_pos.x() >= previous.x()
             name = "drag" if moving_right else "drag-left"
-            if pet_manifest.animation_for(name) is not None:
-                controller.set_animation(name)
-            elif pet_manifest.animation_for("drag") is not None:
+            current = controller.animation_override_name
+            if current == name:
+                return
+            if not controller.set_animation(name):
                 controller.set_animation("drag")
 
         def mouseReleaseEvent(self, event) -> None:
@@ -244,12 +232,15 @@ def run_overlay(
                     base_x[0] = self.x()
                     base_y[0] = self.y()
                     controller.set_state(overlay_state["pre_drag_state"])
+                    if controller.state is PetState.IDLE:
+                        controller.set_animation("jump")
                     self._update_frame()
                 else:
-                    if on_request_focus is not None:
-                        on_request_focus()
+                    controller.set_animation("wave")
+                    self._update_frame()
                 self._drag_offset = None
-                self._moved = False
+                self._press_origin = None
+                self._last_drag_pos = None
 
         def _show_context_menu(self, pos) -> None:
             menu = QMenu(self)
@@ -267,8 +258,47 @@ def run_overlay(
 
     window = PetWindow()
     window.show()
+    window.raise_()
     base_x = [window.x()]
     base_y = [window.y()]
+
+    response_bubble = QLabel()
+    response_bubble.setWindowFlags(_overlay_window_flags(Qt, app.platformName()))
+    response_bubble.setAttribute(Qt.WA_ShowWithoutActivating, True)
+    response_bubble.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+    response_bubble.setWordWrap(True)
+    response_bubble.setMaximumWidth(360)
+    response_bubble.setMargin(12)
+    response_bubble.setStyleSheet(
+        "QLabel { background: rgba(24, 28, 36, 235); color: white; "
+        "border: 1px solid rgba(255, 255, 255, 90); border-radius: 12px; "
+        "font-size: 13px; }"
+    )
+    response_bubble.hide()
+    response_timer = QTimer()
+    response_timer.setSingleShot(True)
+    response_timer.timeout.connect(response_bubble.hide)
+
+    def _show_response(text: str) -> None:
+        clean = " ".join(text.split())
+        if not clean:
+            return
+        response_bubble.setText(clean)
+        response_bubble.adjustSize()
+        screen = app.screenAt(window.frameGeometry().center()) or app.primaryScreen()
+        available = screen.availableGeometry()
+        bubble_x = window.x() + (window.width() - response_bubble.width()) // 2
+        bubble_x = max(
+            available.left(),
+            min(bubble_x, available.right() - response_bubble.width() + 1),
+        )
+        bubble_y = window.y() - response_bubble.height() - 10
+        if bubble_y < available.top():
+            bubble_y = window.y() + window.height() + 10
+        response_bubble.move(bubble_x, bubble_y)
+        response_bubble.show()
+        response_bubble.raise_()
+        response_timer.start(8000)
 
     # --- Show/hide + settings helpers (defined before the tray uses them) -
     def _toggle_visibility() -> None:
@@ -286,7 +316,7 @@ def run_overlay(
     tray = QSystemTrayIcon()
     tray_icon = _make_tray_icon(cell_w, cell_h, sprite_image, scale)
     tray.setIcon(tray_icon)
-    tray.setToolTip(f"{pet_manifest.name} — resting")
+    tray.setToolTip(f"{assistant_name} — resting")
 
     def _tray_activated(reason) -> None:
         if reason == QSystemTrayIcon.Trigger:
@@ -296,7 +326,8 @@ def run_overlay(
 
     def _tray_menu() -> QMenu:
         menu = QMenu()
-        show_action = QAction("Show Mara" if window.isVisible() else "Hide Mara", menu)
+        verb = "Hide" if window.isVisible() else "Show"
+        show_action = QAction(f"{verb} {assistant_name}", menu)
         show_action.triggered.connect(_toggle_visibility)
         menu.addAction(show_action)
         open_action = QAction("Open Zarathushtra", menu)
@@ -325,20 +356,20 @@ def run_overlay(
         controller.set_state(state)
         window._update_frame()
         emotion = _EMOTION_LABELS.get(state, state.value)
-        tray.setToolTip(f"{pet_manifest.name} — {emotion}")
+        tray.setToolTip(f"{assistant_name} — {emotion}")
         # Surface emotion changes that need the user's attention via a tray
         # balloon so the user notices even if the window is hidden.
         if state is PetState.NEEDS_INPUT and state is not overlay_state["last_emotion"]:
             tray.showMessage(
-                pet_manifest.name, f"{pet_manifest.name} needs your input",
+                assistant_name, f"{assistant_name} needs your input",
                 QSystemTrayIcon.Information, 4000)
         elif state is PetState.BLOCKED and state is not overlay_state["last_emotion"]:
             tray.showMessage(
-                pet_manifest.name, f"{pet_manifest.name} is stuck",
+                assistant_name, f"{assistant_name} is stuck",
                 QSystemTrayIcon.Warning, 4000)
         elif state is PetState.READY and state is not overlay_state["last_emotion"]:
             tray.showMessage(
-                pet_manifest.name, f"{pet_manifest.name} has something ready",
+                assistant_name, f"{assistant_name} has something ready",
                 QSystemTrayIcon.Information, 3000)
         overlay_state["last_emotion"] = state
 
@@ -350,6 +381,9 @@ def run_overlay(
 
     def _dispatch_payload(payload, actor_ref) -> None:
         event_name = payload.get("event")
+        if event_name == "ResponseText":
+            _show_response(str(payload.get("text", "")))
+            return
         factory = _PAYLOAD_MAP.get(event_name)
         if factory is None:
             logger.warning("[PetOverlay] unknown event: %s", event_name)
@@ -361,24 +395,26 @@ def run_overlay(
             logger.debug("[PetOverlay] dispatch failed for %s", event_name, exc_info=True)
 
     # --- Timers ---------------------------------------------------------
-    import math
-    bob_phase = [0.0]
-
     def _animation_tick() -> None:
         if overlay_state["dragging"]:
             return
-        # Physical movement while "running" (thinking/responding): a gentle
-        # vertical bob so the sprite is visibly active, not just cycling
-        # sprite frames. needs-input gets a smaller anxious jitter.
-        state = controller.state
-        if state is PetState.RUNNING or state is PetState.NEEDS_INPUT:
-            bob_phase[0] += 0.15
-            amplitude = 6 if state is PetState.RUNNING else 3
-            bob = int(amplitude * math.sin(bob_phase[0]))
-            window.move(base_x[0], base_y[0] + bob)
-        else:
-            if window.y() != base_y[0] or window.x() != base_x[0]:
-                window.move(base_x[0], base_y[0])
+        if controller.animation_finished():
+            controller.set_state(controller.state)
+        if (
+            controller.state is PetState.IDLE
+            and not controller.has_animation_override
+            and not controller.reduced_motion
+        ):
+            center = window.frameGeometry().center()
+            cursor = QCursor.pos()
+            direction = look_direction_index(
+                cursor.x() - center.x(),
+                cursor.y() - center.y(),
+            )
+            if direction is None:
+                controller.clear_look_direction()
+            else:
+                controller.set_look_direction(direction)
         if controller.frame_changed():
             window._update_frame()
 
@@ -420,6 +456,8 @@ def run_overlay(
         anim_timer.stop()
         ipc_timer.stop()
         wakeup.stop()
+        response_timer.stop()
+        response_bubble.hide()
         _restore_signals()
         runtime_bridge.unregister_actor()
         actor.stop()

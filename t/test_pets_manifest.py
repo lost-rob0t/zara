@@ -148,6 +148,15 @@ def test_frame_geometry_rejects_zero():
         FrameGeometry(0, 208, 8, 9)
 
 
+def test_look_frame_requires_v2_metadata():
+    assert _valid_manifest().look_frame(0) is None
+
+
+def test_look_frame_rejects_out_of_bounds_rows():
+    manifest = _valid_manifest(metadata={"look_direction_rows": [9, 10]})
+    assert manifest.look_frame(0) is None
+
+
 def test_manifest_from_dict_loads_full_structure():
     data = {
         "id": "loaded",

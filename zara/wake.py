@@ -203,7 +203,7 @@ class WakeWordListener:
     def _init_ack_player(self, wake_cfg: dict) -> None:
         """Build the AcknowledgementPlayer from config and pre-warm clips."""
         ack_cfg = wake_cfg.get("acknowledgement", {}) or {}
-        if not ack_cfg.get("enabled", True):
+        if not self.enable_tts or not ack_cfg.get("enabled", True):
             self.ack_player = AcknowledgementPlayer(
                 config=AcknowledgementConfig(enabled=False)
             )
@@ -1303,6 +1303,12 @@ class WakeWordListener:
             if not safe_message:
                 safe_message = "No response."
 
+            try:
+                from .pets import runtime_bridge
+                runtime_bridge.response_text(safe_message, label=title)
+            except Exception:
+                self.log("Pet response delivery failed")
+
             success = await send_notification_async(title, safe_message, urgency="normal")
             if success:
                 self.log(f"Sent notification: {title}")
@@ -1555,7 +1561,8 @@ class WakeWordListener:
             self.transition_to("PASSIVE")
             return
 
-        await self.send_response_async("Zara", response)
+        from .pets.settings import PetSettings
+        await self.send_response_async(PetSettings().state.assistant_name, response)
 
 
 
