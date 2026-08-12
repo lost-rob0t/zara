@@ -77,9 +77,16 @@
             p.sentence-transformers
             # Actor framework for real-time turn coordinator
             p.pykka
-            # Streaming VAD (Silero VAD via GGML C extension)
-            p.pysilero-vad
-            # Testing
+# Streaming VAD (Silero VAD via GGML C extension)
+          p.pysilero-vad
+          # Desktop pet overlay (PySide6/Qt6)
+          p.pyside6
+          # Pillow for WebP->PNG conversion at pet import time (Qt's nixpkgs
+          # build lacks the WebP image plugin)
+          p.pillow
+          # ZeroMQ for cross-process pet event streaming (wake -> pet overlay)
+          p.pyzmq
+          # Testing
             p.pytest
             p.pytest-asyncio
             # Packaging metadata sanity checks

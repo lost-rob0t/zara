@@ -740,6 +740,13 @@ class WakeWordListener:
         resolution_state = "conversation" if self.in_conversation_mode() else "passive"
         trace = getattr(self, "current_latency_trace", None)
 
+        # Pet: signal running at the start of any command resolution.
+        try:
+            from .pets import runtime_bridge
+            runtime_bridge.agent_started(label="command")
+        except Exception:
+            pass
+
         # Heuristic gate: skip Prolog entirely for non-command utterances to
         # avoid intent hijacking and reduce latency. The LLM can still call
         # the `query_prolog` tool when the user's input is in fact a command.
@@ -821,6 +828,11 @@ class WakeWordListener:
 
                 except Exception as e:
                     self.log(f"Prolog error: {e}")
+                    try:
+                        from .pets import runtime_bridge
+                        runtime_bridge.model_failed(reason=str(e), label="prolog")
+                    except Exception:
+                        pass
                     if trace is not None:
                         trace.record("prolog_result", status="error")
                     return (False, "", True)
@@ -830,7 +842,12 @@ class WakeWordListener:
                 trace.flush()
 
         if prolog_success:
-            # Prolog handled it successfully
+            # Prolog handled it successfully — tell the pet we're done.
+            try:
+                from .pets import runtime_bridge
+                runtime_bridge.agent_completed(success=True, label="command")
+            except Exception:
+                pass
             return (False, prolog_result)
 
         if not needs_agent:
@@ -845,6 +862,13 @@ class WakeWordListener:
             self.log("Entering conversation mode after Prolog")
             self.agent_manager.conversation_manager.enter_conversation()
             self.agent_manager.conversation_manager.conversation_history.clear()
+
+        # Emit pet agent.started so the overlay reflects the conversation.
+        try:
+            from .pets import runtime_bridge
+            runtime_bridge.agent_started(label="agent")
+        except Exception:
+            pass
 
         self.log("Using agent after Prolog fallback")
         self.log(f"Conversation history has {len(self.agent_manager.conversation_manager.conversation_history)} messages")
@@ -865,6 +889,12 @@ class WakeWordListener:
         self.memory.add_message(self.session_id, "user", command_text)
         if response_text:
             self.memory.add_message(self.session_id, "assistant", response_text)
+        # Emit pet completion so the overlay shows ready.
+        try:
+            from .pets import runtime_bridge
+            runtime_bridge.agent_completed(success=True, label="agent")
+        except Exception:
+            pass
         return (True, response_text)
 
     async def query_llm_async(self, query_text):
@@ -1529,8 +1559,19 @@ class WakeWordListener:
 
 
 
-def main(model="tiny.en", device="cpu", prolog_main_path=None, enable_tts=True):
+def main(model="tiny.en", device="cpu", prolog_main_path=None, enable_tts=True,
+         with_pets=False):
     """Main entry point for wake word listener"""
+    pet_proc = None
+    if with_pets:
+        pet_proc = _launch_pet_overlay()
+        # Eagerly start the ZMQ publisher so the socket is bound before
+        # the first runtime event fires (avoids ZMQ slow-joiner drops).
+        from .pets import runtime_bridge
+        runtime_bridge._ensure_publisher()
+        import time
+        time.sleep(0.3)
+
     listener = WakeWordListener(
         model=model,
         device=device,
@@ -1556,5 +1597,28 @@ def main(model="tiny.en", device="cpu", prolog_main_path=None, enable_tts=True):
         asyncio.run(run_with_cleanup())
     except KeyboardInterrupt:
         pass
+    finally:
+        if pet_proc is not None:
+            pet_proc.terminate()
+            try:
+                pet_proc.wait(timeout=3)
+            except Exception:
+                pet_proc.kill()
 
     return 0
+
+
+def _launch_pet_overlay():
+    """Spawn the pet overlay as a subprocess so it runs its own Qt loop.
+
+    The wake process publishes pet events over ZMQ; the overlay subprocess
+    subscribes and reacts. Dies with the parent. stderr is inherited so
+    overlay errors are visible alongside the wake log.
+    """
+    import subprocess
+    import sys
+    return subprocess.Popen(
+        [sys.executable, "-m", "zara", "--pets"],
+        stdout=subprocess.DEVNULL,
+        stderr=None,
+    )

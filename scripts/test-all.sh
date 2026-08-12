@@ -84,6 +84,7 @@ run_phase "Python compile/import checks" phase_python_compile
 # --- Phase 1b: Generate deterministic audio fixtures ----------------------
 phase_generate_fixtures() {
   python "$repo_root/scripts/generate-audio-fixtures.py" "$repo_root/t/fixtures/audio" >/dev/null
+  python "$repo_root/scripts/generate-pet-fixtures.py" "$TEST_ROOT/pet-fixtures" >/dev/null
 }
 
 run_phase "Generate audio fixtures" phase_generate_fixtures

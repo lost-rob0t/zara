@@ -53,6 +53,20 @@ def main():
         help="Direct conversation mode with agent"
     )
 
+    # --pets is a COMPANION flag, not a mode: it can combine with --wake
+    # (and --agent) so the pet overlay runs alongside the runtime and
+    # reacts to real events over the ZMQ bridge.
+    parser.add_argument(
+        "--pets",
+        action="store_true",
+        help="Launch the desktop pet overlay (companion flag; use with --wake)"
+    )
+    parser.add_argument(
+        "--pets-settings",
+        action="store_true",
+        help="Open the Pets settings dialog"
+    )
+
     # Text command (default mode if no flags)
     parser.add_argument(
         "command",
@@ -127,12 +141,21 @@ def main():
     elif args.wake:
         # Wake word listener mode
         from .wake import main as wake_main
-        sys.exit(wake_main())
+        sys.exit(wake_main(with_pets=args.pets))
 
     elif args.agent:
         # Direct conversation mode with agent
         from .agent_cli import main as agent_main
         sys.exit(agent_main())
+
+    elif args.pets_settings:
+        from .pets.cli import main_settings
+        sys.exit(main_settings())
+
+    elif args.pets:
+        # --pets with no mode: launch the overlay standalone
+        from .pets.cli import main_overlay
+        sys.exit(main_overlay())
 
     elif args.command:
         # Text command mode (default)

@@ -177,6 +177,17 @@ search_paths = [
 # Format: ["module_name.py"]
 autoload = []
 
+[pets]
+# Desktop pet companion (Zarathushtra Pets)
+enabled = false
+selected_pet = "zara-default"
+scale = 1.0
+# reduced_motion: "system" follows OS setting, "on" forces still frames, "off" animates
+reduced_motion = "system"
+# Position is restored from pet-state.json; these are fallback defaults.
+default_x = 100
+default_y = 100
+
 [dictate]
 # Dictation mode settings
 model = "small"
@@ -312,6 +323,29 @@ class ZaraConfig:
         max_bytes = file_config.get("max_bytes", DEFAULT_FILE_TOOL_MAX_BYTES)
         if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 1:
             raise ConfigError("file_tools.max_bytes must be a positive integer")
+
+        pets_config = config.get("pets", {})
+        if not isinstance(pets_config, dict):
+            raise ConfigError("Invalid [pets] configuration: expected a TOML table")
+        if not isinstance(pets_config.get("enabled", False), bool):
+            raise ConfigError("pets.enabled must be true or false")
+        if not isinstance(pets_config.get("selected_pet", "zara-default"), str):
+            raise ConfigError("pets.selected_pet must be a string")
+        scale = pets_config.get("scale", 1.0)
+        if (
+            isinstance(scale, bool)
+            or not isinstance(scale, (int, float))
+            or not math.isfinite(float(scale))
+            or float(scale) <= 0
+        ):
+            raise ConfigError("pets.scale must be a positive number")
+        reduced = pets_config.get("reduced_motion", "system")
+        if reduced not in {"system", "on", "off"}:
+            raise ConfigError("pets.reduced_motion must be 'system', 'on', or 'off'")
+        for key, minimum in (("default_x", None), ("default_y", None)):
+            value = pets_config.get(key, 100)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ConfigError(f"pets.{key} must be an integer")
 
         latency_config = config.get("latency", {})
         if not isinstance(latency_config, dict):
