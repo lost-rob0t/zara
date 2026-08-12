@@ -84,3 +84,35 @@ def test_conversation_migration_coexists_with_later_registration_of_v1(tmp_path)
     assert db.fetch_one("SELECT name FROM sqlite_master WHERE name = 'late_v1'") is not None
     versions = {row["version"] for row in db.fetch_all("SELECT version FROM schema_migrations")}
     assert versions == {1, 2}
+
+
+def test_reload_marks_incomplete_turns_interrupted_instead_of_restoring_phantom_activity(tmp_path):
+    path = tmp_path / "interrupted.db"
+    db = DatabaseManager(path)
+    store = ConversationStore(db)
+    conversation = store.create_conversation("Interrupted")
+    message = MessageRecord(
+        id="interrupted-message",
+        conversation_id=conversation.id,
+        sequence=store.next_sequence(conversation.id),
+        turn_id="dead-turn",
+        role=MessageRole.ASSISTANT,
+        content="partial response",
+        status=MessageStatus.STREAMING,
+        created_at="2026-08-12T12:00:00.000000",
+        updated_at="2026-08-12T12:00:00.000000",
+    )
+    store.save_message(message)
+    db.close()
+
+    reopened_db = DatabaseManager(path)
+    reopened = ConversationStore(reopened_db)
+    state = reopened.load_state(conversation.id)
+
+    assert state.active_turn_id is None
+    assert state.messages[0].status is MessageStatus.CANCELLED
+    assert state.messages[0].error == "Interrupted when Zara stopped."
+    persisted = reopened.load_messages(conversation.id)[0]
+    assert persisted.status is MessageStatus.CANCELLED
+    assert persisted.error == "Interrupted when Zara stopped."
+    reopened_db.close()
