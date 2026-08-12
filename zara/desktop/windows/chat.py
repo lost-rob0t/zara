@@ -144,7 +144,7 @@ class FullChatWindow(QWidget):
         self.history_list.itemActivated.connect(self._activate_history_item)
         self.history_list.currentItemChanged.connect(self._history_selection_changed)
         self.new_chat_button.clicked.connect(self.new_chat)
-        self.rename_button.clicked.connect(self.rename_current)
+        self.rename_button.clicked.connect(lambda _checked=False: self.rename_current())
         self.composer.submit_requested.connect(self.submit_current_text)
         self.send_button.clicked.connect(self.submit_current_text)
         self.stop_button.clicked.connect(self.cancel_active_turn)
