@@ -2,7 +2,7 @@
 
 Lazy-imports PySide6. Provides controls equivalent to the task spec:
 
-    Enabled, Selected Pet, Scale, Reduced Motion,
+    Assistant Name, Enabled, Selected Pet, Scale, Reduced Motion,
     Import Pet, Import ChatGPT Pet, Import from ChatGPT, Open Pet Folder
 """
 
@@ -35,7 +35,7 @@ def run_settings_dialog(settings: PetSettings) -> int:
     from PySide6.QtWidgets import (
         QApplication, QDialog, QVBoxLayout, QFormLayout, QCheckBox,
         QComboBox, QDoubleSpinBox, QPushButton, QFileDialog, QMessageBox,
-        QLabel, QHBoxLayout,
+        QLabel, QHBoxLayout, QLineEdit,
     )
 
     app = QApplication.instance() or QApplication([])
@@ -43,6 +43,10 @@ def run_settings_dialog(settings: PetSettings) -> int:
     dialog.setWindowTitle("Zarathushtra — Pets")
     layout = QVBoxLayout(dialog)
     form = QFormLayout()
+
+    assistant_name = QLineEdit(settings.state.assistant_name)
+    assistant_name.setMaxLength(64)
+    form.addRow("Assistant Name", assistant_name)
 
     enabled_box = QCheckBox("Enabled")
     enabled_box.setChecked(settings.state.enabled)
@@ -164,6 +168,7 @@ def run_settings_dialog(settings: PetSettings) -> int:
 
     def _save():
         settings.update(
+            assistant_name=assistant_name.text().strip() or "Zara",
             enabled=enabled_box.isChecked(),
             selected_pet=pet_combo.currentData(),
             scale=scale_spin.value(),

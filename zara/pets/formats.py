@@ -20,12 +20,9 @@ core. There are three formats:
     ``spriteVersionNumber: 2`` plus id/displayName/description. The V2
     sheet extends V1 with two extra rows of look-direction cells.
 
-Frame mappings are documented from the public ChatGPT/Codex pet docs and
-the community-published V2 format. We do not guess undocumented rows: V2's
-extra rows (10 and 11, 0-indexed 9 and 10) are look-direction cells that
-are not part of the five-state animation set, so they are not mapped to a
-pet state by default. They remain available in the manifest metadata for
-future use.
+Frame mappings follow the ChatGPT/Codex pet contract. State rows, drag rows,
+interactive flourishes, and V2 look-direction rows retain their distinct
+semantics in the native manifest.
 """
 
 from __future__ import annotations
@@ -67,26 +64,40 @@ V2_ROWS = 11
 V2_WIDTH = 1536
 V2_HEIGHT = 2288
 
-# Row index -> Zarathushtra animation name. Rows 0-8 are the nine
-# standard action rows documented by ChatGPT/Codex:
-#   0 idle, 1 run-right, 2 run-left, 3 wave, 4 jump,
-#   5 failure reaction, 6 waiting, 7 active work/processing, 8 review.
-#
-# Row 7 (active work) maps to the ``running`` *state* (task work). Row 1
-# (run-right) is physical movement — we map it to a separate ``drag``
-# animation used only while the user carries the window, so the pet
-# "runs" when moved but does NOT run on tasks. V2's extra rows (9, 10)
-# are look-direction cells not mapped to a state animation.
 CHATGPT_ROW_TO_STATE: Dict[int, str] = {
     0: "idle",
-    1: "drag",           # run right — physical movement, not task work
-    2: "drag-left",      # run left — paired with drag for bidirectional carry
-    3: "idle",           # wave (idle flourish)
-    4: "idle",           # jump (idle flourish)
-    5: "blocked",        # failure reaction
-    6: "needs-input",    # waiting
-    7: "running",        # active work / processing (the task animation)
-    8: "ready",          # review / inspection
+    1: "drag",
+    2: "drag-left",
+    3: "wave",
+    4: "jump",
+    5: "blocked",
+    6: "needs-input",
+    7: "running",
+    8: "ready",
+}
+
+NON_LOOPING_ANIMATIONS = {"wave", "jump"}
+CHATGPT_ROW_FRAME_COUNTS = {
+    0: 6,
+    1: 8,
+    2: 8,
+    3: 4,
+    4: 5,
+    5: 8,
+    6: 6,
+    7: 6,
+    8: 6,
+}
+CHATGPT_ANIMATION_DURATIONS_MS = {
+    "idle": [280, 110, 110, 140, 140, 320],
+    "drag": [120, 120, 120, 120, 120, 120, 120, 220],
+    "drag-left": [120, 120, 120, 120, 120, 120, 120, 220],
+    "wave": [140, 140, 140, 280],
+    "jump": [140, 140, 140, 140, 280],
+    "blocked": [140, 140, 140, 140, 140, 140, 140, 240],
+    "needs-input": [150, 150, 150, 150, 150, 260],
+    "running": [120, 120, 120, 120, 120, 220],
+    "ready": [150, 150, 150, 150, 150, 280],
 }
 
 
@@ -208,10 +219,6 @@ class ChatGPTSpriteV2(PetFormat):
         )
         manifest.metadata["chatgpt_description"] = candidate.pet_json.get("description", "")
         manifest.metadata["chatgpt_sprite_version"] = 2
-        # V2's extra rows (9, 10) are look-direction cells, not state
-        # animations. We record them as metadata for future use but do not
-        # map them to a pet state, since the docs do not define their
-        # semantics as state animations.
         manifest.metadata["look_direction_rows"] = [9, 10]
         return ImportResult(manifest=manifest, source_format=self.name, warnings=warnings)
 
@@ -267,12 +274,7 @@ def _build_manifest_from_rows(
     row_to_state: Dict[int, str],
     warnings: list[str],
 ) -> PetManifest:
-    """Build a manifest by collapsing ChatGPT rows onto Zarathushtra states.
-
-    Multiple rows may map to the same state (e.g. run-left and run-right
-    both -> running). For each state we keep the first row that maps to it
-    so the animation is deterministic.
-    """
+    """Build a native manifest from the standard ChatGPT animation rows."""
     frame_geometry = FrameGeometry(
         width=CELL_WIDTH, height=CELL_HEIGHT, columns=COLUMNS, rows=rows,
     )
@@ -288,9 +290,9 @@ def _build_manifest_from_rows(
             Animation(
                 name=state,
                 row=row,
-                frames=COLUMNS,
+                frames=CHATGPT_ROW_FRAME_COUNTS[row],
                 fps=8.0,
-                loop=True,
+                loop=state not in NON_LOOPING_ANIMATIONS,
             )
         )
     # Ensure all five states are present. If a state is missing from the
@@ -314,7 +316,9 @@ def _build_manifest_from_rows(
         animations=animations,
         anchor=(0.5, 1.0),
         scale=1.0,
-        metadata={},
+        metadata={
+            "animation_durations_ms": CHATGPT_ANIMATION_DURATIONS_MS,
+        },
     )
 
 

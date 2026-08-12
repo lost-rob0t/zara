@@ -148,9 +148,14 @@ future versions fail loudly rather than misbehave.
 
 ### Animations
 
-Each animation names a state (`idle`, `running`, `needs-input`, `ready`,
-`blocked`), a sprite-sheet row, the number of frames (columns) to play,
-the frame rate (FPS), and whether it loops.
+State animations are `idle`, `running`, `needs-input`, `ready`, and
+`blocked`. ChatGPT/Codex imports also retain `drag`, `drag-left`, `wave`, and
+`jump`. V2 pets use rows 9 and 10 for the 16 clockwise look directions, so
+the pet follows the pointer while idle. Clicking plays `wave`; dragging uses
+the directional run rows; dropping plays `jump`.
+
+The Pets settings dialog also controls the assistant display name. It
+defaults to `Zara` independently of the selected artwork package.
 
 No executable scripts, hooks, or network references are permitted in a
 pet package. Pet files are untrusted data.
@@ -180,7 +185,9 @@ also force this with the **Reduced Motion** setting (`on`/`off`/`system`).
   compositors (KWin, Mutter) but may be restricted by some (Sway
   historically limited `WindowStaysOnTopHint`). Dragging may be
   server-side decorated on some compositors.
-- **X11**: full support for transparency, always-on-top, and dragging.
+- **X11**: full support for transparency, always-on-top, cross-monitor
+  dragging, and all-workspace visibility. On qtile the pet uses an unmanaged
+  overlay window so it is not assigned to a single group.
 - **Click-through on transparent regions**: not reliable cross-platform.
   The overlay is interactive on the whole window rectangle; transparent
   regions still intercept clicks on most compositors. The drag-threshold
@@ -209,12 +216,8 @@ CI. Tray integration is not wired up.
 
 ## Compatibility limitations
 
-- ChatGPT V2's extra rows (9 and 10) are look-direction cells; their
-  semantics are not documented as state animations, so they are recorded
-  in manifest metadata but not mapped to a pet state. Future versions may
-  use them for directional idle animation.
-- The V1 layout collapses ChatGPT's nine rows onto the five Zarathushtra
-  states (e.g. `run-right` and `run-left` both map to `running`).
+- V1 pets do not include the V2 pointer-look rows, but retain all nine
+  standard state, drag, wave, and jump rows.
 - Only PNG and WebP are accepted; other image formats are rejected at
   import.
 

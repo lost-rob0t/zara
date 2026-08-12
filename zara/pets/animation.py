@@ -26,6 +26,7 @@ Pillow images (or raw crops) so the controller is testable headless.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
@@ -64,6 +65,7 @@ class AnimationController:
         self._state: PetState = PetState.IDLE
         self._animation: Optional[Animation] = manifest.animation_for(PetState.IDLE.value)
         self._override_animation: Optional[Animation] = None
+        self._override_frame: Optional[Tuple[int, int]] = None
         self._anim_start: float = self._clock()
         self._last_row: Optional[int] = None
         self._last_col: Optional[int] = None
@@ -90,10 +92,15 @@ class AnimationController:
         when ``state`` equals the current state we keep the current
         animation timeline so a re-emitted event does not jump the frame.
         """
-        if state is self._state and not self._override_animation:
+        if (
+            state is self._state
+            and self._override_animation is None
+            and self._override_frame is None
+        ):
             return False
         self._state = state
         self._override_animation = None
+        self._override_frame = None
         self._animation = self.manifest.animation_for(state.value)
         self._anim_start = self._clock()
         self._pending_non_loop_done = False
@@ -110,19 +117,70 @@ class AnimationController:
         if anim is None:
             return False
         self._override_animation = anim
+        self._override_frame = None
         self._animation = anim
         self._anim_start = self._clock()
         self._pending_non_loop_done = False
         return True
 
+    @property
+    def has_animation_override(self) -> bool:
+        return self._override_animation is not None
+
+    @property
+    def animation_override_name(self) -> Optional[str]:
+        if self._override_animation is None:
+            return None
+        return self._override_animation.name
+
+    def animation_finished(self) -> bool:
+        anim = self._override_animation
+        if anim is None or anim.loop:
+            return False
+        durations = self._frame_durations(anim)
+        if durations is not None:
+            return (self._clock() - self._anim_start) * 1000 >= sum(durations)
+        return self._clock() - self._anim_start >= anim.frames / float(anim.fps)
+
+    def set_look_direction(self, direction_index: int) -> bool:
+        frame = self.manifest.look_frame(direction_index)
+        if frame is None or self._override_animation is not None:
+            return False
+        if frame == self._override_frame:
+            return False
+        self._override_frame = frame
+        return True
+
+    def clear_look_direction(self) -> bool:
+        if self._override_frame is None:
+            return False
+        self._override_frame = None
+        return True
+
     def current_frame(self) -> Tuple[int, int]:
         """Return the (row, col) frame that should be displayed now."""
+        if self._override_frame is not None:
+            return self._override_frame
         anim = self._animation
         if anim is None:
             return (0, 0)
         if self._reduced_motion:
             return (anim.row, 0)
         elapsed = self._clock() - self._anim_start
+        durations = self._frame_durations(anim)
+        if durations is not None:
+            elapsed_ms = elapsed * 1000
+            total_ms = sum(durations)
+            if anim.loop:
+                elapsed_ms %= total_ms
+            elif elapsed_ms >= total_ms:
+                return anim.row, anim.frames - 1
+            boundary = 0.0
+            for index, duration in enumerate(durations):
+                boundary += duration
+                if elapsed_ms < boundary:
+                    return anim.row, index
+            return anim.row, anim.frames - 1
         if anim.fps <= 0:
             return (anim.row, 0)
         frame_duration = 1.0 / float(anim.fps)
@@ -142,6 +200,22 @@ class AnimationController:
         col = max(0, min(frame_index, anim.frames - 1))
         return (anim.row, col)
 
+    def _frame_durations(self, anim: Animation) -> Optional[list[float]]:
+        all_durations = self.manifest.metadata.get("animation_durations_ms")
+        if not isinstance(all_durations, dict):
+            return None
+        raw = all_durations.get(anim.name)
+        if not isinstance(raw, list) or len(raw) != anim.frames:
+            return None
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or value <= 0
+            for value in raw
+        ):
+            return None
+        return [float(value) for value in raw]
+
     def frame_changed(self) -> bool:
         """True if the frame advanced since the last call to this method."""
         row, col = self.current_frame()
@@ -153,5 +227,15 @@ class AnimationController:
     def dispose(self) -> None:
         """Release any cached state. The renderer owns the pixmap cache."""
         self._animation = None
+        self._override_animation = None
+        self._override_frame = None
         self._last_row = None
         self._last_col = None
+
+
+def look_direction_index(dx: float, dy: float, deadzone: float = 32.0) -> Optional[int]:
+    """Map a screen-space vector to the v2 clockwise look-cell index."""
+    if math.hypot(dx, dy) <= deadzone:
+        return None
+    degrees = math.degrees(math.atan2(dx, -dy)) % 360.0
+    return int((degrees + 11.25) // 22.5) % 16

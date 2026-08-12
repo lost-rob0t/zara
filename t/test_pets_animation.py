@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from zara.pets.animation import AnimationController
+from zara.pets.animation import AnimationController, look_direction_index
 from zara.pets.manifest import Animation, FrameGeometry, PetManifest
 from zara.pets.settings import PetSettings, PetWindowState
 from zara.pets.state import PetState
@@ -141,6 +141,7 @@ def test_settings_round_trip(tmp_path):
     path = tmp_path / "pet-state.json"
     settings = PetSettings(path=path)
     settings.update(
+        assistant_name="Mara",
         selected_pet="custom",
         x=200,
         y=300,
@@ -152,6 +153,7 @@ def test_settings_round_trip(tmp_path):
     settings.save()
     loaded = PetSettings(path=path)
     assert loaded.state.selected_pet == "custom"
+    assert loaded.state.assistant_name == "Mara"
     assert loaded.state.x == 200
     assert loaded.state.y == 300
     assert loaded.state.scale == 1.5
@@ -164,6 +166,7 @@ def test_settings_defaults_when_missing(tmp_path):
     path = tmp_path / "pet-state.json"
     settings = PetSettings(path=path)
     assert settings.state.enabled is False
+    assert settings.state.assistant_name == "Zara"
     assert settings.state.selected_pet == "zara-default"
     assert settings.state.scale == 1.0
     assert settings.state.reduced_motion == "system"
@@ -258,3 +261,94 @@ def test_pet_window_state_from_dict_handles_none():
     assert state.x is None
     assert state.y is None
     assert state.scale == 1.0
+    assert state.assistant_name == "Zara"
+
+
+def test_empty_assistant_name_falls_back_to_zara():
+    state = PetWindowState.from_dict({"assistant_name": "   "})
+    assert state.assistant_name == "Zara"
+
+
+def test_v2_look_direction_uses_clockwise_rows():
+    manifest = _manifest()
+    manifest.frame_geometry = FrameGeometry(192, 208, 8, 11)
+    manifest.metadata["look_direction_rows"] = [9, 10]
+    ctrl = AnimationController(manifest)
+
+    assert ctrl.set_look_direction(0) is True
+    assert ctrl.current_frame() == (9, 0)
+    assert ctrl.set_look_direction(7) is True
+    assert ctrl.current_frame() == (9, 7)
+    assert ctrl.set_look_direction(8) is True
+    assert ctrl.current_frame() == (10, 0)
+    assert ctrl.set_look_direction(15) is True
+    assert ctrl.current_frame() == (10, 7)
+
+
+def test_state_change_clears_look_direction():
+    manifest = _manifest()
+    manifest.frame_geometry = FrameGeometry(192, 208, 8, 11)
+    manifest.metadata["look_direction_rows"] = [9, 10]
+    ctrl = AnimationController(manifest)
+    ctrl.set_look_direction(4)
+
+    ctrl.set_state(PetState.RUNNING)
+
+    assert ctrl.current_frame()[0] == 1
+
+
+@pytest.mark.parametrize(
+    ("dx", "dy", "expected"),
+    [
+        (0, -100, 0),
+        (100, -100, 2),
+        (100, 0, 4),
+        (100, 100, 6),
+        (0, 100, 8),
+        (-100, 100, 10),
+        (-100, 0, 12),
+        (-100, -100, 14),
+    ],
+)
+def test_look_direction_index_matches_v2_clock(dx, dy, expected):
+    assert look_direction_index(dx, dy) == expected
+
+
+def test_look_direction_deadzone_returns_idle():
+    assert look_direction_index(10, 10, deadzone=32) is None
+
+
+def test_non_looping_override_reports_completion():
+    manifest = _manifest()
+    manifest.animations.append(
+        Animation(name="wave", row=3, frames=8, fps=8.0, loop=False)
+    )
+    clock = _FakeClock()
+    ctrl = AnimationController(manifest, clock=clock)
+    ctrl.set_animation("wave")
+
+    clock.advance(0.99)
+    assert ctrl.animation_finished() is False
+    clock.advance(0.01)
+    assert ctrl.animation_finished() is True
+
+
+def test_manifest_frame_durations_override_uniform_fps():
+    manifest = _manifest()
+    manifest.animations[0] = Animation(
+        name="idle", row=0, frames=3, fps=100.0, loop=True
+    )
+    manifest.metadata["animation_durations_ms"] = {
+        "idle": [280, 110, 320],
+    }
+    clock = _FakeClock()
+    ctrl = AnimationController(manifest, clock=clock)
+
+    clock.advance(0.27)
+    assert ctrl.current_frame() == (0, 0)
+    clock.advance(0.02)
+    assert ctrl.current_frame() == (0, 1)
+    clock.advance(0.11)
+    assert ctrl.current_frame() == (0, 2)
+    clock.advance(0.31)
+    assert ctrl.current_frame() == (0, 0)
