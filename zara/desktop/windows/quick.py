@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional, Sequence
 
-from PySide6.QtCore import QEvent, QRect, QSettings, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QRect, QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QCursor, QHideEvent, QKeyEvent, QShowEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -20,7 +20,7 @@ from zara.desktop.chat_widgets import ChatComposer, MessageWidget
 from zara.desktop.conversation import ConversationService
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.state import DesktopStatus, INITIAL_STATUS
-from zara.runtime.commands import CancelTurn, CommandReceipt, SubmitTurn
+from zara.runtime.commands import CancelTurn, SubmitTurn
 
 _DEFAULT_SIZE = QSize(680, 460)
 _GEOMETRY_KEY = "desktop/quick-copilot/geometry"
@@ -82,7 +82,7 @@ class QuickComposer(ChatComposer):
     escape_requested = Signal()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt API
-        if event.key() is Qt.Key.Key_Escape:
+        if event.key() == Qt.Key.Key_Escape:
             self.escape_requested.emit()
             event.accept()
             return
@@ -323,7 +323,7 @@ class QuickCopilotWindow(QWidget):
         QTimer.singleShot(0, self.composer.setFocus)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt API
-        if event.key() is Qt.Key.Key_Escape:
+        if event.key() == Qt.Key.Key_Escape:
             self.hide()
             event.accept()
             return
@@ -364,6 +364,8 @@ class QuickCopilotWindow(QWidget):
         state = self.conversations.get_state(self.current_conversation_id)
         pending = self.conversations.has_pending_request(self.current_conversation_id)
         active = bool(state.active_turn_id)
+        if not active:
+            self._cancel_request_id = None
         self.send_button.setEnabled(not pending and not active)
         self.stop_button.setEnabled(active and self._cancel_request_id is None)
 
