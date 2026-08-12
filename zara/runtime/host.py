@@ -98,6 +98,9 @@ class RuntimeHost:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._async_stop: Optional[asyncio.Event] = None
         self._startup_future: concurrent.futures.Future = concurrent.futures.Future()
+        self._startup_shutdown_requests: list[
+            tuple[ShutdownRuntime, concurrent.futures.Future]
+        ] = []
 
         # The fields below are owned by the runtime thread after startup.
         self._backend: Optional[RuntimeBackend] = None
@@ -130,6 +133,7 @@ class RuntimeHost:
 
             self._state = RuntimeHostState.STARTING
             self._startup_future = concurrent.futures.Future()
+            self._startup_shutdown_requests.clear()
             self._thread = threading.Thread(
                 target=self._thread_main,
                 name="zara-runtime-host",
@@ -146,6 +150,20 @@ class RuntimeHost:
         with self._state_lock:
             state = self._state
             loop = self._loop
+
+            # Explicit Quit must remain reliable even before backend startup
+            # completes. Queue it for the initial startup coroutine instead of
+            # making the Qt caller poll or block. During a later runtime
+            # restart, _startup_future is already complete and this shortcut is
+            # intentionally not used.
+            if (
+                state is RuntimeHostState.STARTING
+                and isinstance(command, ShutdownRuntime)
+                and not self._startup_future.done()
+            ):
+                future: concurrent.futures.Future = concurrent.futures.Future()
+                self._startup_shutdown_requests.append((command, future))
+                return future
 
         recovery_command = isinstance(command, (RestartRuntime, ShutdownRuntime))
         if state is RuntimeHostState.RUNNING:
@@ -164,11 +182,14 @@ class RuntimeHost:
             return _failed_future(RuntimeNotReady(str(error)))
 
     def shutdown(self, reason: str = "host shutdown") -> concurrent.futures.Future:
+        command = ShutdownRuntime(reason=reason)
         with self._state_lock:
             state = self._state
         if state in {RuntimeHostState.NEW, RuntimeHostState.STOPPED}:
-            return _completed_future(CommandReceipt(request_id="shutdown", detail="already stopped"))
-        return self.submit(ShutdownRuntime(reason=reason))
+            return _completed_future(
+                CommandReceipt(request_id=command.request_id, detail="already stopped")
+            )
+        return self.submit(command)
 
     def join(self, timeout: Optional[float] = None) -> None:
         thread = self._thread
@@ -196,6 +217,7 @@ class RuntimeHost:
                 self._state = RuntimeHostState.FAILED
             if not self._startup_future.done():
                 self._startup_future.set_exception(error)
+            self._fail_startup_shutdown_requests(error)
         finally:
             pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
             for task in pending:
@@ -228,11 +250,14 @@ class RuntimeHost:
             )
             if not self._startup_future.done():
                 self._startup_future.set_exception(error)
+            self._fail_startup_shutdown_requests(error)
             return
 
+        startup_error: Optional[Exception] = None
         try:
             await self._start_backend()
         except Exception as error:
+            startup_error = error
             with self._state_lock:
                 self._state = RuntimeHostState.DEGRADED
             self._publisher(
@@ -244,7 +269,18 @@ class RuntimeHost:
             )
             if not self._startup_future.done():
                 self._startup_future.set_exception(error)
-        else:
+
+        shutdown_requests = self._take_startup_shutdown_requests()
+        if shutdown_requests:
+            if startup_error is None and not self._startup_future.done():
+                self._startup_future.set_exception(
+                    RuntimeNotReady("runtime shutdown requested during startup")
+                )
+            await self._complete_startup_shutdown_requests(shutdown_requests)
+            await self._async_stop.wait()
+            return
+
+        if startup_error is None:
             with self._state_lock:
                 self._state = RuntimeHostState.RUNNING
             self._publisher(events.RuntimeStarted(label="runtime-host"))
@@ -257,13 +293,48 @@ class RuntimeHost:
         candidate = self._backend_factory()
         try:
             await candidate.start()
-        except Exception:
+        except BaseException:
             try:
                 await candidate.stop()
             except Exception:
                 logger.debug("Runtime backend cleanup after failed start failed", exc_info=True)
             raise
         self._backend = candidate
+
+    async def _complete_startup_shutdown_requests(
+        self,
+        requests: list[tuple[ShutdownRuntime, concurrent.futures.Future]],
+    ) -> None:
+        command = requests[0][0]
+        try:
+            receipt = await self._shutdown(command)
+        except Exception as error:
+            for _, future in requests:
+                if not future.done():
+                    future.set_exception(error)
+            raise
+
+        for request, future in requests:
+            if not future.done():
+                future.set_result(
+                    CommandReceipt(
+                        request_id=request.request_id,
+                        detail=receipt.detail,
+                    )
+                )
+
+    def _take_startup_shutdown_requests(
+        self,
+    ) -> list[tuple[ShutdownRuntime, concurrent.futures.Future]]:
+        with self._state_lock:
+            requests = self._startup_shutdown_requests
+            self._startup_shutdown_requests = []
+            return requests
+
+    def _fail_startup_shutdown_requests(self, error: BaseException) -> None:
+        for _, future in self._take_startup_shutdown_requests():
+            if not future.done():
+                future.set_exception(error)
 
     # ------------------------------------------------------------------
     # Command dispatch
@@ -513,7 +584,7 @@ class RuntimeHost:
 
         tasks = [task for task in self._turn_tasks.values() if not task.done()]
         if tasks:
-            done, pending = await asyncio.wait(tasks, timeout=self._shutdown_timeout)
+            _, pending = await asyncio.wait(tasks, timeout=self._shutdown_timeout)
             for task in pending:
                 task.cancel()
             if pending:
