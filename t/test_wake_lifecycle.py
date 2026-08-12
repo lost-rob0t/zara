@@ -1,10 +1,11 @@
 import asyncio
 import queue
 import threading
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 
+from zara.streaming_stt import StreamingVAD, VADConfig
 from zara.wake import WakeWordListener
 
 
@@ -18,7 +19,25 @@ class FakeClock:
         return self.current
 
 
-def build_listener(queue_size=8, sample_rate=10):
+class FakeVADDetector:
+    def __init__(self, pattern=None, default_prob=0.0):
+        self.pattern = pattern or []
+        self.default_prob = default_prob
+        self.index = 0
+
+    def reset(self):
+        self.index = 0
+
+    def process_chunk(self, _audio_bytes):
+        if self.index < len(self.pattern):
+            probability = self.pattern[self.index]
+        else:
+            probability = self.default_prob
+        self.index += 1
+        return probability
+
+
+def build_listener(queue_size=8, sample_rate=16000):
     listener = WakeWordListener.__new__(WakeWordListener)
     listener.state = "PASSIVE"
     listener.audio_queue = queue.Queue(maxsize=queue_size)
@@ -33,10 +52,16 @@ def build_listener(queue_size=8, sample_rate=10):
     listener.loop = asyncio.get_running_loop()
     listener.input_sample_rate = sample_rate
     listener.first_speech_timeout = 5.0
-    listener.max_utterance_duration = 2.0
     listener.silence_duration = 1.0
-    listener.silence_threshold = 0.1
-    listener.silence_log_interval = 100.0
+    listener.vad_config = VADConfig(
+        min_speech_frames=1,
+        trailing_silence_frames=2,
+        max_utterance_frames=100,
+    )
+    listener._vad_factory = lambda config: StreamingVAD(
+        config,
+        FakeVADDetector(),
+    )
     listener._clock = FakeClock(0.0)
     listener.log = lambda _message: None
     listener.ack_player = None
@@ -50,13 +75,20 @@ def build_listener(queue_size=8, sample_rate=10):
     return listener
 
 
-def frame(value, size=5):
+def frame(value, size=512):
     return np.full((size, 1), value, dtype=np.float32)
 
 
 def enqueue(listener, data, epoch=None):
     listener.audio_queue.put_nowait(
         (listener._audio_epoch if epoch is None else epoch, data)
+    )
+
+
+def set_vad(listener, pattern=None, default_prob=0.0):
+    listener._vad_factory = lambda config: StreamingVAD(
+        config,
+        FakeVADDetector(pattern=pattern, default_prob=default_prob),
     )
 
 
@@ -131,12 +163,14 @@ def test_continuous_noise_hits_first_speech_deadline():
 def test_endless_speech_is_capped_by_audio_duration():
     async def run():
         listener = build_listener(queue_size=8)
+        listener.vad_config.max_utterance_frames = 4
+        set_vad(listener, default_prob=0.9)
         for _ in range(4):
             enqueue(listener, frame(1.0))
 
         result = await listener.collect_audio_until_silence()
 
-        assert result.shape == (20, 1)
+        assert result.shape == (2048, 1)
         assert listener.collection_status == "max_utterance"
 
     asyncio.run(run())
@@ -145,12 +179,13 @@ def test_endless_speech_is_capped_by_audio_duration():
 def test_speech_ends_after_silence_deadline():
     async def run():
         listener = build_listener(queue_size=8)
-        listener._clock = FakeClock(0.0, 0.0, 2.0)
-        enqueue(listener, frame(1.0, 6))
+        set_vad(listener, pattern=[0.9, 0.9, 0.0, 0.0])
+        for _ in range(4):
+            enqueue(listener, frame(1.0))
 
         result = await listener.collect_audio_until_silence()
 
-        assert result.shape == (6, 1)
+        assert result.shape == (2048, 1)
         assert listener.collection_status == "silence"
 
     asyncio.run(run())
@@ -185,10 +220,11 @@ def test_slow_consumer_cannot_grow_callback_buffer():
 def test_shutdown_unblocks_passive_and_active_collectors():
     async def run():
         passive = build_listener()
-        passive_task = asyncio.create_task(passive.collect_audio(3))
+        passive_task = asyncio.create_task(passive.collect_audio_until_silence())
         await asyncio.sleep(0)
         passive.request_stop()
         assert await asyncio.wait_for(passive_task, 0.2) is None
+        assert passive.collection_status == "stopped"
 
         active = build_listener()
         active_task = asyncio.create_task(active.collect_audio_until_silence())
@@ -198,7 +234,8 @@ def test_shutdown_unblocks_passive_and_active_collectors():
         assert active.collection_status == "stopped"
 
         recording = build_listener()
-        enqueue(recording, frame(1.0, 6))
+        set_vad(recording, default_prob=0.9)
+        enqueue(recording, frame(1.0))
         recording_task = asyncio.create_task(recording.collect_audio_until_silence())
         await asyncio.sleep(0)
         recording.request_stop()
@@ -221,6 +258,67 @@ def test_state_transition_discards_stale_frames():
 
         assert result[0, 0] == 3.0
         assert listener.audio_queue.empty()
+
+    asyncio.run(run())
+
+
+def test_wake_command_preserves_same_utterance_request():
+    listener = WakeWordListener.__new__(WakeWordListener)
+
+    assert listener._wake_command("Hey Zara, what time is it?") == "what time is it"
+    assert listener._wake_command("Zarathustra open Firefox") == "open Firefox"
+    assert listener._wake_command("ordinary conversation") is None
+
+
+def test_passive_wake_queues_same_utterance_command():
+    async def run():
+        listener = build_listener()
+        listener.prolog = MagicMock()
+        listener.prolog.dictation_active.return_value = False
+        listener.collect_audio_until_silence = AsyncMock(return_value=frame(1.0))
+        listener.transcribe_async = AsyncMock(
+            return_value="Hey Zara, what time is it?"
+        )
+
+        with patch(
+            "zara.wake.send_notification_async",
+            new_callable=AsyncMock,
+        ):
+            await listener.passive_mode_async()
+
+        assert listener.state == "ACTIVE"
+        assert listener._pending_wake_command == "what time is it"
+        listener.transcribe_async.assert_awaited_once()
+
+    asyncio.run(run())
+
+
+def test_active_mode_routes_pending_wake_command_without_listening_again():
+    async def run():
+        listener = build_listener()
+        listener.state = "ACTIVE"
+        listener._pending_wake_command = "what time is it"
+        listener.prolog = MagicMock()
+        listener.prolog.dictation_active.return_value = False
+        listener.prolog.is_conversation_stop.return_value = False
+        listener.agent_manager = None
+        listener.in_conversation_mode = MagicMock(return_value=False)
+        listener.collect_audio_until_silence = AsyncMock()
+        listener.query_with_fallback_async = AsyncMock(
+            return_value=(False, "It is noon")
+        )
+        listener._monitor_speech_during_llm = AsyncMock(return_value=False)
+        listener._play_acknowledgement = MagicMock()
+        listener._stop_tts = AsyncMock()
+        listener.send_response_async = AsyncMock()
+
+        await listener.active_mode_async()
+
+        listener.collect_audio_until_silence.assert_not_awaited()
+        listener.query_with_fallback_async.assert_awaited_once_with(
+            "what time is it"
+        )
+        listener.send_response_async.assert_awaited_once()
 
     asyncio.run(run())
 

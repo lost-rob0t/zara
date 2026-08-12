@@ -6,6 +6,8 @@ Fully async for maximum responsiveness
 """
 
 import os
+import math
+import re
 import sys
 import time
 import asyncio
@@ -22,7 +24,14 @@ from concurrent.futures import ThreadPoolExecutor
 from . import llm
 from . import command_gate
 from .acknowledgement import AcknowledgementConfig, AcknowledgementPlayer
-from .streaming_stt import StreamingVAD, VADConfig, VAD_CHUNK_SAMPLES, VAD_SAMPLE_RATE, SpeechStarted
+from .streaming_stt import (
+    SpeechEnded,
+    SpeechStarted,
+    StreamingVAD,
+    VADConfig,
+    VAD_CHUNK_SAMPLES,
+    VAD_SAMPLE_RATE,
+)
 from .tts import PlaybackResult, TTSEngine, supports_streaming
 from .agent import AgentManager
 from .config import get_config
@@ -35,13 +44,14 @@ from .latency import JSONLMetricsSink, LatencyTrace, metrics_path
 
 DEFAULT_SAMPLE_RATE = 16000
 CHANNELS = 1
-PASSIVE_CHUNK_SEC = 3
-PASSIVE_OVERLAP_SEC = 0.75
-DEFAULT_SILENCE_THRESHOLD = 0.01  # RMS threshold for silence detection
 DEFAULT_SILENCE_DURATION = 5.0  # Seconds of silence before considering speech complete
 MAX_RECORDING_DURATION = 30.0  # Maximum recording duration to prevent infinite recording
 DEFAULT_AUDIO_QUEUE_CHUNKS = 32
 WAKE_WORDS = ["zarathustra", "hey zara", "zara", "sarah"]
+WAKE_PATTERN = re.compile(
+    r"\b(" + "|".join(re.escape(word) for word in WAKE_WORDS) + r")\b",
+    re.IGNORECASE,
+)
 TIMEOUT_ACTIVE = 5
 
 PIDFILE = "/tmp/zara_wakeword.pid"
@@ -122,18 +132,11 @@ class WakeWordListener:
         self.last_tts_status: Optional[PlaybackResult] = None
 
         wake_cfg = self.config.get_section("wake")
+        stt_cfg = self.config.get_section("stt")
         self.stop_on_interrupt = bool(wake_cfg.get("stop_tts_on_input", True))
         self.silence_duration = self._parse_float(
             wake_cfg.get("silence_duration", DEFAULT_SILENCE_DURATION),
             DEFAULT_SILENCE_DURATION,
-        )
-        self.silence_threshold = self._parse_float(
-            wake_cfg.get("silence_threshold", DEFAULT_SILENCE_THRESHOLD),
-            DEFAULT_SILENCE_THRESHOLD,
-        )
-        self.silence_log_interval = self._parse_float(
-            wake_cfg.get("silence_log_interval", 0.5),
-            0.5,
         )
         self.first_speech_timeout = self._positive_float(
             wake_cfg.get("first_speech_timeout", TIMEOUT_ACTIVE),
@@ -147,6 +150,31 @@ class WakeWordListener:
             wake_cfg.get("audio_queue_chunks", DEFAULT_AUDIO_QUEUE_CHUNKS),
             DEFAULT_AUDIO_QUEUE_CHUNKS,
         )
+        self.vad_config = VADConfig(
+            vad_threshold=self._positive_float(stt_cfg.get("vad_threshold", 0.5), 0.5),
+            min_speech_frames=self._vad_frames(stt_cfg.get("min_speech_ms", 128), 128),
+            trailing_silence_frames=self._vad_frames(
+                stt_cfg.get("trailing_silence_ms", 320), 320
+            ),
+            max_utterance_frames=self._vad_frames(
+                stt_cfg.get(
+                    "max_utterance_ms",
+                    self.max_utterance_duration * 1000,
+                ),
+                MAX_RECORDING_DURATION * 1000,
+            ),
+            no_speech_timeout_frames=self._vad_frames(
+                stt_cfg.get("no_speech_timeout_ms", 5000), 5000
+            ),
+            pre_speech_buffer_chunks=self._positive_int(
+                stt_cfg.get("pre_speech_buffer_chunks", 10), 10
+            ),
+            partial_interval_frames=self._vad_frames(
+                stt_cfg.get("partial_transcript_ms", 1000), 1000
+            ),
+        )
+        self._pending_wake_command: Optional[str] = None
+        self._last_audio_warning = 0.0
 
         self.target_sample_rate = self._parse_float(
             wake_cfg.get("sample_rate", DEFAULT_SAMPLE_RATE),
@@ -274,6 +302,35 @@ class WakeWordListener:
         except (TypeError, ValueError):
             return default
         return parsed if parsed > 0 else default
+
+    def _vad_frames(self, milliseconds: Any, default: float) -> int:
+        duration = self._positive_float(milliseconds, default)
+        chunk_ms = VAD_CHUNK_SAMPLES * 1000 / VAD_SAMPLE_RATE
+        return max(1, math.ceil(duration / chunk_ms))
+
+    def _new_streaming_vad(self) -> StreamingVAD:
+        factory = getattr(self, "_vad_factory", StreamingVAD)
+        return factory(self.vad_config)
+
+    def _wake_command(self, text: str) -> Optional[str]:
+        match = WAKE_PATTERN.search(text or "")
+        if match is None:
+            return None
+        command = f"{text[:match.start()]} {text[match.end():]}"
+        return command.strip(" \t\r\n,.:;!?-")
+
+    def _log_no_speech(self, peak: float, probability: float) -> None:
+        now = self._clock()
+        if now - getattr(self, "_last_audio_warning", 0.0) < 30.0:
+            return
+        self._last_audio_warning = now
+        if peak <= 1e-5:
+            self.log("Audio input is silent; check the selected microphone and hardware gain")
+            return
+        self.log(
+            "No speech detected by Silero VAD "
+            f"(peak={peak:.4f}, max_probability={probability:.3f})"
+        )
 
     def _is_conversation_stop(self, text: str) -> bool:
         state = "conversation" if self.in_conversation_mode() else "passive"
@@ -495,27 +552,9 @@ class WakeWordListener:
 
         return await loop.run_in_executor(self.executor, _transcribe)
 
-    async def collect_audio(self, seconds):
-        """Collect audio for specified duration"""
-        target_frames = int(seconds * self.input_sample_rate)
-        buffer = np.zeros((0, CHANNELS), dtype="float32")
-
-        while buffer.shape[0] < target_frames and not self._stopping():
-            data = await self._next_audio()
-            if data is None:
-                break
-            buffer = np.concatenate((buffer, data))
-
-        return buffer[:target_frames] if buffer.shape[0] >= target_frames else None
-
     async def collect_audio_until_silence(self, first_speech_timeout=None):
-        """Collect audio until silence is detected (for active mode)"""
+        """Collect one utterance using Silero VAD endpointing."""
         trace = self._ensure_turn_trace()
-        buffer = np.zeros((0, CHANNELS), dtype="float32")
-        silence_start = None
-        utterance_deadline = None
-        speech_detected = False
-        last_log_time = 0.0
         if first_speech_timeout is None:
             first_speech_timeout = self.first_speech_timeout
         else:
@@ -524,89 +563,68 @@ class WakeWordListener:
                 self._parse_float(first_speech_timeout, self.first_speech_timeout),
             )
         deadline = self._clock() + first_speech_timeout
+        turn_id = trace.trace_id if trace is not None else f"turn-{time.monotonic_ns()}"
+        vad = self._new_streaming_vad()
+        vad.start_turn(turn_id)
+        pending = np.zeros(0, dtype=np.float32)
+        speech_detected = False
+        max_peak = 0.0
+        max_probability = 0.0
         self.collection_status = "waiting_for_speech"
 
         while not self._stopping():
-            data = await self._next_audio(deadline)
-            now = self._clock()
+            data = await self._next_audio(None if speech_detected else deadline)
             if data is None:
                 if self._stopping():
                     self.collection_status = "stopped"
                     return None
-                if not speech_detected:
-                    self.collection_status = "first_speech_timeout"
-                    return None
-                self.collection_status = (
-                    "max_utterance"
-                    if (
-                        utterance_deadline is not None
-                        and utterance_deadline <= silence_start + self.silence_duration
-                    )
-                    else "silence"
-                )
-                break
-
-            buffer = np.concatenate((buffer, data))
-            chunk_mono = data[:, 0] if data.ndim > 1 else data
-            rms = np.sqrt(np.mean(chunk_mono.astype(np.float32) ** 2))
-
-            if (
-                speech_detected
-                and buffer.shape[0] >= self.max_utterance_duration * self.input_sample_rate
-            ):
-                self.collection_status = "max_utterance"
-                break
-            if (
-                not speech_detected
-                and buffer.shape[0] >= first_speech_timeout * self.input_sample_rate
-            ):
                 self.collection_status = "first_speech_timeout"
+                self._log_no_speech(max_peak, max_probability)
                 return None
 
-            if now - last_log_time >= self.silence_log_interval:
-                self.log(f"Silence check: rms={rms:.4f} threshold={self.silence_threshold:.3f}")
-                last_log_time = now
+            mono = data[:, 0] if data.ndim > 1 else data
+            mono = mono.astype(np.float32, copy=False)
+            if self.input_sample_rate != VAD_SAMPLE_RATE:
+                mono = resample_audio(mono, self.input_sample_rate, VAD_SAMPLE_RATE)
+            if len(mono):
+                max_peak = max(max_peak, float(np.max(np.abs(mono))))
+            pending = np.concatenate((pending, mono))
 
-            if rms > self.silence_threshold:
-                if not speech_detected:
-                    speech_detected = True
-                    self.collection_status = "recording"
-                    utterance_deadline = now + self.max_utterance_duration
-                    if trace is not None:
-                        trace.record("speech_start")
-                    if getattr(self, "stop_on_interrupt", False):
-                        await self._interrupt_tts(trace)
-                silence_start = now
-                deadline = min(
-                    utterance_deadline,
-                    silence_start + self.silence_duration,
-                )
-            elif speech_detected:
-                deadline = min(
-                    utterance_deadline,
-                    silence_start + self.silence_duration,
-                )
+            while len(pending) >= VAD_CHUNK_SAMPLES:
+                chunk = pending[:VAD_CHUNK_SAMPLES]
+                pending = pending[VAD_CHUNK_SAMPLES:]
+                events = vad.feed(chunk)
+                max_probability = max(max_probability, vad.last_probability)
+                for event in events:
+                    if isinstance(event, SpeechStarted):
+                        speech_detected = True
+                        self.collection_status = "recording"
+                        deadline = None
+                        self.log("Speech detected (Silero VAD)")
+                        if trace is not None:
+                            trace.record("speech_start")
+                        if getattr(self, "stop_on_interrupt", False):
+                            await self._interrupt_tts(trace)
+                    elif isinstance(event, SpeechEnded):
+                        self.collection_status = event.reason
+                        audio = vad.speech_audio
+                        if self.input_sample_rate != VAD_SAMPLE_RATE:
+                            audio = resample_audio(
+                                audio,
+                                VAD_SAMPLE_RATE,
+                                self.input_sample_rate,
+                            )
+                        if trace is not None:
+                            trace.record("speech_end", reason=event.reason)
+                            trace.flush()
+                        return audio.reshape(-1, CHANNELS)
 
-            if speech_detected and now >= deadline:
-                self.collection_status = (
-                    "max_utterance"
-                    if utterance_deadline <= silence_start + self.silence_duration
-                    else "silence"
-                )
-                break
+            if not speech_detected and self._clock() >= deadline:
+                self.collection_status = "first_speech_timeout"
+                self._log_no_speech(max_peak, max_probability)
+                return None
 
-        if self._stopping():
-            self.collection_status = "stopped"
-            return None
-        if speech_detected and buffer.shape[0] > self.input_sample_rate * 0.5:
-            if trace is not None:
-                trace.record(
-                    "speech_end",
-                    reason=self.collection_status,
-                    observable_proxy=True,
-                )
-                trace.flush()
-            return buffer
+        self.collection_status = "stopped"
         return None
 
     def clear_queue(self):
@@ -627,8 +645,7 @@ class WakeWordListener:
         self.state = state
 
     def check_wake_word(self, text):
-        text_lower = text.lower()
-        return any(wake in text_lower for wake in WAKE_WORDS)
+        return self._wake_command(text) is not None
 
     def in_conversation_mode(self) -> bool:
         """Check if currently in conversation mode"""
@@ -1360,22 +1377,18 @@ class WakeWordListener:
             return
 
         trace = self._new_latency_trace(consume_cold=False)
-        chunk = await self.collect_audio(PASSIVE_CHUNK_SEC)
+        chunk = await self.collect_audio_until_silence(self.first_speech_timeout)
         if chunk is None:
+            self.current_latency_trace = None
             return
 
-        overlap_frames = int(PASSIVE_OVERLAP_SEC * self.input_sample_rate)
-        previous_tail = getattr(self, "_passive_tail", None)
-        self._passive_tail = chunk[-overlap_frames:].copy()
-        window = (
-            np.concatenate((previous_tail, chunk))
-            if previous_tail is not None
-            else chunk
-        )
-        text = await self.transcribe_async(window, wake_mode=True)
+        text = await self.transcribe_async(chunk, wake_mode=True)
+        self.log(f"Passive transcript: {text!r}")
+        command = self._wake_command(text)
 
-        if self.check_wake_word(text):
+        if command is not None:
             self._latency_cold_start = False
+            self._pending_wake_command = command or None
             if trace is not None:
                 trace.record("wake_detected")
                 trace.record("ack_requested", channel="notification")
@@ -1434,26 +1447,30 @@ class WakeWordListener:
                 self.transition_to("PASSIVE")
             return
 
-        conversation_timeout = self._conversation_timeout_remaining()
-        first_speech_timeout = (
-            conversation_timeout
-            if conversation_timeout is not None
-            else self.first_speech_timeout
-        )
-        chunk = await self.collect_audio_until_silence(first_speech_timeout)
-        if chunk is None:
-            if self.collection_status == "stopped":
+        text = getattr(self, "_pending_wake_command", None)
+        self._pending_wake_command = None
+        if text is None:
+            conversation_timeout = self._conversation_timeout_remaining()
+            first_speech_timeout = (
+                conversation_timeout
+                if conversation_timeout is not None
+                else self.first_speech_timeout
+            )
+            chunk = await self.collect_audio_until_silence(first_speech_timeout)
+            if chunk is None:
+                if self.collection_status == "stopped":
+                    return
+                if (
+                    conversation_timeout is not None
+                    and self.agent_manager is not None
+                    and self.agent_manager.should_exit_conversation()
+                ):
+                    await self._end_timed_out_conversation()
+                    return
+                self.log("⏸️ No speech - returning to passive")
+                self.transition_to("PASSIVE")
                 return
-            if (
-                conversation_timeout is not None
-                and self.agent_manager is not None
-                and self.agent_manager.should_exit_conversation()
-            ):
-                await self._end_timed_out_conversation()
-                return
-            self.log("⏸️ No speech - returning to passive")
-            self.transition_to("PASSIVE")
-            return
+            text = await self.transcribe_async(chunk)
 
         # Immediate acknowledgement: play pre-generated clip after speech
         # ends, but only once transcription confirms real speech (not noise).
@@ -1463,8 +1480,6 @@ class WakeWordListener:
             else f"turn-{int(time.time() * 1000)}"
         )
 
-        text = await self.transcribe_async(chunk)
-
         if trace is not None:
             trace.record("final_transcript", text_length=len(text or ""))
             trace.flush()
@@ -1472,11 +1487,9 @@ class WakeWordListener:
         if not text or len(text) < 3:
             return
 
-        await asyncio.sleep(0.3)
-        self._play_acknowledgement(turn_id)
-
         if self.stop_on_interrupt:
             await self._stop_tts()
+        self._play_acknowledgement(turn_id)
 
         self.log(f"📝 Heard: '{text}'")
 

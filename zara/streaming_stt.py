@@ -124,6 +124,7 @@ class StreamingVAD:
         self._turn_id: Optional[str] = None
         self._lock = threading.Lock()
         self._cancelled = False
+        self._last_probability = 0.0
 
     def _ensure_vad(self):
         if self._vad is None:
@@ -141,6 +142,7 @@ class StreamingVAD:
             self._speech_audio = []
             self._turn_id = None
             self._cancelled = False
+            self._last_probability = 0.0
             if self._vad is not None:
                 self._vad.reset()
 
@@ -173,6 +175,10 @@ class StreamingVAD:
             return np.zeros(0, dtype=np.float32)
         return np.concatenate(list(self._pre_speech))
 
+    @property
+    def last_probability(self) -> float:
+        return self._last_probability
+
     def feed(self, chunk: np.ndarray) -> List[STTEvent]:
         """Process one 512-sample float32 chunk. Returns emitted events.
 
@@ -202,6 +208,7 @@ class StreamingVAD:
             except Exception as error:
                 logger.warning("[StreamingVAD] VAD error: %s", error)
                 return events
+            self._last_probability = float(prob)
 
             is_speech = prob >= self.config.vad_threshold
 

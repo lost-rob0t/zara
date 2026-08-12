@@ -62,8 +62,6 @@ def build_listener(queue_size=32, sample_rate=10):
     listener.first_speech_timeout = 5.0
     listener.max_utterance_duration = 30.0
     listener.silence_duration = 1.0
-    listener.silence_threshold = 0.1
-    listener.silence_log_interval = 100.0
     listener._clock = FakeClock(0.0)
     listener.log = lambda _message: None
     listener.ack_player = None
@@ -82,6 +80,7 @@ def build_listener(queue_size=32, sample_rate=10):
     listener.memory = MagicMock()
     listener.config = MagicMock()
     listener.config.get_section = MagicMock(return_value={})
+    listener.collect_audio_until_silence = AsyncMock(return_value=frame(1.0, 10))
     return listener
 
 

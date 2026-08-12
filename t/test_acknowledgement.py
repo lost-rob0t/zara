@@ -35,7 +35,13 @@ from zara.acknowledgement import (
 @pytest.fixture(autouse=True)
 def isolated_xdg(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    yield
+    inactive_stream = MagicMock(active=False)
+    with (
+        patch("sounddevice.play"),
+        patch("sounddevice.get_stream", return_value=inactive_stream),
+        patch("sounddevice.stop"),
+    ):
+        yield
 
 
 def test_disabled_acknowledgement_does_nothing():
