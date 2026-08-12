@@ -152,19 +152,19 @@ def run_overlay(
     class PetWindow(QWidget):
         def __init__(self) -> None:
             super().__init__()
-            # Frameless + always-on-top + Tool (so the WM treats it as a
-            # utility/pet window that appears on ALL workspaces — critical
-            # for qtile/i3/bspwm where a normal window only shows on one
-            # workspace). Qt.Tool also keeps it off the taskbar. On tiling
-            # WMs (qtile) this does NOT cause the withdraw-on-focus-loss
-            # blink that Mutter/KWin exhibited.
+            # Frameless + always-on-top. We do NOT use Qt.Tool because on
+            # tiling WMs (qtile) it constrains the window to one screen
+            # and prevents dragging across monitors. Instead we set the
+            # X11 utility window type via the attribute, which makes the
+            # WM show the window on all workspaces without the screen
+            # constraint that Qt.Tool imposes.
             self.setWindowFlags(
                 Qt.FramelessWindowHint
                 | Qt.WindowStaysOnTopHint
-                | Qt.Tool
             )
             self.setAttribute(Qt.WA_TranslucentBackground, True)
             self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+            self.setAttribute(Qt.WA_X11NetWmWindowTypeUtility, True)
             self.setFocusPolicy(Qt.StrongFocus)
             self.setFixedSize(int(cell_w * scale), int(cell_h * scale))
             self.move(x, y)
