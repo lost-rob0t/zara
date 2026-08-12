@@ -13,8 +13,11 @@
       mkSystem = system:
         let
           pkgs = import nixpkgs { inherit system; };
+
+          # Use python3 (latest stable)
           python = pkgs.python3;
 
+          # Build pyswip from GitHub (use the same python toolchain everywhere)
           pyswip = python.pkgs.buildPythonPackage rec {
             pname = "pyswip";
             version = "0.3.1";
@@ -33,6 +36,7 @@
             ];
 
             buildInputs = [ pkgs.swi-prolog ];
+
             doCheck = false;
 
             meta = {
@@ -51,9 +55,10 @@
             p.pyyaml
             p.pydantic
             p.httpx
-            p.tomli
+            p.tomli  # TOML parsing for config system
             p.orgparse
             pyswip
+            # LangChain + LangGraph for agent system
             p.langchain
             p.langchain-core
             p.langchain-community
@@ -64,28 +69,33 @@
             p.openai
             p.langchain-ollama
             p.ollama
+            # TTS providers
             p.elevenlabs
             p.edge-tts
+            # Memory
             p.chromadb
             p.sentence-transformers
+            # Actor framework for real-time turn coordinator
             p.pykka
-            p.pysilero-vad
-            p.pyside6
-            p.pillow
-            p.pyzmq
+# Streaming VAD (Silero VAD via GGML C extension)
+          p.pysilero-vad
+          # Desktop pet overlay (PySide6/Qt6)
+          p.pyside6
+          # Pillow for WebP->PNG conversion at pet import time (Qt's nixpkgs
+          # build lacks the WebP image plugin)
+          p.pillow
+          # ZeroMQ for cross-process pet event streaming (wake -> pet overlay)
+          p.pyzmq
+          # Testing
             p.pytest
             p.pytest-asyncio
+            # Packaging metadata sanity checks
             p.setuptools
             p.wheel
           ]);
 
-          mkZaraPackage = {
-            pname,
-            binaryName ? pname,
-            addFlags,
-            withProlog ? true,
-            extraPath ? [ ],
-          }:
+          # Shared derivation builder for the Zara runtime packages.
+          mkZaraPackage = { pname, binaryName ? pname, addFlags, withProlog ? true, extraPath ? [ ], }:
             pkgs.stdenv.mkDerivation {
               inherit pname;
               version = "1.0";
@@ -98,15 +108,18 @@
                 mkdir -p $out/lib/python
                 ${if withProlog then "mkdir -p $out/share/zarathushtra" else ""}
 
+                # Copy the zara Python module
                 cp -r $src/zara $out/lib/python/
 
                 ${if withProlog then ''
+                  # Copy ALL Prolog sources with structure intact
                   cp $src/*.pl $out/share/zarathushtra/ 2>/dev/null || true
                   cp -r $src/kb $out/share/zarathushtra/
                   cp -r $src/modules $out/share/zarathushtra/
                   cp -r $src/assets $out/share/zarathushtra/
                 '' else ""}
 
+                # Create wrapper with correct Python interpreter and environment
                 makeWrapper ${pythonLibs}/bin/python3 $out/bin/${binaryName} \
                   --add-flags "${addFlags}" \
                   --prefix PATH : ${pkgs.lib.makeBinPath ([ pkgs.swi-prolog pkgs.mpv ] ++ extraPath)} \
@@ -143,6 +156,8 @@
             extraPath = [ pkgs.xdotool ];
           };
 
+          # zara-prolog keeps the historical layout: Python wrapper that points
+          # at the bundled Prolog share for console mode.
           zara-prolog = pkgs.stdenv.mkDerivation {
             pname = "zara-prolog";
             version = "1.0";
@@ -154,6 +169,7 @@
               mkdir -p $out/share/zarathushtra
               mkdir -p $out/bin
 
+              # Copy ALL Prolog sources with structure intact
               cp $src/*.pl $out/share/zarathushtra/ 2>/dev/null || true
               cp -r $src/kb $out/share/zarathushtra/
               cp -r $src/modules $out/share/zarathushtra/
@@ -161,6 +177,7 @@
               cp -r $src/zara $out/share/zarathushtra/
               cp -r $src/assets $out/share/zarathushtra/
 
+              # zara-console (Python wrapper)
               makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara-console \
                 --add-flags "-m zara --console" \
                 --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.swi-prolog pkgs.mpv ]} \
@@ -175,6 +192,8 @@
             paths = [ zara-cli zara-desktop zara-prolog zara-wake zara-dictate ];
           };
 
+          # Development wrappers intentionally execute the working checkout,
+          # not the immutable package copy in the Nix store.
           zara-dev = pkgs.writeShellScriptBin "zara" ''
             export PYTHONPATH="$PWD''${PYTHONPATH:+:$PYTHONPATH}"
             exec ${pythonLibs}/bin/python -m zara "$@"
@@ -186,6 +205,10 @@
           '';
 
           checks = {
+            # Run the Python test suite. The source tree is read-only in the
+            # Nix store, so copy it to a writable scratch dir first so pytest
+            # can write ``.pytest_cache`` and ``__pycache__``. Set HOME to a
+            # writable temp dir so tests that resolve ``Path.home()`` work.
             pytest = pkgs.runCommand "zara-check-pytest"
               {
                 nativeBuildInputs = [ pythonLibs pkgs.swi-prolog pkgs.makeWrapper ];
@@ -207,6 +230,9 @@
                 touch $out
               '';
 
+            # Compile every Python module to catch syntax errors. The source
+            # tree is read-only in the Nix store, so copy it to a writable
+            # location first so ``compileall`` can write ``__pycache__``.
             syntax = pkgs.runCommand "zara-check-syntax"
               {
                 nativeBuildInputs = [ pythonLibs ];
@@ -220,6 +246,9 @@
                 touch $out
               '';
 
+            # Ensure main.pl and its module graph load cleanly in SWI-Prolog.
+            # An isolated HOME prevents the user's local config from masking
+            # load failures (or causing spurious ones) during the check.
             prolog-load = pkgs.runCommand "zara-check-prolog-load"
               {
                 nativeBuildInputs = [ pkgs.swi-prolog ];
@@ -233,6 +262,8 @@
                 touch $out
               '';
 
+            # Enforce deterministic fixture latency budgets and retain the
+            # JSONL/percentile report as the check output.
             latency = pkgs.runCommand "zara-check-latency"
               {
                 nativeBuildInputs = [ pythonLibs pkgs.swi-prolog ];
@@ -251,16 +282,11 @@
                 bash scripts/test-latency-metrics.sh
               '';
 
+            # Exercise the installed Nix wrappers with isolated HOME and
+            # mocked hardware so the package layout is verified end-to-end.
             wrappers = pkgs.runCommand "zara-check-wrappers"
               {
-                nativeBuildInputs = [
-                  zara-cli
-                  zara-desktop
-                  zara-wake
-                  zara-dictate
-                  zara-prolog
-                  pkgs.bash
-                ];
+                nativeBuildInputs = [ zara-cli zara-desktop zara-wake zara-dictate zara-prolog pkgs.bash ];
                 src = ./.;
               }
               ''
@@ -269,7 +295,8 @@
                 export XDG_RUNTIME_DIR=$(mktemp -d)
                 export ZARA_DICTATION_PIDFILE=$XDG_RUNTIME_DIR/zara_dictation.pid
                 export ZARA_DICTATION_LOGFILE=$XDG_RUNTIME_DIR/zara_dictation.log
-
+                # zara with no args prints help and exits 1 — that proves the
+                # wrapper, Python interpreter, and zara package all resolve.
                 set +e
                 zara >$HOME/cli.out 2>&1
                 cli_rc=$?
@@ -278,7 +305,6 @@
                 zara-console --help >$HOME/console.out 2>&1 || true
                 zara-dictate --help >$HOME/dictate.out 2>&1 || true
                 set -e
-
                 test "$cli_rc" -eq 1
                 grep -q "Zarathustra Voice Assistant" $HOME/cli.out
                 grep -q -- "--desktop" $HOME/cli-help.out
@@ -337,8 +363,8 @@
               zara-dev
               zara-desktop-dev
               pkgs.xdotool
-              pkgs.ffmpeg-full
-              pkgs.mpv
+              pkgs.ffmpeg-full  # Includes ffplay for streaming audio
+              pkgs.mpv  # Alternative for streaming audio playback
               pkgs.portaudio
               pkgs.swi-prolog
               pkgs.pulseaudio
@@ -346,7 +372,7 @@
 
             shellHook = ''
               export PYTHONPATH="$PWD''${PYTHONPATH:+:$PYTHONPATH}"
-              echo "Python + Whisper + SWI-Prolog + LangChain + Zara Desktop ready"
+              echo "Python + Whisper + SWI-Prolog + LangChain ready"
               echo ""
               echo "Commands:"
               echo "  zara-desktop                   # Native desktop / Quick Copilot"
@@ -362,7 +388,7 @@
               echo "  nix build                     # Build all packages"
               echo "  nix run                       # Run default CLI (prints help with no args)"
               echo "  nix run .#zara-wake           # Run wake listener"
-              echo "  nix flake check               # Run all checks"
+              echo "  nix flake check               # Run all checks (pytest, scripts, syntax, prolog load)"
             '';
           };
 
