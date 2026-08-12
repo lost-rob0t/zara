@@ -81,6 +81,11 @@
           p.pysilero-vad
           # Desktop pet overlay (PySide6/Qt6)
           p.pyside6
+          # Pillow for WebP->PNG conversion at pet import time (Qt's nixpkgs
+          # build lacks the WebP image plugin)
+          p.pillow
+          # ZeroMQ for cross-process pet event streaming (wake -> pet overlay)
+          p.pyzmq
           # Testing
             p.pytest
             p.pytest-asyncio

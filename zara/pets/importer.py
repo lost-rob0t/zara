@@ -244,14 +244,36 @@ def import_pet(
     sprite_source = _resolve_sprite_source(adapter, path, manifest)
     if not sprite_source.exists():
         raise ImportError_(f"sprite source not found: {sprite_source}")
-    # Normalize the stored asset name to the actual format. This keeps
-    # the manifest honest: a PNG import is stored as spritesheet.png.
+    # Normalize the stored asset name to the actual format. WebP sources
+    # are converted to PNG because Qt's nixpkgs build lacks the WebP image
+    # plugin; PNG is always loadable. This keeps the manifest honest and
+    # guarantees the overlay can decode the sprite.
     mime = detect_mime(sprite_source)
-    extension = "png" if mime == "image/png" else "webp"
-    manifest.sprite_asset = f"spritesheet.{extension}"
-    install_pet(manifest, sprite_source)
+    if mime == "image/webp":
+        manifest.sprite_asset = "spritesheet.png"
+        png_target = _webp_to_png(sprite_source)
+        install_pet(manifest, png_target)
+        png_target.unlink(missing_ok=True)
+    else:
+        manifest.sprite_asset = "spritesheet.png"
+        install_pet(manifest, sprite_source)
     logger.info(
         "[PetImport] imported %s pet %s from %s (sprite=%s)",
         result.source_format, manifest.id, path, sprite_source,
     )
     return manifest
+
+
+def _webp_to_png(source: Path) -> Path:
+    """Convert a WebP sprite to a temporary PNG using Pillow."""
+    from PIL import Image  # lazy import; Pillow is in pythonLibs
+    import tempfile
+
+    image = Image.open(source)
+    if image.mode != "RGBA":
+        image = image.convert("RGBA")
+    fd, tmp = tempfile.mkstemp(suffix=".png")
+    import os
+    os.close(fd)
+    image.save(tmp, format="PNG")
+    return Path(tmp)

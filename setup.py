@@ -107,6 +107,8 @@ setup(
         "pykka>=3.1",
         "pysilero-vad>=3.0",
         "pyside6>=6.5",
+        "pillow>=10.0",
+        "pyzmq>=25.0",
         "pytest>=7.0",
         "pytest-asyncio>=0.23",
     ],

@@ -1,34 +1,75 @@
-"""Qt/PySide6 pet overlay window — lazy imported so headless tests need no Qt.
+"""Qt/PySide6 pet overlay window + system tray.
 
-The overlay is a frameless, transparent, always-on-top window that paints
-the current animation frame. Dragging uses a movement threshold so clicks
-and right-clicks are distinguished from drags. Transparent regions allow
-click-through where the platform supports it; where it does not, the
-window is still interactive on visible pet pixels (documented caveat).
+The overlay is a frameless, transparent, always-on-top window that
+paints the current animation frame. Dragging switches the pet to the
+``running`` animation (the companion "runs" while you carry her) and
+persists the new position on release. A system tray icon offers
+Show/Hide, Open Zarathushtra, and Quit.
 
-PySide6 is imported lazily inside ``run_overlay`` so importing this
-module in a headless environment does not pull in Qt.
+Cross-process events arrive over ZMQ PUB/SUB (see ``ipc.py``); the
+subscriber polls from a Qt timer and forwards payloads to the
+PetStateActor. In-process events go directly via the actor ref.
+
+PySide6 is imported lazily inside ``run_overlay``.
 """
 
 from __future__ import annotations
 
 import logging
-import os
-import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from . import runtime_bridge
+from . import events, runtime_bridge
 from .animation import AnimationController
 from .geometry import ScreenRect, recover_position
+from .ipc import PetSubscriber
 from .manifest import PetManifest
 from .settings import PetSettings
 from .state import PetState
-from .storage import list_pets, load_pet, sprite_path_for
+from .storage import sprite_path_for
 
 logger = logging.getLogger(__name__)
 
 DRAG_THRESHOLD = 5  # pixels
+
+
+# ZMQ payload -> PetEvent instance. Mirrors zara.pets.events.
+_PAYLOAD_MAP = {
+    "ModelStarted": lambda p: events.ModelStarted(label=p.get("label")),
+    "ModelStreaming": lambda p: events.ModelStreaming(label=p.get("label")),
+    "ModelCompleted": lambda p: events.ModelCompleted(
+        success=p.get("success", True), label=p.get("label")),
+    "ModelFailed": lambda p: events.ModelFailed(
+        reason=p.get("reason", ""), label=p.get("label")),
+    "ToolStarted": lambda p: events.ToolStarted(label=p.get("label")),
+    "ToolCompleted": lambda p: events.ToolCompleted(
+        success=p.get("success", True), label=p.get("label")),
+    "ToolFailed": lambda p: events.ToolFailed(
+        reason=p.get("reason", ""), label=p.get("label")),
+    "AgentStarted": lambda p: events.AgentStarted(label=p.get("label")),
+    "AgentCompleted": lambda p: events.AgentCompleted(
+        success=p.get("success", True), label=p.get("label")),
+    "AgentFailed": lambda p: events.AgentFailed(
+        reason=p.get("reason", ""), label=p.get("label")),
+    "UserInputRequired": lambda p: events.UserInputRequired(
+        kind=p.get("kind", "approval"), label=p.get("label")),
+    "UserResponded": lambda p: events.UserResponded(label=p.get("label")),
+    "OutputReady": lambda p: events.OutputReady(label=p.get("label")),
+    "OutputSeen": lambda p: events.OutputSeen(label=p.get("label")),
+    "TaskCancelled": lambda p: events.TaskCancelled(label=p.get("label")),
+    "RuntimeIdle": lambda p: events.RuntimeIdle(label=p.get("label")),
+    "ProviderUnavailable": lambda p: events.ProviderUnavailable(
+        reason=p.get("reason", ""), label=p.get("label")),
+}
+
+# Human-readable emotion strings shown in the tray tooltip / balloon.
+_EMOTION_LABELS = {
+    PetState.IDLE: "resting",
+    PetState.RUNNING: "working",
+    PetState.NEEDS_INPUT: "needs your input",
+    PetState.READY: "has something ready",
+    PetState.BLOCKED: "is stuck",
+}
 
 
 def _screen_rects(qt_screens) -> list[ScreenRect]:
@@ -40,15 +81,11 @@ def _screen_rects(qt_screens) -> list[ScreenRect]:
 
 
 def _reduced_motion_enabled(preference: str) -> bool:
-    """Resolve the reduced-motion preference against the OS setting."""
     if preference == "on":
         return True
     if preference == "off":
         return False
-    # "system": check the environment. Linux exposes this via gsettings or
-    # GTK_TOOLKIT_PORTAL; we check a couple of well-known env heuristics.
-    if os.getenv("GTK_DISABLE animations") == "1":
-        return True
+    import os
     try:
         import subprocess
         result = subprocess.run(
@@ -65,17 +102,11 @@ def _reduced_motion_enabled(preference: str) -> bool:
 def run_overlay(
     settings: PetSettings,
     pet_manifest: PetManifest,
-    on_state_change: Optional[Callable[[PetState, list[str]], None]] = None,
     on_request_focus: Optional[Callable[[], None]] = None,
 ) -> int:
-    """Launch the Qt pet overlay. Returns the Qt exit code.
-
-    This function is the only place PySide6 is imported. Callers in
-    headless contexts (tests, CLI without ``--pets``) never reach it.
-    """
-    from PySide6.QtCore import Qt, QTimer, QPoint, QEvent
-    from PySide6.QtGui import QPixmap, QPainter, QImage
-    from PySide6.QtWidgets import QApplication, QWidget, QMenu
+    from PySide6.QtCore import Qt, QTimer, QPoint
+    from PySide6.QtGui import QPixmap, QPainter, QImage, QIcon, QAction
+    from PySide6.QtWidgets import QApplication, QWidget, QMenu, QSystemTrayIcon
 
     app = QApplication.instance() or QApplication([])
     app.setQuitOnLastWindowClosed(False)
@@ -96,7 +127,6 @@ def run_overlay(
     cell_w = pet_manifest.frame_geometry.width
     cell_h = pet_manifest.frame_geometry.height
 
-    # Frame pixmap cache keyed by (row, col) so we never re-extract a cell.
     cache: dict[tuple[int, int], QPixmap] = {}
 
     def _frame_pixmap(row: int, col: int) -> QPixmap:
@@ -108,16 +138,28 @@ def run_overlay(
 
     controller = AnimationController(pet_manifest, reduced_motion=reduced)
 
+    # Shared state so the tray and window can coordinate show/hide and the
+    # drag handler can remember the pre-drag state.
+    overlay_state = {
+        "pre_drag_state": PetState.IDLE,
+        "dragging": False,
+        "last_emotion": PetState.IDLE,
+    }
+
     class PetWindow(QWidget):
         def __init__(self) -> None:
             super().__init__()
+            # Frameless + always-on-top + no taskbar entry. We avoid
+            # Qt.Tool here because some compositors withdraw tool windows
+            # when the app loses focus, which caused blinking.
             self.setWindowFlags(
                 Qt.FramelessWindowHint
                 | Qt.WindowStaysOnTopHint
-                | Qt.Tool
+                | Qt.WindowDoesNotAcceptFocus
             )
             self.setAttribute(Qt.WA_TranslucentBackground, True)
             self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+            self.setAttribute(Qt.WA_NoSystemBackground, True)
             self.setFocusPolicy(Qt.NoFocus)
             self.setFixedSize(int(cell_w * scale), int(cell_h * scale))
             self.move(x, y)
@@ -135,6 +177,12 @@ def run_overlay(
         def paintEvent(self, event) -> None:
             painter = QPainter(self)
             painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+            # Compositing: clear to transparent first so stale pixels from
+            # the previous frame don't smear on compositors that don't
+            # auto-clear translucent windows.
+            painter.setCompositionMode(QPainter.CompositionMode_Source)
+            painter.fillRect(self.rect(), Qt.transparent)
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
             if self._current_pixmap is not None:
                 painter.drawPixmap(self.rect(), self._current_pixmap)
 
@@ -149,65 +197,167 @@ def run_overlay(
         def mouseMoveEvent(self, event) -> None:
             if self._drag_offset is not None and (event.buttons() & Qt.LeftButton):
                 if (event.globalPos() - self._drag_origin).manhattanLength() > DRAG_THRESHOLD:
-                    self._moved = True
+                    if not overlay_state["dragging"]:
+                        overlay_state["dragging"] = True
+                        overlay_state["pre_drag_state"] = controller.state
+                        controller.set_state(PetState.RUNNING)
+                        self._update_frame()
                     self.move(event.globalPos() - self._drag_offset)
 
         def mouseReleaseEvent(self, event) -> None:
             if event.button() == Qt.LeftButton:
-                if self._moved:
-                    # Persist the new position.
+                if overlay_state["dragging"]:
                     settings.update(x=self.x(), y=self.y())
                     settings.save()
+                    overlay_state["dragging"] = False
+                    controller.set_state(overlay_state["pre_drag_state"])
+                    self._update_frame()
                 else:
-                    # Treat as a click — focus/open Zarathura.
                     if on_request_focus is not None:
                         on_request_focus()
                 self._drag_offset = None
                 self._moved = False
 
         def _show_context_menu(self, pos) -> None:
-            menu = QMenu(self)
-            open_action = menu.addAction("Open Zarathushtra")
-            menu.addSeparator()
-            tuck_action = menu.addAction("Tuck Away")
-            action = menu.exec_(pos)
-            if action is open_action and on_request_focus is not None:
-                on_request_focus()
-            elif action is tuck_action:
-                self.hide()
-                settings.update(enabled=False)
-                settings.save()
-
-        def _on_state(self, state: PetState, labels: list[str]) -> None:
-            controller.set_state(state)
-            self._update_frame()
+            _build_context_menu(self, pos).exec_(pos)
 
     window = PetWindow()
     window.show()
 
-    # Subscribe the window to pet state changes from the actor.
+    # --- System tray ----------------------------------------------------
+    tray = QSystemTrayIcon()
+    tray_icon = _make_tray_icon(cell_w, cell_h, sprite_image, scale)
+    tray.setIcon(tray_icon)
+    tray.setToolTip(f"{pet_manifest.name} — resting")
+
+    def _tray_activated(reason) -> None:
+        if reason == QSystemTrayIcon.Trigger:
+            _toggle_visibility()
+
+    tray.activated.connect(_tray_activated)
+
+    def _tray_menu() -> QMenu:
+        menu = QMenu()
+        show_action = QAction("Show Mara" if window.isVisible() else "Hide Mara", menu)
+        show_action.triggered.connect(_toggle_visibility)
+        menu.addAction(show_action)
+        open_action = QAction("Open Zarathushtra", menu)
+        open_action.triggered.connect(lambda: on_request_focus() if on_request_focus else None)
+        menu.addAction(open_action)
+        menu.addSeparator()
+        settings_action = QAction("Pet Settings...", menu)
+        settings_action.triggered.connect(_open_settings)
+        menu.addAction(settings_action)
+        menu.addSeparator()
+        quit_action = QAction("Quit", menu)
+        quit_action.triggered.connect(app.quit)
+        menu.addAction(quit_action)
+        return menu
+
+    tray.setContextMenu(_tray_menu())
+
+    def _toggle_visibility() -> None:
+        if window.isVisible():
+            window.hide()
+        else:
+            window.show()
+            window.raise_()
+
+    def _open_settings() -> None:
+        from .qt_settings import run_settings_dialog
+        run_settings_dialog(settings)
+
+    # --- Pet state actor + ZMQ subscriber -------------------------------
     from .actor import PetStateActor
-    actor = PetStateActor.start(subscriber=window._on_state)
+
+    def _on_state(state: PetState, labels: list[str]) -> None:
+        # During a drag, keep the running animation regardless of incoming
+        # state; we'll restore on release.
+        if overlay_state["dragging"]:
+            return
+        controller.set_state(state)
+        window._update_frame()
+        emotion = _EMOTION_LABELS.get(state, state.value)
+        tray.setToolTip(f"{pet_manifest.name} — {emotion}")
+        # Surface emotion changes that need the user's attention via a tray
+        # balloon so the user notices even if the window is hidden.
+        if state is PetState.NEEDS_INPUT and state is not overlay_state["last_emotion"]:
+            tray.showMessage(
+                pet_manifest.name, f"{pet_manifest.name} needs your input",
+                QSystemTrayIcon.Information, 4000)
+        elif state is PetState.BLOCKED and state is not overlay_state["last_emotion"]:
+            tray.showMessage(
+                pet_manifest.name, f"{pet_manifest.name} is stuck",
+                QSystemTrayIcon.Warning, 4000)
+        elif state is PetState.READY and state is not overlay_state["last_emotion"]:
+            tray.showMessage(
+                pet_manifest.name, f"{pet_manifest.name} has something ready",
+                QSystemTrayIcon.Information, 3000)
+        overlay_state["last_emotion"] = state
+
+    actor = PetStateActor.start(subscriber=_on_state)
     runtime_bridge.register_actor(actor)
 
-    # Animation tick: 60 Hz is plenty for 8 fps; the controller reports
-    # whether the frame advanced so we only repaint when it changed.
-    def _tick() -> None:
-        if controller.frame_changed():
+    subscriber = PetSubscriber(on_event=lambda p: _dispatch_payload(p, actor))
+    subscriber.start()
+
+    def _dispatch_payload(payload, actor_ref) -> None:
+        event_name = payload.get("event")
+        factory = _PAYLOAD_MAP.get(event_name)
+        if factory is None:
+            return
+        try:
+            actor_ref.tell(factory(payload))
+        except Exception:
+            logger.debug("[PetOverlay] dispatch failed for %s", event_name, exc_info=True)
+
+    # --- Timers ---------------------------------------------------------
+    def _animation_tick() -> None:
+        if controller.frame_changed() and not overlay_state["dragging"]:
             window._update_frame()
 
-    timer = QTimer()
-    timer.timeout.connect(_tick)
-    timer.start(int(1000 / 60))
+    anim_timer = QTimer()
+    anim_timer.timeout.connect(_animation_tick)
+    anim_timer.start(int(1000 / 60))
+
+    def _ipc_tick() -> None:
+        subscriber.poll()
+
+    ipc_timer = QTimer()
+    ipc_timer.timeout.connect(_ipc_tick)
+    ipc_timer.start(33)  # ~30 Hz ZMQ drain
 
     def _cleanup() -> None:
-        timer.stop()
+        anim_timer.stop()
+        ipc_timer.stop()
         runtime_bridge.unregister_actor()
         actor.stop()
+        subscriber.stop()
         controller.dispose()
         cache.clear()
+        tray.hide()
 
     app.aboutToQuit.connect(_cleanup)
-    if on_state_change is not None:
-        on_state_change(controller.state, [])
+    tray.show()
+    _on_state(PetState.IDLE, [])
     return app.exec()
+
+
+def _build_context_menu(parent, pos):
+    from PySide6.QtGui import QAction
+    from PySide6.QtWidgets import QMenu
+    menu = QMenu(parent)
+    menu.addAction("Open Zarathushtra")
+    menu.addSeparator()
+    menu.addAction("Tuck Away")
+    return menu
+
+
+def _make_tray_icon(cell_w: int, cell_h: int, sprite_image, scale: float):
+    """Build a small tray icon from the pet's idle frame."""
+    from PySide6.QtCore import Qt, QSize
+    from PySide6.QtGui import QPixmap, QIcon, QImage, QPainter
+    idle = sprite_image.copy(0, 0, cell_w, cell_h)
+    pix = QPixmap.fromImage(idle)
+    icon = QIcon(pix)
+    return icon
