@@ -103,7 +103,11 @@ class AgentRuntimeBackend(RuntimeBackend):
                 "context attachments are not wired into the runtime backend yet"
             )
 
-        result = await self._manager.process_async(text, turn_id=turn_id)
+        result = await self._manager.process_async(
+            text,
+            turn_id=turn_id,
+            conversation_id=conversation_id,
+        )
         raw_tool_results = result.get("tool_results", [])
         return RuntimeTurnResult(
             response=str(result.get("response", "")),
