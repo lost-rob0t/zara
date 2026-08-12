@@ -190,6 +190,7 @@ class DesktopController(QObject):
             self.window.handle_command_completed(receipt, update)
         if self.quick_window is not None:
             self.quick_window.handle_command_completed(receipt)
+        self._resync_conversation_surfaces()
 
         request_id = getattr(receipt, "request_id", None)
         if request_id == self._quit_request_id:
@@ -206,6 +207,7 @@ class DesktopController(QObject):
             self.window.handle_command_failed(request_id, message, update)
         if self.quick_window is not None:
             self.quick_window.handle_command_failed(request_id, message)
+        self._resync_conversation_surfaces()
 
         if request_id == self._quit_request_id:
             self._quit_request_id = None
@@ -219,6 +221,13 @@ class DesktopController(QObject):
                     message or "Runtime restart failed",
                 )
             )
+
+    def _resync_conversation_surfaces(self) -> None:
+        if self.conversation_service is None:
+            return
+        self.window.apply_conversation_update(None)
+        if self.quick_window is not None:
+            self.quick_window.sync_from_shared_state()
 
     def _set_status(self, status: DesktopStatus) -> None:
         self.status = status
