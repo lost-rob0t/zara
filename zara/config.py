@@ -36,10 +36,8 @@ sample_rate = 16000
 stop_phrases = ["goodbye", "bye", "end conversation", "stop conversation", "end session", "stop session"]
 # Stop TTS playback when user starts speaking
 stop_tts_on_input = true
-# Silence detection tuning (seconds)
+# Conversation grace after TTS playback (seconds)
 silence_duration = 1.5
-silence_threshold = 0.02
-silence_log_interval = 0.5
 # Return to passive mode if nobody speaks after a wake word
 first_speech_timeout = 5.0
 # Hard cap for a single utterance and buffered callback chunks
@@ -68,9 +66,10 @@ threads = 4
 # Streaming VAD (Silero) parameters — 512 samples = 32 ms at 16 kHz
 vad_threshold = 0.5
 min_speech_ms = 128        # ~4 chunks before speech_started
-trailing_silence_ms = 512  # ~16 chunks after speech to trigger speech_ended
+trailing_silence_ms = 320  # ~10 chunks after speech to trigger speech_ended
 max_utterance_ms = 30000   # hard cap on utterance length
 no_speech_timeout_ms = 5000
+pre_speech_buffer_chunks = 10
 partial_transcript_ms = 1000  # partial transcription interval
 
 [tts]

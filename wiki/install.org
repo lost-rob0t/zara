@@ -215,9 +215,16 @@ instantiating the config manager.
 - =wake.audio_queue_chunks= bounds the real-time callback buffer. When full, the
   oldest chunk is dropped so current audio wins.
 - =wake.first_speech_timeout= returns a wake with no speech to passive mode.
-- =wake.silence_duration= ends an utterance after speech followed by silence.
-- =wake.max_utterance_duration= caps continuous speech or noise. Conversation
-  mode separately uses =agent.conversation_timeout= as its inactivity deadline.
+- Passive wake detection and active command capture both use Silero VAD at
+  16 kHz. =stt.min_speech_ms= confirms speech, =stt.trailing_silence_ms= ends
+  the utterance (320 ms by default), and =stt.pre_speech_buffer_chunks=
+  preserves its onset.
+- =stt.vad_threshold= controls speech sensitivity and =stt.max_utterance_ms=
+  caps continuous speech. =wake.max_utterance_duration= remains the fallback
+  for configurations that do not set the STT cap. Conversation mode separately
+  uses =agent.conversation_timeout= as its inactivity deadline.
+- A request spoken with the wake phrase, such as “Zara, what time is it?”, is
+  routed immediately without waiting for a second utterance.
 
 ** Example: set a custom system prompt
 #+begin_src toml
