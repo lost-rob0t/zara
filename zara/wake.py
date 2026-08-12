@@ -1548,6 +1548,12 @@ def main(model="tiny.en", device="cpu", prolog_main_path=None, enable_tts=True,
     pet_proc = None
     if with_pets:
         pet_proc = _launch_pet_overlay()
+        # Eagerly start the ZMQ publisher so the socket is bound before
+        # the first runtime event fires (avoids ZMQ slow-joiner drops).
+        from .pets import runtime_bridge
+        runtime_bridge._ensure_publisher()
+        import time
+        time.sleep(0.3)
 
     listener = WakeWordListener(
         model=model,

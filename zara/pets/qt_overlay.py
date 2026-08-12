@@ -326,7 +326,9 @@ def run_overlay(
         event_name = payload.get("event")
         factory = _PAYLOAD_MAP.get(event_name)
         if factory is None:
+            logger.warning("[PetOverlay] unknown event: %s", event_name)
             return
+        logger.info("[PetOverlay] event received: %s", event_name)
         try:
             actor_ref.tell(factory(payload))
         except Exception:
@@ -348,9 +350,34 @@ def run_overlay(
     ipc_timer.timeout.connect(_ipc_tick)
     ipc_timer.start(33)  # ~30 Hz ZMQ drain
 
+    # --- Ctrl-C / SIGTERM handler ---------------------------------------
+    # Qt absorbs SIGINT into timer callbacks, producing traceback noise
+    # instead of a clean exit. Install a signal handler that routes
+    # through QCoreApplication.quit so cleanup runs normally.
+    import signal as _signal
+    _orig_sigint = _signal.getsignal(_signal.SIGINT)
+    _orig_sigterm = _signal.getsignal(_signal.SIGTERM)
+
+    def _quit_on_signal(signum, frame) -> None:
+        app.quit()
+
+    def _restore_signals() -> None:
+        _signal.signal(_signal.SIGINT, _orig_sigint)
+        _signal.signal(_signal.SIGTERM, _orig_sigterm)
+
+    # A short wakeup timer lets Python check for pending signals
+    # (signal handlers only run in the main thread between bytecodes).
+    wakeup = QTimer()
+    wakeup.timeout.connect(lambda: None)
+    wakeup.start(200)
+    _signal.signal(_signal.SIGINT, _quit_on_signal)
+    _signal.signal(_signal.SIGTERM, _quit_on_signal)
+
     def _cleanup() -> None:
         anim_timer.stop()
         ipc_timer.stop()
+        wakeup.stop()
+        _restore_signals()
         runtime_bridge.unregister_actor()
         actor.stop()
         subscriber.stop()

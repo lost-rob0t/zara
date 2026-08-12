@@ -60,6 +60,7 @@ def _tell_and_publish(event: events.PetEvent, event_name: str, **kwargs) -> None
         except Exception:
             logger.debug("[PetBridge] tell failed for %r", event, exc_info=True)
     # Cross-process (ZMQ) — always also publish so a separate overlay picks up.
+    logger.debug("[PetBridge] publishing %s %s", event_name, kwargs)
     _publish(event_name, **kwargs)
 
 
