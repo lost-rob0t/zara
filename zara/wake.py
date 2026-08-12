@@ -740,6 +740,13 @@ class WakeWordListener:
         resolution_state = "conversation" if self.in_conversation_mode() else "passive"
         trace = getattr(self, "current_latency_trace", None)
 
+        # Pet: signal running at the start of any command resolution.
+        try:
+            from .pets import runtime_bridge
+            runtime_bridge.agent_started(label="command")
+        except Exception:
+            pass
+
         # Heuristic gate: skip Prolog entirely for non-command utterances to
         # avoid intent hijacking and reduce latency. The LLM can still call
         # the `query_prolog` tool when the user's input is in fact a command.
@@ -821,6 +828,11 @@ class WakeWordListener:
 
                 except Exception as e:
                     self.log(f"Prolog error: {e}")
+                    try:
+                        from .pets import runtime_bridge
+                        runtime_bridge.model_failed(reason=str(e), label="prolog")
+                    except Exception:
+                        pass
                     if trace is not None:
                         trace.record("prolog_result", status="error")
                     return (False, "", True)
@@ -830,7 +842,12 @@ class WakeWordListener:
                 trace.flush()
 
         if prolog_success:
-            # Prolog handled it successfully
+            # Prolog handled it successfully — tell the pet we're done.
+            try:
+                from .pets import runtime_bridge
+                runtime_bridge.agent_completed(success=True, label="command")
+            except Exception:
+                pass
             return (False, prolog_result)
 
         if not needs_agent:

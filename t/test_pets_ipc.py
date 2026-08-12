@@ -15,7 +15,8 @@ def _drain(actor_ref) -> None:
     actor_ref.ask(_GetState(), timeout=5)
 
 
-def test_subscriber_bind_and_publish_round_trip():
+def test_subscriber_bind_and_publish_round_trip(monkeypatch):
+    monkeypatch.setenv("ZARA_PET_ENDPOINT", "tcp://127.0.0.1:35699")
     from zara.pets.ipc import PetPublisher, PetSubscriber
     from zara.pets.actor import PetStateActor, _GetState
     from zara.pets import events
@@ -31,11 +32,14 @@ def test_subscriber_bind_and_publish_round_trip():
 
         pub = PetPublisher()
         pub.start()
-        time.sleep(0.4)  # let ZMQ connect
+        time.sleep(0.8)  # ZMQ slow-joiner: give SUB time to connect
 
-        pub.publish("ModelStarted", label="llm")
-        # Drain: poll() is the non-blocking recv (no background thread).
-        for _ in range(20):
+        # Send a few times — ZMQ PUB/SUB drops the first messages until
+        # the subscription is fully established.
+        for _ in range(5):
+            pub.publish("ModelStarted", label="llm")
+            time.sleep(0.1)
+        for _ in range(40):
             sub.poll()
             if payloads:
                 break
