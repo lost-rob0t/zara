@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pathlib
+import threading
 
 import pytest
 
@@ -36,6 +37,31 @@ def test_event_bus_orders_events_for_each_subscriber():
     assert first.occurred_at <= second.occurred_at
     assert isinstance(received[0].event, events.AgentStarted)
     assert isinstance(received[1].event, events.AssistantStarted)
+
+
+def test_concurrent_publishers_preserve_sequence_delivery_order():
+    bus = runtime_bridge.RuntimeEventBus()
+    subscription = bus.subscribe()
+    barrier = threading.Barrier(9)
+
+    def publisher(worker: int) -> None:
+        barrier.wait()
+        for index in range(100):
+            bus.publish(events.AssistantDelta(text=f"{worker}:{index}"))
+
+    threads = [threading.Thread(target=publisher, args=(worker,)) for worker in range(8)]
+    for thread in threads:
+        thread.start()
+
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=5)
+        assert thread.is_alive() is False
+
+    received = subscription.drain()
+    sequences = [item.sequence for item in received]
+    assert len(sequences) == 800
+    assert sequences == list(range(1, 801))
 
 
 def test_default_subscription_is_lossless_for_control_plane_events():
