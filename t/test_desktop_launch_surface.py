@@ -63,9 +63,16 @@ def test_headless_desktop_start_can_skip_initial_summon(monkeypatch):
 def test_zara_desktop_flag_routes_to_canonical_desktop_main(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["zara", "--desktop"])
     monkeypatch.setattr(cli, "init_config", lambda: None)
-    monkeypatch.setattr(desktop_app, "main", lambda argv=None: 23)
+    seen = {}
+
+    def fake_desktop_main(argv=None):
+        seen["argv"] = argv
+        return 23
+
+    monkeypatch.setattr(desktop_app, "main", fake_desktop_main)
 
     with pytest.raises(SystemExit) as exc_info:
         cli.main()
 
     assert exc_info.value.code == 23
+    assert seen["argv"] == ["zara"]
