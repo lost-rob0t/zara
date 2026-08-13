@@ -289,6 +289,7 @@ class RuntimeHost:
 
     async def _start_backend(self) -> None:
         candidate = self._backend_factory()
+        candidate.bind_event_publisher(self._publisher)
         try:
             await candidate.start()
         except BaseException:
