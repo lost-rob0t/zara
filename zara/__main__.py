@@ -153,10 +153,15 @@ def main():
         ))
 
     elif args.wake:
+        # Resolve named faster-whisper models before constructing the listener so
+        # cache/download state is visible instead of looking like a hung model load.
+        from .whisper_loader import resolve_whisper_model_files
+        resolved_model = resolve_whisper_model_files(args.model)
+
         # Wake word listener mode
         from .wake import main as wake_main
         sys.exit(wake_main(
-            model=args.model,
+            model=resolved_model,
             device=args.device,
             with_pets=args.pets,
         ))
