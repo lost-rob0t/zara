@@ -7,7 +7,6 @@ from typing import Optional
 from zara.database import DatabaseManager, get_database
 
 _CONVERSATION_MIGRATION_VERSION = 2
-_CONVERSATION_REPAIR_MIGRATION_VERSION = 3
 _CONVERSATION_TABLES = ("desktop_conversations", "desktop_messages")
 
 _CONVERSATION_SCHEMA_STATEMENTS = [
@@ -52,13 +51,14 @@ def repair_conversation_schema(db: Optional[DatabaseManager] = None) -> None:
     Early desktop builds used the shared integer-only migration registry. A
     database can therefore contain a historical ``schema_migrations`` row for
     version 2 while lacking Zara Desktop's conversation tables. In that state
-    ``ConversationStore`` correctly sees v2 as applied and SQLite later fails
+    ``ConversationStore`` sees v2 as applied and the first history query fails
     with ``no such table: desktop_conversations``.
 
     Only that inconsistent state triggers the repair. Clean databases still
     receive the canonical v2 migration from ``ConversationStore`` and healthy
-    v2 databases are left untouched. The v3 statements are idempotent so a
-    partially-created desktop schema is repaired as well.
+    v2 databases are left untouched. The repair checks the actual SQLite schema
+    instead of allocating another global migration number, then replays the
+    canonical idempotent DDL in one transaction.
     """
 
     database = db or get_database()
@@ -82,17 +82,9 @@ def repair_conversation_schema(db: Optional[DatabaseManager] = None) -> None:
     if not missing_table:
         return
 
-    try:
-        database.register_migration(
-            _CONVERSATION_REPAIR_MIGRATION_VERSION,
-            _CONVERSATION_SCHEMA_STATEMENTS,
-        )
-    except ValueError:
-        # Another desktop surface may already have registered the repair on
-        # this process-global DatabaseManager. Registration is idempotent at
-        # the schema level; reconnecting below applies any pending migration.
-        pass
-    database.connect()
+    with database.transaction() as conn:
+        for statement in _CONVERSATION_SCHEMA_STATEMENTS:
+            conn.execute(statement)
 
 
 __all__ = ["repair_conversation_schema"]
