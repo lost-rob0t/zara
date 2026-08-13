@@ -54,6 +54,8 @@
             p.numpy
             p.pynput
             p.faster-whisper
+            p.openai-whisper
+            p.sherpa-onnx
             p.aiohttp
             p.soundfile
             p.pyyaml
