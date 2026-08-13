@@ -87,11 +87,11 @@ def main():
         help="Enable verbose logging"
     )
 
-    # Dictate-specific options
+    # Dictate/wake STT options
     parser.add_argument(
         "--model",
         default="small",
-        help="Whisper model for dictation (default: small)"
+        help="Whisper model for dictation/wake (default: small)"
     )
     parser.add_argument(
         "--device",
@@ -151,7 +151,11 @@ def main():
     elif args.wake:
         # Wake word listener mode
         from .wake import main as wake_main
-        sys.exit(wake_main(with_pets=args.pets))
+        sys.exit(wake_main(
+            model=args.model,
+            device=args.device,
+            with_pets=args.pets,
+        ))
 
     elif args.agent:
         # Direct conversation mode with agent
