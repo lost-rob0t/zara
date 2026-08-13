@@ -4,6 +4,7 @@ import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
+import pytest
 
 from zara.streaming_stt import StreamingVAD, VADConfig
 from zara.wake import WakeWordListener
@@ -50,6 +51,7 @@ def build_listener(queue_size=8, sample_rate=16000):
     listener.dropped_audio_chunks = 0
     listener.collection_status = "idle"
     listener.loop = asyncio.get_running_loop()
+    listener._capture_stream = None
     listener.input_sample_rate = sample_rate
     listener.first_speech_timeout = 5.0
     listener.silence_duration = 1.0
@@ -258,6 +260,22 @@ def test_state_transition_discards_stale_frames():
 
         assert result[0, 0] == 3.0
         assert listener.audio_queue.empty()
+
+    asyncio.run(run())
+
+
+def test_capture_failure_aborts_audio_wait_with_actual_error():
+    async def run():
+        listener = build_listener()
+        listener._capture_stream = MagicMock(
+            last_error="parec exited with 7: Connection terminated"
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match=r"Audio capture failed: parec exited with 7: Connection terminated",
+        ):
+            await listener._next_audio()
 
     asyncio.run(run())
 

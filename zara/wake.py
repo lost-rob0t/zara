@@ -93,6 +93,7 @@ class WakeWordListener:
         self.current_latency_trace: Optional[LatencyTrace] = None
         self.enable_tts = enable_tts
         self.loop: Optional[asyncio.AbstractEventLoop] = None
+        self._capture_stream = None
 
         # Thread pool for CPU-bound operations
         self.executor = ThreadPoolExecutor(max_workers=4)
@@ -492,8 +493,15 @@ class WakeWordListener:
             self.stop_event is not None and self.stop_event.is_set()
         )
 
+    def _raise_if_capture_failed(self) -> None:
+        stream = getattr(self, "_capture_stream", None)
+        error = getattr(stream, "last_error", None) if stream is not None else None
+        if error:
+            raise RuntimeError(f"Audio capture failed: {error}")
+
     async def _next_audio(self, deadline: Optional[float] = None):
         while not self._stopping():
+            self._raise_if_capture_failed()
             if self.audio_ready is not None:
                 self.audio_ready.clear()
             try:
@@ -1370,17 +1378,21 @@ class WakeWordListener:
             f.write(str(os.getpid()))
 
         try:
-            with sd.InputStream(
+            capture_stream = sd.InputStream(
                 samplerate=self.input_sample_rate,
                 channels=CHANNELS,
                 callback=self.audio_callback
-            ):
+            )
+            self._capture_stream = capture_stream
+            with capture_stream:
                 while not self._stopping():
+                    self._raise_if_capture_failed()
                     if self.state == "PASSIVE":
                         await self.passive_mode_async()
                     elif self.state == "ACTIVE":
                         await self.active_mode_async()
         finally:
+            self._capture_stream = None
             self.request_stop()
             pathlib.Path(PIDFILE).unlink(missing_ok=True)
             self.log("Stopped")
