@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication
 
 from zara.desktop.controller import DesktopController
 from zara.desktop.qt_bridge import QtRuntimeBridge
+from zara.desktop.theme import apply_readable_palette
 from zara.runtime.host import RuntimeHost
 
 _CONTROLLER_ATTR = "_zara_desktop_controller"
@@ -31,6 +32,7 @@ def create_application(
     app.setApplicationName("Zara")
     app.setOrganizationName("Zara")
     app.setQuitOnLastWindowClosed(False)
+    apply_readable_palette(app)
 
     existing = getattr(app, _CONTROLLER_ATTR, None)
     if existing is not None:
