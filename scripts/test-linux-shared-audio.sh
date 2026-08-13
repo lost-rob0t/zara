@@ -12,7 +12,12 @@ chmod 700 "$runtime_dir"
 export XDG_RUNTIME_DIR="$runtime_dir"
 export PULSE_RUNTIME_PATH="$runtime_dir/pulse"
 
+tone_pid=""
 cleanup() {
+  if [[ -n "$tone_pid" ]]; then
+    kill "$tone_pid" >/dev/null 2>&1 || true
+    wait "$tone_pid" >/dev/null 2>&1 || true
+  fi
   pulseaudio --kill >/dev/null 2>&1 || true
   rm -rf "$runtime_dir"
 }
@@ -41,4 +46,27 @@ pactl load-module module-null-sink \
   sink_properties=device.description=ZaraCI >/dev/null
 pactl set-default-source zara_ci.monitor
 
-python scripts/verify-shared-audio.py
+python - <<'PY' | pacat --playback --raw --format=s16le --rate=48000 --channels=1 --device=zara_ci &
+import math
+import struct
+import sys
+import time
+
+rate = 48000
+frequency = 440.0
+amplitude = 0.2
+chunk = 4800
+end = time.monotonic() + 8.0
+phase = 0
+while time.monotonic() < end:
+    frames = bytearray()
+    for _ in range(chunk):
+        sample = int(32767 * amplitude * math.sin(2 * math.pi * frequency * phase / rate))
+        frames.extend(struct.pack("<h", sample))
+        phase += 1
+    sys.stdout.buffer.write(frames)
+    sys.stdout.buffer.flush()
+PY
+tone_pid=$!
+
+python scripts/verify-shared-audio.py --seconds 2 --require-signal
