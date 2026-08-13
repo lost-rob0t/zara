@@ -9,10 +9,41 @@ PySide6 is imported lazily so headless usage and tests never require Qt.
 
 from __future__ import annotations
 
+import os
 import sys
+from collections.abc import MutableMapping
+from typing import Optional
 
 from .settings import PetSettings
 from .storage import list_pets, load_pet
+
+
+def _configure_pet_qpa_platform(
+    environ: Optional[MutableMapping[str, str]] = None,
+    platform_name: Optional[str] = None,
+) -> Optional[str]:
+    env = os.environ if environ is None else environ
+    platform = sys.platform if platform_name is None else platform_name
+
+    override = env.get("ZARA_PETS_QPA_PLATFORM", "").strip()
+    if override:
+        env["QT_QPA_PLATFORM"] = override
+        return override
+
+    configured = env.get("QT_QPA_PLATFORM", "").strip()
+    if configured:
+        return configured
+
+    if not platform.startswith("linux"):
+        return None
+
+    session_type = env.get("XDG_SESSION_TYPE", "").strip().lower()
+    wayland_session = session_type == "wayland" or bool(env.get("WAYLAND_DISPLAY"))
+    if not wayland_session or not env.get("DISPLAY"):
+        return None
+
+    env["QT_QPA_PLATFORM"] = "xcb"
+    return "xcb"
 
 
 def _ensure_default_pet(settings: PetSettings):
@@ -47,6 +78,7 @@ def _ensure_default_pet(settings: PetSettings):
 
 
 def main_overlay() -> int:
+    _configure_pet_qpa_platform()
     from .qt_overlay import run_overlay
     settings = PetSettings()
     manifest = _ensure_default_pet(settings)
