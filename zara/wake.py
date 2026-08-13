@@ -93,6 +93,7 @@ class WakeWordListener:
         self.current_latency_trace: Optional[LatencyTrace] = None
         self.enable_tts = enable_tts
         self.loop: Optional[asyncio.AbstractEventLoop] = None
+        self._capture_stream = None
 
         # Thread pool for CPU-bound operations
         self.executor = ThreadPoolExecutor(max_workers=4)
@@ -492,8 +493,15 @@ class WakeWordListener:
             self.stop_event is not None and self.stop_event.is_set()
         )
 
+    def _raise_if_capture_failed(self) -> None:
+        stream = getattr(self, "_capture_stream", None)
+        error = getattr(stream, "last_error", None) if stream is not None else None
+        if error:
+            raise RuntimeError(f"Audio capture failed: {error}")
+
     async def _next_audio(self, deadline: Optional[float] = None):
         while not self._stopping():
+            self._raise_if_capture_failed()
             if self.audio_ready is not None:
                 self.audio_ready.clear()
             try:
@@ -1089,6 +1097,7 @@ class WakeWordListener:
         self.tts_playback_active = True
         process: Optional[asyncio.subprocess.Process] = None
         first_chunk_seen = False
+        stopped: Optional[asyncio.Task] = None
         try:
             process = await asyncio.create_subprocess_exec(
                 "mpv",
@@ -1108,6 +1117,7 @@ class WakeWordListener:
             writer_done = asyncio.Event()
 
             async def _pump():
+                nonlocal first_chunk_seen
                 try:
                     async for chunk in self.tts_client.synthesize_stream(text):
                         if stop_event.is_set() or process.returncode is not None:
@@ -1117,7 +1127,8 @@ class WakeWordListener:
                             break
                         if not chunk.audio:
                             continue
-                        if not first_chunk_seen and chunk.first_chunk:
+                        if not first_chunk_seen:
+                            first_chunk_seen = True
                             if trace is not None:
                                 trace.record(
                                     "tts_first_chunk",
@@ -1195,8 +1206,9 @@ class WakeWordListener:
             return PlaybackResult(provider=provider, success=False, error=str(error))
         finally:
             self.tts_playback_active = False
-            stopped.cancel()
-            await asyncio.gather(stopped, return_exceptions=True)
+            if stopped is not None:
+                stopped.cancel()
+                await asyncio.gather(stopped, return_exceptions=True)
             if process is not None and process.returncode is None:
                 process.kill()
                 await process.wait()
@@ -1370,17 +1382,21 @@ class WakeWordListener:
             f.write(str(os.getpid()))
 
         try:
-            with sd.InputStream(
+            capture_stream = sd.InputStream(
                 samplerate=self.input_sample_rate,
                 channels=CHANNELS,
                 callback=self.audio_callback
-            ):
+            )
+            self._capture_stream = capture_stream
+            with capture_stream:
                 while not self._stopping():
+                    self._raise_if_capture_failed()
                     if self.state == "PASSIVE":
                         await self.passive_mode_async()
                     elif self.state == "ACTIVE":
                         await self.active_mode_async()
         finally:
+            self._capture_stream = None
             self.request_stop()
             pathlib.Path(PIDFILE).unlink(missing_ok=True)
             self.log("Stopped")
