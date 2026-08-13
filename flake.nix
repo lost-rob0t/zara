@@ -21,6 +21,56 @@
           # Use python3 (latest stable)
           python = pkgs.python3;
 
+          # The pinned nixpkgs revision predates its sherpa-onnx Python package.
+          # sherpa-onnx 1.12.38 moved to ONNX Runtime 1.24.4 while this flake
+          # carries ORT 1.23.2. Pin 1.12.37: it matches that ABI and already
+          # includes Moonshine v2 support introduced in 1.12.28.
+          sherpaOnnxWheel =
+            let
+              wheel =
+                if system == "x86_64-linux" then {
+                  file = "sherpa_onnx-1.12.37-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
+                  url = "https://files.pythonhosted.org/packages/fb/d7/3a3eef865c85cf799baacca65f89ea9c89244e7f8f87cb029b8b4e65aca0/sherpa_onnx-1.12.37-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
+                  sha256 = "39f58e758fbae54aa73171603db311a69d41b804ebdc0ad3d5a332064a9bc666";
+                } else if system == "aarch64-linux" then {
+                  file = "sherpa_onnx-1.12.37-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl";
+                  url = "https://files.pythonhosted.org/packages/ae/ed/fbceec1edd8590a1f279b1bc278c96da1de8b9218971976791d9fa653e79/sherpa_onnx-1.12.37-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl";
+                  sha256 = "bac7456a22ad0ee11378e2c20d5a6e7baa6a576690e6fd60962b88af83f57874";
+                } else
+                  throw "Unsupported sherpa-onnx wheel system: ${system}";
+            in
+            python.pkgs.buildPythonPackage rec {
+              pname = "sherpa-onnx";
+              version = "1.12.37";
+              format = "wheel";
+
+              src = pkgs.fetchurl {
+                inherit (wheel) url sha256;
+                name = wheel.file;
+              };
+
+              nativeBuildInputs = [ pkgs.patchelf ];
+              buildInputs = [ pkgs.onnxruntime ];
+              propagatedBuildInputs = [ python.pkgs.numpy ];
+
+              # Upstream's manylinux wheel expects loader-visible ONNX Runtime
+              # and the GCC C++ runtime. Nix keeps both in separate store paths,
+              # so patch the native extensions before pythonImportsCheck.
+              postInstall = ''
+                native_libs=$(find "$out/${python.sitePackages}/sherpa_onnx" -type f -name '*.so')
+                test -n "$native_libs" || {
+                  echo "sherpa-onnx wheel contains no native libraries" >&2
+                  exit 1
+                }
+                while IFS= read -r native_lib; do
+                  patchelf --add-rpath "${pkgs.onnxruntime}/lib:${pkgs.stdenv.cc.cc.lib}/lib" "$native_lib"
+                done <<< "$native_libs"
+              '';
+
+              doCheck = false;
+              pythonImportsCheck = [ "sherpa_onnx" ];
+            };
+
           # Build pyswip from GitHub (use the same python toolchain everywhere)
           pyswip = python.pkgs.buildPythonPackage rec {
             pname = "pyswip";
@@ -54,6 +104,8 @@
             p.numpy
             p.pynput
             p.faster-whisper
+            p.openai-whisper
+            sherpaOnnxWheel
             p.aiohttp
             p.soundfile
             p.pyyaml

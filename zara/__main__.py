@@ -8,6 +8,13 @@ import sys
 import argparse
 from pathlib import Path
 from .config import init_config
+from .stt_backends import (
+    STT_PROVIDERS,
+    backend_compat,
+    needs_faster_whisper_files,
+    normalize_provider,
+    resolve_model_for_provider,
+)
 
 
 STT_DEVICE_ALIASES = {
@@ -44,6 +51,7 @@ def is_gpu_initialization_error(error: Exception) -> bool:
 def main():
     config = init_config()
     stt_config = config.get_section("stt") if config is not None else {}
+    default_stt_provider = normalize_provider(stt_config.get("provider", "faster-whisper"))
     default_stt_model = stt_config.get("model", "small")
     default_stt_device = stt_config.get("device", "cpu")
 
@@ -116,23 +124,31 @@ def main():
     )
 
     parser.add_argument(
+        "--stt-provider",
+        default=default_stt_provider,
+        choices=STT_PROVIDERS,
+        help=f"Speech-to-text provider (default: {default_stt_provider})"
+    )
+    parser.add_argument(
         "--model",
+        "--mode",
+        dest="model",
         default=default_stt_model,
-        help=f"Whisper model for dictation/wake (default: {default_stt_model})"
+        help=f"STT model name or local model directory (default: {default_stt_model})"
     )
     parser.add_argument(
         "--device",
         default=default_stt_device,
         choices=STT_DEVICE_CHOICES,
         help=(
-            f"Device for transcription (default: {default_stt_device}); "
-            "rocm/hip/amd use CTranslate2's CUDA-compatible GPU device API"
+            f"Device for local transcription (default: {default_stt_device}); "
+            "rocm/hip/amd use CUDA-compatible provider APIs"
         )
     )
     parser.add_argument(
         "--threads",
         type=int,
-        help="Number of threads for Whisper"
+        help="Number of local STT inference threads"
     )
     parser.add_argument(
         "--workers",
@@ -146,7 +162,9 @@ def main():
     )
 
     args = parser.parse_args()
+    stt_provider = normalize_provider(args.stt_provider)
     stt_device = normalize_stt_device(args.device)
+    stt_model = resolve_model_for_provider(stt_provider, args.model)
 
     if args.desktop:
         from .desktop.app import main as desktop_main
@@ -163,42 +181,46 @@ def main():
 
     elif args.dictate:
         from .config import get_config
-        from .dictate import main as dictate_main
         if args.stop_phrases:
             stop_phrases = args.stop_phrases.split(",")
         else:
             stop_phrases = get_config().get_section("dictate").get("stop_phrases")
-        sys.exit(dictate_main(
-            model_name=args.model,
-            device=stt_device,
-            threads=args.threads,
-            workers=args.workers,
-            stop_phrases=stop_phrases
-        ))
+
+        with backend_compat(stt_provider):
+            from .dictate import main as dictate_main
+            sys.exit(dictate_main(
+                model_name=stt_model,
+                device=stt_device,
+                threads=args.threads,
+                workers=args.workers,
+                stop_phrases=stop_phrases
+            ))
 
     elif args.wake:
-        from .whisper_loader import resolve_whisper_model_files
-        resolved_model = resolve_whisper_model_files(args.model)
+        if needs_faster_whisper_files(stt_provider):
+            from .whisper_loader import resolve_whisper_model_files
+            stt_model = resolve_whisper_model_files(stt_model)
 
-        from .wake import main as wake_main
-        try:
-            exit_code = wake_main(
-                model=resolved_model,
-                device=stt_device,
-                with_pets=args.pets,
-            )
-        except (RuntimeError, ValueError) as error:
-            if stt_device != "cuda" or not is_gpu_initialization_error(error):
-                raise
-            print(
-                f"GPU transcription unavailable ({error}); falling back to CPU.",
-                file=sys.stderr,
-            )
-            exit_code = wake_main(
-                model=resolved_model,
-                device="cpu",
-                with_pets=args.pets,
-            )
+        with backend_compat(stt_provider):
+            from .wake import main as wake_main
+            try:
+                exit_code = wake_main(
+                    model=stt_model,
+                    device=stt_device,
+                    with_pets=args.pets,
+                )
+            except (RuntimeError, ValueError) as error:
+                if stt_device != "cuda" or not is_gpu_initialization_error(error):
+                    raise
+                print(
+                    f"GPU transcription unavailable ({error}); falling back to CPU.",
+                    file=sys.stderr,
+                )
+                exit_code = wake_main(
+                    model=stt_model,
+                    device="cpu",
+                    with_pets=args.pets,
+                )
         sys.exit(exit_code)
 
     elif args.agent:

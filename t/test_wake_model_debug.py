@@ -1,8 +1,11 @@
 import pathlib
 import sys
 import types
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 import zara.__main__ as cli
@@ -59,6 +62,7 @@ def test_wake_constructs_whisper_with_cpu_threads_and_one_worker():
     assert any("Loading Whisper small" in message for message in messages)
     assert any("Whisper model ready: small on cpu" in message for message in messages)
     assert any("Silero VAD configured" in message for message in messages)
+    assert any("Whisper decoding configured" in message for message in messages)
 
 
 def test_wake_accepts_common_zara_transcription_variant():
@@ -68,6 +72,93 @@ def test_wake_accepts_common_zara_transcription_variant():
     assert listener._wake_command("Hey Zara") == ""
     assert listener._wake_command("Sara") == ""
     assert listener._wake_command("Sara open Firefox") == "open Firefox"
+
+
+def test_stt_audio_conditioning_removes_dc_and_nonfinite_values():
+    listener = zara.wake.WakeWordListener.__new__(zara.wake.WakeWordListener)
+    audio = np.array([np.nan, np.inf, 0.75, 0.25, -0.25], dtype=np.float32)
+
+    conditioned = listener._condition_stt_audio(audio)
+
+    assert conditioned.dtype == np.float32
+    assert np.all(np.isfinite(conditioned))
+    assert np.max(np.abs(conditioned)) <= 1.0
+    assert abs(float(np.mean(conditioned))) < 1e-5
+
+
+@pytest.mark.asyncio
+async def test_final_transcript_uses_quality_beam_without_second_vad():
+    listener = zara.wake.WakeWordListener.__new__(zara.wake.WakeWordListener)
+    listener.input_sample_rate = 16000.0
+    listener.target_sample_rate = 16000.0
+    listener.stt_beam_size = 5
+    listener.wake_beam_size = 2
+    listener.stt_language = "en"
+    listener.executor = ThreadPoolExecutor(max_workers=1)
+    listener.model = MagicMock()
+    listener.model.transcribe.return_value = (
+        [SimpleNamespace(text=" forget all of my memory")],
+        None,
+    )
+
+    try:
+        text = await listener.transcribe_async(
+            np.array([[0.1], [0.2], [-0.1], [-0.2]], dtype=np.float32)
+        )
+    finally:
+        listener.executor.shutdown(wait=True)
+
+    assert text == "forget all of my memory"
+    kwargs = listener.model.transcribe.call_args.kwargs
+    assert kwargs["beam_size"] == 5
+    assert kwargs["vad_filter"] is False
+    assert kwargs["language"] == "en"
+    assert kwargs["condition_on_previous_text"] is False
+    assert kwargs["initial_prompt"] is None
+
+
+@pytest.mark.asyncio
+async def test_wake_transcript_keeps_fast_beam_and_zara_prompt():
+    listener = zara.wake.WakeWordListener.__new__(zara.wake.WakeWordListener)
+    listener.input_sample_rate = 16000.0
+    listener.target_sample_rate = 16000.0
+    listener.stt_beam_size = 5
+    listener.wake_beam_size = 2
+    listener.stt_language = "en"
+    listener.executor = ThreadPoolExecutor(max_workers=1)
+    listener.model = MagicMock()
+    listener.model.transcribe.return_value = (
+        [SimpleNamespace(text=" Zara")],
+        None,
+    )
+
+    try:
+        text = await listener.transcribe_async(
+            np.array([[0.1], [0.2], [-0.1], [-0.2]], dtype=np.float32),
+            wake_mode=True,
+        )
+    finally:
+        listener.executor.shutdown(wait=True)
+
+    assert text == "Zara"
+    kwargs = listener.model.transcribe.call_args.kwargs
+    assert kwargs["beam_size"] == 2
+    assert kwargs["vad_filter"] is False
+    assert kwargs["condition_on_previous_text"] is False
+    assert "Zara" in kwargs["initial_prompt"]
+
+
+def test_no_speech_logs_saturated_laptop_input():
+    listener = zara.wake.WakeWordListener.__new__(zara.wake.WakeWordListener)
+    listener._clock = lambda: 31.0
+    listener._last_audio_warning = 0.0
+    listener.log = MagicMock()
+
+    listener._log_no_speech(1.0, 0.011)
+
+    message = listener.log.call_args.args[0]
+    assert "saturated" in message.lower()
+    assert "laptop microphone" in message.lower()
 
 
 @pytest.mark.parametrize("alias", ["rocm", "hip", "amd"])

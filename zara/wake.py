@@ -44,8 +44,8 @@ from .latency import JSONLMetricsSink, LatencyTrace, metrics_path
 
 DEFAULT_SAMPLE_RATE = 16000
 CHANNELS = 1
-DEFAULT_SILENCE_DURATION = 5.0  # Seconds of silence before considering speech complete
-MAX_RECORDING_DURATION = 30.0  # Maximum recording duration to prevent infinite recording
+DEFAULT_SILENCE_DURATION = 5.0
+MAX_RECORDING_DURATION = 30.0
 DEFAULT_AUDIO_QUEUE_CHUNKS = 32
 WAKE_WORDS = ["zarathustra", "hey zara", "zara", "sarah", "sara"]
 WAKE_PATTERN = re.compile(
@@ -56,8 +56,6 @@ TIMEOUT_ACTIVE = 5
 
 PIDFILE = "/tmp/zara_wakeword.pid"
 LOGFILE = "/tmp/zara_wakeword.log"
-
-
 
 
 def load_tts_config():
@@ -72,7 +70,7 @@ def load_tts_config():
     return {
         "provider": provider,
         "qwen3_url": qwen3_url,
-        "qwen3_voice": qwen3_voice
+        "qwen3_voice": qwen3_voice,
     }
 
 
@@ -95,15 +93,9 @@ class WakeWordListener:
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self._capture_stream = None
 
-        # Thread pool for CPU-bound operations
         self.executor = ThreadPoolExecutor(max_workers=4)
-
-        # Chat history for conversational context
         self.chat_history = llm.ChatHistory(max_length=20)
-
-        # LLM client (lazy init on first conversational query)
         self.llm_client = None
-        # Get config from config system
         self.config = get_config()
         self.llm_config = self.config.get_llm_config()
         latency_config = self.config.get_latency_config()
@@ -114,15 +106,12 @@ class WakeWordListener:
             else None
         )
 
-        # Agent manager for conversation mode (lazy init)
         self.agent_manager: Optional[AgentManager] = None
 
-        # Memory manager for sessions
         memory_config = self.config.get_section("memory")
         self.memory = build_memory_manager(memory_config)
         self.session_id: Optional[str] = self.memory.start_session()
 
-        # TTS client (lazy init on first use)
         self.tts_client = None
         self.tts_config = load_tts_config()
         self.tts_task: Optional[asyncio.Task] = None
@@ -135,6 +124,9 @@ class WakeWordListener:
         wake_cfg = self.config.get_section("wake")
         stt_cfg = self.config.get_section("stt")
         self.stt_threads = self._positive_int(stt_cfg.get("threads", 4), 4)
+        self.stt_beam_size = self._positive_int(stt_cfg.get("beam_size", 5), 5)
+        self.wake_beam_size = self._positive_int(stt_cfg.get("wake_beam_size", 2), 2)
+        self.stt_language = str(stt_cfg.get("language", "en") or "en").strip() or "en"
         self.stop_on_interrupt = bool(wake_cfg.get("stop_tts_on_input", True))
         self.silence_duration = self._parse_float(
             wake_cfg.get("silence_duration", DEFAULT_SILENCE_DURATION),
@@ -189,11 +181,9 @@ class WakeWordListener:
         if rate_note:
             self.log(rate_note)
 
-        # Acknowledgement player (immediate ack before STT/Prolog/LLM)
         self.ack_player: Optional[AcknowledgementPlayer] = None
         self._init_ack_player(wake_cfg)
 
-        # Initialize Prolog engine
         self.log("Initializing Prolog...")
 
         candidates = [
@@ -244,6 +234,11 @@ class WakeWordListener:
             f"(threshold={self.vad_config.vad_threshold:.2f}, "
             f"min_speech_frames={self.vad_config.min_speech_frames}, "
             f"trailing_silence_frames={self.vad_config.trailing_silence_frames})"
+        )
+        self.log(
+            "Whisper decoding configured "
+            f"(language={self.stt_language}, wake_beam={self.wake_beam_size}, "
+            f"final_beam={self.stt_beam_size})"
         )
 
     def _init_ack_player(self, wake_cfg: dict) -> None:
@@ -337,6 +332,17 @@ class WakeWordListener:
         command = f"{text[:match.start()]} {text[match.end():]}"
         return command.strip(" \t\r\n,.:;!?-")
 
+    def _condition_stt_audio(self, audio: np.ndarray) -> np.ndarray:
+        """Sanitize microphone PCM and remove DC bias before VAD/Whisper."""
+        conditioned = np.asarray(audio, dtype=np.float32).copy()
+        if conditioned.size == 0:
+            return conditioned
+        np.nan_to_num(conditioned, copy=False, nan=0.0, posinf=1.0, neginf=-1.0)
+        dc_offset = float(np.mean(conditioned, dtype=np.float64))
+        if abs(dc_offset) > 1e-4:
+            conditioned -= dc_offset
+        return np.clip(conditioned, -1.0, 1.0)
+
     def _log_no_speech(self, peak: float, probability: float) -> None:
         now = self._clock()
         if now - getattr(self, "_last_audio_warning", 0.0) < 30.0:
@@ -344,6 +350,13 @@ class WakeWordListener:
         self._last_audio_warning = now
         if peak <= 1e-5:
             self.log("Audio input is silent; check the selected microphone and hardware gain")
+            return
+        if peak >= 0.995 and probability < 0.1:
+            self.log(
+                "Audio input is saturated but Silero sees no speech; "
+                "check laptop microphone gain/boost and the selected input source "
+                f"(peak={peak:.4f}, max_probability={probability:.3f})"
+            )
             return
         self.log(
             "No speech detected by Silero VAD "
@@ -383,7 +396,6 @@ class WakeWordListener:
         return trace
 
     def _play_acknowledgement(self, turn_id: str) -> None:
-        """Fire the immediate acknowledgement clip for this turn."""
         ack_player = getattr(self, "ack_player", None)
         if ack_player is None:
             return
@@ -410,7 +422,6 @@ class WakeWordListener:
             self.log(f"Ack playback error: {error}")
 
     def _stop_acknowledgement(self) -> None:
-        """Stop acknowledgement playback (barge-in / TTS takeover)."""
         ack_player = getattr(self, "ack_player", None)
         if ack_player is None:
             return
@@ -428,8 +439,6 @@ class WakeWordListener:
             await self.tts_player_proc.wait()
         if self.tts_task and not self.tts_task.done():
             if getattr(self, "tts_playback_active", False):
-                # During playback, wait for the player to observe stop_event
-                # so cancellation_completed means output has actually stopped.
                 await asyncio.gather(self.tts_task, return_exceptions=True)
             else:
                 self.tts_task.cancel()
@@ -454,10 +463,8 @@ class WakeWordListener:
             trace.flush()
 
     def audio_callback(self, indata, _frames, _time_info, status):
-        """Push the newest audio into the bounded real-time buffer."""
         trace = getattr(self, "current_latency_trace", None)
         if trace is not None and not trace.has_event("audio_frame_received"):
-            # Record in memory only; disk flushes happen at safe async boundaries.
             trace.record("audio_frame_received", frames=int(len(indata)))
         if status:
             self.log(f"Audio: {status}")
@@ -494,7 +501,6 @@ class WakeWordListener:
             self.audio_ready.set()
 
     def request_stop(self):
-        """Stop producers and wake every pending audio collector."""
         self._shutdown_requested.set()
         if self.loop is not None:
             self.loop.call_soon_threadsafe(self._signal_stop)
@@ -544,7 +550,7 @@ class WakeWordListener:
         return None
 
     async def transcribe_async(self, audio_data, *, wake_mode: bool = False):
-        """Run Whisper transcription in thread pool to avoid blocking"""
+        """Run Whisper transcription in the worker pool."""
         loop = asyncio.get_event_loop()
 
         def _transcribe():
@@ -560,13 +566,15 @@ class WakeWordListener:
                     self.target_sample_rate,
                 )
 
+            audio_float = self._condition_stt_audio(audio_data_mono)
+            beam_size = self.wake_beam_size if wake_mode else self.stt_beam_size
             segments, _ = self.model.transcribe(
-                audio_data_mono.astype(np.float32),
-                beam_size=1,
-                vad_filter=not wake_mode,
-                language="en",
-                initial_prompt="Zara. Hey Zara. Zarathustra." if wake_mode else None,
-                condition_on_previous_text=not wake_mode,
+                audio_float,
+                beam_size=beam_size,
+                vad_filter=False,
+                language=self.stt_language,
+                initial_prompt="Zara. Hey Zara. Zarathushtra." if wake_mode else None,
+                condition_on_previous_text=False,
                 no_speech_threshold=0.8 if wake_mode else 0.5,
             )
 
@@ -625,6 +633,7 @@ class WakeWordListener:
             while len(pending) >= VAD_CHUNK_SAMPLES:
                 chunk = pending[:VAD_CHUNK_SAMPLES]
                 pending = pending[VAD_CHUNK_SAMPLES:]
+                chunk = self._condition_stt_audio(chunk)
                 events = vad.feed(chunk)
                 max_probability = max(max_probability, vad.last_probability)
                 for event in events:
@@ -660,7 +669,6 @@ class WakeWordListener:
         return None
 
     def clear_queue(self):
-        """Drain audio queue to prevent stale data"""
         if self.audio_queue is None:
             return
         while True:
@@ -680,21 +688,11 @@ class WakeWordListener:
         return self._wake_command(text) is not None
 
     def in_conversation_mode(self) -> bool:
-        """Check if currently in conversation mode"""
         if self.agent_manager is not None:
             return self.agent_manager.conversation_manager.in_conversation
         return False
 
     async def _monitor_speech_during_llm(self) -> bool:
-        """Monitor for user speech while LLM is processing using Silero VAD.
-
-        Returns True if speech was detected (barge-in), False if the
-        monitor was cancelled (LLM completed first).
-
-        Uses Silero VAD (via StreamingVAD) with an elevated threshold
-        (0.7) and 6 consecutive speech frames to distinguish real user
-        speech from ack/TTS echo and background noise.
-        """
         if self.audio_queue is None:
             await asyncio.sleep(0.1)
             return False
@@ -730,7 +728,7 @@ class WakeWordListener:
 
             while available >= buffer_target:
                 combined = np.concatenate(chunk_buffer) if len(chunk_buffer) > 1 else chunk_buffer[0]
-                vad_chunk = combined[:buffer_target]
+                vad_chunk = self._condition_stt_audio(combined[:buffer_target])
                 remainder = combined[buffer_target:]
                 chunk_buffer = [remainder] if len(remainder) > 0 else []
 
@@ -760,7 +758,6 @@ class WakeWordListener:
         self.log(f"Conversation grace window: {grace_seconds:.1f}s")
 
     def _ensure_agent_manager(self):
-        """Lazy initialize agent manager"""
         if self.agent_manager is None:
             self.log("Initializing agent manager for conversation mode")
             config = get_config()
@@ -771,19 +768,10 @@ class WakeWordListener:
             )
 
     async def speak_async(self, text):
-        """Speak text via TTS if enabled"""
         if self.enable_tts:
             await self.synthesize_and_play_async(text)
 
     async def query_with_fallback_async(self, command_text: str) -> Tuple[bool, str]:
-        """
-        Try Prolog first, fallback to conversation mode if:
-        1. Prolog resolution fails, OR
-        2. Already in conversation mode
-
-        Returns: (used_agent_mode, response)
-        """
-        # Try Prolog first
         self.log("Attempting Prolog resolution before agent fallback")
         loop = asyncio.get_event_loop()
         if not command_gate.looks_like_command(command_text):
@@ -807,29 +795,22 @@ class WakeWordListener:
         resolution_state = "conversation" if self.in_conversation_mode() else "passive"
         trace = getattr(self, "current_latency_trace", None)
 
-        # Pet: signal running at the start of any command resolution.
         try:
             from .pets import runtime_bridge
             runtime_bridge.agent_started(label="command")
         except Exception:
             pass
 
-        # Heuristic gate: skip Prolog entirely for non-command utterances to
-        # avoid intent hijacking and reduce latency. The LLM can still call
-        # the `query_prolog` tool when the user's input is in fact a command.
         if not command_gate.looks_like_command(command_text):
             if trace is not None:
                 trace.record("prolog_result", status="skipped_non_command")
                 trace.record("route_selected", route="agent_skipped_prolog")
                 trace.flush()
-            self.log(
-                "Non-command utterance; skipping Prolog, routing to LLM"
-            )
+            self.log("Non-command utterance; skipping Prolog, routing to LLM")
             prolog_success = False
             prolog_result = ""
             needs_agent = True
         else:
-
             def _try_prolog():
                 try:
                     result = self.prolog.resolve_intent(command_text, state=resolution_state)
@@ -842,7 +823,6 @@ class WakeWordListener:
 
                     intent = result.name
                     args = result.args
-
                     self.log(f"Resolved: intent={intent}, args={args}")
 
                     if intent == "end_conversation":
@@ -892,7 +872,6 @@ class WakeWordListener:
                     if trace is not None:
                         trace.record("prolog_result", status="execution_failed")
                     return (False, "", True)
-
                 except Exception as e:
                     self.log(f"Prolog error: {e}")
                     try:
@@ -904,12 +883,13 @@ class WakeWordListener:
                         trace.record("prolog_result", status="error")
                     return (False, "", True)
 
-            prolog_success, prolog_result, needs_agent = await loop.run_in_executor(self.executor, _try_prolog)
+            prolog_success, prolog_result, needs_agent = await loop.run_in_executor(
+                self.executor, _try_prolog
+            )
             if trace is not None:
                 trace.flush()
 
         if prolog_success:
-            # Prolog handled it successfully — tell the pet we're done.
             try:
                 from .pets import runtime_bridge
                 runtime_bridge.agent_completed(success=True, label="command")
@@ -920,7 +900,6 @@ class WakeWordListener:
         if not needs_agent:
             return (False, "")
 
-        # Prolog failed or asked for conversation
         self._ensure_agent_manager()
         if self.agent_manager is None:
             return (True, "")
@@ -930,7 +909,6 @@ class WakeWordListener:
             self.agent_manager.conversation_manager.enter_conversation()
             self.agent_manager.conversation_manager.conversation_history.clear()
 
-        # Emit pet agent.started so the overlay reflects the conversation.
         try:
             from .pets import runtime_bridge
             runtime_bridge.agent_started(label="agent")
@@ -956,7 +934,6 @@ class WakeWordListener:
         self.memory.add_message(self.session_id, "user", command_text)
         if response_text:
             self.memory.add_message(self.session_id, "assistant", response_text)
-        # Emit pet completion so the overlay shows ready.
         try:
             from .pets import runtime_bridge
             runtime_bridge.agent_completed(success=True, label="agent")
@@ -965,7 +942,6 @@ class WakeWordListener:
         return (True, response_text)
 
     async def query_llm_async(self, query_text):
-        """Query LLM with chat history for conversational responses"""
         try:
             if self.llm_client is None:
                 self.log(f"Initializing LLM client: {self.llm_config['provider']}")
@@ -990,9 +966,7 @@ class WakeWordListener:
                 chat_history=self.chat_history.get_messages()
             )
             if not result.success:
-                self.log(
-                    f"LLM request failed ({result.error_type}): {result.error}"
-                )
+                self.log(f"LLM request failed ({result.error_type}): {result.error}")
                 if result.cancelled:
                     return ""
                 return f"The LLM request failed: {result.error}"
@@ -1001,14 +975,12 @@ class WakeWordListener:
             self.chat_history.add_assistant_message(result.text)
             self.log(f"LLM response: {result.text}")
             return result.text
-
         except Exception as e:
             error_msg = f"LLM error: {str(e)}"
             self.log(error_msg)
             return error_msg
 
     async def synthesize_and_play_async(self, text):
-        """Replace any active utterance and start the new one."""
         trace = getattr(self, "current_latency_trace", None)
         self._stop_acknowledgement()
         async with self.tts_lock:
@@ -1084,7 +1056,6 @@ class WakeWordListener:
                             stop_event,
                             trace,
                         )
-
         except asyncio.CancelledError:
             status = PlaybackResult(
                 provider=self.tts_config["provider"],
@@ -1119,11 +1090,11 @@ class WakeWordListener:
         stop_event: asyncio.Event,
         trace: Optional[LatencyTrace] = None,
     ) -> PlaybackResult:
-        """Stream synthesis chunks to mpv stdin so playback starts early."""
         provider = self.tts_config["provider"]
         self.tts_playback_active = True
         process: Optional[asyncio.subprocess.Process] = None
         first_chunk_seen = False
+        stopped = None
         try:
             process = await asyncio.create_subprocess_exec(
                 "mpv",
@@ -1232,8 +1203,9 @@ class WakeWordListener:
             return PlaybackResult(provider=provider, success=False, error=str(error))
         finally:
             self.tts_playback_active = False
-            stopped.cancel()
-            await asyncio.gather(stopped, return_exceptions=True)
+            if stopped is not None:
+                stopped.cancel()
+                await asyncio.gather(stopped, return_exceptions=True)
             if process is not None and process.returncode is None:
                 process.kill()
                 await process.wait()
@@ -1366,7 +1338,6 @@ class WakeWordListener:
                 self.tts_player_proc = None
 
     async def send_response_async(self, title, message):
-        """Send response via notification and optionally TTS"""
         try:
             safe_message = message.strip() if message else ""
             if not safe_message:
@@ -1387,13 +1358,11 @@ class WakeWordListener:
 
             if self.enable_tts:
                 await self.synthesize_and_play_async(safe_message)
-
         except Exception as e:
             self.log(f"Failed to send response: {e}")
             self.log(f"Response: {message[:200]}...")
 
     async def run_async(self):
-        """Main async event loop"""
         self.loop = asyncio.get_running_loop()
         self._shutdown_requested.clear()
         self.audio_queue = queue.Queue(maxsize=self.audio_queue_chunks)
@@ -1410,7 +1379,7 @@ class WakeWordListener:
             capture_stream = sd.InputStream(
                 samplerate=self.input_sample_rate,
                 channels=CHANNELS,
-                callback=self.audio_callback
+                callback=self.audio_callback,
             )
             self._capture_stream = capture_stream
             with capture_stream:
@@ -1433,7 +1402,6 @@ class WakeWordListener:
             self.log("Stopped")
 
     async def passive_mode_async(self):
-        """Listen for wake word"""
         if self.prolog.dictation_active():
             self.transition_to("ACTIVE")
             return
@@ -1455,7 +1423,7 @@ class WakeWordListener:
                 trace.record("wake_detected")
                 trace.record("ack_requested", channel="notification")
             await send_notification_async("Zara", "Listening", "normal", 1000)
-            self.log(f"🔥 Wake word detected")
+            self.log("🔥 Wake word detected")
             if trace is not None:
                 trace.flush()
             self.transition_to("ACTIVE")
@@ -1483,15 +1451,12 @@ class WakeWordListener:
         return max(0.0, manager.timeout_seconds - (time.time() - manager.last_activity))
 
     async def active_mode_async(self):
-        """Transcribe and route command with conversation mode support"""
         trace = self._ensure_turn_trace()
-        # Check conversation timeout
         if self.in_conversation_mode():
             if self.agent_manager is not None and self.agent_manager.should_exit_conversation():
                 await self._end_timed_out_conversation()
                 return
 
-        # If dictation is active, only watch for stop phrases
         if self.prolog.dictation_active():
             chunk = await self.collect_audio_until_silence()
             if chunk is None:
@@ -1537,9 +1502,7 @@ class WakeWordListener:
         repeated_wake_command = self._wake_command(text or "")
         if repeated_wake_command is not None:
             if repeated_wake_command:
-                self.log(
-                    f"Repeated wake phrase stripped from active input: {text!r}"
-                )
+                self.log(f"Repeated wake phrase stripped from active input: {text!r}")
                 text = repeated_wake_command
             else:
                 self.log("Standalone wake phrase; clearing conversation context and listening")
@@ -1557,8 +1520,6 @@ class WakeWordListener:
                 self.current_latency_trace = None
                 return
 
-        # Immediate acknowledgement: play pre-generated clip after speech
-        # ends, but only once transcription confirms real speech (not noise).
         turn_id = (
             self.current_latency_trace.trace_id
             if self.current_latency_trace is not None
@@ -1579,8 +1540,6 @@ class WakeWordListener:
         self.log(f"📝 Heard: '{text}'")
 
         text_lower = text.lower()
-
-        # Check for stop phrases
         if self._is_conversation_stop(text_lower):
             await self._stop_tts()
             if self.in_conversation_mode():
@@ -1601,19 +1560,13 @@ class WakeWordListener:
             return
 
         command = text.strip()
-
         if not command:
             return
 
-        # Process with Prolog-first fallback, with barge-in monitoring.
-        # If the user starts speaking during LLM processing, cancel the
-        # request and loop back to collect the new utterance.
-        query_task = asyncio.create_task(
-            self.query_with_fallback_async(command)
-        )
+        query_task = asyncio.create_task(self.query_with_fallback_async(command))
         monitor_task = asyncio.create_task(self._monitor_speech_during_llm())
 
-        done, pending = await asyncio.wait(
+        done, _pending = await asyncio.wait(
             {query_task, monitor_task},
             return_when=asyncio.FIRST_COMPLETED,
         )
@@ -1663,15 +1616,11 @@ class WakeWordListener:
         await self.send_response_async(PetSettings().state.assistant_name, response)
 
 
-
 def main(model="small", device="cpu", prolog_main_path=None, enable_tts=True,
          with_pets=False):
-    """Main entry point for wake word listener"""
     pet_proc = None
     if with_pets:
         pet_proc = _launch_pet_overlay()
-        # Eagerly start the ZMQ publisher so the socket is bound before
-        # the first runtime event fires (avoids ZMQ slow-joiner drops).
         from .pets import runtime_bridge
         runtime_bridge._ensure_publisher()
         import time
@@ -1681,7 +1630,7 @@ def main(model="small", device="cpu", prolog_main_path=None, enable_tts=True,
         model=model,
         device=device,
         prolog_main_path=prolog_main_path,
-        enable_tts=enable_tts
+        enable_tts=enable_tts,
     )
 
     async def run_with_cleanup():
@@ -1714,12 +1663,6 @@ def main(model="small", device="cpu", prolog_main_path=None, enable_tts=True,
 
 
 def _launch_pet_overlay():
-    """Spawn the pet overlay as a subprocess so it runs its own Qt loop.
-
-    The wake process publishes pet events over ZMQ; the overlay subprocess
-    subscribes and reacts. Dies with the parent. stderr is inherited so
-    overlay errors are visible alongside the wake log.
-    """
     import subprocess
     import sys
     return subprocess.Popen(
