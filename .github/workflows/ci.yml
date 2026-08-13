@@ -55,6 +55,23 @@ jobs:
             swipl -q -s test/run_tests.pl
           '
 
+      - name: Build packaged Zara
+        run: nix build
+
+      - name: Run real Prolog-RLM adapter smoke when credential is available
+        shell: bash
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_TEST_MODEL: ${{ vars.OPENROUTER_TEST_MODEL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+            echo "SKIP: OPENROUTER_API_KEY is not configured for Zara live integration CI"
+            exit 0
+          fi
+          export ZARA_RLM_LIVE=1
+          nix develop -c python scripts/test-prolog-rlm-live.py
+
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
