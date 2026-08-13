@@ -58,14 +58,17 @@ amplitude = 0.2
 chunk = 4800
 end = time.monotonic() + 8.0
 phase = 0
-while time.monotonic() < end:
-    frames = bytearray()
-    for _ in range(chunk):
-        sample = int(32767 * amplitude * math.sin(2 * math.pi * frequency * phase / rate))
-        frames.extend(struct.pack("<h", sample))
-        phase += 1
-    sys.stdout.buffer.write(frames)
-    sys.stdout.buffer.flush()
+try:
+    while time.monotonic() < end:
+        frames = bytearray()
+        for _ in range(chunk):
+            sample = int(32767 * amplitude * math.sin(2 * math.pi * frequency * phase / rate))
+            frames.extend(struct.pack("<h", sample))
+            phase += 1
+        sys.stdout.buffer.write(frames)
+        sys.stdout.buffer.flush()
+except BrokenPipeError:
+    pass
 PY
 tone_pid=$!
 
