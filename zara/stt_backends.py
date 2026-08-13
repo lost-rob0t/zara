@@ -8,7 +8,7 @@ forking the audio/VAD pipeline.
 Local backends:
 - faster-whisper (existing CTranslate2 path)
 - OpenAI Whisper reference implementation
-- sherpa-onnx Moonshine, Zipformer transducer, and SenseVoice models
+- sherpa-onnx Moonshine v1/v2, Zipformer transducer, and SenseVoice models
 
 Remote backends:
 - OpenAI audio transcription API
@@ -36,6 +36,7 @@ PROVIDER_ALIASES = {
     "openai_whisper": "openai-whisper",
     "sherpa": "sherpa-onnx",
     "sherpa_onnx": "sherpa-onnx",
+    "moonshine_v2": "moonshine-v2",
     "sensevoice": "sense-voice",
     "sense_voice": "sense-voice",
 }
@@ -46,6 +47,7 @@ STT_PROVIDERS = (
     "openai-whisper",
     "sherpa-onnx",
     "moonshine",
+    "moonshine-v2",
     "zipformer",
     "sense-voice",
     "openai",
@@ -259,6 +261,25 @@ def _moonshine_files(root: Path) -> dict[str, Path]:
     }
 
 
+def _moonshine_v2_files(root: Path) -> dict[str, Path]:
+    return {
+        "encoder": _require_file(
+            root,
+            "Moonshine v2 encoder",
+            "encoder_model.ort",
+            "*encoder*.ort",
+        ),
+        "decoder": _require_file(
+            root,
+            "Moonshine v2 merged decoder",
+            "decoder_model_merged.ort",
+            "*merged*decoder*.ort",
+            "*decoder*merged*.ort",
+        ),
+        "tokens": _require_file(root, "tokens", "tokens.txt", "*tokens*.txt"),
+    }
+
+
 def _zipformer_files(root: Path) -> dict[str, Path]:
     return {
         "encoder": _require_file(root, "Zipformer encoder", "*encoder*.onnx"),
@@ -282,16 +303,23 @@ def detect_sherpa_family(model_dir: str) -> str:
             f"sherpa-onnx STT needs a local model directory, got {model_dir!r}"
         )
 
-    names = [p.name.lower() for p in _files(root, "*.onnx")]
-    if any("uncached" in name for name in names) and any("cached" in name for name in names):
+    onnx_names = [p.name.lower() for p in _files(root, "*.onnx")]
+    ort_names = [p.name.lower() for p in _files(root, "*.ort")]
+    if any("encoder" in name for name in ort_names) and any(
+        "decoder" in name and "merged" in name for name in ort_names
+    ):
+        return "moonshine-v2"
+    if any("uncached" in name for name in onnx_names) and any(
+        "cached" in name for name in onnx_names
+    ):
         return "moonshine"
-    if any("joiner" in name for name in names):
+    if any("joiner" in name for name in onnx_names):
         return "zipformer"
-    if any(name.startswith("model") or "sense" in name for name in names):
+    if any(name.startswith("model") or "sense" in name for name in onnx_names):
         return "sense-voice"
     raise ValueError(
         f"Could not detect sherpa-onnx model family in {root}; "
-        "supported layouts are Moonshine, Zipformer transducer, and SenseVoice"
+        "supported layouts are Moonshine v1/v2, Zipformer transducer, and SenseVoice"
     )
 
 
@@ -329,6 +357,17 @@ class SherpaOnnxModel:
                 tokens=str(files["tokens"]),
                 num_threads=threads,
                 decoding_method="greedy_search",
+                provider=provider,
+            )
+        elif self.family == "moonshine-v2":
+            files = _moonshine_v2_files(root)
+            self._recognizer = sherpa_onnx.OfflineRecognizer.from_moonshine_v2(
+                encoder=str(files["encoder"]),
+                decoder=str(files["decoder"]),
+                tokens=str(files["tokens"]),
+                num_threads=threads,
+                decoding_method="greedy_search",
+                provider=provider,
             )
         elif self.family == "zipformer":
             files = _zipformer_files(root)
@@ -369,7 +408,13 @@ def model_class_for_provider(provider: str):
         return OpenAITranscriptionModel
     if provider == "groq":
         return GroqTranscriptionModel
-    if provider in {"sherpa-onnx", "moonshine", "zipformer", "sense-voice"}:
+    if provider in {
+        "sherpa-onnx",
+        "moonshine",
+        "moonshine-v2",
+        "zipformer",
+        "sense-voice",
+    }:
         family = None if provider == "sherpa-onnx" else provider
 
         class BoundSherpaModel(SherpaOnnxModel):
