@@ -12,15 +12,26 @@ with PySide6/Qt6 — no Electron or Node.js required.
 Run =zara --pets-settings= to open the settings dialog, or =zara --pets=
 to launch the overlay directly.
 
+* Linux display backend
+
+On a Wayland Linux session with XWayland available (=DISPLAY= is set), the
+pet process automatically uses Qt's =xcb= backend. This keeps Zara's main
+runtime on Wayland while preserving the pet overlay's always-on-top and
+client-side drag behavior.
+
+An explicitly configured =QT_QPA_PLATFORM= is respected. Set
+=ZARA_PETS_QPA_PLATFORM= to override the backend for the pet process only.
+If XWayland is unavailable, the pet keeps Qt's native platform selection.
+
 * States
 
 | State        | Priority | Meaning                                  |
 |--------------+----------+------------------------------------------|
 | needs-input  |        4 | Waiting for approval/confirmation        |
 | blocked      |        3 | Fatal failure / provider unavailable     |
-| ready        |        2 | Finished with unseen output               |
-| running      |        1 | Model/tool/agent/indexing/search active   |
-| idle         |        0 | No active operation                       |
+| ready        |        2 | Finished with unseen output              |
+| running      |        1 | Model/tool/agent/indexing/search active  |
+| idle         |        0 | No active operation                      |
 
 * Import
 
