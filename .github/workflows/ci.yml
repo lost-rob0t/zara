@@ -46,6 +46,9 @@ jobs:
 
       - name: Run pinned Prolog-RLM deterministic suite
         shell: bash
+        env:
+          OPENROUTER_API_KEY: ""
+          OPENROUTER_TEST_MODEL: ""
         run: |
           nix develop -c bash -c '
             set -euo pipefail
@@ -54,9 +57,25 @@ jobs:
             cp -R "$ZARA_PROLOG_RLM_ROOT"/. "$rlm_test_root"/
             chmod -R u+w "$rlm_test_root"
             cd "$rlm_test_root"
+
             swipl -q -s test/check_runtime.pl
             swipl -q -s test/load_all.pl
-            swipl -q -s test/run_tests.pl
+            swipl -q -g halt -s test/live_chain_stream_openrouter_test.pl
+            swipl -q -g halt -s test/live_plan_openrouter_test.pl
+            swipl -q -g halt -s test/live_tool_openrouter_test.pl
+            swipl -q -g halt -s test/live_completion_openrouter_test.pl
+            swipl -q -g halt -s test/live_repair_openrouter_test.pl
+
+            set +e
+            swipl -q -s test/run_tests.pl > /tmp/prolog-rlm-plunit.log 2>&1
+            status=$?
+            set -e
+            cat /tmp/prolog-rlm-plunit.log
+            if [ "$status" -ne 0 ]; then
+              echo "--- Prolog-RLM PlUnit failure tail ---" >&2
+              tail -n 100 /tmp/prolog-rlm-plunit.log >&2
+            fi
+            exit "$status"
           '
 
       - name: Build packaged Zara
