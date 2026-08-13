@@ -9,7 +9,8 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Optional, Tuple
+from collections import deque
+from typing import Callable, Optional, Tuple
 
 import numpy as np
 import sounddevice as sd
@@ -19,6 +20,8 @@ from threading import Thread
 _PULSE_APPLICATION_NAME = "Zarathushtra"
 _PULSE_ICON_NAME = "audio-input-microphone"
 _PULSE_MEDIA_ROLE = "phone"
+_PULSE_SIGNAL_THRESHOLD = 1e-5
+_PULSE_SILENCE_WARNING_SECONDS = 3.0
 _ORIGINAL_INPUT_STREAM = sd.InputStream
 _SHARED_STREAM_INSTALLED = False
 
@@ -82,6 +85,7 @@ class PulseInputStream:
         channels: int,
         callback,
         blocksize: int = 0,
+        diagnostic_callback: Optional[Callable[[str], None]] = None,
         **_kwargs,
     ):
         if channels <= 0:
@@ -91,9 +95,27 @@ class PulseInputStream:
         self.channels = int(channels)
         self.callback = callback
         self.blocksize = int(blocksize) if blocksize else max(256, self.samplerate // 50)
+        self.diagnostic_callback = diagnostic_callback
         self.process: Optional[subprocess.Popen] = None
         self.reader_thread: Optional[threading.Thread] = None
+        self.stderr_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
+        self.source: Optional[str] = None
+        self.last_error: Optional[str] = None
+        self.bytes_received = 0
+        self.frames_received = 0
+        self.peak = 0.0
+        self.rms = 0.0
+        self._stderr_lines: deque[str] = deque(maxlen=20)
+        self._started_at = 0.0
+        self._signal_reported = False
+        self._silence_reported = False
+
+    def _diagnostic(self, message: str) -> None:
+        if self.diagnostic_callback is not None:
+            self.diagnostic_callback(message)
+            return
+        print(message, flush=True)
 
     def _command(self) -> list[str]:
         parec = shutil.which("parec")
@@ -108,9 +130,9 @@ class PulseInputStream:
             f"--rate={self.samplerate}",
             f"--channels={self.channels}",
         ]
-        source = _pulse_default_source()
-        if source:
-            command.append(f"--device={source}")
+        self.source = _pulse_default_source()
+        if self.source:
+            command.append(f"--device={self.source}")
         return command
 
     def _environment(self) -> dict[str, str]:
@@ -119,6 +141,24 @@ class PulseInputStream:
         env["PULSE_PROP_application.icon_name"] = _PULSE_ICON_NAME
         env["PULSE_PROP_media.role"] = _PULSE_MEDIA_ROLE
         return env
+
+    def _stderr_loop(self) -> None:
+        process = self.process
+        if process is None or process.stderr is None:
+            return
+        while not self.stop_event.is_set():
+            try:
+                raw = process.stderr.readline()
+            except (OSError, ValueError):
+                return
+            if not raw:
+                return
+            detail = raw.decode("utf-8", errors="replace").strip()
+            if detail:
+                self._stderr_lines.append(detail)
+
+    def _stderr_detail(self) -> str:
+        return " | ".join(self._stderr_lines).strip()
 
     def start(self):
         if self.process is not None:
@@ -129,6 +169,15 @@ class PulseInputStream:
             raise RuntimeError(f"shared Pulse capture unavailable: {reason}")
 
         self.stop_event.clear()
+        self.last_error = None
+        self.bytes_received = 0
+        self.frames_received = 0
+        self.peak = 0.0
+        self.rms = 0.0
+        self._stderr_lines.clear()
+        self._signal_reported = False
+        self._silence_reported = False
+        self._started_at = time.monotonic()
         self.process = subprocess.Popen(
             self._command(),
             stdout=subprocess.PIPE,
@@ -137,15 +186,22 @@ class PulseInputStream:
             bufsize=0,
         )
 
+        self.stderr_thread = threading.Thread(
+            target=self._stderr_loop,
+            name="zara-pulse-stderr",
+            daemon=True,
+        )
+        self.stderr_thread.start()
+
         try:
             self.process.wait(timeout=0.08)
         except subprocess.TimeoutExpired:
             pass
         else:
-            stderr = b""
-            if self.process.stderr is not None:
-                stderr = self.process.stderr.read()
-            detail = stderr.decode("utf-8", errors="replace").strip()
+            thread = self.stderr_thread
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=0.1)
+            detail = self._stderr_detail()
             raise RuntimeError(
                 f"parec exited during startup with {self.process.returncode}: "
                 f"{detail or 'no error output'}"
@@ -157,37 +213,89 @@ class PulseInputStream:
             daemon=True,
         )
         self.reader_thread.start()
+        source = self.source or "@DEFAULT_SOURCE@"
+        self._diagnostic(
+            "Audio stream started "
+            f"(backend=Pulse/parec, source='{source}', "
+            f"rate={self.samplerate}Hz, channels={self.channels})"
+        )
         return self
+
+    def _report_signal(self, audio: np.ndarray) -> None:
+        if audio.size == 0:
+            return
+        peak = float(np.max(np.abs(audio)))
+        rms = float(np.sqrt(np.mean(np.square(audio, dtype=np.float32))))
+        self.peak = max(self.peak, peak)
+        self.rms = max(self.rms, rms)
+        if peak > _PULSE_SIGNAL_THRESHOLD and not self._signal_reported:
+            self._signal_reported = True
+            self._diagnostic(
+                f"Audio signal detected (peak={peak:.4f}, rms={rms:.4f})"
+            )
+            return
+        if self._signal_reported or self._silence_reported:
+            return
+        if time.monotonic() - self._started_at < _PULSE_SILENCE_WARNING_SECONDS:
+            return
+        self._silence_reported = True
+        source = self.source or "@DEFAULT_SOURCE@"
+        self._diagnostic(
+            "Audio input appears silent "
+            f"(source='{source}', peak={self.peak:.4f}, rms={self.rms:.4f})"
+        )
+
+    def _report_runtime_failure(self, process: subprocess.Popen) -> None:
+        if self.stop_event.is_set():
+            return
+        thread = self.stderr_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=0.1)
+        returncode = process.poll()
+        detail = self._stderr_detail()
+        if returncode is None:
+            message = "parec stopped producing audio unexpectedly"
+        else:
+            message = f"parec exited with {returncode}"
+        if detail:
+            message = f"{message}: {detail}"
+        self.last_error = message
+        self._diagnostic(f"Audio capture failed: {message}")
 
     def _reader_loop(self) -> None:
         process = self.process
         if process is None or process.stdout is None:
             return
 
-        frame_bytes = self.blocksize * self.channels * 2
+        frame_width = self.channels * 2
+        read_size = self.blocksize * frame_width
+        pending = bytearray()
         while not self.stop_event.is_set():
             try:
-                raw = process.stdout.read(frame_bytes)
-            except (OSError, ValueError):
-                break
+                raw = process.stdout.read(read_size)
+            except (OSError, ValueError) as error:
+                if not self.stop_event.is_set():
+                    self.last_error = f"parec stdout read failed: {error}"
+                    self._diagnostic(f"Audio capture failed: {self.last_error}")
+                return
             if not raw:
-                break
+                self._report_runtime_failure(process)
+                return
 
-            sample_bytes = len(raw) - (len(raw) % 2)
-            if sample_bytes == 0:
+            self.bytes_received += len(raw)
+            pending.extend(raw)
+            complete_bytes = len(pending) - (len(pending) % frame_width)
+            if complete_bytes == 0:
                 continue
 
-            samples = np.frombuffer(raw[:sample_bytes], dtype="<i2")
-            complete = samples.size - (samples.size % self.channels)
-            if complete == 0:
-                continue
-
+            chunk = bytes(pending[:complete_bytes])
+            del pending[:complete_bytes]
+            samples = np.frombuffer(chunk, dtype="<i2")
             audio = (
-                samples[:complete]
-                .reshape(-1, self.channels)
-                .astype(np.float32)
-                / 32768.0
+                samples.reshape(-1, self.channels).astype(np.float32) / 32768.0
             )
+            self.frames_received += len(audio)
+            self._report_signal(audio)
             if self.callback is not None:
                 self.callback(audio, len(audio), None, None)
 
@@ -205,6 +313,9 @@ class PulseInputStream:
         thread = self.reader_thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=1.0)
+        stderr_thread = self.stderr_thread
+        if stderr_thread is not None and stderr_thread.is_alive():
+            stderr_thread.join(timeout=1.0)
         return self
 
     def close(self):
@@ -216,6 +327,7 @@ class PulseInputStream:
                 self.process.stderr.close()
         self.process = None
         self.reader_thread = None
+        self.stderr_thread = None
 
     def __enter__(self):
         return self.start()
