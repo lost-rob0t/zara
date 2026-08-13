@@ -47,7 +47,7 @@ CHANNELS = 1
 DEFAULT_SILENCE_DURATION = 5.0  # Seconds of silence before considering speech complete
 MAX_RECORDING_DURATION = 30.0  # Maximum recording duration to prevent infinite recording
 DEFAULT_AUDIO_QUEUE_CHUNKS = 32
-WAKE_WORDS = ["zarathustra", "hey zara", "zara", "sarah"]
+WAKE_WORDS = ["zarathustra", "hey zara", "zara", "sarah", "sara"]
 WAKE_PATTERN = re.compile(
     r"\b(" + "|".join(re.escape(word) for word in WAKE_WORDS) + r")\b",
     re.IGNORECASE,
@@ -134,6 +134,7 @@ class WakeWordListener:
 
         wake_cfg = self.config.get_section("wake")
         stt_cfg = self.config.get_section("stt")
+        self.stt_threads = self._positive_int(stt_cfg.get("threads", 4), 4)
         self.stop_on_interrupt = bool(wake_cfg.get("stop_tts_on_input", True))
         self.silence_duration = self._parse_float(
             wake_cfg.get("silence_duration", DEFAULT_SILENCE_DURATION),
@@ -218,15 +219,31 @@ class WakeWordListener:
         self.prolog = PrologEngine(prolog_path)
         self.log("Prolog engine ready")
 
-        threads = os.cpu_count()
-        self.log(f"Loading Whisper {model} (threads={threads})")
+        load_started = self._clock()
+        self.log(
+            f"Loading Whisper {model} "
+            f"(device={device}, cpu_threads={self.stt_threads}, workers=1)"
+        )
         self.log(f"LLM Provider: {self.llm_config['provider']}")
         if self.enable_tts:
             self.log(f"TTS Provider: {self.tts_config['provider']}")
 
         self.model = faster_whisper.WhisperModel(
-            model, device=device,
-            compute_type="int8", num_workers=threads
+            model,
+            device=device,
+            compute_type="int8",
+            cpu_threads=self.stt_threads,
+            num_workers=1,
+        )
+        self.log(
+            f"Whisper model ready: {model} on {device} "
+            f"({self._clock() - load_started:.2f}s)"
+        )
+        self.log(
+            "Silero VAD configured "
+            f"(threshold={self.vad_config.vad_threshold:.2f}, "
+            f"min_speech_frames={self.vad_config.min_speech_frames}, "
+            f"trailing_silence_frames={self.vad_config.trailing_silence_frames})"
         )
 
     def _init_ack_player(self, wake_cfg: dict) -> None:
@@ -1116,6 +1133,7 @@ class WakeWordListener:
             writer_done = asyncio.Event()
 
             async def _pump():
+                nonlocal first_chunk_seen
                 try:
                     async for chunk in self.tts_client.synthesize_stream(text):
                         if stop_event.is_set() or process.returncode is not None:
@@ -1126,6 +1144,7 @@ class WakeWordListener:
                         if not chunk.audio:
                             continue
                         if not first_chunk_seen and chunk.first_chunk:
+                            first_chunk_seen = True
                             if trace is not None:
                                 trace.record(
                                     "tts_first_chunk",
@@ -1385,6 +1404,12 @@ class WakeWordListener:
             )
             self._capture_stream = capture_stream
             with capture_stream:
+                source = getattr(capture_stream, "source", None)
+                source_note = f" source='{source}'" if source else ""
+                self.log(
+                    "✅ Wake listener ready; say 'Zara' or 'Hey Zara'."
+                    f"{source_note}"
+                )
                 while not self._stopping():
                     self._raise_if_capture_failed()
                     if self.state == "PASSIVE":
@@ -1629,7 +1654,7 @@ class WakeWordListener:
 
 
 
-def main(model="tiny.en", device="cpu", prolog_main_path=None, enable_tts=True,
+def main(model="small", device="cpu", prolog_main_path=None, enable_tts=True,
          with_pets=False):
     """Main entry point for wake word listener"""
     pet_proc = None
