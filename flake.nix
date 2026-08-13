@@ -52,9 +52,9 @@
               buildInputs = [ pkgs.onnxruntime ];
               propagatedBuildInputs = [ python.pkgs.numpy ];
 
-              # Upstream's manylinux wheel expects a loader-visible
-              # libonnxruntime.so. Nix keeps it in a separate store path, so
-              # patch the wheel's native extensions before the import check.
+              # Upstream's manylinux wheel expects loader-visible ONNX Runtime
+              # and the GCC C++ runtime. Nix keeps both in separate store paths,
+              # so patch the native extensions before pythonImportsCheck.
               postInstall = ''
                 native_libs=$(find "$out/${python.sitePackages}/sherpa_onnx" -type f -name '*.so')
                 test -n "$native_libs" || {
@@ -62,7 +62,7 @@
                   exit 1
                 }
                 while IFS= read -r native_lib; do
-                  patchelf --add-rpath ${pkgs.onnxruntime}/lib "$native_lib"
+                  patchelf --add-rpath "${pkgs.onnxruntime}/lib:${pkgs.stdenv.cc.cc.lib}/lib" "$native_lib"
                 done <<< "$native_libs"
               '';
 
