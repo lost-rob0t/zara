@@ -50,6 +50,42 @@ def test_configured_and_environment_stop_phrases_are_combined(monkeypatch):
     ]
 
 
+@pytest.mark.parametrize("alias", ["rocm", "hip", "amd"])
+def test_gpu_aliases_use_ctranslate_cuda_device(alias):
+    assert dictate._normalize_device(alias) == "cuda"
+
+
+def test_load_whisper_model_passes_cpu_threads_and_workers(monkeypatch):
+    calls = {}
+    sentinel = object()
+
+    def fake_model(*args, **kwargs):
+        calls["args"] = args
+        calls["kwargs"] = kwargs
+        return sentinel
+
+    monkeypatch.setattr(dictate, "WhisperModel", fake_model)
+
+    result = dictate._load_whisper_model(
+        "small",
+        "cpu",
+        "int8",
+        cpu_threads=4,
+        workers=2,
+    )
+
+    assert result is sentinel
+    assert calls == {
+        "args": ("small",),
+        "kwargs": {
+            "device": "cpu",
+            "compute_type": "int8",
+            "cpu_threads": 4,
+            "num_workers": 2,
+        },
+    }
+
+
 def test_completed_transcriptions_commit_only_in_capture_order(monkeypatch):
     monkeypatch.setattr(dictate, "log", lambda message: None)
     first = Future()
