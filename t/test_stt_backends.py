@@ -31,6 +31,7 @@ def _touch(root: Path, *names: str) -> None:
         ("sherpa", "sherpa-onnx"),
         ("sensevoice", "sense-voice"),
         ("moonshine", "moonshine"),
+        ("moonshine_v2", "moonshine-v2"),
         ("zipformer", "zipformer"),
         ("groq", "groq"),
     ],
@@ -68,6 +69,16 @@ def test_detect_moonshine_model_directory(tmp_path):
     assert detect_sherpa_family(str(tmp_path)) == "moonshine"
 
 
+def test_detect_moonshine_v2_model_directory(tmp_path):
+    _touch(
+        tmp_path,
+        "encoder_model.ort",
+        "decoder_model_merged.ort",
+        "tokens.txt",
+    )
+    assert detect_sherpa_family(str(tmp_path)) == "moonshine-v2"
+
+
 def test_detect_zipformer_model_directory(tmp_path):
     _touch(
         tmp_path,
@@ -95,6 +106,14 @@ def test_backend_compat_swaps_and_restores_whisper_model():
     with backend_compat("moonshine"):
         assert faster_whisper.WhisperModel is not original
         assert faster_whisper.WhisperModel.__name__ == "SherpaOnnx_moonshine"
+    assert faster_whisper.WhisperModel is original
+
+
+def test_moonshine_v2_compat_class_is_bound():
+    original = faster_whisper.WhisperModel
+    with backend_compat("moonshine-v2"):
+        assert faster_whisper.WhisperModel is not original
+        assert faster_whisper.WhisperModel.__name__ == "SherpaOnnx_moonshine_v2"
     assert faster_whisper.WhisperModel is original
 
 
