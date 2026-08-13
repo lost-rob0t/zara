@@ -1,40 +1,257 @@
-* README
-This project was created using artificial intelligence.
-In fact, this README was created using the `zara-dictate` Python script.
+#+title: Zara
 
-This project provides a NixOS flake with utilities.
-There is a command-line interface that lets you type natural text for commands, and there is `zara-dictate` — Zara Dictates — it's how you do voice-to-text.
+* Zara — experimental Python/Prolog desktop copilot
 
-The `zara` command lets you type text (natural language).
-Use `zara --dictate` for voice-to-text input, or `zara --wake` for wake-word mode.
+Zara is an experimental Linux AI assistant and desktop copilot built around Python, SWI-Prolog, voice input, LLM/tool agents, and a native PySide6 interface.
 
-Zara is also able to work in a wake-word mode: simply say "zara" or "hey zara" and then state the command.
+It started as a small voice-command idea and has gradually turned into a hybrid assistant runtime with wake-word interaction, speech-to-text, Prolog intent handling, conversational agents, tools, persistent desktop chat, and optional desktop pets.
 
-Plans to enable TTS are down the road.
-I mostly created this with an LLM to generate a project to learn from. Now that it works, I don’t want it fucking it up.
+#+begin_quote
+Random idea I wanted, so I made it using LLMs. A lot of the code is experimental and probably terrible, so please do not use this repository as a reference implementation.
 
-So I’ll slowly rework this with actual NLP — I need to learn DCG.
-Right now verb intents just look ahead `n` args for command handling.
+One day, when I actually understand NLP well enough, I want to rebuild the important language-processing parts by hand. Learning Prolog DCGs and replacing the crude intent plumbing is part of the point of the project.
+#+end_quote
 
-The schedule function is broken and only works with Org Mode.
+This is a learning project first. It works, it is useful to me, and it is also a place where I can tear apart generated code and replace it with things I actually understand.
 
-** zara-dictate
-~zara-dictate~ lets you type using your own voice. It uses Whisper.
-You can specify the number of Whisper workers and the number of parallel workers.
+** What Zara does
 
-I mostly use CPU only on an AMD Ryzen 3950X with the `tiny`/`small` models. In this section I was using the tiny model — you can get good results.
+Zara currently combines several assistant surfaces behind the same runtime:
 
-I don’t currently have my GPU configured (not sure if I can with my 5500 as of writing to test GPU mode).
+- Native PySide6 desktop application.
+- Quick Copilot summon window and persistent Full Chat.
+- Shared SQLite-backed desktop conversations and message history.
+- Voice-to-text using faster-whisper.
+- Wake-word interaction with commands such as =zara= and =hey zara=.
+- Text-to-speech support through the existing speech provider layer.
+- SWI-Prolog/PySwip command and intent handling.
+- LangChain/LangGraph-based conversational agent runtime.
+- Tool execution through Zara's tool registry.
+- OpenAI, Anthropic, and Ollama provider integrations.
+- Local semantic-memory components using Chroma and sentence-transformers.
+- Pykka actors for turn coordination and runtime state ownership.
+- Optional Zarathushtra desktop pets driven by runtime events.
+- Nix/NixOS packaging and reproducible development environments.
 
-** zara-wake
-Lets you say "open youtube" or any other command.
+Zara is Linux-first. The desktop architecture tries to keep the runtime sufficiently separated from Qt that other platforms are possible later, but Linux is the actual target today.
 
-** zara-console
-Main CLI interactive assistant entrypoint.
+** Current architecture
 
-* TODO IDEA BOX [0/5]
-** TODO Major refactor now that I understand the main NLP command loop
-** TODO ZaraAssistant class
-** TODO LLMClient
-** TODO PrologClient
-** TODO SkillRegistry?
+The desktop UI is not supposed to be a second assistant implementation. Quick Copilot, Full Chat, voice, tools, Prolog, and Pets are increasingly routed through a common application/runtime boundary.
+
+#+begin_example
+                       Zara Desktop
+                 PySide6 / Qt application
+                          |
+              +-----------+-----------+
+              |                       |
+        Quick Copilot              Full Chat
+              |                       |
+              +-----------+-----------+
+                          |
+                  Desktop Controller
+                          |
+                    QtRuntimeBridge
+                          |
+                     RuntimeHost
+                          |
+              provider-neutral events
+                          |
+       +----------+-------+--------+----------+
+       |          |                |          |
+     Voice      Prolog          LLM agent    Tools
+       |          |                |          |
+       +----------+-------+--------+----------+
+                          |
+                    shared runtime
+                          |
+               +----------+----------+
+               |                     |
+            Desktop                 Pets
+#+end_example
+
+The important design rule is simple: UI code should issue runtime commands and consume runtime events instead of reaching directly into low-level assistant objects.
+
+** Main commands
+
+| Command        | Purpose |
+|----------------+---------|
+| =zara=         | Main CLI entry point. |
+| =zara-desktop= | Native PySide6 desktop copilot. |
+| =zara-wake=    | Long-running wake-word / voice mode. |
+| =zara-dictate= | Speech-to-text dictation utility. |
+| =zara-console= | Interactive console assistant. |
+| =zara-agent=   | Conversational LLM/tool agent entry point. |
+| =zara-pets=    | Optional Zarathushtra desktop pet UI. |
+
+The main CLI also exposes modes such as:
+
+#+begin_src sh
+zara --desktop
+zara --wake
+zara --dictate
+#+end_src
+
+** Quick start with Nix
+
+Nix is the authoritative development and packaging surface for Zara.
+
+Clone the repository and enter the development shell:
+
+#+begin_src sh
+git clone https://github.com/lost-rob0t/zara.git
+cd zara
+nix develop
+#+end_src
+
+Then launch the desktop application:
+
+#+begin_src sh
+zara-desktop
+#+end_src
+
+Or run the packaged desktop application directly:
+
+#+begin_src sh
+nix run .#zara-desktop
+#+end_src
+
+For the older/headless interaction styles:
+
+#+begin_src sh
+zara --wake
+zara --dictate
+zara-console
+#+end_src
+
+** Voice and dictation
+
+*** =zara-dictate=
+
+=zara-dictate= is the standalone speech-to-text path. It uses faster-whisper and can be used as a voice typing utility independently of the full assistant.
+
+I mostly use CPU inference on an AMD Ryzen 3950X with the =tiny= and =small= Whisper models. That is enough for useful dictation without requiring a GPU.
+
+*** Wake mode
+
+Wake mode keeps Zara running as a voice assistant. Say =zara= or =hey zara=, then speak a command or request.
+
+The voice stack includes audio capture, VAD/transcription, command or conversational routing, and speech output. Desktop UI work is being layered over the same runtime rather than creating a separate microphone/assistant stack.
+
+** Prolog and NLP
+
+Prolog is one of the main reasons this project exists.
+
+Zara uses SWI-Prolog through PySwip for command/intention logic and other symbolic behavior. The current natural-language command path is still crude in places. Historically, verb intents mostly looked ahead a fixed number of arguments and dispatched from that structure.
+
+I do not consider that finished NLP.
+
+The long-term goal is to understand the language-processing side well enough to replace the generated/hand-wavy parts with better symbolic parsing, especially using Prolog DCGs and a cleaner intent representation.
+
+That means this repository is intentionally both an assistant and a lab for learning how the assistant should actually work.
+
+** LLM agent runtime
+
+Zara also has a conversational agent path built around LangChain and LangGraph.
+
+Current integration packages include:
+
+- OpenAI
+- Anthropic
+- Ollama
+
+The agent layer is separate from the Prolog engine but shares the broader Zara runtime, event model, tools, conversation state, and desktop surfaces.
+
+Remote providers obviously require their own credentials and may send conversation content to those providers. Ollama can be used for a local model path.
+
+** Desktop Copilot
+
+The newer Zara desktop work uses PySide6/Qt.
+
+Implemented desktop foundations include:
+
+- one canonical =QApplication= / desktop controller;
+- system tray integration with graceful no-tray behavior;
+- a Qt-safe bridge to the runtime worker;
+- Quick Copilot;
+- Full Chat;
+- handoff from Quick Copilot to the exact same conversation in Full Chat;
+- durable SQLite conversation/message persistence;
+- incremental assistant/runtime event handling;
+- cancellation through canonical turn IDs;
+- native Markdown/code rendering;
+- runtime/provider status and diagnostics surfaces.
+
+Desktop development is still active. The design documents describe more than is implemented today, so do not assume every planned desktop capability has landed just because it appears in =docs/desktop-copilot-design.md=.
+
+** Zarathushtra Pets
+
+Zara also contains an optional desktop-pet subsystem.
+
+The pet UI uses PySide6 and consumes generic Zara runtime state. It can react to assistant states such as listening, thinking, tool activity, success, and errors without becoming the source of those states.
+
+The runtime/Pet boundary supports in-process delivery and a ZeroMQ transport for standalone Pet processes.
+
+Run it with:
+
+#+begin_src sh
+zara-pets
+#+end_src
+
+** Development
+
+Run the repository's main regression gate with:
+
+#+begin_src sh
+nix develop -c bash scripts/test-all.sh
+#+end_src
+
+The Nix flake also contains checks for Python tests, syntax/compileability, Prolog loading, packaging, and related integration surfaces.
+
+When changing Zara, the intended direction is to preserve the boundaries between:
+
+- runtime and UI;
+- Prolog and Python;
+- provider-specific code and provider-neutral events;
+- assistant execution and optional consumers such as Pets;
+- persistent state and presentation widgets.
+
+** Project status / rough edges
+
+This repo is experimental and changes quickly.
+
+Things to keep in mind:
+
+- A significant amount of the project was bootstrapped or expanded with LLM-generated code.
+- I am actively trying to understand and replace code rather than merely accumulating generated abstractions.
+- The NLP/intent layer is not where I ultimately want it to be.
+- The desktop application is under active development.
+- Linux/Nix is the best-supported environment.
+- Some provider features require external services and API credentials.
+- This has not been presented as a production-hardened or security-audited assistant.
+
+If you are here looking for pristine architecture to copy into a production assistant: seriously, do not.
+
+If you are here because hybrid symbolic AI + LLMs + voice + weird desktop software sounds fun, that is much closer to the reason Zara exists.
+
+** Repository map
+
+Some useful places to start:
+
+| Path | What it contains |
+|------+------------------|
+| =zara/runtime/= | Provider-neutral events, commands, runtime host, and application boundary. |
+| =zara/desktop/= | Native PySide6 desktop shell, controller, windows, and Qt bridge. |
+| =zara/agent/= | LangGraph/LLM agent and tool runtime. |
+| =zara/pets/= | Zarathushtra desktop-pet subsystem. |
+| =zara/prolog_engine.py= | Python/SWI-Prolog application boundary. |
+| =main.pl=, =kb/=, =modules/= | Prolog entry point, knowledge base, and modules. |
+| =zara/streaming_stt.py= / =zara/transcription.py= | Speech transcription pipeline. |
+| =flake.nix= | Nix development environment, packages, apps, and checks. |
+| =docs/desktop-copilot-design.md= | Desktop research and architecture document. |
+
+** Why keep going?
+
+Because eventually I want to understand enough of this stack that the interesting parts are mine in more than the Git sense.
+
+The LLMs got the experiment moving. The goal now is to learn the pieces deeply enough to replace the bullshit with code and models I actually understand.
