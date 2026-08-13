@@ -1097,7 +1097,6 @@ class WakeWordListener:
         self.tts_playback_active = True
         process: Optional[asyncio.subprocess.Process] = None
         first_chunk_seen = False
-        stopped: Optional[asyncio.Task] = None
         try:
             process = await asyncio.create_subprocess_exec(
                 "mpv",
@@ -1117,7 +1116,6 @@ class WakeWordListener:
             writer_done = asyncio.Event()
 
             async def _pump():
-                nonlocal first_chunk_seen
                 try:
                     async for chunk in self.tts_client.synthesize_stream(text):
                         if stop_event.is_set() or process.returncode is not None:
@@ -1127,8 +1125,7 @@ class WakeWordListener:
                             break
                         if not chunk.audio:
                             continue
-                        if not first_chunk_seen:
-                            first_chunk_seen = True
+                        if not first_chunk_seen and chunk.first_chunk:
                             if trace is not None:
                                 trace.record(
                                     "tts_first_chunk",
@@ -1206,9 +1203,8 @@ class WakeWordListener:
             return PlaybackResult(provider=provider, success=False, error=str(error))
         finally:
             self.tts_playback_active = False
-            if stopped is not None:
-                stopped.cancel()
-                await asyncio.gather(stopped, return_exceptions=True)
+            stopped.cancel()
+            await asyncio.gather(stopped, return_exceptions=True)
             if process is not None and process.returncode is None:
                 process.kill()
                 await process.wait()
