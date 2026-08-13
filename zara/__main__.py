@@ -10,8 +10,38 @@ from pathlib import Path
 from .config import init_config
 
 
+STT_DEVICE_ALIASES = {
+    "amd": "cuda",
+    "hip": "cuda",
+    "rocm": "cuda",
+}
+STT_DEVICE_CHOICES = ["cpu", "cuda", "rocm", "hip", "amd"]
+GPU_ERROR_MARKERS = (
+    "cuda",
+    "cudnn",
+    "gpu",
+    "hip",
+    "rocm",
+    "gfx",
+)
+
+
+def normalize_stt_device(device: str) -> str:
+    normalized = str(device).strip().lower()
+    if normalized in {"cpu", "cuda"}:
+        return normalized
+    if normalized in STT_DEVICE_ALIASES:
+        return STT_DEVICE_ALIASES[normalized]
+    choices = ", ".join(STT_DEVICE_CHOICES)
+    raise ValueError(f"Unsupported STT device {device!r}; choose one of: {choices}")
+
+
+def is_gpu_initialization_error(error: Exception) -> bool:
+    message = str(error).lower()
+    return any(marker in message for marker in GPU_ERROR_MARKERS)
+
+
 def main():
-    # Initialize configuration system
     config = init_config()
     stt_config = config.get_section("stt") if config is not None else {}
     default_stt_model = stt_config.get("model", "small")
@@ -30,7 +60,6 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
 
-    # Mode selection (mutually exclusive)
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument(
         "--desktop",
@@ -63,9 +92,6 @@ def main():
         help="Direct conversation mode with agent"
     )
 
-    # --pets is a COMPANION flag, not a mode: it can combine with --wake
-    # (and --agent) so the pet overlay runs alongside the runtime and
-    # reacts to real events over the ZMQ bridge.
     parser.add_argument(
         "--pets",
         action="store_true",
@@ -77,21 +103,18 @@ def main():
         help="Open the Pets settings dialog"
     )
 
-    # Text command (default mode if no flags)
     parser.add_argument(
         "command",
         nargs="*",
         help="Text command to execute"
     )
 
-    # Common options
     parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         help="Enable verbose logging"
     )
 
-    # Dictate/wake STT options
     parser.add_argument(
         "--model",
         default=default_stt_model,
@@ -100,8 +123,11 @@ def main():
     parser.add_argument(
         "--device",
         default=default_stt_device,
-        choices=["cpu", "cuda"],
-        help=f"Device for transcription (default: {default_stt_device})"
+        choices=STT_DEVICE_CHOICES,
+        help=(
+            f"Device for transcription (default: {default_stt_device}); "
+            "rocm/hip/amd use CTranslate2's CUDA-compatible GPU device API"
+        )
     )
     parser.add_argument(
         "--threads",
@@ -120,19 +146,17 @@ def main():
     )
 
     args = parser.parse_args()
+    stt_device = normalize_stt_device(args.device)
 
-    # Determine mode
     if args.desktop:
         from .desktop.app import main as desktop_main
         sys.exit(desktop_main([sys.argv[0]]))
 
     elif args.console:
-        # Interactive console mode
         from .console import main as console_main
         sys.exit(console_main())
 
     elif args.voice:
-        # Single voice command mode - not implemented
         print("Error: Voice mode is not currently implemented.", file=sys.stderr)
         print("Use --dictate for continuous voice input instead.", file=sys.stderr)
         sys.exit(1)
@@ -146,28 +170,38 @@ def main():
             stop_phrases = get_config().get_section("dictate").get("stop_phrases")
         sys.exit(dictate_main(
             model_name=args.model,
-            device=args.device,
+            device=stt_device,
             threads=args.threads,
             workers=args.workers,
             stop_phrases=stop_phrases
         ))
 
     elif args.wake:
-        # Resolve named faster-whisper models before constructing the listener so
-        # cache/download state is visible instead of looking like a hung model load.
         from .whisper_loader import resolve_whisper_model_files
         resolved_model = resolve_whisper_model_files(args.model)
 
-        # Wake word listener mode
         from .wake import main as wake_main
-        sys.exit(wake_main(
-            model=resolved_model,
-            device=args.device,
-            with_pets=args.pets,
-        ))
+        try:
+            exit_code = wake_main(
+                model=resolved_model,
+                device=stt_device,
+                with_pets=args.pets,
+            )
+        except (RuntimeError, ValueError) as error:
+            if stt_device != "cuda" or not is_gpu_initialization_error(error):
+                raise
+            print(
+                f"GPU transcription unavailable ({error}); falling back to CPU.",
+                file=sys.stderr,
+            )
+            exit_code = wake_main(
+                model=resolved_model,
+                device="cpu",
+                with_pets=args.pets,
+            )
+        sys.exit(exit_code)
 
     elif args.agent:
-        # Direct conversation mode with agent
         from .agent_cli import main as agent_main
         sys.exit(agent_main())
 
@@ -176,12 +210,10 @@ def main():
         sys.exit(main_settings())
 
     elif args.pets:
-        # --pets with no mode: launch the overlay standalone
         from .pets.cli import main_overlay
         sys.exit(main_overlay())
 
     elif args.command:
-        # Text command mode (default)
         from .console import ZaraConsole
         command_text = " ".join(args.command)
 
@@ -194,7 +226,6 @@ def main():
             sys.exit(1)
 
     else:
-        # No mode or command specified, show help
         parser.print_help()
         sys.exit(1)
 

@@ -70,6 +70,16 @@ def test_wake_accepts_common_zara_transcription_variant():
     assert listener._wake_command("Sara open Firefox") == "open Firefox"
 
 
+@pytest.mark.parametrize("alias", ["rocm", "hip", "amd"])
+def test_stt_gpu_aliases_use_ctranslate_cuda_device(alias):
+    assert cli.normalize_stt_device(alias) == "cuda"
+
+
+def test_stt_native_devices_are_preserved():
+    assert cli.normalize_stt_device("cpu") == "cpu"
+    assert cli.normalize_stt_device("cuda") == "cuda"
+
+
 def _fake_wake_modules(resolved_model):
     wake_main = MagicMock(return_value=0)
     fake_wake = types.ModuleType("zara.wake")
@@ -141,3 +151,71 @@ def test_wake_cli_explicit_model_override_wins():
         device="cpu",
         with_pets=True,
     )
+
+
+def test_wake_cli_rocm_alias_uses_ctranslate_cuda_device():
+    config = _fake_config(model="base.en", device="cpu")
+    wake_main, resolve_model, fake_wake, fake_loader = _fake_wake_modules(
+        "/cache/faster-whisper-base.en"
+    )
+
+    with (
+        patch.object(cli, "init_config", return_value=config),
+        patch.object(sys, "argv", ["zara", "--wake", "--device", "rocm"]),
+        patch.dict(
+            sys.modules,
+            {
+                "zara.wake": fake_wake,
+                "zara.whisper_loader": fake_loader,
+            },
+        ),
+        pytest.raises(SystemExit) as exited,
+    ):
+        cli.main()
+
+    assert exited.value.code == 0
+    resolve_model.assert_called_once_with("base.en")
+    wake_main.assert_called_once_with(
+        model="/cache/faster-whisper-base.en",
+        device="cuda",
+        with_pets=False,
+    )
+
+
+def test_wake_cli_gpu_initialization_failure_falls_back_to_cpu(capsys):
+    config = _fake_config(model="base.en", device="cpu")
+    wake_main, resolve_model, fake_wake, fake_loader = _fake_wake_modules(
+        "/cache/faster-whisper-base.en"
+    )
+    wake_main.side_effect = [
+        ValueError("HIP error: no binary for GPU gfx1012"),
+        0,
+    ]
+
+    with (
+        patch.object(cli, "init_config", return_value=config),
+        patch.object(sys, "argv", ["zara", "--wake", "--device", "rocm"]),
+        patch.dict(
+            sys.modules,
+            {
+                "zara.wake": fake_wake,
+                "zara.whisper_loader": fake_loader,
+            },
+        ),
+        pytest.raises(SystemExit) as exited,
+    ):
+        cli.main()
+
+    assert exited.value.code == 0
+    assert wake_main.call_count == 2
+    assert wake_main.call_args_list[0].kwargs == {
+        "model": "/cache/faster-whisper-base.en",
+        "device": "cuda",
+        "with_pets": False,
+    }
+    assert wake_main.call_args_list[1].kwargs == {
+        "model": "/cache/faster-whisper-base.en",
+        "device": "cpu",
+        "with_pets": False,
+    }
+    assert "falling back to CPU" in capsys.readouterr().err

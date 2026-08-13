@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Zarathustra Dictation Helper - Optimized
+Zarathushtra Dictation Helper - Optimized
 -----------------------------------------
 Memory-safe with bounded queues, lower latency, parallel transcription.
 """
@@ -51,6 +51,16 @@ USE_XDO = shutil.which("xdotool") is not None
 stop_event = Event()
 audio_queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
 chunk_queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
+_GPU_DEVICE_ALIASES = {"amd", "hip", "rocm"}
+
+
+def _normalize_device(device: str) -> str:
+    normalized = str(device).strip().lower()
+    if normalized == "cpu":
+        return "cpu"
+    if normalized == "cuda" or normalized in _GPU_DEVICE_ALIASES:
+        return "cuda"
+    raise ValueError(f"Unsupported transcription device: {device!r}")
 
 
 def write_pid():
@@ -108,7 +118,6 @@ def record_audio(q, stop_event):
             time.sleep(0.1)
 
 
-
 def chunk_audio(q, outq, stop_event):
     """Assemble audio chunks with no memory growth (deque instead of concat)"""
     target_frames = int(CHUNK_SECONDS * _get_input_sample_rate())
@@ -120,12 +129,10 @@ def chunk_audio(q, outq, stop_event):
         except queue.Empty:
             continue
 
-        # extend buffer without reallocating giant arrays
         buffer.extend(data[:, 0] if data.ndim > 1 else data)
 
         while len(buffer) >= target_frames:
             chunk = np.array([buffer.popleft() for _ in range(target_frames)], dtype=np.float32)
-
             _put_latest(outq, chunk)
 
 
@@ -320,6 +327,22 @@ def _reset_runtime_state() -> tuple[Event, queue.Queue, queue.Queue]:
     return stop_event, audio_queue, chunk_queue
 
 
+def _load_whisper_model(
+    model_name: str,
+    device: str,
+    compute_type: str,
+    cpu_threads: int,
+    workers: int,
+):
+    return WhisperModel(
+        model_name,
+        device=device,
+        compute_type=compute_type,
+        cpu_threads=cpu_threads,
+        num_workers=workers,
+    )
+
+
 def main(model_name="small", device="cpu", threads=None, workers=2, stop_phrases=None):
     run_stop_event, run_audio_queue, run_chunk_queue = _reset_runtime_state()
     resolved_stop_phrases = _resolve_stop_phrases(stop_phrases)
@@ -340,28 +363,52 @@ def main(model_name="small", device="cpu", threads=None, workers=2, stop_phrases
         write_pid()
         _get_input_sample_rate()
 
+        device = _normalize_device(device)
+        workers = max(1, int(workers))
         if threads is None:
             threads = int(os.getenv("ZARA_THREADS", os.cpu_count() or 1))
-        log(f"Using {threads} Whisper threads, {workers} parallel workers")
+        threads = max(1, int(threads))
+        cpu_threads = max(1, threads // workers) if device == "cpu" else threads
+        log(
+            f"Using {threads} total Whisper CPU threads, "
+            f"{workers} parallel model workers ({cpu_threads} CPU threads/worker)"
+        )
 
         compute = "float16" if device == "cuda" else "int8"
         log(f"Loading Whisper model '{model_name}' on {device} ({compute=})")
         try:
-            model = WhisperModel(
+            model = _load_whisper_model(
                 model_name,
-                device=device,
-                compute_type=compute,
-                num_workers=threads,
+                device,
+                compute,
+                cpu_threads,
+                workers,
             )
         except Exception as error:
-            log(f"Failed with compute_type={compute}: {error}")
-            log("Retrying with compute_type='int8'")
-            model = WhisperModel(
-                model_name,
-                device=device,
-                compute_type="int8",
-                num_workers=threads,
-            )
+            if device != "cuda":
+                raise
+            log(f"GPU load failed with compute_type={compute}: {error}")
+            log("Retrying GPU with compute_type='int8'")
+            try:
+                model = _load_whisper_model(
+                    model_name,
+                    "cuda",
+                    "int8",
+                    threads,
+                    workers,
+                )
+            except Exception as gpu_error:
+                device = "cpu"
+                cpu_threads = max(1, threads // workers)
+                log(f"GPU transcription unavailable: {gpu_error}")
+                log("Falling back to CPU int8 transcription")
+                model = _load_whisper_model(
+                    model_name,
+                    "cpu",
+                    "int8",
+                    cpu_threads,
+                    workers,
+                )
 
         recorder = Thread(
             target=record_audio,
@@ -445,14 +492,14 @@ def cli_main(argv=None) -> int:
             print(f"Level: {rms:.4f} |{bars}", end='\r')
 
         try:
-            INPUT_SAMPLE_RATE, rate_note = resolve_input_sample_rate(
+            input_sample_rate, rate_note = resolve_input_sample_rate(
                 TARGET_SAMPLE_RATE,
                 channels=CHANNELS,
             )
             if rate_note:
                 log(rate_note)
             with sd.InputStream(
-                samplerate=INPUT_SAMPLE_RATE,
+                samplerate=input_sample_rate,
                 channels=CHANNELS,
                 callback=test_callback,
             ):
