@@ -13,6 +13,10 @@ from .config import init_config
 def main():
     # Initialize configuration system
     config = init_config()
+    stt_config = config.get_section("stt") if config is not None else {}
+    default_stt_model = stt_config.get("model", "small")
+    default_stt_device = stt_config.get("device", "cpu")
+
     parser = argparse.ArgumentParser(
         prog="zara",
         description="Zarathustra Voice Assistant - Unified Interface",
@@ -87,17 +91,17 @@ def main():
         help="Enable verbose logging"
     )
 
-    # Dictate-specific options
+    # Dictate/wake STT options
     parser.add_argument(
         "--model",
-        default="small",
-        help="Whisper model for dictation (default: small)"
+        default=default_stt_model,
+        help=f"Whisper model for dictation/wake (default: {default_stt_model})"
     )
     parser.add_argument(
         "--device",
-        default="cpu",
+        default=default_stt_device,
         choices=["cpu", "cuda"],
-        help="Device for transcription (default: cpu)"
+        help=f"Device for transcription (default: {default_stt_device})"
     )
     parser.add_argument(
         "--threads",
@@ -151,7 +155,11 @@ def main():
     elif args.wake:
         # Wake word listener mode
         from .wake import main as wake_main
-        sys.exit(wake_main(with_pets=args.pets))
+        sys.exit(wake_main(
+            model=args.model,
+            device=args.device,
+            with_pets=args.pets,
+        ))
 
     elif args.agent:
         # Direct conversation mode with agent
