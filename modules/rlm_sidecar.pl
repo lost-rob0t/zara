@@ -20,7 +20,7 @@ main :-
             halt(1)
           )).
 
-main_args(["--probe", Root]) :-
+main_args(['--probe', Root]) :-
     !,
     load_rlm(Root),
     integration_revision(Revision),
@@ -209,14 +209,14 @@ call_rlm(Request, Options, Token, Main, Provider, Registry, Outcome) :-
                time_limit:Options.time_limit},
     RLMOptions = [ provider(Provider),
                    provider_name(openrouter),
-                   planner_handler(PlannerHandler),
-                   capabilities(Capabilities),
-                   child_capabilities([model(openrouter)]),
-                   tool_registry(Registry),
-                   planner_instruction(Options.planner_instruction),
-                   planner_max_tokens(Options.planner_max_tokens),
-                   budget(Budget),
-                   cancel_token(Token)
+                  planner_handler(PlannerHandler),
+                  capabilities(Capabilities),
+                  child_capabilities([model(openrouter)]),
+                  tool_registry(Registry),
+                  planner_instruction(Options.planner_instruction),
+                  planner_max_tokens(Options.planner_max_tokens),
+                  budget(Budget),
+                  cancel_token(Token)
                  ],
     context_source(Request, Context),
     rlm_completion:rlm_completion(Request.query, Context, RLMOptions, Outcome).
