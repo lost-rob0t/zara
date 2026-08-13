@@ -13,7 +13,7 @@ from .config import init_config
 def main():
     # Initialize configuration system
     config = init_config()
-    stt_config = config.get_section("stt")
+    stt_config = config.get_section("stt") if config is not None else {}
     default_stt_model = stt_config.get("model", "small")
     default_stt_device = stt_config.get("device", "cpu")
 
