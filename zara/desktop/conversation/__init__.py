@@ -1,5 +1,10 @@
 """Shared conversation state and durable storage for Zara Desktop."""
 
+from typing import Optional
+
+from zara.database import DatabaseManager
+
+from .migrations import repair_conversation_schema
 from .models import (
     ConversationRecord,
     ConversationState,
@@ -7,8 +12,18 @@ from .models import (
     MessageRole,
     MessageStatus,
 )
-from .service import ConversationService, ConversationUpdate
-from .store import ConversationStore
+from .store import ConversationStore as _ConversationStore
+
+
+class ConversationStore(_ConversationStore):
+    """Conversation store with compatibility repair for legacy v2 databases."""
+
+    def __init__(self, db: Optional[DatabaseManager] = None) -> None:
+        repair_conversation_schema(db)
+        super().__init__(db)
+
+
+from .service import ConversationService, ConversationUpdate  # noqa: E402
 
 __all__ = [
     "ConversationRecord",
