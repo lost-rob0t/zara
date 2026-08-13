@@ -1,0 +1,177 @@
+#+title: Zara MCP Client Support
+
+* Overview
+
+Zara treats Model Context Protocol (MCP) servers as dynamic capability
+providers. Remote MCP tools are adapted into the same LangChain tool registry as
+native Zara tools; resources and prompts keep their MCP identity and are exposed
+through generic access tools.
+
+The implementation targets the official MCP Python SDK v2 and its current
+2026-07-28 protocol behavior while retaining the SDK's automatic compatibility
+with older handshake-era MCP servers.
+
+Supported transports:
+
+- =stdio= -- Zara launches and supervises a local MCP subprocess.
+- =http= -- MCP Streamable HTTP using the SDK's =httpx2= transport.
+
+Legacy HTTP+SSE is intentionally not a Zara configuration transport. The
+current SDK can speak it for compatibility, but new Zara configuration should
+use Streamable HTTP.
+
+* Configuration
+
+Configuration can live in Zara's normal =~/.config/zarathushtra/config.toml=:
+
+#+begin_src toml
+[mcp]
+connect_timeout = 10
+request_timeout = 60
+refresh_interval = 30
+
+[mcp.servers.filesystem]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/Documents"]
+
+[mcp.servers.research]
+transport = "http"
+url = "https://example.com/mcp"
+headers = { Authorization = "Bearer ${RESEARCH_MCP_TOKEN}" }
+#+end_src
+
+=zara mcp add/enable/disable/remove= writes a companion
+=~/.config/zarathushtra/mcp.toml=. Values there override servers with the same
+name in =config.toml=. This lets the management CLI persist changes without
+rewriting unrelated Zara configuration.
+
+Environment variable references and =~= are expanded when a connection is
+opened. Header and environment values are redacted from diagnostic
+representations. Credentials embedded in HTTP URLs are rejected; use headers
+instead.
+
+For a stdio server, remember that =command= executes locally with Zara's user
+privileges. Only configure servers you intend to execute.
+
+* Management CLI
+
+#+begin_src sh
+zara mcp list
+zara mcp status
+zara mcp inspect filesystem
+zara mcp tools filesystem
+zara mcp resources filesystem
+zara mcp prompts filesystem
+
+zara mcp add filesystem \
+  --transport stdio \
+  --command npx \
+  --arg=-y \
+  --arg=@modelcontextprotocol/server-filesystem \
+  --arg=/home/user/Documents
+
+zara mcp add research \
+  --transport http \
+  --url https://example.com/mcp \
+  --header 'Authorization=Bearer ${RESEARCH_MCP_TOKEN}'
+
+zara mcp disable filesystem
+zara mcp enable filesystem
+zara mcp remove filesystem
+#+end_src
+
+=status= and the inspection commands connect to the selected server where
+needed, report protocol/capability state, then shut it down cleanly.
+
+* How capabilities enter Zara
+
+Each configured server is owned by an asynchronous =MCPServerActor=. The actor
+owns the MCP =Client= and transport for their entire lifetime. Requests are sent
+to the actor and individual MCP operations run concurrently, so one stalled
+server does not block another server or Zara's UI event loop.
+
+On each agent turn the tool registry prepares dynamic providers before LangGraph
+is compiled:
+
+#+begin_example
+Agent turn
+  -> ToolRegistry.prepare_async
+  -> MCPManager start/reconnect/refresh
+  -> MCP tools adapted as StructuredTool
+  -> LangGraph binds native + MCP tools together
+  -> normal ToolNode invocation
+#+end_example
+
+The stable internal identity is =mcp.<server>.<remote-tool>=. Model-visible names
+are sanitized as =mcp__<server>__<remote-tool>= and are collision checked against
+native tools and other MCP servers. No remote tool silently overwrites another
+capability.
+
+A short dynamic system context describes the currently discovered MCP tools,
+resources, prompts, and failed servers. This matters because Zara's historical
+routing prompt strongly favors Prolog for verbs such as =search= and =list=;
+explicit MCP capability matches are allowed to supersede that fallback.
+
+* Resources and prompts
+
+MCP resources remain resources. Zara lists fixed resources and resource
+templates separately and exposes =mcp__read_resource(server, uri)= as the
+agent-side access operation.
+
+MCP prompts remain prompts. Zara lists their origin and exposes
+=mcp__get_prompt(server, name, arguments)= to render one.
+
+Tool results retain MCP content blocks, structured content, metadata and
+=isError=. Text, image, audio, embedded resource, structured content and future
+SDK content models are therefore not flattened to a plain string at the MCP
+boundary. Rendering layers may still choose a text fallback for content they do
+not display natively.
+
+* Lifecycle, cancellation and reconnect
+
+For stdio, the official SDK owns subprocess shutdown. Closing the actor closes
+stdin and lets the SDK reap/terminate the child process tree; Zara does not
+spawn a second unmanaged process layer.
+
+A caller cancellation cancels the corresponding async MCP request while leaving
+the healthy server session usable. Request timeouts do the same. A protocol or
+transport exception marks only that server actor failed. Zara reconnects it for
+future operations and never automatically replays the failed tool call, because
+the call may have had side effects.
+
+Modern MCP list-change subscriptions are used when the negotiated server
+advertises them. A conservative periodic refresh remains as a fallback for
+older servers or unavailable subscriptions.
+
+* Security and logging
+
+- MCP servers are external capability providers, not trusted Zara internals.
+- stdio commands run with Zara's OS privileges.
+- HTTP URLs must be =http= or =https= and cannot carry userinfo credentials.
+- TLS verification stays enabled through =httpx2= defaults.
+- configured headers/environment values are redacted from Zara diagnostics;
+  stdio stderr is filtered against resolved configured environment secrets.
+- connect and request timeouts bound transport work.
+- Zara logs server identity, lifecycle, discovery counts and tool names, not
+  authorization headers or environment values.
+- MCP tools use Zara's existing tool execution path. Zara currently has no
+  separate MCP-only approval framework; if the common tool policy is extended,
+  MCP tools should continue to pass through that same path.
+
+* Debugging
+
+Start with:
+
+#+begin_src sh
+zara mcp status
+zara mcp inspect SERVER
+zara mcp tools SERVER
+#+end_src
+
+Typical states are =configured=, =starting=, =initializing=, =ready=, =failed=,
+=stopping= and =stopped=. Failures include the server name and operation while
+keeping protocol dumps out of normal output.
+
+If no MCP servers are configured, no MCP client connection is started and Zara's
+normal tool behavior is unchanged.

@@ -17,6 +17,10 @@ def main():
     default_stt_model = stt_config.get("model", "small")
     default_stt_device = stt_config.get("device", "cpu")
 
+    if len(sys.argv) > 1 and sys.argv[1] == "mcp":
+        from .mcp.cli import main as mcp_main
+        sys.exit(mcp_main(sys.argv[2:], config=config))
+
     parser = argparse.ArgumentParser(
         prog="zara",
         description="Zarathustra Voice Assistant - Unified Interface",
@@ -26,7 +30,8 @@ def main():
                "  zara --console                # Interactive REPL\n"
                "  zara --voice                  # One-shot voice command\n"
                "  zara --dictate                # Continuous dictation mode\n"
-               "  zara --wake                   # Wake word listener\n",
+               "  zara --wake                   # Wake word listener\n"
+               "  zara mcp status               # Inspect MCP connections\n",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
 

@@ -263,5 +263,12 @@ class AgentManager:
     def exit_conversation(self):
         self.conversation_manager.exit_conversation()
 
+    async def shutdown_async(self) -> None:
+        """Close dynamic providers and end the conversation cleanly."""
+        try:
+            self.exit_conversation()
+        finally:
+            await self.tool_registry.shutdown_async()
+
 
 __all__ = ["AgentManager"]

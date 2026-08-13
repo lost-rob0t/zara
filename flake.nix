@@ -45,6 +45,57 @@
             };
           };
 
+          # Official MCP Python SDK v2. Nixpkgs still carries the v1 SDK, so
+          # package the current pure-Python v2 wheels directly while reusing
+          # nixpkgs for their runtime dependency graph.
+          mcpTypesV2 = python.pkgs.buildPythonPackage rec {
+            pname = "mcp-types";
+            version = "2.0.0";
+            format = "wheel";
+            src = pkgs.fetchPypi {
+              pname = "mcp_types";
+              inherit version format;
+              dist = "py3";
+              python = "py3";
+              hash = "sha256-ay3nl8onl/Vot5Up4bJZSONN5RG8wL2C/vEDmm0bjrA=";
+            };
+            dependencies = [
+              python.pkgs.pydantic
+              python.pkgs.typing-extensions
+            ];
+            pythonImportsCheck = [ "mcp_types" ];
+            doCheck = false;
+          };
+
+          mcpV2 = python.pkgs.buildPythonPackage rec {
+            pname = "mcp";
+            version = "2.0.0";
+            format = "wheel";
+            src = pkgs.fetchPypi {
+              inherit pname version format;
+              dist = "py3";
+              python = "py3";
+              hash = "sha256-HLTHXS0se4wddWNV5dgqOfKCLMfxPiKiBR18o1kjSdY=";
+            };
+            dependencies = [
+              python.pkgs.anyio
+              python.pkgs.httpx2
+              python.pkgs.jsonschema
+              mcpTypesV2
+              python.pkgs.opentelemetry-api
+              python.pkgs.pydantic
+              python.pkgs.pyjwt
+              python.pkgs.python-multipart
+              python.pkgs.sse-starlette
+              python.pkgs.starlette
+              python.pkgs.typing-extensions
+              python.pkgs.typing-inspection
+              python.pkgs.uvicorn
+            ];
+            pythonImportsCheck = [ "mcp" ];
+            doCheck = false;
+          };
+
           pythonLibs = python.withPackages (p: [
             p.sounddevice
             p.numpy
@@ -55,6 +106,7 @@
             p.pyyaml
             p.pydantic
             p.httpx
+            mcpV2
             p.tomli  # TOML parsing for config system
             p.orgparse
             pyswip

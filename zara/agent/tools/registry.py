@@ -33,6 +33,7 @@ class ToolRegistry:
         self.prolog_engine = prolog_engine
         self.config = config
         self._tools: Dict[str, LangChainTool] = {}
+        self._mcp_manager: Any = None
 
     def register_tool(self, tool: LangChainTool):
         """
@@ -48,6 +49,10 @@ class ToolRegistry:
             raise ValueError(f"Tool '{tool.name}' already registered")
 
         self._tools[tool.name] = tool
+
+    def unregister_tool(self, name: str) -> Optional[LangChainTool]:
+        """Remove a tool if present and return the previous binding."""
+        return self._tools.pop(name, None)
 
     def register_tools(self, tools: List[LangChainTool]):
         """
@@ -83,6 +88,28 @@ class ToolRegistry:
     def to_langchain_tools(self) -> List[LangChainTool]:
         """Return the tools already registered in LangChain format."""
         return list(self._tools.values())
+
+    async def prepare_async(self) -> None:
+        """Start/refresh optional dynamic capability providers before a turn."""
+        if self.config is None:
+            return
+        if self._mcp_manager is None:
+            from ...mcp import MCPManager
+
+            self._mcp_manager = MCPManager(self.config, self)
+        await self._mcp_manager.ensure_started()
+
+    def dynamic_system_context(self) -> Optional[str]:
+        """Return dynamic provider routing context for the current turn."""
+        if self._mcp_manager is None:
+            return None
+        return self._mcp_manager.system_context()
+
+    async def shutdown_async(self) -> None:
+        """Shut down dynamic capability providers and their child processes."""
+        if self._mcp_manager is not None:
+            await self._mcp_manager.shutdown()
+            self._mcp_manager = None
 
     def execute_tool(self, name: str, **kwargs) -> str:
         """

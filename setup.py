@@ -109,6 +109,8 @@ setup(
         "pyside6>=6.5",
         "pillow>=10.0",
         "pyzmq>=25.0",
+        "mcp>=2,<3",
+        "httpx2>=2.5",
         "pytest>=7.0",
         "pytest-asyncio>=0.23",
     ],
