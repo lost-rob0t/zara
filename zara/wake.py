@@ -576,6 +576,16 @@ class WakeWordListener:
 
     async def collect_audio_until_silence(self, first_speech_timeout=None):
         """Collect one utterance using Silero VAD endpointing."""
+        tts_task = getattr(self, "tts_task", None)
+        if tts_task is not None and not tts_task.done():
+            self.log("Waiting for active TTS before microphone collection")
+            await asyncio.gather(tts_task, return_exceptions=True)
+            # Drop speaker bleed captured while Zara was talking. Bump the
+            # epoch as well so any concurrent callback frame from the old
+            # playback window cannot become the first frame of the next turn.
+            self._audio_epoch += 1
+            self.clear_queue()
+
         trace = self._ensure_turn_trace()
         if first_speech_timeout is None:
             first_speech_timeout = self.first_speech_timeout
