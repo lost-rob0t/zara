@@ -24,12 +24,65 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check whitespace errors
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          if [ -n "${{ github.base_ref }}" ]; then
+            git diff --check "origin/${{ github.base_ref }}...HEAD"
+          else
+            git diff --check HEAD^..HEAD
+          fi
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
 
       - name: Run all tests
         run: nix develop -c bash scripts/test-all.sh
+
+      - name: Verify pinned Prolog-RLM runtime contract
+        shell: bash
+        env:
+          OPENROUTER_API_KEY: ""
+          OPENROUTER_TEST_MODEL: ""
+        run: |
+          nix develop -c bash -c '
+            set -euo pipefail
+            rlm_test_root="$(mktemp -d)"
+            trap "rm -rf \"$rlm_test_root\"" EXIT
+            cp -R "$ZARA_PROLOG_RLM_ROOT"/. "$rlm_test_root"/
+            chmod -R u+w "$rlm_test_root"
+            cd "$rlm_test_root"
+
+            swipl -q -s test/check_runtime.pl
+            swipl -q -s test/load_all.pl
+            swipl -q -g halt -s test/live_chain_stream_openrouter_test.pl
+            swipl -q -g halt -s test/live_plan_openrouter_test.pl
+            swipl -q -g halt -s test/live_tool_openrouter_test.pl
+            swipl -q -g halt -s test/live_completion_openrouter_test.pl
+            swipl -q -g halt -s test/live_repair_openrouter_test.pl
+          '
+
+      - name: Build packaged Zara
+        run: nix build
+
+      - name: Run real Prolog-RLM adapter smoke when credential is available
+        shell: bash
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_TEST_MODEL: ${{ vars.OPENROUTER_TEST_MODEL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+            echo "SKIP: OPENROUTER_API_KEY is not configured for Zara live integration CI"
+            exit 0
+          fi
+          export ZARA_RLM_LIVE=1
+          nix develop -c python scripts/test-prolog-rlm-live.py
 
       - name: Upload test artifacts
         if: always()

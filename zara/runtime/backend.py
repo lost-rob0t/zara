@@ -1,8 +1,8 @@
-"""Application-service backend owned by :class:`zara.runtime.host.RuntimeHost`.
+"""Application-service backends owned by :class:`zara.runtime.host.RuntimeHost`.
 
-The host owns lifecycle, threading, turn correlation, and cancellation. A
-backend owns the existing Zara application services used to execute a turn.
-This keeps the host testable without inventing a second assistant runtime.
+RuntimeHost owns lifecycle, threading, turn correlation, and cancellation.
+Backends own the application services used to execute a turn. LangGraph remains
+the default; Prolog-RLM is an explicit experimental alternative.
 """
 
 from __future__ import annotations
@@ -19,14 +19,14 @@ class UnsupportedRuntimeCommand(RuntimeError):
 class RuntimeTurnResult:
     response: str = ""
     tool_results: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class RuntimeBackend:
-    """Async application-service contract used by RuntimeHost.
+    """Async application-service contract used by RuntimeHost."""
 
-    Concrete backends execute exclusively on the RuntimeHost thread/asyncio
-    loop unless they deliberately delegate work to an existing worker/actor.
-    """
+    def bind_event_publisher(self, publisher) -> None:
+        pass
 
     async def start(self) -> None:
         pass
@@ -63,15 +63,8 @@ class RuntimeBackend:
         pass
 
 
-class AgentRuntimeBackend(RuntimeBackend):
-    """Thin adapter over Zara's existing :class:`AgentManager`.
-
-    The manager is constructed lazily inside ``start()``. RuntimeHost invokes
-    ``start()`` on its dedicated worker thread, so provider/tool/memory setup is
-    never performed synchronously by a Qt caller. A future desktop bootstrap
-    may inject an AgentManager factory that also wires the existing Prolog
-    engine; this adapter deliberately does not duplicate wake.py startup code.
-    """
+class LangGraphRuntimeBackend(RuntimeBackend):
+    """Thin adapter over Zara's existing :class:`AgentManager`."""
 
     def __init__(self, manager_factory: Optional[Callable[[], Any]] = None) -> None:
         self._manager_factory = manager_factory
@@ -97,8 +90,6 @@ class AgentRuntimeBackend(RuntimeBackend):
         if self._manager is None:
             raise RuntimeError("runtime backend is not started")
         if context_ids:
-            # Context attachment resolution belongs to #88. Reject rather than
-            # silently pretending the context was used.
             raise UnsupportedRuntimeCommand(
                 "context attachments are not wired into the runtime backend yet"
             )
@@ -118,10 +109,6 @@ class AgentRuntimeBackend(RuntimeBackend):
         )
 
     async def cancel_turn(self, turn_id: str) -> None:
-        # Cancelling the RuntimeHost asyncio task is the current concrete
-        # cancellation path for buffered AgentManager calls. Provider/tool
-        # specific cancellation hooks can be added behind this method without
-        # changing the desktop command API.
         return None
 
     async def stop(self) -> None:
@@ -130,3 +117,103 @@ class AgentRuntimeBackend(RuntimeBackend):
                 self._manager.exit_conversation()
             finally:
                 self._manager = None
+
+
+def create_runtime_backend(config=None) -> RuntimeBackend:
+    """Create the configured conversational backend."""
+
+    if config is None:
+        from zara.config import get_config
+
+        config = get_config()
+
+    backend_name = str(config.get("agent", "backend", "langgraph")).strip().lower()
+    if backend_name == "langgraph":
+        def manager_factory():
+            from zara.agent import AgentManager
+
+            return AgentManager(config=config)
+
+        return LangGraphRuntimeBackend(manager_factory)
+
+    if backend_name == "prolog_rlm":
+        from .prolog_rlm import PrologRLMBackend
+
+        return PrologRLMBackend(config=config)
+
+    raise ValueError(
+        f"Unsupported agent backend {backend_name!r}; choose 'langgraph' or 'prolog_rlm'"
+    )
+
+
+class AgentRuntimeBackend(RuntimeBackend):
+    """Backward-compatible facade selecting Zara's configured agent backend.
+
+    RuntimeHost historically constructed ``AgentRuntimeBackend`` directly. The
+    facade preserves that API while keeping backend selection in one place.
+    Supplying ``manager_factory`` explicitly still forces the legacy LangGraph
+    adapter, which preserves existing tests and embedders.
+    """
+
+    def __init__(
+        self,
+        manager_factory: Optional[Callable[[], Any]] = None,
+        *,
+        config=None,
+    ) -> None:
+        if manager_factory is not None:
+            self._delegate: RuntimeBackend = LangGraphRuntimeBackend(manager_factory)
+        else:
+            self._delegate = create_runtime_backend(config)
+
+    def bind_event_publisher(self, publisher) -> None:
+        self._delegate.bind_event_publisher(publisher)
+
+    async def start(self) -> None:
+        await self._delegate.start()
+
+    async def submit_turn(
+        self,
+        text: str,
+        *,
+        turn_id: str,
+        conversation_id: Optional[str] = None,
+        context_ids: tuple[str, ...] = (),
+    ) -> RuntimeTurnResult:
+        return await self._delegate.submit_turn(
+            text,
+            turn_id=turn_id,
+            conversation_id=conversation_id,
+            context_ids=context_ids,
+        )
+
+    async def cancel_turn(self, turn_id: str) -> None:
+        await self._delegate.cancel_turn(turn_id)
+
+    async def start_voice(self) -> None:
+        await self._delegate.start_voice()
+
+    async def stop_voice(self) -> None:
+        await self._delegate.stop_voice()
+
+    async def mute_speech(self, enabled: bool) -> None:
+        await self._delegate.mute_speech(enabled)
+
+    async def approve_tool(self, tool_run_id: str) -> None:
+        await self._delegate.approve_tool(tool_run_id)
+
+    async def reject_tool(self, tool_run_id: str, reason: str = "") -> None:
+        await self._delegate.reject_tool(tool_run_id, reason)
+
+    async def stop(self) -> None:
+        await self._delegate.stop()
+
+
+__all__ = [
+    "AgentRuntimeBackend",
+    "LangGraphRuntimeBackend",
+    "RuntimeBackend",
+    "RuntimeTurnResult",
+    "UnsupportedRuntimeCommand",
+    "create_runtime_backend",
+]
