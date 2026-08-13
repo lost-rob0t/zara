@@ -70,23 +70,41 @@ def test_wake_accepts_common_zara_transcription_variant():
     assert listener._wake_command("Sara open Firefox") == "open Firefox"
 
 
-def test_wake_cli_defaults_model_and_device_from_stt_config():
-    config = _fake_config(model="base.en", device="cpu")
+def _fake_wake_modules(resolved_model):
     wake_main = MagicMock(return_value=0)
     fake_wake = types.ModuleType("zara.wake")
     fake_wake.main = wake_main
 
+    resolve_model = MagicMock(return_value=resolved_model)
+    fake_loader = types.ModuleType("zara.whisper_loader")
+    fake_loader.resolve_whisper_model_files = resolve_model
+    return wake_main, resolve_model, fake_wake, fake_loader
+
+
+def test_wake_cli_defaults_model_and_device_from_stt_config():
+    config = _fake_config(model="base.en", device="cpu")
+    wake_main, resolve_model, fake_wake, fake_loader = _fake_wake_modules(
+        "/cache/faster-whisper-base.en"
+    )
+
     with (
         patch.object(cli, "init_config", return_value=config),
         patch.object(sys, "argv", ["zara", "--wake"]),
-        patch.dict(sys.modules, {"zara.wake": fake_wake}),
+        patch.dict(
+            sys.modules,
+            {
+                "zara.wake": fake_wake,
+                "zara.whisper_loader": fake_loader,
+            },
+        ),
         pytest.raises(SystemExit) as exited,
     ):
         cli.main()
 
     assert exited.value.code == 0
+    resolve_model.assert_called_once_with("base.en")
     wake_main.assert_called_once_with(
-        model="base.en",
+        model="/cache/faster-whisper-base.en",
         device="cpu",
         with_pets=False,
     )
@@ -94,9 +112,9 @@ def test_wake_cli_defaults_model_and_device_from_stt_config():
 
 def test_wake_cli_explicit_model_override_wins():
     config = _fake_config(model="small", device="cpu")
-    wake_main = MagicMock(return_value=0)
-    fake_wake = types.ModuleType("zara.wake")
-    fake_wake.main = wake_main
+    wake_main, resolve_model, fake_wake, fake_loader = _fake_wake_modules(
+        "/cache/faster-whisper-base.en"
+    )
 
     with (
         patch.object(cli, "init_config", return_value=config),
@@ -105,14 +123,21 @@ def test_wake_cli_explicit_model_override_wins():
             "argv",
             ["zara", "--wake", "--model", "base.en", "--device", "cpu", "--pets"],
         ),
-        patch.dict(sys.modules, {"zara.wake": fake_wake}),
+        patch.dict(
+            sys.modules,
+            {
+                "zara.wake": fake_wake,
+                "zara.whisper_loader": fake_loader,
+            },
+        ),
         pytest.raises(SystemExit) as exited,
     ):
         cli.main()
 
     assert exited.value.code == 0
+    resolve_model.assert_called_once_with("base.en")
     wake_main.assert_called_once_with(
-        model="base.en",
+        model="/cache/faster-whisper-base.en",
         device="cpu",
         with_pets=True,
     )
