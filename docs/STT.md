@@ -9,10 +9,11 @@ engine behind it to be selected independently.
 | --- | --- | --- | --- |
 | `faster-whisper` | yes | Whisper model name/path | Default CTranslate2 backend |
 | `whisper` / `openai-whisper` | yes | OpenAI Whisper model name | Reference OpenAI Whisper implementation |
-| `moonshine` | yes | sherpa-onnx Moonshine model directory | Low-latency local candidate |
+| `moonshine` | yes | sherpa-onnx Moonshine v1 model directory | Four-file legacy Moonshine export |
+| `moonshine-v2` | yes | sherpa-onnx Moonshine v2 model directory | Current two-file/merged-decoder export |
 | `zipformer` | yes | sherpa-onnx transducer model directory | Fast ONNX transducer candidate |
 | `sense-voice` | yes | sherpa-onnx SenseVoice model directory | Multilingual ONNX model |
-| `sherpa-onnx` | yes | supported sherpa model directory | Auto-detect Moonshine/Zipformer/SenseVoice |
+| `sherpa-onnx` | yes | supported sherpa model directory | Auto-detect Moonshine v1/v2, Zipformer, SenseVoice |
 | `groq` | no | Groq transcription model | Requires `GROQ_API_KEY` |
 | `openai` | no | OpenAI transcription model | Requires `OPENAI_API_KEY` |
 
@@ -45,13 +46,25 @@ nix run .#zara -- --wake --pets \
   --model tiny.en
 ```
 
-Moonshine through sherpa-onnx:
+Moonshine v1 through sherpa-onnx:
 
 ```sh
 nix run .#zara -- --wake --pets \
   --stt-provider moonshine \
   --model "$HOME/.local/share/zara/models/moonshine"
 ```
+
+Moonshine v2 through sherpa-onnx:
+
+```sh
+nix run .#zara -- --wake --pets \
+  --stt-provider moonshine-v2 \
+  --model "$HOME/.local/share/zara/models/moonshine-v2"
+```
+
+The v2 directory is expected to contain `encoder_model.ort`,
+`decoder_model_merged.ort`, and `tokens.txt`. The generic `sherpa-onnx`
+provider auto-detects this layout too.
 
 Zipformer transducer through sherpa-onnx:
 
@@ -105,8 +118,8 @@ The same values can be persisted in Zara's TOML config:
 
 ```toml
 [stt]
-provider = "moonshine"
-model = "/home/me/.local/share/zara/models/moonshine"
+provider = "moonshine-v2"
+model = "/home/me/.local/share/zara/models/moonshine-v2"
 device = "cpu"
 threads = 4
 ```
