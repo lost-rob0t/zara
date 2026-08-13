@@ -21,6 +21,38 @@
           # Use python3 (latest stable)
           python = pkgs.python3;
 
+          # The pinned nixpkgs revision predates its sherpa-onnx Python package.
+          # Pin upstream CPython 3.13 wheels instead of moving Zara's entire
+          # package set just to add an STT backend.
+          sherpaOnnxWheel =
+            let
+              wheel =
+                if system == "x86_64-linux" then {
+                  file = "sherpa_onnx-1.13.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
+                  url = "https://files.pythonhosted.org/packages/f9/a1/2a35324c4c6cdccdfa1b23cb2a9d7263dddfba30c57a7d46bab8fd19160d/sherpa_onnx-1.13.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
+                  sha256 = "198312f6d2d2befec14bc387559ca60cf5522c3a7f9e2d24100474ef783d8edc";
+                } else if system == "aarch64-linux" then {
+                  file = "sherpa_onnx-1.13.2-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl";
+                  url = "https://files.pythonhosted.org/packages/63/d3/46e354ebe1b2002dceefdee0f15c2fef42249bf467b46bd668f0eb7a7e76/sherpa_onnx-1.13.2-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl";
+                  sha256 = "d390f50271f930fd451de907b6c34a84da88be401e57746c1be1ced8e0f5ca17";
+                } else
+                  throw "Unsupported sherpa-onnx wheel system: ${system}";
+            in
+            python.pkgs.buildPythonPackage rec {
+              pname = "sherpa-onnx";
+              version = "1.13.2";
+              format = "wheel";
+
+              src = pkgs.fetchurl {
+                inherit (wheel) url sha256;
+                name = wheel.file;
+              };
+
+              propagatedBuildInputs = [ python.pkgs.numpy ];
+              doCheck = false;
+              pythonImportsCheck = [ "sherpa_onnx" ];
+            };
+
           # Build pyswip from GitHub (use the same python toolchain everywhere)
           pyswip = python.pkgs.buildPythonPackage rec {
             pname = "pyswip";
@@ -55,7 +87,7 @@
             p.pynput
             p.faster-whisper
             p.openai-whisper
-            p.sherpa-onnx
+            sherpaOnnxWheel
             p.aiohttp
             p.soundfile
             p.pyyaml
