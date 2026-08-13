@@ -22,25 +22,26 @@
           python = pkgs.python3;
 
           # The pinned nixpkgs revision predates its sherpa-onnx Python package.
-          # Pin upstream CPython 3.13 wheels instead of moving Zara's entire
-          # package set just to add an STT backend.
+          # sherpa-onnx 1.12.38 moved to ONNX Runtime 1.24.4 while this flake
+          # carries ORT 1.23.2. Pin 1.12.37: it matches that ABI and already
+          # includes Moonshine v2 support introduced in 1.12.28.
           sherpaOnnxWheel =
             let
               wheel =
                 if system == "x86_64-linux" then {
-                  file = "sherpa_onnx-1.13.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
-                  url = "https://files.pythonhosted.org/packages/f9/a1/2a35324c4c6cdccdfa1b23cb2a9d7263dddfba30c57a7d46bab8fd19160d/sherpa_onnx-1.13.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
-                  sha256 = "198312f6d2d2befec14bc387559ca60cf5522c3a7f9e2d24100474ef783d8edc";
+                  file = "sherpa_onnx-1.12.37-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
+                  url = "https://files.pythonhosted.org/packages/fb/d7/3a3eef865c85cf799baacca65f89ea9c89244e7f8f87cb029b8b4e65aca0/sherpa_onnx-1.12.37-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
+                  sha256 = "39f58e758fbae54aa73171603db311a69d41b804ebdc0ad3d5a332064a9bc666";
                 } else if system == "aarch64-linux" then {
-                  file = "sherpa_onnx-1.13.2-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl";
-                  url = "https://files.pythonhosted.org/packages/63/d3/46e354ebe1b2002dceefdee0f15c2fef42249bf467b46bd668f0eb7a7e76/sherpa_onnx-1.13.2-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl";
-                  sha256 = "d390f50271f930fd451de907b6c34a84da88be401e57746c1be1ced8e0f5ca17";
+                  file = "sherpa_onnx-1.12.37-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl";
+                  url = "https://files.pythonhosted.org/packages/ae/ed/fbceec1edd8590a1f279b1bc278c96da1de8b9218971976791d9fa653e79/sherpa_onnx-1.12.37-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl";
+                  sha256 = "bac7456a22ad0ee11378e2c20d5a6e7baa6a576690e6fd60962b88af83f57874";
                 } else
                   throw "Unsupported sherpa-onnx wheel system: ${system}";
             in
             python.pkgs.buildPythonPackage rec {
               pname = "sherpa-onnx";
-              version = "1.13.2";
+              version = "1.12.37";
               format = "wheel";
 
               src = pkgs.fetchurl {
