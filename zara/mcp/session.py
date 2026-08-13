@@ -366,9 +366,12 @@ class MCPServerActor:
             errlog = _RedactingWriter(sys.stderr, list(resolved_env.values()))
             try:
                 transport = stdio_client(params, errlog=errlog)
+                # The actor's request timeout is the single public deadline.
+                # Disabling the SDK's overlapping read timeout avoids races in
+                # which its internal cancellation escapes as CancelledError.
                 async with Client(
                     transport,
-                    read_timeout_seconds=self.config.request_timeout,
+                    read_timeout_seconds=None,
                     cache=None,
                 ) as client:
                     yield client
@@ -381,17 +384,16 @@ class MCPServerActor:
         except ImportError as error:
             raise MCPUnavailableError("MCP HTTP transport requires `httpx2`") from error
 
-        timeout = httpx2.Timeout(
-            self.config.request_timeout,
-            connect=self.config.connect_timeout,
-        )
+        # Bound connection establishment here; per-operation deadlines remain
+        # owned by MCPServerActor.request for consistent stdio/HTTP semantics.
+        timeout = httpx2.Timeout(None, connect=self.config.connect_timeout)
         async with httpx2.AsyncClient(
             headers=self.config.resolved_headers(),
             timeout=timeout,
             follow_redirects=True,
         ) as http_client:
             transport = streamable_http_client(str(self.config.url), http_client=http_client)
-            async with Client(transport, read_timeout_seconds=self.config.request_timeout, cache=None) as client:
+            async with Client(transport, read_timeout_seconds=None, cache=None) as client:
                 yield client
 
     def snapshot(self) -> dict[str, Any]:
