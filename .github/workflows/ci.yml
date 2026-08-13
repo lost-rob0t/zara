@@ -44,6 +44,17 @@ jobs:
       - name: Run all tests
         run: nix develop -c bash scripts/test-all.sh
 
+      - name: Run pinned Prolog-RLM deterministic suite
+        shell: bash
+        run: |
+          nix develop -c bash -c '
+            set -euo pipefail
+            cd "$ZARA_PROLOG_RLM_ROOT"
+            swipl -q -s test/check_runtime.pl
+            swipl -q -s test/load_all.pl
+            swipl -q -s test/run_tests.pl
+          '
+
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
