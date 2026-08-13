@@ -10,6 +10,24 @@ from pathlib import Path
 from .config import init_config
 
 
+STT_DEVICE_ALIASES = {
+    "amd": "cuda",
+    "hip": "cuda",
+    "rocm": "cuda",
+}
+STT_DEVICE_CHOICES = ["cpu", "cuda", "rocm", "hip", "amd"]
+
+
+def normalize_stt_device(device: str) -> str:
+    normalized = str(device).strip().lower()
+    if normalized in {"cpu", "cuda"}:
+        return normalized
+    if normalized in STT_DEVICE_ALIASES:
+        return STT_DEVICE_ALIASES[normalized]
+    choices = ", ".join(STT_DEVICE_CHOICES)
+    raise ValueError(f"Unsupported STT device {device!r}; choose one of: {choices}")
+
+
 def main():
     # Initialize configuration system
     config = init_config()
@@ -100,8 +118,11 @@ def main():
     parser.add_argument(
         "--device",
         default=default_stt_device,
-        choices=["cpu", "cuda"],
-        help=f"Device for transcription (default: {default_stt_device})"
+        choices=STT_DEVICE_CHOICES,
+        help=(
+            f"Device for transcription (default: {default_stt_device}); "
+            "rocm/hip/amd use CTranslate2's CUDA-compatible GPU device API"
+        )
     )
     parser.add_argument(
         "--threads",
@@ -120,6 +141,7 @@ def main():
     )
 
     args = parser.parse_args()
+    stt_device = normalize_stt_device(args.device)
 
     # Determine mode
     if args.desktop:
@@ -146,7 +168,7 @@ def main():
             stop_phrases = get_config().get_section("dictate").get("stop_phrases")
         sys.exit(dictate_main(
             model_name=args.model,
-            device=args.device,
+            device=stt_device,
             threads=args.threads,
             workers=args.workers,
             stop_phrases=stop_phrases
@@ -162,7 +184,7 @@ def main():
         from .wake import main as wake_main
         sys.exit(wake_main(
             model=resolved_model,
-            device=args.device,
+            device=stt_device,
             with_pets=args.pets,
         ))
 
