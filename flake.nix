@@ -48,7 +48,24 @@
                 name = wheel.file;
               };
 
+              nativeBuildInputs = [ pkgs.patchelf ];
+              buildInputs = [ pkgs.onnxruntime ];
               propagatedBuildInputs = [ python.pkgs.numpy ];
+
+              # Upstream's manylinux wheel expects a loader-visible
+              # libonnxruntime.so. Nix keeps it in a separate store path, so
+              # patch the wheel's native extensions before the import check.
+              postInstall = ''
+                native_libs=$(find "$out/${python.sitePackages}/sherpa_onnx" -type f -name '*.so')
+                test -n "$native_libs" || {
+                  echo "sherpa-onnx wheel contains no native libraries" >&2
+                  exit 1
+                }
+                while IFS= read -r native_lib; do
+                  patchelf --add-rpath ${pkgs.onnxruntime}/lib "$native_lib"
+                done <<< "$native_libs"
+              '';
+
               doCheck = false;
               pythonImportsCheck = [ "sherpa_onnx" ];
             };
