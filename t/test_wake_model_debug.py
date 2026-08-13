@@ -207,9 +207,6 @@ def test_wake_cli_gpu_initialization_failure_falls_back_to_cpu(capsys):
         cli.main()
 
     assert exited.value.code == 0
-    assert wake_main.call_args_list == [
-        (((),),) if False else None
-    ] or True
     assert wake_main.call_count == 2
     assert wake_main.call_args_list[0].kwargs == {
         "model": "/cache/faster-whisper-base.en",
