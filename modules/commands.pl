@@ -5,6 +5,7 @@
 :- module(commands, [execute/2]).
 
 :- use_module('../kb/config').
+:- use_module('capability_resolver').
 :- use_module('config_loader', [command_argv/3, search_url/2]).
 :- use_module(library(process)).
 :- use_module('dictate').
@@ -39,10 +40,8 @@ execute(open, [AppName]) :-
     open_app(AppName), !.
 
 execute(search, Args) :-
-    atomic_list_concat(Args, ' ', Query),
-    search_url(Query, URL),
-    format('Searching for: ~w~n', [Query]),
-    launch_process('xdg-open', ["--", URL]), !.
+    capability_resolver:select(search, Args, Provider),
+    execute_capability(Provider, search, Args), !.
 
 execute(dictation_start, _) :-
     dictation:start_dictation,
@@ -85,20 +84,36 @@ execute(say, Rest) :-
     format('Executing ~w with args: ~w~n', [Rest]), !.
 
 % ============================================
+% Capability Execution
+% ============================================
+
+execute_capability(web_search, search, Args) :-
+    atomic_list_concat(Args, ' ', Query),
+    search_url(Query, URL),
+    format('Searching for: ~w~n', [Query]),
+    launch_process('xdg-open', ["--", URL]).
+
+execute_capability(mapped_app, open, [AppName]) :-
+    kb_config:app_mapping(AppName, Command),
+    format('Opening ~w via: ~w~n', [AppName, Command]),
+    command_argv(Command, Executable, Args),
+    launch_process(Executable, Args).
+
+execute_capability(direct_app, open, [AppName]) :-
+    format('Launching ~w directly~n', [AppName]),
+    launch_process(AppName, []).
+
+execute_capability(executable_fallback, open, [AppName]) :-
+    format('Attempting to launch ~w (not in config)~n', [AppName]),
+    launch_process(AppName, []).
+
+% ============================================
 % App Opening System
 % ============================================
 
 open_app(AppName) :-
-    (   once(kb_config:app_mapping(AppName, Command))
-    ->  format('Opening ~w via: ~w~n', [AppName, Command]),
-        command_argv(Command, Executable, Args),
-        launch_process(Executable, Args)
-    ;   once(kb_config:direct_app(AppName))
-    ->  format('Launching ~w directly~n', [AppName]),
-        launch_process(AppName, [])
-    ;   format('Attempting to launch ~w (not in config)~n', [AppName]),
-        launch_process(AppName, [])
-    ),
+    capability_resolver:select(open, [AppName], Provider),
+    execute_capability(Provider, open, [AppName]),
     !.
 
 launch_process(Executable, Args) :-
