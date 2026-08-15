@@ -1,0 +1,46 @@
+#+title: Capability Reasoning
+
+* Purpose
+
+Zara's Prolog layer resolves user language into intents and arguments. The
+capability layer adds a second symbolic step: determine which implementation
+can satisfy the resolved intent under the current constraints.
+
+The existing command runtime remains authoritative. Capability reasoning does
+not create a second dispatcher or execution stack.
+
+* Model
+
+Capability providers are declared as facts with priorities:
+
+#+begin_src prolog
+capability_provider(search, web_search, 100).
+capability_provider(open, mapped_app, 100).
+capability_provider(open, direct_app, 50).
+capability_provider(open, executable_fallback, 10).
+#+end_src
+
+The resolver can return every provider that satisfies the intent and arguments:
+
+#+begin_src prolog
+?- capability_resolver:candidates(open, [vim], Candidates).
+Candidates = [100-mapped_app, 50-direct_app, 10-executable_fallback].
+#+end_src
+
+Execution selects the highest-priority surviving provider. This preserves the
+existing behavior while making the reasoning step explicit and queryable.
+
+* Current first slice
+
+- =search= is satisfied by the existing web-search implementation.
+- =open= prefers configured application mappings.
+- direct applications remain a lower-priority alternative.
+- unknown applications retain the existing executable fallback.
+- multiple valid providers remain observable through =candidates/3=.
+
+* Direction
+
+The next layers should add explicit constraints such as availability,
+permissions, accepted argument shapes, platform support, latency or cost, and
+user preference. Those constraints should remain Prolog facts and predicates;
+Python should only bridge runtime state into the Prolog engine where required.
