@@ -218,11 +218,20 @@ def main():
         if needs_whisper_cpp_files(stt_provider):
             stt_model = resolve_local_stt_model(stt_provider, stt_model)
 
+        # dictate.py still exposes the historical faster-whisper device API,
+        # where every GPU is represented as `cuda`. The whisper.cpp adapter
+        # translates that compatibility token back to Vulkan internally.
+        dictate_device = (
+            "cuda"
+            if stt_provider == "whisper-cpp" and stt_device == "vulkan"
+            else stt_device
+        )
+
         with backend_compat(stt_provider):
             from .dictate import main as dictate_main
             sys.exit(dictate_main(
                 model_name=stt_model,
-                device=stt_device,
+                device=dictate_device,
                 threads=args.threads,
                 workers=args.workers,
                 stop_phrases=stop_phrases
