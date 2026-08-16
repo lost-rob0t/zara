@@ -7,6 +7,7 @@ forking the audio/VAD pipeline.
 
 Local backends:
 - faster-whisper (existing CTranslate2 path)
+- whisper.cpp (persistent local server; Vulkan-capable)
 - OpenAI Whisper reference implementation
 - sherpa-onnx Moonshine v1/v2, Zipformer transducer, and SenseVoice models
 
@@ -32,6 +33,8 @@ import soundfile as sf
 PROVIDER_ALIASES = {
     "faster_whisper": "faster-whisper",
     "fasterwhisper": "faster-whisper",
+    "whisper_cpp": "whisper-cpp",
+    "whispercpp": "whisper-cpp",
     "whisper": "openai-whisper",
     "openai_whisper": "openai-whisper",
     "sherpa": "sherpa-onnx",
@@ -43,6 +46,7 @@ PROVIDER_ALIASES = {
 
 STT_PROVIDERS = (
     "faster-whisper",
+    "whisper-cpp",
     "whisper",
     "openai-whisper",
     "sherpa-onnx",
@@ -100,6 +104,10 @@ def resolve_model_for_provider(provider: str, model: str) -> str:
 
 def needs_faster_whisper_files(provider: str) -> bool:
     return normalize_provider(provider) == "faster-whisper"
+
+
+def needs_whisper_cpp_files(provider: str) -> bool:
+    return normalize_provider(provider) == "whisper-cpp"
 
 
 def _segment_result(text: str):
@@ -402,6 +410,10 @@ class SherpaOnnxModel:
 
 def model_class_for_provider(provider: str):
     provider = normalize_provider(provider)
+    if provider == "whisper-cpp":
+        from .whisper_cpp import WhisperCppModel
+
+        return WhisperCppModel
     if provider == "openai-whisper":
         return OpenAIWhisperModel
     if provider == "openai":
