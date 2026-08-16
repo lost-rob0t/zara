@@ -44,6 +44,14 @@ class RuntimeBackend:
     async def cancel_turn(self, turn_id: str) -> None:
         pass
 
+    def register_tools(self, tools) -> None:
+        raise UnsupportedRuntimeCommand(
+            "tool registration is not available in this runtime backend"
+        )
+
+    def unregister_tools(self, names) -> None:
+        pass
+
     async def start_voice(self) -> None:
         raise UnsupportedRuntimeCommand("voice start is not available in this runtime backend")
 
@@ -110,6 +118,15 @@ class LangGraphRuntimeBackend(RuntimeBackend):
 
     async def cancel_turn(self, turn_id: str) -> None:
         return None
+
+    def register_tools(self, tools) -> None:
+        if self._manager is None:
+            raise RuntimeError("runtime backend is not started")
+        self._manager.tool_registry.register_tools(list(tools))
+
+    def unregister_tools(self, names) -> None:
+        if self._manager is not None:
+            self._manager.tool_registry.unregister_tools(list(names))
 
     async def stop(self) -> None:
         if self._manager is not None:
@@ -189,6 +206,12 @@ class AgentRuntimeBackend(RuntimeBackend):
 
     async def cancel_turn(self, turn_id: str) -> None:
         await self._delegate.cancel_turn(turn_id)
+
+    def register_tools(self, tools) -> None:
+        self._delegate.register_tools(tools)
+
+    def unregister_tools(self, names) -> None:
+        self._delegate.unregister_tools(names)
 
     async def start_voice(self) -> None:
         await self._delegate.start_voice()

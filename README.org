@@ -27,6 +27,7 @@ Zara currently combines several assistant surfaces behind the same runtime:
 - SWI-Prolog/PySwip command and intent handling.
 - LangChain/LangGraph-based conversational agent runtime.
 - Tool execution through Zara's tool registry.
+- Explicit lifecycle support for externally installed service plugins.
 - OpenAI, Anthropic, and Ollama provider integrations.
 - Local semantic-memory components using Chroma and sentence-transformers.
 - Pykka actors for turn coordination and runtime state ownership.
@@ -198,6 +199,22 @@ Run it with:
 zara-pets
 #+end_src
 
+** User plugins
+
+Python plugins installed under =~/.zarathushtra/plugins/= are discovered from
+the configured =[modules].search_paths=. Legacy =register_tools()= and
+=register_skills()= plugins remain supported. Long-running integrations use the
+versioned service-plugin contract: a module exports =create_plugin()=, and
+=RuntimeHost= owns the returned plugin's explicit =start(runtime)= and =stop()=
+lifecycle.
+
+The plugin runtime facade exposes only Zara's thread-safe boundary: runtime
+status, the plugin's own configuration table, bounded provider-neutral event
+subscriptions, canonical runtime-command dispatch, and bounded managed workers.
+It does not expose Qt application, widget, backend, agent, Prolog, microphone,
+or Pet implementation objects. See [[file:wiki/plugins.org][wiki/plugins.org]] for the API,
+generic example, diagnostics, and shutdown/threading rules.
+
 ** Development
 
 Run the repository's main regression gate with:
@@ -249,6 +266,7 @@ Some useful places to start:
 | =zara/streaming_stt.py= / =zara/transcription.py= | Speech transcription pipeline. |
 | =flake.nix= | Nix development environment, packages, apps, and checks. |
 | =docs/desktop-copilot-design.md= | Desktop research and architecture document. |
+| =wiki/plugins.org= | Legacy tools and the external service-plugin API. |
 
 ** Why keep going?
 

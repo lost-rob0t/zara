@@ -7,7 +7,8 @@ import concurrent.futures
 import enum
 import logging
 import threading
-from typing import Callable, Optional
+from pathlib import Path
+from typing import Callable, Iterable, Optional
 
 from zara.actors import (
     CancelTurn as ActorCancelTurn,
@@ -18,6 +19,8 @@ from zara.actors import (
     TurnCoordinator,
     TurnStartedReply,
 )
+from zara.plugins.api import RuntimeStatus
+from zara.plugins.manager import PluginDiagnostic, PluginManager
 
 from . import bridge, events
 from .backend import AgentRuntimeBackend, RuntimeBackend, RuntimeTurnResult, UnsupportedRuntimeCommand
@@ -58,6 +61,7 @@ class RuntimeHostState(str, enum.Enum):
 
 BackendFactory = Callable[[], RuntimeBackend]
 EventPublisher = Callable[[events.RuntimeEvent], bridge.EventEnvelope]
+EventSubscriber = Callable[..., bridge.RuntimeEventSubscription]
 
 
 def _completed_future(value=None) -> concurrent.futures.Future:
@@ -85,11 +89,18 @@ class RuntimeHost:
         backend_factory: Optional[BackendFactory] = None,
         *,
         publisher: EventPublisher = bridge.publish,
+        subscriber: EventSubscriber = bridge.subscribe,
         shutdown_timeout: float = 5.0,
+        plugin_paths: Optional[Iterable[Path | str]] = None,
+        config=None,
     ) -> None:
         self._backend_factory = backend_factory or (lambda: AgentRuntimeBackend())
         self._publisher = publisher
+        self._subscriber = subscriber
         self._shutdown_timeout = max(0.1, float(shutdown_timeout))
+        self._manage_plugins = backend_factory is None or plugin_paths is not None
+        self._plugin_paths = None if plugin_paths is None else tuple(plugin_paths)
+        self._config = config
 
         self._state_lock = threading.RLock()
         self._state = RuntimeHostState.NEW
@@ -106,6 +117,8 @@ class RuntimeHost:
         self._backend: Optional[RuntimeBackend] = None
         self._coordinator = None
         self._turn_tasks: dict[str, asyncio.Task] = {}
+        self._plugin_manager: Optional[PluginManager] = None
+        self._last_plugin_diagnostics: tuple[PluginDiagnostic, ...] = ()
 
     @property
     def state(self) -> RuntimeHostState:
@@ -120,6 +133,12 @@ class RuntimeHost:
     def is_alive(self) -> bool:
         thread = self._thread
         return bool(thread and thread.is_alive())
+
+    def plugin_diagnostics(self) -> tuple[PluginDiagnostic, ...]:
+        manager = self._plugin_manager
+        if manager is not None:
+            return manager.diagnostics()
+        return self._last_plugin_diagnostics
 
     def start(self) -> concurrent.futures.Future:
         """Start the runtime worker without blocking the caller."""
@@ -214,6 +233,11 @@ class RuntimeHost:
                 self._startup_future.set_exception(error)
             self._fail_startup_shutdown_requests(error)
         finally:
+            if self._plugin_manager is not None and not loop.is_closed():
+                try:
+                    loop.run_until_complete(self._stop_plugins())
+                except Exception:
+                    logger.warning("Service plugin cleanup after runtime exit failed", exc_info=True)
             pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
             for task in pending:
                 task.cancel()
@@ -271,6 +295,9 @@ class RuntimeHost:
                 if not shutdown_requests:
                     self._state = RuntimeHostState.RUNNING
 
+            if not shutdown_requests:
+                await self._start_plugins()
+
         if shutdown_requests:
             if startup_error is None and not self._startup_future.done():
                 self._startup_future.set_exception(
@@ -299,6 +326,61 @@ class RuntimeHost:
                 logger.debug("Runtime backend cleanup after failed start failed", exc_info=True)
             raise
         self._backend = candidate
+
+    async def _start_plugins(self) -> None:
+        if not self._manage_plugins:
+            return
+        try:
+            config = self._config
+            if config is None:
+                from zara.config import get_config
+
+                config = get_config()
+            paths = (
+                self._plugin_paths
+                if self._plugin_paths is not None
+                else tuple(config.get_module_search_paths())
+            )
+            plugin_config = config.get_plugin_runtime_config()
+            manager = PluginManager(
+                paths,
+                configuration_provider=config.get_plugin_config,
+                status_provider=self._plugin_runtime_status,
+                dispatcher=self.submit,
+                subscriber=self._subscriber,
+                tool_registrar=self._require_backend().register_tools,
+                tool_unregistrar=self._require_backend().unregister_tools,
+                publisher=self._publisher,
+                lifecycle_timeout=plugin_config["lifecycle_timeout"],
+                event_queue_size=plugin_config["event_queue_size"],
+                max_workers=plugin_config["max_managed_workers"],
+            )
+            self._plugin_manager = manager
+            self._last_plugin_diagnostics = ()
+            await manager.start()
+        except Exception as error:
+            logger.warning("Service plugin manager startup failed", exc_info=True)
+            self._publisher(
+                events.RuntimeError(
+                    reason=f"service plugin manager startup failed: {error}",
+                    fatal=False,
+                    label="plugin-manager",
+                )
+            )
+
+    async def _stop_plugins(self) -> None:
+        manager = self._plugin_manager
+        self._plugin_manager = None
+        if manager is not None:
+            await manager.stop()
+            self._last_plugin_diagnostics = manager.diagnostics()
+
+    def _plugin_runtime_status(self) -> RuntimeStatus:
+        return RuntimeStatus(
+            state=self.state.value,
+            alive=self.is_alive,
+            thread_id=self.thread_id,
+        )
 
     async def _complete_startup_shutdown_requests(
         self,
@@ -525,6 +607,7 @@ class RuntimeHost:
         if self._coordinator is not None:
             await self._coordinator_ask(Drain())
         self._publisher(events.RuntimeStopped(reason=command.reason, label="runtime-host"))
+        await self._stop_plugins()
 
         try:
             await self._start_backend()
@@ -548,6 +631,7 @@ class RuntimeHost:
                 detail="runtime restart interrupted by shutdown",
             )
 
+        await self._start_plugins()
         self._publisher(events.RuntimeStarted(label="runtime-host"))
         return CommandReceipt(request_id=command.request_id, detail="runtime restarted")
 
@@ -557,8 +641,9 @@ class RuntimeHost:
 
         await self._cancel_all_turns(reason="runtime shutdown")
         await self._stop_backend()
-        await self._stop_coordinator()
         self._publisher(events.RuntimeStopped(reason=command.reason, label="runtime-host"))
+        await self._stop_plugins()
+        await self._stop_coordinator()
 
         if self._async_stop is not None:
             self._async_stop.set()
