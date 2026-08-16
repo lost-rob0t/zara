@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from zara.prolog_engine import (
+    CapabilityCandidate,
     PrologEngine,
     PrologQueryError,
     PrologSerializationError,
@@ -153,3 +154,39 @@ def test_schedule_values_use_quoted_atoms():
     goal = engine.prolog.query.call_args.args[0]
     assert goal.startswith("todo_schedule:no_overlap('2026-07-19T01:00', [")
     assert "quote\\'\\\\\\nvalue" in goal
+
+
+def test_capability_candidates_return_every_solution_ranked():
+    engine = build_engine(
+        FakeQuery(
+            [
+                {"Provider": "direct_app", "Priority": 50},
+                {"Provider": "mapped_app", "Priority": 100},
+                {"Provider": "executable_fallback", "Priority": 10},
+            ]
+        )
+    )
+
+    assert engine.capability_candidates("open", ["vim"]) == [
+        CapabilityCandidate("mapped_app", 100),
+        CapabilityCandidate("direct_app", 50),
+        CapabilityCandidate("executable_fallback", 10),
+    ]
+    goal = engine.prolog.query.call_args.args[0]
+    assert goal == (
+        "capability_resolver:candidate('open', ['vim'], Provider, Priority)"
+    )
+
+
+def test_selected_capability_queries_without_execution():
+    engine = build_engine(FakeQuery([{"Provider": "mapped_app"}]))
+
+    assert engine.selected_capability("open", ["github"]) == "mapped_app"
+    goal = engine.prolog.query.call_args.args[0]
+    assert goal == "capability_resolver:select('open', ['github'], Provider)"
+
+
+def test_selected_capability_returns_none_when_unsatisfied():
+    engine = build_engine(FakeQuery())
+
+    assert engine.selected_capability("missing", []) is None
