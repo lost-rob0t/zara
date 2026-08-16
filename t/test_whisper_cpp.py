@@ -8,7 +8,11 @@ from zara.stt_backends import (
     needs_whisper_cpp_files,
     normalize_provider,
 )
-from zara.whisper_cpp import WhisperCppModel, resolve_whisper_cpp_model
+from zara.whisper_cpp import (
+    WhisperCppModel,
+    _normalize_backend_device,
+    resolve_whisper_cpp_model,
+)
 
 
 def test_whisper_cpp_provider_aliases():
@@ -28,7 +32,7 @@ def test_whisper_cpp_cpu_is_preserved():
     assert cli.normalize_stt_device("cpu", provider="whisper-cpp") == "cpu"
 
 
-def test_whisper_cpp_rejects_cuda_device():
+def test_whisper_cpp_rejects_user_facing_cuda_device():
     with pytest.raises(ValueError, match="uses Vulkan"):
         cli.normalize_stt_device("cuda", provider="whisper-cpp")
 
@@ -36,6 +40,12 @@ def test_whisper_cpp_rejects_cuda_device():
 def test_legacy_amd_alias_stays_cuda_without_whisper_cpp():
     assert cli.normalize_stt_device("amd") == "cuda"
     assert cli.normalize_stt_device("rocm", provider="faster-whisper") == "cuda"
+
+
+def test_legacy_dictation_cuda_token_maps_back_to_vulkan():
+    assert _normalize_backend_device("cuda") == "vulkan"
+    assert _normalize_backend_device("vulkan") == "vulkan"
+    assert _normalize_backend_device("cpu") == "cpu"
 
 
 def test_whisper_cpp_backend_class_is_registered():
