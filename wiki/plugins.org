@@ -1,0 +1,165 @@
+#+title: Zara user plugins
+
+* Installation and discovery
+
+Zara discovers public =*.py= files in each =[modules].search_paths= directory.
+The default user installation path is:
+
+#+begin_example
+~/.zarathushtra/plugins/
+#+end_example
+
+Files beginning with an underscore are ignored. Discovery is deterministic and
+does not download, update, or package plugins.
+
+* Legacy tool plugins
+
+Existing tool-only modules remain supported. They export one of:
+
+#+begin_src python
+def register_tools(prolog_engine):
+    return [some_langchain_tool]
+
+def register_skills(prolog_engine):
+    return [some_langchain_tool]
+#+end_src
+
+Returned objects must be LangChain =BaseTool= instances. Tool names must be
+unique.
+
+* Service plugin API version 1
+
+A long-running integration exports one factory. Importing the module must not
+start threads, servers, processes, subscriptions, or other resources.
+
+#+begin_src python
+import queue
+
+from zara.plugins import PluginMetadata, ServicePlugin
+
+
+class EventObserver(ServicePlugin):
+    metadata = PluginMetadata(
+        name="event-observer",
+        version="1.0.0",
+        api_version="1",
+        description="Counts provider-neutral runtime events.",
+    )
+
+    def __init__(self):
+        self.subscription = None
+        self.worker = None
+        self.events_seen = 0
+
+    def start(self, runtime):
+        if not runtime.configuration.get("enabled", True):
+            return
+        self.subscription = runtime.subscribe(maxsize=64)
+        self.worker = runtime.start_worker("events", self.consume_events)
+
+    def consume_events(self, stop_event):
+        while not stop_event.is_set():
+            try:
+                self.subscription.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            self.events_seen += 1
+
+    def stop(self):
+        pass
+
+
+def create_plugin():
+    return EventObserver()
+#+end_src
+
+=create_plugin()= is called once for a RuntimeHost lifecycle. =start(runtime)= is
+called once after the runtime backend is ready. =stop()= is called once during
+shutdown, restart, or cleanup after a failed start. A restart creates a fresh
+plugin instance for the new lifecycle.
+
+A service may also implement =tools()= and return ordinary LangChain
+=BaseTool= instances. They are registered before =start()= and removed when the
+service fails or stops. The default LangGraph backend supports service tools;
+backends without a tool registry reject them without killing Zara.
+
+* Runtime facade
+
+The object passed to =start()= is a per-plugin =PluginRuntime= facade:
+
+- =status= returns a snapshot containing =state=, =alive=, and the runtime
+  thread id.
+- =configuration= is a copy of only =[plugins.<plugin-name>]=.
+- =dispatch(command)= submits a =zara.runtime.commands.RuntimeCommand= through
+  =RuntimeHost= and returns a =concurrent.futures.Future=.
+- =subscribe(maxsize=N)= returns an ordered =RuntimeEventSubscription=. Plugin
+  queues must be bounded from 1 through 4096 entries. When full, the oldest
+  event is dropped and =dropped_count= increases. Each plugin may hold at most
+  16 open subscriptions.
+- =start_worker(name, target)= starts a bounded managed worker. =target= receives
+  a =threading.Event= which is set during automatic cleanup.
+
+Plugins import provider-neutral event and command types from =zara.runtime=.
+They must not reach into =RuntimeHost= internals, concrete backends, Qt objects,
+speech providers, Prolog objects, Pet widgets, or desktop controllers.
+
+The facade exposes only commands implemented by Zara's current RuntimeHost and
+backend. A plugin must handle =UnsupportedRuntimeCommand= for optional
+capabilities. It must not create a parallel runtime, event bus, speech pipeline,
+timer scheduler, notification system, or UI-control path.
+
+* Events and threading
+
+The canonical event stream is =zara.runtime.bridge=. A subscription delivers
+queue-backed =EventEnvelope= objects; runtime publishers never call plugin or UI
+callbacks directly. Plugins remove a subscription with =subscription.close()=.
+All subscriptions created through the facade are also closed automatically
+after =stop()=.
+
+Service workers may call =runtime.dispatch(...)= from any thread. RuntimeHost
+executes accepted commands on its dedicated asyncio thread. A plugin worker must
+never manipulate a Qt widget directly; Qt updates continue through runtime
+events and =QtRuntimeBridge= signals.
+
+Managed workers are limited by =plugins.max_managed_workers=. Cleanup sets each
+worker's stop event and joins all workers within the lifecycle deadline. Plugin
+=start()= and =stop()= must return promptly and must explicitly release any
+resources they create outside =start_worker()=.
+
+* Configuration
+
+Generic bounds live in the root table:
+
+#+begin_src toml
+[plugins]
+lifecycle_timeout = 5.0
+event_queue_size = 256
+max_managed_workers = 8
+#+end_src
+
+Plugin-owned settings use a table matching =PluginMetadata.name=:
+
+#+begin_src toml
+[plugins.event-observer]
+enabled = true
+#+end_src
+
+Zara does not interpret or expose a plugin's private settings in diagnostics.
+
+* Failures, diagnostics, and shutdown
+
+=RuntimeHost.plugin_diagnostics()= returns bounded =PluginDiagnostic= records
+with only =name=, =version=, =plugin_type=, =state=, and sanitized =error=.
+Lifecycle states distinguish =installed=, =loaded=, =running=, =stopped=,
+=failed=, and =incompatible=. Tool-only plugins report =loaded= because they do
+not have a service lifecycle.
+
+An incompatible API version is not started. Import, factory, tool, startup,
+managed-worker, and shutdown failures are isolated to that plugin and emit a
+non-fatal =RuntimeError= event. Error text is single-line and bounded; plugin
+configuration is never included.
+
+On RuntimeHost shutdown, each started service is stopped in reverse discovery
+order. Its subscriptions are closed, managed workers are signalled and joined,
+and registered tools are removed. Repeated host start or shutdown calls do not
+duplicate lifecycle calls.
