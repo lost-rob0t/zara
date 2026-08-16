@@ -159,7 +159,6 @@ def run_overlay(
     overlay_state = {
         "pre_drag_state": PetState.IDLE,
         "dragging": False,
-        "last_emotion": PetState.IDLE,
     }
 
     class PetWindow(QWidget):
@@ -357,21 +356,6 @@ def run_overlay(
         window._update_frame()
         emotion = _EMOTION_LABELS.get(state, state.value)
         tray.setToolTip(f"{assistant_name} — {emotion}")
-        # Surface emotion changes that need the user's attention via a tray
-        # balloon so the user notices even if the window is hidden.
-        if state is PetState.NEEDS_INPUT and state is not overlay_state["last_emotion"]:
-            tray.showMessage(
-                assistant_name, f"{assistant_name} needs your input",
-                QSystemTrayIcon.Information, 4000)
-        elif state is PetState.BLOCKED and state is not overlay_state["last_emotion"]:
-            tray.showMessage(
-                assistant_name, f"{assistant_name} is stuck",
-                QSystemTrayIcon.Warning, 4000)
-        elif state is PetState.READY and state is not overlay_state["last_emotion"]:
-            tray.showMessage(
-                assistant_name, f"{assistant_name} has something ready",
-                QSystemTrayIcon.Information, 3000)
-        overlay_state["last_emotion"] = state
 
     actor = PetStateActor.start(subscriber=_on_state)
     runtime_bridge.register_actor(actor)
