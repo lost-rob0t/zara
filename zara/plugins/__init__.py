@@ -1,16 +1,14 @@
-"""Compatibility imports for the generic :mod:`zara.plugins` API."""
+"""Public contracts for user-installed Zara plugins."""
 
-from zara.plugins import (
+from .api import (
     PLUGIN_API_VERSION,
     ManagedWorker,
-    PluginDiagnostic,
-    PluginManager,
     PluginMetadata,
     PluginRuntime,
-    PluginState,
     RuntimeStatus,
     ServicePlugin,
 )
+from .manager import PluginDiagnostic, PluginManager, PluginState
 
 __all__ = [
     "ManagedWorker",

@@ -183,6 +183,13 @@ search_paths = [
 # Format: ["module_name.py"]
 autoload = []
 
+[plugins]
+# Generic service-plugin lifecycle bounds. Plugin-owned settings use
+# [plugins.<plugin-name>] and are passed only to that plugin.
+lifecycle_timeout = 5.0
+event_queue_size = 256
+max_managed_workers = 8
+
 [pets]
 # Desktop pet companion (Zarathushtra Pets)
 enabled = false
@@ -329,6 +336,41 @@ class ZaraConfig:
         max_bytes = file_config.get("max_bytes", DEFAULT_FILE_TOOL_MAX_BYTES)
         if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 1:
             raise ConfigError("file_tools.max_bytes must be a positive integer")
+
+        plugins_config = config.get("plugins", {})
+        if not isinstance(plugins_config, dict):
+            raise ConfigError("Invalid [plugins] configuration: expected a TOML table")
+        lifecycle_timeout = plugins_config.get("lifecycle_timeout", 5.0)
+        if (
+            isinstance(lifecycle_timeout, bool)
+            or not isinstance(lifecycle_timeout, (int, float))
+            or not math.isfinite(float(lifecycle_timeout))
+            or lifecycle_timeout <= 0
+        ):
+            raise ConfigError("plugins.lifecycle_timeout must be a positive number")
+        event_queue_size = plugins_config.get("event_queue_size", 256)
+        if (
+            isinstance(event_queue_size, bool)
+            or not isinstance(event_queue_size, int)
+            or not 1 <= event_queue_size <= 4096
+        ):
+            raise ConfigError("plugins.event_queue_size must be an integer from 1 to 4096")
+        max_workers = plugins_config.get("max_managed_workers", 8)
+        if (
+            isinstance(max_workers, bool)
+            or not isinstance(max_workers, int)
+            or not 1 <= max_workers <= 64
+        ):
+            raise ConfigError("plugins.max_managed_workers must be an integer from 1 to 64")
+        for plugin_name, plugin_config in plugins_config.items():
+            if plugin_name in {
+                "lifecycle_timeout",
+                "event_queue_size",
+                "max_managed_workers",
+            }:
+                continue
+            if not isinstance(plugin_config, dict):
+                raise ConfigError(f"plugins.{plugin_name} must be a TOML table")
 
         pets_config = config.get("pets", {})
         if not isinstance(pets_config, dict):
@@ -491,6 +533,20 @@ class ZaraConfig:
                     pass
 
         return expanded_paths
+
+    def get_plugin_runtime_config(self) -> Dict[str, Any]:
+        """Return generic service-plugin lifecycle bounds."""
+        plugins_config = self.get_section("plugins")
+        return {
+            "lifecycle_timeout": float(plugins_config.get("lifecycle_timeout", 5.0)),
+            "event_queue_size": int(plugins_config.get("event_queue_size", 256)),
+            "max_managed_workers": int(plugins_config.get("max_managed_workers", 8)),
+        }
+
+    def get_plugin_config(self, plugin_name: str) -> Dict[str, Any]:
+        """Return one external plugin's isolated configuration namespace."""
+        plugin_config = self.get_section("plugins").get(plugin_name, {})
+        return dict(plugin_config) if isinstance(plugin_config, dict) else {}
 
     def get_autoload_modules(self) -> List[str]:
         """

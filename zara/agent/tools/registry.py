@@ -4,11 +4,12 @@ Tool registry for agent function calling.
 Uses LangChain tools directly. The old custom registry is deprecated.
 """
 
+import logging
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
+
 from langchain_core.tools import BaseTool as LangChainTool
 
-
-
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ...config import ZaraConfig
@@ -56,8 +57,19 @@ class ToolRegistry:
         Args:
             tools: List of tool instances to register
         """
-        for tool in tools:
-            self.register_tool(tool)
+        pending = list(tools)
+        names = [tool.name for tool in pending]
+        duplicate_names = sorted({name for name in names if names.count(name) > 1})
+        existing_names = sorted(set(names).intersection(self._tools))
+        conflicts = duplicate_names + existing_names
+        if conflicts:
+            raise ValueError(f"Tool '{conflicts[0]}' already registered")
+        self._tools.update((tool.name, tool) for tool in pending)
+
+    def unregister_tools(self, names: List[str]) -> None:
+        """Remove tools owned by a stopped service plugin."""
+        for name in names:
+            self._tools.pop(name, None)
 
     def get_tool(self, name: str) -> Optional[LangChainTool]:
         """
@@ -150,4 +162,7 @@ class ToolRegistry:
         """
         from .loader import load_plugins
         tools = load_plugins(plugin_dir, self.prolog_engine)
-        self.register_tools(tools)
+        try:
+            self.register_tools(tools)
+        except ValueError as error:
+            logger.warning("Skipping conflicting tools from %s: %s", plugin_dir, error)

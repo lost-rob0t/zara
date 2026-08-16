@@ -24,6 +24,52 @@ def test_default_config_is_valid_toml():
     assert parsed["stt"]["trailing_silence_ms"] == 320
     assert parsed["stt"]["pre_speech_buffer_chunks"] == 10
     assert len(parsed["wake"]["acknowledgement"]["phrases"]) >= 15
+    assert parsed["plugins"]["lifecycle_timeout"] == 5.0
+    assert parsed["plugins"]["event_queue_size"] == 256
+    assert parsed["plugins"]["max_managed_workers"] == 8
+
+
+def test_plugin_config_is_isolated_by_plugin_name(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[tts]\nprovider = "qwen3"\n\n'
+        '[plugins]\nevent_queue_size = 32\n\n'
+        '[plugins.example-service]\nenabled = true\nport = 1234\n\n'
+        '[plugins.other-service]\nsecret = "private"\n'
+    )
+
+    config = ZaraConfig(str(config_path))
+
+    assert config.get_plugin_runtime_config() == {
+        "lifecycle_timeout": 5.0,
+        "event_queue_size": 32,
+        "max_managed_workers": 8,
+    }
+    assert config.get_plugin_config("example-service") == {
+        "enabled": True,
+        "port": 1234,
+    }
+    assert "secret" not in config.get_plugin_config("example-service")
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        "lifecycle_timeout = 0",
+        "event_queue_size = 0",
+        "event_queue_size = 4097",
+        "max_managed_workers = 0",
+        "max_managed_workers = 65",
+    ],
+)
+def test_plugin_runtime_bounds_are_validated(tmp_path, setting):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        f'[tts]\nprovider = "qwen3"\n\n[plugins]\n{setting}\n'
+    )
+
+    with pytest.raises(ConfigError, match="plugins"):
+        ZaraConfig(str(config_path))
 
 
 def test_first_run_creates_parseable_config(monkeypatch, tmp_path):
