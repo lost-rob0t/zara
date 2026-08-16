@@ -4,21 +4,38 @@
 
 Zara's Prolog layer resolves user language into intents and arguments. The
 capability layer adds a second symbolic step: determine which implementation
-can satisfy the resolved intent under the current constraints.
+can satisfy the resolved intent under explicit constraints.
 
 The existing command runtime remains authoritative. Capability reasoning does
 not create a second dispatcher or execution stack.
 
-* Model
+* Provider facts
 
-Capability providers are declared as facts with priorities:
+Providers are declared as facts with priorities and queryable properties:
 
 #+begin_src prolog
 capability_provider(search, web_search, 100).
+capability_property(web_search, scope(web)).
+capability_property(web_search, transport(network)).
+capability_property(web_search, certainty(configured)).
+
 capability_provider(open, mapped_app, 100).
+capability_property(mapped_app, scope(local)).
+capability_property(mapped_app, certainty(configured)).
+
 capability_provider(open, direct_app, 50).
+capability_property(direct_app, scope(local)).
+capability_property(direct_app, certainty(known)).
+
 capability_provider(open, executable_fallback, 10).
+capability_property(executable_fallback, scope(local)).
+capability_property(executable_fallback, certainty(speculative)).
 #+end_src
+
+Properties are data. New policy dimensions can be added without changing the
+selection algorithm.
+
+* Multiple solutions
 
 The resolver can return every provider that satisfies the intent and arguments:
 
@@ -30,17 +47,99 @@ Candidates = [100-mapped_app, 50-direct_app, 10-executable_fallback].
 Execution selects the highest-priority surviving provider. This preserves the
 existing behavior while making the reasoning step explicit and queryable.
 
-* Current first slice
+* Constraints
+
+=candidate/5=, =candidates/4=, and =select/4= accept a list of symbolic
+constraints. Two generic forms are currently supported:
+
+- =require(Property)= keeps providers that declare the property.
+- =exclude(Property)= removes providers that declare the property.
+
+For example, a strict open policy can reject speculative executable fallback:
+
+#+begin_src prolog
+?- capability_resolver:candidates(
+       open,
+       [vim],
+       [exclude(certainty(speculative))],
+       Candidates).
+Candidates = [100-mapped_app, 50-direct_app].
+#+end_src
+
+An unknown application still has the legacy fallback under the default policy:
+
+#+begin_src prolog
+?- capability_resolver:select(open, [unknown_program], Provider).
+Provider = executable_fallback.
+#+end_src
+
+The same request can be rejected symbolically under a strict policy:
+
+#+begin_src prolog
+?- capability_resolver:select(
+       open,
+       [unknown_program],
+       [exclude(certainty(speculative))],
+       Provider).
+false.
+#+end_src
+
+Constraints compose by conjunction. Contradictory requirements therefore fail
+naturally through normal Prolog proof search.
+
+* Explainability
+
+=explain/4= returns the selected provider, priority, the evidence that made it
+applicable, its declared properties, and the surviving alternatives:
+
+#+begin_src prolog
+?- capability_resolver:explain(open, [github], [], Decision).
+Decision = decision(
+    mapped_app,
+    100,
+    [mapping(github, "xdg-open https://github.com")],
+    Properties,
+    [100-mapped_app, 10-executable_fallback]).
+#+end_src
+
+This is intended for diagnostics, future TUI displays, and LLM explanations.
+The LLM does not become the authority for provider selection by consuming this
+information; Prolog remains the selection authority.
+
+* Python bridge
+
+=PrologEngine.capability_candidates(Intent, Args)= returns all satisfying
+providers as =CapabilityCandidate= values, ordered by priority.
+
+=PrologEngine.selected_capability(Intent, Args)= asks Prolog which provider
+would win without executing the command.
+
+Execution still uses =commands:execute/2= and the same capability resolver, so
+inspection and execution share one source of truth.
+
+* Current coverage
 
 - =search= is satisfied by the existing web-search implementation.
 - =open= prefers configured application mappings.
 - direct applications remain a lower-priority alternative.
-- unknown applications retain the existing executable fallback.
+- unknown applications retain the existing executable fallback by default.
 - multiple valid providers remain observable through =candidates/3=.
+- provider properties can be required or excluded symbolically.
+- selection can produce an explanation with evidence and alternatives.
+- Python can inspect all candidates or the selected provider without executing.
 
-* Direction
+* Next policy dimensions
 
-The next layers should add explicit constraints such as availability,
-permissions, accepted argument shapes, platform support, latency or cost, and
-user preference. Those constraints should remain Prolog facts and predicates;
-Python should only bridge runtime state into the Prolog engine where required.
+The property/constraint model is intentionally generic enough to grow into:
+
+- runtime availability
+- authorization level
+- platform support
+- accepted argument shapes
+- latency and cost classes
+- network/offline requirements
+- user preference
+- session policy
+
+Runtime facts should be bridged into Prolog where needed. They should not move
+selection authority into Python.
