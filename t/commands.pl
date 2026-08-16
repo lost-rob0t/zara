@@ -41,6 +41,55 @@ test(open_candidates_are_ranked) :-
         [100-mapped_app, 50-direct_app, 10-executable_fallback]
     ).
 
+test(constraints_can_exclude_speculative_fallback) :-
+    capability_resolver:candidates(
+        open,
+        [vim],
+        [exclude(certainty(speculative))],
+        [100-mapped_app, 50-direct_app]
+    ).
+
+test(strict_unknown_app_has_no_candidate, [fail]) :-
+    capability_resolver:select(
+        open,
+        [zara_capability_test_missing_app],
+        [exclude(certainty(speculative))],
+        _
+    ).
+
+test(required_property_filters_candidates) :-
+    capability_resolver:select(
+        search,
+        [starintel, python],
+        [require(scope(web))],
+        web_search
+    ).
+
+test(conflicting_constraints_have_no_candidate, [fail]) :-
+    capability_resolver:candidate(
+        open,
+        [vim],
+        [require(scope(local)), exclude(scope(local))],
+        _,
+        _
+    ).
+
+test(explanation_contains_evidence_and_alternatives) :-
+    capability_resolver:explain(
+        open,
+        [github],
+        [],
+        decision(
+            mapped_app,
+            100,
+            [mapping(github, _)],
+            Properties,
+            [100-mapped_app, 10-executable_fallback]
+        )
+    ),
+    member(scope(local), Properties),
+    member(certainty(configured), Properties).
+
 test(unknown_intent_has_no_provider, [fail]) :-
     capability_resolver:select(unknown_intent, [], _).
 
