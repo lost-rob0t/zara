@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
+import soundfile as sf
 
 from zara.streaming_stt import StreamingVAD, VADConfig
 from zara.wake import WakeWordListener
@@ -54,6 +55,9 @@ def build_listener(queue_size=8, sample_rate=16000):
     listener._capture_stream = None
     listener.input_sample_rate = sample_rate
     listener.first_speech_timeout = 5.0
+    listener.wake_followup_timeout = 10.0
+    listener.wake_command_silence_frames = 79
+    listener._awaiting_wake_followup = False
     listener.silence_duration = 1.0
     listener.vad_config = VADConfig(
         min_speech_frames=1,
@@ -92,6 +96,21 @@ def set_vad(listener, pattern=None, default_prob=0.0):
         config,
         FakeVADDetector(pattern=pattern, default_prob=default_prob),
     )
+
+
+def test_debug_audio_dump_writes_the_pcm_given_to_whisper(tmp_path):
+    listener = WakeWordListener.__new__(WakeWordListener)
+    listener.debug_audio_dump_path = tmp_path
+    listener.target_sample_rate = 16000
+    listener.log = lambda _message: None
+    audio = np.array([-0.5, 0.0, 0.5], dtype=np.float32)
+
+    listener._dump_debug_audio(audio, wake_mode=False)
+
+    dump = next(tmp_path.glob("command-*.wav"))
+    saved, sample_rate = sf.read(dump, dtype="float32")
+    assert sample_rate == 16000
+    np.testing.assert_array_equal(saved, audio)
 
 
 def test_no_speech_deadline_is_deterministic():
@@ -141,7 +160,10 @@ def test_conversation_timeout_is_checked_after_collection_wait():
 
         await listener.active_mode_async()
 
-        listener.collect_audio_until_silence.assert_awaited_once_with(12.0)
+        listener.collect_audio_until_silence.assert_awaited_once_with(
+            12.0,
+            allow_tts_barge_in=True,
+        )
         listener._end_timed_out_conversation.assert_awaited_once_with()
 
     asyncio.run(run())
@@ -264,6 +286,19 @@ def test_state_transition_discards_stale_frames():
     asyncio.run(run())
 
 
+def test_wake_transition_retains_follow_up_audio():
+    async def run():
+        listener = build_listener()
+        enqueue(listener, frame(1.0))
+
+        listener.transition_to("ACTIVE", discard_audio=False)
+
+        result = await listener._next_audio()
+        assert result[0, 0] == 1.0
+
+    asyncio.run(run())
+
+
 def test_capture_failure_aborts_audio_wait_with_actual_error():
     async def run():
         listener = build_listener()
@@ -306,7 +341,73 @@ def test_passive_wake_queues_same_utterance_command():
 
         assert listener.state == "ACTIVE"
         assert listener._pending_wake_command == "what time is it"
+        assert listener._awaiting_wake_followup is False
         listener.transcribe_async.assert_awaited_once()
+        listener.collect_audio_until_silence.assert_awaited_once_with(
+            listener.first_speech_timeout,
+            trailing_silence_frames=listener.wake_command_silence_frames,
+        )
+
+    asyncio.run(run())
+
+
+def test_wake_only_turn_uses_extended_follow_up_timeout():
+    async def run():
+        listener = build_listener()
+        listener.state = "ACTIVE"
+        listener._awaiting_wake_followup = True
+        listener.prolog = MagicMock()
+        listener.prolog.dictation_active.return_value = False
+        listener.agent_manager = None
+        listener.in_conversation_mode = MagicMock(return_value=False)
+        listener.collect_audio_until_silence = AsyncMock(return_value=None)
+        listener.collection_status = "first_speech_timeout"
+
+        await listener.active_mode_async()
+
+        listener.collect_audio_until_silence.assert_awaited_once_with(
+            10.0,
+            allow_tts_barge_in=True,
+        )
+        assert listener._awaiting_wake_followup is False
+
+    asyncio.run(run())
+
+
+def test_passive_capture_keeps_wake_and_delayed_command_together():
+    async def run():
+        listener = build_listener()
+        set_vad(listener, pattern=[0.9, 0.0, 0.0, 0.0])
+        listener.wake_command_silence_frames = 3
+        for value in (1.0, 0.0, 0.0, 0.0):
+            enqueue(listener, frame(value))
+
+        result = await listener.collect_audio_until_silence(
+            trailing_silence_frames=listener.wake_command_silence_frames,
+        )
+
+        assert result.shape == (2048, 1)
+        assert listener.collection_status == "silence"
+
+    asyncio.run(run())
+
+
+def test_active_capture_accepts_barge_in_while_tts_is_running():
+    async def run():
+        listener = build_listener()
+        listener.tts_task = asyncio.create_task(asyncio.sleep(60))
+        listener.stop_on_interrupt = True
+        listener._interrupt_tts = AsyncMock()
+        set_vad(listener, pattern=[0.9, 0.0, 0.0])
+        for value in (1.0, 0.0, 0.0):
+            enqueue(listener, frame(value))
+
+        result = await listener.collect_audio_until_silence(allow_tts_barge_in=True)
+
+        assert result.shape == (1536, 1)
+        listener._interrupt_tts.assert_awaited_once()
+        listener.tts_task.cancel()
+        await asyncio.gather(listener.tts_task, return_exceptions=True)
 
     asyncio.run(run())
 

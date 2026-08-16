@@ -19,10 +19,13 @@ def test_default_config_is_valid_toml():
     assert parsed["file_tools"]["writable_roots"] == ["."]
     assert parsed["wake"]["audio_queue_chunks"] == 32
     assert parsed["wake"]["first_speech_timeout"] == 5.0
+    assert parsed["wake"]["wake_followup_timeout"] == 10.0
+    assert parsed["wake"]["wake_command_pause_ms"] == 2500
     assert parsed["wake"]["max_utterance_duration"] == 30.0
     assert "silence_threshold" not in parsed["wake"]
-    assert parsed["stt"]["trailing_silence_ms"] == 320
-    assert parsed["stt"]["pre_speech_buffer_chunks"] == 10
+    assert parsed["stt"]["trailing_silence_ms"] == 384
+    assert parsed["stt"]["pre_roll_ms"] == 750
+    assert parsed["stt"]["debug_audio_dump_path"] == ""
     assert len(parsed["wake"]["acknowledgement"]["phrases"]) >= 15
     assert parsed["plugins"]["lifecycle_timeout"] == 5.0
     assert parsed["plugins"]["event_queue_size"] == 256

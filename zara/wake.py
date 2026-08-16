@@ -14,9 +14,11 @@ import asyncio
 import pathlib
 import queue
 import threading
+from dataclasses import replace
 from typing import Any, Optional, Tuple
 import numpy as np
 import sounddevice as sd
+import soundfile as sf
 import faster_whisper
 from concurrent.futures import ThreadPoolExecutor
 
@@ -136,6 +138,10 @@ class WakeWordListener:
             wake_cfg.get("first_speech_timeout", TIMEOUT_ACTIVE),
             TIMEOUT_ACTIVE,
         )
+        self.wake_followup_timeout = self._positive_float(
+            wake_cfg.get("wake_followup_timeout", 10.0),
+            10.0,
+        )
         self.max_utterance_duration = self._positive_float(
             wake_cfg.get("max_utterance_duration", MAX_RECORDING_DURATION),
             MAX_RECORDING_DURATION,
@@ -148,7 +154,7 @@ class WakeWordListener:
             vad_threshold=self._positive_float(stt_cfg.get("vad_threshold", 0.5), 0.5),
             min_speech_frames=self._vad_frames(stt_cfg.get("min_speech_ms", 128), 128),
             trailing_silence_frames=self._vad_frames(
-                stt_cfg.get("trailing_silence_ms", 320), 320
+                stt_cfg.get("trailing_silence_ms", 384), 384
             ),
             max_utterance_frames=self._vad_frames(
                 stt_cfg.get(
@@ -161,13 +167,20 @@ class WakeWordListener:
                 stt_cfg.get("no_speech_timeout_ms", 5000), 5000
             ),
             pre_speech_buffer_chunks=self._positive_int(
-                stt_cfg.get("pre_speech_buffer_chunks", 10), 10
+                self._vad_frames(stt_cfg.get("pre_roll_ms", 750), 750), 24
             ),
             partial_interval_frames=self._vad_frames(
                 stt_cfg.get("partial_transcript_ms", 1000), 1000
             ),
         )
+        self.wake_command_silence_frames = self._vad_frames(
+            wake_cfg.get("wake_command_pause_ms", 2500),
+            2500,
+        )
+        debug_dump_path = str(stt_cfg.get("debug_audio_dump_path", "") or "").strip()
+        self.debug_audio_dump_path = pathlib.Path(debug_dump_path).expanduser() if debug_dump_path else None
         self._pending_wake_command: Optional[str] = None
+        self._awaiting_wake_followup = False
         self._last_audio_warning = 0.0
 
         self.target_sample_rate = self._parse_float(
@@ -321,9 +334,15 @@ class WakeWordListener:
         chunk_ms = VAD_CHUNK_SAMPLES * 1000 / VAD_SAMPLE_RATE
         return max(1, math.ceil(duration / chunk_ms))
 
-    def _new_streaming_vad(self) -> StreamingVAD:
+    def _new_streaming_vad(
+        self,
+        trailing_silence_frames: Optional[int] = None,
+    ) -> StreamingVAD:
         factory = getattr(self, "_vad_factory", StreamingVAD)
-        return factory(self.vad_config)
+        config = self.vad_config
+        if trailing_silence_frames is not None:
+            config = replace(config, trailing_silence_frames=trailing_silence_frames)
+        return factory(config)
 
     def _wake_command(self, text: str) -> Optional[str]:
         match = WAKE_PATTERN.search(text or "")
@@ -567,6 +586,7 @@ class WakeWordListener:
                 )
 
             audio_float = self._condition_stt_audio(audio_data_mono)
+            self._dump_debug_audio(audio_float, wake_mode=wake_mode)
             beam_size = self.wake_beam_size if wake_mode else self.stt_beam_size
             segments, _ = self.model.transcribe(
                 audio_float,
@@ -582,10 +602,34 @@ class WakeWordListener:
 
         return await loop.run_in_executor(self.executor, _transcribe)
 
-    async def collect_audio_until_silence(self, first_speech_timeout=None):
+    def _dump_debug_audio(self, audio: np.ndarray, *, wake_mode: bool) -> None:
+        """Optionally save the exact post-VAD PCM passed to Whisper."""
+        directory = getattr(self, "debug_audio_dump_path", None)
+        if directory is None:
+            return
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            mode = "wake" if wake_mode else "command"
+            path = directory / f"{mode}-{time.monotonic_ns()}.wav"
+            sf.write(path, audio, int(self.target_sample_rate), subtype="FLOAT")
+            self.log(f"VAD debug audio saved: {path} ({len(audio)} samples)")
+        except Exception as error:
+            self.log(f"VAD debug audio dump failed: {error}")
+
+    async def collect_audio_until_silence(
+        self,
+        first_speech_timeout=None,
+        *,
+        allow_tts_barge_in: bool = False,
+        trailing_silence_frames: Optional[int] = None,
+    ):
         """Collect one utterance using Silero VAD endpointing."""
         tts_task = getattr(self, "tts_task", None)
-        if tts_task is not None and not tts_task.done():
+        if (
+            not allow_tts_barge_in
+            and tts_task is not None
+            and not tts_task.done()
+        ):
             self.log("Waiting for active TTS before microphone collection")
             await asyncio.gather(tts_task, return_exceptions=True)
             # Drop speaker bleed captured while Zara was talking. Bump the
@@ -604,9 +648,10 @@ class WakeWordListener:
             )
         deadline = self._clock() + first_speech_timeout
         turn_id = trace.trace_id if trace is not None else f"turn-{time.monotonic_ns()}"
-        vad = self._new_streaming_vad()
+        vad = self._new_streaming_vad(trailing_silence_frames)
         vad.start_turn(turn_id)
         pending = np.zeros(0, dtype=np.float32)
+        capture_frame_count = 0
         speech_detected = False
         max_peak = 0.0
         max_probability = 0.0
@@ -623,6 +668,7 @@ class WakeWordListener:
                 return None
 
             mono = data[:, 0] if data.ndim > 1 else data
+            capture_frame_count += len(mono)
             mono = mono.astype(np.float32, copy=False)
             if self.input_sample_rate != VAD_SAMPLE_RATE:
                 mono = resample_audio(mono, self.input_sample_rate, VAD_SAMPLE_RATE)
@@ -649,6 +695,19 @@ class WakeWordListener:
                     elif isinstance(event, SpeechEnded):
                         self.collection_status = event.reason
                         audio = vad.speech_audio
+                        if getattr(self, "debug_audio_dump_path", None) is not None:
+                            details = vad.diagnostics
+                            self.log(
+                                "VAD utterance "
+                                f"capture_samples={capture_frame_count} "
+                                f"vad_frames={details['vad_frames']} "
+                                f"utterance_samples={details['utterance_samples']} "
+                                f"duration_ms={len(audio) * 1000 / VAD_SAMPLE_RATE:.1f} "
+                                f"speech_start_frame={details['speech_start_frame']} "
+                                f"speech_end_frame={details['speech_end_frame']} "
+                                f"pre_roll_ms={details['pre_roll_samples'] * 1000 / VAD_SAMPLE_RATE:.1f} "
+                                f"trailing_silence_ms={details['trailing_silence_frames'] * VAD_CHUNK_SAMPLES * 1000 / VAD_SAMPLE_RATE:.1f}"
+                            )
                         if self.input_sample_rate != VAD_SAMPLE_RATE:
                             audio = resample_audio(
                                 audio,
@@ -677,11 +736,12 @@ class WakeWordListener:
             except queue.Empty:
                 break
 
-    def transition_to(self, state: str):
+    def transition_to(self, state: str, *, discard_audio: bool = True):
         if state == self.state:
             return
-        self._audio_epoch += 1
-        self.clear_queue()
+        if discard_audio:
+            self._audio_epoch += 1
+            self.clear_queue()
         self.state = state
 
     def check_wake_word(self, text):
@@ -1407,7 +1467,10 @@ class WakeWordListener:
             return
 
         trace = self._new_latency_trace(consume_cold=False)
-        chunk = await self.collect_audio_until_silence(self.first_speech_timeout)
+        chunk = await self.collect_audio_until_silence(
+            self.first_speech_timeout,
+            trailing_silence_frames=self.wake_command_silence_frames,
+        )
         if chunk is None:
             self.current_latency_trace = None
             return
@@ -1419,6 +1482,7 @@ class WakeWordListener:
         if command is not None:
             self._latency_cold_start = False
             self._pending_wake_command = command or None
+            self._awaiting_wake_followup = not bool(command)
             if trace is not None:
                 trace.record("wake_detected")
                 trace.record("ack_requested", channel="notification")
@@ -1426,7 +1490,7 @@ class WakeWordListener:
             self.log("🔥 Wake word detected")
             if trace is not None:
                 trace.flush()
-            self.transition_to("ACTIVE")
+            self.transition_to("ACTIVE", discard_audio=False)
         else:
             self.current_latency_trace = None
 
@@ -1478,12 +1542,20 @@ class WakeWordListener:
         self._pending_wake_command = None
         if text is None:
             conversation_timeout = self._conversation_timeout_remaining()
-            first_speech_timeout = (
-                conversation_timeout
-                if conversation_timeout is not None
-                else self.first_speech_timeout
+            if conversation_timeout is not None:
+                first_speech_timeout = conversation_timeout
+            elif getattr(self, "_awaiting_wake_followup", False):
+                first_speech_timeout = max(
+                    self.first_speech_timeout,
+                    self.wake_followup_timeout,
+                )
+            else:
+                first_speech_timeout = self.first_speech_timeout
+            chunk = await self.collect_audio_until_silence(
+                first_speech_timeout,
+                allow_tts_barge_in=True,
             )
-            chunk = await self.collect_audio_until_silence(first_speech_timeout)
+            self._awaiting_wake_followup = False
             if chunk is None:
                 if self.collection_status == "stopped":
                     return
@@ -1498,6 +1570,8 @@ class WakeWordListener:
                 self.transition_to("PASSIVE")
                 return
             text = await self.transcribe_async(chunk)
+        else:
+            self._awaiting_wake_followup = False
 
         repeated_wake_command = self._wake_command(text or "")
         if repeated_wake_command is not None:
@@ -1518,6 +1592,7 @@ class WakeWordListener:
                     if self.agent_manager is not None:
                         self.agent_manager.exit_conversation()
                 self.current_latency_trace = None
+                self._awaiting_wake_followup = True
                 return
 
         turn_id = (

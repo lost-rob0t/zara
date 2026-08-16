@@ -40,6 +40,10 @@ stop_tts_on_input = true
 silence_duration = 1.5
 # Return to passive mode if nobody speaks after a wake word
 first_speech_timeout = 5.0
+# A wake-only utterance gets longer to accept a follow-up command.
+wake_followup_timeout = 10.0
+# Keep a wake word and a command spoken up to a couple of seconds apart in one turn.
+wake_command_pause_ms = 2500
 # Hard cap for a single utterance and buffered callback chunks
 max_utterance_duration = 30.0
 audio_queue_chunks = 32
@@ -71,10 +75,11 @@ threads = 4
 # Streaming VAD (Silero) parameters — 512 samples = 32 ms at 16 kHz
 vad_threshold = 0.5
 min_speech_ms = 128        # ~4 chunks before speech_started
-trailing_silence_ms = 320  # ~10 chunks after speech to trigger speech_ended
+trailing_silence_ms = 384  # ~12 chunks after speech to trigger speech_ended
 max_utterance_ms = 30000   # hard cap on utterance length
 no_speech_timeout_ms = 5000
-pre_speech_buffer_chunks = 10
+pre_roll_ms = 750          # bounded audio retained before VAD confirms speech
+debug_audio_dump_path = "" # opt-in directory for final post-VAD Whisper WAVs
 partial_transcript_ms = 1000  # partial transcription interval
 
 [tts]

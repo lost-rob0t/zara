@@ -226,7 +226,10 @@ instantiating the config manager.
 - =wake.first_speech_timeout= returns a wake with no speech to passive mode.
 - Passive wake detection and active command capture both use Silero VAD at
   16 kHz. =stt.min_speech_ms= confirms speech, =stt.trailing_silence_ms= ends
-  the utterance (320 ms by default), and =stt.pre_speech_buffer_chunks=
+  the utterance (384 ms by default), and =stt.pre_roll_ms= retains a bounded
+  750 ms of audio before confirmation. Set =stt.debug_audio_dump_path= to a
+  directory only while diagnosing audio: Zara writes the final post-VAD WAV
+  passed to Whisper there.
   preserves its onset.
 - =stt.vad_threshold= controls speech sensitivity and =stt.max_utterance_ms=
   caps continuous speech. =wake.max_utterance_duration= remains the fallback

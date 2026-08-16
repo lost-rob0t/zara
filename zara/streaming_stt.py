@@ -45,6 +45,7 @@ class STTEvent:
 @dataclass(frozen=True)
 class SpeechStarted(STTEvent):
     pre_speech_samples: int = 0
+    speech_start_frame: int = 0
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,8 @@ class PartialTranscript(STTEvent):
 @dataclass(frozen=True)
 class SpeechEnded(STTEvent):
     reason: str = "silence"
+    speech_end_frame: int = 0
+    trailing_silence_frames: int = 0
 
 
 @dataclass(frozen=True)
@@ -83,7 +86,7 @@ class VADConfig:
     """Hard cap on total speech chunks (30 s at 32 ms/chunk)."""
     no_speech_timeout_frames: int = 156
     """Return to idle if no speech within this many chunks (5 s)."""
-    pre_speech_buffer_chunks: int = 10
+    pre_speech_buffer_chunks: int = 24
     """Rolling buffer of pre-speech chunks to avoid clipping onset."""
     partial_interval_frames: int = 31
     """Run partial transcription every N chunks (~1 s at 32 ms/chunk)."""
@@ -125,6 +128,9 @@ class StreamingVAD:
         self._lock = threading.Lock()
         self._cancelled = False
         self._last_probability = 0.0
+        self._speech_start_frame: Optional[int] = None
+        self._speech_end_frame: Optional[int] = None
+        self._pre_roll_samples = 0
 
     def _ensure_vad(self):
         if self._vad is None:
@@ -143,6 +149,9 @@ class StreamingVAD:
             self._turn_id = None
             self._cancelled = False
             self._last_probability = 0.0
+            self._speech_start_frame = None
+            self._speech_end_frame = None
+            self._pre_roll_samples = 0
             if self._vad is not None:
                 self._vad.reset()
 
@@ -178,6 +187,19 @@ class StreamingVAD:
     @property
     def last_probability(self) -> float:
         return self._last_probability
+
+    @property
+    def diagnostics(self) -> dict[str, int | str | None]:
+        """Boundary information for debug logging of a completed utterance."""
+        return {
+            "vad_frames": self._total_frames,
+            "utterance_samples": len(self.speech_audio),
+            "speech_start_frame": self._speech_start_frame,
+            "speech_end_frame": self._speech_end_frame,
+            "pre_roll_samples": self._pre_roll_samples,
+            "trailing_silence_frames": self._silence_frame_count,
+            "state": self._state,
+        }
 
     def feed(self, chunk: np.ndarray) -> List[STTEvent]:
         """Process one 512-sample float32 chunk. Returns emitted events.
@@ -220,9 +242,12 @@ class StreamingVAD:
                     if self._speech_frame_count >= self.config.min_speech_frames:
                         self._state = "speaking"
                         self._speech_audio = list(self._pre_speech)
+                        self._pre_roll_samples = len(self.pre_speech_audio)
+                        self._speech_start_frame = self._total_frames
                         events.append(SpeechStarted(
                             turn_id=self._turn_id,
                             pre_speech_samples=len(self.pre_speech_audio),
+                            speech_start_frame=self._speech_start_frame,
                         ))
                     else:
                         self._state = "maybe_speech"
@@ -230,15 +255,18 @@ class StreamingVAD:
                     self._pre_speech.clear()
 
             elif self._state == "maybe_speech":
+                self._pre_speech.append(mono)
                 if is_speech:
                     self._speech_frame_count += 1
-                    self._pre_speech.append(mono)
                     if self._speech_frame_count >= self.config.min_speech_frames:
                         self._state = "speaking"
                         self._speech_audio = list(self._pre_speech)
+                        self._pre_roll_samples = len(self.pre_speech_audio)
+                        self._speech_start_frame = self._total_frames
                         events.append(SpeechStarted(
                             turn_id=self._turn_id,
                             pre_speech_samples=len(self.pre_speech_audio),
+                            speech_start_frame=self._speech_start_frame,
                         ))
                 else:
                     self._speech_frame_count = 0
@@ -252,19 +280,44 @@ class StreamingVAD:
                     self._silence_frame_count = 0
                 else:
                     self._silence_frame_count += 1
+                    self._state = "hangover"
 
                 if self._speech_frame_count >= self.config.max_utterance_frames:
                     self._state = "ended"
+                    self._speech_end_frame = self._total_frames
                     events.append(SpeechEnded(
                         turn_id=self._turn_id,
                         reason="max_utterance",
+                        speech_end_frame=self._speech_end_frame,
+                        trailing_silence_frames=self._silence_frame_count,
                     ))
 
+            elif self._state == "hangover":
+                self._speech_audio.append(mono)
+                self._speech_frame_count += 1
+                if is_speech:
+                    self._silence_frame_count = 0
+                    self._state = "speaking"
+                else:
+                    self._silence_frame_count += 1
+
+                if self._speech_frame_count >= self.config.max_utterance_frames:
+                    self._state = "ended"
+                    self._speech_end_frame = self._total_frames
+                    events.append(SpeechEnded(
+                        turn_id=self._turn_id,
+                        reason="max_utterance",
+                        speech_end_frame=self._speech_end_frame,
+                        trailing_silence_frames=self._silence_frame_count,
+                    ))
                 elif self._silence_frame_count >= self.config.trailing_silence_frames:
                     self._state = "ended"
+                    self._speech_end_frame = self._total_frames
                     events.append(SpeechEnded(
                         turn_id=self._turn_id,
                         reason="silence",
+                        speech_end_frame=self._speech_end_frame,
+                        trailing_silence_frames=self._silence_frame_count,
                     ))
 
         return events

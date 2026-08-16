@@ -182,6 +182,67 @@ def test_pre_speech_buffer_prevents_clipped_onset():
     assert started[0].pre_speech_samples <= 10 * VAD_CHUNK_SAMPLES
 
 
+def test_full_command_pcm_survives_vad_boundaries():
+    """The VAD must retain the exact frames for 'Zara, delete all memories'."""
+    config = VADConfig(
+        min_speech_frames=2,
+        trailing_silence_frames=3,
+        pre_speech_buffer_chunks=24,
+    )
+    pre_roll = [np.full(VAD_CHUNK_SAMPLES, -index, dtype=np.float32) for index in range(1, 25)]
+    command = [np.full(VAD_CHUNK_SAMPLES, index, dtype=np.float32) for index in range(1, 7)]
+    silence = [np.zeros(VAD_CHUNK_SAMPLES, dtype=np.float32) for _ in range(3)]
+    detector = FakeVADDetector(pattern=[0.01] * len(pre_roll) + [0.9] * len(command) + [0.01] * len(silence))
+    vad = StreamingVAD(config, vad_detector=detector)
+    vad.start_turn("delete-all-memories")
+
+    events = feed_all(vad, pre_roll + command + silence)
+
+    assert any(isinstance(event, SpeechStarted) for event in events)
+    assert any(isinstance(event, SpeechEnded) for event in events)
+    expected = np.concatenate(pre_roll[2:] + command + silence)
+    np.testing.assert_array_equal(vad.speech_audio, expected)
+    assert vad.diagnostics["pre_roll_samples"] == len(pre_roll) * VAD_CHUNK_SAMPLES
+    assert vad.diagnostics["trailing_silence_frames"] == 3
+
+
+def test_short_pause_keeps_one_pcm_utterance():
+    config = VADConfig(min_speech_frames=1, trailing_silence_frames=4, pre_speech_buffer_chunks=2)
+    first_words = [np.full(VAD_CHUNK_SAMPLES, 0.2, dtype=np.float32) for _ in range(2)]
+    pause = [np.zeros(VAD_CHUNK_SAMPLES, dtype=np.float32) for _ in range(2)]
+    last_words = [np.full(VAD_CHUNK_SAMPLES, 0.6, dtype=np.float32) for _ in range(2)]
+    ending = [np.zeros(VAD_CHUNK_SAMPLES, dtype=np.float32) for _ in range(4)]
+    vad = StreamingVAD(
+        config,
+        vad_detector=FakeVADDetector(pattern=[0.9] * 2 + [0.01] * 2 + [0.9] * 2 + [0.01] * 4),
+    )
+    vad.start_turn("natural-pause")
+
+    events = feed_all(vad, first_words + pause + last_words + ending)
+
+    assert len([event for event in events if isinstance(event, SpeechEnded)]) == 1
+    np.testing.assert_array_equal(vad.speech_audio, np.concatenate(first_words + pause + last_words + ending))
+
+
+def test_real_silence_separates_two_utterances():
+    config = VADConfig(min_speech_frames=1, trailing_silence_frames=2, pre_speech_buffer_chunks=1)
+    first = np.full(VAD_CHUNK_SAMPLES, 0.1, dtype=np.float32)
+    second = np.full(VAD_CHUNK_SAMPLES, 0.8, dtype=np.float32)
+    silence = np.zeros(VAD_CHUNK_SAMPLES, dtype=np.float32)
+    vad = StreamingVAD(config, vad_detector=FakeVADDetector(pattern=[0.9, 0.01, 0.01]))
+    vad.start_turn("first")
+    first_events = feed_all(vad, [first, silence, silence])
+
+    vad._vad = FakeVADDetector(pattern=[0.9, 0.01, 0.01])
+    vad.start_turn("second")
+    second_events = feed_all(vad, [second, silence, silence])
+
+    assert len([event for event in first_events if isinstance(event, SpeechEnded)]) == 1
+    assert len([event for event in second_events if isinstance(event, SpeechEnded)]) == 1
+    assert first_events[-1].turn_id == "first"
+    assert second_events[-1].turn_id == "second"
+
+
 def test_pauses_inside_speech_do_not_trigger_premature_end():
     config = VADConfig(
         min_speech_frames=2,
