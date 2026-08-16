@@ -187,6 +187,22 @@ def _server_binary() -> str:
     )
 
 
+def _normalize_backend_device(device: str) -> str:
+    normalized = str(device).strip().lower()
+    if normalized == "cpu":
+        return "cpu"
+    if normalized == "vulkan":
+        return "vulkan"
+    if normalized == "cuda":
+        # Zara's legacy dictation layer normalizes every GPU to the historical
+        # faster-whisper `cuda` token before constructing WhisperModel. Inside
+        # this provider compatibility boundary that token means Vulkan, not CUDA.
+        return "vulkan"
+    raise ValueError(
+        f"whisper.cpp Zara backend supports cpu or vulkan, got {device!r}"
+    )
+
+
 class WhisperCppModel:
     """faster-whisper-compatible adapter backed by a resident whisper-server."""
 
@@ -204,14 +220,8 @@ class WhisperCppModel:
                 f"whisper.cpp requires a local GGML model file, got {model!r}"
             )
 
-        normalized_device = str(device).strip().lower()
-        if normalized_device not in {"cpu", "vulkan"}:
-            raise ValueError(
-                f"whisper.cpp Zara backend supports cpu or vulkan, got {device!r}"
-            )
-
         self.model = str(model_path.resolve())
-        self.device = normalized_device
+        self.device = _normalize_backend_device(device)
         self.cpu_threads = max(1, int(cpu_threads or 1))
         self.binary = _server_binary()
         self.port = _free_local_port()
