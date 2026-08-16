@@ -25,6 +25,15 @@ cat >"$test_root/commands.pl" <<'PL'
 execute(echo, [Value]) :- nb_setval(captured_argument, Value).
 PL
 
+cat >"$test_root/capability_resolver.pl" <<'PL'
+:- module(capability_resolver, [candidate/4, select/3]).
+
+candidate(open, [vim], mapped_app, 100).
+candidate(open, [vim], direct_app, 50).
+candidate(open, [vim], executable_fallback, 10).
+select(open, [vim], mapped_app).
+PL
+
 cat >"$test_root/syntax-error.pl" <<'PL'
 :- module(broken, [value/1]).
 value(.
@@ -34,7 +43,12 @@ python - <<'PY'
 import os
 from pathlib import Path
 
-from zara.prolog_engine import PrologEngine, PrologQueryError, PrologStartupError
+from zara.prolog_engine import (
+    CapabilityCandidate,
+    PrologEngine,
+    PrologQueryError,
+    PrologStartupError,
+)
 
 test_root = Path(os.environ["ZARA_PROLOG_TEST_ROOT"])
 
@@ -54,6 +68,7 @@ else:
 
 engine = PrologEngine(test_root / "fixture.pl")
 engine.consult(test_root / "commands.pl")
+engine.consult(test_root / "capability_resolver.pl")
 assert engine.query_once("intent_resolver:no_solution") is None
 
 try:
@@ -78,4 +93,13 @@ values = engine.query_iter("intent_resolver:value(Value)")
 assert next(values) == {"Value": 1}
 values.close()
 assert engine.query_once("true") == {}
+
+assert engine.capability_candidates("open", ["vim"]) == [
+    CapabilityCandidate("mapped_app", 100),
+    CapabilityCandidate("direct_app", 50),
+    CapabilityCandidate("executable_fallback", 10),
+]
+assert engine.selected_capability("open", ["vim"]) == "mapped_app"
+assert engine.capability_candidates("open", ["missing"]) == []
+assert engine.selected_capability("open", ["missing"]) is None
 PY
