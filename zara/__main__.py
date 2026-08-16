@@ -12,6 +12,7 @@ from .stt_backends import (
     STT_PROVIDERS,
     backend_compat,
     needs_faster_whisper_files,
+    needs_whisper_cpp_files,
     normalize_provider,
     resolve_model_for_provider,
 )
@@ -22,23 +23,39 @@ STT_DEVICE_ALIASES = {
     "hip": "cuda",
     "rocm": "cuda",
 }
-STT_DEVICE_CHOICES = ["cpu", "cuda", "rocm", "hip", "amd"]
+STT_DEVICE_CHOICES = ["cpu", "cuda", "vulkan", "rocm", "hip", "amd"]
 GPU_ERROR_MARKERS = (
     "cuda",
     "cudnn",
     "gpu",
     "hip",
     "rocm",
+    "vulkan",
+    "vk_",
     "gfx",
 )
 
 
-def normalize_stt_device(device: str) -> str:
+def normalize_stt_device(device: str, provider: str | None = None) -> str:
     normalized = str(device).strip().lower()
+    normalized_provider = normalize_provider(provider) if provider is not None else None
+
+    if normalized_provider == "whisper-cpp":
+        if normalized == "cpu":
+            return "cpu"
+        if normalized in {"vulkan", "amd", "hip", "rocm"}:
+            return "vulkan"
+        if normalized == "cuda":
+            raise ValueError(
+                "Zara's whisper.cpp backend uses Vulkan for GPU STT; "
+                "choose --device vulkan (or amd/rocm/hip)"
+            )
+
     if normalized in {"cpu", "cuda"}:
         return normalized
     if normalized in STT_DEVICE_ALIASES:
         return STT_DEVICE_ALIASES[normalized]
+
     choices = ", ".join(STT_DEVICE_CHOICES)
     raise ValueError(f"Unsupported STT device {device!r}; choose one of: {choices}")
 
@@ -46,6 +63,18 @@ def normalize_stt_device(device: str) -> str:
 def is_gpu_initialization_error(error: Exception) -> bool:
     message = str(error).lower()
     return any(marker in message for marker in GPU_ERROR_MARKERS)
+
+
+def resolve_local_stt_model(provider: str, model: str) -> str:
+    if needs_faster_whisper_files(provider):
+        from .whisper_loader import resolve_whisper_model_files
+
+        return resolve_whisper_model_files(model)
+    if needs_whisper_cpp_files(provider):
+        from .whisper_cpp import resolve_whisper_cpp_model
+
+        return resolve_whisper_cpp_model(model)
+    return model
 
 
 def main():
@@ -134,7 +163,7 @@ def main():
         "--mode",
         dest="model",
         default=default_stt_model,
-        help=f"STT model name or local model directory (default: {default_stt_model})"
+        help=f"STT model name, local model directory, or GGML model file (default: {default_stt_model})"
     )
     parser.add_argument(
         "--device",
@@ -142,7 +171,7 @@ def main():
         choices=STT_DEVICE_CHOICES,
         help=(
             f"Device for local transcription (default: {default_stt_device}); "
-            "rocm/hip/amd use CUDA-compatible provider APIs"
+            "whisper-cpp uses Vulkan for AMD GPU acceleration"
         )
     )
     parser.add_argument(
@@ -163,7 +192,7 @@ def main():
 
     args = parser.parse_args()
     stt_provider = normalize_provider(args.stt_provider)
-    stt_device = normalize_stt_device(args.device)
+    stt_device = normalize_stt_device(args.device, provider=stt_provider)
     stt_model = resolve_model_for_provider(stt_provider, args.model)
 
     if args.desktop:
@@ -186,6 +215,9 @@ def main():
         else:
             stop_phrases = get_config().get_section("dictate").get("stop_phrases")
 
+        if needs_whisper_cpp_files(stt_provider):
+            stt_model = resolve_local_stt_model(stt_provider, stt_model)
+
         with backend_compat(stt_provider):
             from .dictate import main as dictate_main
             sys.exit(dictate_main(
@@ -197,9 +229,7 @@ def main():
             ))
 
     elif args.wake:
-        if needs_faster_whisper_files(stt_provider):
-            from .whisper_loader import resolve_whisper_model_files
-            stt_model = resolve_whisper_model_files(stt_model)
+        stt_model = resolve_local_stt_model(stt_provider, stt_model)
 
         with backend_compat(stt_provider):
             from .wake import main as wake_main
@@ -210,7 +240,7 @@ def main():
                     with_pets=args.pets,
                 )
             except (RuntimeError, ValueError) as error:
-                if stt_device != "cuda" or not is_gpu_initialization_error(error):
+                if stt_device not in {"cuda", "vulkan"} or not is_gpu_initialization_error(error):
                     raise
                 print(
                     f"GPU transcription unavailable ({error}); falling back to CPU.",
