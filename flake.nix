@@ -21,6 +21,12 @@
           # Use python3 (latest stable)
           python = pkgs.python3;
 
+          # whisper.cpp is the AMD/Radeon STT path. Vulkan avoids tying Zara's
+          # local voice acceleration to ROCm GPU support matrices.
+          whisperCppVulkan = pkgs.whisper-cpp.override {
+            vulkanSupport = true;
+          };
+
           # The pinned nixpkgs revision predates its sherpa-onnx Python package.
           # sherpa-onnx 1.12.38 moved to ONNX Runtime 1.24.4 while this flake
           # carries ORT 1.23.2. Pin 1.12.37: it matches that ABI and already
@@ -192,26 +198,26 @@
             pname = "zara-cli";
             binaryName = "zara";
             addFlags = "-m zara";
-            extraPath = [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full ];
+            extraPath = [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full whisperCppVulkan ];
           };
 
           zara-desktop = mkZaraPackage {
             pname = "zara-desktop";
             addFlags = "-m zara.desktop.app";
-            extraPath = [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full ];
+            extraPath = [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full whisperCppVulkan ];
           };
 
           zara-wake = mkZaraPackage {
             pname = "zara-wake";
             addFlags = "-m zara --wake";
-            extraPath = [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full ];
+            extraPath = [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full whisperCppVulkan ];
           };
 
           zara-dictate = mkZaraPackage {
             pname = "zara-dictate";
             addFlags = "-m zara --dictate";
             withProlog = false;
-            extraPath = [ pkgs.xdotool ];
+            extraPath = [ pkgs.xdotool whisperCppVulkan ];
           };
 
           # zara-prolog keeps the historical layout: Python wrapper that points
@@ -428,6 +434,7 @@
               pythonLibs
               zara-dev
               zara-desktop-dev
+              whisperCppVulkan
               pkgs.xdotool
               pkgs.ffmpeg-full  # Includes ffplay for streaming audio
               pkgs.mpv  # Alternative for streaming audio playback
@@ -440,12 +447,13 @@
               export PYTHONPATH="$PWD''${PYTHONPATH:+:$PYTHONPATH}"
               export ZARA_PROLOG_RLM_ROOT="${prolog-rlm}"
               export ZARA_RLM_SIDECAR="$PWD/modules/rlm_sidecar.pl"
-              echo "Python + Whisper + SWI-Prolog + LangChain ready"
+              echo "Python + Whisper + whisper.cpp/Vulkan + SWI-Prolog + LangChain ready"
               echo ""
               echo "Commands:"
               echo "  zara-desktop                   # Native desktop / Quick Copilot"
               echo "  zara --desktop                 # Same canonical desktop entry point"
               echo "  zara --wake                    # Wake listener"
+              echo "  zara --wake --stt-provider whisper-cpp --device amd  # AMD/Vulkan STT"
               echo "  zara --console                 # Console mode"
               echo "  zara --dictate                 # Dictation mode"
               echo "  zara --agent                   # Direct agent conversation"
