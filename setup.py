@@ -122,6 +122,7 @@ setup(
             "zara-console=zara.console:main",
             "zara-dictate=zara.dictate:main",
             "zara-agent=zara.agent_cli:main",
+            "zara-autoresearch=zara.autoresearch:main",
             "zara-pets=zara.pets.cli:main",
             "zara-desktop=zara.desktop.app:main",
         ],

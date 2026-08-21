@@ -1,0 +1,105 @@
+#+title: Zara AutoResearch
+
+* Purpose
+
+Zara AutoResearch is a metric-driven autonomous experiment loop embedded in the
+Zara runtime. It is intentionally generic: the research target can be latency,
+accuracy, benchmark score, memory use, test runtime, or any other numeric metric
+that an evaluator command can print.
+
+The loop is:
+
+1. establish a fixed research contract and baseline metric,
+2. let a Zara agent make one hypothesis-driven change in a disposable repo copy,
+3. reject changes outside the explicitly allowed file list,
+4. run the evaluator with a fixed timeout,
+5. parse one numeric metric from evaluator output,
+6. copy allowed changes back only when the metric improves,
+7. append the decision to =.zara/autoresearch/results.jsonl=,
+8. repeat until stopped or the iteration limit is reached.
+
+Evaluator stdout/stderr is never replayed into the LLM context. The agent sees
+only numeric experiment history and acceptance decisions. This avoids treating
+benchmark output as trusted prompt text.
+
+* Running
+
+The package exposes =zara-autoresearch=.
+
+#+begin_src sh
+zara-autoresearch \
+  --goal 'reduce wake routing latency' \
+  --command 'python scripts/bench-routing.py' \
+  --metric 'p95_ms: ([0-9.]+)' \
+  --direction minimize \
+  --files zara/wake.py zara/command_gate.py \
+  --timeout 120 \
+  --iterations 20
+#+end_src
+
+The command is parsed with =shlex= and executed without a shell. Shell pipelines,
+redirections, and compound shell expressions are intentionally not supported by
+the bootstrap CLI; wrap complex evaluation logic in a checked-in script.
+
+=--iterations 0= means continue until stopped. To request a graceful stop between
+experiments, create:
+
+#+begin_src sh
+touch .zara/autoresearch/STOP
+#+end_src
+
+Ctrl-C also requests shutdown from the CLI process.
+
+* Research contract
+
+A contract contains:
+
+- a human goal,
+- an evaluator argv,
+- a regex containing one numeric capture group,
+- =minimize= or =maximize=,
+- an explicit list of files the agent is allowed to modify,
+- an evaluator timeout,
+- an optional iteration limit.
+
+The baseline evaluator must succeed before any research iteration starts.
+Research files must already exist inside the repository and must be regular
+files.
+
+* Isolation and acceptance
+
+Each experiment copies the repository to a temporary workspace. Zara's normal
+LangGraph agent is instantiated there, but its file tools are replaced with
+workspace-scoped tools. After the agent acts, the workspace tree is hashed.
+Any change outside the contract's allowed file list rejects the experiment
+before evaluation.
+
+The evaluator then runs in that temporary workspace. If the metric improves,
+only changed files that are present in the allowlist are atomically copied back
+to the real repository. Regressions and failed experiments disappear with the
+temporary workspace.
+
+This is a bootstrap isolation boundary, not a hostile-code sandbox. The
+evaluator still executes local code. Research commands should therefore be
+owned and reviewed like any other executable development command.
+
+* State
+
+=.zara/autoresearch/results.jsonl= is append-only and gitignored. Each row stores
+only structured experiment metadata such as iteration, metric, decision,
+elapsed time, and changed file names. Raw evaluator output is not persisted.
+
+The actor also supports an in-process status query with current iteration,
+best metric, latest metric, acceptance state, and the latest error.
+
+* Architecture
+
+=AutoResearchActor= extends Zara's existing bounded =BoundedActor= abstraction.
+It owns one research session and schedules one internal iteration message at a
+time. This keeps the research loop separate from the real-time voice turn graph
+and gives control messages a bounded mailbox rather than introducing an
+unbounded background coroutine.
+
+The first slice is deliberately single-worker. Parallel hypotheses, evaluator
+replication/noise handling, contract hashing/resume, branch lineage, and a UI
+can be layered on after the keep/reject loop is proven on real Zara benchmarks.

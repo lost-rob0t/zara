@@ -1,4 +1,5 @@
 /.env
+/.zara/autoresearch/
 __pycache__/
 *.pyc
 *.pyo
