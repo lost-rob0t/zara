@@ -1,13 +1,9 @@
 """Autonomous metric-driven research loop for Zara.
 
-The loop follows the small, useful core of autoresearch:
-propose one change, evaluate it against a fixed metric, keep improvements,
-reject regressions, persist the decision, and repeat.
-
-Experiments are performed in a disposable copy of the repository. Only files
-explicitly listed in the research contract may be copied back into the working
-repository after an improvement. Evaluator stdout/stderr is used only for
-metric parsing and is never fed back into the research agent.
+Each experiment is made in a disposable repository copy. The worker may inspect
+the copy, but only explicitly allowlisted files can be promoted back after the
+fixed evaluator reports a strictly better metric. Evaluator output is parsed as
+data and is never replayed into the worker prompt.
 """
 
 from __future__ import annotations
@@ -23,11 +19,9 @@ import shutil
 import subprocess
 import tempfile
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Optional
-
-import pykka
 
 from .actors import BoundedActor
 from .agent import AgentManager
@@ -36,6 +30,7 @@ from .config import ZaraConfig, get_config
 
 
 Direction = Literal["minimize", "maximize"]
+_FILE_TOOL_NAMES = ("read_file", "write_file", "diff_file", "list_dir")
 _IGNORED_NAMES = {
     ".git",
     ".zara",
@@ -46,7 +41,6 @@ _IGNORED_NAMES = {
     "build",
     "dist",
 }
-_FILE_TOOL_NAMES = ("read_file", "write_file", "diff_file", "list_dir")
 
 
 @dataclass(frozen=True)
@@ -71,22 +65,32 @@ class ResearchContract:
             raise ValueError("timeout_seconds must be positive")
         if self.max_iterations < 0:
             raise ValueError("max_iterations cannot be negative")
-        try:
-            compiled = re.compile(self.metric_pattern, re.MULTILINE)
-        except re.error as error:
-            raise ValueError(f"invalid metric pattern: {error}") from error
-        if compiled.groups < 1:
-            raise ValueError("metric_pattern must contain a capture group")
         if not self.files:
             raise ValueError("at least one research file is required")
+        if Path(self.state_dir).is_absolute():
+            raise ValueError("state_dir must be relative to the repo root")
+
+        try:
+            metric_regex = re.compile(self.metric_pattern, re.MULTILINE)
+        except re.error as error:
+            raise ValueError(f"invalid metric pattern: {error}") from error
+        if metric_regex.groups < 1:
+            raise ValueError("metric_pattern must contain a capture group")
 
         root = repo_root.resolve(strict=True)
+        state_root = (root / self.state_dir).resolve(strict=False)
+        if state_root != root and root not in state_root.parents:
+            raise ValueError("state_dir escapes repo root")
+
         resolved: list[Path] = []
         for value in self.files:
-            candidate = (root / value).resolve(strict=True)
+            source_path = root / value
+            if source_path.is_symlink():
+                raise ValueError(f"research file cannot be a symlink: {value}")
+            candidate = source_path.resolve(strict=True)
             if root not in candidate.parents:
                 raise ValueError(f"research file escapes repo root: {value}")
-            if not candidate.is_file() or candidate.is_symlink():
+            if not candidate.is_file():
                 raise ValueError(f"research file must be a regular file: {value}")
             resolved.append(candidate)
         return tuple(resolved)
@@ -146,6 +150,7 @@ class ResearchLedger:
     def numeric_history(self, limit: int = 12) -> list[dict[str, Any]]:
         if not self.path.exists():
             return []
+
         records: list[dict[str, Any]] = []
         with self.path.open("r", encoding="utf-8") as handle:
             for line in handle:
@@ -168,6 +173,7 @@ def parse_metric(output: str, pattern: str) -> float:
     matches = list(re.finditer(pattern, output, re.MULTILINE))
     if not matches:
         raise ValueError("metric pattern did not match evaluator output")
+
     raw = matches[-1].group(1)
     try:
         return float(raw)
@@ -196,11 +202,12 @@ def run_evaluator(repo_root: Path, contract: ResearchContract) -> Evaluation:
         env=os.environ.copy(),
     )
     elapsed = time.monotonic() - started
+
     if completed.returncode != 0:
         raise RuntimeError(f"evaluator exited with status {completed.returncode}")
-    metric = parse_metric(completed.stdout, contract.metric_pattern)
+
     return Evaluation(
-        metric=metric,
+        metric=parse_metric(completed.stdout, contract.metric_pattern),
         returncode=completed.returncode,
         elapsed_seconds=elapsed,
     )
@@ -236,16 +243,7 @@ def _copy_repo(source: Path, destination: Path) -> None:
         source,
         destination,
         dirs_exist_ok=True,
-        ignore=shutil.ignore_patterns(
-            ".git",
-            ".zara",
-            "__pycache__",
-            ".pytest_cache",
-            ".mypy_cache",
-            ".tox",
-            "build",
-            "dist",
-        ),
+        ignore=shutil.ignore_patterns(*_IGNORED_NAMES),
     )
 
 
@@ -269,7 +267,7 @@ def _replace_file(source: Path, destination: Path) -> None:
 
 
 class AutoResearchActor(BoundedActor):
-    """Own one autonomous research session and execute one experiment per message."""
+    """Own one research session and execute one experiment per actor message."""
 
     mailbox_size = 16
     mailbox_overflow = "drop_newest"
@@ -284,7 +282,6 @@ class AutoResearchActor(BoundedActor):
         self.config = config or get_config()
         self.contract: Optional[ResearchContract] = None
         self.ledger: Optional[ResearchLedger] = None
-        self.allowed_files: tuple[Path, ...] = ()
         self.iteration = 0
         self.best_metric: Optional[float] = None
         self.last_metric: Optional[float] = None
@@ -308,7 +305,8 @@ class AutoResearchActor(BoundedActor):
     def _start(self, contract: ResearchContract) -> ResearchStatus:
         if self.running:
             raise RuntimeError("autoresearch session is already running")
-        self.allowed_files = contract.validate(self.repo_root)
+
+        contract.validate(self.repo_root)
         self.contract = contract
         state_root = self.repo_root / contract.state_dir
         state_root.mkdir(parents=True, exist_ok=True)
@@ -340,13 +338,15 @@ class AutoResearchActor(BoundedActor):
                 },
             }
         )
-        self.running = contract.max_iterations != 0 or contract.max_iterations == 0
+
+        self.running = True
         self.actor_ref.tell(_RunIteration())
         return self._status()
 
     def _run_iteration(self) -> None:
         if not self.running or self.contract is None or self.ledger is None:
             return
+
         stop_file = self.repo_root / self.contract.state_dir / "STOP"
         if stop_file.exists():
             self.running = False
@@ -365,6 +365,7 @@ class AutoResearchActor(BoundedActor):
             self.error = None
         except Exception as error:
             self.iteration = next_iteration
+            self.last_metric = None
             self.last_accepted = False
             self.error = str(error)
             self.ledger.append(
@@ -408,16 +409,16 @@ class AutoResearchActor(BoundedActor):
             allowed = "\n".join(f"- {path}" for path in self.contract.files)
             prompt = (
                 "You are the worker for an autonomous Zara research experiment. "
-                "The human explicitly authorizes you to inspect and modify files in the disposable "
-                "workspace using the file tools. Make exactly one coherent experimental change.\n\n"
+                "The human explicitly authorizes file inspection and edits inside this disposable "
+                "workspace. Make exactly one coherent experimental change.\n\n"
                 f"Goal: {self.contract.goal}\n"
                 f"Metric direction: {self.contract.direction}\n"
                 f"Current best metric: {self.best_metric}\n"
                 f"Allowed files:\n{allowed}\n\n"
                 f"Numeric experiment history: {json.dumps(history, separators=(',', ':'))}\n\n"
-                "Rules: only modify allowed files; do not run the evaluator; do not create helper files; "
-                "do not edit tests unless a test file is explicitly allowed; use read_file before write_file; "
-                "make one hypothesis-driven change and then briefly state the hypothesis."
+                "Only modify allowed files. Do not run the evaluator. Do not create helper files. "
+                "Do not edit tests unless a test file is explicitly allowed. Read before writing. "
+                "Make one hypothesis-driven change and briefly state the hypothesis when finished."
             )
             response = asyncio.run(agent.process_async(prompt))
 
@@ -451,9 +452,7 @@ class AutoResearchActor(BoundedActor):
             )
             if accepted:
                 for relative in sorted(changed):
-                    source = workspace / relative
-                    destination = self.repo_root / relative
-                    _replace_file(source, destination)
+                    _replace_file(workspace / relative, self.repo_root / relative)
                 self.best_metric = evaluation.metric
 
             text = response.get("response", "") if isinstance(response, dict) else ""
@@ -506,9 +505,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         state_dir=args.state_dir,
     )
     actor = AutoResearchActor.start(repo_root=Path(args.repo))
-    timeout = max(60.0, contract.timeout_seconds + 30.0)
+    actor_timeout = max(600.0, contract.timeout_seconds + 720.0)
+
     try:
-        status = actor.ask(StartResearch(contract), timeout=timeout)
+        status = actor.ask(StartResearch(contract), timeout=actor_timeout)
         previous_iteration = -1
         while status.running:
             if status.iteration != previous_iteration:
@@ -518,7 +518,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                 )
                 previous_iteration = status.iteration
             time.sleep(1.0)
-            status = actor.ask(GetResearchStatus(), timeout=timeout)
+            status = actor.ask(GetResearchStatus(), timeout=actor_timeout)
+
         print(
             f"stopped iteration={status.iteration} best={status.best_metric} "
             f"error={status.error or '-'}"
@@ -528,7 +529,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         actor.tell(StopResearch())
         return 130
     finally:
-        actor.stop(block=True, timeout=timeout)
+        actor.stop(block=True, timeout=actor_timeout)
 
 
 if __name__ == "__main__":
