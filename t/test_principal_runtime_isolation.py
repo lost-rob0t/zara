@@ -6,6 +6,7 @@ import pytest
 
 from zara.runtime import bridge
 from zara.runtime.commands import SubmitTurn
+from zara.runtime.events import TurnStarted
 from zara.runtime.host import RuntimeHostState
 from zara.server import PrincipalContext, PrincipalMismatch, RuntimeSupervisor
 
@@ -28,7 +29,11 @@ class PublishingHost:
         return completed(None)
 
     def submit(self, command):
-        self.bus.publish(command)
+        event = TurnStarted(
+            conversation_id=getattr(command, "conversation_id", None),
+            label=getattr(command, "text", None),
+        )
+        self.bus.publish(event)
         return completed(command)
 
     def shutdown(self, reason=""):
@@ -65,12 +70,18 @@ def test_principal_event_subscriptions_do_not_cross_runtime_buses():
         alice_command = SubmitTurn(text="alice private", conversation_id="same-label")
         bob_command = SubmitTurn(text="bob private", conversation_id="same-label")
         runtime.submit(alice, alice_command).result(timeout=0.2)
-        assert alice_events.get(timeout=0.2) == alice_command
+        assert alice_events.get(timeout=0.2) == TurnStarted(
+            conversation_id="same-label",
+            label="alice private",
+        )
         with pytest.raises(TimeoutError):
             bob_events.get(timeout=0.01)
 
         runtime.submit(bob, bob_command).result(timeout=0.2)
-        assert bob_events.get(timeout=0.2) == bob_command
+        assert bob_events.get(timeout=0.2) == TurnStarted(
+            conversation_id="same-label",
+            label="bob private",
+        )
         with pytest.raises(TimeoutError):
             alice_events.get(timeout=0.01)
     finally:
