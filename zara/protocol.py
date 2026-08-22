@@ -35,6 +35,7 @@ SERVER_MESSAGE_TYPES = frozenset(
         "turn.accepted",
         "turn.cancel.accepted",
         "turn.started",
+        "turn.completed",
         "turn.cancelled",
         "assistant.started",
         "assistant.delta",
