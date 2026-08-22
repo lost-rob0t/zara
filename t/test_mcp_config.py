@@ -89,6 +89,25 @@ def test_managed_config_round_trip_and_literal_dotted_server_name(tmp_path):
     assert '[mcp.servers."dev.files"]' in text
 
 
+def test_managed_config_is_owner_only_even_with_literal_secret(tmp_path):
+    store = MCPConfigStore(FakeConfig(tmp_path))
+    store.save_server(
+        "private",
+        {
+            "transport": "http",
+            "url": "https://example.test/mcp",
+            "headers": {"Authorization": "Bearer literal-secret"},
+        },
+    )
+    assert store.path.stat().st_mode & 0o777 == 0o600
+    assert "literal-secret" in store.path.read_text()
+
+    # Existing loose permissions must be repaired on every managed rewrite.
+    store.path.chmod(0o644)
+    store.set_enabled("private", False)
+    assert store.path.stat().st_mode & 0o777 == 0o600
+
+
 def test_managed_config_overrides_main_config(tmp_path):
     base = {
         "servers": {
