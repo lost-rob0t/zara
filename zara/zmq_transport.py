@@ -661,6 +661,7 @@ class ZaraZmqGateway:
 class _PendingKind(str, enum.Enum):
     HELLO = "hello"
     PING = "ping"
+    STATUS = "status"
     CONVERSATION = "conversation"
     COMMAND = "command"
 
@@ -839,6 +840,14 @@ class ZmqZaraClient(ZaraClient):
             else:
                 pending.future.set_result(message)
             return
+        if pending.kind is _PendingKind.STATUS:
+            body = message.body or {}
+            state = body.get("state")
+            if message.type != "runtime.status.ok" or not isinstance(state, str) or not state:
+                pending.future.set_exception(ProtocolValidationError("invalid runtime status response"))
+            else:
+                pending.future.set_result(state)
+            return
         if pending.kind is _PendingKind.CONVERSATION:
             if message.type != "conversation.opened" or not message.conversation_id:
                 pending.future.set_exception(ProtocolValidationError("invalid conversation response"))
@@ -919,6 +928,18 @@ class ZmqZaraClient(ZaraClient):
                 payload_count=0,
             ),
             _PendingKind.PING,
+        )
+
+    def runtime_status(self) -> concurrent.futures.Future:
+        return self._request(
+            ProtocolMessage(
+                type="runtime.status",
+                id=_message_id(),
+                session_id=self._session_id,
+                timestamp_ns=_now_ns(),
+                payload_count=0,
+            ),
+            _PendingKind.STATUS,
         )
 
     def open_conversation(self, conversation_id: Optional[str] = None) -> concurrent.futures.Future:
