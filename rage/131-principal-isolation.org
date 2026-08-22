@@ -69,3 +69,15 @@
 3. Add/reconcile deterministic service-path conversation ownership tests so #131 proves the runtime does not retain an unscoped durable/private conversation path.
 4. Add concurrent SQLite legacy-schema migration coverage and principal-kind/transient-state boundary coverage where reachable.
 5. Run focused isolation gate, full repository/Nix gates, inspect changed-code coverage, then exact-head GitHub Actions before merge.
+
+** Runtime wiring red evidence and implementation
+- Red candidate :: =50e26ab780b7395c7b453927acfd1a59b5a726fb=.
+- GitHub Actions :: CI #357, run =32601373622=.
+- Full regression :: 3 failed, 884 passed, 14 warnings; ZARA/1 91/91 PASS; Arch and Ubuntu shared-mic jobs PASS.
+- Wiring red #1 :: =test_default_supervisor_threads_each_principal_into_agent_manager= failed because the default supervisor did not pass the authenticated principal to the agent manager.
+- Wiring red #2 :: =test_agent_manager_binds_memory_manager_to_explicit_principal= failed because =AgentManager= did not accept/bind =principal=.
+- Harness red :: =test_principal_event_subscriptions_do_not_cross_runtime_buses= compared =RuntimeEventSubscription.get()= directly with a raw =TurnStarted= even though the public subscription contract returns =EventEnvelope=; production bus behavior was correct.
+- Minimal agent implementation :: =b414076c675f283054348f78db5f1aec84793ab9= adds optional =principal= to =AgentManager= and passes it into =build_memory_manager=; existing injected memory-manager callers remain compatible.
+- Minimal daemon implementation :: =3a7b307f72016e01ca8869a40e6ed79c9edccc59= threads the supervisor's authenticated principal into the existing =AgentRuntimeBackend -> AgentManager= path. It explicitly preserves service-plugin management by supplying =plugin_paths= when using the principal-aware backend factory.
+- Test-contract correction :: =fa098b2e52c48e69edf95ef8ebc24ef31c0da20d= unwraps the =EventEnvelope.event= field in the event-isolation assertions; no runtime semantics are weakened.
+- Candidate gate :: exact-head CI #358 / run =32601832386= started for =fa098b2e52c48e69edf95ef8ebc24ef31c0da20d=; result pending at log update time.
