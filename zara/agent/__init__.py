@@ -62,7 +62,10 @@ class AgentManager:
 
         agent_config = self.config.get_section("agent")
         timeout = agent_config.get("conversation_timeout", 60)
-        self.conversation_manager = ConversationManager(timeout_seconds=timeout)
+        self.conversation_manager = ConversationManager(
+            timeout_seconds=timeout,
+            principal=principal,
+        )
 
     def _build_system_prompt(self):
         date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
