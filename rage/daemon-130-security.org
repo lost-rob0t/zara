@@ -111,3 +111,17 @@ TDD consequence: update only the Slice C tests to target =SecureZaraZmqGateway=;
 - Concurrent-runtime failure :: a second in-flight runtime request was not rejected at =max_concurrent_requests=1= and produced no immediate denial.
 - Audit failure :: =SecureZaraZmqGateway= did not yet accept the tested bounded =SecurityAuditLog= injection.
 - Interpretation :: ordinary implementation incompleteness, not a design-invalidating failure. Authentication, CURVE/ZAP, protocol isolation, and platform gates remained green. The tested quota/audit wiring is therefore authorized for the same iteration.
+
+* Iteration 1 checkpoint - exact-head gate #323 test-race correction
+
+- Exact failed head :: =dc72c3d96535b2184496cfe441487ff735deebd9=.
+- GitHub Actions :: CI #323, run =32586972711=.
+- Existing ZARA/1 protocol/transport phase :: PASS, 91 tests.
+- Shared-mic Arch Linux :: PASS.
+- Shared-mic Ubuntu 24.04 :: PASS.
+- Full pytest :: 866 PASS, 1 FAIL.
+- Failure :: =test_concurrent_runtime_quota_releases_when_runtime_future_finishes= sent =turn-three= and immediately inspected =BlockingSupervisor.commands= from the test thread before the ROUTER owner loop was guaranteed to receive and dispatch the message.
+- Production evidence :: the completed runtime future already releases its held principal request quota in =SecureZaraZmqGateway._enqueue_outbound= before the accepted response is queued; CI had already observed the =turn-one= accepted response before =turn-three= was sent.
+- Interpretation :: nondeterministic test synchronization defect, not an implementation or architecture failure. Changing production semantics to satisfy an unsynchronized cross-thread assertion would violate the one-owner-loop transport design.
+- Test correction :: =BlockingSupervisor= now exposes a =threading.Event= set by actual supervisor dispatch. The test clears it before =turn-three=, sends the message, waits deterministically for dispatch, and only then asserts command ordering. No sleeps and no production behavior change.
+- Correction commit :: =76dd48f2e2cd75f8e391f63b548b6a20a1c0833d=.
