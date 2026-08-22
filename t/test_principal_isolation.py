@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+import zara.memory as memory_module
 from zara.database import DatabaseManager
 from zara.desktop.conversation import (
     ConversationStore,
@@ -54,6 +55,23 @@ def test_conversation_known_id_is_not_bearer_authority(tmp_path):
     assert bob.load_messages(secret.id)[0].content == "needle-private-content"
 
 
+def test_cross_owner_message_id_collision_cannot_mutate_existing_message(tmp_path):
+    db = DatabaseManager(tmp_path / "message-id-isolation.db")
+    alice = ConversationStore(db, principal_id="alice")
+    bob = ConversationStore(db, principal_id="bob")
+    alice_conversation = alice.create_conversation("Alice")
+    bob_conversation = bob.create_conversation("Bob")
+    bob.save_message(_message(bob_conversation.id, "shared-message-id", "bob secret"))
+
+    with pytest.raises(KeyError):
+        alice.save_message(
+            _message(alice_conversation.id, "shared-message-id", "overwrite attempt")
+        )
+
+    assert bob.load_messages(bob_conversation.id)[0].content == "bob secret"
+    assert alice.load_messages(alice_conversation.id) == []
+
+
 def test_same_conversation_titles_remain_principal_local(tmp_path):
     db = DatabaseManager(tmp_path / "same-title.db")
     alice = ConversationStore(db, principal_id="alice")
@@ -65,12 +83,14 @@ def test_same_conversation_titles_remain_principal_local(tmp_path):
     assert [record.id for record in bob.list_conversations()] == [bob_conv.id]
 
 
-def test_memory_manager_requires_nonempty_principal():
+def test_memory_manager_requires_nonempty_principal(monkeypatch):
+    monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", False)
     with pytest.raises(ValueError):
         MemoryManager(enabled=True, principal_id="\t")
 
 
-def test_local_memory_isolation_duplicate_retrieval_and_forget():
+def test_local_memory_isolation_duplicate_retrieval_and_forget(monkeypatch):
+    monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", False)
     alice = MemoryManager(enabled=True, principal_id="alice")
     bob = MemoryManager(enabled=True, principal_id="bob")
 
@@ -88,7 +108,8 @@ def test_local_memory_isolation_duplicate_retrieval_and_forget():
     assert [entry["id"] for entry in bob.list_memories()] == [bob_id]
 
 
-def test_chroma_query_pushes_owner_filter_before_candidate_selection():
+def test_chroma_query_pushes_owner_filter_before_candidate_selection(monkeypatch):
+    monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", False)
     manager = MemoryManager(enabled=True, principal_id="alice")
 
     class FakeCollection:
@@ -110,3 +131,33 @@ def test_chroma_query_pushes_owner_filter_before_candidate_selection():
 
     assert result[0]["id"] == "memory-a"
     assert fake.query_kwargs["where"] == {"principal_id": "alice"}
+
+
+def test_chroma_listing_pushes_owner_filter_into_backend_get(monkeypatch):
+    monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", False)
+    manager = MemoryManager(enabled=True, principal_id="alice")
+
+    class FakeCollection:
+        def __init__(self):
+            self.get_kwargs = None
+
+        def get(self, **kwargs):
+            self.get_kwargs = kwargs
+            return {
+                "ids": ["memory-a"],
+                "documents": ["owned"],
+                "metadatas": [
+                    {
+                        "principal_id": "alice",
+                        "kind": "fact",
+                        "tags": "",
+                        "created_at": "2026-08-22T00:00:00+00:00",
+                    }
+                ],
+            }
+
+    fake = FakeCollection()
+    manager._collection = fake
+
+    assert manager.list_memories()[0]["id"] == "memory-a"
+    assert fake.get_kwargs["where"] == {"principal_id": "alice"}
