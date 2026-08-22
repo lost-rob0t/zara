@@ -1,7 +1,7 @@
 """Authenticated CURVE/ZAP gateway for remote Zara service traffic.
 
 The secure gateway reuses the ZARA/1 ROUTER implementation from issue #129,
-but transport routing ids never become principals.  ZAP ``User-Id`` metadata
+but transport routing ids never become principals. ZAP ``User-Id`` metadata
 is resolved through the live security registry on every application message so
 revocation takes effect without restarting the daemon.
 """
@@ -9,6 +9,7 @@ revocation takes effect without restarting the daemon.
 from __future__ import annotations
 
 import concurrent.futures
+import time
 from typing import Optional
 
 import zmq
@@ -19,6 +20,8 @@ from zara.security import (
     Capability,
     KeyNotActive,
     QuotaExceeded,
+    SecurityAuditLog,
+    SecurityAuditRecord,
     SecurityLimits,
     SecurityRegistry,
     authorize,
@@ -78,6 +81,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         security_registry: SecurityRegistry,
         curve_server: CurveServerConfig,
         security_limits: Optional[SecurityLimits] = None,
+        audit_log: Optional[SecurityAuditLog] = None,
         context: Optional[zmq.Context] = None,
         config: Optional[TransportConfig] = None,
         limits=None,
@@ -86,6 +90,8 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             raise TypeError("security_registry must be SecurityRegistry")
         if not isinstance(curve_server, CurveServerConfig):
             raise TypeError("curve_server must be CurveServerConfig")
+        if audit_log is not None and not isinstance(audit_log, SecurityAuditLog):
+            raise TypeError("audit_log must be SecurityAuditLog")
         validate_listener_security(endpoint, curve_enabled=True, zap_enabled=True)
         super().__init__(
             endpoint,
@@ -99,8 +105,10 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         self._curve_server = curve_server
         self._security_limits = security_limits or SecurityLimits()
         self._quotas = self._security_limits.new_quota_manager()
+        self._audit_log = audit_log or SecurityAuditLog()
         self._route_user_ids: dict[bytes, str] = {}
         self._route_principal_ids: dict[bytes, str] = {}
+        self._runtime_quota_holds: set[tuple[str, str]] = set()
 
     @staticmethod
     def _capability_for(message_type: str) -> Capability:
@@ -113,6 +121,50 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         if message_type == "turn.cancel":
             return Capability.TURN_CANCEL
         return Capability.SESSION_BASIC
+
+    def _audit(
+        self,
+        *,
+        enrolled,
+        message: ProtocolMessage,
+        decision: str,
+        error_class: Optional[str],
+        started_ns: int,
+    ) -> None:
+        self._audit_log.append(
+            SecurityAuditRecord(
+                timestamp_ns=time.time_ns(),
+                principal_id=enrolled.principal.principal_id,
+                device_id=enrolled.device_id,
+                session_id=message.session_id,
+                request_id=message.id,
+                turn_id=message.turn_id,
+                action=message.type,
+                decision=decision,
+                error_class=error_class,
+                duration_ns=max(0, time.monotonic_ns() - started_ns),
+            )
+        )
+
+    def _release_runtime_quota(self, route: bytes, message: ProtocolMessage) -> None:
+        if message.reply_to is None:
+            return
+        principal_id = self._route_principal_ids.get(route)
+        if principal_id is None:
+            return
+        key = (principal_id, message.reply_to)
+        with self._lock:
+            if key not in self._runtime_quota_holds:
+                return
+            self._runtime_quota_holds.remove(key)
+        self._quotas.release_request(principal_id)
+
+    def _enqueue_outbound(self, route: bytes, message: ProtocolMessage) -> bool:
+        # Runtime completions are delivered asynchronously by the base gateway.
+        # Release the principal's concurrent-request slot exactly once when that
+        # completion becomes available, even when the route has since stalled.
+        self._release_runtime_quota(route, message)
+        return super()._enqueue_outbound(route, message)
 
     def _run(self) -> None:
         authenticator = RegistryAuthenticator(
@@ -140,6 +192,9 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         finally:
             for principal_id in tuple(self._route_principal_ids.values()):
                 self._quotas.release_connection(principal_id)
+            for principal_id, _request_id in tuple(self._runtime_quota_holds):
+                self._quotas.release_request(principal_id)
+            self._runtime_quota_holds.clear()
             self._route_user_ids.clear()
             self._route_principal_ids.clear()
             socket.close(self._config.linger_ms)
@@ -182,9 +237,40 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             super()._receive(_PreloadedSocket(socket, frames))
             return
 
+        started_ns = time.monotonic_ns()
+        principal_id = enrolled.principal.principal_id
+        try:
+            self._quotas.acquire_request(principal_id)
+        except QuotaExceeded:
+            self._audit(
+                enrolled=enrolled,
+                message=message,
+                decision="deny",
+                error_class="quota_exceeded",
+                started_ns=started_ns,
+            )
+            self._send(
+                socket,
+                route,
+                _security_error(
+                    reply_to=message.id,
+                    code="quota_exceeded",
+                    message="resource quota exceeded",
+                ),
+            )
+            return
+
         try:
             authorize(enrolled, self._capability_for(message.type))
         except (AuthorizationDenied, KeyNotActive):
+            self._quotas.release_request(principal_id)
+            self._audit(
+                enrolled=enrolled,
+                message=message,
+                decision="deny",
+                error_class="authorization_denied",
+                started_ns=started_ns,
+            )
             self._send(
                 socket,
                 route,
@@ -198,8 +284,16 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
 
         if message.type == "hello" and route not in self._route_principal_ids:
             try:
-                self._quotas.acquire_connection(enrolled.principal.principal_id)
+                self._quotas.acquire_connection(principal_id)
             except QuotaExceeded:
+                self._quotas.release_request(principal_id)
+                self._audit(
+                    enrolled=enrolled,
+                    message=message,
+                    decision="deny",
+                    error_class="quota_exceeded",
+                    started_ns=started_ns,
+                )
                 self._send(
                     socket,
                     route,
@@ -211,11 +305,19 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
                 )
                 return
             self._route_user_ids[route] = enrolled.user_id
-            self._route_principal_ids[route] = enrolled.principal.principal_id
+            self._route_principal_ids[route] = principal_id
         else:
             bound_user_id = self._route_user_ids.get(route)
             if bound_user_id is not None and bound_user_id != enrolled.user_id:
+                self._quotas.release_request(principal_id)
                 self._drop_route(route)
+                self._audit(
+                    enrolled=enrolled,
+                    message=message,
+                    decision="deny",
+                    error_class="authentication_required",
+                    started_ns=started_ns,
+                )
                 self._send(
                     socket,
                     route,
@@ -233,6 +335,26 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             super()._receive(_PreloadedSocket(socket, frames))
         finally:
             self._principal = previous_principal
+
+        replay_key = (principal_id, message.id)
+        with self._lock:
+            runtime_pending = (
+                message.type in {"turn.submit", "turn.cancel"}
+                and replay_key in self._inflight
+            )
+            if runtime_pending:
+                self._runtime_quota_holds.add(replay_key)
+
+        if not runtime_pending:
+            self._quotas.release_request(principal_id)
+
+        self._audit(
+            enrolled=enrolled,
+            message=message,
+            decision="allow",
+            error_class=None,
+            started_ns=started_ns,
+        )
 
 
 __all__ = ["SecureZaraZmqGateway"]
