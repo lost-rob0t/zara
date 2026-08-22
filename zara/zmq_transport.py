@@ -316,6 +316,23 @@ class ZaraZmqGateway:
                 ),
             )
             return
+        if message.type == "runtime.status":
+            supervisor_state = self._supervisor.state
+            status = supervisor_state.value if isinstance(supervisor_state, enum.Enum) else str(supervisor_state)
+            self._send(
+                socket,
+                route,
+                ProtocolMessage(
+                    type="runtime.status.ok",
+                    id=_message_id(),
+                    reply_to=message.id,
+                    session_id=state.session_id,
+                    timestamp_ns=_now_ns(),
+                    payload_count=0,
+                    body={"state": status},
+                ),
+            )
+            return
         if message.type == "conversation.open":
             conversation_id = message.conversation_id or _message_id()
             state.conversation_id = conversation_id
