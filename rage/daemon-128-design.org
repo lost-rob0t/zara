@@ -79,6 +79,10 @@ Required operations:
 - =close(timeout=...)=;
 - state/readiness inspection.
 
+Client state is transport-neutral. It must not expose =RuntimeHostState= as the public abstraction because #129's remote client will not own a RuntimeHost.
+
+=close()= is idempotent and leaves the client observably =STOPPED= even if the client was never started. A transport may keep implementation details around internally, but callers must not see a supposedly closed client report =NEW=.
+
 =InProcessZaraClient= implements this with one private =RuntimeHost= and private =RuntimeEventBus=. It exists to prove the boundary and preserve standalone embedding. It does not make current CLI modes remote yet; #133 owns migration.
 
 #129 adds =ZmqZaraClient= behind the same interface. That future client owns its DEALER socket and must not expose ZeroMQ primitives to callers.
@@ -92,6 +96,8 @@ Fields:
 - =principal_id=: non-empty opaque identifier;
 - =kind=: currently =local-owner= or =synthetic=;
 - optional safe display metadata only.
+
+Principal identifiers and kinds must already be canonical strings. Leading/trailing whitespace is rejected rather than silently normalized. Two visually similar principal identifiers must not become distinct ownership keys because one contained invisible padding.
 
 Important invariant: principal context is *not authentication*. #130 later maps authenticated CURVE/ZAP identities to these server-side ownership objects. A caller-supplied string does not become trusted merely because the type is named Principal.
 
@@ -221,6 +227,20 @@ Future #129 rule: ROUTER socket lives on its own gateway loop/thread. RuntimeHos
 
 SIGTERM handler itself does none of the above. It only requests that normal control flow start this algorithm.
 
+* TDD and coverage contract
+
+For the remainder of Iteration 1 and all later work, implementation is red-green-refactor:
+
+1. Add the smallest deterministic test for the next behavior.
+2. Run that focused test against the current implementation and record the expected red result when it exposes a new requirement/regression.
+3. Change production code only after the red state is proven.
+4. Rerun to green.
+5. Refactor only while green.
+
+The TDD rule was added after the first skeleton implementation commit in this already-running iteration. That existing code is therefore treated as unaccepted scaffolding, not evidence of completion. Before merge, tests must surround it deeply enough that later production changes are driven by failures and all reachable changed behavior has the highest practical meaningful coverage.
+
+Coverage targets behavior, not a vanity percentage. Add tests for success paths, invalid/canonicalization input, state transitions, degraded startup, duplicate ownership, shutdown timeouts, active cancellation, stale work, principal limits/mismatch, lease permissions/metadata, package entrypoints, and client lifecycle edge cases. Do not add weak or execution-only assertions merely to touch lines.
+
 * Rejected alternatives
 
 ** Keep =zara --daemon=
@@ -263,6 +283,8 @@ Rejected. #128 should leave a clean seam for #129, not sneak half the protocol i
 8. RuntimeHost remains the only route to AgentManager/backend lifecycle.
 9. ZeroMQ sockets do not exist in this slice.
 10. Prolog-RLM remains absent.
+11. Principal identifiers/kinds reject leading/trailing whitespace rather than creating ambiguous ownership keys.
+12. Closing a ZaraClient leaves its public state STOPPED even when it was never started.
 
 * Packaging
 
@@ -280,17 +302,21 @@ Keep =zara= untouched as the client-facing executable.
 | Acceptance | Test |
 |-
 | server starts without Qt | server module import/start with fake host; packaged wrapper smoke |
-| duplicate ownership deterministic | two ServerLease instances against same temp runtime dir |
-| explicit state lifecycle | NEW -> STARTING -> READY/DEGRADED -> STOPPING -> STOPPED |
-| degraded runtime does not kill server | fake host startup failure aggregates DEGRADED |
+| duplicate ownership deterministic | two ServerLease instances against same temp runtime dir; second ZaraServer cannot bootstrap a runtime |
+| explicit state lifecycle | NEW -> STARTING -> READY/DEGRADED -> STOPPING -> STOPPED/FAILED |
+| degraded runtime does not kill server | fake host startup failure aggregates DEGRADED and remains controllable |
 | clean shutdown | fake/real RuntimeHost shutdown future + join assertions |
+| bounded failed shutdown | non-completing/alive fake host causes FAILED without pretending clean stop |
 | active work shutdown | RuntimeHost test backend with blocked turn then stop |
 | stale work suppressed | existing RuntimeHost stale-result tests remain green; focused server test ensures no post-stop dispatch |
-| explicit principal ownership | supervisor APIs reject raw strings/empty principal and key slots by PrincipalContext |
+| explicit principal ownership | reject raw strings, blank/canonicalization-ambiguous principal values, and mismatched ownership metadata |
+| production principal cap | second principal rejected at default max=1 |
 | synthetic slots separate | two fake principals with independent host/event objects under test-only max=2 |
 | client abstraction | InProcessZaraClient submit/subscribe/shutdown test with fake backend |
+| client lifecycle edge | close-before-start reports STOPPED; pre-start submit fails explicitly |
+| lease security/diagnostics | owner-private modes plus PID/start metadata and lock re-acquisition after release |
 | existing modes unaffected | full pytest + deterministic scripts + wrapper tests |
-| packaged server exists | setup metadata + Nix wrapper/app gate |
+| packaged server exists | wheel metadata + Nix package/app/wrapper gate |
 
 * Exact gate
 
@@ -309,6 +335,8 @@ nix flake check
 nix build
 #+end_src
 
+Inspect coverage around =zara/server.py= and =zara/client.py= after focused tests and add meaningful deterministic tests for reachable uncovered branches before the final gate.
+
 After opening the PR, only GitHub Actions attached to the exact final candidate SHA may authorize merge.
 
-If focused/full gates expose a coding defect that preserves this design, fix within Iteration 1. If they show the lifecycle/client/supervisor architecture itself is wrong, preserve the evidence, discard the implementation attempt, and start Iteration 2 from research/design.
+If focused/full gates expose a coding defect that preserves this design, fix within Iteration 1 using a red test first. If they show the lifecycle/client/supervisor architecture itself is wrong, preserve the evidence, discard the implementation attempt, and start Iteration 2 from research/design.
