@@ -9,7 +9,12 @@ import zmq
 from zara.protocol import ProtocolMessage, decode_message, encode_message
 from zara.runtime import bridge
 from zara.server import PrincipalContext, ServerState
-from zara.zmq_transport import TransportConfig, ZaraZmqGateway, apply_socket_options
+from zara.zmq_transport import (
+    TransportConfig,
+    ZaraZmqGateway,
+    ZmqZaraClient,
+    apply_socket_options,
+)
 
 
 class StatusSupervisor:
@@ -107,4 +112,24 @@ def test_runtime_status_reports_supervisor_state_without_dispatch(zmq_context):
         assert response.body == {"state": "degraded"}
     finally:
         client.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_client_runtime_status_uses_zara_client_transport_boundary(zmq_context):
+    endpoint = f"inproc://client-runtime-status-{time.time_ns()}"
+    config = _config()
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=StatusSupervisor(ServerState.READY),
+        principal=PrincipalContext("local-owner"),
+        context=zmq_context,
+        config=config,
+    )
+    gateway.start().result(timeout=1.0)
+    client = ZmqZaraClient(endpoint, context=zmq_context, config=config)
+    try:
+        client.start().result(timeout=1.0)
+        assert client.runtime_status().result(timeout=1.0) == "ready"
+    finally:
+        client.close(timeout=1.0)
         gateway.close(timeout=1.0)
