@@ -74,9 +74,10 @@ run_phase() {
 # --- Phase 1: Python compile/import checks --------------------------------
 phase_python_compile() {
   python -m compileall -q zara scripts
-  python -c "import zara.wake; import zara.dictate; import zara.console; import zara.agent_cli; import zara.__main__"
+  python -c "import zara.wake; import zara.dictate; import zara.console; import zara.agent_cli; import zara.client; import zara.server; import zara.__main__"
   python -m zara --help >/dev/null 2>&1 || true
   python -m zara --help 2>&1 | grep -q "Zarathustra Voice Assistant"
+  python -m zara.server --help 2>&1 | grep -q "zara-server"
 }
 
 run_phase "Python compile/import checks" phase_python_compile
@@ -129,6 +130,7 @@ phase_security_scripts() {
     scripts/test-tts.sh
     scripts/test-wake-lifecycle.sh
     scripts/test-agent-history.sh
+    scripts/test-server-lifecycle.sh
   )
   for script in "${security_scripts[@]}"; do
     echo "  running $script..."
