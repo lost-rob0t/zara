@@ -96,7 +96,7 @@ During design review, the executable boundary was simplified:
 Issue #128 and task #139 were updated to encode this decision. Epic #127 received a superseding architecture note rather than creating a duplicate epic.
 
 - Design artifact :: =rage/daemon-128-design.org=
-- Design commit :: =736219f0b617c7ce51bb9f653d20c43e68795e87=
+- Design commit :: =736219f0b617c7ce51bb9f653d20c43e68795e87=.
 - Iteration state :: DESIGN COMPLETE / IMPLEMENTATION AUTHORIZED
 
 Selected implementation slice:
@@ -187,3 +187,80 @@ TDD evidence is the red exact-head flake check above. The regression test is kep
 - Outcome :: MERGED / ITERATION 1 COMPLETE.
 
 The implementation establishes =zara-server= as the foreground long-lived service process, keeps =zara= as the client-facing name, introduces the transport-neutral =ZaraClient= seam, provides principal-explicit runtime supervision and lease-backed single ownership, and intentionally leaves ZeroMQ/auth/hard multi-user isolation to #129-#131. The next RAGE iteration must re-read the issue queue and consume #129 only on a later worker run.
+
+* Iteration 2 - issue #129 ZARA/1 protocol
+
+** Run identity
+
+- Consumed issue :: #129 - implement =ZARA/1= ZeroMQ ROUTER/DEALER protocol and daemon client SDK.
+- Parent epic :: #127.
+- Dependency proof :: #128 is closed completed; its implementation merged in PR #140 and its append-only evidence PR #141 passed exact-head CI #237 and merged before this iteration began.
+- Branch :: =rage/129-zara1-protocol=.
+- RAGE start commit :: =b0bc03590215424db01277cbc4758067a7b854ab=.
+- Start meaning :: exact =master= commit after PR #141 merged; immutable baseline for Iteration 2.
+- Status :: RESEARCH.
+
+** Queue evidence
+
+- Daemon child order from =skills/rage/SKILL.md= is #128 -> #129 -> #130 -> #131, then #132/#133 as dependencies allow, with #134 final.
+- #128 is closed completed.
+- #129 is open and depends only on #128 inside the daemon queue.
+- #130-#134 remain later slices and are not implementation scope for this iteration.
+- Reopened provider issue #17 remains a global roadmap blocker, but this worker is explicitly assigned the daemon epic queue and the daemon-local ordering makes #129 the eligible consumed slice after #128.
+
+** Research
+
+- Artifact :: =rage/daemon-129-research.org=.
+- Commit :: =6c9c004590218fbfef159216d1120376b6fac890=.
+- Result :: ROUTER/DEALER survives, but transport reconnect is explicitly not application-session recovery; routing identities remain transport-only and cannot select a principal before #130; application queues must be bounded independently of ZeroMQ HWM; protocol JSON is strict/closed and duplicate keys/non-finite values fail closed.
+
+** Design
+
+- Artifact :: =rage/daemon-129-design.org=.
+- Commit :: =ed7012c78fc705d21de0c53723edfdcaaffcf999=.
+- Result :: pure =zara.protocol= codec + owned-loop =zara.zmq_transport= + =ZmqZaraClient= behind existing client seam, with explicit handshake/re-handshake, correlation, backpressure, runtime codecs, and Slice A-E TDD gate.
+
+** TDD / Implementation
+
+*** Slice A - pure protocol codec RED
+
+- Tests-only commit :: =5784ab75619a5e4b1906e422cecd2db5be8089fa=.
+- Draft PR :: #142.
+- GitHub Actions :: CI #239, run =32558573251=.
+- Arch shared-mic :: PASS.
+- Ubuntu shared-mic :: PASS.
+- Main =scripts/test-all.sh= :: EXPECTED FAILURE in Phase 5 / pytest collection.
+- Exact failure :: =ModuleNotFoundError: No module named 'zara.protocol'= while collecting =t/test_protocol.py=.
+- Classification :: authoritative expected TDD red. The failure is exactly the missing Slice A production module; no inherited regression or design contradiction was exposed.
+- Production authorization :: implement only the minimum coherent pure codec required by the committed Slice A contract, then rerun the same tests/full CI to green before starting Slice B.
+
+*** Slice A - pure protocol codec GREEN
+
+- Production commit :: =297de324b26e3adacfb343033e46872c8d4e8a87=.
+- GitHub Actions :: CI #241, run =32558762483=.
+- Exact-head =scripts/test-all.sh= :: PASS.
+- =nix flake check= :: PASS.
+- =nix build= :: PASS.
+- Arch shared-mic :: PASS.
+- Ubuntu shared-mic :: PASS.
+- Outcome :: Slice A accepted. =zara.protocol= now provides strict/closed deterministic framing, duplicate-key/non-finite JSON rejection, bounded ids/frames/payloads, reserved message recognition, and canonical encoding. Slice B was not started until this exact head was fully green.
+
+*** Slice B - explicit runtime codecs RED
+
+- Tests-only commit :: =00a50d706d03cd8a51bea2579b0751dd22c891b9=.
+- GitHub Actions :: CI #242, run =32559212734=.
+- Arch shared-mic :: PASS.
+- Ubuntu shared-mic :: PASS.
+- Main =scripts/test-all.sh= :: EXPECTED FAILURE in Phase 5 / pytest collection.
+- Exact failure :: =ModuleNotFoundError: No module named 'zara.protocol_runtime'= while collecting =t/test_protocol_runtime.py=.
+- =nix flake check= and =nix build= :: correctly skipped after the expected main-gate failure.
+- Classification :: authoritative expected TDD red. Tests define explicit =turn.submit=/=turn.cancel= command mapping, allowlisted runtime-event codecs, unsupported-event fail-closed behavior, and sanitized internal-error output before implementation exists.
+- Production authorization :: implement only the explicit runtime codec contract; no reflection serializer, no provider/label leakage, and no raw exception text on the wire.
+
+** Gate
+
+Slice A complete red -> full green. Slice B red established. Full issue gate remains pending.
+
+** Outcome
+
+Pending.
