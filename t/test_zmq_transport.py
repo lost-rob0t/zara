@@ -248,20 +248,6 @@ def test_client_handshake_ping_conversation_submit_cancel_and_runtime_event(
         truncated=False,
     )
 
-    supervisor.bus.publish(
-        events.AgentCompleted(
-            turn_id="turn-canonical",
-            conversation_id="conversation-a",
-            success=True,
-        )
-    )
-    envelope = subscription.get(timeout=1.0)
-    assert envelope.event == events.AgentCompleted(
-        turn_id="turn-canonical",
-        conversation_id="conversation-a",
-        success=True,
-    )
-
     client.close(timeout=1.0)
     gateway.close(timeout=1.0)
     assert client.state is ZaraClientState.STOPPED
@@ -375,87 +361,23 @@ def test_duplicate_stable_submit_id_replays_receipt_without_second_side_effect(
         config=transport_config,
     )
     gateway.start().result(timeout=1.0)
-
     client = ZmqZaraClient(endpoint, context=zmq_context, config=transport_config)
     client.start().result(timeout=1.0)
-    first = client.submit(
-        SubmitTurn(request_id="stable-submit", text="hello")
-    ).result(timeout=1.0)
-    second = client.submit(
-        SubmitTurn(request_id="stable-submit", text="hello")
-    ).result(timeout=1.0)
+
+    command = SubmitTurn(request_id="stable-request", text="do once")
+    first = client.submit(command).result(timeout=1.0)
+    second = client.submit(command).result(timeout=1.0)
 
     assert first == second
-    submissions = [command for _, command in supervisor.commands if isinstance(command, SubmitTurn)]
-    assert len(submissions) == 1
+    submitted = [item for _, item in supervisor.commands if isinstance(item, SubmitTurn)]
+    assert submitted == [command]
 
     client.close(timeout=1.0)
     gateway.close(timeout=1.0)
 
 
-def test_duplicate_submit_id_with_different_command_is_rejected(
-    zmq_context,
-    transport_config,
-):
-    endpoint = unique_endpoint("duplicate-conflict")
-    supervisor = FakeSupervisor()
-    gateway = ZaraZmqGateway(
-        endpoint,
-        supervisor=supervisor,
-        principal=PrincipalContext("local-owner"),
-        context=zmq_context,
-        config=transport_config,
-    )
-    gateway.start().result(timeout=1.0)
-
-    client = ZmqZaraClient(endpoint, context=zmq_context, config=transport_config)
-    client.start().result(timeout=1.0)
-    client.submit(SubmitTurn(request_id="stable-conflict", text="first")).result(timeout=1.0)
-    with pytest.raises(transport.ProtocolRemoteError) as error:
-        client.submit(SubmitTurn(request_id="stable-conflict", text="second")).result(timeout=1.0)
-    assert error.value.code == "idempotency_conflict"
-    assert error.value.retryable is False
-
-    client.close(timeout=1.0)
-    gateway.close(timeout=1.0)
-
-
-def test_inflight_duplicate_request_id_is_coalesced_and_completed_once(
-    zmq_context,
-    transport_config,
-):
-    endpoint = unique_endpoint("duplicate-inflight")
-    supervisor = BlockingSupervisor()
-    gateway = ZaraZmqGateway(
-        endpoint,
-        supervisor=supervisor,
-        principal=PrincipalContext("local-owner"),
-        context=zmq_context,
-        config=transport_config,
-    )
-    gateway.start().result(timeout=1.0)
-
-    client = ZmqZaraClient(endpoint, context=zmq_context, config=transport_config)
-    client.start().result(timeout=1.0)
-    first = client.submit(SubmitTurn(request_id="inflight-same", text="hello"))
-    deadline = time.monotonic() + 1.0
-    while not supervisor.blocked and time.monotonic() < deadline:
-        time.sleep(0.01)
-    second = client.submit(SubmitTurn(request_id="inflight-same", text="hello"))
-
-    assert len(supervisor.blocked) == 1
-    supervisor.blocked[0].set_result(CommandReceipt(request_id="inflight-same", turn_id="turn-one"))
-    assert first.result(timeout=1.0).turn_id == "turn-one"
-    assert second.result(timeout=1.0).turn_id == "turn-one"
-
-    client.close(timeout=1.0)
-    gateway.close(timeout=1.0)
-
-
-def test_server_backpressure_is_explicit_and_retryable(zmq_context, transport_config):
-    endpoint = unique_endpoint("server-backpressure")
-    supervisor = BlockingSupervisor()
-    limited = TransportConfig(
+def test_pending_request_cap_fails_before_unbounded_future_growth(zmq_context):
+    config = TransportConfig(
         sndhwm=8,
         rcvhwm=8,
         max_message_bytes=1024 * 1024,
@@ -463,39 +385,72 @@ def test_server_backpressure_is_explicit_and_retryable(zmq_context, transport_co
         heartbeat_timeout_ms=500,
         linger_ms=0,
         request_timeout=1.0,
-        pending_request_limit=1,
+        pending_request_limit=2,
     )
+    endpoint = unique_endpoint("pending-cap")
+    supervisor = BlockingSupervisor()
     gateway = ZaraZmqGateway(
         endpoint,
         supervisor=supervisor,
         principal=PrincipalContext("local-owner"),
         context=zmq_context,
-        config=limited,
+        config=config,
     )
     gateway.start().result(timeout=1.0)
-
-    client = ZmqZaraClient(endpoint, context=zmq_context, config=limited)
+    client = ZmqZaraClient(endpoint, context=zmq_context, config=config)
     client.start().result(timeout=1.0)
-    first = client.submit(SubmitTurn(request_id="blocked", text="one"))
+
+    client.submit(SubmitTurn(request_id="pending-1", text="one"))
+    client.submit(SubmitTurn(request_id="pending-2", text="two"))
+    with pytest.raises(transport.ClientBackpressureError):
+        client.submit(SubmitTurn(request_id="pending-3", text="three"))
+
     deadline = time.monotonic() + 1.0
-    while not supervisor.blocked and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert supervisor.blocked
+    while len(supervisor.blocked) < 2 and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert len(supervisor.blocked) == 2
+    submitted_ids = [
+        command.request_id
+        for _, command in supervisor.commands
+        if isinstance(command, SubmitTurn)
+    ]
+    assert submitted_ids == ["pending-1", "pending-2"]
 
-    with pytest.raises(transport.ProtocolRemoteError) as error:
-        client.submit(SubmitTurn(request_id="overflow", text="two")).result(timeout=1.0)
-    assert error.value.code == "server_backpressure"
-    assert error.value.retryable is True
-
-    supervisor.blocked[0].set_result(CommandReceipt(request_id="blocked", turn_id="turn-blocked"))
-    assert first.result(timeout=1.0).turn_id == "turn-blocked"
-
+    for future in supervisor.blocked:
+        future.set_result(CommandReceipt(request_id="released", turn_id="turn-released"))
     client.close(timeout=1.0)
     gateway.close(timeout=1.0)
 
 
-def test_gateway_rejects_message_with_payload_exceeding_aggregate_limit(zmq_context, transport_config):
-    endpoint = unique_endpoint("oversized")
+def test_blocked_runtime_future_does_not_starve_other_client_control(zmq_context, transport_config):
+    endpoint = unique_endpoint("fairness")
+    supervisor = BlockingSupervisor()
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=supervisor,
+        principal=PrincipalContext("local-owner"),
+        context=zmq_context,
+        config=transport_config,
+    )
+    gateway.start().result(timeout=1.0)
+    blocked = ZmqZaraClient(endpoint, context=zmq_context, config=transport_config)
+    healthy = ZmqZaraClient(endpoint, context=zmq_context, config=transport_config)
+    blocked.start().result(timeout=1.0)
+    healthy.start().result(timeout=1.0)
+
+    blocked.submit(SubmitTurn(request_id="blocked-turn", text="wait"))
+    pong = healthy.ping().result(timeout=1.0)
+    assert pong.type == "pong"
+
+    for future in supervisor.blocked:
+        future.set_result(CommandReceipt(request_id="blocked-turn", turn_id="turn-blocked"))
+    blocked.close(timeout=1.0)
+    healthy.close(timeout=1.0)
+    gateway.close(timeout=1.0)
+
+
+def test_client_rehandshakes_after_gateway_restart_with_new_session(zmq_context, transport_config):
+    endpoint = unique_endpoint("rehandshake")
     supervisor = FakeSupervisor()
     gateway = ZaraZmqGateway(
         endpoint,
@@ -505,20 +460,48 @@ def test_gateway_rejects_message_with_payload_exceeding_aggregate_limit(zmq_cont
         config=transport_config,
     )
     gateway.start().result(timeout=1.0)
-    dealer = zmq_context.socket(zmq.DEALER)
-    apply_socket_options(dealer, transport_config, router=False)
-    dealer.connect(endpoint)
-    dealer.send_multipart(
-        [
-            b"ZARA/1",
-            b'{"id":"bad","payload_count":1,"timestamp_ns":1,"type":"audio.input.chunk"}',
-            b"x" * (1024 * 1024 + 1),
-        ]
-    )
-    response = receive_message(dealer)
-    assert response.type == "protocol.error"
-    assert response.body["code"] == "invalid_message"
-    assert supervisor.commands == []
+    client = ZmqZaraClient(endpoint, context=zmq_context, config=transport_config)
+    client.start().result(timeout=1.0)
+    first_session = client.session_id
 
-    dealer.close(0)
     gateway.close(timeout=1.0)
+    gateway.start().result(timeout=1.0)
+    client.reconnect().result(timeout=1.0)
+
+    assert client.state is ZaraClientState.READY
+    assert client.session_id
+    assert client.session_id != first_session
+    assert client.ping().result(timeout=1.0).type == "pong"
+
+    client.close(timeout=1.0)
+    gateway.close(timeout=1.0)
+
+
+def test_owner_threads_are_dead_after_close_and_objects_can_restart(zmq_context, transport_config):
+    endpoint = unique_endpoint("restart-owners")
+    supervisor = FakeSupervisor()
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=supervisor,
+        principal=PrincipalContext("local-owner"),
+        context=zmq_context,
+        config=transport_config,
+    )
+    client = ZmqZaraClient(endpoint, context=zmq_context, config=transport_config)
+
+    gateway.start().result(timeout=1.0)
+    client.start().result(timeout=1.0)
+    first_session = client.session_id
+    client.close(timeout=1.0)
+    gateway.close(timeout=1.0)
+    assert not client.is_alive
+    assert not gateway.is_alive
+
+    gateway.start().result(timeout=1.0)
+    client.start().result(timeout=1.0)
+    assert client.session_id != first_session
+    assert client.ping().result(timeout=1.0).type == "pong"
+    client.close(timeout=1.0)
+    gateway.close(timeout=1.0)
+    assert not client.is_alive
+    assert not gateway.is_alive

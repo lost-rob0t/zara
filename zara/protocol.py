@@ -35,7 +35,6 @@ SERVER_MESSAGE_TYPES = frozenset(
         "turn.accepted",
         "turn.cancel.accepted",
         "turn.started",
-        "turn.completed",
         "turn.cancelled",
         "assistant.started",
         "assistant.delta",
@@ -261,60 +260,111 @@ def _validate_body(value: Any) -> dict[str, Any] | None:
         return None
     if not isinstance(value, dict):
         raise ProtocolValidationError("body must be a JSON object")
-    return dict(value)
+    return value
 
 
-def _validate_message(
-    value: Mapping[str, Any],
-    *,
-    limits: ProtocolLimits,
-    expected_payload_count: int | None = None,
-) -> ProtocolMessage:
-    unknown = set(value) - _ALLOWED_ENVELOPE_KEYS
+def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> ProtocolMessage:
+    unknown = set(data) - _ALLOWED_ENVELOPE_KEYS
     if unknown:
-        raise ProtocolValidationError(f"unknown envelope fields: {sorted(unknown)!r}")
+        raise ProtocolValidationError(f"unknown envelope keys: {sorted(unknown)!r}")
+
+    missing = {"type", "id", "timestamp_ns", "payload_count"} - set(data)
+    if missing:
+        raise ProtocolValidationError(f"missing required envelope keys: {sorted(missing)!r}")
 
     message_type = _validate_ascii_token(
         "type",
-        value.get("type"),
+        data["type"],
         max_bytes=limits.max_type_bytes,
         allow_dot_type=True,
     )
     if message_type not in KNOWN_MESSAGE_TYPES:
-        raise ProtocolValidationError(f"unknown message type: {message_type}")
+        raise ProtocolValidationError(f"unsupported message type: {message_type!r}")
 
-    message_id = _validate_ascii_token(
-        "id",
-        value.get("id"),
-        max_bytes=limits.max_id_bytes,
-    )
-    timestamp_ns = _validate_nonnegative_int("timestamp_ns", value.get("timestamp_ns"))
-    payload_count = _validate_nonnegative_int("payload_count", value.get("payload_count"))
+    request_id = _validate_ascii_token("id", data["id"], max_bytes=limits.max_id_bytes)
+    timestamp_ns = _validate_nonnegative_int("timestamp_ns", data["timestamp_ns"])
+    payload_count = _validate_nonnegative_int("payload_count", data["payload_count"])
     if payload_count > limits.max_payload_frames:
         raise ProtocolValidationError("payload frame count exceeds limit")
-    if expected_payload_count is not None and payload_count != expected_payload_count:
-        raise ProtocolValidationError("payload_count does not match multipart frame count")
 
-    seq = value.get("seq")
+    seq = data.get("seq")
     if seq is not None:
         seq = _validate_nonnegative_int("seq", seq)
 
     return ProtocolMessage(
         type=message_type,
-        id=message_id,
+        id=request_id,
         timestamp_ns=timestamp_ns,
         payload_count=payload_count,
-        reply_to=_validate_optional_id("reply_to", value.get("reply_to"), limits),
-        session_id=_validate_optional_id("session_id", value.get("session_id"), limits),
-        conversation_id=_validate_optional_id("conversation_id", value.get("conversation_id"), limits),
-        turn_id=_validate_optional_id("turn_id", value.get("turn_id"), limits),
-        stream_id=_validate_optional_id("stream_id", value.get("stream_id"), limits),
+        reply_to=_validate_optional_id("reply_to", data.get("reply_to"), limits),
+        session_id=_validate_optional_id("session_id", data.get("session_id"), limits),
+        conversation_id=_validate_optional_id("conversation_id", data.get("conversation_id"), limits),
+        turn_id=_validate_optional_id("turn_id", data.get("turn_id"), limits),
+        stream_id=_validate_optional_id("stream_id", data.get("stream_id"), limits),
         seq=seq,
-        trace_id=_validate_optional_id("trace_id", value.get("trace_id"), limits),
-        content_type=_validate_content_type(value.get("content_type")),
-        flags=_validate_flags(value.get("flags")),
-        body=_validate_body(value.get("body")),
+        trace_id=_validate_optional_id("trace_id", data.get("trace_id"), limits),
+        content_type=_validate_content_type(data.get("content_type")),
+        flags=_validate_flags(data.get("flags")),
+        body=_validate_body(data.get("body")),
     )
+
+
+def _validate_payloads(
+    payloads: Sequence[bytes],
+    *,
+    expected_count: int,
+    limits: ProtocolLimits,
+) -> tuple[bytes, ...]:
+    if len(payloads) != expected_count:
+        raise ProtocolValidationError(
+            f"payload_count mismatch: envelope={expected_count}, frames={len(payloads)}"
+        )
+    if len(payloads) > limits.max_payload_frames:
+        raise ProtocolValidationError("payload frame count exceeds limit")
+
+    normalized: list[bytes] = []
+    aggregate = 0
+    for frame in payloads:
+        if not isinstance(frame, bytes):
+            raise ProtocolValidationError("payload frames must be bytes")
+        if len(frame) > limits.max_payload_frame_bytes:
+            raise ProtocolValidationError("payload frame exceeds byte limit")
+        aggregate += len(frame)
+        if aggregate > limits.max_payload_bytes:
+            raise ProtocolValidationError("aggregate payload exceeds byte limit")
+        normalized.append(frame)
+    return tuple(normalized)
+
+
+def _message_to_mapping(message: ProtocolMessage, limits: ProtocolLimits) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "type": message.type,
+        "id": message.id,
+        "timestamp_ns": message.timestamp_ns,
+        "payload_count": message.payload_count,
+    }
+    optional = {
+        "reply_to": message.reply_to,
+        "session_id": message.session_id,
+        "conversation_id": message.conversation_id,
+        "turn_id": message.turn_id,
+        "stream_id": message.stream_id,
+        "seq": message.seq,
+        "trace_id": message.trace_id,
+        "content_type": message.content_type,
+    }
+    for key, value in optional.items():
+        if value is not None:
+            data[key] = value
+    if message.flags:
+        data["flags"] = dict(message.flags)
+    if message.body is not None:
+        data["body"] = dict(message.body)
+
+    validated = _message_from_mapping(data, limits)
+    if validated != message:
+        raise ProtocolValidationError("message contains non-canonical field values")
+    return data
 
 
 def decode_message(
@@ -323,102 +373,50 @@ def decode_message(
     limits: ProtocolLimits | None = None,
 ) -> DecodedMessage:
     limits = limits or ProtocolLimits()
-    if not isinstance(frames, Sequence) or isinstance(frames, (str, bytes, bytearray)):
-        raise ProtocolValidationError("frames must be a sequence of bytes")
     if len(frames) < 2:
-        raise ProtocolValidationError("message must contain marker and envelope frames")
+        raise ProtocolValidationError("ZARA/1 message requires marker and envelope frames")
     marker = frames[0]
     if marker != PROTOCOL_MARKER:
         raise ProtocolVersionError("unsupported ZARA application protocol marker")
+
     envelope = _load_envelope(frames[1], limits)
-    payloads = tuple(frames[2:])
-    if len(payloads) > limits.max_payload_frames:
-        raise ProtocolValidationError("payload frame count exceeds limit")
-    total = 0
-    for payload in payloads:
-        if not isinstance(payload, bytes):
-            raise ProtocolValidationError("payload frames must be bytes")
-        if len(payload) > limits.max_payload_frame_bytes:
-            raise ProtocolValidationError("payload frame exceeds byte limit")
-        total += len(payload)
-        if total > limits.max_payload_bytes:
-            raise ProtocolValidationError("aggregate payload bytes exceed limit")
-    message = _validate_message(
-        envelope,
+    message = _message_from_mapping(envelope, limits)
+    payloads = _validate_payloads(
+        frames[2:],
+        expected_count=message.payload_count,
         limits=limits,
-        expected_payload_count=len(payloads),
     )
     return DecodedMessage(message=message, payloads=payloads)
 
 
-def _message_dict(message: ProtocolMessage) -> dict[str, Any]:
-    if not isinstance(message, ProtocolMessage):
-        raise ProtocolValidationError("encoder requires ProtocolMessage")
-    value: dict[str, Any] = {
-        "type": message.type,
-        "id": message.id,
-        "timestamp_ns": message.timestamp_ns,
-        "payload_count": message.payload_count,
-    }
-    optional = (
-        ("reply_to", message.reply_to),
-        ("session_id", message.session_id),
-        ("conversation_id", message.conversation_id),
-        ("turn_id", message.turn_id),
-        ("stream_id", message.stream_id),
-        ("seq", message.seq),
-        ("trace_id", message.trace_id),
-        ("content_type", message.content_type),
-    )
-    for name, item in optional:
-        if item is not None:
-            value[name] = item
-    if message.flags:
-        value["flags"] = dict(message.flags)
-    if message.body is not None:
-        value["body"] = dict(message.body)
-    return value
-
-
 def encode_message(
     message: ProtocolMessage,
-    payloads: Sequence[bytes] = (),
     *,
+    payloads: Sequence[bytes] = (),
     limits: ProtocolLimits | None = None,
-) -> tuple[bytes, ...]:
+) -> list[bytes]:
     limits = limits or ProtocolLimits()
-    if not isinstance(payloads, Sequence) or isinstance(payloads, (str, bytes, bytearray)):
-        raise ProtocolValidationError("payloads must be a sequence of bytes")
-    if message.payload_count != len(payloads):
-        raise ProtocolValidationError("payload_count does not match payloads")
-    value = _message_dict(message)
-    validated = _validate_message(
-        value,
+    if not isinstance(message, ProtocolMessage):
+        raise ProtocolValidationError("message must be ProtocolMessage")
+    normalized_payloads = _validate_payloads(
+        payloads,
+        expected_count=message.payload_count,
         limits=limits,
-        expected_payload_count=len(payloads),
     )
-    if validated != message:
-        raise ProtocolValidationError("message contains non-canonical values")
-    payload_tuple = tuple(payloads)
-    total = 0
-    for payload in payload_tuple:
-        if not isinstance(payload, bytes):
-            raise ProtocolValidationError("payload frames must be bytes")
-        if len(payload) > limits.max_payload_frame_bytes:
-            raise ProtocolValidationError("payload frame exceeds byte limit")
-        total += len(payload)
-        if total > limits.max_payload_bytes:
-            raise ProtocolValidationError("aggregate payload bytes exceed limit")
-    envelope = json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-        allow_nan=False,
-    ).encode("utf-8")
+    data = _message_to_mapping(message, limits)
+    try:
+        envelope = json.dumps(
+            data,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise ProtocolValidationError("message body is not strict JSON") from error
     if len(envelope) > limits.max_envelope_bytes:
-        raise ProtocolValidationError("encoded envelope exceeds byte limit")
-    return (PROTOCOL_MARKER, envelope, *payload_tuple)
+        raise ProtocolValidationError("envelope exceeds byte limit")
+    return [PROTOCOL_MARKER, envelope, *normalized_payloads]
 
 
 __all__ = [
