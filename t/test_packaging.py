@@ -191,3 +191,20 @@ def test_find_main_pl_locates_project_root_main():
     assert located is not None, "find_main_pl() returned None in dev checkout"
     assert located.name == "main.pl"
     assert located.exists()
+
+
+def test_flake_packages_and_exposes_zara_server():
+    flake = (ROOT / "flake.nix").read_text()
+
+    required_fragments = [
+        'zara-server = mkZaraPackage {',
+        'pname = "zara-server";',
+        'binaryName = "zara-server";',
+        'addFlags = "-m zara.server";',
+        'paths = [ zara-cli zara-server zara-desktop zara-prolog zara-wake zara-dictate ];',
+        'zara-server = zara-server;',
+        'program = "${zara-server}/bin/zara-server";',
+    ]
+
+    missing = [fragment for fragment in required_fragments if fragment not in flake]
+    assert not missing, "flake.nix is missing the zara-server package/app contract:\n  " + "\n  ".join(missing)
