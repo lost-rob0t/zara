@@ -133,3 +133,22 @@ Design was amended before new tests to add two concrete invariants discovered du
 2. =ZaraClient.close()= leaves public state =STOPPED= even when called before =start()=.
 
 Next action is a tests-only red commit covering those invariants plus broader lifecycle/error/lease/client edge paths. Production code changes wait for the expected red evidence.
+
+* Iteration 1 checkpoint - exact red gate observed
+
+- Draft PR :: #140
+- Red candidate head :: =2bf98ace0629c0ece015ef53aea7f5f0ebe39e63=
+- GitHub Actions :: CI #225, run =32554357698=
+- Arch shared-mic job :: PASS
+- Ubuntu shared-mic job :: PASS
+- Main test job :: EXPECTED FAILURE at pytest phase
+- Aggregate :: 6 failed, 737 passed, 14 warnings
+
+The red gate proved the two new production requirements before either production fix was made:
+
+1. =InProcessZaraClient.close()= before =start()= left public state =NEW= instead of required =STOPPED=.
+2. =PrincipalContext= accepted four leading/trailing-whitespace cases that the design requires it to reject.
+
+The sixth failure was a test defect, not a product defect. The client-isolation test expected the second client's event queue to be completely empty after startup, but that queue correctly contained its own =RuntimeStarted= event. The isolation claim is only that first-client turn output does not appear in the second client's stream. The test was corrected in tests-only commit =6deb0e161585b25bd66f69aec642cb7d703dcfbd= to drain local startup lifecycle events and assert specifically against cross-client =ResponseText= leakage.
+
+No production code was changed to placate that flawed assertion. The next production patch is limited to the two legitimate red requirements above.
