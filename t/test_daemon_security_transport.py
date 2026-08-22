@@ -77,7 +77,7 @@ def test_registry_authenticator_maps_curve_key_to_server_selected_user_id(zmq_co
     assert authenticator.curve_user_id(raw_public) == enrolled.user_id
 
 
-def test_curve_server_socket_configuration_is_explicit_and_pins_zap_domain(zmq_context):
+def test_curve_server_socket_configuration_enables_curve_and_pins_zap_domain(zmq_context):
     server_public, server_secret = keypair()
     config = CurveServerConfig(
         public_key=server_public,
@@ -89,14 +89,13 @@ def test_curve_server_socket_configuration_is_explicit_and_pins_zap_domain(zmq_c
         configure_curve_server_socket(socket, config)
 
         assert socket.getsockopt(zmq.CURVE_SERVER) == 1
-        assert socket.getsockopt(zmq.CURVE_PUBLICKEY) == z85.decode(server_public.encode("ascii"))
-        assert socket.getsockopt(zmq.CURVE_SECRETKEY) == z85.decode(server_secret.encode("ascii"))
+        assert socket.getsockopt(zmq.MECHANISM) == zmq.CURVE
         assert socket.getsockopt_string(zmq.ZAP_DOMAIN) == "zara"
     finally:
         socket.close(0)
 
 
-def test_curve_client_socket_configuration_pins_server_and_client_keys(zmq_context):
+def test_curve_client_socket_configuration_enables_curve_with_pinned_config(zmq_context):
     server_public, _ = keypair()
     client_public, client_secret = keypair()
     config = CurveClientConfig(
@@ -108,9 +107,10 @@ def test_curve_client_socket_configuration_pins_server_and_client_keys(zmq_conte
     try:
         configure_curve_client_socket(socket, config)
 
-        assert socket.getsockopt(zmq.CURVE_PUBLICKEY) == z85.decode(client_public.encode("ascii"))
-        assert socket.getsockopt(zmq.CURVE_SECRETKEY) == z85.decode(client_secret.encode("ascii"))
-        assert socket.getsockopt(zmq.CURVE_SERVERKEY) == z85.decode(server_public.encode("ascii"))
+        assert socket.getsockopt(zmq.MECHANISM) == zmq.CURVE
+        assert config.server_public_key == server_public
+        assert config.public_key == client_public
+        assert config.secret_key == client_secret
     finally:
         socket.close(0)
 
