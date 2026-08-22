@@ -115,7 +115,7 @@ def test_server_starts_gateway_before_ready_and_stops_it_before_runtime_and_leas
     assert server.state is ServerState.STOPPED
 
 
-def test_gateway_start_failure_rolls_back_runtime_and_releases_lease(tmp_path):
+def test_gateway_start_failure_closes_gateway_rolls_back_runtime_and_releases_lease(tmp_path):
     events = []
     runtime_dir = tmp_path / "runtime"
     lease = RecordingLease(events, runtime_dir)
@@ -139,6 +139,7 @@ def test_gateway_start_failure_rolls_back_runtime_and_releases_lease(tmp_path):
         "lease.acquire",
         "supervisor.start",
         "gateway.start",
+        "gateway.close",
         "supervisor.shutdown",
         "lease.release",
     ]
