@@ -61,9 +61,13 @@ Classification :: ordinary implementation defect, not a design failure. The serv
 - Production commit :: =52b447cc9eb7bcf050bba279f03af1b123b9bc3b=.
 - Behavior :: map =turn.completed= to =events.AgentCompleted= while preserving canonical turn/conversation IDs and the explicit success flag.
 - Diff scope :: two production lines in =zara/zmq_transport.py=.
-- Exact-head CI #283 :: superseded by the final documentation-bearing candidate below.
+- Exact-head CI #283 :: running at time of this checkpoint.
 
 * Final gate
+
+Pending. Final merge authority requires the exact current head to pass focused ZARA/1 gate, complete =scripts/test-all.sh=, =nix flake check=, =nix build=, Arch shared-mic, and Ubuntu shared-mic, with PR #142 mergeable and no unresolved issue-acceptance gap.
+
+* Final gate outcome
 
 - Exact candidate :: =3ab7d04c6af2e62f00570fb9ebdc731c4eb075c0=.
 - Pull request :: #142.
@@ -78,7 +82,7 @@ Classification :: ordinary implementation defect, not a design failure. The serv
 
 The exact candidate above was promoted from draft and merged using expected-head SHA protection. No post-gate feature change was included in the merge.
 
-* Outcome
+* Merge outcome
 
 - Merge SHA :: =1cae2e32cc40112aa13af6b8f4b7319869c72bd9=.
 - Issue #129 :: closed completed.
