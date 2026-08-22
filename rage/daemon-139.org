@@ -210,19 +210,33 @@ The implementation establishes =zara-server= as the foreground long-lived servic
 
 ** Research
 
-Not started. Research must challenge the inherited frame/envelope/handshake/reconnect assumptions before any #129 tests or production code are written.
+- Artifact :: =rage/daemon-129-research.org=.
+- Commit :: =6c9c004590218fbfef159216d1120376b6fac890=.
+- Result :: ROUTER/DEALER survives, but transport reconnect is explicitly not application-session recovery; routing identities remain transport-only and cannot select a principal before #130; application queues must be bounded independently of ZeroMQ HWM; protocol JSON is strict/closed and duplicate keys/non-finite values fail closed.
 
 ** Design
 
-Not started.
+- Artifact :: =rage/daemon-129-design.org=.
+- Commit :: =ed7012c78fc705d21de0c53723edfdcaaffcf999=.
+- Result :: pure =zara.protocol= codec + owned-loop =zara.zmq_transport= + =ZmqZaraClient= behind existing client seam, with explicit handshake/re-handshake, correlation, backpressure, runtime codecs, and Slice A-E TDD gate.
 
 ** TDD / Implementation
 
-Not started. No #129 test or production behavior may be committed before research and design complete.
+*** Slice A - pure protocol codec RED
+
+- Tests-only commit :: =5784ab75619a5e4b1906e422cecd2db5be8089fa=.
+- Draft PR :: #142.
+- GitHub Actions :: CI #239, run =32558573251=.
+- Arch shared-mic :: PASS.
+- Ubuntu shared-mic :: PASS.
+- Main =scripts/test-all.sh= :: EXPECTED FAILURE in Phase 5 / pytest collection.
+- Exact failure :: =ModuleNotFoundError: No module named 'zara.protocol'= while collecting =t/test_protocol.py=.
+- Classification :: authoritative expected TDD red. The failure is exactly the missing Slice A production module; no inherited regression or design contradiction was exposed.
+- Production authorization :: implement only the minimum coherent pure codec required by the committed Slice A contract, then rerun the same tests/full CI to green before starting Slice B.
 
 ** Gate
 
-Not started.
+Slice A red established. Full issue gate remains pending.
 
 ** Outcome
 
