@@ -59,11 +59,13 @@ Read [[file:docs/voice.org][the voice overview]] and [[file:docs/STT.md][the STT
 
 *** Prolog command path
 
-SWI-Prolog handles the deterministic side of Zara: intent resolution, command routing, application mappings, timers, unit conversion, todo context, and related symbolic rules.
+SWI-Prolog handles the deterministic side of Zara: intent resolution, command routing, application mappings, search, dictation control, timer parsing, state-aware control, and related symbolic rules.
 
 The Python boundary is deliberately thin. =zara/prolog_engine.py= serializes access to the process-wide SWI runtime and keeps user-derived terms behind constrained serializers. The command loop emits structured acknowledgement/result events instead of pretending every handler succeeded.
 
 Not every recognized verb has a completed side effect. For example, alarms are explicitly unsupported today, and several old media/device verbs are still recognition/stub territory. [[file:docs/commands.org][commands.org]] is the exact truth table instead of making the README perform interpretive dance around =kb/intents.pl=.
+
+Timer parsing knows seconds, minutes, and hours. That is timer normalization, not a general unit-conversion feature.
 
 The built-in knowledge base lives under =kb/= and executable Prolog logic under =modules/=. User overrides are separate from Python TOML configuration; see [[file:docs/config/prolog.org][the literate Prolog config]] and [[file:docs/features.org][the feature map]].
 
@@ -315,6 +317,7 @@ See [[file:wiki/install.org][Install & Configuration]] for the test phases and [
 - It is not equally supported on Linux, macOS, and Windows.
 - It does not have a working =--voice= one-shot mode just because the flag exists.
 - A recognized Prolog intent is not automatically a completed side effect.
+- It does not have a general unit-conversion command just because timer parsing understands hours and minutes.
 - Draft architecture in a design document is not a promise that the code already does it.
 - The LLM is not the authority for deterministic commands when Prolog can resolve them.
 
