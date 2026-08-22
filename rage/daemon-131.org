@@ -14,3 +14,16 @@
 ** TDD / Implementation
 ** Gate
 ** Outcome
+
+* Evidence append 2026-08-22
+** Research/design artifacts
+- Research :: =rage/daemon-131-research.org=
+- Design :: =rage/daemon-131-design.org=
+- Selected boundary :: owner-bound conversation/memory objects; authenticated server principal is authoritative; #51 ContextManager is not duplicated.
+
+** TDD red candidate
+- Tests-first commit :: =935621443f7143c3d12cd3a14b903db420d35cd9=
+- Focused gate script commit :: =55c8f277c6f71542e8564565d5788b46b8f3b151=
+- Expected red reason :: production =ConversationStore= and =MemoryManager= do not yet accept/bind =principal_id= and Chroma query lacks mandatory owner =where= filter.
+- Production behavior changes before red evidence :: none.
+- Draft PR :: #147
