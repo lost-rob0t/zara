@@ -405,7 +405,17 @@ def test_pending_request_cap_fails_before_unbounded_future_growth(zmq_context):
     with pytest.raises(transport.ClientBackpressureError):
         client.submit(SubmitTurn(request_id="pending-3", text="three"))
 
+    deadline = time.monotonic() + 1.0
+    while len(supervisor.blocked) < 2 and time.monotonic() < deadline:
+        time.sleep(0.005)
     assert len(supervisor.blocked) == 2
+    submitted_ids = [
+        command.request_id
+        for _, command in supervisor.commands
+        if isinstance(command, SubmitTurn)
+    ]
+    assert submitted_ids == ["pending-1", "pending-2"]
+
     for future in supervisor.blocked:
         future.set_result(CommandReceipt(request_id="released", turn_id="turn-released"))
     client.close(timeout=1.0)
