@@ -5,68 +5,64 @@
 
 This is the current-feature ledger for Zara on =master=.
 
-If this page disagrees with a research document, the current code wins. If a flag exists but deliberately exits with an error, that is *not implemented*, not “basically done.” If a draft PR contains a feature, it does not get smuggled into the shipped column because GitHub can render the diff.
+If a design document describes something clever but this page says it is not wired yet, it is not wired yet. A CLI flag, parser synonym, interface method, or draft PR is not automatically a feature. Computers already provide enough ambiguity without documentation joining in.
 
-For the surrounding system, read [[file:architecture.org][architecture.org]]. For commands, see [[file:cli.org][cli.org]]. For configuration, see [[file:configuration.org][configuration.org]].
+Use [[file:commands.org][commands.org]] for the exact deterministic intent/handler truth table, [[file:architecture.org][architecture.org]] for runtime ownership, [[file:cli.org][cli.org]] for entry points, and [[file:configuration.org][configuration.org]] for settings.
 
 * User surfaces
 
 | Surface | Status | Notes |
 |---------+--------+-------|
-| Text command | Shipped | =zara 'open firefox'= runs one command through Zara's command path. |
-| Interactive console | Shipped | =zara --console= / =zara-console=. |
-| Agent console | Shipped | =zara --agent= / =zara-agent=. |
-| Wake assistant | Shipped | =zara --wake= / =zara-wake=. Long-running wake + conversation path. |
-| Dictation | Shipped | =zara --dictate= / =zara-dictate=. |
-| Desktop | Shipped | =zara --desktop= / =zara-desktop=. Quick Copilot + Full Chat. |
-| Pets | Optional | =zara --pets= / =zara-pets= and =--pets-settings=. |
-| MCP management | Optional | =zara mcp ...=. No connections are opened when no server is configured. |
-| One-shot =--voice= | *Not implemented* | The CLI rejects it and points users at dictation. |
-
-See [[file:cli.org][CLI and entry points]].
+| =zara COMMAND= | Shipped | One text command through the normal command path. Individual deterministic intents vary; see [[file:commands.org][commands.org]]. |
+| =zara --console= / =zara-console= | Shipped | Interactive command REPL. |
+| =zara --agent= / =zara-agent= | Shipped | Direct LangGraph conversation/tool loop. |
+| =zara --wake= / =zara-wake= | Shipped | Long-running wake/voice assistant. |
+| =zara --dictate= / =zara-dictate= | Shipped | Continuous speech-to-text dictation. |
+| =zara --desktop= / =zara-desktop= | Shipped | Native Quick Copilot + Full Chat desktop. |
+| =zara --pets= / =zara-pets= | Optional | Desktop Pet overlay. |
+| =zara --pets-settings= | Optional | Pet settings/import UI. |
+| =zara mcp ...= | Optional | MCP server management/inspection. |
+| =zara --voice= | *Not implemented* | Parser placeholder; exits with an error and points users at dictation. |
 
 * Voice and audio
 
-** Wake word lifecycle
+** Wake lifecycle
 
-Status: *Shipped*
+Status: *Shipped*.
 
-Wake mode is a long-lived async voice assistant. It listens passively for Zara's wake forms, enters active capture, segments an utterance, transcribes it, routes the text, optionally speaks the result, and returns to active conversation or passive listening.
+Wake mode listens passively, detects Zara wake forms, captures a bounded utterance with Silero VAD, transcribes it, routes it to deterministic or conversational work, optionally speaks the result, and returns to conversational grace or passive listening.
 
-Current wake forms include =zarathustra=, =hey zara=, =zara=, =sarah=, and =sara=. A request can be spoken in the same utterance as the wake phrase, so “Zara, what time is it?” does not require a second recording.
-
-Repeated wake words are stripped rather than fed into the conversational model. A wake word by itself can reopen listening without becoming an LLM prompt.
+Current wake spellings include =zarathustra=, =hey zara=, =zara=, =sarah=, and =sara=. A command may follow the wake phrase in the same utterance.
 
 Read [[file:voice.org][voice.org]].
 
-** VAD and capture
+** Capture and VAD
 
-Status: *Shipped*
+Status: *Shipped*.
 
-Silero VAD owns speech boundaries in wake mode. The configurable path includes:
+The shared wake/dictation capture path provides:
 
-- speech threshold;
-- minimum speech duration;
+- configurable VAD threshold and minimum speech time;
 - pre-speech buffering;
-- trailing silence;
+- trailing-silence completion;
 - no-speech timeout;
 - hard utterance cap;
-- partial-transcript interval;
-- bounded audio callback queue.
+- partial-transcript cadence;
+- bounded microphone callback buffering;
+- input-rate fallback/resampling to Zara's target rate;
+- PCM sanitization before speech analysis.
 
-When the callback queue fills, the oldest audio is discarded so current speech wins. Input can fall back to the device's supported sample rate and be resampled to Zara's target rate.
+When the callback queue is full, old audio is discarded so latency stays bounded.
 
 ** Speech-to-text
 
-Status: *Shipped*, backend support varies by installation/model assets.
-
-Current adapters include:
+Status: *Shipped*, subject to backend/model installation.
 
 | Backend | Local/remote | Notes |
 |---------+--------------+-------|
 | faster-whisper | Local | Default CTranslate2 path. |
-| whisper.cpp | Local | Persistent local server; Vulkan path for AMD/GPU use. |
-| OpenAI Whisper | Local | Reference =openai-whisper= package. |
+| whisper.cpp | Local | Persistent local server; Vulkan GPU path. |
+| OpenAI Whisper | Local | Reference =openai-whisper= implementation. |
 | sherpa-onnx | Local | Auto-detect supported model directory. |
 | Moonshine v1/v2 | Local | sherpa-onnx adapters. |
 | Zipformer | Local | sherpa-onnx transducer. |
@@ -74,152 +70,152 @@ Current adapters include:
 | OpenAI transcription | Remote | Requires =OPENAI_API_KEY=. |
 | Groq transcription | Remote | Requires =GROQ_API_KEY=. |
 
-The complete provider/model examples live in [[file:STT.md][STT.md]].
+See [[file:STT.md][STT.md]] for models and device flags.
 
 ** Dictation
 
-Status: *Shipped*
+Status: *Shipped*.
 
-Continuous dictation is usable independently of the assistant. It supports configurable stop phrases and parallel transcription workers while committing completed text in capture order.
+Continuous dictation supports configurable stop phrases and parallel transcription workers while committing finished text in capture order.
 
-** Acknowledgement
+** Immediate acknowledgement
 
-Status: *Shipped*
+Status: *Shipped*.
 
-Wake mode can play a short acknowledgement before slower reasoning starts. Multiple phrases can rotate, cached clips are reused, and missing variants can warm in the background. This is intentionally noncommittal acknowledgement, not a success claim before execution.
+Wake mode can play short noncommittal acknowledgement audio before slower work begins. Phrase rotation, cached clips, background warming, provider, voice, and volume are configurable.
 
 ** Text-to-speech
 
-Status: *Shipped*
+Status: *Shipped*.
 
-Current providers:
+Providers:
 
 - local Piper when available, otherwise espeak;
 - ElevenLabs;
 - Edge TTS;
-- Qwen3 TTS (=qwen= remains a compatibility alias).
+- Qwen3 TTS, with =qwen= retained as an alias.
 
-The provider contract returns typed synthesis/playback results, checks output format, and applies bounded timeouts. ElevenLabs exposes streaming chunks. Edge currently synthesizes then yields chunks; local and Qwen3 return a complete synthesis as one chunk.
+Provider operations use typed results and bounded timeouts. Returned audio is validated before it is treated as successful synthesis.
 
-** Barge-in and cancellation
+** Barge-in, cancellation, and speaker echo
 
-Status: *Shipped*
+Status: *Shipped*.
 
-New user speech can interrupt active playback when configured. Zara tracks turn/playback state instead of waiting for a speech process to finish politely while the human is already trying to talk over it.
+New speech can stop active playback when configured. Separately, when Zara transitions into a fresh capture while TTS is still active, it waits for the playback boundary and discards buffered microphone audio from that playback epoch so its own speaker output does not become the next user utterance.
+
+See [[file:voice.org][voice.org]] for the distinction.
 
 ** Latency metrics
 
-Status: *Shipped*
+Status: *Shipped*.
 
-Wake turns can emit monotonic JSONL timing events. The metrics deliberately exclude transcript text, prompts, credentials, and raw audio. Deterministic fixture budgets cover acknowledgement, final transcript, TTS startup, and interruption-to-stop; provider LLM latency is measured without pretending the internet obeys a universal deadline.
-
-See [[file:voice.org][voice.org]] and [[file:../wiki/install.org][the regression gate]].
+Wake turns can emit monotonic JSONL timing events. Metrics deliberately exclude transcript text, prompts, credentials, and raw audio. Deterministic fixture gates cover acknowledgement, final transcript, TTS startup, and interruption-to-stop. Provider LLM latency is measured without pretending the network has signed a local SLA.
 
 * Deterministic Prolog path
 
 ** SWI-Prolog boundary
 
-Status: *Shipped*
+Status: *Shipped*.
 
-Zara runs SWI-Prolog through a serialized =PrologEngine= boundary. PySWIP embeds one process-wide SWI runtime, so consult/query work is serialized across engine instances. User-derived strings, atoms, and lists pass through constrained term serializers before queries are submitted.
+=zara/prolog_engine.py= serializes access to the process-wide SWI-Prolog runtime. Consult/query work, including lazy result iteration, goes through that boundary. User-derived strings, atoms, and lists pass through constrained serializers rather than arbitrary goal concatenation.
 
-Logical “no solution” is kept distinct from engine/query failure.
+Logical “no solution” remains distinct from an engine/query failure.
 
-** Intent and command routing
+** Intent resolution and command execution
 
-Status: *Shipped*
+Status: *Shipped*, *per-intent behavior varies*.
 
-The Prolog side owns deterministic intent/rule behavior. The current knowledge and logic include:
+The deterministic path owns normalization, intent/verb matching, missing-slot detection, state-aware stop/control rules, application launching, search, dictation control, timer parsing, and routing to selected Python skills such as todos/weather.
 
-- intent/verb mappings;
-- command dispatch;
-- application aliases and direct apps;
-- search routing;
-- dictation control;
-- timer parsing/execution;
-- unit conversion;
-- conversation/passive state-aware intent precedence;
-- todo context inference and older file-oriented todo templates.
+Timer parsing normalizes seconds/minutes/hours into timer duration. Zara does *not* currently expose a general unit-conversion feature.
 
-Missing command slots can produce structured =pending(...)= results rather than guessing.
+A recognized intent is not proof of a completed side effect. Several historical media/device/navigation verbs remain stubs or have no current =commands:execute/2= handler. Alarms are explicitly unsupported. [[file:commands.org][commands.org]] records the exact current status so parser vocabulary cannot impersonate product capability.
 
-The command loop emits an acknowledgement event and then one structured =command_result(Status, Intent, Args, Detail)= result. A failed handler stays failed; reply generation does not get to rewrite history into success.
+The command loop emits structured acknowledgement/result events. Failed execution stays failed; reply generation does not rewrite it into success prose.
 
 ** Application mappings
 
-Status: *Shipped*
+Status: *Shipped*.
 
-Built-in mappings cover common browsers, editors, terminals, file managers, media tools, communication apps, office tools, development tools, system utilities, directories, and power actions.
+Known applications may resolve through =app_mapping/2= or =direct_app/1=. User mappings belong in the Prolog override layer. Prefer executable/argv lists over legacy whitespace strings; shell syntax is rejected by the constrained launcher path.
 
-User mappings belong in the Prolog override layer. Prefer executable/argument lists over legacy whitespace strings. Shell syntax is rejected by the constrained launcher path. See [[file:config/prolog.org][the literate Prolog config]].
+See [[file:config/prolog.org][the literate Prolog config]].
+
+** Search and timers
+
+Status: *Shipped*.
+
+Deterministic search builds the configured search URL and opens it with =xdg-open=. Timers accept seconds/minutes/hours, optional names, and the configured completion sound.
+
+Alarm recognition exists but alarm execution explicitly reports unsupported. See [[file:commands.org][commands.org]].
 
 ** Prolog-RLM
 
 Status: *Not part of Zara's runtime*.
 
-Plain Prolog remains central. The separate Prolog-RLM project is not a selectable Zara runtime backend and should not be reintroduced through stale configuration or documentation.
+Plain Prolog remains central. The separate Prolog-RLM project is not a selectable Zara backend/dependency and should not be resurrected through stale configuration or documentation.
 
 * Conversational agent
 
 ** Runtime backend
 
-Status: *Shipped*
+Status: *Shipped*.
 
-The canonical conversational runtime backend is LangGraph. =agent.backend= accepts =langgraph=; stale alternate backend values are rejected rather than silently selecting something else.
+The current conversational backend is LangGraph. =agent.backend= accepts =langgraph=; stale alternate backend values are rejected.
 
 ** LLM providers
 
-Status: *Shipped*
+Status: *Shipped*.
 
 - OpenAI
 - Anthropic
 - Ollama
 
-Provider calls are bounded by connect/read/total timeouts and retry/history limits. Provider failures stay typed until the user-facing boundary instead of being written into conversation history as fake assistant prose.
+Provider work is bounded by configured connect/read/total timeouts, retries, history limits, and graph-step limits. Provider failures remain errors at the boundary rather than being inserted into chat history as fake assistant replies.
 
 ** Conversation/tool loop
 
-Status: *Shipped*
+Status: *Shipped*.
 
-The agent can call LangChain tools, receive tool results, and continue the graph. History validation keeps complete tool-result groups in originating call order and removes malformed/orphaned results before provider serialization.
+The graph can issue LangChain tool calls, receive results, and continue. History validation keeps complete tool-result groups in originating call order and removes malformed/orphaned/duplicate results before provider serialization.
 
 ** Context attachments
 
-Status: *Not implemented in the current runtime backend*.
+Status: *Not implemented end to end*.
 
-The runtime command contract has =context_ids=, but the LangGraph backend currently rejects non-empty attachment sets. Desktop/design docs may describe explicit context as a target; that is not a shipped attachment pipeline yet.
+The runtime command shape contains =context_ids=, but the current LangGraph backend rejects non-empty attachment sets. Design documents discussing explicit context are targets, not shipped attachment behavior.
 
-* Native tools
+* Native tools and skills
 
 ** Calculator and current time
 
 Status: *Shipped*.
 
-The calculator parses a restricted Python AST and supports arithmetic operators without evaluating arbitrary Python.
+The calculator uses a restricted Python AST for arithmetic instead of arbitrary Python evaluation.
 
 ** Prolog query tool
 
-Status: *Shipped* when Prolog is available.
+Status: *Shipped when Prolog is available*.
 
-The agent can query Zara's Prolog KB through the same constrained engine boundary. Side-effecting command queries are only appropriate when the user actually requested the action.
+The conversational agent can query Zara's Prolog knowledge through the constrained engine boundary.
 
 ** File tools
 
 Status: *Optional; disabled by default*.
 
-When enabled, readable/writable roots and maximum bytes are explicit. Paths outside configured roots, symlinks, and special files are rejected. Writes require overwrite permission and use atomic replacement.
+When enabled, readable/writable roots and maximum bytes are explicit. Paths outside configured roots, symlinks, and special files are rejected. Writes use atomic replacement and require overwrite permission for existing files.
 
 See [[file:config/main.org][the literate main config]].
 
 ** NOAA weather
 
-Status: *Optional*.
+Status: *Optional, shipped*.
 
-A NOAA weather skill/tool is available with configurable location/user-agent values.
+A NOAA weather skill/tool uses configurable default location and user-agent values.
 
 * Memory
 
-Status: *Optional, enabled by default in the generated config*.
+Status: *Optional, enabled by default in generated config*.
 
 Memory supports:
 
@@ -228,11 +224,10 @@ Memory supports:
 - recent-memory listing;
 - targeted deletion by id/query/session;
 - explicitly confirmed delete-all;
-- conversation transcripts and caller-supplied summaries;
-- tags and memory kinds;
-- bounded stored summary/transcript text.
+- bounded transcript/summary storage;
+- tags and memory kinds.
 
-Persistence uses ChromaDB when it initializes successfully. Embedding choices include ONNX MiniLM, Ollama, and sentence-transformers. If persistent storage or embedding fails, Zara reports =local_fallback= and keeps process-local memory instead of presenting persistence as healthy.
+Persistent operation uses ChromaDB. Embeddings may use ONNX MiniLM, Ollama, or sentence-transformers. If persistent initialization/retrieval fails, Zara reports =local_fallback= and retains process-local memory instead of claiming durability.
 
 Health states are =disabled=, =persistent=, and =local_fallback=.
 
@@ -242,7 +237,7 @@ See [[file:configuration.org][configuration.org]].
 
 Status: *Shipped*.
 
-The newer todo path uses Zara's SQLite-backed =TodoStore=. User-facing operations include:
+The current agent todo path uses the SQLite-backed =TodoStore=. User operations include:
 
 - capture;
 - list/filter;
@@ -251,46 +246,46 @@ The newer todo path uses Zara's SQLite-backed =TodoStore=. User-facing operation
 - reopen;
 - search;
 - schedule;
-- export to Org or Markdown.
+- Org/Markdown export.
 
-Supported statuses are =TODO=, =NEXT=, =WAITING=, =SOMEDAY=, =DONE=, and =CANCELED=. Priorities are =A=, =B=, or =C=.
+Statuses are =TODO=, =NEXT=, =WAITING=, =SOMEDAY=, =DONE=, and =CANCELED=. Priorities are =A=, =B=, or =C=.
 
-Scheduling uses task durations and half-open =[start,end)= intervals, so back-to-back tasks are valid while positive overlap is rejected. Missing durations use the configured default, currently 30 minutes.
+Scheduling uses task durations and half-open =[start,end)= intervals. Back-to-back tasks are valid; positive overlap is rejected. Missing durations use the configured default, currently 30 minutes.
 
 Recurring records support positive =+Nmin=, =+Nh=, =+Nd=, =+Nw=, =+Nm=, and =+Ny= repeaters. Month/year recurrence follows calendar boundaries and clamps invalid dates while retaining the intended day for later occurrences.
 
-Older Prolog todo templates/context inference still exist for symbolic/file-oriented flows. Do not confuse those templates with the SQLite store; they are separate layers with separate configuration.
+Older Prolog todo context/template logic still exists for symbolic/file-oriented flows. It is related by user intent, not the same persistence implementation. See [[file:config/prolog.org][Prolog config]] and [[file:config/main.org][main config]].
 
 * MCP client
 
 Status: *Optional, shipped*.
 
-Zara implements an MCP client using the official Python SDK v2.
+Zara uses the official MCP Python SDK v2.
 
 ** Transports
 
-- =stdio=: Zara launches and supervises a local MCP server process.
-- Streamable HTTP: remote/local HTTP MCP endpoint.
+- local =stdio=;
+- Streamable HTTP.
 
-Legacy HTTP+SSE is not a Zara configuration transport for new servers.
+Legacy HTTP+SSE is not the new-server configuration path.
 
-** Discovery and tools
+** Discovery
 
-Zara discovers tools, fixed resources, resource templates, and prompts. MCP tools join the existing agent registry rather than forming a second agent/tool runtime.
+Zara discovers tools, fixed resources, resource templates, and prompts. Remote tools join the existing agent =ToolRegistry= rather than creating an MCP-specific agent stack.
 
-Stable internal tool identities are namespaced by server. Name collisions with native or other remote tools are rejected.
+Stable internal tool identities are namespaced by server. Collisions with native/other remote tools are rejected.
 
-** Lifecycle
+** Lifecycle and failure isolation
 
-Each server owns its own async session/actor. One failed server does not collapse unrelated servers. Timeouts/caller cancellation are scoped to the request. Transport/protocol failures mark that server failed and Zara reconnects for future operations.
+Each server owns its own async session/actor. One failed server does not collapse unrelated servers. Request timeout/caller cancellation are operation-scoped. Transport/protocol failure marks that server failed and Zara may reconnect it for future work.
 
-Failed effectful calls are *never automatically replayed* after reconnect.
+Failed effectful calls are never automatically replayed after reconnect.
 
-** Configuration and security
+** Configuration/security
 
-Managed MCP configuration is written to an owner-only companion file. Environment references can be resolved at connection time; diagnostics redact configured headers/environment values. HTTP URLs carrying userinfo credentials are rejected.
+Managed MCP config is written owner-only. Environment references can be resolved at connection time; configured headers/environment values are redacted from diagnostics; URLs carrying userinfo credentials are rejected.
 
-A stdio server runs with Zara's OS privileges, because subprocesses remain stubbornly literal about what “local integration” means.
+A stdio MCP server still runs with Zara's OS privileges. The acronym does not negotiate with Unix.
 
 Read [[file:../wiki/mcp.org][the MCP guide]] and [[file:config/mcp.org][literate MCP config]].
 
@@ -298,25 +293,25 @@ Read [[file:../wiki/mcp.org][the MCP guide]] and [[file:config/mcp.org][literate
 
 Status: *Optional, shipped*.
 
-** Legacy tool plugins
+** Legacy tool modules
 
 Public Python modules can export =register_tools(prolog_engine)= or =register_skills(prolog_engine)= and return LangChain tools.
 
 ** Service plugin API v1
 
-Long-running integrations export =create_plugin()=. =RuntimeHost= owns the returned object's lifecycle and calls =start(runtime)= / =stop()=.
+Long-running integrations export =create_plugin()=. =RuntimeHost= owns the returned service lifecycle and calls =start(runtime)= / =stop()=.
 
-The per-plugin runtime facade exposes only:
+The per-plugin facade exposes only:
 
 - runtime status;
-- that plugin's own config table;
+- the plugin's own config table;
 - bounded provider-neutral event subscriptions;
 - canonical runtime-command dispatch;
 - bounded managed workers.
 
-It does not hand plugins Qt widgets, concrete backend internals, microphone objects, Prolog objects, Pets internals, or a parallel event bus.
+It does not hand plugins Qt widgets, concrete backend internals, microphone objects, Prolog objects, Pet internals, or a parallel event bus.
 
-Plugin failures are isolated and diagnosed without dumping private plugin config.
+Plugin failures are isolated and diagnostics omit private plugin configuration.
 
 Read [[file:../wiki/plugins.org][plugins.org]] and [[file:architecture.org][architecture.org]].
 
@@ -324,28 +319,28 @@ Read [[file:../wiki/plugins.org][plugins.org]] and [[file:architecture.org][arch
 
 Status: *Shipped, still evolving*.
 
-The current PySide6 desktop shell includes:
+The PySide6 desktop currently includes:
 
 - one process-level =QApplication=;
 - =DesktopController= owning tray/windows/runtime bridge;
-- one =RuntimeHost= behind the UI;
+- one =RuntimeHost=;
 - Quick Copilot;
 - Full Chat;
 - shared =ConversationService= / SQLite-backed conversation state;
-- Quick → Full handoff to the same conversation id;
+- Quick → Full handoff to the same conversation id without resubmission;
 - provider-neutral runtime status updates;
 - command completion/failure propagation;
 - runtime restart/shutdown actions;
 - native chat/code widgets;
-- tray fallback that shows a reachable window when a tray is unavailable.
+- a reachable full-window fallback when no tray exists.
 
-The desktop does not own a second Prolog engine, second agent, or private tool registry.
+The desktop does not create a second Prolog engine, second agent, or private tool registry.
 
 ** Diagnostics
 
 Status: *Partial*.
 
-There is a stable diagnostics request/status hook, but the large diagnostics surface described in older design work should not be treated as fully landed.
+A stable diagnostics request/status hook exists. The larger diagnostics ideas in historical design material should not be treated as fully landed.
 
 ** Explicit context attachments
 
@@ -353,15 +348,15 @@ Status: *Not implemented end to end*.
 
 See the agent section above.
 
-Read [[file:architecture.org][current architecture]]. [[file:desktop-copilot-design.md][desktop-copilot-design.md]] is retained for research/design rationale.
+[[file:desktop-copilot-design.md][desktop-copilot-design.md]] remains useful design history. Use [[file:architecture.org][architecture.org]] for current ownership/boundaries.
 
 * Pets
 
 Status: *Optional, shipped*.
 
-Pets are native PySide6 overlays driven by Zara runtime activity, not executable plugin packages.
+Pets are native PySide6 overlays driven by provider-neutral runtime activity.
 
-Current aggregate states:
+Aggregate states, highest priority first:
 
 1. =needs-input=
 2. =blocked=
@@ -369,13 +364,11 @@ Current aggregate states:
 4. =running=
 5. =idle=
 
-Higher states win when activity overlaps.
+Pet packages are data-only manifests plus PNG/WebP sprites. Zara can import native packages and compatible ChatGPT/Codex V1/V2 assets, remembers position/scale/selection, respects reduced-motion settings, and supports read-only discovery of known local ChatGPT/Codex Pet locations.
 
-Pet packages are data-only manifests plus PNG/WebP sprites. Zara can import native packages and compatible ChatGPT/Codex V1/V2 assets, remembers position/scale/selection, supports reduced motion, and has read-only discovery for known local ChatGPT/Codex pet locations.
+Linux is the tested platform. X11 generally provides the strongest overlay behavior; Wayland behavior depends on compositor support and may use XWayland/xcb for the Pet process.
 
-Linux is the tested platform. X11 generally offers the strongest overlay behavior; Wayland support depends on compositor behavior and may use XWayland/xcb for the Pet process.
-
-Read [[file:pets.md][full Pets docs]].
+Read [[file:pets.md][full Pets docs]] and [[file:../wiki/pets.org][operational notes]].
 
 * Packaging, install, and tests
 
@@ -389,35 +382,33 @@ Status: *Supported path*.
 
 Status: *Best-effort, unsupported*.
 
-=setup.py= / =MANIFEST.in= install Python modules, console scripts, and Prolog resources, but the project does not promise to solve system SWI-Prolog/audio/model dependencies outside Nix.
+=setup.py= / =MANIFEST.in= install Python modules, console scripts, and Prolog resources, but do not solve every system SWI-Prolog/audio/model/Qt dependency on arbitrary hosts.
 
 ** Regression gate
 
-The repository's full local gate is:
-
 #+begin_src sh
 nix develop -c bash scripts/test-all.sh
-#+end_src
-
-and flake checks are available with:
-
-#+begin_src sh
 nix flake check
 #+end_src
 
-See [[file:../wiki/install.org][Install & Configuration]].
+Pull requests also require the GitHub Actions test job at the exact proposed head. An older green SHA is nostalgia, not validation.
 
-* Things visible in architecture but not shipped
+See [[file:../wiki/install.org][Install, Build, and Validate Zara]].
 
-These are called out because interfaces and design documents make them easy to overclaim:
+* Visible interfaces and research that are not shipped features
+
+These are called out because they are easy to overclaim:
 
 - =zara --voice= one-shot mode: *not implemented*.
-- Runtime backend attachment =context_ids=: *not wired into LangGraph*.
-- Runtime backend voice start/stop/mute commands: contract exists, current backend does not implement them.
-- Runtime backend tool approval/rejection commands: contract exists, current backend does not implement them.
-- Prolog-RLM runtime backend: *removed/not supported*.
-- Long-lived ZeroMQ daemon/client architecture: roadmap/research, not current master behavior.
-- Autoresearch loop work living in draft/research branches: not current master behavior.
-- Draft Prolog capability-selection PRs: not current master behavior until merged and revalidated.
+- =context_ids= attachments: command/interface shape exists; LangGraph path is not wired.
+- runtime backend voice start/stop/mute commands: interface hooks exist; current backend reports unsupported.
+- runtime backend tool approval/rejection commands: interface hooks exist; current backend reports unsupported.
+- general unit conversion: *not implemented*; timer unit normalization is narrower.
+- alarms: recognized but explicitly unsupported.
+- historical media/device/navigation parser verbs: several remain stubs/no-handler; see [[file:commands.org][commands.org]].
+- Prolog-RLM runtime backend: removed/not supported.
+- long-lived ZeroMQ daemon/client architecture: roadmap/research, not current master behavior.
+- autoresearch work on draft/research branches: not current master behavior.
+- draft Prolog capability-selection work: not current master behavior until merged and revalidated.
 
 Future work belongs in [[https://github.com/lost-rob0t/zara/issues/1][roadmap issue #1]], not in the present tense here.
