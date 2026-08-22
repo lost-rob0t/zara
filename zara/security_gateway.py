@@ -229,16 +229,30 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             )
             return
 
+        principal_id = enrolled.principal.principal_id
         from zara.protocol import ZaraProtocolError, decode_message
 
         try:
             message = decode_message(frames[1:], limits=self._limits).message
         except ZaraProtocolError:
+            try:
+                self._quotas.acquire_request(principal_id)
+            except QuotaExceeded:
+                self._send(
+                    socket,
+                    route,
+                    _security_error(
+                        reply_to=None,
+                        code="quota_exceeded",
+                        message="resource quota exceeded",
+                    ),
+                )
+                return
+            self._quotas.release_request(principal_id)
             super()._receive(_PreloadedSocket(socket, frames))
             return
 
         started_ns = time.monotonic_ns()
-        principal_id = enrolled.principal.principal_id
         try:
             self._quotas.acquire_request(principal_id)
         except QuotaExceeded:
