@@ -81,3 +81,19 @@
 - Minimal daemon implementation :: =3a7b307f72016e01ca8869a40e6ed79c9edccc59= threads the supervisor's authenticated principal into the existing =AgentRuntimeBackend -> AgentManager= path. It explicitly preserves service-plugin management by supplying =plugin_paths= when using the principal-aware backend factory.
 - Test-contract correction :: =fa098b2e52c48e69edf95ef8ebc24ef31c0da20d= unwraps the =EventEnvelope.event= field in the event-isolation assertions; no runtime semantics are weakened.
 - Candidate gate :: exact-head CI #358 / run =32601832386= started for =fa098b2e52c48e69edf95ef8ebc24ef31c0da20d=; result pending at log update time.
+
+** Live conversation-context ownership TDD
+- Pre-slice review baseline :: =0420d98da746d6efbdd848b13c6907843fae95c5= was exact-head green in CI #368 before this additional adversarial boundary was added.
+- Rationale :: daemon isolation previously depended on one =AgentManager= instance per principal but the mutable LangChain =ConversationManager= itself carried no owner identity. Make that ownership explicit without inventing a second durable conversation subsystem.
+- Tests-only candidate :: =46a8330f453def30f060af9dc4fb9bfa283dc684=.
+- GitHub Actions :: CI #369, run =32603697114=.
+- Expected red :: 1 failed, 890 passed, 14 warnings; ZARA/1 91/91 PASS; Arch and Ubuntu shared-mic jobs PASS.
+- Exact red reason :: =test_agent_manager_binds_live_conversation_context_to_explicit_principal= failed with =AttributeError: 'ConversationManager' object has no attribute 'principal'=.
+- Minimal production commits :: =981ae77113c09f3712a565acbd13dd2f4b8e1f31= adds optional canonical-principal binding and fail-closed type validation to =ConversationManager=; =4880f2adb2b66265b70d860c64378c4f7d804d6e= threads the daemon/runtime principal from =AgentManager= into that live conversation context.
+- Green candidate :: =4880f2adb2b66265b70d860c64378c4f7d804d6e=.
+- GitHub Actions :: CI #371, run =32603997715= completed GREEN: full =Run all tests= PASS, =nix flake check= PASS, packaged Zara build PASS, shared-mic Arch PASS, shared-mic Ubuntu PASS.
+- Ownership reconciliation :: durable conversation/message persistence remains the existing principal-bound =ConversationStore= and is not duplicated. =ConversationManager= is transient live model context scoped to the exact server-side =PrincipalContext= and remains object-distinct for concurrent principal runtimes. The daemon does not accept a payload-selected owner for either boundary.
+- Architecture verdict :: no new iteration required; the added evidence strengthens Iteration 1's object-scoped ownership design.
+
+** Final merge gate
+- This log update changes the PR head, so its resulting exact-head CI is authoritative for merge. Merge only after that final head is green and PR #148 remains mergeable.
