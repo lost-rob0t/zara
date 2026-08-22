@@ -115,3 +115,27 @@ def test_agent_manager_binds_memory_manager_to_explicit_principal(monkeypatch):
     assert manager.memory_manager.principal is alice
     assert manager.memory_manager.principal_id == alice.principal_id
     assert manager.memory_manager.principal_kind == alice.kind
+
+
+def test_agent_manager_binds_live_conversation_context_to_explicit_principal(monkeypatch):
+    from zara.agent import AgentManager
+    from zara.agent.tools.registry import ToolRegistry
+
+    config = MinimalRuntimeConfig()
+    alice = principal("alice")
+    bob = principal("bob")
+
+    monkeypatch.setattr(
+        AgentManager,
+        "_create_llm_client",
+        lambda self, _llm_config: object(),
+    )
+    monkeypatch.setattr(ToolRegistry, "load_builtin_tools", lambda self, memory_manager=None: None)
+    monkeypatch.setattr(ToolRegistry, "load_user_tools", lambda self, plugin_dir: None)
+
+    alice_manager = AgentManager(config=config, principal=alice)
+    bob_manager = AgentManager(config=config, principal=bob)
+
+    assert alice_manager.conversation_manager.principal is alice
+    assert bob_manager.conversation_manager.principal is bob
+    assert alice_manager.conversation_manager is not bob_manager.conversation_manager
