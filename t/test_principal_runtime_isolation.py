@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import queue
 
 import pytest
 
@@ -74,7 +75,7 @@ def test_principal_event_subscriptions_do_not_cross_runtime_buses():
             conversation_id="same-label",
             label="alice private",
         )
-        with pytest.raises(TimeoutError):
+        with pytest.raises(queue.Empty):
             bob_events.get(timeout=0.01)
 
         runtime.submit(bob, bob_command).result(timeout=0.2)
@@ -82,7 +83,7 @@ def test_principal_event_subscriptions_do_not_cross_runtime_buses():
             conversation_id="same-label",
             label="bob private",
         )
-        with pytest.raises(TimeoutError):
+        with pytest.raises(queue.Empty):
             alice_events.get(timeout=0.01)
     finally:
         alice_events.close()
