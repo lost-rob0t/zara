@@ -15,7 +15,8 @@ The important distinction throughout the docs is *shipped behavior on =master=* 
 |------+------------+-----------|
 | Install or build Zara | [[file:../wiki/install.org][Install & Configuration]] | [[file:cli.org][CLI]] |
 | See everything Zara can currently do | [[file:features.org][Feature map]] | [[file:architecture.org][Architecture]] |
-| Run a command or choose a mode | [[file:cli.org][CLI and entry points]] | [[file:../wiki/install.org][Install]] |
+| Run a command or choose a mode | [[file:cli.org][CLI and entry points]] | [[file:commands.org][Command truth table]] |
+| See which deterministic commands really execute | [[file:commands.org][Deterministic commands]] | [[file:config/prolog.org][Prolog config]], =kb/intents.pl=, =modules/commands.pl= |
 | Configure Zara | [[file:configuration.org][Configuration guide]] | [[file:config/main.org][Main config]], [[file:config/prolog.org][Prolog config]], [[file:config/mcp.org][MCP config]] |
 | Work on wake/voice | [[file:voice.org][Voice pipeline]] | [[file:STT.md][STT backends]] |
 | Pick an STT backend | [[file:STT.md][STT backends]] | [[file:voice.org][Voice pipeline]] |
@@ -23,7 +24,7 @@ The important distinction throughout the docs is *shipped behavior on =master=* 
 | Add an MCP server | [[file:../wiki/mcp.org][MCP guide]] | [[file:config/mcp.org][Literate MCP config]] |
 | Write a Zara plugin | [[file:../wiki/plugins.org][Plugin guide]] | [[file:architecture.org][Runtime boundary]] |
 | Use or create Pets | [[file:pets.md][Full Pets docs]] | [[file:../wiki/pets.org][Operational notes]] |
-| Change Prolog intents/commands | [[file:features.org][Feature map]] | [[file:config/prolog.org][Prolog config]], =kb/=, =modules/= |
+| Change Prolog intents/commands | [[file:commands.org][Command truth table]] | [[file:config/prolog.org][Prolog config]], =kb/=, =modules/= |
 | Change runtime boundaries | [[file:architecture.org][Architecture]] | [[file:../AGENTS.md][AGENTS.md]] |
 | Check what is planned next | [[https://github.com/lost-rob0t/zara/issues/1][Roadmap issue #1]] | Relevant design/research PRs |
 
@@ -36,7 +37,8 @@ These documents describe what is expected to work on current =master=:
 - [[file:../README.org][README.org]] — project overview and fast path.
 - [[file:features.org][features.org]] — exhaustive user-facing feature inventory and status.
 - [[file:architecture.org][architecture.org]] — current runtime and ownership boundaries.
-- [[file:cli.org][cli.org]] — commands, modes, and entry points.
+- [[file:cli.org][cli.org]] — modes, entry points, and flags.
+- [[file:commands.org][commands.org]] — deterministic intents, real handlers, stubs, and unsupported actions.
 - [[file:voice.org][voice.org]] — end-to-end voice lifecycle.
 - [[file:STT.md][STT.md]] — transcription backend matrix and model examples.
 - [[file:configuration.org][configuration.org]] — configuration files, precedence, and setting families.
@@ -82,6 +84,7 @@ Documentation should point at the boundary that owns a behavior instead of dupli
 | Concern | Owning code/data |
 |---------+------------------|
 | CLI/modes | =zara/__main__.py=, =setup.py=, =flake.nix= |
+| Deterministic command recognition/effects | =zara/command_gate.py=, =kb/intents.pl=, =modules/command_loop.pl=, =modules/commands.pl= |
 | Runtime lifecycle | =zara/runtime/= |
 | Desktop shell | =zara/desktop/= |
 | Agent | =zara/agent/= |
@@ -103,6 +106,6 @@ Documentation should point at the boundary that owns a behavior instead of dupli
 
 * Keeping this sane
 
-When a feature changes, update the page that owns the explanation and then update links/status in [[file:features.org][features.org]] if the user-visible capability changed. When a new configuration family appears, add it to [[file:configuration.org][configuration.org]] and the relevant literate config. When a design graduates into working code, move the claim out of the design document and into current docs.
+When a feature changes, update the page that owns the explanation and then update links/status in [[file:features.org][features.org]] if the user-visible capability changed. When a new configuration family appears, add it to [[file:configuration.org][configuration.org]] and the relevant literate config. When a deterministic verb gains or loses a real effect, update [[file:commands.org][commands.org]] rather than leaving a parser synonym to impersonate a feature. When a design graduates into working code, move the claim out of the design document and into current docs.
 
 The contributor rules in [[file:../AGENTS.md][AGENTS.md]] are the final maintenance checklist.
