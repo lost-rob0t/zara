@@ -1,0 +1,314 @@
+#+title: Zara configuration
+#+options: toc:3 num:nil
+
+* Three files, three jobs
+
+Zara has three user-facing configuration layers because not every setting belongs to the same runtime.
+
+| Layer | Usual path | Owns |
+|-------+------------+------|
+| Main TOML | =$XDG_CONFIG_HOME/zarathushtra/config.toml= | Python runtime, voice, providers, tools, memory, desktop-adjacent settings, plugins, Pets, todos |
+| Prolog config | user =config.pl= loaded by the Prolog config loader | symbolic mappings, commands, sounds, Prolog-side todo formatting/provider facts |
+| MCP overlay | =~/.config/zarathushtra/mcp.toml= | server changes written by =zara mcp add/enable/disable/remove= |
+
+The generated main TOML is the broad runtime configuration. The Prolog file is code-shaped because it contains validated facts. The MCP overlay exists so a management command does not need to rewrite a person's entire main config because one server was disabled.
+
+Annotated, copyable examples:
+
+- [[file:config/main.org][Main TOML]]
+- [[file:config/prolog.org][Prolog config]]
+- [[file:config/mcp.org][MCP config]]
+
+* Main TOML
+
+** Location
+
+With =XDG_CONFIG_HOME=:
+
+#+begin_example
+$XDG_CONFIG_HOME/zarathushtra/config.toml
+#+end_example
+
+otherwise:
+
+#+begin_example
+~/.config/zarathushtra/config.toml
+#+end_example
+
+Zara creates the file on first use. Invalid TOML stops configuration loading with the file path and parser diagnostic. It is not silently replaced with defaults, because quietly discarding someone's configuration is a fairly hostile interpretation of “fallback.”
+
+** Main sections
+
+| Section | Purpose |
+|---------+---------|
+| =[wake]= | microphone/wake behavior, stop phrases, interruption, queue/time bounds |
+| =[wake.acknowledgement]= | immediate acknowledgement phrases/provider/voice/cache behavior |
+| =[stt]= | STT provider/model/device and VAD tuning |
+| =[tts]= | synthesis provider, endpoint/voice/model and timeouts |
+| =[llm]= | OpenAI/Anthropic/Ollama model/provider/timeouts/retries/history |
+| =[agent]= | conversation grace, max graph steps, system prompt, backend |
+| =[latency]= / =[latency.budgets]= | JSONL timing and deterministic p95 gates |
+| =[prolog]= | main Prolog program/load behavior |
+| =[tools]= | tool-family enable flags |
+| =[file_tools]= | read/write roots and byte bound |
+| =[database]= | shared SQLite path |
+| =[todo]= | default todo status/duration |
+| =[noaa]= | weather location/user-agent defaults |
+| =[memory]= | Chroma/embedding/retrieval settings |
+| =[modules]= | external Python plugin discovery/autoload |
+| =[plugins]= | generic service-plugin lifecycle bounds and private plugin tables |
+| =[pets]= | Pet enable/selection/scale/motion/position defaults |
+| =[dictate]= | dictation model/device/workers/stop phrases |
+| =[mcp]= / =[mcp.servers.*]= | optional MCP servers declared directly in the main config |
+
+The canonical Python default text lives in =zara/config.py=. [[file:config/main.org][config/main.org]] explains the fields without becoming a competing default implementation.
+
+* Main config precedence
+
+Within the normal Python runtime, explicit invocation arguments can override config for that invocation. Examples include STT provider/model/device and dictation stop phrases.
+
+Provider-specific environment variables may also supply credentials/endpoints. The exact precedence is subsystem-specific; the important cases are documented with each setting instead of inventing one universal rule that the code does not actually implement.
+
+For MCP, the companion =mcp.toml= has a specific merge rule described below.
+
+* LLM configuration
+
+Current providers are:
+
+- =ollama=
+- =openai=
+- =anthropic=
+
+The important bounded-work settings are:
+
+#+begin_src toml
+[llm]
+provider = "ollama"
+model = ""
+endpoint = ""
+connect_timeout = 5.0
+read_timeout = 20.0
+total_timeout = 30.0
+max_retries = 2
+history_limit = 20
+#+end_src
+
+OpenAI and Anthropic credentials normally come from =OPENAI_API_KEY= and =ANTHROPIC_API_KEY=; matching config key fields remain supported. Leave =endpoint= empty for provider defaults unless you are intentionally using a compatible proxy/local endpoint.
+
+Agent configuration is separate:
+
+#+begin_src toml
+[agent]
+conversation_timeout = 3600
+post_tts_silence_seconds = 2.0
+max_steps = 10
+system_prompt = ""
+#+end_src
+
+=system_prompt= may be inline text or a file path according to the agent loader. The only supported runtime backend is LangGraph; stale alternate backend values should fail rather than resurrect removed runtime paths.
+
+* Voice configuration
+
+Voice behavior spans =[wake]=, =[stt]=, =[tts]=, =[agent]=, and =[latency]=. That is a lot of knobs, so the lifecycle explanation lives in [[file:voice.org][voice.org]] and backend/model details live in [[file:STT.md][STT.md]].
+
+Useful defaults include bounded microphone buffering, Silero VAD thresholds/times, remote TTS timeouts, conversation grace, and payload-free latency metrics.
+
+See [[file:config/main.org][the complete annotated example]].
+
+* File tools
+
+Agent file tools are disabled by default:
+
+#+begin_src toml
+[tools]
+file_tools = false
+
+[file_tools]
+readable_roots = ["."]
+writable_roots = ["."]
+max_bytes = 20000
+#+end_src
+
+When enabled, the configured roots are security boundaries, not suggestions. Paths outside them, symlinks, and special files are rejected. Writes are bounded and atomic and require overwrite permission when a target already exists.
+
+Relative roots resolve from Zara's repository/runtime root according to the tool implementation. Prefer explicit absolute roots for a long-lived personal installation where the current directory is not meant to define access.
+
+* Memory
+
+The generated config enables memory and asks for persistent Chroma storage:
+
+#+begin_src toml
+[memory]
+enabled = true
+persist_directory = "~/.local/share/zarathushtra/chroma"
+collection_name = "zara_memory"
+embedding_backend = "onnx"
+embedding_model = "all-MiniLM-L6-v2"
+top_k = 5
+max_chars = 1200
+summary_max_chars = 4000
+#+end_src
+
+Embedding backends include ONNX, Ollama, and sentence-transformers. Persistent failure causes an explicit =local_fallback= state. It does not mean the data is still durable.
+
+For an Ollama embedding path, use the memory-specific endpoint/model settings supported by =MemoryManager= and environment variables such as =ZARA_MEMORY_OLLAMA_URL= / =OLLAMA_HOST= where appropriate.
+
+* Plugins
+
+Discovery paths live under =[modules]=:
+
+#+begin_src toml
+[modules]
+search_paths = [
+  "~/.zarathushtra/plugins",
+  "~/.zarathushtra/modules",
+]
+autoload = []
+#+end_src
+
+Generic service-plugin resource bounds live under =[plugins]=:
+
+#+begin_src toml
+[plugins]
+lifecycle_timeout = 5.0
+event_queue_size = 256
+max_managed_workers = 8
+#+end_src
+
+Plugin-owned configuration is nested under its metadata name:
+
+#+begin_src toml
+[plugins.event-observer]
+enabled = true
+#+end_src
+
+That private table is copied only to the matching plugin facade and is not dumped into generic diagnostics. See [[file:../wiki/plugins.org][plugins.org]].
+
+* Pets
+
+Static defaults are under =[pets]=. Runtime UI state such as the selected Pet/position also lives in the Pet state file under the XDG config directory.
+
+#+begin_src toml
+[pets]
+enabled = false
+selected_pet = "zara-default"
+scale = 1.0
+reduced_motion = "system"
+default_x = 100
+default_y = 100
+#+end_src
+
+The full behavior and storage layout are documented in [[file:pets.md][pets.md]].
+
+* Prolog user configuration
+
+Python TOML does not replace Prolog facts.
+
+The Prolog defaults in =kb/config.pl= cover:
+
+- application/direct-app mappings;
+- search engine;
+- dictation command;
+- timer/alarm sounds;
+- todo destination/context mode/format/templates;
+- Prolog-side LLM provider/model/endpoint facts.
+
+The user config loader validates supported forms and installs them into the appropriate config/intent modules. Reloaded user values replace prior user overrides rather than accumulating duplicate stale facts forever.
+
+Command-valued facts should prefer argument lists:
+
+#+begin_src prolog
+app_mapping(browser, ["xdg-open", "https://example.com"]).
+dictation_command(["zara-dictate", "small"]).
+#+end_src
+
+Legacy constrained whitespace strings remain supported in some places, but shell syntax is rejected and runtime launches do not interpolate through a shell.
+
+Read [[file:config/prolog.org][the annotated Prolog config]].
+
+* MCP configuration
+
+MCP servers can be declared in main =config.toml=:
+
+#+begin_src toml
+[mcp.servers.filesystem]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/Documents"]
+#+end_src
+
+or managed through =zara mcp= commands. Managed writes go to:
+
+#+begin_example
+~/.config/zarathushtra/mcp.toml
+#+end_example
+
+Servers in the companion file override same-named server definitions from the main TOML. This is server-level overlay behavior, not a blanket replacement of the main config.
+
+Managed MCP config is written owner-only because literal headers/environment values may contain secrets. Prefer =${ENV_VAR}= references anyway. URL userinfo credentials are rejected.
+
+Read [[file:config/mcp.org][the literate MCP config]] and [[file:../wiki/mcp.org][MCP guide]].
+
+* Secrets
+
+Do not put credentials into documentation examples or diagnostics.
+
+Common secret paths:
+
+- =OPENAI_API_KEY=
+- =ANTHROPIC_API_KEY=
+- =GROQ_API_KEY=
+- ElevenLabs config credentials
+- MCP headers/environment values, preferably via =${NAME}= references
+
+MCP diagnostic rendering redacts configured secret values. Plugin diagnostics do not expose plugin-private config. Latency metrics do not contain prompts/transcripts/credentials/audio.
+
+Those controls reduce accidental disclosure. They do not make a third-party plugin or MCP server trustworthy.
+
+* Database and state paths
+
+The generated SQLite default is:
+
+#+begin_example
+~/.local/share/zarathushtra/zara.db
+#+end_example
+
+It backs shared application data including desktop conversations and newer todo storage.
+
+Other subsystem paths include:
+
+- Chroma memory under the configured =[memory].persist_directory=;
+- latency metrics under XDG state unless overridden;
+- managed Pets under XDG data;
+- Pet runtime state under XDG config;
+- MCP companion config under the Zara config directory.
+
+See the subsystem docs for exact semantics instead of assuming every XDG path has identical lifecycle/backup requirements.
+
+* Validation
+
+Configuration changes should pass the full repository gate:
+
+#+begin_src sh
+nix develop -c bash scripts/test-all.sh
+#+end_src
+
+and:
+
+#+begin_src sh
+nix flake check
+#+end_src
+
+The validation code intentionally rejects invalid provider names, nonpositive timeout/resource bounds, malformed root lists, invalid Pet settings, and similar configuration errors early.
+
+* Related docs
+
+- [[file:config/main.org][Literate main TOML]]
+- [[file:config/prolog.org][Literate Prolog config]]
+- [[file:config/mcp.org][Literate MCP config]]
+- [[file:voice.org][Voice pipeline]]
+- [[file:STT.md][STT backends]]
+- [[file:../wiki/plugins.org][Plugin API]]
+- [[file:../wiki/mcp.org][MCP client]]
+- [[file:pets.md][Pets]]
+- [[file:../wiki/install.org][Install and validation]]

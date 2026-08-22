@@ -1,36 +1,63 @@
 #+title: Zara user plugins
+#+options: toc:3 num:nil
 
-* Installation and discovery
+* What a plugin is allowed to be
 
-Zara discovers public =*.py= files in each =[modules].search_paths= directory.
-The default user installation path is:
+Zara supports small tool modules and versioned long-running service plugins.
+
+The important constraint is what a plugin is *not*: it is not a second Zara runtime. It should not create its own event bus, speech pipeline, timer scheduler, notification subsystem, agent, or secret route into Qt internals.
+
+Service plugins get a narrow facade over [[file:../docs/architecture.org][RuntimeHost]]. That keeps an external integration useful without making every plugin a new architecture.
+
+Related:
+
+- [[file:../docs/features.org][Feature map]]
+- [[file:../docs/architecture.org][Runtime architecture]]
+- [[file:../docs/configuration.org][Configuration]]
+- [[file:../docs/config/main.org][Literate main config]]
+
+* Discovery
+
+Zara discovers public =*.py= files in =[modules].search_paths= directories. The generated config includes:
 
 #+begin_example
 ~/.zarathushtra/plugins/
+~/.zarathushtra/modules/
 #+end_example
 
-Files beginning with an underscore are ignored. Discovery is deterministic and
-does not download, update, or package plugins.
+Files beginning with =_= are ignored. Discovery is deterministic and local. Zara does not automatically download, update, package, or bless whatever it finds there.
+
+Configure paths under:
+
+#+begin_src toml
+[modules]
+search_paths = [
+  "~/.zarathushtra/plugins",
+  "~/.zarathushtra/modules",
+]
+autoload = []
+#+end_src
 
 * Legacy tool plugins
 
-Existing tool-only modules remain supported. They export one of:
+Existing tool-only modules remain supported. Export one of:
 
 #+begin_src python
 def register_tools(prolog_engine):
     return [some_langchain_tool]
 
+
 def register_skills(prolog_engine):
     return [some_langchain_tool]
 #+end_src
 
-Returned objects must be LangChain =BaseTool= instances. Tool names must be
-unique.
+Returned objects must be LangChain =BaseTool= instances and tool names must be unique.
+
+This API is intentionally small. If you only need a callable tool, do not invent a long-running service because threads are available and therefore apparently irresistible.
 
 * Service plugin API version 1
 
-A long-running integration exports one factory. Importing the module must not
-start threads, servers, processes, subscriptions, or other resources.
+A long-running integration exports one factory. Importing the module must *not* start threads, network servers, child processes, subscriptions, or other resources. Import discovers the plugin; =start()= starts it.
 
 #+begin_src python
 import queue
@@ -73,62 +100,91 @@ def create_plugin():
     return EventObserver()
 #+end_src
 
-=create_plugin()= is called once for a RuntimeHost lifecycle. =start(runtime)= is
-called once after the runtime backend is ready. =stop()= is called once during
-shutdown, restart, or cleanup after a failed start. A restart creates a fresh
-plugin instance for the new lifecycle.
+=create_plugin()= is called once for a =RuntimeHost= lifecycle. =start(runtime)= runs after the runtime backend is ready. =stop()= runs during shutdown/restart or cleanup after failed startup. A fresh runtime lifecycle creates a fresh plugin instance.
 
-A service may also implement =tools()= and return ordinary LangChain
-=BaseTool= instances. They are registered before =start()= and removed when the
-service fails or stops. The default LangGraph backend supports service tools;
-backends without a tool registry reject them without killing Zara.
+A service may implement =tools()= and return normal LangChain =BaseTool= objects. Zara registers those before =start()= and removes them if the service fails/stops. The current LangGraph backend supports service tools; a backend that cannot register tools is allowed to reject that optional capability without killing the rest of Zara.
 
-* Runtime facade
+* PluginRuntime facade
 
-The object passed to =start()= is a per-plugin =PluginRuntime= facade:
+The object passed to =start()= is a per-plugin facade, not =RuntimeHost= itself.
 
-- =status= returns a snapshot containing =state=, =alive=, and the runtime
-  thread id.
-- =configuration= is a copy of only =[plugins.<plugin-name>]=.
-- =dispatch(command)= submits a =zara.runtime.commands.RuntimeCommand= through
-  =RuntimeHost= and returns a =concurrent.futures.Future=.
-- =subscribe(maxsize=N)= returns an ordered =RuntimeEventSubscription=. Plugin
-  queues must be bounded from 1 through 4096 entries. When full, the oldest
-  event is dropped and =dropped_count= increases. Each plugin may hold at most
-  16 open subscriptions.
-- =start_worker(name, target)= starts a bounded managed worker. =target= receives
-  a =threading.Event= which is set during automatic cleanup.
+** =status=
 
-Plugins import provider-neutral event and command types from =zara.runtime=.
-They must not reach into =RuntimeHost= internals, concrete backends, Qt objects,
-speech providers, Prolog objects, Pet widgets, or desktop controllers.
+Returns a snapshot containing runtime state/aliveness/thread identity useful for health reporting.
 
-The facade exposes only commands implemented by Zara's current RuntimeHost and
-backend. A plugin must handle =UnsupportedRuntimeCommand= for optional
-capabilities. It must not create a parallel runtime, event bus, speech pipeline,
-timer scheduler, notification system, or UI-control path.
+** =configuration=
 
-* Events and threading
+Returns a copy of only:
 
-The canonical event stream is =zara.runtime.bridge=. A subscription delivers
-queue-backed =EventEnvelope= objects; runtime publishers never call plugin or UI
-callbacks directly. Plugins remove a subscription with =subscription.close()=.
-All subscriptions created through the facade are also closed automatically
-after =stop()=.
+#+begin_example
+[plugins.<plugin-name>]
+#+end_example
 
-Service workers may call =runtime.dispatch(...)= from any thread. RuntimeHost
-executes accepted commands on its dedicated asyncio thread. A plugin worker must
-never manipulate a Qt widget directly; Qt updates continue through runtime
-events and =QtRuntimeBridge= signals.
+The plugin does not receive every Zara setting merely because reading dictionaries is easy.
 
-Managed workers are limited by =plugins.max_managed_workers=. Cleanup sets each
-worker's stop event and joins all workers within the lifecycle deadline. Plugin
-=start()= and =stop()= must return promptly and must explicitly release any
-resources they create outside =start_worker()=.
+** =dispatch(command)=
+
+Submits a canonical =zara.runtime.commands.RuntimeCommand= through =RuntimeHost= and returns a =concurrent.futures.Future=.
+
+A plugin should handle =UnsupportedRuntimeCommand= for optional commands. Current runtime interfaces deliberately contain some hooks that the LangGraph backend does not implement yet.
+
+** =subscribe(maxsize=N)=
+
+Returns an ordered =RuntimeEventSubscription= backed by a bounded queue.
+
+Rules:
+
+- size must be 1 through 4096;
+- when full, the oldest event is dropped;
+- =dropped_count= records overflow;
+- a plugin may hold at most 16 subscriptions;
+- close a subscription with =subscription.close()=;
+- runtime cleanup closes remaining plugin subscriptions automatically.
+
+The event stream is provider-neutral. Do not parse backend implementation logs as a substitute for events.
+
+** =start_worker(name, target)=
+
+Starts a managed worker. =target(stop_event)= receives a =threading.Event= that is set during cleanup.
+
+Managed workers are limited by =[plugins].max_managed_workers=. Runtime cleanup signals and joins them within the lifecycle deadline.
+
+If you create resources outside =start_worker()=, =stop()= still needs to release them promptly.
+
+* Threading rules
+
+Runtime publishers never call plugin or UI callbacks directly. Subscription queues are the boundary.
+
+Plugin workers may call =runtime.dispatch(...)= from any thread. =RuntimeHost= executes accepted commands on its dedicated asyncio thread.
+
+A plugin worker must not touch Qt widgets. UI updates flow through runtime events and =QtRuntimeBridge=. Qt is already creative enough about thread affinity without external plugins helping.
+
+* Things plugins must not reach into
+
+Do not retain/use concrete references to:
+
+- =RuntimeHost= internals;
+- concrete agent backends;
+- =AgentManager= internals;
+- Qt widgets/controllers;
+- microphone/VAD/speech provider objects;
+- =PrologEngine= internals;
+- Pet widgets/state internals.
+
+Do not create a parallel:
+
+- runtime;
+- event bus;
+- speech pipeline;
+- timer scheduler;
+- notification system;
+- UI-control path.
+
+If the facade cannot express a legitimate application-level operation, extend the runtime contract rather than tunneling around it from a plugin.
 
 * Configuration
 
-Generic bounds live in the root table:
+Generic resource bounds:
 
 #+begin_src toml
 [plugins]
@@ -137,29 +193,60 @@ event_queue_size = 256
 max_managed_workers = 8
 #+end_src
 
-Plugin-owned settings use a table matching =PluginMetadata.name=:
+Plugin settings use the metadata name:
 
 #+begin_src toml
 [plugins.event-observer]
 enabled = true
 #+end_src
 
-Zara does not interpret or expose a plugin's private settings in diagnostics.
+Zara copies only that private table into the facade. Generic diagnostics do not expose the plugin's private settings.
 
-* Failures, diagnostics, and shutdown
+Full config context: [[file:../docs/configuration.org][configuration.org]] and [[file:../docs/config/main.org][config/main.org]].
 
-=RuntimeHost.plugin_diagnostics()= returns bounded =PluginDiagnostic= records
-with only =name=, =version=, =plugin_type=, =state=, and sanitized =error=.
-Lifecycle states distinguish =installed=, =loaded=, =running=, =stopped=,
-=failed=, and =incompatible=. Tool-only plugins report =loaded= because they do
-not have a service lifecycle.
+* Failure isolation
 
-An incompatible API version is not started. Import, factory, tool, startup,
-managed-worker, and shutdown failures are isolated to that plugin and emit a
-non-fatal =RuntimeError= event. Error text is single-line and bounded; plugin
-configuration is never included.
+=RuntimeHost.plugin_diagnostics()= reports bounded =PluginDiagnostic= records containing only basic identity/type/state and sanitized error text.
 
-On RuntimeHost shutdown, each started service is stopped in reverse discovery
-order. Its subscriptions are closed, managed workers are signalled and joined,
-and registered tools are removed. Repeated host start or shutdown calls do not
-duplicate lifecycle calls.
+Lifecycle states distinguish:
+
+- =installed=
+- =loaded=
+- =running=
+- =stopped=
+- =failed=
+- =incompatible=
+
+Tool-only legacy modules normally report =loaded= because there is no service lifecycle to run.
+
+An incompatible API version is not started. Import, factory, tool, startup, worker, and shutdown failures are isolated to that plugin and produce a non-fatal runtime error event. Error text is bounded/single-line and does not include plugin configuration.
+
+* Shutdown order
+
+On =RuntimeHost= shutdown, started services are stopped in reverse discovery order. Zara then closes their subscriptions, signals/joins managed workers, and unregisters their tools.
+
+Repeated host start/shutdown calls are designed not to duplicate lifecycle calls.
+
+* A practical checklist
+
+Before considering a service plugin done:
+
+1. Import has no side effects.
+2. =metadata.api_version= is supported.
+3. =start()= returns promptly.
+4. All subscriptions are bounded.
+5. Long-running work uses managed workers or is otherwise explicitly cleaned up.
+6. No Qt/backend/Prolog internals leak through the plugin boundary.
+7. Optional runtime commands handle =UnsupportedRuntimeCommand=.
+8. Tool names do not collide.
+9. Errors do not contain private configuration/credentials.
+10. Stop/restart does not leave workers, processes, sockets, or tools behind.
+
+* Related docs
+
+- [[file:../docs/architecture.org][Runtime architecture]]
+- [[file:../docs/features.org][Feature map]]
+- [[file:../docs/configuration.org][Configuration]]
+- [[file:../docs/config/main.org][Literate main config]]
+- [[file:mcp.org][MCP, another external capability path]]
+- [[file:install.org][Install and regression gate]]

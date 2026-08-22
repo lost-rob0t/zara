@@ -1,0 +1,134 @@
+#+title: Zara deterministic commands
+#+options: toc:3 num:nil
+
+* What this documents
+
+This is the current deterministic command surface behind =zara COMMAND= and the Prolog-first part of wake mode.
+
+It is worth documenting separately because =kb/intents.pl= contains more recognizable verbs than =modules/commands.pl= contains completed effects. A parser recognizing =alarm= is not the same thing as Zara supporting alarms. Humans have lost enough afternoons to that distinction.
+
+See [[file:features.org][features.org]] for the whole product and [[file:architecture.org][architecture.org]] for the Prolog/agent split.
+
+* Routing
+
+Zara normalizes text and resolves verbs/slots through Prolog. Wake mode first uses =zara/command_gate.py= as a cheap signal so ordinary questions/chitchat can go directly to the conversational agent instead of paying Prolog-routing latency for no useful reason.
+
+Command-looking utterances include actions such as open/search/dictate/timer/todo/weather. Wake mode can also recover a very short known application target when STT drops the leading verb.
+
+Missing required slots may return a structured pending question. Failed execution remains a failure in =command_result(...)=; reply/TTS generation does not get to convert it into success prose.
+
+* Current command truth table
+
+| Intent / examples | Current behavior |
+|-------------------+------------------|
+| greet: “hello”, “hey”, etc. | Implemented. Returns the deterministic greeting / Python greeting skill depending on path. |
+| open/launch/start/run APP | Implemented. Uses configured app mapping/direct app or constrained direct launch. |
+| search/find/lookup QUERY | Implemented. Builds configured search URL and opens it with =xdg-open=. |
+| dictate / voice-mode start phrases | Implemented through dictation start path. |
+| stopdictation / stopvoice / quitdictation | Implemented through dictation stop path. |
+| timer ... | Implemented. Parsed timer duration/name starts timer and configured completion sound. |
+| alarm ... | *Not supported*. The intent exists; execution explicitly reports that alarms are unsupported and fails. |
+| ask/tell/explain/question words | Routed to conversational/LLM behavior. Wake command gate deliberately avoids hijacking ordinary conversation with these. |
+| todo/add/note/remind/reminder/task | Routed to the Python SQLite todo capture skill. |
+| schedule/sched/plan/set | Routed to Python todo scheduling where the resolver selects that skill. |
+| list/todos/tasks/show | Routed to Python todo listing where selected. |
+| edit/update | Routed to Python todo editing where selected. |
+| export | Routed to Python todo export. |
+| weather/forecast | Routed to the Python NOAA skill. |
+| play MEDIA | Recognized; current Prolog execution only reports “Playing” rather than controlling a media player. Treat as a stub, not a completed media integration. |
+| pause | Recognized; current Prolog execution only reports pause text. Treat as a stub. |
+| resume/next/skip | Intent synonyms exist, but current =commands:execute/2= has no completed handlers. *Not a shipped media-control effect*. |
+| text/message/sms CONTACT MESSAGE | Recognized; current handler reports the requested text but does not send SMS. Stub. |
+| lock/unlock | Intent verbs exist but current deterministic execution does not provide completed handlers. Not a supported device-control effect. |
+| navigate/goto | Intent verbs exist but current deterministic execution does not provide a completed navigation handler. |
+| say ... | Current Prolog handler prints execution information; it is not the normal TTS reply path. |
+| end-conversation phrases | Wake/conversation lifecycle consumes stop phrases; they are not ordinary =commands:execute/2= effects. |
+
+The table intentionally distinguishes recognition from side effects. When implementing one of the stubs, update this page and [[file:features.org][features.org]] in the same change.
+
+* Application launching
+
+Application names can resolve through:
+
+1. =app_mapping(Name, Command)=;
+2. =direct_app(Name)=;
+3. constrained direct executable fallback.
+
+Configured command lists are split into executable + argv and launched without shell interpolation. Prefer:
+
+#+begin_src prolog
+app_mapping(editor, ["emacsclient", "-c"]).
+#+end_src
+
+over shell-looking strings. See [[file:config/prolog.org][the literate Prolog config]].
+
+The configured mappings cover common browsers, terminals, editors, file managers, communication/office/development utilities, directories, and system actions. The mapping's existence still does not guarantee the target program exists on the current host.
+
+* Search
+
+Search uses the configured =search_engine/1= URL template and launches the resulting URL via:
+
+#+begin_example
+xdg-open -- URL
+#+end_example
+
+This is the deterministic browser-search command. It is separate from any richer web/search tool exposed to the conversational agent through MCP or a plugin.
+
+* Timers and alert sounds
+
+Timers are implemented by the Prolog alarm/timer module and use the configured timer completion sound.
+
+An =alarm= intent is present but deliberately fails with “Alarms are not supported.” Do not document future alarm scheduling merely because =alarm_sound/1= configuration and an =alarm.wav= asset exist.
+
+See [[file:config/prolog.org][Prolog sound configuration]].
+
+* Todos
+
+The canonical current interactive todo effects are Python skills over =TodoStore= rather than the deprecated Prolog todo execution path.
+
+The skill surface includes:
+
+- capture;
+- complete;
+- list;
+- reopen;
+- edit;
+- search;
+- schedule;
+- export.
+
+The Prolog knowledge base still contributes intent/context/template behavior for older file-oriented flows. See [[file:features.org][the todo feature section]] for storage/scheduling semantics.
+
+* Weather
+
+=weather= and =forecast= can resolve to =noaa_weather=. The skill uses Zara's NOAA client and configurable default location/user-agent values.
+
+See [[file:config/main.org][main config]].
+
+* Conversation fallback
+
+Questions, statements, and other open-ended text should normally reach LangGraph rather than being forced through a deterministic command handler. That is why =command_gate.py= excludes greetings/question words and borderline conversational verbs from its fast command-trigger set.
+
+The agent may still call the controlled Prolog query tool when symbolic facts are genuinely useful.
+
+* Prolog REPL special commands
+
+The standalone =main.pl= REPL has a few developer/config commands:
+
+| Command | Effect |
+|---------+--------|
+| =help= | Shows REPL help. |
+| =reload_config= | Reloads user Prolog configuration. |
+| =show_config= | Prints selected current Prolog config. |
+| =quit= | Exits the standalone Prolog REPL. |
+
+The normal Python =zara --console= is a Python wrapper over =PrologEngine= and has its own =quit= / =exit= / =q= loop handling.
+
+* Related docs
+
+- [[file:features.org][Feature map]]
+- [[file:architecture.org][Architecture]]
+- [[file:cli.org][CLI]]
+- [[file:config/prolog.org][Literate Prolog config]]
+- [[file:config/main.org][Literate main config]]
+- [[file:voice.org][Wake routing]]

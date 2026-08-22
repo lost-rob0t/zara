@@ -1,0 +1,294 @@
+#+title: Zara architecture
+#+options: toc:3 num:nil
+
+* The useful mental model
+
+Zara has two kinds of work and several ways to ask for it.
+
+Deterministic desktop-assistant commands belong in the Prolog path. Open-ended conversation and tool reasoning belong in the LangGraph path. CLI, wake mode, and the Qt desktop are surfaces over those capabilities, not excuses to implement the assistant again from scratch.
+
+#+begin_example
+                         user surfaces
+
+         CLI      Wake      Dictate      Desktop
+          |         |          |            |
+          +---------+----------+------------+
+                         |
+                 application boundary
+                         |
+                 RuntimeHost / turns
+                         |
+             +-----------+-----------+
+             |                       |
+        deterministic             agent work
+             |                       |
+          SWI-Prolog              LangGraph
+             |                       |
+      rules / commands       native + MCP tools
+             |                       |
+             +-----------+-----------+
+                         |
+               memory / todos / events
+                         |
+              desktop / plugins / pets
+#+end_example
+
+That picture is intentionally a little cleaner than the repository's history. Wake mode still owns older direct voice orchestration in places while the newer desktop runtime boundary grows around it. The architectural rule is the destination: consumers talk through stable commands/events instead of reaching into whichever implementation object is convenient this week.
+
+For the exact feature status, use [[file:features.org][features.org]].
+
+* Process and ownership boundaries
+
+** RuntimeHost
+
+=zara/runtime/host.py= is the application lifecycle boundary used by the desktop and service plugins. It owns a dedicated asyncio runtime thread, backend startup/shutdown, command dispatch, event publication, plugin lifecycle, turn correlation, and cleanup.
+
+The UI is not supposed to call =AgentManager= directly. Plugins are not supposed to call it either. =RuntimeHost= is the place where application-level commands become backend work.
+
+The public command/event types live under =zara/runtime/commands.py= and =zara/runtime/events.py=. Queue-backed subscriptions live in =zara/runtime/bridge.py=.
+
+** Runtime backend
+
+=zara/runtime/backend.py= defines the provider-neutral backend contract. The current executable backend is =LangGraphRuntimeBackend=.
+
+The contract contains hooks for more capabilities than the current backend implements. That is deliberate interface space, not hidden functionality:
+
+- turn submission: implemented;
+- turn cancellation hook: present;
+- dynamic tool registration: implemented for LangGraph;
+- voice start/stop/mute: contract exists, current backend reports unsupported;
+- tool approval/rejection: contract exists, current backend reports unsupported;
+- attached =context_ids=: accepted by the command shape but rejected by the current LangGraph backend when non-empty.
+
+Backend selection is intentionally boring now. =agent.backend= must be =langgraph=. Stale Prolog-RLM backend configuration fails loudly.
+
+** TurnCoordinator and actor-style state
+
+Zara uses Pykka and explicit turn IDs for bounded state ownership and cancellation-related coordination. Voice, model, tool, TTS, and UI work should retain the same logical turn identity where they participate in one request.
+
+The point is not “actors everywhere.” The point is that long-lived state has an owner and asynchronous work has an identity, which is considerably less exciting than debugging a collection of anonymous threads after midnight.
+
+* Deterministic command path
+
+** PrologEngine
+
+=zara/prolog_engine.py= is the only normal Python boundary into SWI-Prolog.
+
+PySWIP embeds a process-wide SWI runtime. Zara serializes consults and queries, including lazy query iteration, so separate Python objects do not race the same interpreter. Query failure, startup failure, and a valid Prolog goal with no solution remain distinguishable states.
+
+User-controlled values are serialized as constrained Prolog terms rather than concatenated into arbitrary executable goals.
+
+** Knowledge and executable logic
+
+The split is conventional:
+
+- =kb/= contains facts/default knowledge;
+- =modules/= contains executable predicates and command/intent logic;
+- =main.pl= wires the application together.
+
+=kb/config.pl= contains shipped defaults. User Prolog configuration is loaded separately and can override supported facts. See [[file:config/prolog.org][the literate Prolog config]].
+
+** Routing contract
+
+The deterministic path resolves a user's text against state-aware intent rules and either executes the corresponding command/skill or reports an unresolved/pending state. It should not claim a command succeeded merely because parsing succeeded.
+
+Wake mode generally attempts this path before treating input as open-ended conversation. The agent also has a controlled =query_prolog= tool for cases where model reasoning genuinely needs symbolic information.
+
+Plain Prolog is an intentional part of Zara. Prolog-RLM is not.
+
+* Conversational path
+
+** AgentManager and LangGraph
+
+=zara/agent/= owns open-ended conversation. =AgentManager= configures provider, history, memory, tools, and graph execution. =zara/agent/graph.py= drives model/tool iterations with a bounded maximum-step count.
+
+Supported model providers are OpenAI, Anthropic, and Ollama. The model-provider code stays behind a common agent contract; desktop widgets should not know which SDK produced a token or final response.
+
+** Tool registry
+
+=zara/agent/tools/registry.py= is the shared tool boundary for the agent.
+
+Sources include:
+
+- native built-in tools;
+- optional file tools;
+- todo tools;
+- legacy external tool plugins;
+- tools returned by service plugins;
+- dynamically prepared MCP tools.
+
+MCP does not get a parallel “MCP agent.” Service plugins do not get their own private LangGraph. Everything that should be callable by the conversational agent enters the same tool registry with collision checks.
+
+** History integrity
+
+Provider message histories containing tool calls have structural constraints. Zara validates tool result groups, keeps them in originating call order, and discards orphaned/duplicate/unknown cross-turn results before serialization.
+
+That sounds fussy because it is. Feeding malformed tool histories to model APIs is an excellent way to turn a deterministic bug into a provider-specific séance.
+
+* MCP boundary
+
+=zara/mcp/= owns external Model Context Protocol clients.
+
+Each configured server has independent session/lifecycle state. A server actor owns its SDK client and transport for the lifetime of the connection. Operations can proceed concurrently across servers.
+
+Supported configured transports are:
+
+- local =stdio=;
+- Streamable HTTP.
+
+Discovery produces tools, resources, resource templates, and prompts. Tools are adapted into the shared LangChain registry; resources/prompts retain their MCP identity and use generic read/render operations.
+
+Failures are isolated by server. A failed transport can reconnect for *future* requests. Zara deliberately does not replay a failed tool call automatically because it may already have changed the outside world.
+
+See [[file:../wiki/mcp.org][MCP client support]] and [[file:config/mcp.org][the literate MCP config]].
+
+* Desktop boundary
+
+** One Qt application, one runtime
+
+=zara/desktop/= is a PySide6 view/controller layer.
+
+=DesktopController= owns the process-level desktop shell:
+
+- tray;
+- Quick Copilot;
+- Full Chat;
+- =QtRuntimeBridge=;
+- one =RuntimeHost=;
+- shared conversation service.
+
+If the system tray is unavailable, the application shows a reachable full window instead of achieving the technically pure but operationally useless state of running invisibly.
+
+** Quick Copilot and Full Chat
+
+Both surfaces use the same durable conversation store. Expanding Quick Copilot into Full Chat selects the same conversation ID. It does not copy messages or submit the turn again.
+
+Conversation persistence is SQLite-backed. Runtime events and command receipts update the shared conversation model and then the visible surfaces.
+
+** Qt thread boundary
+
+Qt widgets stay on the GUI thread. Runtime work stays behind =QtRuntimeBridge= / =RuntimeHost=. Runtime publishers do not call arbitrary widget or plugin callbacks directly.
+
+This is one of the boundaries worth defending aggressively. “It worked when I called the widget from the worker thread” is merely Qt giving you time to regret the decision later.
+
+** Desktop design document
+
+[[file:desktop-copilot-design.md][desktop-copilot-design.md]] records the original research and target architecture. It includes ideas that predate the current implementation. Use this file and [[file:features.org][features.org]] for present-tense behavior.
+
+* Voice boundary
+
+Wake mode predates some of the application-runtime work and still orchestrates a full voice lifecycle directly in =zara/wake.py=.
+
+The major pieces are:
+
+#+begin_example
+microphone
+   |
+input-rate resolution / resample
+   |
+Silero streaming VAD
+   |
+STT backend adapter
+   |
+text normalization / wake handling
+   |
+Prolog command path or AgentManager
+   |
+reply / notification
+   |
+TTS engine
+   |
+playback + barge-in
+#+end_example
+
+The CLI backend-compatibility layer lets wake/dictation reuse the same microphone/VAD code while swapping transcription implementations.
+
+Voice events retain a latency trace ID across stages where possible. See [[file:voice.org][voice.org]].
+
+* Memory and persistence
+
+** Long-term memory
+
+=zara/memory.py= owns conversational memory.
+
+Persistent operation uses ChromaDB. Embeddings may use ONNX MiniLM, Ollama, or sentence-transformers. If persistent initialization or later retrieval breaks, memory falls back to process-local storage and reports =local_fallback= health rather than lying about durability.
+
+Memory differentiates facts, summaries, and transcripts. Agent tools expose retrieval/list/delete operations without giving the model direct access to Chroma internals.
+
+** Conversations
+
+Desktop conversations/messages use the shared SQLite database layer. They are separate from semantic memory. A saved chat is not automatically the same thing as an extracted long-term fact.
+
+** Todos
+
+The newer todo subsystem is also SQLite-backed through =zara/todo_storage.py=. It owns task records, tags, schedules, recurrence expansion, conflict checks, and transactional updates.
+
+The Prolog tree also has older todo context/template logic for symbolic and file-oriented capture. These systems are related by user intent, not by pretending they are the same persistence layer.
+
+* Plugin boundary
+
+External service plugins are lifecycle-managed consumers/producers around =RuntimeHost=.
+
+A plugin receives a per-plugin =PluginRuntime= facade, not the host object itself. The facade allows:
+
+- status snapshots;
+- a copy of =[plugins.<name>]= configuration;
+- canonical runtime command dispatch;
+- bounded event subscriptions;
+- bounded managed workers.
+
+Subscriptions drop the oldest item on overflow and count drops. Workers receive a stop event and are cleaned up by the runtime lifecycle. Startup/shutdown failures remain isolated to the plugin.
+
+Plugins must not manipulate Qt directly, create another runtime/event bus, or retain references to concrete agent/Prolog/microphone/Pet internals.
+
+See [[file:../wiki/plugins.org][the service plugin API]].
+
+* Pets boundary
+
+Pets are consumers of aggregate runtime activity. They are not execution authorities.
+
+=zara/pets/= reduces runtime activity into one visible state and renders an untrusted-data sprite package in a transparent Qt overlay. Pet packages cannot contain executable scripts or network hooks.
+
+Standalone Pets can consume event transport outside the main UI process; when integrated with Zara they still derive state from runtime events rather than becoming another source of assistant truth.
+
+See [[file:pets.md][Pets documentation]].
+
+* Configuration ownership
+
+Zara intentionally has more than one config file because Python runtime settings and symbolic Prolog facts are not the same kind of thing.
+
+- main TOML: Python/runtime/provider/UI settings;
+- Prolog user config: symbolic facts and mappings;
+- MCP overlay TOML: server changes managed by the MCP CLI.
+
+The precedence and examples are documented in [[file:configuration.org][configuration.org]]. Annotated examples live under [[file:config/main.org][config/main.org]], [[file:config/prolog.org][config/prolog.org]], and [[file:config/mcp.org][config/mcp.org]].
+
+* Security boundaries worth remembering
+
+Zara is experimental, not security-audited, but several boundaries are explicit:
+
+- file tools are off by default and root constrained;
+- Prolog user terms are serialized through constrained helpers;
+- MCP URL credentials are rejected and configured secrets are redacted;
+- managed MCP config is owner-only;
+- stdio MCP servers are executable programs running as the Zara user;
+- plugin config is not dumped into generic diagnostics;
+- memory delete-all requires explicit confirmation in the agent tool;
+- Pet packages are data-only;
+- latency metrics exclude conversational/credential/audio payloads.
+
+Those controls do not magically turn third-party tools/plugins/MCP servers into trusted code. They establish where trust decisions belong.
+
+* What is deliberately not current architecture
+
+The following concepts may exist in issues, interfaces, or research branches, but they are not the current =master= runtime:
+
+- a selectable Prolog-RLM backend;
+- the researched long-lived =zara --daemon= ZeroMQ client/server architecture;
+- end-to-end desktop context attachments;
+- backend voice-control commands through =RuntimeHost=;
+- a general tool approval/rejection UI through the current backend;
+- draft capability-resolver work not merged to =master=;
+- draft autoresearch runtime work not merged to =master=.
+
+Track future architecture in [[https://github.com/lost-rob0t/zara/issues/1][issue #1]].

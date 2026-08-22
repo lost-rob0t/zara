@@ -3,49 +3,70 @@
 
 * Overview
 
-Zarathushtra Pets are optional animated desktop companions that reflect
-the live state of the Zara runtime. They are built natively in Python
-with PySide6/Qt6 — no Electron or Node.js required.
+Zarathushtra Pets are optional animated desktop companions that reflect live Zara runtime activity. They are native PySide6/Qt6 overlays, not Electron apps and not executable plugin packages.
+
+For the full package/import/manifest/platform documentation, read [[file:../docs/pets.md][docs/pets.md]]. For where Pets sit in the runtime, see [[file:../docs/architecture.org][architecture.org]]. Static settings are annotated in [[file:../docs/config/main.org][the literate main config]].
 
 * Enabling
 
-Run =zara --pets-settings= to open the settings dialog, or =zara --pets=
-to launch the overlay directly.
+Open settings/import UI:
+
+#+begin_src sh
+zara --pets-settings
+#+end_src
+
+Launch the overlay directly:
+
+#+begin_src sh
+zara --pets
+#+end_src
+
+Or launch it alongside wake mode:
+
+#+begin_src sh
+zara --wake --pets
+#+end_src
 
 * Linux display backend
 
-On a Wayland Linux session with XWayland available (=DISPLAY= is set), the
-pet process automatically uses Qt's =xcb= backend. This keeps Zara's main
-runtime on Wayland while preserving the pet overlay's always-on-top and
-client-side drag behavior.
+On a Wayland Linux session with XWayland available (=DISPLAY= is set), the Pet process automatically uses Qt's =xcb= backend. This keeps Zara's main runtime on Wayland while preserving the Pet overlay's always-on-top and client-side drag behavior.
 
-An explicitly configured =QT_QPA_PLATFORM= is respected. Set
-=ZARA_PETS_QPA_PLATFORM= to override the backend for the pet process only.
-If XWayland is unavailable, the pet keeps Qt's native platform selection.
+An explicitly configured =QT_QPA_PLATFORM= is respected. Set =ZARA_PETS_QPA_PLATFORM= to override the backend for the Pet process only. If XWayland is unavailable, the Pet keeps Qt's native platform selection.
+
+Linux is the tested platform. “Qt can probably open a window elsewhere” is not the same sentence as “we support that platform.”
 
 * States
 
 | State        | Priority | Meaning                                  |
 |--------------+----------+------------------------------------------|
-| needs-input  |        4 | Waiting for approval/confirmation        |
+| needs-input  |        4 | Waiting for approval/confirmation/input  |
 | blocked      |        3 | Fatal failure / provider unavailable     |
 | ready        |        2 | Finished with unseen output              |
 | running      |        1 | Model/tool/agent/indexing/search active  |
 | idle         |        0 | No active operation                      |
 
+When activities overlap, the highest-priority current state wins. The Pet visualizes runtime state; it does not decide whether work succeeded.
+
 * Import
 
-- *Import Pet...* — import a Zarathushtra-native =pet.json= package.
-- *Import ChatGPT Pet...* — import a ChatGPT V1 (1536×1872) or V2
-  (1536×2288 with =pet.json=) sprite.
-- *Import from ChatGPT...* — discover and import pets from local
-  ChatGPT/Codex application data (read-only).
+- *Import Pet...* imports a Zarathushtra-native =pet.json= package.
+- *Import ChatGPT Pet...* imports a compatible ChatGPT V1 (1536×1872) or V2 (1536×2288 plus =pet.json=) sprite package.
+- *Import from ChatGPT...* discovers compatible Pets in known local ChatGPT/Codex application-data locations, read-only.
+
+Pet packages are data: manifest plus sprite assets. They cannot contain executable scripts/hooks/network references.
 
 * Storage
 
-- Pets: =$XDG_DATA_HOME/zarathushtra/pets/<pet-id>/=
-- Runtime state: =$XDG_CONFIG_HOME/zarathushtra/pet-state.json=
+- managed Pets: =$XDG_DATA_HOME/zarathushtra/pets/<pet-id>/=
+- runtime Pet state: =$XDG_CONFIG_HOME/zarathushtra/pet-state.json=
+- static defaults: =[pets]= in Zara's main =config.toml=
+
+Removing an imported Pet removes Zara's managed copy, not the original source asset.
 
 * See also
 
 - [[file:../docs/pets.md][Full Pets documentation]]
+- [[file:../docs/features.org][Current feature map]]
+- [[file:../docs/architecture.org][Runtime architecture]]
+- [[file:../docs/config/main.org][Literate main config]]
+- [[file:../docs/cli.org][CLI]]

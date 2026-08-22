@@ -1,0 +1,228 @@
+#+title: Literate Zara Prolog configuration
+#+options: toc:3 num:nil
+
+* Why Prolog has its own config
+
+Zara's TOML config controls Python/runtime settings. Prolog configuration controls symbolic facts used by the deterministic command system.
+
+Keeping those separate is useful. An application alias is knowledge consumed by Prolog; it does not need to become a Python conditional because TOML happens to be fashionable.
+
+Canonical shipped defaults live in =kb/config.pl=. User facts are loaded through =modules/config_loader.pl= into the supported config/intent modules.
+
+See [[file:../configuration.org][configuration.org]] for the complete config map.
+
+* User file
+
+The normal user override is a =config.pl= under Zara's user configuration location, commonly:
+
+#+begin_example
+~/.config/zarathushtra/config.pl
+#+end_example
+
+Only supported generated/user fact forms should live there. The loader validates values before installing overrides.
+
+This document gives examples. It is not meant to be copied wholesale unless you actually want every override.
+
+* Application mappings
+
+The safest command shape is an executable/argument list:
+
+#+begin_src prolog
+app_mapping(browser, ["xdg-open", "https://example.com"]).
+app_mapping(editor, ["emacsclient", "-c"]).
+app_mapping(files, ["xdg-open", "/home/me"]).
+#+end_src
+
+Then deterministic commands such as “open browser” can resolve a known target without asking an LLM to manufacture a shell command.
+
+Legacy whitespace-only command strings remain accepted in constrained paths, but argument lists make boundaries clearer and avoid shell parsing entirely.
+
+Do not put shell metacharacter programs into a string and expect the launcher to interpret them. Zara deliberately does not interpolate these mappings through a shell.
+
+* Direct applications
+
+=direct_app/1= marks names that may be treated as direct application targets by the resolver:
+
+#+begin_src prolog
+direct_app(emacs).
+direct_app(kitty).
+direct_app(firefox).
+#+end_src
+
+Keep this list to programs you genuinely expect Zara to launch by name.
+
+* Search
+
+The deterministic =search= intent uses a URL template:
+
+#+begin_src prolog
+search_engine("https://duckduckgo.com/?q=~w").
+#+end_src
+
+The command layer substitutes the encoded query into the supported template. This is separate from agent/MCP search tools, which may exist as richer conversational capabilities.
+
+* Dictation launcher
+
+The Prolog command path can launch dictation with an argv-style command:
+
+#+begin_src prolog
+dictation_command(["zara-dictate", "small"]).
+#+end_src
+
+The main unified CLI also has =zara --dictate=. See [[file:../cli.org][cli.org]].
+
+* Timer and alarm sounds
+
+Timer and alarm completion sounds are separate facts:
+
+#+begin_src prolog
+timer_sound("/home/me/.local/share/zara/timer.wav").
+alarm_sound("/home/me/.local/share/zara/alarm.wav").
+#+end_src
+
+Use the unquoted atom =disabled= to disable one:
+
+#+begin_src prolog
+timer_sound(disabled).
+alarm_sound(disabled).
+#+end_src
+
+Quoted ="disabled"= is a string, not the disable sentinel. Other non-path values are rejected.
+
+Bundled defaults live under =assets/sounds/= and are played by the existing command path.
+
+* Todo destination and format
+
+The older Prolog/file-oriented todo path has its own formatting facts:
+
+#+begin_src prolog
+todo_destination("~/todo.org").
+todo_context_mode(infer).
+todo_format(org).
+#+end_src
+
+Supported context modes are:
+
+- =infer=
+- =infer_with_llm=
+- =llm_only=
+
+Supported output formats are =org= and =markdown=.
+
+For Markdown you can set a separate destination:
+
+#+begin_src prolog
+todo_destination_md("~/todo.md").
+todo_format(markdown).
+#+end_src
+
+This configuration belongs to the Prolog/file-oriented capture/template path. Zara also has a newer SQLite-backed =TodoStore= used by agent tools. Those are related features but not one storage implementation. See [[file:../features.org][features.org]].
+
+* Todo templates
+
+Templates can use placeholders such as:
+
+- ={task}=
+- ={tag}=
+- ={category}=
+- ={created}=
+- ={scheduled}=
+- ={scheduled_org}=
+- ={scheduled_line}=
+- ={due_suffix}=
+- ={cursor}=
+
+A compact Org template:
+
+#+begin_src prolog
+todo_template(org,
+"* TODO {task} :{tag}:
+:PROPERTIES:
+:CREATED:  {created}
+:CATEGORY: {category}
+:END:
+{scheduled_line}{cursor}
+
+").
+#+end_src
+
+A compact Markdown template:
+
+#+begin_src prolog
+todo_template(markdown,
+"- [ ] {task}{due_suffix}  <!-- tag:{tag} cat:{category} created:{created} -->
+  - {cursor}
+
+").
+#+end_src
+
+If you change a template, test a scheduled and an unscheduled task. Formatting bugs have a remarkable ability to remain invisible until the first time you actually need the generated file.
+
+* Prolog-side LLM facts
+
+Some Prolog modules have provider-neutral LLM facts:
+
+#+begin_src prolog
+llm_provider(ollama).
+llm_model("llama3.2:latest").
+llm_endpoint("http://localhost:11434/api/chat").
+#+end_src
+
+Supported provider atoms are =ollama=, =openai=, and =anthropic= where the Prolog client supports them.
+
+These are not the same table as Python =[llm]= configuration. If you use both paths, configure both intentionally instead of assuming one secretly mirrors the other.
+
+Remote credentials should come from the provider's supported environment/config mechanism rather than being sprayed through example facts.
+
+* User verb/intention overrides
+
+User-defined verb mappings are loaded into the user-intent knowledge layer. A simple example:
+
+#+begin_src prolog
+verb_intent("summon", play, 1).
+verb_intent("yo", greet, 0).
+#+end_src
+
+Keep intent arity aligned with the resolver and command implementation. Adding a catchy synonym is easy; creating a mapping whose required slots can never be filled is also easy, just less charming.
+
+For repository-level intent additions, follow [[file:../../AGENTS.md][AGENTS.md]] and update the canonical =kb/intents.pl= / resolver behavior together.
+
+* Minimal personal example
+
+A realistic small user override might be:
+
+#+begin_src prolog
+app_mapping(browser, ["firefox"]).
+app_mapping(editor, ["emacsclient", "-c"]).
+direct_app(firefox).
+direct_app(emacsclient).
+
+search_engine("https://duckduckgo.com/?q=~w").
+dictation_command(["zara-dictate", "small"]).
+
+timer_sound(disabled).
+alarm_sound(disabled).
+
+todo_destination("~/org/todo.org").
+todo_context_mode(infer).
+todo_format(org).
+#+end_src
+
+Only add facts you want to override. The shipped defaults remain in =kb/config.pl=.
+
+* Reload and validation behavior
+
+The config loader installs validated user facts into the supported modules. Reloading replaces earlier user overrides rather than accumulating an archaeological layer of old facts in the running process.
+
+Malformed/unsupported values should fail at the config boundary. Do not work around validation by constructing arbitrary Prolog goals from Python strings.
+
+All normal Python access to Prolog should continue through =zara/prolog_engine.py=.
+
+* Related docs
+
+- [[file:../configuration.org][Configuration overview]]
+- [[file:main.org][Literate main TOML]]
+- [[file:../features.org][Current Prolog/todo features]]
+- [[file:../architecture.org][Prolog/runtime boundary]]
+- [[file:../cli.org][CLI]]
+- [[file:../../AGENTS.md][Contributor rules]]

@@ -1,0 +1,111 @@
+#+title: Zara documentation
+#+options: toc:2 num:nil
+
+* Read this before spelunking
+
+Zara has enough moving parts now that “open whatever file sounds relevant” stopped being a documentation strategy.
+
+This page is the map.
+
+The important distinction throughout the docs is *shipped behavior on =master=* versus *research, plans, and roadmap work*. If a design document describes something clever but [[file:features.org][features.org]] says it is not wired yet, it is not wired yet. Architecture prose does not get voting rights over the executable.
+
+** I want to...
+
+| Goal | Start here | Then read |
+|------+------------+-----------|
+| Install or build Zara | [[file:../wiki/install.org][Install & Configuration]] | [[file:cli.org][CLI]] |
+| See everything Zara can currently do | [[file:features.org][Feature map]] | [[file:architecture.org][Architecture]] |
+| Run a command or choose a mode | [[file:cli.org][CLI and entry points]] | [[file:commands.org][Command truth table]] |
+| See which deterministic commands really execute | [[file:commands.org][Deterministic commands]] | [[file:config/prolog.org][Prolog config]], =kb/intents.pl=, =modules/commands.pl= |
+| Configure Zara | [[file:configuration.org][Configuration guide]] | [[file:config/main.org][Main config]], [[file:config/prolog.org][Prolog config]], [[file:config/mcp.org][MCP config]] |
+| Work on wake/voice | [[file:voice.org][Voice pipeline]] | [[file:STT.md][STT backends]] |
+| Pick an STT backend | [[file:STT.md][STT backends]] | [[file:voice.org][Voice pipeline]] |
+| Understand desktop behavior | [[file:features.org][Feature map]] | [[file:architecture.org][Architecture]], [[file:desktop-copilot-design.md][original desktop design]] |
+| Add an MCP server | [[file:../wiki/mcp.org][MCP guide]] | [[file:config/mcp.org][Literate MCP config]] |
+| Write a Zara plugin | [[file:../wiki/plugins.org][Plugin guide]] | [[file:architecture.org][Runtime boundary]] |
+| Use or create Pets | [[file:pets.md][Full Pets docs]] | [[file:../wiki/pets.org][Operational notes]] |
+| Change Prolog intents/commands | [[file:commands.org][Command truth table]] | [[file:config/prolog.org][Prolog config]], =kb/=, =modules/= |
+| Change runtime boundaries | [[file:architecture.org][Architecture]] | [[file:../AGENTS.md][AGENTS.md]] |
+| Check what is planned next | [[https://github.com/lost-rob0t/zara/issues/1][Roadmap issue #1]] | Relevant design/research PRs |
+
+* Documentation layers
+
+** Current behavior
+
+These documents describe what is expected to work on current =master=:
+
+- [[file:../README.org][README.org]] — project overview and fast path.
+- [[file:features.org][features.org]] — exhaustive user-facing feature inventory and status.
+- [[file:architecture.org][architecture.org]] — current runtime and ownership boundaries.
+- [[file:cli.org][cli.org]] — modes, entry points, and flags.
+- [[file:commands.org][commands.org]] — deterministic intents, real handlers, stubs, and unsupported actions.
+- [[file:voice.org][voice.org]] — end-to-end voice lifecycle.
+- [[file:STT.md][STT.md]] — transcription backend matrix and model examples.
+- [[file:configuration.org][configuration.org]] — configuration files, precedence, and setting families.
+- [[file:pets.md][pets.md]] — full Pet package, import, UI, and platform behavior.
+- [[file:../wiki/install.org][wiki/install.org]] — supported install/build/test path.
+- [[file:../wiki/mcp.org][wiki/mcp.org]] — MCP client and management CLI.
+- [[file:../wiki/plugins.org][wiki/plugins.org]] — external plugin contract.
+- [[file:../wiki/pets.org][wiki/pets.org]] — short Pets operational guide.
+
+** Literate configuration examples
+
+The config docs are meant to be read, copied, and modified without opening =zara/config.py= in one window and guessing in another.
+
+- [[file:config/main.org][config/main.org]] — annotated =config.toml=.
+- [[file:config/prolog.org][config/prolog.org]] — annotated user =config.pl= / symbolic overrides.
+- [[file:config/mcp.org][config/mcp.org]] — annotated =mcp.toml= and MCP server examples.
+
+They are documentation, not a second source of defaults. Canonical Python defaults still live in =zara/config.py=; canonical Prolog defaults live in =kb/config.pl=; MCP merge/validation rules live in =zara/mcp/config.py=.
+
+** Research and design history
+
+[[file:desktop-copilot-design.md][desktop-copilot-design.md]] is valuable because it records why the desktop architecture was chosen. It is not the current-feature checklist. Some of it landed. Some of it did not. Some of it has been superseded by the runtime that now exists.
+
+That pattern applies to research PRs too. A draft PR can explain future architecture without becoming product documentation by osmosis.
+
+* Status language
+
+The docs use a small vocabulary on purpose:
+
+- *Shipped* — present on =master= and expected to be covered by the repository's regression gate.
+- *Optional* — shipped, but disabled or unused until configured.
+- *Experimental* — present on =master= but still rough or deliberately narrow.
+- *Unsupported* — code may be portable, but this project does not promise the platform/install path.
+- *Not implemented* — visible placeholder, CLI flag, interface hook, or design concept with no working current path.
+- *Roadmap* — tracked future work, normally in [[https://github.com/lost-rob0t/zara/issues/1][issue #1]].
+
+Please do not “upgrade” *Not implemented* to *Experimental* because a class name exists. Humans have suffered enough from optimistic README files.
+
+* Source-of-truth map
+
+Documentation should point at the boundary that owns a behavior instead of duplicating implementation details forever.
+
+| Concern | Owning code/data |
+|---------+------------------|
+| CLI/modes | =zara/__main__.py=, =setup.py=, =flake.nix= |
+| Deterministic command recognition/effects | =zara/command_gate.py=, =kb/intents.pl=, =modules/command_loop.pl=, =modules/commands.pl= |
+| Runtime lifecycle | =zara/runtime/= |
+| Desktop shell | =zara/desktop/= |
+| Agent | =zara/agent/= |
+| Native tools | =zara/agent/tools/= |
+| MCP | =zara/mcp/= |
+| Voice lifecycle | =zara/wake.py=, =zara/streaming_stt.py=, =zara/audio.py= |
+| STT adapters | =zara/stt_backends.py=, =zara/whisper_cpp.py= |
+| TTS | =zara/tts/= |
+| Memory | =zara/memory.py= |
+| Todos | =zara/todo_storage.py=, =zara/todo_skills.py= |
+| Python skill bridge | =zara/python_skills.py= |
+| Prolog boundary | =zara/prolog_engine.py= |
+| Prolog knowledge | =kb/= |
+| Prolog logic | =modules/= |
+| Pets | =zara/pets/= |
+| Main TOML defaults | =zara/config.py= |
+| Prolog defaults | =kb/config.pl= |
+| Tests | =t/= and =scripts/test-*.sh= |
+
+* Keeping this sane
+
+When a feature changes, update the page that owns the explanation and then update links/status in [[file:features.org][features.org]] if the user-visible capability changed. When a new configuration family appears, add it to [[file:configuration.org][configuration.org]] and the relevant literate config. When a deterministic verb gains or loses a real effect, update [[file:commands.org][commands.org]] rather than leaving a parser synonym to impersonate a feature. When a design graduates into working code, move the claim out of the design document and into current docs.
+
+The contributor rules in [[file:../AGENTS.md][AGENTS.md]] are the final maintenance checklist.

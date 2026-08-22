@@ -1,0 +1,276 @@
+#+title: Zara voice pipeline
+#+options: toc:3 num:nil
+
+* What voice mode actually is
+
+Zara's working voice assistant is =--wake=. It is a long-lived pipeline that owns microphone capture, wake detection, VAD, transcription, routing, acknowledgement, replies, TTS, interruption, and conversation grace.
+
+=zara --voice= is a parser placeholder and is not implemented. =--dictate= is the standalone speech-to-text path. See [[file:cli.org][cli.org]] for the command map.
+
+* End-to-end flow
+
+#+begin_example
+PASSIVE microphone capture
+        |
+        v
+   Silero streaming VAD
+        |
+ passive transcription / wake phrase
+        |
+        v
+      ACTIVE
+        |
+ acknowledged immediately
+        |
+ capture one utterance with VAD
+        |
+        v
+   selected STT backend
+        |
+        v
+ normalize / strip wake phrase
+        |
+        +--------------------+
+        |                    |
+ deterministic command   conversation
+        |                    |
+      Prolog              LangGraph
+        |                    |
+        +---------+----------+
+                  |
+       notification / reply
+                  |
+                 TTS
+                  |
+       conversation grace or PASSIVE
+#+end_example
+
+Wake mode is intentionally hybrid. “Open Firefox” should not need a model to debate the nature of opening Firefox. A broad question can move into the conversational agent instead.
+
+* Wake detection
+
+Current accepted wake forms include:
+
+- =zarathustra=
+- =hey zara=
+- =zara=
+- =sarah=
+- =sara=
+
+The wake phrase and command may arrive together. “Zara, open Firefox” can route immediately after transcription.
+
+If the recognizer gives only a short known application target after wake, Zara can use the canonical Prolog application table to recover the missing =open= intent. Unknown targets stay conversational rather than being launched as invented commands.
+
+A standalone wake word returns Zara to active listening without sending the wake word itself to the LLM.
+
+* Microphone and sample rate
+
+The configured =wake.sample_rate= is Zara's target rate. If the selected input device cannot capture that rate directly, Zara can use the device's supported rate and resample into the target pipeline.
+
+The real-time callback writes into a bounded queue. When that queue fills, old audio is dropped instead of allowing latency to grow without bound.
+
+Before speech analysis, microphone PCM is normalized to finite =float32= samples, clipped to the valid range, and corrected for meaningful DC offset. Wake diagnostics can distinguish silence from saturated audio that VAD does not recognize as speech.
+
+* Silero VAD
+
+Both passive wake capture and active utterance capture use Silero VAD at 16 kHz.
+
+Important settings live in =[stt]=:
+
+- =vad_threshold= controls speech sensitivity;
+- =min_speech_ms= confirms that speech really started;
+- =trailing_silence_ms= decides when an utterance is finished;
+- =max_utterance_ms= caps a continuous utterance;
+- =no_speech_timeout_ms= prevents endless active waiting;
+- =pre_speech_buffer_chunks= keeps the beginning of speech that arrived just before confirmation;
+- =partial_transcript_ms= controls partial-transcript cadence.
+
+The generated defaults are annotated in [[file:config/main.org][config/main.org]].
+
+* Speech-to-text backends
+
+The audio/VAD path is shared while transcription is selected independently.
+
+Current adapters cover faster-whisper, whisper.cpp, the reference OpenAI Whisper package, sherpa-onnx model families, OpenAI transcription, and Groq transcription.
+
+Do not duplicate backend-specific model instructions here. [[file:STT.md][STT.md]] is the source for model layouts, provider examples, Vulkan/whisper.cpp behavior, and remote credentials.
+
+* Faster-whisper quality path
+
+Wake mode already has a VAD boundary. Final faster-whisper decoding therefore does not run another VAD pass over the already-segmented utterance.
+
+Passive wake detection uses a lighter decode configuration than final command transcription. Independent turns do not condition on previous decoded text. This avoids a class of failures where a valid Silero segment gets damaged by a second segmentation/conditioning pass.
+
+* Dictation
+
+Dictation is a separate continuous STT utility:
+
+#+begin_src sh
+zara --dictate
+#+end_src
+
+It can run multiple transcription workers while committing text in original capture order. Stop phrases are configurable from TOML or the CLI and are matched after normalization of case, spacing, and punctuation.
+
+Read [[file:cli.org][cli.org]] for examples.
+
+* Immediate acknowledgement
+
+A wake turn can play a short acknowledgement as soon as Zara accepts the utterance.
+
+This is deliberately not “Done” or another premature success claim. The default phrase set uses neutral responses such as “Okay,” “One sec,” and “Let me check.” Acknowledgement audio can be cached/prewarmed so the feedback happens before the expensive part of the turn.
+
+Settings live under =[wake.acknowledgement]=:
+
+- =enabled=
+- =phrase= / =phrases=
+- =provider=
+- =voice=
+- =volume=
+
+The acknowledgement layer can use the selected provider path and falls back conservatively if its own initialization fails.
+
+* Routing after transcription
+
+The recognized utterance can become:
+
+1. a deterministic Prolog command;
+2. a conversation stop/control;
+3. an open-ended agent turn.
+
+State matters. Passive, active, dictation, and conversation contexts are not treated as interchangeable bags of words.
+
+The Prolog command loop reports structured success/failure. A reply sink or TTS problem does not retroactively change whether the underlying command ran.
+
+See [[file:commands.org][commands.org]] for the exact deterministic command/stub surface and [[file:features.org][features.org]] for the Prolog/agent split.
+
+* Text-to-speech
+
+=zara/tts/= provides one typed synthesis/playback contract over four provider families:
+
+| Provider | Behavior |
+|----------+----------|
+| =local= | Piper when installed/model available; otherwise espeak. |
+| =11labs= | ElevenLabs remote synthesis; streaming chunks supported. |
+| =edge= | Edge TTS; currently synthesized then chunked for playback. |
+| =qwen3= | Qwen3 TTS endpoint; full synthesis returned as one chunk. |
+
+=qwen= is accepted as a compatibility alias for =qwen3=.
+
+Remote work is bounded by =connect_timeout=, =read_timeout=, and =total_timeout=. Returned audio is validated before Zara treats synthesis as successful.
+
+A new utterance can replace/cancel active playback instead of queueing speech behind a response the user no longer wants.
+
+* Barge-in
+
+When =wake.stop_tts_on_input = true=, user speech can interrupt Zara while TTS is playing.
+
+The interruption path is tracked separately from normal synthesis. Latency metrics include an interruption-to-playback-stop stage so the system can be tested for responsiveness rather than judged by vibes.
+
+* Speaker-echo guard
+
+Barge-in is not the same thing as blindly listening to the speakers.
+
+When Zara is about to collect a new utterance and a TTS task is still active, capture waits for that playback boundary and discards queued microphone audio from the playback epoch before starting the next collection pass. That prevents Zara from treating its own reply leaking through the microphone as fresh user speech.
+
+When no TTS task is active, the microphone queue is left alone. The regression tests cover both sides of that behavior so the “fix” does not become “throw away real speech whenever audio is inconvenient.”
+
+* Conversation grace
+
+After a response, Zara can keep the conversational context active long enough for a follow-up without requiring another wake word.
+
+Two timings matter:
+
+- =agent.post_tts_silence_seconds=: short grace immediately after speech playback;
+- =agent.conversation_timeout=: longer inactivity deadline for conversation mode.
+
+Wake/stop phrases can explicitly end the conversation and return to passive listening.
+
+* Memory during voice sessions
+
+Wake mode starts a memory session. Session messages can later be stored as bounded transcripts or caller-supplied summaries through =MemoryManager=.
+
+Semantic long-term memory is a separate subsystem from immediate =ChatHistory=. Its persistence and fallback behavior are documented in [[file:features.org][features.org]] and [[file:configuration.org][configuration.org]].
+
+* Latency instrumentation
+
+If =[latency].enabled = true=, Zara writes structured JSONL events to the configured path, otherwise to the XDG state location.
+
+The default path is:
+
+#+begin_example
+$XDG_STATE_HOME/zarathushtra/latency.jsonl
+#+end_example
+
+with =~/.local/state/zarathushtra/latency.jsonl= as the normal fallback.
+
+The trace is designed for timings, not surveillance. It does not contain:
+
+- transcript text;
+- prompts;
+- credentials;
+- raw audio bytes.
+
+Default deterministic p95 gates cover:
+
+- wake → first acknowledgement audio;
+- speech end → final transcript;
+- first reply text chunk → first TTS audio;
+- barge-in → playback stop.
+
+Provider LLM latency is reported but not given a universal hard budget. Network services are already capable of inventing enough failure modes without us pretending a local test can legislate their response time.
+
+Benchmark and regression commands are in [[file:../wiki/install.org][wiki/install.org]].
+
+* Configuration example
+
+A minimal local voice setup:
+
+#+begin_src toml
+[wake]
+sample_rate = 16000
+stop_tts_on_input = true
+first_speech_timeout = 5.0
+audio_queue_chunks = 32
+
+[stt]
+provider = "faster-whisper"
+model = "small"
+device = "cpu"
+threads = 4
+vad_threshold = 0.5
+trailing_silence_ms = 320
+pre_speech_buffer_chunks = 10
+
+[tts]
+provider = "edge"
+connect_timeout = 5.0
+read_timeout = 20.0
+total_timeout = 30.0
+#+end_src
+
+For all settings, use [[file:config/main.org][the literate main config]].
+
+* Debugging path
+
+When voice behavior is wrong, debug it in pipeline order instead of immediately blaming the LLM:
+
+1. confirm the input device has non-silent, non-saturated PCM;
+2. confirm sample-rate selection/resampling;
+3. inspect Silero speech probability and segment boundaries;
+4. inspect final STT text;
+5. inspect Prolog vs agent routing;
+6. inspect provider/tool result;
+7. inspect TTS synthesis/playback and speaker-echo queue handling;
+8. compare latency trace stages.
+
+The wake process also uses its targeted log/PID paths for operational debugging. Do not put secrets or huge provider payloads into new logging just because text files are convenient.
+
+* Related docs
+
+- [[file:STT.md][STT backend and model guide]]
+- [[file:cli.org][CLI modes and flags]]
+- [[file:commands.org][Deterministic command truth table]]
+- [[file:configuration.org][Configuration ownership and precedence]]
+- [[file:features.org][Current feature map]]
+- [[file:architecture.org][Runtime architecture]]
+- [[file:../wiki/install.org][Install, validation, and latency benchmarks]]
