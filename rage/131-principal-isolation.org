@@ -29,3 +29,26 @@
 
 ** Outcome
 - In progress.
+
+** Research completed
+- Dedicated artifact :: =rage/131-principal-isolation-research.org=
+- Decisive finding :: private persistence must be structurally bound to server-side =PrincipalContext=; caller-supplied owner filtering is rejected as too easy to spoof or omit.
+- Existing =RuntimeSupervisor= per-principal event buses are retained as the runtime isolation root rather than replaced.
+
+** Design completed
+- Dedicated artifact :: =rage/131-principal-isolation-design.org=
+- Conversation rows/messages gain immutable principal ownership and every operation predicates on the bound owner.
+- Legacy single-user rows may be claimed only by =PrincipalContext.local_owner()=.
+- =MemoryManager= becomes principal-bound; remote persistent memory uses per-principal collection namespaces plus owner metadata validation; guest/ephemeral principals remain local-only.
+- #51 ContextManager remains separate work; this issue only establishes the ownership boundary it will consume.
+
+** TDD red authority
+- Tests-only candidate :: =1cbfe6b53833e70e4a418a0854080fb1cfa6a188=
+- GitHub Actions :: CI #346, run =32593930022=.
+- Full regression result :: expected RED at pytest phase: 12 failed, 870 passed, 14 warnings.
+- Conversation failures :: 6/6 new tests failed because =ConversationStore.__init__()= does not yet accept =principal=.
+- Memory failures :: 6/6 new tests failed because =MemoryManager.__init__()= does not yet accept =principal=.
+- ZARA/1 protocol/transport :: 91 passed.
+- Shared mic / Arch Linux :: PASS.
+- Shared mic / Ubuntu 24.04 :: PASS.
+- Interpretation :: clean feature-red evidence. Existing unrelated behavior remains green; proceed with minimal production implementation.
