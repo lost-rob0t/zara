@@ -165,25 +165,28 @@ def test_persistent_query_requires_owner_filter_and_drops_mismatched_results(mon
     assert [item["id"] for item in results] == ["alice"]
 
 
-def test_guest_memory_never_initializes_persistent_backend(monkeypatch, tmp_path):
+@pytest.mark.parametrize("kind", ["guest", "ephemeral"])
+def test_transient_memory_never_initializes_persistent_backend(monkeypatch, tmp_path, kind):
     monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", True)
     monkeypatch.setattr(
         memory_module,
         "chromadb",
         SimpleNamespace(
-            PersistentClient=lambda path: pytest.fail("guest must not open persistent memory"),
-            Client=lambda: pytest.fail("guest must not open persistent memory"),
+            PersistentClient=lambda path: pytest.fail(
+                f"{kind} principal must not open persistent memory"
+            ),
+            Client=lambda: pytest.fail(f"{kind} principal must not open persistent memory"),
         ),
     )
-    guest = MemoryManager(
-        principal=PrincipalContext("guest:1", kind="guest"),
+    transient = MemoryManager(
+        principal=PrincipalContext(f"{kind}:1", kind=kind),
         persist_directory=str(tmp_path / "memory"),
         embedding_function=lambda texts: [[1.0] for _ in texts],
     )
 
-    guest.remember_fact("ephemeral secret")
-    assert [item["text"] for item in guest.list_memories()] == ["ephemeral secret"]
-    guest.clear_principal_state()
-    assert guest.list_memories() == []
-    assert guest.sessions == {}
-    assert guest.current_session_id is None
+    transient.remember_fact("ephemeral secret")
+    assert [item["text"] for item in transient.list_memories()] == ["ephemeral secret"]
+    transient.clear_principal_state()
+    assert transient.list_memories() == []
+    assert transient.sessions == {}
+    assert transient.current_session_id is None
