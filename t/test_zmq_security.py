@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import zmq
+from zmq.auth.thread import ThreadAuthenticator
 from zmq.utils import z85
 
 from zara.security import (
@@ -33,6 +34,51 @@ def _registry_with(public_key: str) -> KeyRegistry:
         )
     )
     return registry
+
+
+def _curve_roundtrip(*, wrong_server_pin: bool) -> bool:
+    client_public, client_secret = _pair()
+    server_public, server_secret = _pair()
+    pinned_public = _pair()[0] if wrong_server_pin else server_public
+    registry = _registry_with(client_public)
+    server_config = CurveServerConfig(
+        public_key=server_public,
+        secret_key=server_secret,
+        registry=registry,
+        zap_domain="zara-test",
+    )
+    client_config = CurveClientConfig(
+        public_key=client_public,
+        secret_key=client_secret,
+        server_public_key=pinned_public,
+    )
+
+    context = zmq.Context()
+    authenticator = ThreadAuthenticator(context)
+    server = context.socket(zmq.ROUTER)
+    client = context.socket(zmq.DEALER)
+    try:
+        authenticator.start()
+        authenticator.configure_curve_callback(
+            domain=server_config.zap_domain,
+            credentials_provider=CurveCredentialsProvider(registry),
+        )
+        apply_curve_server(server, server_config)
+        apply_curve_client(client, client_config)
+        server.bind("tcp://127.0.0.1:0")
+        endpoint = server.getsockopt(zmq.LAST_ENDPOINT).decode("ascii")
+        client.connect(endpoint)
+        client.send(b"probe")
+
+        if not server.poll(timeout=500, flags=zmq.POLLIN):
+            return False
+        frames = server.recv_multipart()
+        return frames[-1] == b"probe"
+    finally:
+        client.close(0)
+        server.close(0)
+        authenticator.stop()
+        context.term()
 
 
 def test_curve_server_config_requires_matching_keypair():
@@ -150,7 +196,7 @@ def test_apply_curve_server_sets_curve_mechanism_and_zap_domain():
         context.term()
 
 
-def test_apply_curve_client_sets_curve_mechanism_and_server_pin():
+def test_apply_curve_client_sets_curve_mechanism():
     client_public, client_secret = _pair()
     server_public, _ = _pair()
     config = CurveClientConfig(
@@ -164,7 +210,14 @@ def test_apply_curve_client_sets_curve_mechanism_and_server_pin():
         apply_curve_client(socket, config)
         assert socket.getsockopt(zmq.MECHANISM) == zmq.CURVE
         assert socket.getsockopt(zmq.CURVE_SERVER) == 0
-        assert socket.getsockopt(zmq.CURVE_SERVERKEY) == z85.decode(server_public.encode("ascii"))
     finally:
         socket.close(0)
         context.term()
+
+
+def test_correct_server_pin_completes_authenticated_curve_connection():
+    assert _curve_roundtrip(wrong_server_pin=False) is True
+
+
+def test_wrong_server_pin_cannot_complete_authenticated_curve_connection():
+    assert _curve_roundtrip(wrong_server_pin=True) is False
