@@ -1,8 +1,8 @@
 """Long-lived Zara service lifecycle.
 
 ``zara-server`` owns process lifecycle and RuntimeHost instances. It also owns
-the local-first ZARA/1 gateway lifecycle. Authentication and hard multi-user
-persistence isolation remain ordered work in issues #130-#131.
+the ZARA/1 gateway lifecycle. Issue #130 permits authenticated TCP listeners;
+hard multi-user persistence isolation remains ordered work in issue #131.
 """
 
 from __future__ import annotations
@@ -39,9 +39,17 @@ def _ipc_path_limit() -> int:
     return int(getattr(zmq, "IPC_PATH_MAX_LEN", 0) or 0)
 
 
-def _validate_ipc_endpoint(endpoint: str) -> str:
+def _validate_endpoint(endpoint: str, *, security=None) -> str:
+    if endpoint.startswith("tcp://"):
+        if security is None:
+            raise ValueError("TCP endpoints require CURVE authentication security")
+        from zara.security import CurveServerConfig
+
+        if not isinstance(security, CurveServerConfig):
+            raise TypeError("security must be CurveServerConfig")
+        return endpoint
     if not endpoint.startswith("ipc://"):
-        raise ValueError("TCP and non-IPC endpoints require authentication from issue #130")
+        raise ValueError("only ipc:// or authenticated tcp:// endpoints are supported")
     path = endpoint.removeprefix("ipc://")
     if not path:
         raise ValueError("IPC endpoint path must not be empty")
@@ -75,7 +83,7 @@ def default_zmq_endpoint(runtime_dir: Path | str) -> str:
     max_len = _ipc_path_limit()
     if max_len and len(os.fsencode(candidate)) > max_len:
         candidate = _private_ipc_fallback(runtime_path)
-    return _validate_ipc_endpoint(f"ipc://{candidate}")
+    return _validate_endpoint(f"ipc://{candidate}")
 
 
 class ServerError(RuntimeError):
@@ -438,12 +446,18 @@ class ZaraServer:
         gateway_factory: Optional[GatewayFactory] = None,
         shutdown_timeout: float = 5.0,
         principal: Optional[PrincipalContext] = None,
+        security=None,
         config=None,
     ) -> None:
+        if security is not None:
+            from zara.security import CurveServerConfig
+
+            if not isinstance(security, CurveServerConfig):
+                raise TypeError("security must be CurveServerConfig")
         if endpoint is not None:
             if not isinstance(endpoint, str) or not endpoint.strip():
                 raise ValueError("endpoint must be a non-empty string")
-            endpoint = _validate_ipc_endpoint(endpoint)
+            endpoint = _validate_endpoint(endpoint, security=security)
         self._shutdown_timeout = max(0.1, float(shutdown_timeout))
         self._supervisor = supervisor or RuntimeSupervisor(
             shutdown_timeout=self._shutdown_timeout,
@@ -454,18 +468,20 @@ class ZaraServer:
         self._runtime_dir_override = None if runtime_dir is None else Path(runtime_dir).expanduser()
         self._endpoint_override = endpoint
         self._gateway_factory = gateway_factory or self._build_default_gateway
+        self._security = security
         self._gateway = None
         self._principal = principal or PrincipalContext.local_owner()
         self._state = ServerState.NEW
         self._lock = threading.RLock()
 
-    def _build_default_gateway(self, endpoint: str, *, supervisor, principal):
+    def _build_default_gateway(self, endpoint: str, *, supervisor, principal, security=None):
         from zara.zmq_transport import ZaraZmqGateway
 
         return ZaraZmqGateway(
             endpoint,
             supervisor=supervisor,
             principal=principal,
+            security=security,
         )
 
     @property
@@ -502,11 +518,13 @@ class ZaraServer:
             self._supervisor.start(self._principal)
             supervisor_started = True
             endpoint = self._resolve_endpoint(lease_path)
-            gateway = self._gateway_factory(
-                endpoint,
-                supervisor=self._supervisor,
-                principal=self._principal,
-            )
+            gateway_kwargs = {
+                "supervisor": self._supervisor,
+                "principal": self._principal,
+            }
+            if self._security is not None:
+                gateway_kwargs["security"] = self._security
+            gateway = self._gateway_factory(endpoint, **gateway_kwargs)
             self._gateway = gateway
             gateway.start().result(timeout=self._shutdown_timeout)
             supervisor_state = self._supervisor.state
@@ -580,8 +598,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zara-server",
         description=(
-            "Long-lived Zara assistant service. ZARA/1 is local IPC only until "
-            "transport authentication lands in issue #130."
+            "Long-lived Zara assistant service. Local IPC is available by default; "
+            "TCP requires CURVE authentication configuration."
         ),
     )
     parser.add_argument(
@@ -590,7 +608,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--endpoint",
-        help="Override the local ipc:// ZARA/1 endpoint; TCP is disabled until authentication",
+        help="Override the ZARA/1 endpoint; TCP requires CURVE authentication",
     )
     parser.add_argument(
         "--shutdown-timeout",
