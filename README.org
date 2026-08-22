@@ -30,6 +30,7 @@ If you want to understand the system:
 
 - [[file:docs/index.org][Documentation map]]
 - [[file:docs/features.org][Feature map: what actually exists on master]]
+- [[file:docs/commands.org][Deterministic command truth table]]
 - [[file:docs/architecture.org][Runtime architecture and boundaries]]
 - [[file:docs/voice.org][Voice pipeline]]
 - [[file:wiki/mcp.org][MCP client]]
@@ -51,6 +52,7 @@ Zara is several interfaces over one growing runtime, not seven unrelated assista
 - Dictation mode with ordered commits, parallel transcription, and configurable stop phrases.
 - TTS through local Piper/espeak, ElevenLabs, Edge TTS, or Qwen3 TTS.
 - Barge-in and cancellation so new speech can stop active playback.
+- Speaker-echo protection so post-TTS capture does not immediately feed Zara its own voice.
 - Structured latency traces that deliberately exclude transcript text, prompts, credentials, and audio.
 
 Read [[file:docs/voice.org][the voice overview]] and [[file:docs/STT.md][the STT backend guide]].
@@ -60,6 +62,8 @@ Read [[file:docs/voice.org][the voice overview]] and [[file:docs/STT.md][the STT
 SWI-Prolog handles the deterministic side of Zara: intent resolution, command routing, application mappings, timers, unit conversion, todo context, and related symbolic rules.
 
 The Python boundary is deliberately thin. =zara/prolog_engine.py= serializes access to the process-wide SWI runtime and keeps user-derived terms behind constrained serializers. The command loop emits structured acknowledgement/result events instead of pretending every handler succeeded.
+
+Not every recognized verb has a completed side effect. For example, alarms are explicitly unsupported today, and several old media/device verbs are still recognition/stub territory. [[file:docs/commands.org][commands.org]] is the exact truth table instead of making the README perform interpretive dance around =kb/intents.pl=.
 
 The built-in knowledge base lives under =kb/= and executable Prolog logic under =modules/=. User overrides are separate from Python TOML configuration; see [[file:docs/config/prolog.org][the literate Prolog config]] and [[file:docs/features.org][the feature map]].
 
@@ -176,13 +180,13 @@ Run a deterministic text command:
 zara 'open firefox'
 #+end_src
 
-For installation details, package entry points, GPU/STT notes, and the best-effort Python packaging path, use [[file:wiki/install.org][wiki/install.org]].
+For installation details, package entry points, GPU/STT notes, and the best-effort Python packaging path, use [[file:wiki/install.org][wiki/install.org]]. For what a text command can *actually* execute today, use [[file:docs/commands.org][commands.org]].
 
 ** Command map
 
 | Entry point | What it does | Status |
 |-------------+--------------+--------|
-| =zara COMMAND= | Run one text command through the normal command path. | Shipped |
+| =zara COMMAND= | Run one text command through the normal command path. | Shipped; individual intents vary, see [[file:docs/commands.org][commands.org]] |
 | =zara --desktop= / =zara-desktop= | Native Quick Copilot + Full Chat desktop shell. | Shipped |
 | =zara --wake= / =zara-wake= | Long-running wake/voice assistant. | Shipped |
 | =zara --dictate= / =zara-dictate= | Continuous speech-to-text dictation. | Shipped |
@@ -251,9 +255,10 @@ The documentation is deliberately cross-linked instead of requiring a tour throu
 |----------+----------------|
 | [[file:docs/index.org][docs/index.org]] | You do not know where to start. |
 | [[file:docs/features.org][docs/features.org]] | You want a complete current-feature inventory. |
+| [[file:docs/commands.org][docs/commands.org]] | You need to know which deterministic intents really execute, stub, or fail. |
 | [[file:docs/architecture.org][docs/architecture.org]] | You are changing runtime boundaries or trying to understand the process model. |
-| [[file:docs/cli.org][docs/cli.org]] | You need commands, modes, flags, or entry points. |
-| [[file:docs/voice.org][docs/voice.org]] | You are working on wake, VAD, acknowledgement, TTS, barge-in, or latency. |
+| [[file:docs/cli.org][docs/cli.org]] | You need modes, flags, or entry points. |
+| [[file:docs/voice.org][docs/voice.org]] | You are working on wake, VAD, acknowledgement, TTS, echo protection, barge-in, or latency. |
 | [[file:docs/STT.md][docs/STT.md]] | You need a specific STT backend/model. |
 | [[file:docs/configuration.org][docs/configuration.org]] | You need configuration locations, precedence, or a setting family. |
 | [[file:wiki/install.org][wiki/install.org]] | You are installing, building, or validating Zara. |
@@ -297,7 +302,7 @@ See [[file:wiki/install.org][Install & Configuration]] for the test phases and [
 | =main.pl= | Prolog application entry point. |
 | =kb/= | Prolog facts and defaults. |
 | =modules/= | Prolog command/intent/todo/timer logic. |
-| =docs/= | Current architecture, feature, voice, desktop and config documentation. |
+| =docs/= | Current architecture, feature, command, voice, desktop and config documentation. |
 | =wiki/= | Operational deep dives for install, MCP, plugins and Pets. |
 | =t/= | Python tests. |
 | =scripts/= | Integration, benchmark and regression scripts. |
@@ -309,6 +314,7 @@ See [[file:wiki/install.org][Install & Configuration]] for the test phases and [
 - It is not security-audited.
 - It is not equally supported on Linux, macOS, and Windows.
 - It does not have a working =--voice= one-shot mode just because the flag exists.
+- A recognized Prolog intent is not automatically a completed side effect.
 - Draft architecture in a design document is not a promise that the code already does it.
 - The LLM is not the authority for deterministic commands when Prolog can resolve them.
 
