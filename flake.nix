@@ -370,7 +370,7 @@
             # writable temp dir so tests that resolve ``Path.home()`` work.
             pytest = pkgs.runCommand "zara-check-pytest"
               {
-                nativeBuildInputs = [ pythonLibs pkgs.swi-prolog pkgs.makeWrapper ];
+                nativeBuildInputs = [ pythonLibs pkgs.swi-prolog pkgs.makeWrapper pkgs.cacert ];
                 src = ./.;
               }
               ''
@@ -379,6 +379,8 @@
                 export XDG_RUNTIME_DIR=$(mktemp -d)
                 export ZARA_DICTATION_PIDFILE=$XDG_RUNTIME_DIR/zara_dictation.pid
                 export ZARA_DICTATION_LOGFILE=$XDG_RUNTIME_DIR/zara_dictation.log
+                export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+                export NIX_SSL_CERT_FILE=$SSL_CERT_FILE
                 export LANG=C.UTF-8
                 export LC_ALL=C.UTF-8
                 cp -r $src $out-src
