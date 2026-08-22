@@ -1,0 +1,250 @@
+#+title: Zara CLI and entry points
+#+options: toc:3 num:nil
+
+* The short version
+
+The =zara= command is the unified entry point. Packaging also installs dedicated wrappers for the modes people actually use often.
+
+#+begin_src sh
+zara 'open firefox'
+zara --desktop
+zara --wake
+zara --dictate
+zara --console
+zara --agent
+zara --pets
+zara mcp status
+#+end_src
+
+Nix is the supported way to get those commands. See [[file:../wiki/install.org][Install & Configuration]].
+
+* Installed entry points
+
+| Command | Equivalent unified form | Purpose |
+|---------+-------------------------+---------|
+| =zara= | — | Unified CLI and one-shot text commands. |
+| =zara-desktop= | =zara --desktop= | Native PySide6 desktop. |
+| =zara-wake= | =zara --wake= | Long-running wake assistant. |
+| =zara-dictate= | =zara --dictate= | Continuous dictation. |
+| =zara-console= | =zara --console= | Interactive text console. |
+| =zara-agent= | =zara --agent= | Direct conversational agent loop. |
+| =zara-pets= | =zara --pets= | Desktop Pet overlay. |
+
+The exact packaging definitions live in =setup.py= and =flake.nix=.
+
+* One-shot text commands
+
+Anything left after CLI options becomes one command string:
+
+#+begin_src sh
+zara open firefox
+zara 'search prolog dcg tutorial'
+#+end_src
+
+This uses =ZaraConsole.execute_command()= and exits nonzero when execution reports failure.
+
+Deterministic commands are normally resolved by the Prolog path. See [[file:features.org][the Prolog feature map]].
+
+* Desktop
+
+#+begin_src sh
+zara --desktop
+zara-desktop
+nix run .#zara-desktop
+#+end_src
+
+This starts the native Qt application with Quick Copilot, Full Chat, tray integration where available, and one shared =RuntimeHost=.
+
+Read [[file:architecture.org][architecture.org]] for the runtime boundary.
+
+* Wake mode
+
+#+begin_src sh
+zara --wake
+zara-wake
+#+end_src
+
+Wake mode accepts the STT selection flags documented below and can launch Pets alongside it:
+
+#+begin_src sh
+zara --wake --pets
+#+end_src
+
+Read [[file:voice.org][voice.org]] for the lifecycle and [[file:STT.md][STT.md]] for backend examples.
+
+* Dictation
+
+#+begin_src sh
+zara --dictate
+zara-dictate
+#+end_src
+
+The unified CLI can select model/device/workers and override stop phrases:
+
+#+begin_src sh
+zara --dictate \
+  --stt-provider faster-whisper \
+  --model small \
+  --device cpu \
+  --workers 2 \
+  --stop-phrases 'end voice,stop voice'
+#+end_src
+
+Stop phrase matching ignores case, spacing, and punctuation. If no CLI override is supplied, the =[dictate].stop_phrases= config value is used; an empty list selects Zara's built-in defaults.
+
+* Console and direct agent
+
+** Interactive command console
+
+#+begin_src sh
+zara --console
+zara-console
+#+end_src
+
+Use this when you want the normal command-oriented interface without microphone or Qt.
+
+** Conversational agent
+
+#+begin_src sh
+zara --agent
+zara-agent
+#+end_src
+
+This enters the LangGraph conversational/tool loop directly.
+
+* Pets
+
+Launch the overlay:
+
+#+begin_src sh
+zara --pets
+zara-pets
+#+end_src
+
+Open Pet settings/import UI:
+
+#+begin_src sh
+zara --pets-settings
+#+end_src
+
+See [[file:pets.md][Pets documentation]].
+
+* MCP subcommands
+
+=MCP= is a subcommand family, not another top-level executable.
+
+Inspect configured servers:
+
+#+begin_src sh
+zara mcp list
+zara mcp status
+zara mcp inspect filesystem
+zara mcp tools filesystem
+zara mcp resources filesystem
+zara mcp prompts filesystem
+#+end_src
+
+Add a stdio server:
+
+#+begin_src sh
+zara mcp add filesystem \
+  --transport stdio \
+  --command npx \
+  --arg=-y \
+  --arg=@modelcontextprotocol/server-filesystem \
+  --arg=/home/user/Documents
+#+end_src
+
+Add a Streamable HTTP server:
+
+#+begin_src sh
+zara mcp add research \
+  --transport http \
+  --url https://example.com/mcp \
+  --header 'Authorization=Bearer ${RESEARCH_MCP_TOKEN}'
+#+end_src
+
+Manage it:
+
+#+begin_src sh
+zara mcp disable filesystem
+zara mcp enable filesystem
+zara mcp remove filesystem
+#+end_src
+
+See [[file:../wiki/mcp.org][the MCP guide]] before handing a random stdio server your user account's privileges and hoping its npm package name inspires confidence.
+
+* STT selection flags
+
+The unified wake/dictation CLI exposes:
+
+| Flag | Meaning |
+|------+---------|
+| =--stt-provider PROVIDER= | Select transcription adapter. |
+| =--model MODEL= | Provider-specific model name, directory, or GGML file. |
+| =--mode MODEL= | Historical alias for =--model=. |
+| =--device DEVICE= | =cpu=, =cuda=, =vulkan=, =rocm=, =hip=, or =amd=. |
+| =--threads N= | Local STT inference threads where supported. |
+| =--workers N= | Parallel dictation transcription workers. |
+| =--stop-phrases CSV= | Dictation stop phrase override. |
+
+Current provider choices are:
+
+#+begin_example
+faster-whisper
+whisper-cpp
+whisper / openai-whisper
+sherpa-onnx
+moonshine
+moonshine-v2
+zipformer
+sense-voice
+openai
+groq
+#+end_example
+
+Provider aliases are normalized internally. The detailed requirements and model layouts belong in [[file:STT.md][STT.md]].
+
+** GPU naming
+
+For faster-whisper-style backends, =cuda= remains the GPU token expected by that API.
+
+For whisper.cpp, Zara uses Vulkan for the GPU path. =amd=, =rocm=, and =hip= are accepted convenience spellings and normalize to =vulkan= for whisper.cpp. Passing =--device cuda= to whisper.cpp is rejected with an actionable message.
+
+Wake mode can fall back to CPU when GPU initialization fails with a recognized GPU/runtime error. It does not reinterpret arbitrary application failures as “probably the GPU.”
+
+* Verbose mode
+
+#+begin_src sh
+zara --verbose ...
+#+end_src
+
+The unified CLI accepts =-v= / =--verbose=. Subsystems also write their own targeted diagnostics; voice-specific details are covered in [[file:voice.org][voice.org]].
+
+* The =--voice= trap
+
+The parser exposes =--voice=, but one-shot voice mode is currently *not implemented*.
+
+#+begin_src sh
+zara --voice
+#+end_src
+
+exits with an error and directs the user to =--dictate=.
+
+This is documented explicitly because otherwise a perfectly reasonable person sees a CLI flag and assumes someone connected it to code. We are trying an exotic documentation technique called “not lying.”
+
+* Configuration interaction
+
+CLI defaults come from Zara's generated TOML where appropriate, especially =[stt]= and =[dictate]=. Explicit CLI flags override those values for the current invocation.
+
+Read [[file:configuration.org][configuration.org]] and [[file:config/main.org][the literate main config]].
+
+* Nix invocation
+
+When running through flake apps, arguments after the application need the normal =--= separator where Nix requires it:
+
+#+begin_src sh
+nix run .#zara -- --wake --pets --stt-provider whisper-cpp --model /path/model.bin
+#+end_src
+
+The available flake apps and validation commands are kept in [[file:../wiki/install.org][wiki/install.org]].
