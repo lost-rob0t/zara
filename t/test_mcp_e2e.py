@@ -9,15 +9,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+import httpx2
+import mcp
 import pytest
 
-pytest.importorskip("mcp")
-if int(version("mcp").split(".", 1)[0]) < 2:
-    pytest.skip("MCP SDK v2 is required", allow_module_level=True)
-pytest.importorskip("langchain_core")
+assert int(version("mcp").split(".", 1)[0]) >= 2
 
 from zara.agent.tools.registry import ToolRegistry
 from zara.mcp.manager import MCPManager
+from zara.mcp.session import MCPRequestError
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "mcp_test_server.py"
@@ -125,7 +125,7 @@ async def test_two_servers_are_isolated_and_namespaced(tmp_path):
         assert "A" in json.dumps(alpha)
         assert "B" in json.dumps(beta)
 
-        with pytest.raises(Exception):
+        with pytest.raises(MCPRequestError):
             await manager.call_tool("alpha", "crash", {})
         beta_after = await manager.call_tool("beta", "echo", {"text": "still-alive"})
         assert "still-alive" in json.dumps(beta_after)
@@ -158,7 +158,7 @@ async def test_timeout_and_cancellation_do_not_kill_healthy_session(tmp_path):
     manager = MCPManager(config)
     try:
         await manager.ensure_started()
-        with pytest.raises(Exception, match="timed out"):
+        with pytest.raises(MCPRequestError, match="timed out"):
             await manager.call_tool("fixture", "slow", {"seconds": 1.0})
         followup = await manager.call_tool("fixture", "echo", {"text": "after-timeout"})
         assert "after-timeout" in json.dumps(followup)
@@ -196,7 +196,6 @@ async def test_shutdown_reaps_stdio_child(tmp_path):
 
 @pytest.mark.asyncio
 async def test_real_streamable_http_server(tmp_path):
-    pytest.importorskip("httpx2")
     port = _free_port()
     process = subprocess.Popen(
         [sys.executable, str(FIXTURE), "--http", str(port)],
