@@ -86,3 +86,15 @@ Reasons:
 - the underlying ZARA/1 framing/backpressure implementation remains reused rather than forked.
 
 TDD consequence: update only the Slice C tests to target =SecureZaraZmqGateway=; prove the new boundary is red before creating that production class.
+
+* Iteration 1 checkpoint - Slice C refined RED
+
+- Exact head :: =64891356d73b9e8bb2d9347ee4bda2302c5c232a=.
+- GitHub Actions :: CI #316, run =32583073572=.
+- Existing ZARA/1 protocol/transport phase :: PASS, 91 tests.
+- Shared-mic Arch Linux :: PASS.
+- Shared-mic Ubuntu 24.04 :: PASS.
+- Full pytest collection :: RED exactly on =ModuleNotFoundError: No module named 'zara.security_gateway'= from =t/test_daemon_security_gateway.py=.
+- Flake/package gates :: skipped because the regression suite correctly stopped at the red TDD boundary.
+- Interpretation :: expected red for the refined boundary, not a design contradiction. Production implementation of =SecureZaraZmqGateway= is authorized now.
+- Upstream verification :: PyZMQ 27 documents that base =Authenticator= does not run its own event loop, while =ThreadAuthenticator= owns the background ZAP thread; =curve_user_id()= is the supported override for custom CURVE-key to ZAP =User-Id= mapping. The gateway implementation must therefore use the threaded authenticator lifecycle rather than merely calling =Authenticator.start()= and assuming ZAP requests are serviced.
