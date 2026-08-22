@@ -18,6 +18,7 @@ timeout 120s python -m pytest \
   t/test_protocol.py \
   t/test_protocol_runtime.py \
   t/test_zmq_transport.py \
+  t/test_zmq_transport_turn_completed.py \
   t/test_zmq_transport_reconnect_idempotency.py \
   t/test_zmq_transport_route_backpressure.py \
   t/test_zmq_transport_status.py \
