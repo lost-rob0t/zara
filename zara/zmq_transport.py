@@ -134,6 +134,18 @@ class _RouteState:
     conversation_id: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class _ReplayEntry:
+    command: RuntimeCommand
+    response: ProtocolMessage
+
+
+@dataclass
+class _InflightEntry:
+    command: RuntimeCommand
+    routes: list[bytes]
+
+
 class ZaraZmqGateway:
     """ROUTER owner loop bridging ZARA/1 requests to RuntimeSupervisor."""
 
@@ -166,7 +178,8 @@ class ZaraZmqGateway:
         )
         self._routes: dict[bytes, _RouteState] = {}
         self._turn_routes: dict[str, bytes] = {}
-        self._replay: OrderedDict[tuple[bytes, str], ProtocolMessage] = OrderedDict()
+        self._replay: OrderedDict[tuple[str, str], _ReplayEntry] = OrderedDict()
+        self._inflight: dict[tuple[str, str], _InflightEntry] = {}
         self._event_subscription = None
         self._lock = threading.RLock()
         self._generation = 0
@@ -186,6 +199,7 @@ class ZaraZmqGateway:
             self._routes.clear()
             self._turn_routes.clear()
             self._replay.clear()
+            self._inflight.clear()
             self._outbound = queue.Queue(maxsize=self._config.event_queue_size)
             self._stop.clear()
             self._started = concurrent.futures.Future()
@@ -348,16 +362,56 @@ class ZaraZmqGateway:
             ),
         )
 
+    def _idempotency_key(self, message: ProtocolMessage) -> tuple[str, str]:
+        return self._principal.principal_id, message.id
+
+    def _response_for_route(self, response: ProtocolMessage, route: bytes) -> ProtocolMessage:
+        state = self._routes.get(route)
+        session_id = state.session_id if state is not None and state.ready else response.session_id
+        return ProtocolMessage(
+            type=response.type,
+            id=response.id,
+            timestamp_ns=response.timestamp_ns,
+            payload_count=response.payload_count,
+            reply_to=response.reply_to,
+            session_id=session_id,
+            conversation_id=response.conversation_id,
+            turn_id=response.turn_id,
+            stream_id=response.stream_id,
+            seq=response.seq,
+            trace_id=response.trace_id,
+            content_type=response.content_type,
+            flags=response.flags,
+            body=response.body,
+        )
+
+    def _send_idempotency_conflict(
+        self,
+        socket: zmq.Socket,
+        route: bytes,
+        message: ProtocolMessage,
+    ) -> None:
+        self._send(
+            socket,
+            route,
+            _protocol_error(
+                reply_to=message.id,
+                code="idempotency_conflict",
+                message="request id was already used for a different command",
+                retryable=False,
+            ),
+        )
+
     def _remember_response(
         self,
-        key: tuple[bytes, str],
+        key: tuple[str, str],
+        command: RuntimeCommand,
         response: ProtocolMessage,
     ) -> None:
-        with self._lock:
-            self._replay[key] = response
-            self._replay.move_to_end(key)
-            while len(self._replay) > self._config.idempotency_cache_size:
-                self._replay.popitem(last=False)
+        self._replay[key] = _ReplayEntry(command=command, response=response)
+        self._replay.move_to_end(key)
+        while len(self._replay) > self._config.idempotency_cache_size:
+            self._replay.popitem(last=False)
 
     def _dispatch_runtime(
         self,
@@ -366,13 +420,6 @@ class ZaraZmqGateway:
         state: _RouteState,
         message: ProtocolMessage,
     ) -> None:
-        replay_key = (route, message.id)
-        with self._lock:
-            replay = self._replay.get(replay_key)
-        if replay is not None:
-            self._send(socket, route, replay)
-            return
-
         if message.type == "turn.submit" and message.conversation_id is None:
             message = ProtocolMessage(
                 type=message.type,
@@ -392,8 +439,60 @@ class ZaraZmqGateway:
             )
         try:
             command = command_from_message(message)
+        except (RuntimeCodecError, KeyError, RuntimeError):
+            self._send(
+                socket,
+                route,
+                _protocol_error(
+                    reply_to=message.id,
+                    code="invalid_command",
+                    message="invalid runtime command",
+                    retryable=False,
+                ),
+            )
+            return
+
+        replay_key = self._idempotency_key(message)
+        with self._lock:
+            replay = self._replay.get(replay_key)
+            if replay is not None:
+                if replay.command != command:
+                    self._send_idempotency_conflict(socket, route, message)
+                    return
+                self._replay.move_to_end(replay_key)
+                if replay.response.turn_id:
+                    self._turn_routes[replay.response.turn_id] = route
+                self._send(socket, route, self._response_for_route(replay.response, route))
+                return
+
+            inflight = self._inflight.get(replay_key)
+            if inflight is not None:
+                if inflight.command != command:
+                    self._send_idempotency_conflict(socket, route, message)
+                    return
+                if route not in inflight.routes:
+                    inflight.routes.append(route)
+                return
+
+            if len(self._inflight) >= self._config.pending_request_limit:
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="server_backpressure",
+                        message="too many runtime commands are pending",
+                        retryable=True,
+                    ),
+                )
+                return
+            self._inflight[replay_key] = _InflightEntry(command=command, routes=[route])
+
+        try:
             future = self._supervisor.submit(self._principal, command)
         except (RuntimeCodecError, KeyError, RuntimeError):
+            with self._lock:
+                self._inflight.pop(replay_key, None)
             self._send(
                 socket,
                 route,
@@ -420,7 +519,6 @@ class ZaraZmqGateway:
                     type=response_type,
                     id=_message_id(),
                     reply_to=message.id,
-                    session_id=state.session_id,
                     conversation_id=message.conversation_id,
                     turn_id=receipt.turn_id,
                     timestamp_ns=_now_ns(),
@@ -436,15 +534,22 @@ class ZaraZmqGateway:
 
             with self._lock:
                 if generation != self._generation or self._stop.is_set():
+                    self._inflight.pop(replay_key, None)
                     return
-                if response.turn_id:
-                    self._turn_routes[response.turn_id] = route
-                self._remember_response(replay_key, response)
-            try:
-                self._outbound.put_nowait((route, response))
-            except queue.Full:
-                with self._lock:
-                    self._routes.pop(route, None)
+                inflight = self._inflight.pop(replay_key, None)
+                routes = list(inflight.routes) if inflight is not None else [route]
+                live_routes = [candidate for candidate in routes if candidate in self._routes]
+                if response.turn_id and live_routes:
+                    self._turn_routes[response.turn_id] = live_routes[-1]
+                self._remember_response(replay_key, command, response)
+
+            for candidate in routes:
+                routed_response = self._response_for_route(response, candidate)
+                try:
+                    self._outbound.put_nowait((candidate, routed_response))
+                except queue.Full:
+                    with self._lock:
+                        self._routes.pop(candidate, None)
 
         future.add_done_callback(completed)
 
