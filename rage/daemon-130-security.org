@@ -41,3 +41,13 @@ Pending.
 - Shared-mic Ubuntu 24.04 :: PASS.
 - New security tests :: RED as intended during collection with =ModuleNotFoundError: No module named 'zara.security'=.
 - Interpretation :: expected TDD red boundary. No existing regression and no design contradiction. Slice A production implementation is authorized only for the tested registry, authorization, quota, audit, listener-policy, and key-file-permission primitives.
+
+* Iteration 1 checkpoint - Slice B RED
+
+- Tests/head :: =b22461a05699dc9563d267575f5480fa54211bbd=.
+- GitHub Actions :: CI #308, run =32581410611=.
+- Existing ZARA/1 protocol/transport gate :: PASS, 91 tests.
+- Shared-mic Arch Linux :: PASS.
+- Shared-mic Ubuntu 24.04 :: PASS.
+- New transport-security tests :: RED as intended during collection with =ModuleNotFoundError: No module named 'zara.security_transport'=.
+- Interpretation :: expected TDD red boundary after Slice A. No existing protocol/runtime regression and no design contradiction. Slice B production implementation is authorized only for the tested registry-backed CURVE credential provider, server-selected ZAP user id, explicit CURVE socket configuration, pinned server identity, and fail-closed authenticated metadata extraction.
