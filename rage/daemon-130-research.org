@@ -1,0 +1,273 @@
+#+title: RAGE Research - Zara CURVE/ZAP Security / Issue #130
+#+startup: overview
+
+* Status
+
+- Consumed issue :: #130
+- Parent epic :: #127
+- Immutable baseline :: =2bf0adbca15ea8c161df7cf15c6c9cc4125317dc=
+- Research phase :: complete for Iteration 1
+- Scope :: CURVE/ZAP authentication, server-side principal binding, authorization, key lifecycle, listener policy, quotas/abuse controls, and bounded redacted audit. Principal-scoped persistence/context/memory remains #131.
+
+* Questions attacked
+
+1. Does CURVE authenticate a Zara principal by itself?
+2. Can ROUTER routing identity or payload identity ever be used as authentication?
+3. Can ZAP alone provide immediate revocation?
+4. Where can the authenticated CURVE identity be recovered in PyZMQ?
+5. Should Zara use certificate-directory reloads, CURVE_ALLOW_ANY, or a callback-backed registry?
+6. Which authorization decisions belong before RuntimeSupervisor dispatch?
+7. Which quotas can be enforced in #130 without implementing #131 persistence isolation or #132 audio streaming?
+8. How should key files and audit records be stored without secret leakage?
+9. Does current #129 transport make unsafe remote bind possible today?
+10. What failure modes would make the inherited #130 wording unsafe despite passing a happy-path CURVE test?
+
+* Baseline audit
+
+** #129 deliberately has no authenticated principal binding
+
+At the baseline, =zara/zmq_transport.py= injects exactly one =PrincipalContext= into =ZaraZmqGateway=. Every route is dispatched under that principal. The module documentation explicitly says authentication is deferred to #130.
+
+The gateway receives ROUTER multipart frames as plain bytes, strips the transport routing frame, decodes =ZARA/1=, and indexes idempotency by =self._principal.principal_id=. Thus #130 must replace the single injected-principal assumption with an authenticated per-route/per-message principal binding. It must not add a parallel transport.
+
+** Current server refuses non-IPC endpoints
+
+=zara/server.py::_validate_ipc_endpoint= rejects TCP and other endpoint schemes with the message that they require authentication from #130. The default remains owner-private local IPC. This is a strong safe default and should survive.
+
+#130 should extend endpoint policy rather than deleting the guard. Remote/wildcard TCP must require a complete secure configuration.
+
+** ROUTER identity is delivery metadata only
+
+#129 already treats the first ROUTER frame as =route=. A reconnect can choose another routing ID and a malicious client controls DEALER identity when configured. It is therefore unsuitable as an owner identity.
+
+Decision pressure: never derive =PrincipalContext= from =route= or any =ZARA/1= body field.
+
+* CURVE / ZAP findings
+
+** CURVE provides encrypted authenticated transport, not Zara authorization
+
+ZeroMQ RFC 25 specifies ZMTP-CURVE as secure authentication and confidentiality for ZMTP 3.0. RFC 27 defines ZAP as the mechanism by which a server authenticates a peer; CURVE credentials contain the peer's 32-byte long-term public key.
+
+Sources:
+- https://rfc.zeromq.org/spec/25/
+- https://rfc.zeromq.org/spec/27/
+
+CURVE proves possession of a client secret key and authenticates the server via the pinned server public key. It does not answer whether that key may run tools, inspect daemon status, or perform future administration. Zara requires a second application authorization layer.
+
+** PLAIN is not acceptable for production remote security
+
+ZAP RFC 27 states PLAIN provides no security or confidentiality and is intended for low-security internal networks. #130 is correct to reject PLAIN as Zara's production remote mechanism.
+
+Source:
+- https://rfc.zeromq.org/spec/27/
+
+** PyZMQ can expose the authenticated User-Id on received messages
+
+PyZMQ documents that frames received with =copy=False= expose message properties, including CURVE =User-Id=:
+
+#+begin_src python
+frames = socket.recv_multipart(copy=False)
+user_id = frames[0]["User-Id"]
+#+end_src
+
+Source:
+- https://pyzmq.readthedocs.io/en/latest/api/zmq.html
+
+libzmq documents the same =User-Id= message property for ZAP-authenticated connections:
+- https://libzmq.readthedocs.io/en/latest/zmq_msg_gets.html
+
+This is the critical bridge from transport authentication to application ownership. The gateway can receive =zmq.Frame= objects, read the authenticated =User-Id= from transport metadata, then convert frame bytes for existing ZARA/1 decoding.
+
+** Default PyZMQ CURVE User-Id is the Z85 public key
+
+PyZMQ's Authenticator documents =curve_user_id(client_public_key)= and says the default is the Z85 encoding of the client public key. This is preferable to smuggling a principal string through client-controlled application metadata.
+
+Sources:
+- https://pyzmq.readthedocs.io/en/latest/api/zmq.auth.thread.html
+- https://pyzmq.readthedocs.io/en/latest/api/zmq.auth.html
+
+Decision pressure:
+- treat authenticated public-key identity as the lookup key;
+- map key -> Zara principal/capabilities in Zara's registry;
+- keep principal IDs application-owned and server-side.
+
+** ZAP admission is connection-time; immediate revocation needs an application re-check
+
+PyZMQ supports certificate-directory CURVE auth and callback-backed CURVE auth. Its docs note directory changes require re-running =configure_curve= to refresh Authenticator state. More importantly, ZAP authenticates the connection handshake; removing a key after a connection is established does not retroactively authenticate every later application message.
+
+Source:
+- https://pyzmq.readthedocs.io/en/latest/api/zmq.auth.thread.html
+
+Therefore the inherited phrase "revoked key denied without daemon restart where practical" cannot safely mean "update ZAP and hope the existing socket disappears."
+
+Selected direction:
+1. ZAP callback denies unknown/disabled keys at connection establishment.
+2. Every received application message reads the authenticated CURVE User-Id and performs a fresh registry lookup.
+3. If the key is revoked/disabled or its mapping changed, the route is dropped/denied before runtime dispatch.
+4. Re-enrollment/rotation can update registry state without daemon restart.
+
+This yields immediate application-level revocation on the next message even if libzmq keeps the transport connection alive.
+
+* Authenticator design alternatives
+
+** A. Certificate-directory allowlist only
+
+Advantages:
+- built into PyZMQ;
+- simple operational model.
+
+Problems:
+- directory reload is explicit;
+- mapping certificates to Zara principal/capability state becomes a second lookup anyway;
+- live revocation still needs application checking;
+- filesystem mutation becomes auth-control API.
+
+Verdict: reject as canonical registry. May support export/import tooling later.
+
+** B. CURVE_ALLOW_ANY plus application lookup only
+
+Advantages:
+- simple gateway logic.
+
+Fatal problem:
+- unknown clients complete the cryptographic connection and consume server resources before application rejection;
+- violates the issue requirement that unknown keys are denied by authentication.
+
+Verdict: reject.
+
+** C. callback-backed ZAP registry plus per-message re-check
+
+Advantages:
+- unknown/revoked keys fail during handshake;
+- server-side dynamic registry supports enrollment/revocation without daemon restart;
+- same registry supplies principal/capabilities to application authorization;
+- per-message lookup closes established-connection revocation gap.
+
+Costs:
+- registry must be thread-safe because ZAP's authenticator thread and gateway thread both read it;
+- lifecycle ordering must stop authenticator only after gateway sockets are closed.
+
+Verdict: select.
+
+* Principal and authorization model
+
+Authentication record should contain at minimum:
+
+- canonical Z85 client public key;
+- =PrincipalContext=;
+- device/key id suitable for diagnostics;
+- enabled/revoked state;
+- capability set;
+- creation/rotation metadata without secrets.
+
+Do not make role strings authoritative by themselves. Authorization checks should consume explicit capability names. A role can expand to a capability set at enrollment time or through a closed policy table.
+
+Initial #130 capabilities can cover existing #129 operations without inventing future behavior:
+
+- =conversation= :: hello/conversation.open/turn.submit/turn.cancel and private runtime event delivery;
+- =status= :: ordinary runtime status if permitted;
+- =admin= :: reserved daemon administration boundary; no new admin wire commands need be invented in this slice;
+- later tool/context/voice capability names can be reserved but should only be enforced when those message families exist.
+
+Handshake transport messages such as hello/ping may be allowed after successful authentication; runtime dispatch still requires the relevant application capability.
+
+Authorization must occur after key -> principal resolution and before =RuntimeSupervisor= or runtime command dispatch.
+
+* Key lifecycle and filesystem
+
+CURVE server secret and client secret keys are credentials. #130 must never put them in the repository, logs, audit events, protocol errors, or ordinary diagnostic representations.
+
+Key-management invariants:
+
+- key directories owner-only =0700=;
+- secret files =0600=;
+- public key material may be exported, but private key reads validate ownership/mode;
+- server has one active keypair for this slice;
+- client enrollment stores public key only on server;
+- rotation means enroll replacement, then revoke old key; no magic continuity claim;
+- registry serialization is atomic if persisted;
+- diagnostics identify =key_id= / principal, never secret bytes.
+
+PyZMQ provides =curve_keypair()= and certificate helpers, but Zara should own the application registry format and permission checks.
+
+* Listener policy
+
+Current safe behavior rejects all non-IPC endpoints. #130 should allow TCP only when a secure server configuration is supplied.
+
+Rules:
+
+- owner-private IPC remains allowed in explicit local/null fixture mode;
+- TCP requires CURVE server keys plus active authenticator/registry;
+- wildcard addresses such as =tcp://*= or =0.0.0.0= are not special-cased as inherently evil, but they must fail closed without secure auth;
+- no fallback from configured CURVE to NULL/PLAIN when setup fails;
+- a bad/missing server secret is startup failure, not degraded unauthenticated operation.
+
+* Quotas / abuse controls
+
+ZeroMQ HWM/MAXMSGSIZE from #129 are transport bounds, not per-principal policy. #130 should layer application quotas before runtime dispatch.
+
+Practical deterministic #130 quotas:
+
+- active routes/connections per authenticated key/principal;
+- request token bucket/window per principal;
+- concurrent in-flight runtime commands per principal;
+- malformed/protocol error budget per route/principal;
+- existing per-route outbound queue remains the mailbox bound;
+- existing protocol MAXMSGSIZE/frame/payload limits remain global hard bounds.
+
+Provider/model request and tool-run quotas require runtime visibility not currently exposed cleanly at the gateway. Do not fake those with approximate text-turn counts; establish policy hooks/counters that later tool/provider integration can call.
+
+Audio byte/time quotas belong to #132 because there is no live audio ingress yet.
+
+* Audit
+
+Audit must be structured and bounded, with no transcript/prompt/audio/secrets.
+
+Recommended event fields:
+
+- monotonic/wall timestamp;
+- principal id;
+- key/device id;
+- session/request/turn identifiers where already available;
+- action/message type;
+- decision =allow|deny|rate_limit|auth_failure=;
+- coarse error class;
+- duration where available.
+
+Never include:
+
+- =turn.submit= text body;
+- raw protocol body;
+- auth headers/provider keys;
+- CURVE secret key;
+- environment/config dumps;
+- audio payloads.
+
+Keep an in-memory bounded sink plus an interface for later persistence/diagnostics. #130 does not need to invent a new durable audit database.
+
+* Threat/failure conclusions
+
+1. ROUTER identity must never become owner identity.
+2. Payload =user_id=/principal-like fields remain forbidden by protocol schema and cannot override transport auth.
+3. ZAP-only revocation is insufficient for already-authenticated connections.
+4. CURVE authentication is not authorization.
+5. Authenticator and gateway share registry reads; registry synchronization is mandatory.
+6. Auth setup failure must fail server startup for TCP; never downgrade silently.
+7. Key registry lookup must be bounded O(1)-style, not filesystem scan per message.
+8. Quota rejection happens before runtime work is submitted.
+9. Audit must record decisions without request content.
+10. #131 remains responsible for proving persistence/context/memory isolation. #130 can authenticate principals without falsely claiming private-state isolation is complete.
+
+* Research outcome
+
+The inherited issue survives with a narrower implementation shape:
+
+- dynamic server-owned key registry;
+- callback-backed ZAP authentication;
+- default Z85 CURVE User-Id as authenticated key identity;
+- per-message registry revalidation for live revocation;
+- explicit capability authorization before runtime dispatch;
+- secure TCP listener gate with IPC local compatibility;
+- per-principal application quotas layered on existing transport bounds;
+- bounded redacted audit;
+- no #131 memory/context rewrite and no #132 audio quota implementation in this slice.
