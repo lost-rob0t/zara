@@ -42,6 +42,7 @@ def test_supervisor_default_host_seals_authenticated_principal_into_backend():
     backend = host._backend_factory()
     assert backend.principal_id == "alice"
     assert backend.principal_kind == "curve"
+    assert host._manage_plugins is True
 
 
 @pytest.mark.asyncio
