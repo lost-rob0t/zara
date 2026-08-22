@@ -1,4 +1,5 @@
 import concurrent.futures
+import json
 import os
 import stat
 import threading
@@ -12,6 +13,7 @@ from zara.runtime.host import RuntimeHost, RuntimeHostState
 from zara.server import (
     PrincipalContext,
     PrincipalLimitExceeded,
+    PrincipalMismatch,
     RuntimeSupervisor,
     ServerAlreadyRunning,
     ServerLease,
@@ -30,6 +32,10 @@ def failed(error):
     future = concurrent.futures.Future()
     future.set_exception(error)
     return future
+
+
+def pending():
+    return concurrent.futures.Future()
 
 
 class FakeHost:
@@ -61,6 +67,12 @@ class FakeHost:
         self.join_calls += 1
 
 
+class StuckHost(FakeHost):
+    def shutdown(self, reason=""):
+        self.shutdown_calls += 1
+        return pending()
+
+
 class BlockingBackend(RuntimeBackend):
     def __init__(self):
         self.entered = threading.Event()
@@ -84,7 +96,30 @@ class BlockingBackend(RuntimeBackend):
         self.stopped.set()
 
 
-def test_server_lease_uses_kernel_lock_and_owner_private_directory(tmp_path):
+@pytest.mark.parametrize(
+    "principal_id,kind",
+    [
+        ("", "synthetic"),
+        ("   ", "synthetic"),
+        ("owner", ""),
+        ("owner", "   "),
+        (" owner", "synthetic"),
+        ("owner ", "synthetic"),
+        ("owner", " synthetic"),
+        ("owner", "synthetic "),
+    ],
+)
+def test_principal_context_rejects_empty_or_noncanonical_strings(principal_id, kind):
+    with pytest.raises(ValueError):
+        PrincipalContext(principal_id, kind)
+
+
+def test_local_owner_principal_is_canonical_and_uid_scoped():
+    principal = PrincipalContext.local_owner()
+    assert principal == PrincipalContext(f"uid:{os.getuid()}", "local-owner")
+
+
+def test_server_lease_uses_kernel_lock_owner_private_modes_and_diagnostic_metadata(tmp_path):
     runtime_dir = tmp_path / "runtime"
     first = ServerLease(runtime_dir)
     second = ServerLease(runtime_dir)
@@ -94,12 +129,32 @@ def test_server_lease_uses_kernel_lock_and_owner_private_directory(tmp_path):
     assert stat.S_IMODE(os.stat(runtime_dir).st_mode) == 0o700
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
 
+    metadata = json.loads(path.read_text())
+    assert metadata["pid"] == os.getpid()
+    assert metadata["executable"] == "zara-server"
+    assert isinstance(metadata["started_ns"], int)
+    assert metadata["started_ns"] > 0
+
     with pytest.raises(ServerAlreadyRunning):
         second.acquire()
 
     first.release()
-    second.acquire()
+    assert not first.held
+    assert second.acquire() == path
     second.release()
+
+
+def test_server_lease_repairs_existing_runtime_directory_permissions(tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(mode=0o755)
+    os.chmod(runtime_dir, 0o755)
+
+    lease = ServerLease(runtime_dir)
+    lease.acquire()
+    try:
+        assert stat.S_IMODE(os.stat(runtime_dir).st_mode) == 0o700
+    finally:
+        lease.release()
 
 
 def test_supervisor_requires_explicit_principal_and_defaults_to_single_principal():
@@ -130,6 +185,25 @@ def test_supervisor_requires_explicit_principal_and_defaults_to_single_principal
     assert supervisor.state is ServerState.STOPPED
 
 
+def test_supervisor_rejects_same_id_with_different_principal_metadata():
+    supervisor = RuntimeSupervisor(
+        host_factory=lambda _principal, _bus: FakeHost(),
+        max_active_principals=2,
+        shutdown_timeout=0.2,
+    )
+    original = PrincipalContext("owner", "synthetic")
+    collision = PrincipalContext("owner", "local-owner")
+
+    supervisor.start(original)
+    try:
+        with pytest.raises(PrincipalMismatch):
+            supervisor.runtime(collision)
+        with pytest.raises(PrincipalMismatch):
+            supervisor.open_principal(collision)
+    finally:
+        assert supervisor.shutdown()
+
+
 def test_synthetic_multi_principal_slots_have_separate_hosts_and_buses():
     def factory(_principal, _bus):
         return FakeHost()
@@ -151,6 +225,20 @@ def test_synthetic_multi_principal_slots_have_separate_hosts_and_buses():
     assert supervisor.shutdown()
 
 
+def test_supervisor_factory_failure_is_terminal_failed_state_without_phantom_principal():
+    def factory(_principal, _bus):
+        raise RuntimeError("cannot construct runtime")
+
+    supervisor = RuntimeSupervisor(host_factory=factory, shutdown_timeout=0.2)
+
+    with pytest.raises(RuntimeError, match="cannot construct runtime"):
+        supervisor.start(PrincipalContext("owner"))
+
+    assert supervisor.state is ServerState.FAILED
+    assert supervisor.principals == ()
+    assert not supervisor.shutdown()
+
+
 def test_failed_runtime_start_degrades_supervisor_without_losing_shutdown_control():
     host = FakeHost(start_error=RuntimeError("backend unavailable"))
     supervisor = RuntimeSupervisor(
@@ -164,6 +252,34 @@ def test_failed_runtime_start_degrades_supervisor_without_losing_shutdown_contro
     assert supervisor.shutdown()
     assert host.shutdown_calls == 1
     assert host.join_calls == 1
+
+
+def test_shutdown_timeout_marks_supervisor_failed_and_clears_registry():
+    host = StuckHost()
+    supervisor = RuntimeSupervisor(
+        host_factory=lambda _principal, _bus: host,
+        shutdown_timeout=0.01,
+    )
+    supervisor.start(PrincipalContext("owner"))
+
+    assert not supervisor.shutdown()
+    assert host.shutdown_calls == 1
+    assert host.join_calls == 1
+    assert supervisor.state is ServerState.FAILED
+    assert supervisor.principals == ()
+
+
+def test_supervisor_rejects_new_principals_after_shutdown():
+    supervisor = RuntimeSupervisor(
+        host_factory=lambda _principal, _bus: FakeHost(),
+        max_active_principals=2,
+        shutdown_timeout=0.2,
+    )
+    supervisor.start(PrincipalContext("owner"))
+    assert supervisor.shutdown()
+
+    with pytest.raises(Exception):
+        supervisor.open_principal(PrincipalContext("later"))
 
 
 def test_zara_server_acquires_lease_before_runtime_and_releases_after_stop(tmp_path):
@@ -181,6 +297,59 @@ def test_zara_server_acquires_lease_before_runtime_and_releases_after_stop(tmp_p
     assert server.state is ServerState.STOPPED
     assert not lease.held
     assert host.join_calls == 1
+
+
+def test_duplicate_zara_server_fails_before_second_runtime_is_constructed(tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    first_host = FakeHost()
+    second_factory_calls = 0
+
+    first = ZaraServer(
+        supervisor=RuntimeSupervisor(
+            host_factory=lambda _principal, _bus: first_host,
+            shutdown_timeout=0.2,
+        ),
+        lease=ServerLease(runtime_dir),
+    )
+
+    def second_factory(_principal, _bus):
+        nonlocal second_factory_calls
+        second_factory_calls += 1
+        return FakeHost()
+
+    second = ZaraServer(
+        supervisor=RuntimeSupervisor(
+            host_factory=second_factory,
+            shutdown_timeout=0.2,
+        ),
+        lease=ServerLease(runtime_dir),
+    )
+
+    assert first.start() is ServerState.READY
+    try:
+        with pytest.raises(ServerAlreadyRunning):
+            second.start()
+        assert second_factory_calls == 0
+        assert second.state is ServerState.FAILED
+        assert first.state is ServerState.READY
+    finally:
+        assert first.stop()
+
+
+def test_zara_server_stop_before_start_is_idempotent_and_releases_nothing(tmp_path):
+    lease = ServerLease(tmp_path / "runtime")
+    server = ZaraServer(
+        supervisor=RuntimeSupervisor(
+            host_factory=lambda _principal, _bus: FakeHost(),
+            shutdown_timeout=0.2,
+        ),
+        lease=lease,
+    )
+
+    assert server.stop()
+    assert server.stop()
+    assert server.state is ServerState.STOPPED
+    assert not lease.held
 
 
 def test_supervisor_shutdown_cancels_active_runtime_turn():
