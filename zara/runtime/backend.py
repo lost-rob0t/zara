@@ -1,8 +1,8 @@
 """Application-service backends owned by :class:`zara.runtime.host.RuntimeHost`.
 
 RuntimeHost owns lifecycle, threading, turn correlation, and cancellation.
-Backends own the application services used to execute a turn. LangGraph remains
-the default; Prolog-RLM is an explicit experimental alternative.
+Backends own the application services used to execute a turn. LangGraph is the
+supported conversational backend.
 """
 
 from __future__ import annotations
@@ -153,13 +153,8 @@ def create_runtime_backend(config=None) -> RuntimeBackend:
 
         return LangGraphRuntimeBackend(manager_factory)
 
-    if backend_name == "prolog_rlm":
-        from .prolog_rlm import PrologRLMBackend
-
-        return PrologRLMBackend(config=config)
-
     raise ValueError(
-        f"Unsupported agent backend {backend_name!r}; choose 'langgraph' or 'prolog_rlm'"
+        f"Unsupported agent backend {backend_name!r}; choose 'langgraph'"
     )
 
 
@@ -168,8 +163,8 @@ class AgentRuntimeBackend(RuntimeBackend):
 
     RuntimeHost historically constructed ``AgentRuntimeBackend`` directly. The
     facade preserves that API while keeping backend selection in one place.
-    Supplying ``manager_factory`` explicitly still forces the legacy LangGraph
-    adapter, which preserves existing tests and embedders.
+    Supplying ``manager_factory`` explicitly still forces the LangGraph adapter,
+    which preserves existing tests and embedders.
     """
 
     def __init__(
