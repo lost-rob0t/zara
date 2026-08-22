@@ -1,0 +1,436 @@
+#+title: RAGE Research - Zara Daemon Lifecycle / Issue #128
+#+startup: overview
+
+* Status
+
+- Consumed issue :: #128
+- Parent epic :: #127
+- Repository baseline :: =12d28bcb28a2b48750875050ad7c21ebbbd636d8=
+- Research phase :: complete for Iteration 1
+- Scope :: daemon process lifecycle and principal-aware runtime supervision only. ZeroMQ wire protocol, remote auth, hard multi-user persistence isolation, live audio transport, and client migration remain #129-#134.
+
+This document deliberately attacks the inherited design before defending any implementation. A daemon that merely stays alive is easy. A daemon that does not quietly inherit process-global state, leak events between future users, hang on shutdown, or spawn a second runtime because somebody clicked an icon is the actual problem.
+
+* Research questions
+
+1. What does current Zara already own correctly in =RuntimeHost= and =TurnCoordinator=, and what should a daemon not duplicate?
+2. Can one =RuntimeHost= per principal be treated as an isolation boundary today?
+3. Which process-lifecycle guarantees belong in #128 before any ZeroMQ socket exists?
+4. How should duplicate daemon ownership be detected without stale PID-file races?
+5. Where should runtime locks/sockets live on Linux?
+6. What must run on Python's main thread?
+7. What shutdown behavior is required because =RuntimeHost= currently uses a daemon thread?
+8. What architecture lets #129 add ROUTER/DEALER without sharing ZeroMQ sockets across threads?
+9. Which multi-user capabilities must remain deliberately disabled until #130/#131?
+10. Which serious alternatives are better or worse than the inherited supervisor direction?
+
+* Current Zara audit
+
+All code observations below refer to the immutable RAGE start commit unless stated otherwise.
+
+** RuntimeHost already solves the process-local runtime boundary
+
+=zara/runtime/host.py= already provides:
+
+- a Qt-neutral public API;
+- a dedicated asyncio worker thread;
+- explicit states =NEW=, =STARTING=, =RUNNING=, =DEGRADED=, =STOPPING=, =STOPPED=, =FAILED=;
+- typed =RuntimeCommand= dispatch;
+- canonical =TurnCoordinator= creation;
+- turn-task bookkeeping and cancellation;
+- stale-result suppression through the coordinator;
+- backend startup/stop/restart;
+- service-plugin lifecycle;
+- futures suitable for cross-thread callers;
+- bounded shutdown waiting for active turn tasks.
+
+The daemon should wrap this seam. It should not wire directly to AgentManager, Prolog, tools, memory, TTS, or Qt.
+
+** RuntimeHost shutdown semantics are usable, but the process must actually call them
+
+The host thread is created with =daemon=True=. Python documents that daemon threads are abruptly stopped when only daemon threads remain; files, transactions, and other resources may not be cleaned up. This means process exit is *not* a valid daemon shutdown strategy.
+
+Source:
+- Python threading documentation: https://docs.python.org/3/library/threading.html
+
+Required consequence for #128:
+
+- daemon shutdown first transitions the supervisor to =STOPPING= so no new runtime can be created;
+- issue shutdown to every owned host;
+- wait for each shutdown future with a bounded deadline;
+- join each host thread;
+- only then release process ownership and exit;
+- a host that remains alive past the bound is a lifecycle failure, not "probably fine because Python is exiting anyway."
+
+** Signal ownership belongs to the main thread
+
+Python only allows installing signal handlers from the main thread of the main interpreter, and Python signal handlers execute in that main thread. RuntimeHost intentionally runs on a worker thread, so it must not own process SIGINT/SIGTERM behavior.
+
+Source:
+- Python =signal= documentation: https://docs.python.org/3/library/signal.html
+
+Required consequence:
+
+=zara --daemon= remains a foreground process. Its main thread owns SIGINT/SIGTERM and the runtime supervisor. RuntimeHost continues doing assistant work off-thread.
+
+The signal handler should do the minimum possible. Do not perform runtime shutdown or take project locks inside the handler. Record the stop request, return, and let normal main-thread control flow execute shutdown.
+
+** TurnCoordinator is per instance and bounded
+
+=zara/actors.py= makes =TurnCoordinator= a Pykka =ThreadingActor= with a bounded mailbox and per-instance =_turns= dictionary. Each RuntimeHost starts its own coordinator. This is useful for synthetic per-principal runtime contexts because turn state is naturally per host.
+
+The existing coordinator remains the canonical turn ID/cancellation authority. A daemon supervisor must not invent a second turn lifecycle.
+
+** AgentManager conversation state is per instance
+
+=zara/agent/__init__.py= creates a new =ConversationManager= for each AgentManager. A separate runtime backend instance therefore gives separate in-memory conversation history.
+
+That is enough to prove #128's narrow "two synthetic principal runtime contexts do not share mutable conversation state" criterion with injected/fake backends.
+
+It is *not* enough to claim production multi-user isolation.
+
+** Durable memory is not principal-scoped today
+
+Current AgentManager creates a MemoryManager from shared configuration. The default persistent directory and collection are global Zara settings. The existing daemon research already identifies =MemoryManager.current_session_id= and shared collection behavior as unsafe for authenticated multi-user operation.
+
+Therefore:
+
+- #128 may establish explicit principal ownership in the supervisor API;
+- #128 must not advertise hard multi-user privacy;
+- production daemon configuration should default to one local principal until #131 changes persistence/context/memory ownership structurally;
+- synthetic tests may enable multiple principals with isolated fake/in-memory runtime backends to prove registry semantics without pretending Chroma is already tenant-safe.
+
+** Prolog is process-wide, even if RuntimeHosts multiply
+
+=zara/prolog_engine.py= is explicit: PySWIP exposes one process-wide SWI-Prolog runtime, all =PrologEngine= instances share one class-level lock, and a lazy query owns that lock until it is exhausted/closed.
+
+SWI-Prolog itself supports multiple native-thread engines when correctly embedded, but Zara/PySWIP currently chooses process-wide serialized access rather than independent Prolog engines.
+
+Sources:
+- Zara =zara/prolog_engine.py= at the RAGE baseline.
+- SWI-Prolog embedding/thread documentation: https://www.swi-prolog.org/download/stable/doc/SWI-Prolog-9.0.4.pdf
+
+Consequences:
+
+1. "one RuntimeHost thread per principal" does not create independent Prolog databases;
+2. Prolog work across hosts is serialized by Zara's current runtime lock;
+3. dynamic/global Prolog state is a future isolation concern even if Python objects are separate;
+4. #128 should not refactor PySWIP. That would violate slice ordering and create a second project inside the daemon project;
+5. #131 must include Prolog-owned user state in its isolation audit if any private dynamic facts exist by then.
+
+This finding materially changes the naive interpretation of PR #135. Per-user hosts are useful ownership containers, not security sandboxes.
+
+** The current runtime bridge is process-global
+
+RuntimeHost defaults to =bridge.publish= / =bridge.subscribe=. Multiple hosts using that default would publish into the same process-local event bus. Likewise service plugins subscribe through the configured subscriber.
+
+Consequences:
+
+- a daemon supervisor needs principal ownership attached *outside* the generic RuntimeEvent schema before future transport routing;
+- construct daemon-owned RuntimeHosts with a principal-tagging publisher rather than relying on an unscoped global subscription as the daemon API;
+- do not claim plugin/event multi-user safety until #131 proves the full event path;
+- keep normal standalone/desktop RuntimeHost defaults unchanged.
+
+A small daemon wrapper event such as =PrincipalRuntimeEvent(principal, event)= is preferable to contaminating every existing runtime event with auth fields before #130 exists.
+
+** RuntimeBackend and plugin lifecycle already have shutdown hooks
+
+=zara/runtime/backend.py= defines async =stop()=. LangGraphRuntimeBackend calls AgentManager shutdown and dynamic tool-registry cleanup. RuntimeHost also stops service plugins and the coordinator.
+
+#128 should compose these hooks, not add =atexit= hope as a second lifecycle mechanism.
+
+* Linux daemon/process research
+
+** Do not double-fork
+
+Modern service managers want the service process they start to remain the service process. systemd's service documentation describes a foreground process for =Type=simple= and recommends =Type=exec= for long-running services where exec/setup errors should be tracked. A self-daemonizing fork would force =Type=forking= and reintroduce PID-file/parent-child tracking complexity Zara does not need.
+
+Source:
+- systemd.service(5): https://man7.org/linux/man-pages/man5/systemd.service.5.html
+
+Decision pressure:
+
+- =zara --daemon= means long-lived headless service mode, not "fork into the background yourself";
+- systemd, a shell, tmux, s6, runit, or another supervisor may own backgrounding;
+- stdout/stderr remain usable for journal/log capture;
+- no =os.fork()=, double-fork, chdir('/'), close-all-fds ritual, or SysV cosplay.
+
+** Runtime files belong in XDG_RUNTIME_DIR
+
+The XDG Base Directory specification says =$XDG_RUNTIME_DIR= is for user-specific runtime objects such as sockets and named pipes; it must be user-owned, mode 0700, local, and tied to the user's login lifetime. systemd's PAM integration creates =/run/user/$UID= and describes it specifically as suitable for Unix sockets and PID-like runtime objects.
+
+Sources:
+- XDG Base Directory Specification: https://specifications.freedesktop.org/basedir/0.8/
+- pam_systemd: https://www.freedesktop.org/software/systemd/man/251/pam_systemd.html
+
+This matters twice:
+
+1. #128's ownership lock belongs under =$XDG_RUNTIME_DIR/zarathushtra/=;
+2. #129's default local IPC endpoint should live there too.
+
+Do not put a daemon socket under =~/.local/share= or the repository. Do not use a globally writable naked =/tmp/zara.sock=.
+
+#128 should create its Zara runtime subdirectory mode 0700 and reject an obviously unsafe owner mismatch.
+
+** Use a held file lock, not PID-file truthiness
+
+Linux =flock(2)= supports a non-blocking exclusive advisory lock tied to the open file description. The lock disappears when the held descriptor is closed, including normal process teardown/crash cleanup. A PID file, by contrast, can survive a crash and then becomes a stale-data parsing exercise with PID reuse as a bonus insult.
+
+Source:
+- flock(2): https://man7.org/linux/man-pages/man2/flock.2.html
+
+The lock file may contain the current PID for human diagnostics, but the *kernel lock*, not the text, is authority.
+
+Important subtlety: flock semantics can differ on network filesystems. XDG_RUNTIME_DIR is required to be local, which removes that class of uncertainty for the default path. This is a useful alignment between the XDG and flock contracts, not an accident to throw away by putting the lock in =~=.
+
+Recommended acquisition:
+
+- open/create =$XDG_RUNTIME_DIR/zarathushtra/daemon.lock= mode 0600;
+- use =LOCK_EX | LOCK_NB=;
+- hold the descriptor for the daemon lifetime;
+- write PID/start metadata only as diagnostics;
+- on contention, fail deterministically with a distinct "already running" error;
+- close/release after runtime shutdown is complete.
+
+* ZeroMQ research relevant to #128, before #129 exists
+
+ZeroMQ is not implemented in this slice, but #128 must not paint #129 into a thread-safety corner.
+
+** Contexts are thread-safe; sockets are not
+
+PyZMQ explicitly documents that Contexts are thread-safe and sockets are not. Sharing a socket across threads can cause C-level crashes; the recommendation is one socket per owning thread.
+
+Source:
+- PyZMQ "More Than Just Bindings" / Thread Safety: https://pyzmq.readthedocs.io/en/latest/howto/morethanbindings.html
+
+Architectural consequence:
+
+- the future ROUTER gateway in #129 must own its sockets on one event-loop/thread boundary;
+- the supervisor API should be ordinary Python commands/events and futures, not expose or store a ROUTER socket in individual RuntimeHosts;
+- RuntimeHost worker threads never send directly on the gateway socket;
+- gateway receives principal-tagged supervisor events and performs transport writes on its own owner loop.
+
+** Context shutdown can be dangerous across threads
+
+PyZMQ documents that =Context.destroy()= closes associated sockets and that this is not thread-safe if active sockets live on other threads. Later #129 must make the gateway own socket close ordering before context termination.
+
+Source:
+- PyZMQ API: https://pyzmq.readthedocs.io/en/latest/api/zmq.html
+
+#128 should therefore avoid introducing a global ZeroMQ context merely because pyzmq is already installed. No socket means no socket lifecycle yet.
+
+* Principal model research
+
+** A principal ID is ownership metadata, not authentication
+
+#128 comes before #130. Therefore a =PrincipalId= in Python cannot mean "authenticated user" yet.
+
+Rules for this slice:
+
+- principal IDs are internal supervisor ownership keys;
+- default CLI daemon uses one local-owner principal derived from the local process/user context;
+- callers cannot enable remote/multi-user safety by merely passing another string;
+- #130 later binds CURVE/ZAP identity to this ownership key;
+- #131 later proves storage/event/context isolation under it.
+
+Naming and docs must resist the common security bug where a field called =user_id= gradually becomes trusted because everybody got tired.
+
+** Production multi-principal operation stays gated
+
+The supervisor should support multiple principal slots structurally, because that is the point of #128. But the shipped default should cap active principals at one until #131.
+
+Why:
+
+- current memory persistence is shared;
+- current Prolog runtime is process-wide;
+- plugin subscriptions are not tenant-scoped;
+- no authenticated identity exists until #130;
+- no cross-user adversarial gate exists until #131/#134.
+
+The multi-principal code path is exercised with synthetic runtime factories in tests. A later issue deliberately raises/removes the production cap after the real isolation work lands.
+
+This is a better failure mode than shipping a =--user alice= flag and calling the result multi-user.
+
+* Lifecycle state research
+
+Issue #128 asks for =starting, ready, degraded, stopping, stopped, failed=. Keep these daemon states separate from RuntimeHost's existing states.
+
+Recommended daemon states:
+
+- =NEW= :: application object exists, no ownership lease or runtime started;
+- =STARTING= :: process lease acquired and bootstrap runtime(s) starting;
+- =READY= :: supervisor accepts work and every required bootstrap runtime is healthy;
+- =DEGRADED= :: process is alive and can be controlled, but one or more owned runtimes failed/degraded;
+- =STOPPING= :: no new principals/runtimes accepted; drain/stop is in progress;
+- =STOPPED= :: all owned RuntimeHosts have been asked to stop and joined; lease can be released;
+- =FAILED= :: supervisor invariant/bootstrap failure prevents safe operation.
+
+State is monotonic around stop: no STOPPING -> READY resurrection.
+
+A degraded *runtime* should not crash unrelated synthetic runtimes. The daemon aggregates health from slots.
+
+* Alternative architectures
+
+** Alternative A: one shared RuntimeHost, add principal to every command/event now
+
+Advantages:
+- fewer model/backend instances;
+- avoids parallel PySWIP call attempts;
+- resource pooling is straightforward.
+
+Costs:
+- immediately changes RuntimeCommand, RuntimeEvent, AgentManager, MemoryManager, plugins, tools, conversation history, and persistence;
+- collapses #128 and #131 into one dangerous mega-slice;
+- makes every existing desktop/headless caller principal-aware before authentication exists;
+- broad regression surface.
+
+Verdict: reject for #128. Revisit shared stateless resource pooling later, after ownership invariants exist.
+
+** Alternative B: one RuntimeHost per principal thread, treat it as hard isolation
+
+Advantages:
+- easy mental model;
+- separate AgentManager/ConversationManager instances;
+- maps cleanly onto a supervisor registry.
+
+Fatal assumption:
+- thread/object separation is not storage/Prolog/plugin/event security isolation.
+
+Verdict: use per-principal host slots as an ownership/lifecycle abstraction, but explicitly *reject* the claim that this is a security boundary. Production cap remains one until #131.
+
+** Alternative C: subprocess per principal
+
+Advantages:
+- separate Python interpreter and SWI-Prolog process;
+- strong crash and mutable-global isolation;
+- resource limits could eventually be per process/cgroup.
+
+Costs:
+- requires an internal IPC protocol before the public daemon protocol exists;
+- duplicate model/tool/plugin startup cost;
+- supervision complexity;
+- durable storage still needs owner-scoped schemas;
+- would create nested process messaging and partially duplicate #129;
+- current RuntimeHost/desktop architecture is intentionally process-local.
+
+Verdict: reject for #128. Keep it as a future hard-isolation option if measurement/security requirements justify it.
+
+** Alternative D: D-Bus user service
+
+Advantages:
+- excellent Linux desktop/service integration;
+- user bus already has process/session identity concepts;
+- service activation is mature.
+
+Costs:
+- user explicitly selected ZeroMQ for the daemon protocol;
+- streaming binary voice and cross-platform/non-Linux clients fit less naturally;
+- would create a Linux-specific protocol boundary beside the planned ZARA/1 transport.
+
+Verdict: reject as canonical transport. A future D-Bus activation/control adapter could coexist without owning assistant semantics.
+
+** Alternative E: gRPC
+
+Advantages:
+- typed schemas, streaming, generated multi-language clients, TLS/mTLS ecosystem.
+
+Costs:
+- large dependency/protocol stack not currently required by Zara;
+- duplicates the deliberate ZeroMQ direction;
+- protobuf/service evolution would become a second schema toolchain;
+- no benefit for #128, where no network is needed.
+
+Verdict: reject.
+
+** Alternative F: raw asyncio Unix sockets
+
+Advantages:
+- stdlib local IPC, simple service.
+
+Costs:
+- Zara would own framing, multiplexing, reconnect, backpressure, remote/TLS story, and client implementations that #129 intends ZeroMQ to provide.
+
+Verdict: reject as canonical path.
+
+* Derived architecture constraints
+
+The research therefore imposes these constraints on the Iteration 1 design:
+
+1. =zara --daemon= is foreground/headless. It does not fork itself.
+2. Main thread owns process signals and the daemon lifecycle shell.
+3. A kernel =flock= under an XDG private runtime directory is the single-instance authority.
+4. The daemon supervisor owns RuntimeHosts. It never bypasses RuntimeHost into AgentManager/Prolog/tools/memory.
+5. The supervisor API requires an explicit opaque principal key for every runtime operation.
+6. RuntimeHost events are wrapped/tagged with principal ownership at the daemon boundary.
+7. Supervisor host factory accepts the principal and a principal-scoped publisher, enabling synthetic tests and future gateway routing.
+8. Default production =max_principals= is one until #131. Multi-principal supervisor behavior is tested only with synthetic safe backends in #128.
+9. Stop transitions close admission first, then shut down all hosts, then join them, then release the process lease.
+10. Daemon and RuntimeHost state machines remain separate.
+11. A failed/degraded child runtime makes daemon health degraded, not silently ready.
+12. No ZeroMQ context/socket is created in #128. #129 owns that resource and must keep sockets thread-affine.
+13. No auth claim is made in #128. Principal ownership is internal metadata until #130.
+14. No durable-memory privacy claim is made before #131.
+15. No Prolog-RLM dependency or backend returns to Zara.
+
+* Test implications
+
+#128's focused deterministic gate should prove:
+
+- supervisor start reaches READY without importing Qt;
+- =zara --daemon= parser path exists;
+- default runtime directory resolution uses =$XDG_RUNTIME_DIR/zarathushtra=;
+- lock acquisition is exclusive and a second lease fails deterministically;
+- lock release permits a later instance;
+- state transition NEW -> STARTING -> READY -> STOPPING -> STOPPED;
+- runtime startup failure becomes DEGRADED;
+- admission is rejected while STOPPING/STOPPED;
+- clean shutdown calls host shutdown and joins it;
+- active fake turn is cancelled/drained through RuntimeHost shutdown;
+- late result after shutdown cannot publish as a successful newer result;
+- two synthetic principals get separate RuntimeHost/backend mutable histories;
+- principal A cannot accidentally submit into B's host by omitting a principal key;
+- production default rejects a second principal until the explicit future isolation gate is lifted;
+- daemon modules import with no Qt dependency;
+- existing wake/desktop/console imports remain valid;
+- packaged wrapper/CLI help includes daemon mode.
+
+Then run the repository's full deterministic gate, Nix flake checks/build, and exact-head GitHub Actions.
+
+* Sources
+
+** Zara primary sources
+
+- =zara/runtime/host.py=
+- =zara/runtime/backend.py=
+- =zara/runtime/commands.py=
+- =zara/runtime/events.py=
+- =zara/runtime/bridge.py=
+- =zara/actors.py=
+- =zara/agent/__init__.py=
+- =zara/prolog_engine.py=
+- =zara/config.py=
+- issue #82
+- issue #83
+- issue #127
+- issue #128
+- draft PR #135 / =docs/research/001-daemon-zeromq-voice-service.md=
+
+** External primary / authoritative sources
+
+- Python signal handling: https://docs.python.org/3/library/signal.html
+- Python threading lifecycle: https://docs.python.org/3/library/threading.html
+- XDG Base Directory Specification: https://specifications.freedesktop.org/basedir/0.8/
+- pam_systemd runtime-directory behavior: https://www.freedesktop.org/software/systemd/man/251/pam_systemd.html
+- systemd.service(5): https://man7.org/linux/man-pages/man5/systemd.service.5.html
+- Linux flock(2): https://man7.org/linux/man-pages/man2/flock.2.html
+- PyZMQ thread safety: https://pyzmq.readthedocs.io/en/latest/howto/morethanbindings.html
+- PyZMQ Context/socket lifecycle: https://pyzmq.readthedocs.io/en/latest/api/zmq.html
+- SWI-Prolog multithreaded embedding: https://www.swi-prolog.org/download/stable/doc/SWI-Prolog-9.0.4.pdf
+
+* Research conclusion
+
+The inherited daemon direction survives, but with a narrower and safer interpretation.
+
+The correct #128 artifact is not yet a network server. It is a foreground Linux daemon application shell plus a principal-explicit RuntimeHost supervisor and a real single-instance lifecycle lease. It should be designed so #129 can attach one thread-owned ZeroMQ gateway later.
+
+Most importantly, per-principal RuntimeHosts are *ownership containers*, not security sandboxes. Zara's process-wide Prolog runtime, shared durable memory defaults, and unscoped plugin/event paths make that distinction non-negotiable. The production daemon therefore remains single-principal until #130/#131 earn the right to remove that gate with actual authentication and isolation tests.

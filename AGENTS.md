@@ -37,11 +37,44 @@ This file guides agentic coding assistants working in this repo.
 - Run a single test by node id:
   - `nix develop -c pytest t/test_agent_history.py::test_multiple_results_survive_in_call_order`
 
+## TDD & Coverage Contract
+
+All behavior-changing work is test-driven by default. Tests are not paperwork to backfill after the implementation is already emotionally attached to itself.
+
+For each behavior or regression:
+
+1. Write or update a deterministic test that expresses the required behavior before changing production logic.
+2. Run the focused test and prove it fails for the expected reason.
+3. Make the smallest coherent production change that satisfies the test.
+4. Run the focused test until green.
+5. Refactor only while the test remains green.
+6. Repeat for the next behavior, then run the broader suite.
+
+Exceptions are limited to changes needed to create or repair the test harness itself. When that happens, keep the harness change minimal and document why ordinary red-green TDD was impossible.
+
+Maximize meaningful coverage across all changed and adjacent behavior. Coverage means exercising distinct behavior and failure paths, not merely causing a line counter to blink.
+
+Prioritize tests for:
+
+- happy paths and realistic end-to-end flows;
+- invalid input, empty values, limits, and boundary conditions;
+- startup, degraded, restart, shutdown, and cleanup transitions;
+- cancellation, stale work, retries, races, and timeout behavior;
+- queue/resource limits and failure recovery;
+- security, authorization, identity, and isolation boundaries where relevant;
+- persistence and migration behavior;
+- packaging, console scripts, Nix wrappers, and installed-resource behavior;
+- regressions for every bug fixed.
+
+Do not game coverage. Never weaken assertions, add meaningless execution-only tests, exclude relevant code, or preserve untested reachable branches solely to improve a percentage. If changed reachable behavior remains untested, keep adding useful tests until the practical coverage ceiling is reached or document the specific reason a path cannot be deterministically exercised.
+
 ## CI/CD Test Gate
+- Always run the focused red/green TDD cycle before the full test suite for behavior changes.
 - Always run the full test suite after any code, configuration, test, or documentation change.
+- Inspect changed-code coverage gaps and add meaningful tests before considering implementation complete.
 - Do not consider work complete unless every local test passes.
 - Pull requests and pushes to `master` must pass the GitHub Actions `test` job.
-- After pushing or opening a pull request, verify the CI test job passes; do not report the change as complete while CI is pending or failing.
+- After pushing or opening a pull request, verify the CI test job passes for the exact candidate SHA; do not report the change as complete while CI is pending or failing.
 
 ## Lint / Formatting
 - No enforced linter in the repo; do not add one unless asked.
@@ -122,12 +155,50 @@ This file guides agentic coding assistants working in this repo.
 ## Cursor / Copilot Rules
 - No `.cursor/rules/`, `.cursorrules`, or `.github/copilot-instructions.md` found.
 
+## RAGE Work Protocol
+
+When the user requests RAGE, use the repository's GitHub Issues as the work queue. Do not manufacture an implementation target from prose when an issue or epic already defines the work.
+
+### Issue consumer
+
+1. Read the relevant epic/roadmap issue and its open children.
+2. Select the first open issue whose declared dependencies are satisfied, honoring explicit priority/order. Regression blockers outrank later feature work when the roadmap says so.
+3. Record the consumed issue number and exact starting commit in `rage/<work-log>.org` before research, design, tests, or implementation commits.
+4. One RAGE iteration works one consumed issue. An epic is a queue/container unless the epic explicitly says it is itself an atomic implementation issue.
+5. When an issue passes its gate and is merged/closed, consume the next eligible issue on the next iteration. Never silently skip an eligible blocking issue.
+
+### RAGE iteration
+
+Every iteration is ordered and evidence-driven:
+
+1. **Research** — investigate deeply enough to challenge the issue's inherited design. Read current code and tests, relevant project history/issues, authoritative upstream documentation, known failure modes, and serious alternatives. Research must be capable of changing the plan.
+2. **Architecture / Design** — derive the implementation from the research. Record decisions, rejected alternatives, invariants, threat/failure analysis, migration/compatibility constraints, acceptance criteria, and the exact verification gate. Map every acceptance criterion to tests before implementation.
+3. **TDD / Generate / Implement** — write the next failing test first, prove the expected red result, implement the smallest coherent change, rerun to green, then refactor. Repeat behavior by behavior. Maximize meaningful branch/path/failure coverage for the consumed issue.
+4. **Evaluate** — run focused tests plus the repository's complete gate at the exact candidate head. Inspect changed-code coverage gaps and add useful tests for reachable behavior. GitHub Actions for an older SHA is stale evidence and cannot authorize merge.
+5. **Outcome** — if the gate passes, merge and record the merge SHA. If failures falsify the design or reveal that the attempt is structurally wrong, preserve the failure evidence in the Org log, discard the failed implementation attempt, and start a new RAGE iteration from research/design. Do not endlessly patch a disproven architecture until CI becomes green by exhaustion.
+
+### Work log
+
+- Keep an append-only Org-mode log under `rage/`.
+- The log must state the exact immutable RAGE start commit and consumed GitHub issue.
+- Record iteration boundaries, research sources/findings, design decisions, planned tests, significant red/green evidence, implementation commits, coverage gaps addressed, gate commands/results, CI run/SHA, failures, discarded attempts, PR, and final merge SHA.
+- A retry gets a new iteration section. Failed work stays visible as evidence.
+
+### Repository-local skills
+
+- Zara-local reusable agent procedures belong under `skills/`.
+- Read the relevant local skill before executing that procedure.
+- The RAGE skill supplements this file; it does not override repository gates or GitHub issue ordering.
+
 ## Do Not Do
 - Do not add new linters or formatters.
 - Do not change API providers or models without approval.
 - Do not move Prolog logic into Python.
 - Do not add non‑Nix dependencies without approval.
 - Do not add inline comments unless asked.
+- Do not add or revive Prolog-RLM as a Zara runtime backend or dependency.
+- Do not implement behavior first and backfill tests later when ordinary TDD is possible.
+- Do not game coverage metrics.
 
 ## Logging Conventions
 - Prefer module-level loggers via `logging.getLogger(__name__)`.
@@ -144,19 +215,22 @@ This file guides agentic coding assistants working in this repo.
 - For Prolog issues, verify `main.pl` is loaded and predicates exist.
 
 ## Single‑File Changes
-- Use small edits and avoid large refactors without request.
+- Use small edits and avoid large refactors without request, except where an explicit RAGE design justifies the larger change.
 - When modifying logic, add logging only where needed.
 
 ## Tests Location
 - Python tests live in `t/`.
 - Shell integration and smoke tests live in `scripts/test-*.sh`.
 - Use the full test suite command under **Tests** for final verification.
+- New behavior belongs behind tests first; regressions require a reproducing test before the fix.
 
 ## Structure Notes
 - `zara/` contains runtime Python modules.
 - `kb/` contains Prolog knowledge base facts.
 - `modules/` contains Prolog logic.
 - `t/` contains tests.
+- `rage/` contains append-only RAGE work evidence.
+- `skills/` contains Zara-local agent skills.
 
 ## Wiki Documentation
 - Keep `wiki/` documentation up to date with code changes.
@@ -164,6 +238,6 @@ This file guides agentic coding assistants working in this repo.
 
 ## Additional Notes
 - Keep code consistent with existing style.
-- Favor minimal, targeted changes.
-- Ask before adding new files beyond what is requested.
+- Favor minimal, targeted changes outside an approved RAGE design.
+- Ask before adding new files beyond what is requested, except RAGE logs/skills/design/test artifacts required by this protocol.
 - Follow repo conventions for notifications, logging, and config defaults.

@@ -289,6 +289,13 @@
             extraPath = [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full whisperCppVulkan ];
           };
 
+          zara-server = mkZaraPackage {
+            pname = "zara-server";
+            binaryName = "zara-server";
+            addFlags = "-m zara.server";
+            extraPath = [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full whisperCppVulkan ];
+          };
+
           zara-desktop = mkZaraPackage {
             pname = "zara-desktop";
             addFlags = "-m zara.desktop.app";
@@ -341,7 +348,7 @@
 
           zarathushtra = pkgs.buildEnv {
             name = "zarathushtra-full";
-            paths = [ zara-cli zara-desktop zara-prolog zara-wake zara-dictate ];
+            paths = [ zara-cli zara-server zara-desktop zara-prolog zara-wake zara-dictate ];
           };
 
           # Development wrappers intentionally execute the working checkout,
@@ -363,7 +370,7 @@
             # writable temp dir so tests that resolve ``Path.home()`` work.
             pytest = pkgs.runCommand "zara-check-pytest"
               {
-                nativeBuildInputs = [ pythonLibs pkgs.swi-prolog pkgs.makeWrapper ];
+                nativeBuildInputs = [ pythonLibs pkgs.swi-prolog pkgs.makeWrapper pkgs.cacert ];
                 src = ./.;
               }
               ''
@@ -372,6 +379,8 @@
                 export XDG_RUNTIME_DIR=$(mktemp -d)
                 export ZARA_DICTATION_PIDFILE=$XDG_RUNTIME_DIR/zara_dictation.pid
                 export ZARA_DICTATION_LOGFILE=$XDG_RUNTIME_DIR/zara_dictation.log
+                export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+                export NIX_SSL_CERT_FILE=$SSL_CERT_FILE
                 export LANG=C.UTF-8
                 export LC_ALL=C.UTF-8
                 cp -r $src $out-src
@@ -441,7 +450,7 @@
             # mocked hardware so the package layout is verified end-to-end.
             wrappers = pkgs.runCommand "zara-check-wrappers"
               {
-                nativeBuildInputs = [ zara-cli zara-desktop zara-wake zara-dictate zara-prolog pkgs.bash ];
+                nativeBuildInputs = [ zara-cli zara-server zara-desktop zara-wake zara-dictate zara-prolog pkgs.bash ];
                 src = ./.;
               }
               ''
@@ -456,6 +465,7 @@
                 zara >$HOME/cli.out 2>&1
                 cli_rc=$?
                 zara --help >$HOME/cli-help.out 2>&1
+                zara-server --help >$HOME/server.out 2>&1
                 zara-wake --help >$HOME/wake.out 2>&1 || true
                 zara-console --help >$HOME/console.out 2>&1 || true
                 zara-dictate --help >$HOME/dictate.out 2>&1 || true
@@ -463,6 +473,7 @@
                 test "$cli_rc" -eq 1
                 grep -q "Zarathustra Voice Assistant" $HOME/cli.out
                 grep -q -- "--desktop" $HOME/cli-help.out
+                grep -q "Long-lived Zara assistant service" $HOME/server.out
                 grep -q "usage:" $HOME/wake.out
                 grep -q "usage:" $HOME/console.out
                 grep -q "usage:" $HOME/dictate.out
@@ -475,6 +486,7 @@
         {
           packages = {
             zara-cli = zara-cli;
+            zara-server = zara-server;
             zara-desktop = zara-desktop;
             zara-prolog = zara-prolog;
             zara-wake = zara-wake;
@@ -487,6 +499,10 @@
             zara = {
               type = "app";
               program = "${zara-cli}/bin/zara";
+            };
+            zara-server = {
+              type = "app";
+              program = "${zara-server}/bin/zara-server";
             };
             zara-desktop = {
               type = "app";
@@ -533,6 +549,7 @@
               echo "Commands:"
               echo "  zara-desktop                   # Native desktop / Quick Copilot"
               echo "  zara --desktop                 # Same canonical desktop entry point"
+              echo "  zara-server                    # Long-lived Zara service"
               echo "  zara --wake                    # Wake listener"
               echo "  zara --wake --stt-provider whisper-cpp --device amd  # AMD/Vulkan STT"
               echo "  zara --console                 # Console mode"
@@ -542,7 +559,9 @@
               echo ""
               echo "Build system:"
               echo "  nix build .#zara-desktop      # Build native desktop package"
+              echo "  nix build .#zara-server       # Build service package"
               echo "  nix run .#zara-desktop        # Run native desktop / Quick Copilot"
+              echo "  nix run .#zara-server         # Run long-lived Zara service"
               echo "  nix build                     # Build all packages"
               echo "  nix run                       # Run default CLI (prints help with no args)"
               echo "  nix run .#zara-wake           # Run wake listener"

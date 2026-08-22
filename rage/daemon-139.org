@@ -1,0 +1,173 @@
+#+title: RAGE Work Log - Zara Daemon TASK #139
+#+startup: overview
+
+* Run identity
+
+- Task :: #139 - bootstrap Zara RAGE and execute the daemon queue
+- Parent epic :: #127 - Long-lived Zara daemon, ZeroMQ client protocol, multi-user isolation, and Voice replacement
+- Consumed issue :: #128 - add long-lived =zara --daemon= lifecycle and principal-aware runtime supervisor
+- Branch :: =rage/139-daemon=
+- RAGE start commit :: =12d28bcb28a2b48750875050ad7c21ebbbd636d8=
+- Start meaning :: This is the exact repository commit at which this RAGE run began. Every research, design, implementation, gate, retry, and merge record below is relative to this immutable marker.
+- Status :: ITERATION 1 / RESEARCH
+- Rule :: This log is append-only except for correcting an immediately discovered factual typo. Failed attempts remain recorded.
+
+* Contract
+
+RAGE is not a euphemism for "code until CI stops complaining."
+
+GitHub Issues are the work queue. Read the roadmap/epic, then consume the first open dependency-satisfied issue in declared order. One iteration works one consumed issue.
+
+Each iteration follows this order:
+
+1. Research deeply enough to falsify assumptions and challenge inherited designs.
+2. Architecture/design from the evidence, including rejected alternatives, invariants, threat/failure analysis, acceptance criteria, and the exact gate.
+3. Generate/implement the consumed issue's selected design.
+4. Evaluate at the exact candidate head with the repository's complete gate.
+5. If the gate passes, merge. If the attempt is architecturally invalid or the gate failure disproves the design, preserve the evidence, discard the failed implementation attempt, and begin a new RAGE iteration from research/design.
+
+A stale CI run never authorizes a merge.
+
+* Queue evidence
+
+- Roadmap #1 already contains Phase 9 and orders #127 plus children #128-#134.
+- Epic #127 already exists. No duplicate epic was created.
+- #128 is the first open daemon child and has no earlier daemon child dependency; it is therefore the consumed issue for Iteration 1.
+- Later issues remain queued. This iteration does not silently implement #129-#134.
+
+* Iteration 1
+
+** Bootstrap
+
+- [X] Task created before repository bootstrap: #139.
+- [X] Start commit recorded before daemon research/design/implementation work.
+- [X] Permanent issue-driven RAGE rules added to =AGENTS.md= in commit =9b84d84052c0b948c75dcd75decd2fba92b51a78=.
+- [X] Zara-local =skills/= directory created.
+- [X] Zara-local RAGE skill created in commit =0a0aa8bda5c6b1e8000dad40c740493449a031da=.
+- [X] Reusable RAGE skill created in =lost-rob0t/skills= without running RAGE there; skills PR #9, head =249fc74c878c481dd032282060c95bf9bc546c67=.
+
+** Research
+
+Started after bootstrap. Research must challenge the existing PR #135 assumptions and the issue #128 shape before design.
+
+** Design
+
+Not started.
+
+** Implementation
+
+Not started.
+
+** Gate
+
+Not started.
+
+** Outcome
+
+Pending.
+
+* Iteration 1 checkpoint - research complete
+
+- Research artifact :: =rage/daemon-128-research.org=
+- Research commit :: =eb036fc2ee5802e23acbcf2d8ad2cf08cb9852dd=
+- Result :: inherited supervisor direction survived, but several assumptions did not.
+
+Key findings:
+
+1. =RuntimeHost= is already the right process-local runtime seam; the server must wrap it rather than build another assistant stack.
+2. =PrologEngine= deliberately serializes access to one process-wide PySWIP/SWI runtime. Separate RuntimeHost threads are ownership containers, not Prolog/security sandboxes.
+3. Current durable memory and parts of the event/plugin path are not principal-isolated. Production multi-principal operation remains gated on #130/#131.
+4. Python daemon threads are abruptly abandoned at interpreter exit, so =zara-server= must explicitly shutdown and join every owned RuntimeHost before exiting.
+5. Python signal handlers belong to the main thread. The server main thread owns SIGINT/SIGTERM and only uses handlers to request normal shutdown.
+6. Modern service managers should supervise a foreground process. No double-fork/self-daemonization.
+7. A held =flock= in an owner-private local XDG runtime directory is a stronger single-instance authority than PID-file truthiness.
+8. Future ZeroMQ sockets must remain owned by the gateway thread/loop; RuntimeHost threads should communicate through ordinary commands/events, not share sockets.
+
+* Iteration 1 checkpoint - naming/design pivot
+
+During design review, the executable boundary was simplified:
+
+- =zara= remains the client-facing executable;
+- =zara-server= becomes the canonical long-lived daemon/service executable;
+- old =zara --daemon= wording in the research/epic is historical and superseded for implementation;
+- #128 establishes a transport-neutral =ZaraClient= seam plus =InProcessZaraClient=;
+- #129 will add =ZmqZaraClient= behind the same seam.
+
+Issue #128 and task #139 were updated to encode this decision. Epic #127 received a superseding architecture note rather than creating a duplicate epic.
+
+- Design artifact :: =rage/daemon-128-design.org=
+- Design commit :: =736219f0b617c7ce51bb9f653d20c43e68795e87=
+- Iteration state :: DESIGN COMPLETE / IMPLEMENTATION AUTHORIZED
+
+Selected implementation slice:
+
+1. =zara.client.ZaraClient= abstraction and =InProcessZaraClient= implementation.
+2. =zara.server.PrincipalContext=, =PrincipalRuntime=, =RuntimeSupervisor=, =ServerLease=, =ZaraServer=.
+3. =zara-server= foreground executable with minimal SIGINT/SIGTERM handlers and bounded drain/join.
+4. Default production principal cap of one until #131.
+5. Python + Nix packaging for =zara-server=.
+6. Focused lifecycle/client/package tests and a non-interactive server gate script.
+7. No ZeroMQ, auth, hard multi-user persistence isolation, or voice transport in this issue.
+
+* Iteration 1 checkpoint - TDD/coverage policy strengthened mid-run
+
+The user explicitly strengthened the permanent LLM/agent contract during Iteration 1:
+
+- TDD is mandatory: red -> green -> refactor for behavior changes;
+- tests precede production logic whenever an ordinary deterministic test can be written;
+- maximize meaningful behavioral/path/failure/security/lifecycle coverage;
+- do not game coverage percentages with weak assertions, meaningless execution-only tests, exclusions, or trivial branches.
+
+Agent-facing instructions were updated accordingly:
+
+- =AGENTS.md= commit =e70f517281b43a1c13d65a416811b395b198c6ab=;
+- Zara-local =skills/rage/SKILL.md= commit =543aba417f22ca2c91c9672473a5eb5a8aabc873=;
+- reusable =lost-rob0t/skills= RAGE skill PR #9 updated to head =1b48fd364aa33d2c422a4b42a31f2ae9b7eed836=;
+- TASK #139 and the recurring RAGE worker prompt were updated with the same contract.
+
+The first skeleton implementation commit predated this stronger instruction. It is therefore treated as unaccepted scaffolding, not completion evidence. From this checkpoint forward, new behavior fixes must be driven by failing tests first. The existing scaffold must also receive broad edge/failure coverage before it can pass the issue gate.
+
+Design was amended before new tests to add two concrete invariants discovered during static review:
+
+1. principal identifiers/kinds reject leading/trailing whitespace rather than creating ambiguous ownership keys;
+2. =ZaraClient.close()= leaves public state =STOPPED= even when called before =start()=.
+
+Next action is a tests-only red commit covering those invariants plus broader lifecycle/error/lease/client edge paths. Production code changes wait for the expected red evidence.
+
+* Iteration 1 checkpoint - exact red gate observed
+
+- Draft PR :: #140
+- Red candidate head :: =2bf98ace0629c0ece015ef53aea7f5f0ebe39e63=
+- GitHub Actions :: CI #225, run =32554357698=
+- Arch shared-mic job :: PASS
+- Ubuntu shared-mic job :: PASS
+- Main test job :: EXPECTED FAILURE at pytest phase
+- Aggregate :: 6 failed, 737 passed, 14 warnings
+
+The red gate proved the two new production requirements before either production fix was made:
+
+1. =InProcessZaraClient.close()= before =start()= left public state =NEW= instead of required =STOPPED=.
+2. =PrincipalContext= accepted four leading/trailing-whitespace cases that the design requires it to reject.
+
+The sixth failure was a test defect, not a product defect. The client-isolation test expected the second client's event queue to be completely empty after startup, but that queue correctly contained its own =RuntimeStarted= event. The isolation claim is only that first-client turn output does not appear in the second client's stream. The test was corrected in tests-only commit =6deb0e161585b25bd66f69aec642cb7d703dcfbd= to drain local startup lifecycle events and assert specifically against cross-client =ResponseText= leakage.
+
+No production code was changed to placate that flawed assertion. The next production patch is limited to the two legitimate red requirements above.
+
+* Iteration 1 checkpoint - exact-head CI gate defect after feature tests green
+
+- Candidate head :: =9a46128da4d84a549f421ba14841e8cd35b25905=
+- GitHub Actions :: CI #233, run =32556740580=
+- Canonical =scripts/test-all.sh= :: PASS; main pytest =744 passed= and server lifecycle =37 passed=.
+- Arch shared-mic job :: PASS.
+- Ubuntu shared-mic job :: PASS.
+- =nix flake check= :: FAIL in =checks.x86_64-linux.pytest=.
+- Hermetic check aggregate :: =1 failed, 738 passed, 5 skipped, 14 warnings=.
+- Failing existing regression :: =t/test_mcp_e2e.py::test_real_streamable_http_server=.
+- Failure :: MCP HTTP client startup raised =FileNotFoundError: [Errno 2] No such file or directory= inside the isolated Nix derivation.
+
+Classification: ordinary gate/test-environment defect, not a daemon design failure. The same real HTTP MCP test passes under =nix develop= and the isolated HTTP fixture reaches its listening port before the client fails. MCP v2/httpx2 documents that HTTP clients use the operating-system trust store and that minimal environments must provide =SSL_CERT_FILE=/=SSL_CERT_DIR=. The pure =runCommand= check did not provide a CA path.
+
+TDD evidence is the red exact-head flake check above. The regression test is kept intact. No skip, xfail, weakened assertion, or MCP runtime behavior change is permitted to make the gate green.
+
+- Hermetic environment fix :: commit =5d141ae456e7edef219bd3e21061d828855650c1= adds Nix =cacert= to the isolated pytest inputs and exports =SSL_CERT_FILE= and =NIX_SSL_CERT_FILE= to the Nix store CA bundle.
+- Next gate :: rerun exact-head GitHub Actions; both =nix flake check= and =nix build= must pass before merge authority exists.
