@@ -171,3 +171,19 @@ TDD evidence is the red exact-head flake check above. The regression test is kep
 
 - Hermetic environment fix :: commit =5d141ae456e7edef219bd3e21061d828855650c1= adds Nix =cacert= to the isolated pytest inputs and exports =SSL_CERT_FILE= and =NIX_SSL_CERT_FILE= to the Nix store CA bundle.
 - Next gate :: rerun exact-head GitHub Actions; both =nix flake check= and =nix build= must pass before merge authority exists.
+
+* Iteration 1 outcome - issue #128 merged
+
+- Exact candidate head :: =0a961fa21dbc339affdd87b46831ee94c5871d7b=.
+- Authoritative GitHub Actions :: CI #235, run =32557265702=.
+- =scripts/test-all.sh= :: PASS.
+- =nix flake check= :: PASS.
+- =nix build= :: PASS.
+- Arch shared-mic job :: PASS.
+- Ubuntu shared-mic job :: PASS.
+- PR :: #140, promoted from draft only after exact-head green.
+- Merge SHA :: =0a648c9157ec0f5dc63bc193acdc3b4fe1fcd4dc=.
+- Consumed issue :: #128 closed completed.
+- Outcome :: MERGED / ITERATION 1 COMPLETE.
+
+The implementation establishes =zara-server= as the foreground long-lived service process, keeps =zara= as the client-facing name, introduces the transport-neutral =ZaraClient= seam, provides principal-explicit runtime supervision and lease-backed single ownership, and intentionally leaves ZeroMQ/auth/hard multi-user isolation to #129-#131. The next RAGE iteration must re-read the issue queue and consume #129 only on a later worker run.
