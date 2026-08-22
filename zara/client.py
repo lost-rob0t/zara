@@ -8,6 +8,8 @@ issue #129 will implement later.
 from __future__ import annotations
 
 import concurrent.futures
+import enum
+import time
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -16,12 +18,35 @@ from zara.runtime.commands import RuntimeCommand
 from zara.runtime.host import BackendFactory, RuntimeHost, RuntimeHostState, RuntimeNotReady
 
 
+class ZaraClientState(str, enum.Enum):
+    NEW = "new"
+    STARTING = "starting"
+    READY = "ready"
+    DEGRADED = "degraded"
+    STOPPING = "stopping"
+    STOPPED = "stopped"
+    FAILED = "failed"
+
+
+def _map_host_state(state: RuntimeHostState) -> ZaraClientState:
+    mapping = {
+        RuntimeHostState.NEW: ZaraClientState.NEW,
+        RuntimeHostState.STARTING: ZaraClientState.STARTING,
+        RuntimeHostState.RUNNING: ZaraClientState.READY,
+        RuntimeHostState.DEGRADED: ZaraClientState.DEGRADED,
+        RuntimeHostState.STOPPING: ZaraClientState.STOPPING,
+        RuntimeHostState.STOPPED: ZaraClientState.STOPPED,
+        RuntimeHostState.FAILED: ZaraClientState.FAILED,
+    }
+    return mapping[state]
+
+
 class ZaraClient(ABC):
     """Application-facing client contract independent of transport."""
 
     @property
     @abstractmethod
-    def state(self) -> RuntimeHostState:
+    def state(self) -> ZaraClientState:
         raise NotImplementedError
 
     @abstractmethod
@@ -66,8 +91,8 @@ class InProcessZaraClient(ZaraClient):
         )
 
     @property
-    def state(self) -> RuntimeHostState:
-        return self._host.state
+    def state(self) -> ZaraClientState:
+        return _map_host_state(self._host.state)
 
     @property
     def is_alive(self) -> bool:
@@ -87,11 +112,12 @@ class InProcessZaraClient(ZaraClient):
 
     def close(self, timeout: Optional[float] = None) -> None:
         wait_timeout = self._shutdown_timeout if timeout is None else max(0.0, float(timeout))
+        deadline = time.monotonic() + wait_timeout
         future = self.shutdown()
-        future.result(timeout=wait_timeout)
-        self._host.join(timeout=wait_timeout)
+        future.result(timeout=max(0.0, deadline - time.monotonic()))
+        self._host.join(timeout=max(0.0, deadline - time.monotonic()))
         if self._host.is_alive:
             raise RuntimeNotReady("runtime host did not stop before client close timeout")
 
 
-__all__ = ["InProcessZaraClient", "ZaraClient"]
+__all__ = ["InProcessZaraClient", "ZaraClient", "ZaraClientState"]
