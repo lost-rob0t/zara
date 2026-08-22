@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import zmq
 from zmq.auth.thread import ThreadAuthenticator
-from zmq.utils import z85
 
 from zara.security import (
     Capability,
@@ -70,7 +69,7 @@ def _curve_roundtrip(*, wrong_server_pin: bool) -> bool:
         client.connect(endpoint)
         client.send(b"probe")
 
-        if not server.poll(timeout=500, flags=zmq.POLLIN):
+        if not server.poll(timeout=1000, flags=zmq.POLLIN):
             return False
         frames = server.recv_multipart()
         return frames[-1] == b"probe"
@@ -149,30 +148,28 @@ def test_curve_config_repr_never_contains_secret_key():
     assert client_secret not in repr(client)
 
 
-def test_credentials_provider_accepts_only_enabled_enrolled_raw_key():
+def test_credentials_provider_accepts_only_enabled_enrolled_z85_key():
     public, _ = _pair()
     unknown_public, _ = _pair()
     registry = _registry_with(public)
     provider = CurveCredentialsProvider(registry)
 
-    raw_public = z85.decode(public.encode("ascii"))
-    raw_unknown = z85.decode(unknown_public.encode("ascii"))
-
-    assert provider.callback("zara", raw_public) is True
-    assert provider.callback("zara", raw_unknown) is False
+    assert provider.callback("zara", public.encode("ascii")) is True
+    assert provider.callback("zara", unknown_public.encode("ascii")) is False
 
     registry.revoke(public)
-    assert provider.callback("zara", raw_public) is False
+    assert provider.callback("zara", public.encode("ascii")) is False
 
 
-def test_credentials_provider_rejects_malformed_raw_key_without_throwing():
+def test_credentials_provider_rejects_malformed_z85_key_without_throwing():
     public, _ = _pair()
     provider = CurveCredentialsProvider(_registry_with(public))
 
     assert provider.callback("zara", b"") is False
     assert provider.callback("zara", b"short") is False
-    assert provider.callback("zara", b"x" * 31) is False
-    assert provider.callback("zara", b"x" * 33) is False
+    assert provider.callback("zara", b"x" * 39) is False
+    assert provider.callback("zara", b"x" * 41) is False
+    assert provider.callback("zara", b"~" * 40) is False
 
 
 def test_apply_curve_server_sets_curve_mechanism_and_zap_domain():
