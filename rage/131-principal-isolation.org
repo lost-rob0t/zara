@@ -1,0 +1,31 @@
+#+title: RAGE Work Log - Zara issue 131
+
+* Run identity
+- Consumed issue :: #131
+- Branch :: =rage/131-principal-isolation=
+- RAGE start commit :: =71615bcd4cdece940db433cb79ea46fe9ad085e3=
+- Start meaning :: Exact =master= commit immediately after #130 / PR #145 merged. Immutable for this run.
+
+* Iteration 1
+** Research
+- Queue eligibility :: #130 is closed as completed; #131 depends on #130 and is therefore the next dependency-satisfied child of daemon epic #127.
+- Status :: research in progress; no production behavior changed in this iteration yet.
+
+** Design
+- Pending evidence-derived design.
+
+** Planned TDD
+- Pending acceptance-to-test mapping after research.
+
+** Implementation
+- None yet.
+
+** Gate
+- Focused red/green tests per behavior.
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- Exact-head GitHub Actions required before merge.
+
+** Outcome
+- In progress.
