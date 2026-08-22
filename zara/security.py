@@ -1,6 +1,6 @@
 """Authentication-adjacent security primitives for Zara's daemon transport.
 
-This module deliberately contains no socket ownership.  Issue #130 uses these
+This module deliberately contains no socket ownership. Issue #130 uses these
 thread-safe primitives from both the ZAP authenticator and the ZARA/1 gateway.
 """
 
@@ -16,6 +16,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Optional
 
+import zmq
 from zmq.utils import z85
 
 from zara.server import PrincipalContext
@@ -39,24 +40,41 @@ class Capability(str, enum.Enum):
     VOICE = "voice"
 
 
-def validate_curve_public_key(value: str | bytes) -> str:
+def _validate_z85_key(value: str | bytes, *, label: str) -> str:
     if isinstance(value, bytes):
         try:
             value = value.decode("ascii")
         except UnicodeDecodeError as error:
-            raise SecurityConfigurationError("CURVE public key must be ASCII Z85") from error
+            raise SecurityConfigurationError(f"{label} must be ASCII Z85") from error
     if not isinstance(value, str):
-        raise SecurityConfigurationError("CURVE public key must be a Z85 string")
+        raise SecurityConfigurationError(f"{label} must be a Z85 string")
     if len(value) != 40:
-        raise SecurityConfigurationError("CURVE public key must be exactly 40 Z85 characters")
+        raise SecurityConfigurationError(f"{label} must be exactly 40 Z85 characters")
     try:
         encoded = value.encode("ascii")
         decoded = z85.decode(encoded)
     except (UnicodeEncodeError, ValueError, KeyError) as error:
-        raise SecurityConfigurationError("CURVE public key is not valid Z85") from error
+        raise SecurityConfigurationError(f"{label} is not valid Z85") from error
     if len(decoded) != 32:
-        raise SecurityConfigurationError("CURVE public key must decode to 32 bytes")
+        raise SecurityConfigurationError(f"{label} must decode to 32 bytes")
     return value
+
+
+def validate_curve_public_key(value: str | bytes) -> str:
+    return _validate_z85_key(value, label="CURVE public key")
+
+
+def validate_curve_secret_key(value: str | bytes) -> str:
+    return _validate_z85_key(value, label="CURVE secret key")
+
+
+def _validate_curve_keypair(public_key: str, secret_key: str) -> None:
+    try:
+        derived = zmq.curve_public(secret_key.encode("ascii")).decode("ascii")
+    except (ValueError, zmq.ZMQError) as error:
+        raise SecurityConfigurationError("CURVE secret key cannot derive a public key") from error
+    if derived != public_key:
+        raise SecurityConfigurationError("CURVE public and secret keys do not form a keypair")
 
 
 @dataclass(frozen=True)
@@ -131,6 +149,82 @@ class KeyRegistry:
             updated = replace(current, enabled=True)
             self._records[key] = updated
             return updated
+
+
+@dataclass(frozen=True)
+class CurveServerConfig:
+    public_key: str
+    secret_key: str = field(repr=False)
+    registry: KeyRegistry = field(repr=False)
+    zap_domain: str = "zara"
+
+    def __post_init__(self) -> None:
+        public_key = validate_curve_public_key(self.public_key)
+        secret_key = validate_curve_secret_key(self.secret_key)
+        _validate_curve_keypair(public_key, secret_key)
+        if not isinstance(self.registry, KeyRegistry):
+            raise SecurityConfigurationError("CURVE server requires KeyRegistry")
+        if not isinstance(self.zap_domain, str) or not self.zap_domain.strip():
+            raise SecurityConfigurationError("ZAP domain must be a non-empty string")
+        try:
+            self.zap_domain.encode("ascii")
+        except UnicodeEncodeError as error:
+            raise SecurityConfigurationError("ZAP domain must be ASCII") from error
+        if self.zap_domain != self.zap_domain.strip():
+            raise SecurityConfigurationError("ZAP domain must not contain surrounding whitespace")
+        object.__setattr__(self, "public_key", public_key)
+        object.__setattr__(self, "secret_key", secret_key)
+
+
+@dataclass(frozen=True)
+class CurveClientConfig:
+    public_key: str
+    secret_key: str = field(repr=False)
+    server_public_key: str = ""
+
+    def __post_init__(self) -> None:
+        public_key = validate_curve_public_key(self.public_key)
+        secret_key = validate_curve_secret_key(self.secret_key)
+        server_public_key = validate_curve_public_key(self.server_public_key)
+        _validate_curve_keypair(public_key, secret_key)
+        object.__setattr__(self, "public_key", public_key)
+        object.__setattr__(self, "secret_key", secret_key)
+        object.__setattr__(self, "server_public_key", server_public_key)
+
+
+class CurveCredentialsProvider:
+    """PyZMQ CURVE callback backed by Zara's live key registry."""
+
+    def __init__(self, registry: KeyRegistry) -> None:
+        if not isinstance(registry, KeyRegistry):
+            raise TypeError("registry must be KeyRegistry")
+        self._registry = registry
+
+    def callback(self, domain: str, key: bytes) -> bool:
+        del domain
+        if not isinstance(key, bytes) or len(key) != 32:
+            return False
+        try:
+            public_key = z85.encode(key).decode("ascii")
+            return self._registry.require_enabled(public_key) is not None
+        except (SecurityConfigurationError, ValueError, KeyError, UnicodeDecodeError):
+            return False
+
+
+def apply_curve_server(socket: zmq.Socket, config: CurveServerConfig) -> None:
+    if not isinstance(config, CurveServerConfig):
+        raise TypeError("config must be CurveServerConfig")
+    socket.curve_secretkey = config.secret_key.encode("ascii")
+    socket.curve_server = True
+    socket.zap_domain = config.zap_domain.encode("ascii")
+
+
+def apply_curve_client(socket: zmq.Socket, config: CurveClientConfig) -> None:
+    if not isinstance(config, CurveClientConfig):
+        raise TypeError("config must be CurveClientConfig")
+    socket.curve_publickey = config.public_key.encode("ascii")
+    socket.curve_secretkey = config.secret_key.encode("ascii")
+    socket.curve_serverkey = config.server_public_key.encode("ascii")
 
 
 class AuthorizationPolicy:
@@ -300,6 +394,9 @@ __all__ = [
     "AuthorizationPolicy",
     "BoundedAuditSink",
     "Capability",
+    "CurveClientConfig",
+    "CurveCredentialsProvider",
+    "CurveServerConfig",
     "KeyRecord",
     "KeyRegistry",
     "PrincipalQuotaPolicy",
@@ -308,6 +405,9 @@ __all__ = [
     "QuotaTracker",
     "SecurityAuditRecord",
     "SecurityConfigurationError",
+    "apply_curve_client",
+    "apply_curve_server",
     "validate_curve_public_key",
+    "validate_curve_secret_key",
     "validate_secret_file",
 ]
