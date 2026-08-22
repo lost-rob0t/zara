@@ -95,14 +95,15 @@ class ConversationStore:
         self._db.connect()
 
     def _ensure_principal_schema(self) -> None:
-        """Upgrade conversation tables without consuming the shared integer migration space."""
-        conversation_columns = {
-            row["name"] for row in self._db.fetch_all("PRAGMA table_info(desktop_conversations)")
-        }
-        message_columns = {
-            row["name"] for row in self._db.fetch_all("PRAGMA table_info(desktop_messages)")
-        }
-        with self._db.transaction() as conn:
+        """Upgrade ownership columns while holding SQLite's write reservation."""
+        with self._db.transaction(immediate=True) as conn:
+            conversation_columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(desktop_conversations)")
+            }
+            message_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(desktop_messages)")
+            }
             if "principal_id" not in conversation_columns:
                 conn.execute(
                     "ALTER TABLE desktop_conversations "
