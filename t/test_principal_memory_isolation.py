@@ -62,6 +62,18 @@ def install_chroma(monkeypatch, client: RecordingClient) -> None:
     )
 
 
+def test_explicit_memory_principal_requires_canonical_context(monkeypatch):
+    monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", False)
+
+    with pytest.raises(TypeError, match="PrincipalContext"):
+        MemoryManager(
+            principal=SimpleNamespace(
+                principal_id="user:alice",
+                kind="authenticated",
+            )
+        )
+
+
 def test_same_fact_text_is_not_deduplicated_across_principals(monkeypatch):
     monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", False)
     alice = MemoryManager(principal=principal("alice"))
