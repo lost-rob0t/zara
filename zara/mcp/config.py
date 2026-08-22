@@ -54,6 +54,20 @@ def _toml_value(value: Any) -> str:
     raise TypeError(f"Unsupported TOML value: {type(value).__name__}")
 
 
+def _secure_write_text(path: Path, text: str) -> None:
+    """Write managed config with owner-only permissions, independent of umask."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as handle:
+            handle.write(text)
+            handle.flush()
+    finally:
+        os.close(fd)
+
+
 @dataclass(frozen=True)
 class MCPServerConfig:
     """Validated configuration for one MCP server."""
@@ -292,7 +306,6 @@ class MCPConfigStore:
         self._write(raw)
 
     def _write(self, raw: Mapping[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         lines = ["# Managed by `zara mcp`; values in this file override [mcp] in config.toml.", ""]
         for key in ("connect_timeout", "request_timeout", "refresh_interval"):
             if key in raw:
@@ -325,7 +338,7 @@ class MCPConfigStore:
                     if key not in preferred and values[key] is not None:
                         lines.append(f"{key} = {_toml_value(values[key])}")
                 lines.append("")
-        self.path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        _secure_write_text(self.path, "\n".join(lines).rstrip() + "\n")
 
 
 def find_env_references(config: MCPServerConfig) -> set[str]:
