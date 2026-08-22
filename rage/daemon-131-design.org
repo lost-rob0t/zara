@@ -26,6 +26,15 @@ Issue #131 owns principal isolation for durable conversations/messages, memory/s
 - Duplicate-fact detection is owner-scoped.
 - Session dictionary and =current_session_id= remain only inside the sealed principal-bound manager for compatibility; daemon code must create one manager per principal rather than share it.
 - =build_memory_manager(..., principal_id=...)= exposes the binding explicitly.
+- Guest/ephemeral runtime principals use a non-persistent manager whose state dies with the runtime slot; they never fall through to =local-owner= durable state.
+
+** Runtime injection refinement
+Initial Slice D tests proposed widening =AgentManager= with =principal_id=. Repository inspection showed that =AgentManager= already accepts an injected =memory_manager=, so the narrower design is selected before runtime production changes:
+- =RuntimeSupervisor= keeps authenticated =PrincipalContext= as the authority and passes its principal id/kind into the runtime backend factory.
+- =create_runtime_backend= / =AgentRuntimeBackend= construct the owner-bound =MemoryManager= at the daemon boundary and inject that object into =AgentManager=.
+- =AgentManager= remains identity-agnostic; standalone callers do not need daemon principal concepts.
+- =RuntimeHost= may remain transport/runtime-host generic; tests prove the backend dependency is sealed to the authenticated principal instead of requiring a public host =principal_id= field.
+- No wire/request field can select the injected owner.
 
 ** Future #51 integration
 - ContextManager later receives the same principal-bound storage dependencies. #131 must not create a second context history model.
@@ -39,10 +48,13 @@ Issue #131 owns principal isolation for durable conversations/messages, memory/s
 6. Existing standalone data remains accessible only through explicit =local-owner= scope after migration.
 7. No payload owner/user field can change an object's bound principal.
 8. Deleting/exporting all state is principal-local.
+9. Authenticated principal identity crosses supervisor/backend boundaries only as trusted construction data; =AgentManager= receives sealed dependencies, not caller-controlled identity strings.
+10. Guest/ephemeral runtimes never open durable user memory and destruction removes their private state.
 
 * Rejected alternatives
 - Post-filter vector results: rejected due inference/candidate-selection leakage.
 - Caller-supplied principal per method: rejected because omission creates unsafe unscoped calls.
+- =AgentManager(principal_id=...)=: rejected after code inspection because it spreads daemon identity into a component that already supports dependency injection.
 - New memory subsystem: rejected; wrap/refactor existing MemoryManager.
 - Implement #51 here: rejected as queue violation/duplicate subsystem.
 
@@ -51,8 +63,10 @@ Issue #131 owns principal isolation for durable conversations/messages, memory/s
 - Foreign message insert: fail closed before insert/update.
 - Chroma backend error: fallback stays owner-scoped; persistent destructive operations continue failing closed when durability is unavailable.
 - Legacy rows: assigned =local-owner= by migration; never globally visible.
+- Legacy ownerless Chroma records are not claimed by whichever authenticated principal connects first; they remain inaccessible to daemon principals until an explicit trusted migration exists.
 - Empty/whitespace principal ids: constructor rejects.
 - Session id collision across distinct manager objects: safe because each object is owner-bound; tests force same label/id where APIs allow.
+- Guest/ephemeral principal: local-only memory, no durable collection creation, destroyed with runtime slot.
 
 * TDD map
 ** Slice A - conversation owner migration and CRUD isolation
@@ -82,9 +96,19 @@ GREEN implementation: push owner filter into Chroma query/get/delete paths.
 
 ** Slice D - daemon construction/event ownership seam
 RED tests first:
-- runtime slot for principal A receives a memory/state dependency bound to A;
-- B cannot subscribe/resume A private conversation/event identifiers through existing ZARA/1 bridge.
+- runtime slot for principal A constructs/injects a memory/state dependency sealed to A;
+- guest/ephemeral runtime gets a non-durable dependency;
+- A/B principal event subscriptions stay independent even across separate routes/reconnects;
+- B cannot resume/use A private identifiers through existing ZARA/1 bridge.
 GREEN only within #131 boundaries; do not implement #132/#133 message families.
+
+** Slice E - explicit destructive/export boundaries
+RED tests first:
+- known foreign conversation cannot be deleted/exported;
+- owner export contains only own conversations/messages/memories;
+- owner delete-all preserves other principals;
+- legacy local-owner data is not exported to authenticated daemon users.
+GREEN implementation: explicit owner-bound export/delete APIs, reusing existing scoped stores.
 
 * Exact gates
 Focused scripts/tests introduced for #131, then:
