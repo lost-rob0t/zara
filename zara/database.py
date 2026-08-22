@@ -66,11 +66,11 @@ class DatabaseManager:
             return cursor
 
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
+    def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         conn = self.connect()
         with self._lock:
             try:
-                conn.execute("BEGIN")
+                conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
                 yield conn
             except Exception:
                 conn.rollback()
