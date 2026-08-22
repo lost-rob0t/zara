@@ -120,6 +120,7 @@ setup(
     entry_points={
         "console_scripts": [
             "zara=zara.__main__:main",
+            "zara-server=zara.server:main",
             "zara-wake=zara.wake:main",
             "zara-console=zara.console:main",
             "zara-dictate=zara.dictate:main",
