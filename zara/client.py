@@ -89,9 +89,12 @@ class InProcessZaraClient(ZaraClient):
             shutdown_timeout=self._shutdown_timeout,
             config=config,
         )
+        self._closed = False
 
     @property
     def state(self) -> ZaraClientState:
+        if self._closed:
+            return ZaraClientState.STOPPED
         return _map_host_state(self._host.state)
 
     @property
@@ -99,6 +102,7 @@ class InProcessZaraClient(ZaraClient):
         return self._host.is_alive
 
     def start(self) -> concurrent.futures.Future:
+        self._closed = False
         return self._host.start()
 
     def submit(self, command: RuntimeCommand) -> concurrent.futures.Future:
@@ -111,6 +115,9 @@ class InProcessZaraClient(ZaraClient):
         return self._host.shutdown(reason=reason)
 
     def close(self, timeout: Optional[float] = None) -> None:
+        if self._closed and not self._host.is_alive:
+            return
+
         wait_timeout = self._shutdown_timeout if timeout is None else max(0.0, float(timeout))
         deadline = time.monotonic() + wait_timeout
         future = self.shutdown()
@@ -118,6 +125,7 @@ class InProcessZaraClient(ZaraClient):
         self._host.join(timeout=max(0.0, deadline - time.monotonic()))
         if self._host.is_alive:
             raise RuntimeNotReady("runtime host did not stop before client close timeout")
+        self._closed = True
 
 
 __all__ = ["InProcessZaraClient", "ZaraClient", "ZaraClientState"]
