@@ -1,0 +1,314 @@
+#+title: RAGE Design - Zara Server Lifecycle / Issue #128
+#+startup: overview
+
+* Status
+
+- Consumed issue :: #128
+- Parent epic :: #127
+- RAGE task :: #139
+- Iteration :: 1
+- Baseline :: =12d28bcb28a2b48750875050ad7c21ebbbd636d8=
+- Research :: =rage/daemon-128-research.org=
+- Design status :: implementation-ready
+
+* Naming decision
+
+The research started from the inherited =zara --daemon= wording. During design review the executable boundary was simplified:
+
+- =zara= remains the client-facing executable and product command;
+- =zara-server= is the long-lived daemon/service executable;
+- =zara --daemon= is not the canonical server interface;
+- #129 will implement a ZeroMQ-backed Zara client behind the client interface established here.
+
+This is more than naming. A dedicated server executable makes ownership obvious. Client code does not need a permanent special-case flag that flips the entire process from caller into authority.
+
+* Problem boundary
+
+Issue #128 must make Zara a real long-lived service process without prematurely implementing the protocol, auth, hard tenant isolation, voice transport, or client migration owned by #129-#134.
+
+The slice has four jobs:
+
+1. establish a first-class =zara-server= process lifecycle;
+2. establish an explicit principal-aware runtime supervisor around =RuntimeHost=;
+3. establish a =ZaraClient= abstraction so future callers do not couple to =RuntimeHost=;
+4. prove deterministic startup, duplicate ownership, degraded state, and bounded graceful shutdown.
+
+Everything else is deliberately deferred.
+
+* Selected architecture
+
+#+begin_src text
+                  client-facing code
+                         |
+                    ZaraClient
+                         |
+             +-----------+-----------+
+             |                       |
+     InProcessZaraClient       #129 ZmqZaraClient
+       (standalone/tests)            |
+             |                 ZARA/1 DEALER
+             |                       |
+        RuntimeHost            zara-server
+                                   |
+                              ZaraServer
+                                   |
+                           RuntimeSupervisor
+                                   |
+                 +-----------------+-----------------+
+                 |                                   |
+          PrincipalRuntime A                 PrincipalRuntime B
+          RuntimeHost + bus                  RuntimeHost + bus
+                 |                                   |
+          existing Zara runtime              existing Zara runtime
+#+end_src
+
+For production in #128, =zara-server= starts one local-owner principal. The supervisor registry is structurally multi-principal, but the default active-principal cap is one until #130/#131 provide authentication and hard state isolation.
+
+* Components
+
+** =zara.client.ZaraClient=
+
+A transport-neutral abstract interface for runtime consumers.
+
+Required operations:
+
+- =start()=;
+- =submit(RuntimeCommand)= returning a future-like result;
+- =subscribe(maxsize=...)=;
+- =shutdown(reason=...)=;
+- =close(timeout=...)=;
+- state/readiness inspection.
+
+=InProcessZaraClient= implements this with one private =RuntimeHost= and private =RuntimeEventBus=. It exists to prove the boundary and preserve standalone embedding. It does not make current CLI modes remote yet; #133 owns migration.
+
+#129 adds =ZmqZaraClient= behind the same interface. That future client owns its DEALER socket and must not expose ZeroMQ primitives to callers.
+
+** =zara.server.PrincipalContext=
+
+Immutable internal ownership metadata.
+
+Fields:
+
+- =principal_id=: non-empty opaque identifier;
+- =kind=: currently =local-owner= or =synthetic=;
+- optional safe display metadata only.
+
+Important invariant: principal context is *not authentication*. #130 later maps authenticated CURVE/ZAP identities to these server-side ownership objects. A caller-supplied string does not become trusted merely because the type is named Principal.
+
+** =PrincipalRuntime=
+
+A supervisor-owned slot containing:
+
+- =PrincipalContext=;
+- =RuntimeHost=;
+- principal-local runtime event bus/subscriber factory;
+- lifecycle state/error metadata.
+
+It is an ownership/lifecycle container, not a security sandbox. PySWIP, persistence, plugins, and some existing process-global paths remain reasons production multi-user is gated.
+
+** =RuntimeSupervisor=
+
+Thread-safe registry and lifecycle authority.
+
+Responsibilities:
+
+- state machine;
+- reject new runtime creation once stopping begins;
+- start/get/stop runtime slots by explicit PrincipalContext;
+- aggregate runtime health into READY/DEGRADED;
+- bounded shutdown of every owned host;
+- wait for shutdown futures and join host threads;
+- never bypass RuntimeHost into AgentManager/Prolog/tools.
+
+Default =max_active_principals= is 1. Tests may configure a larger value with fake backends to prove registry semantics.
+
+** =ServerLease=
+
+Linux single-instance ownership using a held advisory =flock= under the user runtime directory.
+
+Default path:
+
+=$XDG_RUNTIME_DIR/zarathushtra/zara-server.lock=
+
+Requirements:
+
+- runtime subdirectory mode 0700;
+- lock file mode 0600;
+- non-blocking exclusive lock;
+- held descriptor remains open for the server lifetime;
+- file text contains PID/start metadata for diagnostics only;
+- kernel lock is authority;
+- deterministic =ServerAlreadyRunning= on contention;
+- release only after runtime shutdown/join completes.
+
+Fallback when =$XDG_RUNTIME_DIR= is absent:
+
+- use a UID-scoped directory beneath the platform temporary directory;
+- create/verify owner-only permissions;
+- emit a warning because the preferred XDG guarantee is unavailable.
+
+No stale PID-file checking. No deleting someone else's lock file to feel productive.
+
+** =ZaraServer=
+
+Process-level lifecycle object.
+
+Owns:
+
+- ServerLease;
+- RuntimeSupervisor;
+- local-owner PrincipalContext;
+- process server state;
+- run/stop coordination.
+
+It does not own signal registration internally. =main()= runs on the Python main thread, installs SIGINT/SIGTERM handlers that merely set a stop event, starts ZaraServer, blocks on the event, then performs normal shutdown.
+
+No fork. No double-fork. No self-backgrounding.
+
+* State machine
+
+#+begin_src text
+NEW
+ |
+ v
+STARTING ---- bootstrap invariant failure ----> FAILED
+ |  \
+ |   \ required runtime failed but process controllable
+ |    v
+ |  DEGRADED
+ v     |
+READY  |
+  \    /
+   v  v
+ STOPPING
+    |
+    +---- all hosts stopped + joined ----> STOPPED
+    |
+    +---- bounded shutdown invariant failure -> FAILED
+#+end_src
+
+Rules:
+
+- stop is idempotent;
+- no STOPPING -> READY resurrection;
+- STARTING/READY/DEGRADED may accept status inspection;
+- only READY/DEGRADED may own live principal slots;
+- no new slot after STOPPING;
+- lease releases after terminal shutdown work, not before;
+- a failed principal runtime may degrade the server but cannot mutate another slot's bookkeeping.
+
+* Event ownership
+
+Each daemon-owned RuntimeHost gets a dedicated RuntimeEventBus where possible. The supervisor exposes events with principal ownership at the wrapper boundary rather than changing every existing RuntimeEvent schema now.
+
+This does not claim full isolation. Existing backend/plugin code may still use global paths. #131 audits and closes those leaks before production multi-user is enabled.
+
+Future #129 rule: ROUTER socket lives on its own gateway loop/thread. RuntimeHost threads never send on it directly. Principal-tagged events cross a normal Python queue/callback boundary into the gateway owner.
+
+* Shutdown algorithm
+
+1. =ZaraServer.stop()= transitions to STOPPING exactly once.
+2. Supervisor rejects creation of new principal slots.
+3. Snapshot owned slots.
+4. Issue =RuntimeHost.shutdown()= for each host.
+5. Wait for each returned future within the configured shutdown deadline.
+6. Call =join()= on every host with remaining bounded time.
+7. If any host remains alive, record failure and return a non-clean shutdown result.
+8. Clear registry only after shutdown attempts complete.
+9. Transition STOPPED on clean drain, FAILED on lifecycle invariant failure.
+10. Release ServerLease.
+11. Process exits.
+
+SIGTERM handler itself does none of the above. It only requests that normal control flow start this algorithm.
+
+* Rejected alternatives
+
+** Keep =zara --daemon=
+
+Rejected as canonical naming. It makes one executable both client and authority, encourages mode-conditional imports/lifecycle, and muddies future service-manager packaging. A dedicated =zara-server= is clearer while =zara= remains the user-facing client command.
+
+** Double-fork/self-daemonize
+
+Rejected. Modern service managers supervise foreground processes better. It complicates PID tracking, logs, readiness, and shutdown for no Zara benefit.
+
+** PID file as ownership authority
+
+Rejected. Stale files and PID reuse are unnecessary failure modes. Keep PID text only as diagnostics inside a held flock file.
+
+** One shared RuntimeHost with principal added everywhere now
+
+Rejected for #128. It would drag commands/events/memory/plugins/tools/context into the tenant model before auth and isolation work exists, collapsing #128 and #131 into one giant unsafe patch.
+
+** One RuntimeHost per principal as a security sandbox
+
+Rejected as a claim, retained only as an ownership container. PySWIP is process-wide and current durable memory/event/plugin paths are not proven isolated.
+
+** Subprocess per principal
+
+Rejected for this slice. Stronger process isolation is attractive, but it would require another internal IPC protocol before #129 and still would not solve shared durable storage ownership.
+
+** Add ZeroMQ now
+
+Rejected. #128 should leave a clean seam for #129, not sneak half the protocol into lifecycle code where it cannot yet be fully gated.
+
+* Security / failure invariants
+
+1. No payload/user string can become authenticated identity in #128.
+2. Production server defaults to one active principal until #131.
+3. Duplicate =zara-server= ownership fails before starting a second runtime.
+4. Lease files use an owner-private local runtime directory by default.
+5. No runtime is created after STOPPING begins.
+6. Runtime shutdown is explicit and joined; interpreter exit is not cleanup.
+7. Server signal handlers stay on the main thread and do minimal work.
+8. RuntimeHost remains the only route to AgentManager/backend lifecycle.
+9. ZeroMQ sockets do not exist in this slice.
+10. Prolog-RLM remains absent.
+
+* Packaging
+
+Add:
+
+- Python console entry point =zara-server=zara.server:main=;
+- Nix package/app =zara-server=;
+- include it in the full =zarathushtra= build environment;
+- package/wrapper smoke coverage.
+
+Keep =zara= untouched as the client-facing executable.
+
+* Tests mapped to acceptance
+
+| Acceptance | Test |
+|-
+| server starts without Qt | server module import/start with fake host; packaged wrapper smoke |
+| duplicate ownership deterministic | two ServerLease instances against same temp runtime dir |
+| explicit state lifecycle | NEW -> STARTING -> READY/DEGRADED -> STOPPING -> STOPPED |
+| degraded runtime does not kill server | fake host startup failure aggregates DEGRADED |
+| clean shutdown | fake/real RuntimeHost shutdown future + join assertions |
+| active work shutdown | RuntimeHost test backend with blocked turn then stop |
+| stale work suppressed | existing RuntimeHost stale-result tests remain green; focused server test ensures no post-stop dispatch |
+| explicit principal ownership | supervisor APIs reject raw strings/empty principal and key slots by PrincipalContext |
+| synthetic slots separate | two fake principals with independent host/event objects under test-only max=2 |
+| client abstraction | InProcessZaraClient submit/subscribe/shutdown test with fake backend |
+| existing modes unaffected | full pytest + deterministic scripts + wrapper tests |
+| packaged server exists | setup metadata + Nix wrapper/app gate |
+
+* Exact gate
+
+Focused first:
+
+#+begin_src sh
+nix develop -c pytest -q t/test_server.py t/test_client.py t/test_runtime_host.py t/test_runtime_host_startup_shutdown.py
+nix develop -c bash scripts/test-server-lifecycle.sh
+#+end_src
+
+Then repository authority:
+
+#+begin_src sh
+nix develop -c bash scripts/test-all.sh
+nix flake check
+nix build
+#+end_src
+
+After opening the PR, only GitHub Actions attached to the exact final candidate SHA may authorize merge.
+
+If focused/full gates expose a coding defect that preserves this design, fix within Iteration 1. If they show the lifecycle/client/supervisor architecture itself is wrong, preserve the evidence, discard the implementation attempt, and start Iteration 2 from research/design.
