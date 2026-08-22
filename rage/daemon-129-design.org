@@ -1,0 +1,351 @@
+#+title: RAGE Design - ZARA/1 ZeroMQ Protocol / Issue #129
+#+startup: overview
+
+* Identity
+
+- Consumed issue :: #129
+- Baseline :: =b0bc03590215424db01277cbc4758067a7b854ab=
+- Research :: =rage/daemon-129-research.org=
+- Design status :: implementation authorized only through test-first slices below.
+
+* Problem boundary
+
+Implement one versioned local-first application protocol between =zara-server= and a reusable =ZmqZaraClient=. Preserve the existing =ZaraClient= and =RuntimeSupervisor=/=RuntimeHost= boundaries. Provide asynchronous request/reply correlation plus unsolicited runtime events over ZeroMQ ROUTER/DEALER.
+
+This issue does not authenticate remote users, provide hard tenant isolation, stream live audio, migrate CLI/desktop surfaces, or promise durable session resume.
+
+* Chosen architecture
+
+** Modules
+
+1. =zara/protocol.py=
+   - pure =ZARA/1= envelope/frame codec;
+   - closed message vocabulary;
+   - strict JSON parser/encoder;
+   - message-specific validation;
+   - no PyZMQ import and no runtime import required for basic frame validation.
+
+2. =zara/zmq_transport.py=
+   - socket option helpers;
+   - endpoint/default limit configuration;
+   - =ZaraZmqGateway= ROUTER owner loop;
+   - =ZmqZaraClient= DEALER owner loop;
+   - explicit adapters between protocol messages and existing runtime commands/events.
+
+3. =zara/server.py=
+   - remains lifecycle authority;
+   - composes/stops gateway without absorbing protocol parsing logic;
+   - default endpoint derived from #128 owner-private runtime directory.
+
+4. =zara/client.py=
+   - exports =ZmqZaraClient= or imports it lazily after transport module lands;
+   - existing =InProcessZaraClient= semantics remain unchanged.
+
+** Ownership
+
+- Gateway thread/event loop owns ROUTER socket from create through close.
+- Each =ZmqZaraClient= I/O thread/event loop owns its DEALER socket.
+- =RuntimeHost= threads never call socket methods.
+- One =zmq.asyncio.Context= may be injected for tests; lifecycle code closes owned sockets before terminating an owned context.
+- Server connection state is keyed by opaque routing bytes only for delivery; it never converts those bytes to principal identity.
+- Until #130, gateway delegates all protocol requests to =ZaraServer.principal= / existing local-owner runtime.
+
+* Protocol constants and limits
+
+Initial conservative defaults, configurable downward/upward only through explicit configuration:
+
+- major marker :: =b"ZARA/1"=
+- max multipart frames :: 18 total application frames (marker + envelope + up to 16 payloads)
+- max envelope bytes :: 64 KiB
+- max payload frame :: 1 MiB for #129 (audio slice may revise under #132)
+- max aggregate payload :: 4 MiB
+- max string id fields :: 128 UTF-8 bytes, printable ASCII for opaque ids/types
+- max message type :: 64 bytes
+- max JSON body depth/size :: structurally bounded by envelope byte cap plus explicit list/string limits
+- socket SNDHWM/RCVHWM :: finite, default 256
+- socket MAXMSGSIZE :: finite, default 5 MiB to cover bounded application multipart overhead
+- client pending request table :: finite, default 128
+- per-route outbound queue :: finite, default 256
+- reconnect initial/max :: finite exponential backoff using libzmq settings, with application handshake recovery
+- heartbeat :: nonzero transport heartbeat; application =ping/pong= remains separate
+
+Exact numeric defaults may be adjusted by test evidence, but unbounded defaults are prohibited.
+
+* Envelope
+
+Every DEALER application message is multipart:
+
+1. frame 0 exactly =b"ZARA/1"=;
+2. frame 1 strict UTF-8 JSON object;
+3. frame 2..N opaque payload frames.
+
+Required envelope keys:
+
+- =type= string;
+- =id= string;
+- =timestamp_ns= non-negative integer;
+- =payload_count= non-negative integer;
+
+Allowed optional keys:
+
+- =reply_to=
+- =session_id=
+- =conversation_id=
+- =turn_id=
+- =stream_id=
+- =seq=
+- =trace_id=
+- =content_type=
+- =flags=
+- =body=
+
+Unknown top-level keys fail closed in v1. Duplicate JSON keys, NaN/Infinity, non-object envelopes, invalid UTF-8, booleans where integers are required, negative sequence/timestamp/count, extra/missing payload frames, oversize fields/frames, and unsupported message types are protocol errors.
+
+=flags= is an allowlisted boolean-only object. Initial allowlist: =idempotent=, =resume=. Unknown flag names fail closed.
+
+* Message vocabulary
+
+Requests accepted from client:
+
+- =hello=
+- =ping=
+- =runtime.status=
+- =conversation.open=
+- =turn.submit=
+- =turn.cancel=
+
+Server responses/events:
+
+- =hello.ok=
+- =pong=
+- =runtime.status.ok=
+- =conversation.opened=
+- =turn.accepted=
+- =turn.cancel.accepted=
+- =turn.started=
+- =turn.cancelled=
+- =assistant.started=
+- =assistant.delta=
+- =assistant.completed=
+- =assistant.response=
+- =runtime.error=
+- =runtime.stopped=
+- =protocol.error=
+
+Reserved-but-not-yet-executable audio names are recognized as reserved and return =not_implemented= rather than unknown/dynamic dispatch:
+
+- =voice.start=
+- =audio.input.start=
+- =audio.input.chunk=
+- =audio.input.commit=
+- =audio.input.cancel=
+- =audio.output.start=
+- =audio.output.chunk=
+- =audio.output.done=
+
+* Handshake state machine
+
+Per route:
+
+- =UNNEGOTIATED= on first message/new route/server restart.
+- =hello= validates client supported major =1= and bounded capability metadata.
+- server allocates random =session_id= and replies =hello.ok= with selected major, server version, limits, heartbeat values, =resume=false= initially.
+- state becomes =READY=.
+- non-handshake commands received while =UNNEGOTIATED= -> =protocol.error(code="handshake_required")=.
+- unknown major marker -> =protocol.error(code="unsupported_version")= when a routable reply is possible; otherwise close/drop route safely.
+- a fresh transport route never inherits READY from a previous routing id.
+
+Client:
+
+- start -> socket connect -> hello -> READY;
+- =handshake_required= or observed reconnect/server restart -> transition STARTING, hello again;
+- requests created while not READY fail fast or queue only within a finite configured pending-start bound; default fail-fast for first implementation;
+- side-effect request replay occurs only when request retains identical id and is explicitly idempotent under policy.
+
+* Correlation
+
+- Every request id is stable and unique within active client pending table.
+- Direct response uses =reply_to=request.id= and its own message =id=.
+- Runtime events are not forced into fake request replies. They carry canonical turn/conversation ids and optional trace id.
+- =turn.submit= request id becomes =SubmitTurn.request_id=.
+- =turn.accepted.body.turn_id= comes from canonical =CommandReceipt.turn_id=.
+- =turn.cancel= requires envelope =turn_id= and maps it unchanged to =CancelTurn.turn_id=.
+- Client correlation dispatch occurs before generic event decoding; unknown =reply_to= is a protocol diagnostic and cannot resolve an unrelated future.
+
+* Conversation semantics
+
+=conversation.open= is gateway session bookkeeping, not a new RuntimeCommand. If client supplies a valid requested conversation id, gateway may accept it; otherwise gateway allocates one. =turn.submit= can reference the selected conversation id. This does not add persistence/isolation guarantees; #131 owns that.
+
+* Runtime event codec
+
+Explicit allowlist only:
+
+- =TurnStarted= -> =turn.started=
+- =TurnCancelled= -> =turn.cancelled=
+- =AssistantStarted= -> =assistant.started=
+- =AssistantDelta= -> =assistant.delta=
+- =AssistantComplete= -> =assistant.completed=
+- =ResponseText= -> =assistant.response=
+- =RuntimeError= -> =runtime.error=
+- =RuntimeStopped= -> =runtime.stopped=
+
+Event fields are copied explicitly. No class name, module path, arbitrary dataclass conversion, provider object, prompt, credentials, or audio bytes are serialized implicitly.
+
+* Backpressure and fairness
+
+- ROUTER receive loop never awaits RuntimeHost work inline. It validates, schedules runtime command future completion, and returns to receive.
+- Runtime event subscription is drained into a bounded gateway scheduler/outbound queue.
+- Per-route queues prevent a slow client from monopolizing global outbound capacity.
+- A full route queue marks that route failed/disconnected rather than blocking other routes indefinitely.
+- ROUTER send uses =ROUTER_MANDATORY= so sends to vanished routes fail visibly.
+- Client pending request cap fails before adding unbounded futures.
+- Local network event subscription has a finite default maxsize.
+
+* Error model
+
+Typed exception hierarchy on client:
+
+- =ZaraProtocolError= base;
+- =ProtocolVersionError=;
+- =ProtocolValidationError=;
+- =ProtocolRemoteError= with safe code/message only;
+- =ClientNotReady=;
+- =ClientBackpressureError=;
+- =ClientDisconnected=.
+
+Wire =protocol.error= body contains bounded =code=, sanitized =message=, optional =retryable=. It never sends Python traceback, exception repr containing secrets, absolute paths, routing ids, or raw malformed input.
+
+* Threat/failure analysis
+
+- Malformed JSON :: bounded before decode, strict parser, typed error/drop.
+- Duplicate JSON keys :: reject.
+- Huge frame :: transport MAXMSGSIZE + parser bounds.
+- Many small frames :: max frame count.
+- payload_count mismatch :: reject before dispatch.
+- Unknown type :: allowlist error, never =getattr=/import dispatch.
+- Spoofed user/principal field :: unknown top-level key rejected; routing id ignored as identity.
+- Slow client :: bounded per-route queue; disconnect/fail route.
+- Dead route :: ROUTER_MANDATORY exposes send failure.
+- Daemon restart :: server route state reset; client re-hello; no implicit durable resume.
+- Duplicate request after reconnect :: stable id + bounded duplicate cache for side-effecting runtime submissions.
+- Client restart :: new session unless future resume capability exists.
+- Gateway crash :: server should move degraded/failed depending integration; runtime lifecycle remains separately stoppable.
+- Socket close :: owned I/O loop closes socket with finite LINGER before context teardown.
+
+* Rejected alternatives
+
+- REQ/REP :: incompatible with asynchronous events and cancellation.
+- generic dataclass JSON serializer :: accidental/unbounded schema and private-data leakage.
+- asyncio public-only client API :: breaks existing =ZaraClient= contract and forces #133 work early.
+- shared ZeroMQ socket across runtime threads :: PyZMQ thread-safety violation.
+- routing id as principal :: no authentication semantics.
+- socket reconnect as session resume :: loses server application handshake state.
+- global outbound queue only :: one slow route can starve others.
+
+* TDD plan - tests before production code
+
+** Slice A - pure frame codec
+
+Tests first in =t/test_protocol.py=:
+
+1. golden =hello= encode fixture is deterministic;
+2. valid decode round-trip with payload frames;
+3. wrong marker/major rejected;
+4. malformed UTF-8/JSON/non-object rejected;
+5. duplicate JSON keys rejected;
+6. NaN/Infinity rejected;
+7. unknown top-level key rejected;
+8. unknown message type rejected but reserved audio type classified as reserved/not implemented;
+9. payload_count missing/mismatch rejected;
+10. too many payload frames rejected;
+11. envelope/payload frame/aggregate payload limits rejected at exact boundaries;
+12. invalid ids/type/negative integers/bool-as-int/flags rejected;
+13. identity-looking =user_id=/=principal_id= keys rejected.
+
+Expected red reason before implementation: =zara.protocol= does not exist.
+
+** Slice B - explicit runtime codecs
+
+Tests first:
+
+1. =turn.submit= -> =SubmitTurn= preserves request/conversation/context ids;
+2. =turn.cancel= -> =CancelTurn= preserves canonical turn id;
+3. explicit runtime event mappings serialize only allowed fields;
+4. unsupported RuntimeEvent class fails closed instead of reflection fallback;
+5. error serializer sanitizes exception/path/routing data.
+
+** Slice C - inproc ROUTER/DEALER handshake and correlation
+
+Tests first in =t/test_zmq_transport.py= using =inproc://= and injected fake supervisor/runtime:
+
+1. socket options finite and set as designed;
+2. hello/hello.ok selects v1 and publishes limits/session;
+3. command before hello returns handshake_required;
+4. unsupported major fails closed;
+5. ping/pong correlation;
+6. conversation.open allocation/correlation;
+7. turn.submit receipt correlation with canonical turn id;
+8. cancellation passes canonical turn id;
+9. runtime event reaches correct route as unsolicited event;
+10. unknown reply_to does not resolve another request.
+
+** Slice D - restart/reconnect/backpressure/fairness
+
+Tests first:
+
+1. server connection-state reset requires re-hello;
+2. client can re-handshake after gateway restart with bounded retry;
+3. duplicate stable turn.submit id is not submitted twice within cache window;
+4. pending request cap fails deterministically;
+5. route outbound queue cap fails/disconnects only slow route;
+6. two clients: stalled client does not block ping/turn response to healthy client;
+7. vanished route send error is visible under ROUTER_MANDATORY;
+8. close/restart leaves no socket owner thread alive.
+
+** Slice E - =zara-server= integration/package
+
+Tests first:
+
+1. server lifecycle composes gateway start before READY and gateway stop before lease release/process exit;
+2. default endpoint is owner-private local IPC;
+3. no unauthenticated wildcard TCP bind by default;
+4. wheel/Nix already containing pyzmq remains sufficient; no new dependency stack;
+5. =zara-server --help= documents endpoint and unauthenticated-remote warning if remote override exists;
+6. focused =scripts/test-zara1-protocol.sh= exists and is included in full gate.
+
+* Acceptance mapping
+
+- versioned =ZARA/1= framing :: Slice A.
+- strict closed schema/bounds :: Slice A.
+- no dynamic serialization/dispatch :: A+B.
+- ROUTER/DEALER async transport :: C.
+- hello negotiation :: C.
+- text submit/cancel/runtime events :: B+C.
+- request correlation :: C.
+- reconnect/server restart :: D.
+- HWM/backpressure/slow-client isolation :: C+D.
+- routing identity not trusted :: A+C plus explicit gateway principal test.
+- reusable =ZaraClient= implementation :: C+D.
+- =zara-server= composition :: E.
+- noninteractive script + full Nix gate :: E/final gate.
+
+* Exact gate
+
+During TDD each tests-only commit must be observed red for the expected missing/incorrect behavior before its production counterpart.
+
+Focused:
+
+#+begin_src sh
+nix develop -c pytest -q t/test_protocol.py t/test_zmq_transport.py t/test_client.py t/test_server.py
+nix develop -c bash scripts/test-zara1-protocol.sh
+#+end_src
+
+Full exact candidate:
+
+#+begin_src sh
+nix develop -c bash scripts/test-all.sh
+nix flake check
+nix build
+#+end_src
+
+Then open/update PR and require GitHub Actions success for the exact final head. No stale run authorizes merge.
