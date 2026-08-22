@@ -873,6 +873,8 @@ class ZmqZaraClient(ZaraClient):
             event = events.TurnStarted(**common)
         elif message.type == "turn.cancelled":
             event = events.TurnCancelled(reason=str(body.get("reason", "")), **common)
+        elif message.type == "turn.completed":
+            event = events.AgentCompleted(success=bool(body.get("success", False)), **common)
         elif message.type == "assistant.started":
             event = events.AssistantStarted(**common)
         elif message.type == "assistant.delta":
