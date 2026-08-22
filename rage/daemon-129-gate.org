@@ -66,3 +66,27 @@ Classification :: ordinary implementation defect, not a design failure. The serv
 * Final gate
 
 Pending. Final merge authority requires the exact current head to pass focused ZARA/1 gate, complete =scripts/test-all.sh=, =nix flake check=, =nix build=, Arch shared-mic, and Ubuntu shared-mic, with PR #142 mergeable and no unresolved issue-acceptance gap.
+
+* Final gate outcome
+
+- Exact candidate :: =3ab7d04c6af2e62f00570fb9ebdc731c4eb075c0=.
+- Pull request :: #142.
+- GitHub Actions :: CI #284, run =32572470202=.
+- =scripts/test-all.sh= :: PASS, including the complete focused ZARA/1 protocol/transport gate and full repository regression/security/packaging phases.
+- =nix flake check= :: PASS.
+- packaged =nix build= :: PASS.
+- Arch Linux shared-mic :: PASS.
+- Ubuntu 24.04 shared-mic :: PASS.
+- PR mergeability :: mergeable, no unresolved review threads.
+- Acceptance audit :: clean for #129. Authentication, hard principal isolation, voice streaming, and client-surface migration remain in their owning later issues.
+
+The exact candidate above was promoted from draft and merged using expected-head SHA protection. No post-gate feature change was included in the merge.
+
+* Merge outcome
+
+- Merge SHA :: =1cae2e32cc40112aa13af6b8f4b7319869c72bd9=.
+- Issue #129 :: closed completed.
+- Epic #127 :: updated with #129 completion and next dependency-satisfied slice.
+- Roadmap #1 :: updated with #128/#129 completion.
+- Next ordered daemon issue :: #130.
+- Queue rule :: #130 implementation is deliberately deferred to the next RAGE iteration; this iteration ends at the #129 merge and audit record.
