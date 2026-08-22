@@ -105,6 +105,99 @@
             };
           };
 
+          # Official MCP Python SDK v2. Keep Zara's existing nixpkgs lock: the
+          # current pin already satisfies the SDK's normal dependencies, but it
+          # predates the parallel httpx2/httpcore2 packages. Package only those
+          # pure-Python wheels plus MCP v2 here instead of bumping nixpkgs and
+          # disturbing the sherpa/ONNX Runtime compatibility pin above.
+          httpcore2V2 = python.pkgs.buildPythonPackage rec {
+            pname = "httpcore2";
+            version = "2.9.1";
+            format = "wheel";
+            src = pkgs.fetchPypi {
+              inherit pname version format;
+              dist = "py3";
+              python = "py3";
+              hash = "sha256-YYJHI3noVf5CISRqK7fs7eQDvGHGeYBirheH0FHM3iY=";
+            };
+            dependencies = [
+              python.pkgs.h11
+              python.pkgs.truststore
+              python.pkgs.anyio
+            ];
+            pythonImportsCheck = [ "httpcore2" ];
+            doCheck = false;
+          };
+
+          httpx2V2 = python.pkgs.buildPythonPackage rec {
+            pname = "httpx2";
+            version = "2.9.1";
+            format = "wheel";
+            src = pkgs.fetchPypi {
+              inherit pname version format;
+              dist = "py3";
+              python = "py3";
+              hash = "sha256-GCD+FKmrEQe/7/OSWZh0KUULBw7A/zjMh+sNjJf9xxo=";
+            };
+            dependencies = [
+              python.pkgs.anyio
+              python.pkgs.certifi
+              httpcore2V2
+              python.pkgs.idna
+            ];
+            pythonImportsCheck = [ "httpx2" ];
+            doCheck = false;
+          };
+
+          mcpTypesV2 = python.pkgs.buildPythonPackage rec {
+            pname = "mcp-types";
+            version = "2.0.0";
+            format = "wheel";
+            src = pkgs.fetchPypi {
+              pname = "mcp_types";
+              inherit version format;
+              dist = "py3";
+              python = "py3";
+              hash = "sha256-ay3nl8onl/Vot5Up4bJZSONN5RG8wL2C/vEDmm0bjrA=";
+            };
+            dependencies = [
+              python.pkgs.pydantic
+              python.pkgs.typing-extensions
+            ];
+            pythonImportsCheck = [ "mcp_types" ];
+            doCheck = false;
+          };
+
+          mcpV2 = python.pkgs.buildPythonPackage rec {
+            pname = "mcp";
+            version = "2.0.0";
+            format = "wheel";
+            src = pkgs.fetchPypi {
+              inherit pname version format;
+              dist = "py3";
+              python = "py3";
+              hash = "sha256-HLTHXS0se4wddWNV5dgqOfKCLMfxPiKiBR18o1kjSdY=";
+            };
+            dependencies = [
+              python.pkgs.anyio
+              httpx2V2
+              python.pkgs.jsonschema
+              mcpTypesV2
+              python.pkgs.opentelemetry-api
+              python.pkgs.pydantic
+              python.pkgs.pyjwt
+              python.pkgs.cryptography
+              python.pkgs.python-multipart
+              python.pkgs.sse-starlette
+              python.pkgs.starlette
+              python.pkgs.typing-extensions
+              python.pkgs.typing-inspection
+              python.pkgs.uvicorn
+            ];
+            pythonImportsCheck = [ "mcp" ];
+            doCheck = false;
+          };
+
           pythonLibs = python.withPackages (p: [
             p.sounddevice
             p.numpy
@@ -117,6 +210,7 @@
             p.pyyaml
             p.pydantic
             p.httpx
+            mcpV2
             p.tomli  # TOML parsing for config system
             p.orgparse
             pyswip
@@ -139,16 +233,16 @@
             p.sentence-transformers
             # Actor framework for real-time turn coordinator
             p.pykka
-# Streaming VAD (Silero VAD via GGML C extension)
-          p.pysilero-vad
-          # Desktop pet overlay (PySide6/Qt6)
-          p.pyside6
-          # Pillow for WebP->PNG conversion at pet import time (Qt's nixpkgs
-          # build lacks the WebP image plugin)
-          p.pillow
-          # ZeroMQ for cross-process pet event streaming (wake -> pet overlay)
-          p.pyzmq
-          # Testing
+            # Streaming VAD (Silero VAD via GGML C extension)
+            p.pysilero-vad
+            # Desktop pet overlay (PySide6/Qt6)
+            p.pyside6
+            # Pillow for WebP->PNG conversion at pet import time (Qt's nixpkgs
+            # build lacks the WebP image plugin)
+            p.pillow
+            # ZeroMQ for cross-process pet event streaming (wake -> pet overlay)
+            p.pyzmq
+            # Testing
             p.pytest
             p.pytest-asyncio
             # Packaging metadata sanity checks
@@ -298,6 +392,9 @@
                 cd $out-src
                 export ZARA_RLM_SIDECAR="$out-src/modules/rlm_sidecar.pl"
                 export PYTHONPATH="$out-src''${PYTHONPATH:+:$PYTHONPATH}"
+                # MCP is an installed runtime contract, not an optional skipped
+                # test dependency. Prove v2 is present before running pytest.
+                ${pythonLibs}/bin/python -c 'import importlib.metadata as m; import mcp; assert int(m.version("mcp").split(".", 1)[0]) >= 2'
                 ${pythonLibs}/bin/python -m pytest -q
                 touch $out
               '';
@@ -447,7 +544,7 @@
               export PYTHONPATH="$PWD''${PYTHONPATH:+:$PYTHONPATH}"
               export ZARA_PROLOG_RLM_ROOT="${prolog-rlm}"
               export ZARA_RLM_SIDECAR="$PWD/modules/rlm_sidecar.pl"
-              echo "Python + Whisper + whisper.cpp/Vulkan + SWI-Prolog + LangChain ready"
+              echo "Python + Whisper + whisper.cpp/Vulkan + SWI-Prolog + LangChain + MCP v2 ready"
               echo ""
               echo "Commands:"
               echo "  zara-desktop                   # Native desktop / Quick Copilot"
@@ -457,6 +554,7 @@
               echo "  zara --console                 # Console mode"
               echo "  zara --dictate                 # Dictation mode"
               echo "  zara --agent                   # Direct agent conversation"
+              echo "  zara mcp status               # Inspect MCP connections"
               echo ""
               echo "Build system:"
               echo "  nix build .#zara-desktop      # Build native desktop package"

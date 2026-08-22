@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Literal, Optional, TypedDict, Annotated
 
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 
@@ -262,7 +262,31 @@ def create_agent_graph(llm_client, tool_registry):
 async def run_conversation_loop(llm_client, tool_registry, state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Execute the graph until a final answer is produced or max_steps is hit.
+
+    Dynamic capability providers are prepared before the graph is compiled so
+    their tools are bound exactly like native Zara tools for this turn.
     """
+    prepare = getattr(tool_registry, "prepare_async", None)
+    if prepare is not None:
+        await prepare()
+
+    dynamic_context = getattr(tool_registry, "dynamic_system_context", lambda: None)()
+    if dynamic_context:
+        messages = list(state.get("messages", []))
+        messages = [
+            message
+            for message in messages
+            if getattr(message, "id", None) != "zara-dynamic-capabilities"
+        ]
+        context_message = SystemMessage(
+            content=dynamic_context,
+            id="zara-dynamic-capabilities",
+        )
+        insert_at = max(0, len(messages) - 1)
+        messages.insert(insert_at, context_message)
+        state = dict(state)
+        state["messages"] = messages
+
     graph = create_agent_graph(llm_client, tool_registry)
     result: Dict[str, Any] = await graph.ainvoke(state)
 

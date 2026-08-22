@@ -23,37 +23,40 @@ async def chat_loop():
     agent = AgentManager(config=config)
     agent.conversation_manager.enter_conversation()  # Start in conversation mode
 
-    while True:
-        try:
-            # Get user input
-            user_input = input("You: ")
+    try:
+        while True:
+            try:
+                # Get user input
+                user_input = input("You: ")
 
-            if not user_input.strip():
-                continue
+                if not user_input.strip():
+                    continue
 
-            if user_input.lower() in ["exit", "quit", "bye", "goodbye"]:
-                print("Goodbye!")
+                if user_input.lower() in ["exit", "quit", "bye", "goodbye"]:
+                    print("Goodbye!")
+                    break
+
+                # Process with agent
+                result = await agent.process_async(user_input)
+                response = result["response"]
+
+                print(f"Zara: {response}")
+
+                # Show tool usage if any
+                if result.get("tool_results"):
+                    tools_used = [r["tool"] for r in result["tool_results"]]
+                    print(f"[Tools used: {', '.join(tools_used)}]")
+
+                print()  # Blank line for readability
+
+            except KeyboardInterrupt:
+                print("\nGoodbye!")
                 break
-
-            # Process with agent
-            result = await agent.process_async(user_input)
-            response = result["response"]
-
-            print(f"Zara: {response}")
-
-            # Show tool usage if any
-            if result.get("tool_results"):
-                tools_used = [r["tool"] for r in result["tool_results"]]
-                print(f"[Tools used: {', '.join(tools_used)}]")
-
-            print()  # Blank line for readability
-
-        except KeyboardInterrupt:
-            print("\nGoodbye!")
-            break
-        except Exception as e:
-            print(f"Error: {e}", file=sys.stderr)
-            continue
+            except Exception as e:
+                print(f"Error: {e}", file=sys.stderr)
+                continue
+    finally:
+        await agent.shutdown_async()
 
 
 def main():

@@ -129,11 +129,15 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             self._manager.tool_registry.unregister_tools(list(names))
 
     async def stop(self) -> None:
-        if self._manager is not None:
-            try:
-                self._manager.exit_conversation()
-            finally:
-                self._manager = None
+        manager = self._manager
+        self._manager = None
+        if manager is None:
+            return
+        shutdown = getattr(manager, "shutdown_async", None)
+        if shutdown is not None:
+            await shutdown()
+        else:
+            manager.exit_conversation()
 
 
 def create_runtime_backend(config=None) -> RuntimeBackend:
