@@ -116,6 +116,11 @@ def test_client_subscription_queue_is_private_to_the_client():
     first.start().result(timeout=0.5)
     second.start().result(timeout=0.5)
     try:
+        # Each client legitimately receives its own RuntimeStarted event. Clear
+        # those local lifecycle events before testing cross-client turn leakage.
+        first_events.drain()
+        second_events.drain()
+
         first.submit(SubmitTurn(text="first-only")).result(timeout=0.5)
 
         deadline = time.monotonic() + 0.5
@@ -133,7 +138,12 @@ def test_client_subscription_queue_is_private_to_the_client():
             isinstance(event, events.ResponseText) and event.text == "echo:first-only"
             for event in observed
         )
-        assert second_events.drain() == []
+        leaked = second_events.drain()
+        assert not any(
+            isinstance(envelope.event, events.ResponseText)
+            and envelope.event.text == "echo:first-only"
+            for envelope in leaked
+        )
     finally:
         first.close(timeout=0.5)
         second.close(timeout=0.5)
