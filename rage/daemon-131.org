@@ -1,0 +1,39 @@
+#+title: RAGE Work Log - Zara daemon issue 131
+
+* Run identity
+- Consumed issue :: #131
+- Parent epic :: #127
+- Branch :: =rage/131-principal-scope=
+- RAGE start commit :: =71615bcd4cdece940db433cb79ea46fe9ad085e3=
+- Start meaning :: Exact master commit from which this #131 RAGE run began, after #130 merged.
+- Protocol :: append-only evidence log; failed attempts remain visible.
+
+* Iteration 1
+** Research
+** Design
+** TDD / Implementation
+** Gate
+** Outcome
+
+* Evidence append 2026-08-22
+** Research/design artifacts
+- Research :: =rage/daemon-131-research.org=
+- Design :: =rage/daemon-131-design.org=
+- Selected boundary :: owner-bound conversation/memory objects; authenticated server principal is authoritative; #51 ContextManager is not duplicated.
+
+** TDD red candidate
+- Tests-first commit :: =935621443f7143c3d12cd3a14b903db420d35cd9=
+- Focused gate script commit :: =55c8f277c6f71542e8564565d5788b46b8f3b151=
+- Expected red reason :: production =ConversationStore= and =MemoryManager= do not yet accept/bind =principal_id= and Chroma query lacks mandatory owner =where= filter.
+- Production behavior changes before red evidence :: none.
+- Draft PR :: #147
+
+** TDD red authority
+- Candidate head :: =1bc2bbba08ea7d0c380c002ef6685c078c990856=
+- GitHub Actions :: CI #333, run =32592239812=
+- Core gate :: FAIL in phase 6, exactly =6 failed, 870 passed, 14 warnings=.
+- Expected failures :: all six new #131 tests failed because =ConversationStore= / =MemoryManager= do not yet accept =principal_id=; no unrelated regression was observed.
+- ZARA/1 protocol/transport :: =91 passed=.
+- Shared mic / Arch Linux :: PASS.
+- Shared mic / Ubuntu 24.04 :: PASS.
+- Design verdict :: ordinary implementation incompleteness; architecture remains selected.

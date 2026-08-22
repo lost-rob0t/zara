@@ -1,0 +1,54 @@
+#+title: RAGE Research - Zara daemon issue 131
+
+* Scope
+Issue #131 requires structural principal ownership for conversations, memory, persistence, and private state. It integrates with #51 but must not invent a second ContextManager while #51 remains open.
+
+* Repository evidence at immutable start
+- Start SHA :: =71615bcd4cdece940db433cb79ea46fe9ad085e3=
+- =zara/desktop/conversation/store.py= persists conversations/messages without any principal/owner column. Reads, writes, rename, load, and list are keyed only by globally guessable conversation id.
+- =zara/memory.py= owns =sessions= and =current_session_id= process-wide. Stored memory metadata has kind/tags/session/source/time but no principal. Chroma retrieval calls =collection.query(...)= without an owner filter and local fallback iterates every record.
+- =zara/security.py= already provides =PrincipalContext= through authenticated =EnrolledKey.principal=. #131 should consume that server-side identity rather than accept owner IDs from protocol payloads.
+- Existing standalone desktop/wake behavior still needs a deterministic local-owner compatibility scope during migration.
+- #51 is open; therefore #131 must make existing private-state boundaries principal-safe without replacing future context assembly work.
+
+* Upstream evidence
+** Chroma metadata filtering
+Official Chroma docs document =where= on both =query= and =get= for metadata equality/filtering. Therefore shared collection use is viable only if every daemon read structurally supplies =where={"principal_id": ...}=. Post-filtering after an unscoped vector query is rejected because another principal's vectors would still participate in nearest-neighbor selection and can alter observable results.
+
+Sources:
+- https://docs.trychroma.com/docs/querying-collections/metadata-filtering
+- https://docs.trychroma.com/docs/querying-collections/query-and-get
+
+** SQLite migration
+SQLite permits =ALTER TABLE ... ADD COLUMN ... NOT NULL= only when a non-NULL default is supplied for pre-existing rows. Existing single-user rows therefore need an explicit compatibility owner during migration rather than becoming ownerless.
+
+Source:
+- https://www.sqlite.org/lang_altertable.html
+
+* Threat/failure analysis
+- Known conversation id must not become a bearer token. Every SQL predicate must combine owner + id.
+- Search/list queries must scope before filtering content; post-filtering would leak existence/timing/count behavior.
+- Message save must prove the parent conversation belongs to the scoped owner before insert/update.
+- Same conversation/session labels for A and B must remain independent.
+- Memory duplicate detection must be principal-scoped; otherwise A can infer B owns an exact fact because remember_fact returns B's id.
+- Chroma semantic query must include owner metadata in the database query itself, not just in Python filtering.
+- Local fallback must enforce the same owner filter as persistent mode.
+- Delete/forget all must remove only the current principal's records and sessions.
+- Guest/ephemeral state must use an isolated non-durable manager or explicit ephemeral scope; never fall through to the durable local owner.
+- Existing =current_session_id= cannot be a daemon-global identity shortcut. Per-principal manager instances may retain a current session only within their sealed owner scope during compatibility migration.
+
+* Alternatives
+** Separate Chroma collection per principal
+Strong physical namespace boundary, but collection lifecycle/cardinality and migration become broader than needed. Keep as fallback if metadata-filter tests expose Chroma API limitations.
+
+** Shared Chroma collection + mandatory principal metadata filter
+Selected initially: directly supported by Chroma, minimizes migration, and can be regression-proven. The owner filter must be inside every =query/get/delete= operation.
+
+** Post-filter results in Python
+Rejected. Cross-user records would influence candidate selection and create inference channels.
+
+** Global store with principal argument on every call
+Rejected for daemon ergonomics: one missed call becomes an unscoped API. Prefer an owner-bound object constructed from authenticated server state, so methods cannot choose another principal.
+
+* Research conclusion
+Use owner-bound state objects. Add immutable principal ownership to durable conversation rows; bind every conversation store instance to one principal. Bind each MemoryManager instance to one principal, write principal metadata to every record, push principal filters into Chroma operations, and enforce equivalent filtering in local fallback. Preserve standalone compatibility with one explicit legacy/local principal constant; daemon construction must always use authenticated PrincipalContext.

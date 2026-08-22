@@ -1,0 +1,97 @@
+#+title: RAGE Design - Zara daemon issue 131
+
+* Boundary
+Issue #131 owns principal isolation for durable conversations/messages, memory/session state, vector retrieval, and private event/state ownership seams needed by daemon mode. It does not implement #51 ContextManager, #132 audio transport, or #133 client migration.
+
+* Selected architecture
+** Principal identity
+- Reuse authenticated =PrincipalContext.principal_id= from #130.
+- Add =LOCAL_PRINCIPAL_ID = "local-owner"= solely as explicit standalone/migration compatibility scope.
+- Owner identity is fixed when a private-state object is constructed; no public method accepts an arbitrary alternate principal.
+
+** Conversation persistence
+- Migrate =desktop_conversations= with =principal_id TEXT NOT NULL DEFAULT 'local-owner'=. Existing single-user rows migrate to the explicit local owner.
+- Add an owner index and owner-scoped uniqueness/search behavior.
+- Bind =ConversationStore(principal_id=...)= to exactly one principal.
+- Every get/list/update/rename/load/message query includes the bound principal.
+- Saving a message first verifies its conversation belongs to the bound principal; unknown/foreign IDs use the same not-found behavior.
+- Conversation ids remain globally unique UUIDs but are never sufficient authority.
+
+** Memory
+- Bind =MemoryManager(principal_id=...)= to exactly one principal.
+- Every stored record includes =principal_id= metadata.
+- Persistent semantic query uses Chroma =where={"principal_id": self.principal_id}= before nearest-neighbor selection.
+- Persistent get/delete operations use principal metadata filters or owner-validated ids.
+- Local fallback applies the exact same owner predicate.
+- Duplicate-fact detection is owner-scoped.
+- Session dictionary and =current_session_id= remain only inside the sealed principal-bound manager for compatibility; daemon code must create one manager per principal rather than share it.
+- =build_memory_manager(..., principal_id=...)= exposes the binding explicitly.
+
+** Future #51 integration
+- ContextManager later receives the same principal-bound storage dependencies. #131 must not create a second context history model.
+
+* Invariants
+1. A store/manager created for principal A never returns or mutates B state.
+2. A known B conversation or memory id presented to A is indistinguishable from an unknown id where practical.
+3. Chroma candidate selection itself is owner-scoped.
+4. Duplicate memory detection cannot reveal another principal's matching fact.
+5. Local fallback and persistent mode enforce identical owner semantics.
+6. Existing standalone data remains accessible only through explicit =local-owner= scope after migration.
+7. No payload owner/user field can change an object's bound principal.
+8. Deleting/exporting all state is principal-local.
+
+* Rejected alternatives
+- Post-filter vector results: rejected due inference/candidate-selection leakage.
+- Caller-supplied principal per method: rejected because omission creates unsafe unscoped calls.
+- New memory subsystem: rejected; wrap/refactor existing MemoryManager.
+- Implement #51 here: rejected as queue violation/duplicate subsystem.
+
+* Threat/failure behavior
+- Foreign conversation id: return None/KeyError matching absent object, never owner mismatch details.
+- Foreign message insert: fail closed before insert/update.
+- Chroma backend error: fallback stays owner-scoped; persistent destructive operations continue failing closed when durability is unavailable.
+- Legacy rows: assigned =local-owner= by migration; never globally visible.
+- Empty/whitespace principal ids: constructor rejects.
+- Session id collision across distinct manager objects: safe because each object is owner-bound; tests force same label/id where APIs allow.
+
+* TDD map
+** Slice A - conversation owner migration and CRUD isolation
+RED tests first:
+- migrated legacy conversation belongs only to =local-owner=;
+- A cannot get/rename/save/delete/list/search B conversation by known id/content;
+- A cannot save/load messages under B conversation;
+- identical titles are independent;
+- list/search counts contain only own rows.
+GREEN implementation: owner-bound ConversationStore + migration/index + scoped SQL.
+
+** Slice B - memory owner isolation local fallback
+RED tests first:
+- A/B exact same fact yield separate memory ids;
+- A retrieve/list/forget cannot observe/mutate B;
+- same session id/name semantics stay independent;
+- forget-all for A preserves B;
+- empty principal rejected.
+GREEN implementation: principal metadata + local filtering + principal-aware builder.
+
+** Slice C - persistent Chroma owner filtering
+RED fixtures first:
+- verify =query= called with owner =where=;
+- verify =get/delete= cannot cross owner;
+- backend failure falls back without leaking foreign cached records.
+GREEN implementation: push owner filter into Chroma query/get/delete paths.
+
+** Slice D - daemon construction/event ownership seam
+RED tests first:
+- runtime slot for principal A receives a memory/state dependency bound to A;
+- B cannot subscribe/resume A private conversation/event identifiers through existing ZARA/1 bridge.
+GREEN only within #131 boundaries; do not implement #132/#133 message families.
+
+* Exact gates
+Focused scripts/tests introduced for #131, then:
+- =nix develop -c bash scripts/test-principal-isolation.sh=
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- GitHub Actions on exact final head, including distro shared-mic lanes.
+
+Changed-code coverage review must add useful deterministic tests for any reachable owner/failure branch left uncovered.
