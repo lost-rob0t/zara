@@ -9,7 +9,12 @@ import zmq
 from zara.runtime import bridge
 from zara.runtime.commands import CommandReceipt, SubmitTurn
 from zara.server import PrincipalContext, ServerState
-from zara.zmq_transport import TransportConfig, ZaraZmqGateway, ZmqZaraClient
+from zara.zmq_transport import (
+    ProtocolRemoteError,
+    TransportConfig,
+    ZaraZmqGateway,
+    ZmqZaraClient,
+)
 
 
 class CountingSupervisor:
@@ -41,8 +46,8 @@ def zmq_context():
         context.term()
 
 
-def test_duplicate_submit_id_survives_client_reconnect_without_second_side_effect(zmq_context):
-    config = TransportConfig(
+def _config(*, cache_size: int = 8) -> TransportConfig:
+    return TransportConfig(
         sndhwm=8,
         rcvhwm=8,
         max_message_bytes=1024 * 1024,
@@ -51,8 +56,12 @@ def test_duplicate_submit_id_survives_client_reconnect_without_second_side_effec
         linger_ms=0,
         request_timeout=1.0,
         pending_request_limit=8,
-        idempotency_cache_size=8,
+        idempotency_cache_size=cache_size,
     )
+
+
+def test_duplicate_submit_id_survives_client_reconnect_without_second_side_effect(zmq_context):
+    config = _config()
     endpoint = f"inproc://reconnect-idempotency-{time.time_ns()}"
     principal = PrincipalContext("local-owner")
     supervisor = CountingSupervisor()
@@ -78,6 +87,76 @@ def test_duplicate_submit_id_survives_client_reconnect_without_second_side_effec
         assert second == first
         submitted = [item for _, item in supervisor.commands if isinstance(item, SubmitTurn)]
         assert submitted == [command]
+    finally:
+        client.close(timeout=1.0)
+        gateway.close(timeout=1.0)
+
+
+def test_reusing_request_id_for_different_command_fails_closed_after_reconnect(zmq_context):
+    config = _config()
+    endpoint = f"inproc://reconnect-idempotency-conflict-{time.time_ns()}"
+    principal = PrincipalContext("local-owner")
+    supervisor = CountingSupervisor()
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=supervisor,
+        principal=principal,
+        context=zmq_context,
+        config=config,
+    )
+    client = ZmqZaraClient(endpoint, context=zmq_context, config=config)
+
+    try:
+        gateway.start().result(timeout=1.0)
+        client.start().result(timeout=1.0)
+
+        first = SubmitTurn(request_id="stable-conflict", text="first effect")
+        client.submit(first).result(timeout=1.0)
+        client.reconnect().result(timeout=1.0)
+
+        conflicting = SubmitTurn(request_id="stable-conflict", text="different effect")
+        with pytest.raises(ProtocolRemoteError) as captured:
+            client.submit(conflicting).result(timeout=1.0)
+
+        assert captured.value.code == "idempotency_conflict"
+        assert captured.value.retryable is False
+        submitted = [item for _, item in supervisor.commands if isinstance(item, SubmitTurn)]
+        assert submitted == [first]
+    finally:
+        client.close(timeout=1.0)
+        gateway.close(timeout=1.0)
+
+
+def test_idempotency_cache_is_bounded_and_eviction_allows_old_id_to_execute_again(zmq_context):
+    config = _config(cache_size=2)
+    endpoint = f"inproc://reconnect-idempotency-eviction-{time.time_ns()}"
+    principal = PrincipalContext("local-owner")
+    supervisor = CountingSupervisor()
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=supervisor,
+        principal=principal,
+        context=zmq_context,
+        config=config,
+    )
+    client = ZmqZaraClient(endpoint, context=zmq_context, config=config)
+
+    try:
+        gateway.start().result(timeout=1.0)
+        client.start().result(timeout=1.0)
+
+        first = SubmitTurn(request_id="cache-1", text="one")
+        second = SubmitTurn(request_id="cache-2", text="two")
+        third = SubmitTurn(request_id="cache-3", text="three")
+        client.submit(first).result(timeout=1.0)
+        client.submit(second).result(timeout=1.0)
+        client.submit(third).result(timeout=1.0)
+
+        client.reconnect().result(timeout=1.0)
+        client.submit(first).result(timeout=1.0)
+
+        submitted = [item for _, item in supervisor.commands if isinstance(item, SubmitTurn)]
+        assert submitted == [first, second, third, first]
     finally:
         client.close(timeout=1.0)
         gateway.close(timeout=1.0)
