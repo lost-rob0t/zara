@@ -1,0 +1,16 @@
+#+title: RAGE Work Log - Zara daemon issue 131
+
+* Run identity
+- Consumed issue :: #131
+- Parent epic :: #127
+- Branch :: =rage/131-principal-scope=
+- RAGE start commit :: =71615bcd4cdece940db433cb79ea46fe9ad085e3=
+- Start meaning :: Exact master commit from which this #131 RAGE run began, after #130 merged.
+- Protocol :: append-only evidence log; failed attempts remain visible.
+
+* Iteration 1
+** Research
+** Design
+** TDD / Implementation
+** Gate
+** Outcome
