@@ -8,6 +8,7 @@ import pytest
 import zmq
 import zmq.asyncio
 
+from zara import zmq_transport as transport
 from zara.client import ZaraClientState
 from zara.protocol import ProtocolMessage, decode_message, encode_message
 from zara.runtime import bridge, events
@@ -43,6 +44,21 @@ class FakeSupervisor:
     def subscribe(self, principal, *, maxsize=0):
         assert isinstance(principal, PrincipalContext)
         return self.bus.subscribe(maxsize=maxsize)
+
+
+class BlockingSupervisor(FakeSupervisor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.blocked = []
+
+    def submit(self, principal, command):
+        assert isinstance(principal, PrincipalContext)
+        self.commands.append((principal, command))
+        if isinstance(command, SubmitTurn):
+            future = concurrent.futures.Future()
+            self.blocked.append(future)
+            return future
+        return super().submit(principal, command)
 
 
 @pytest.fixture
@@ -270,3 +286,203 @@ def test_two_routes_do_not_receive_each_others_runtime_events(zmq_context, trans
     first.close(timeout=1.0)
     second.close(timeout=1.0)
     gateway.close(timeout=1.0)
+
+
+def test_gateway_restart_forgets_route_handshake_state(zmq_context, transport_config):
+    endpoint = unique_endpoint("gateway-reset")
+    supervisor = FakeSupervisor()
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=supervisor,
+        principal=PrincipalContext("local-owner"),
+        context=zmq_context,
+        config=transport_config,
+    )
+    gateway.start().result(timeout=1.0)
+
+    dealer = zmq_context.socket(zmq.DEALER)
+    dealer.setsockopt(zmq.IDENTITY, b"stable-route")
+    apply_socket_options(dealer, transport_config, router=False)
+    dealer.connect(endpoint)
+    dealer.send_multipart(
+        encode_message(
+            ProtocolMessage(
+                type="hello",
+                id="hello-before-restart",
+                timestamp_ns=1,
+                payload_count=0,
+                body={"versions": [1]},
+            )
+        )
+    )
+    assert decode_message(dealer.recv_multipart()).message.type == "hello.ok"
+
+    gateway.close(timeout=1.0)
+    gateway.start().result(timeout=1.0)
+
+    dealer.send_multipart(
+        encode_message(
+            ProtocolMessage(
+                type="ping",
+                id="ping-after-restart",
+                timestamp_ns=2,
+                payload_count=0,
+            )
+        )
+    )
+    response = decode_message(dealer.recv_multipart()).message
+    assert response.type == "protocol.error"
+    assert response.body["code"] == "handshake_required"
+
+    dealer.close(0)
+    gateway.close(timeout=1.0)
+
+
+def test_duplicate_stable_submit_id_replays_receipt_without_second_side_effect(
+    zmq_context,
+    transport_config,
+):
+    endpoint = unique_endpoint("duplicate-submit")
+    supervisor = FakeSupervisor()
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=supervisor,
+        principal=PrincipalContext("local-owner"),
+        context=zmq_context,
+        config=transport_config,
+    )
+    gateway.start().result(timeout=1.0)
+    client = ZmqZaraClient(endpoint, context=zmq_context, config=transport_config)
+    client.start().result(timeout=1.0)
+
+    command = SubmitTurn(request_id="stable-request", text="do once")
+    first = client.submit(command).result(timeout=1.0)
+    second = client.submit(command).result(timeout=1.0)
+
+    assert first == second
+    submitted = [item for _, item in supervisor.commands if isinstance(item, SubmitTurn)]
+    assert submitted == [command]
+
+    client.close(timeout=1.0)
+    gateway.close(timeout=1.0)
+
+
+def test_pending_request_cap_fails_before_unbounded_future_growth(zmq_context):
+    config = TransportConfig(
+        sndhwm=8,
+        rcvhwm=8,
+        max_message_bytes=1024 * 1024,
+        heartbeat_interval_ms=100,
+        heartbeat_timeout_ms=500,
+        linger_ms=0,
+        request_timeout=1.0,
+        pending_request_limit=2,
+    )
+    endpoint = unique_endpoint("pending-cap")
+    supervisor = BlockingSupervisor()
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=supervisor,
+        principal=PrincipalContext("local-owner"),
+        context=zmq_context,
+        config=config,
+    )
+    gateway.start().result(timeout=1.0)
+    client = ZmqZaraClient(endpoint, context=zmq_context, config=config)
+    client.start().result(timeout=1.0)
+
+    client.submit(SubmitTurn(request_id="pending-1", text="one"))
+    client.submit(SubmitTurn(request_id="pending-2", text="two"))
+    with pytest.raises(transport.ClientBackpressureError):
+        client.submit(SubmitTurn(request_id="pending-3", text="three"))
+
+    assert len(supervisor.blocked) == 2
+    for future in supervisor.blocked:
+        future.set_result(CommandReceipt(request_id="released", turn_id="turn-released"))
+    client.close(timeout=1.0)
+    gateway.close(timeout=1.0)
+
+
+def test_blocked_runtime_future_does_not_starve_other_client_control(zmq_context, transport_config):
+    endpoint = unique_endpoint("fairness")
+    supervisor = BlockingSupervisor()
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=supervisor,
+        principal=PrincipalContext("local-owner"),
+        context=zmq_context,
+        config=transport_config,
+    )
+    gateway.start().result(timeout=1.0)
+    blocked = ZmqZaraClient(endpoint, context=zmq_context, config=transport_config)
+    healthy = ZmqZaraClient(endpoint, context=zmq_context, config=transport_config)
+    blocked.start().result(timeout=1.0)
+    healthy.start().result(timeout=1.0)
+
+    blocked.submit(SubmitTurn(request_id="blocked-turn", text="wait"))
+    pong = healthy.ping().result(timeout=1.0)
+    assert pong.type == "pong"
+
+    for future in supervisor.blocked:
+        future.set_result(CommandReceipt(request_id="blocked-turn", turn_id="turn-blocked"))
+    blocked.close(timeout=1.0)
+    healthy.close(timeout=1.0)
+    gateway.close(timeout=1.0)
+
+
+def test_client_rehandshakes_after_gateway_restart_with_new_session(zmq_context, transport_config):
+    endpoint = unique_endpoint("rehandshake")
+    supervisor = FakeSupervisor()
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=supervisor,
+        principal=PrincipalContext("local-owner"),
+        context=zmq_context,
+        config=transport_config,
+    )
+    gateway.start().result(timeout=1.0)
+    client = ZmqZaraClient(endpoint, context=zmq_context, config=transport_config)
+    client.start().result(timeout=1.0)
+    first_session = client.session_id
+
+    gateway.close(timeout=1.0)
+    gateway.start().result(timeout=1.0)
+    client.reconnect().result(timeout=1.0)
+
+    assert client.state is ZaraClientState.READY
+    assert client.session_id
+    assert client.session_id != first_session
+    assert client.ping().result(timeout=1.0).type == "pong"
+
+    client.close(timeout=1.0)
+    gateway.close(timeout=1.0)
+
+
+def test_owner_threads_are_dead_after_close_and_objects_can_restart(zmq_context, transport_config):
+    endpoint = unique_endpoint("restart-owners")
+    supervisor = FakeSupervisor()
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=supervisor,
+        principal=PrincipalContext("local-owner"),
+        context=zmq_context,
+        config=transport_config,
+    )
+    client = ZmqZaraClient(endpoint, context=zmq_context, config=transport_config)
+
+    gateway.start().result(timeout=1.0)
+    client.start().result(timeout=1.0)
+    first_session = client.session_id
+    client.close(timeout=1.0)
+    gateway.close(timeout=1.0)
+    assert not client.is_alive
+    assert not gateway.is_alive
+
+    gateway.start().result(timeout=1.0)
+    client.start().result(timeout=1.0)
+    assert client.session_id != first_session
+    assert client.ping().result(timeout=1.0).type == "pong"
+    client.close(timeout=1.0)
+    gateway.close(timeout=1.0)
+    assert not client.is_alive
+    assert not gateway.is_alive
