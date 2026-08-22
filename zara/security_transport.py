@@ -76,14 +76,22 @@ class RegistryCredentialsProvider:
         self._registry = registry
 
     @staticmethod
-    def _z85_public_key(raw_public_key: bytes) -> str:
-        if not isinstance(raw_public_key, bytes) or len(raw_public_key) != 32:
+    def _z85_public_key(public_key: bytes) -> str:
+        if not isinstance(public_key, bytes):
             raise KeyNotActive("client key is not active")
-        return z85.encode(raw_public_key).decode("ascii")
+        if len(public_key) == 32:
+            return z85.encode(public_key).decode("ascii")
+        if len(public_key) == 40:
+            try:
+                z85.decode(public_key)
+                return public_key.decode("ascii")
+            except (UnicodeDecodeError, ValueError) as error:
+                raise KeyNotActive("client key is not active") from error
+        raise KeyNotActive("client key is not active")
 
-    def callback(self, _domain, raw_public_key: bytes) -> bool:
+    def callback(self, _domain, public_key: bytes) -> bool:
         try:
-            self._registry.resolve_public_key(self._z85_public_key(raw_public_key))
+            self._registry.resolve_public_key(self._z85_public_key(public_key))
         except (KeyNotActive, ValueError, TypeError):
             return False
         return True
