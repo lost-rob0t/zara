@@ -202,10 +202,10 @@ class CurveCredentialsProvider:
 
     def callback(self, domain: str, key: bytes) -> bool:
         del domain
-        if not isinstance(key, bytes) or len(key) != 32:
+        if not isinstance(key, bytes) or len(key) != 40:
             return False
         try:
-            public_key = z85.encode(key).decode("ascii")
+            public_key = validate_curve_public_key(key)
             return self._registry.require_enabled(public_key) is not None
         except (SecurityConfigurationError, ValueError, KeyError, UnicodeDecodeError):
             return False
@@ -318,55 +318,58 @@ class QuotaTracker:
     def _principal_id(principal_id: str) -> str:
         if not isinstance(principal_id, str) or not principal_id.strip():
             raise ValueError("principal_id must be a non-empty string")
+        if principal_id != principal_id.strip():
+            raise ValueError("principal_id must not contain surrounding whitespace")
         return principal_id
 
     def _state(self, principal_id: str) -> _QuotaState:
         principal_id = self._principal_id(principal_id)
         return self._states.setdefault(principal_id, _QuotaState())
 
-    def _expire_requests(self, state: _QuotaState, now: float) -> None:
-        cutoff = now - float(self._policy.request_window_seconds)
-        while state.requests and state.requests[0] <= cutoff:
-            state.requests.popleft()
-
-    def open_route(self, principal_id: str) -> None:
+    def acquire_route(self, principal_id: str) -> None:
         with self._lock:
             state = self._state(principal_id)
             if state.routes >= self._policy.max_routes:
-                raise QuotaExceeded("active route quota exceeded")
+                raise QuotaExceeded("route quota exceeded")
             state.routes += 1
 
-    def close_route(self, principal_id: str) -> None:
+    def release_route(self, principal_id: str) -> None:
         with self._lock:
             state = self._state(principal_id)
-            state.routes = max(0, state.routes - 1)
+            if state.routes > 0:
+                state.routes -= 1
 
-    def check_request(self, principal_id: str) -> None:
+    def record_request(self, principal_id: str, *, now: Optional[float] = None) -> None:
+        timestamp = time.monotonic() if now is None else float(now)
         with self._lock:
             state = self._state(principal_id)
-            now = time.monotonic()
-            self._expire_requests(state, now)
+            cutoff = timestamp - float(self._policy.request_window_seconds)
+            while state.requests and state.requests[0] <= cutoff:
+                state.requests.popleft()
             if len(state.requests) >= self._policy.max_requests:
                 raise QuotaExceeded("request quota exceeded")
-            state.requests.append(now)
+            state.requests.append(timestamp)
 
-    def begin_command(self, principal_id: str) -> None:
+    def acquire_command(self, principal_id: str) -> None:
         with self._lock:
             state = self._state(principal_id)
             if state.concurrent_commands >= self._policy.max_concurrent_commands:
                 raise QuotaExceeded("concurrent command quota exceeded")
             state.concurrent_commands += 1
 
-    def end_command(self, principal_id: str) -> None:
+    def release_command(self, principal_id: str) -> None:
         with self._lock:
             state = self._state(principal_id)
-            state.concurrent_commands = max(0, state.concurrent_commands - 1)
+            if state.concurrent_commands > 0:
+                state.concurrent_commands -= 1
 
-    def snapshot(self, principal_id: str) -> QuotaSnapshot:
+    def snapshot(self, principal_id: str, *, now: Optional[float] = None) -> QuotaSnapshot:
+        timestamp = time.monotonic() if now is None else float(now)
         with self._lock:
             state = self._state(principal_id)
-            now = time.monotonic()
-            self._expire_requests(state, now)
+            cutoff = timestamp - float(self._policy.request_window_seconds)
+            while state.requests and state.requests[0] <= cutoff:
+                state.requests.popleft()
             return QuotaSnapshot(
                 routes=state.routes,
                 concurrent_commands=state.concurrent_commands,
@@ -374,20 +377,16 @@ class QuotaTracker:
             )
 
 
-def validate_secret_file(path: Path | str) -> Path:
-    candidate = Path(path)
-    try:
-        info = os.lstat(candidate)
-    except FileNotFoundError as error:
-        raise SecurityConfigurationError(f"secret file does not exist: {candidate}") from error
-    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
-        raise SecurityConfigurationError(f"secret path must be a regular file: {candidate}")
+def validate_secret_file(path: str | os.PathLike[str]) -> Path:
+    secret = Path(path).expanduser()
+    info = secret.stat()
+    if not stat.S_ISREG(info.st_mode):
+        raise SecurityConfigurationError("secret path must be a regular file")
     if info.st_uid != os.getuid():
-        raise SecurityConfigurationError(f"secret file is not owned by current user: {candidate}")
-    mode = stat.S_IMODE(info.st_mode)
-    if mode != 0o600:
-        raise SecurityConfigurationError(f"secret file must have mode 0600: {candidate}")
-    return candidate
+        raise SecurityConfigurationError("secret file must be owned by the current user")
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        raise SecurityConfigurationError("secret file permissions must not grant group/other access")
+    return secret
 
 
 __all__ = [
