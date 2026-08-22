@@ -3,13 +3,9 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    prolog-rlm = {
-      url = "github:lost-rob0t/prolog-rlm/4cdc9854a510a2d07b559e9ae34491d43d81301a";
-      flake = false;
-    };
   };
 
-  outputs = { self, nixpkgs, prolog-rlm, ... }:
+  outputs = { self, nixpkgs, ... }:
     let
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
       eachSystem = nixpkgs.lib.genAttrs supportedSystems;
@@ -281,8 +277,6 @@
                   --prefix PATH : ${pkgs.lib.makeBinPath ([ pkgs.swi-prolog pkgs.mpv ] ++ extraPath)} \
                   --set PYTHONPATH $out/lib/python${if withProlog then ":$out/share/zarathushtra" else ""}:${pythonLibs}/${python.sitePackages} \
                   --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [ pkgs.libsndfile pkgs.portaudio ]} \
-                  ${if withProlog then "--set ZARA_PROLOG_RLM_ROOT ${prolog-rlm}" else ""} \
-                  ${if withProlog then "--set ZARA_RLM_SIDECAR $out/share/zarathushtra/modules/rlm_sidecar.pl" else ""} \
                   ${if withProlog then "--set SWI_HOME_DIR ${pkgs.swi-prolog}/lib/swipl" else ""} \
                   --run "${if withProlog then "cd $out/share/zarathushtra" else ""}"
               '';
@@ -340,8 +334,6 @@
                 --add-flags "-m zara --console" \
                 --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.swi-prolog pkgs.mpv ]} \
                 --set PYTHONPATH $out/share/zarathushtra:${pythonLibs}/${python.sitePackages} \
-                --set ZARA_PROLOG_RLM_ROOT ${prolog-rlm} \
-                --set ZARA_RLM_SIDECAR $out/share/zarathushtra/modules/rlm_sidecar.pl \
                 --set SWI_HOME_DIR ${pkgs.swi-prolog}/lib/swipl \
                 --run "cd $out/share/zarathushtra"
             '';
@@ -356,15 +348,11 @@
           # not the immutable package copy in the Nix store.
           zara-dev = pkgs.writeShellScriptBin "zara" ''
             export PYTHONPATH="$PWD''${PYTHONPATH:+:$PYTHONPATH}"
-            export ZARA_PROLOG_RLM_ROOT="${prolog-rlm}"
-            export ZARA_RLM_SIDECAR="$PWD/modules/rlm_sidecar.pl"
             exec ${pythonLibs}/bin/python -m zara "$@"
           '';
 
           zara-desktop-dev = pkgs.writeShellScriptBin "zara-desktop" ''
             export PYTHONPATH="$PWD''${PYTHONPATH:+:$PYTHONPATH}"
-            export ZARA_PROLOG_RLM_ROOT="${prolog-rlm}"
-            export ZARA_RLM_SIDECAR="$PWD/modules/rlm_sidecar.pl"
             exec ${pythonLibs}/bin/python -m zara.desktop.app "$@"
           '';
 
@@ -384,13 +372,11 @@
                 export XDG_RUNTIME_DIR=$(mktemp -d)
                 export ZARA_DICTATION_PIDFILE=$XDG_RUNTIME_DIR/zara_dictation.pid
                 export ZARA_DICTATION_LOGFILE=$XDG_RUNTIME_DIR/zara_dictation.log
-                export ZARA_PROLOG_RLM_ROOT=${prolog-rlm}
                 export LANG=C.UTF-8
                 export LC_ALL=C.UTF-8
                 cp -r $src $out-src
                 chmod -R u+w $out-src
                 cd $out-src
-                export ZARA_RLM_SIDECAR="$out-src/modules/rlm_sidecar.pl"
                 export PYTHONPATH="$out-src''${PYTHONPATH:+:$PYTHONPATH}"
                 # MCP is an installed runtime contract, not an optional skipped
                 # test dependency. Prove v2 is present before running pytest.
@@ -542,8 +528,6 @@
 
             shellHook = ''
               export PYTHONPATH="$PWD''${PYTHONPATH:+:$PYTHONPATH}"
-              export ZARA_PROLOG_RLM_ROOT="${prolog-rlm}"
-              export ZARA_RLM_SIDECAR="$PWD/modules/rlm_sidecar.pl"
               echo "Python + Whisper + whisper.cpp/Vulkan + SWI-Prolog + LangChain + MCP v2 ready"
               echo ""
               echo "Commands:"
