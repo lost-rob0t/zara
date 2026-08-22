@@ -38,6 +38,7 @@ _SEARCH_STOP_WORDS = {
     "anything", "everything", "forget", "forgot", "forgotten", "know", "knew",
     "memory", "memories", "remember", "remembered",
 }
+_TRANSIENT_PRINCIPAL_KINDS = frozenset({"guest", "ephemeral"})
 
 
 class MemoryOperationError(RuntimeError):
@@ -109,14 +110,23 @@ class MemoryManager:
         self.health_status = "disabled" if not self.enabled else "local_fallback"
         self.health_error: Optional[str] = None
 
+        if principal is not None:
+            # Import lazily because zara.server builds runtime backends that import
+            # this module. Explicit daemon ownership must still be the canonical
+            # authenticated context rather than a shaped request object.
+            from zara.server import PrincipalContext
+
+            if not isinstance(principal, PrincipalContext):
+                raise TypeError("principal must be a PrincipalContext")
+
         self.principal = principal
         self.principal_id = self._principal_field(principal, "principal_id", f"uid:{os.getuid()}")
         self.principal_kind = self._principal_field(principal, "kind", "local-owner")
-        self._guest = self.principal_kind == "guest"
+        self._transient = self.principal_kind in _TRANSIENT_PRINCIPAL_KINDS
         self._local_owner = self.principal_kind == "local-owner"
         self._effective_collection_name = self._collection_name_for_principal()
 
-        if not self.enabled or self._guest:
+        if not self.enabled or self._transient:
             return
         if not _CHROMADB_AVAILABLE:
             self.health_error = "ChromaDB is unavailable"
