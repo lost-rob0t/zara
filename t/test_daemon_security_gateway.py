@@ -10,13 +10,14 @@ from zara.protocol import ProtocolMessage, decode_message, encode_message
 from zara.runtime import bridge
 from zara.runtime.commands import CommandReceipt, SubmitTurn
 from zara.security import Capability, SecurityLimits, SecurityRegistry
+from zara.security_gateway import SecureZaraZmqGateway
 from zara.security_transport import (
     CurveClientConfig,
     CurveServerConfig,
     configure_curve_client_socket,
 )
 from zara.server import PrincipalContext, ServerState
-from zara.zmq_transport import TransportConfig, ZaraZmqGateway, apply_socket_options
+from zara.zmq_transport import TransportConfig, apply_socket_options
 
 
 class FakeSupervisor:
@@ -127,11 +128,10 @@ def make_secure_gateway(
     server_public: str,
     server_secret: str,
     limits: SecurityLimits | None = None,
-) -> ZaraZmqGateway:
-    return ZaraZmqGateway(
+) -> SecureZaraZmqGateway:
+    return SecureZaraZmqGateway(
         endpoint,
         supervisor=supervisor,
-        principal=PrincipalContext("local-fallback", kind="local-owner"),
         context=context,
         config=transport_config,
         security_registry=registry,
