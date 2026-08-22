@@ -27,3 +27,13 @@
 - Expected red reason :: production =ConversationStore= and =MemoryManager= do not yet accept/bind =principal_id= and Chroma query lacks mandatory owner =where= filter.
 - Production behavior changes before red evidence :: none.
 - Draft PR :: #147
+
+** TDD red authority
+- Candidate head :: =1bc2bbba08ea7d0c380c002ef6685c078c990856=
+- GitHub Actions :: CI #333, run =32592239812=
+- Core gate :: FAIL in phase 6, exactly =6 failed, 870 passed, 14 warnings=.
+- Expected failures :: all six new #131 tests failed because =ConversationStore= / =MemoryManager= do not yet accept =principal_id=; no unrelated regression was observed.
+- ZARA/1 protocol/transport :: =91 passed=.
+- Shared mic / Arch Linux :: PASS.
+- Shared mic / Ubuntu 24.04 :: PASS.
+- Design verdict :: ordinary implementation incompleteness; architecture remains selected.
