@@ -1,7 +1,10 @@
 import concurrent.futures
+import os
+import stat
 from pathlib import Path
 
 import pytest
+import zmq
 
 from zara.server import (
     PrincipalContext,
@@ -61,8 +64,13 @@ class RecordingGateway:
         self.events.append("gateway.close")
 
 
-def test_default_zmq_endpoint_is_owner_private_ipc_under_runtime_directory(tmp_path):
-    runtime_dir = tmp_path / "runtime"
+def _ipc_path(endpoint: str) -> str:
+    assert endpoint.startswith("ipc://")
+    return endpoint.removeprefix("ipc://")
+
+
+def test_default_zmq_endpoint_is_owner_private_ipc_under_short_runtime_directory():
+    runtime_dir = Path("/run/user/1000/zarathushtra")
 
     endpoint = default_zmq_endpoint(runtime_dir)
 
@@ -70,12 +78,54 @@ def test_default_zmq_endpoint_is_owner_private_ipc_under_runtime_directory(tmp_p
     assert not endpoint.startswith("tcp://")
 
 
-def test_default_zmq_endpoint_accepts_string_runtime_directory(tmp_path):
-    runtime_dir = tmp_path / "runtime"
+def test_default_zmq_endpoint_accepts_string_runtime_directory():
+    runtime_dir = "/run/user/1000/zarathushtra"
 
-    endpoint = default_zmq_endpoint(str(runtime_dir))
+    endpoint = default_zmq_endpoint(runtime_dir)
 
     assert endpoint == f"ipc://{Path(runtime_dir) / 'zara-server.sock'}"
+
+
+def test_long_runtime_directory_uses_deterministic_private_bounded_fallback(tmp_path):
+    max_len = getattr(zmq, "IPC_PATH_MAX_LEN", 0)
+    if not max_len:
+        pytest.skip("platform does not expose an IPC path limit")
+    runtime_dir = tmp_path / ("long-segment-" * 10)
+
+    first = default_zmq_endpoint(runtime_dir)
+    second = default_zmq_endpoint(runtime_dir)
+
+    path = Path(_ipc_path(first))
+    assert first == second
+    assert len(os.fsencode(path)) <= max_len
+    assert path.name.startswith("zara-server-")
+    assert path.name.endswith(".sock")
+    assert path.parent != runtime_dir
+    assert path.parent.name == f"zarathushtra-{os.getuid()}"
+    assert path.parent.is_dir()
+    assert os.lstat(path.parent).st_uid == os.getuid()
+    assert stat.S_IMODE(os.lstat(path.parent).st_mode) == 0o700
+
+
+def test_distinct_long_runtime_directories_do_not_collide(tmp_path):
+    max_len = getattr(zmq, "IPC_PATH_MAX_LEN", 0)
+    if not max_len:
+        pytest.skip("platform does not expose an IPC path limit")
+    first_dir = tmp_path / ("a" * 120)
+    second_dir = tmp_path / ("b" * 120)
+
+    assert default_zmq_endpoint(first_dir) != default_zmq_endpoint(second_dir)
+
+
+def test_ipc_limit_is_measured_in_filesystem_bytes_not_unicode_characters(tmp_path):
+    max_len = getattr(zmq, "IPC_PATH_MAX_LEN", 0)
+    if not max_len:
+        pytest.skip("platform does not expose an IPC path limit")
+    runtime_dir = tmp_path / ("é" * 60)
+
+    endpoint = default_zmq_endpoint(runtime_dir)
+
+    assert len(os.fsencode(_ipc_path(endpoint))) <= max_len
 
 
 def test_server_starts_gateway_before_ready_and_stops_it_before_runtime_and_lease(tmp_path):
@@ -157,3 +207,13 @@ def test_server_cli_help_exposes_local_endpoint_and_warns_remote_auth_is_not_ava
 def test_server_rejects_tcp_endpoint_before_authentication_slice(tmp_path):
     with pytest.raises(ValueError, match="TCP|tcp|authentication"):
         ZaraServer(runtime_dir=tmp_path, endpoint="tcp://127.0.0.1:5555")
+
+
+def test_server_rejects_explicit_overlong_ipc_endpoint_before_bind():
+    max_len = getattr(zmq, "IPC_PATH_MAX_LEN", 0)
+    if not max_len:
+        pytest.skip("platform does not expose an IPC path limit")
+    endpoint = "ipc:///" + ("x" * (max_len + 1))
+
+    with pytest.raises(ValueError, match="IPC|ipc|length|long"):
+        ZaraServer(endpoint=endpoint)
