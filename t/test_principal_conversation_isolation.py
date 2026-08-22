@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -30,6 +32,58 @@ def message(conversation_id: str, message_id: str, content: str) -> MessageRecor
         created_at="2026-08-22T00:00:00.000000",
         updated_at="2026-08-22T00:00:00.000000",
     )
+
+
+def _create_legacy_schema(path) -> None:
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE schema_migrations (
+            version INTEGER PRIMARY KEY,
+            applied_at INTEGER NOT NULL
+        );
+        INSERT INTO schema_migrations(version, applied_at) VALUES (2, 0);
+        CREATE TABLE desktop_conversations (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            provider TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE desktop_messages (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            sequence INTEGER NOT NULL,
+            turn_id TEXT,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error TEXT NOT NULL DEFAULT '',
+            tool_run_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(conversation_id) REFERENCES desktop_conversations(id) ON DELETE CASCADE,
+            UNIQUE(conversation_id, sequence)
+        );
+        """
+    )
+    connection.commit()
+    connection.close()
+
+
+class BarrierDatabaseManager(DatabaseManager):
+    """Make two stores observe the legacy message schema before either migrates."""
+
+    def __init__(self, db_path, barrier: threading.Barrier) -> None:
+        super().__init__(db_path)
+        self._schema_barrier = barrier
+
+    def fetch_all(self, statement, params=None):
+        rows = super().fetch_all(statement, params)
+        if statement == "PRAGMA table_info(desktop_messages)":
+            self._schema_barrier.wait(timeout=2.0)
+        return rows
 
 
 def test_known_foreign_conversation_id_is_indistinguishable_from_missing(tmp_path):
@@ -99,45 +153,45 @@ def test_persisted_rows_carry_immutable_principal_owner(tmp_path):
     assert message_row["principal_id"] == "user:alice"
 
 
+def test_concurrent_legacy_schema_upgrade_is_serialized(tmp_path):
+    path = tmp_path / "legacy-race.db"
+    _create_legacy_schema(path)
+    barrier = threading.Barrier(2)
+
+    def open_store(name: str) -> ConversationStore:
+        return ConversationStore(
+            BarrierDatabaseManager(path, barrier),
+            principal=principal(name),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(open_store, "alice"), pool.submit(open_store, "bob")]
+        stores = [future.result(timeout=5.0) for future in futures]
+
+    assert [store.principal.principal_id for store in stores] == ["user:alice", "user:bob"]
+    columns = {
+        row["name"]
+        for row in stores[0].database.fetch_all("PRAGMA table_info(desktop_conversations)")
+    }
+    message_columns = {
+        row["name"]
+        for row in stores[0].database.fetch_all("PRAGMA table_info(desktop_messages)")
+    }
+    assert "principal_id" in columns
+    assert "principal_id" in message_columns
+
+
 def test_remote_principal_cannot_claim_legacy_unowned_rows(tmp_path):
     path = tmp_path / "legacy.db"
+    _create_legacy_schema(path)
     connection = sqlite3.connect(path)
-    connection.executescript(
+    connection.execute(
         """
-        CREATE TABLE schema_migrations (
-            version INTEGER PRIMARY KEY,
-            applied_at INTEGER NOT NULL
-        );
-        INSERT INTO schema_migrations(version, applied_at) VALUES (2, 0);
-        CREATE TABLE desktop_conversations (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            provider TEXT NOT NULL DEFAULT '',
-            model TEXT NOT NULL DEFAULT ''
-        );
-        CREATE TABLE desktop_messages (
-            id TEXT PRIMARY KEY,
-            conversation_id TEXT NOT NULL,
-            sequence INTEGER NOT NULL,
-            turn_id TEXT,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            status TEXT NOT NULL,
-            error TEXT NOT NULL DEFAULT '',
-            tool_run_id TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY(conversation_id) REFERENCES desktop_conversations(id) ON DELETE CASCADE,
-            UNIQUE(conversation_id, sequence)
-        );
         INSERT INTO desktop_conversations(
             id, title, created_at, updated_at, provider, model
-        ) VALUES (
-            'legacy-conv', 'Legacy private', '2026-01-01', '2026-01-01', '', ''
-        );
-        """
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        ("legacy-conv", "Legacy private", "2026-01-01", "2026-01-01", "", ""),
     )
     connection.commit()
     connection.close()
@@ -152,43 +206,15 @@ def test_remote_principal_cannot_claim_legacy_unowned_rows(tmp_path):
 
 def test_local_owner_claims_legacy_rows_without_exposing_them_to_remote(tmp_path):
     path = tmp_path / "legacy-local.db"
+    _create_legacy_schema(path)
     connection = sqlite3.connect(path)
-    connection.executescript(
+    connection.execute(
         """
-        CREATE TABLE schema_migrations (
-            version INTEGER PRIMARY KEY,
-            applied_at INTEGER NOT NULL
-        );
-        INSERT INTO schema_migrations(version, applied_at) VALUES (2, 0);
-        CREATE TABLE desktop_conversations (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            provider TEXT NOT NULL DEFAULT '',
-            model TEXT NOT NULL DEFAULT ''
-        );
-        CREATE TABLE desktop_messages (
-            id TEXT PRIMARY KEY,
-            conversation_id TEXT NOT NULL,
-            sequence INTEGER NOT NULL,
-            turn_id TEXT,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            status TEXT NOT NULL,
-            error TEXT NOT NULL DEFAULT '',
-            tool_run_id TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY(conversation_id) REFERENCES desktop_conversations(id) ON DELETE CASCADE,
-            UNIQUE(conversation_id, sequence)
-        );
         INSERT INTO desktop_conversations(
             id, title, created_at, updated_at, provider, model
-        ) VALUES (
-            'legacy-conv', 'Legacy private', '2026-01-01', '2026-01-01', '', ''
-        );
-        """
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        ("legacy-conv", "Legacy private", "2026-01-01", "2026-01-01", "", ""),
     )
     connection.commit()
     connection.close()
