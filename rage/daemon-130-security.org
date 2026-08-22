@@ -98,3 +98,16 @@ TDD consequence: update only the Slice C tests to target =SecureZaraZmqGateway=;
 - Flake/package gates :: skipped because the regression suite correctly stopped at the red TDD boundary.
 - Interpretation :: expected red for the refined boundary, not a design contradiction. Production implementation of =SecureZaraZmqGateway= is authorized now.
 - Upstream verification :: PyZMQ 27 documents that base =Authenticator= does not run its own event loop, while =ThreadAuthenticator= owns the background ZAP thread; =curve_user_id()= is the supported override for custom CURVE-key to ZAP =User-Id= mapping. The gateway implementation must therefore use the threaded authenticator lifecycle rather than merely calling =Authenticator.start()= and assuming ZAP requests are serviced.
+
+* Iteration 1 checkpoint - Slice C integration RED
+
+- Exact head :: =8f32effdd1f8f20157b8f2d10addcf9c0c5fc155=.
+- GitHub Actions :: CI #321, run =32584777546=.
+- Existing ZARA/1 protocol/transport phase :: PASS, 91 tests.
+- Shared-mic Arch Linux :: PASS.
+- Shared-mic Ubuntu 24.04 :: PASS.
+- Full pytest :: 864 PASS, 3 RED.
+- Rate-limit failure :: authenticated requests were not yet wired through the per-principal request quota; Alice's third request returned =pong= instead of =quota_exceeded=.
+- Concurrent-runtime failure :: a second in-flight runtime request was not rejected at =max_concurrent_requests=1= and produced no immediate denial.
+- Audit failure :: =SecureZaraZmqGateway= did not yet accept the tested bounded =SecurityAuditLog= injection.
+- Interpretation :: ordinary implementation incompleteness, not a design-invalidating failure. Authentication, CURVE/ZAP, protocol isolation, and platform gates remained green. The tested quota/audit wiring is therefore authorized for the same iteration.
