@@ -1,8 +1,8 @@
 """Long-lived Zara service lifecycle.
 
-``zara-server`` owns process lifecycle and RuntimeHost instances.  It does not
-implement authentication or hard multi-user persistence isolation; those
-remain ordered work in issues #130-#131.
+``zara-server`` owns process lifecycle and RuntimeHost instances. It also owns
+the local-first ZARA/1 gateway lifecycle. Authentication and hard multi-user
+persistence isolation remain ordered work in issues #130-#131.
 """
 
 from __future__ import annotations
@@ -102,6 +102,7 @@ class PrincipalRuntime:
 
 
 HostFactory = Callable[[PrincipalContext, bridge.RuntimeEventBus], RuntimeHost]
+GatewayFactory = Callable[..., object]
 
 
 class RuntimeSupervisor:
@@ -386,7 +387,7 @@ class ServerLease:
 
 
 class ZaraServer:
-    """Foreground service process owning one RuntimeSupervisor."""
+    """Foreground service process owning RuntimeSupervisor and ZARA/1 gateway."""
 
     def __init__(
         self,
@@ -394,10 +395,17 @@ class ZaraServer:
         supervisor: Optional[RuntimeSupervisor] = None,
         lease: Optional[ServerLease] = None,
         runtime_dir: Optional[Path | str] = None,
+        endpoint: Optional[str] = None,
+        gateway_factory: Optional[GatewayFactory] = None,
         shutdown_timeout: float = 5.0,
         principal: Optional[PrincipalContext] = None,
         config=None,
     ) -> None:
+        if endpoint is not None:
+            if not isinstance(endpoint, str) or not endpoint.strip():
+                raise ValueError("endpoint must be a non-empty string")
+            if not endpoint.startswith("ipc://"):
+                raise ValueError("TCP and non-IPC endpoints require authentication from issue #130")
         self._shutdown_timeout = max(0.1, float(shutdown_timeout))
         self._supervisor = supervisor or RuntimeSupervisor(
             shutdown_timeout=self._shutdown_timeout,
@@ -405,9 +413,22 @@ class ZaraServer:
             config=config,
         )
         self._lease = lease or ServerLease(runtime_dir)
+        self._runtime_dir_override = None if runtime_dir is None else Path(runtime_dir).expanduser()
+        self._endpoint_override = endpoint
+        self._gateway_factory = gateway_factory or self._build_default_gateway
+        self._gateway = None
         self._principal = principal or PrincipalContext.local_owner()
         self._state = ServerState.NEW
         self._lock = threading.RLock()
+
+    def _build_default_gateway(self, endpoint: str, *, supervisor, principal):
+        from zara.zmq_transport import ZaraZmqGateway
+
+        return ZaraZmqGateway(
+            endpoint,
+            supervisor=supervisor,
+            principal=principal,
+        )
 
     @property
     def state(self) -> ServerState:
@@ -422,6 +443,12 @@ class ZaraServer:
     def supervisor(self) -> RuntimeSupervisor:
         return self._supervisor
 
+    def _resolve_endpoint(self, lease_path: Path) -> str:
+        if self._endpoint_override is not None:
+            return self._endpoint_override
+        runtime_dir = self._runtime_dir_override or lease_path.parent
+        return default_zmq_endpoint(runtime_dir)
+
     def start(self) -> ServerState:
         with self._lock:
             if self._state in {ServerState.READY, ServerState.DEGRADED}:
@@ -430,9 +457,20 @@ class ZaraServer:
                 raise ServerStateError(f"server cannot start from {self._state.value}")
             self._state = ServerState.STARTING
 
+        supervisor_started = False
+        gateway = None
         try:
-            self._lease.acquire()
+            lease_path = Path(self._lease.acquire())
             self._supervisor.start(self._principal)
+            supervisor_started = True
+            endpoint = self._resolve_endpoint(lease_path)
+            gateway = self._gateway_factory(
+                endpoint,
+                supervisor=self._supervisor,
+                principal=self._principal,
+            )
+            self._gateway = gateway
+            gateway.start().result(timeout=self._shutdown_timeout)
             supervisor_state = self._supervisor.state
             with self._lock:
                 self._state = (
@@ -442,6 +480,17 @@ class ZaraServer:
                 )
                 return self._state
         except BaseException:
+            if gateway is not None:
+                try:
+                    gateway.close(timeout=self._shutdown_timeout)
+                except BaseException:
+                    logger.exception("Failed to close ZARA/1 gateway after startup failure")
+            self._gateway = None
+            if supervisor_started:
+                try:
+                    self._supervisor.shutdown()
+                except BaseException:
+                    logger.exception("Failed to rollback runtime after gateway startup failure")
             self._lease.release()
             with self._lock:
                 self._state = ServerState.FAILED
@@ -457,9 +506,21 @@ class ZaraServer:
                 return True
             self._state = ServerState.STOPPING
 
-        clean = False
+        clean = True
+        gateway = self._gateway
+        self._gateway = None
         try:
-            clean = self._supervisor.shutdown()
+            if gateway is not None:
+                try:
+                    gateway.close(timeout=self._shutdown_timeout)
+                except BaseException:
+                    logger.exception("Failed to stop ZARA/1 gateway cleanly")
+                    clean = False
+            try:
+                clean = self._supervisor.shutdown() and clean
+            except BaseException:
+                logger.exception("Failed to stop runtime supervisor cleanly")
+                clean = False
             return clean
         finally:
             self._lease.release()
@@ -480,17 +541,24 @@ class ZaraServer:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zara-server",
-        description="Long-lived Zara assistant service",
+        description=(
+            "Long-lived Zara assistant service. ZARA/1 is local IPC only until "
+            "transport authentication lands in issue #130."
+        ),
     )
     parser.add_argument(
         "--runtime-dir",
         help="Override the owner-private runtime directory used for the server lease",
     )
     parser.add_argument(
+        "--endpoint",
+        help="Override the local ipc:// ZARA/1 endpoint; TCP is disabled until authentication",
+    )
+    parser.add_argument(
         "--shutdown-timeout",
         type=float,
         default=5.0,
-        help="Maximum seconds allowed for runtime drain and join (default: 5)",
+        help="Maximum seconds allowed for runtime/gateway drain and join (default: 5)",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser
@@ -513,6 +581,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     server = ZaraServer(
         runtime_dir=args.runtime_dir,
+        endpoint=args.endpoint,
         shutdown_timeout=args.shutdown_timeout,
     )
     try:
@@ -534,6 +603,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "GatewayFactory",
     "PrincipalContext",
     "PrincipalLimitExceeded",
     "PrincipalMismatch",
