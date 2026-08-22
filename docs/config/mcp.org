@@ -1,0 +1,212 @@
+#+title: Literate Zara MCP configuration
+#+options: toc:3 num:nil
+
+* Two places MCP configuration can come from
+
+MCP servers may be declared in the normal Zara =config.toml= or in the companion file managed by =zara mcp=.
+
+Main config:
+
+#+begin_example
+~/.config/zarathushtra/config.toml
+#+end_example
+
+Managed overlay:
+
+#+begin_example
+~/.config/zarathushtra/mcp.toml
+#+end_example
+
+The managed file exists so enabling one server does not require Zara to rewrite unrelated user configuration.
+
+When the same server name appears in both places, the companion definition wins for that server.
+
+Read [[file:../../wiki/mcp.org][the MCP guide]] for lifecycle/tool behavior. This page concentrates on configuration.
+
+* Global MCP settings
+
+#+begin_src toml
+[mcp]
+connect_timeout = 10
+request_timeout = 60
+refresh_interval = 30
+#+end_src
+
+- =connect_timeout= bounds initial connection/handshake work.
+- =request_timeout= bounds an individual MCP operation.
+- =refresh_interval= provides conservative periodic capability refresh when list-change notifications are unavailable or insufficient.
+
+A timeout/cancellation does not authorize Zara to retry an effectful tool behind your back.
+
+* Local stdio server
+
+A stdio server is an executable child process:
+
+#+begin_src toml
+[mcp.servers.filesystem]
+transport = "stdio"
+command = "npx"
+args = [
+  "-y",
+  "@modelcontextprotocol/server-filesystem",
+  "/home/me/Documents",
+]
+#+end_src
+
+The command runs as the same OS user as Zara. Configure it with the same care you would use for any other program you launch locally. Calling it “MCP” does not create a sandbox by semantic association.
+
+If a server needs environment values, use its supported environment table and references rather than hard-coding secrets where possible.
+
+* Streamable HTTP server
+
+#+begin_src toml
+[mcp.servers.research]
+transport = "http"
+url = "https://example.com/mcp"
+headers = {
+  Authorization = "Bearer ${RESEARCH_MCP_TOKEN}"
+}
+#+end_src
+
+Zara's configured HTTP transport is MCP Streamable HTTP. Legacy HTTP+SSE is not the new-server configuration path.
+
+HTTP URLs must be =http= or =https=. Userinfo credentials embedded directly in the URL are rejected. Keep authentication in headers and preferably reference environment variables.
+
+TLS verification remains enabled through the HTTP client defaults.
+
+* Environment expansion
+
+Header/environment values can reference environment variables using =${NAME}= syntax:
+
+#+begin_src toml
+[mcp.servers.internal]
+transport = "http"
+url = "https://mcp.example.net/api"
+headers = {
+  Authorization = "Bearer ${INTERNAL_MCP_TOKEN}"
+}
+#+end_src
+
+Expansion happens when a connection is opened. This keeps a secret out of the checked-in/shared config while still making the dependency explicit.
+
+The diagnostic representation redacts configured header/environment values.
+
+* Managed configuration with the CLI
+
+Add a stdio server:
+
+#+begin_src sh
+zara mcp add filesystem \
+  --transport stdio \
+  --command npx \
+  --arg=-y \
+  --arg=@modelcontextprotocol/server-filesystem \
+  --arg=/home/me/Documents
+#+end_src
+
+Add HTTP:
+
+#+begin_src sh
+zara mcp add research \
+  --transport http \
+  --url https://example.com/mcp \
+  --header 'Authorization=Bearer ${RESEARCH_MCP_TOKEN}'
+#+end_src
+
+Manage existing entries:
+
+#+begin_src sh
+zara mcp disable filesystem
+zara mcp enable filesystem
+zara mcp remove filesystem
+#+end_src
+
+Inspect what Zara sees:
+
+#+begin_src sh
+zara mcp list
+zara mcp status
+zara mcp inspect filesystem
+zara mcp tools filesystem
+zara mcp resources filesystem
+zara mcp prompts filesystem
+#+end_src
+
+The management CLI writes the companion =mcp.toml= with owner-only permissions because literal values can contain headers or environment secrets. Rewrites also repair overly broad permissions on that managed file.
+
+* What a merged configuration means
+
+A configured server is still just a configured server. It is not necessarily healthy.
+
+At runtime, Zara connects, negotiates protocol/capabilities, discovers tools/resources/prompts, and tracks server lifecycle. Operational states include configured/starting/initializing/ready/failed/stopping/stopped.
+
+Use:
+
+#+begin_src sh
+zara mcp status
+zara mcp inspect SERVER
+#+end_src
+
+when a config looks correct but tools are missing.
+
+* Names and collisions
+
+Each server name becomes part of Zara's stable remote-tool identity. Choose simple, durable names:
+
+#+begin_src toml
+[mcp.servers.filesystem]
+# ...
+
+[mcp.servers.github]
+# ...
+#+end_src
+
+Internally a remote tool is namespaced by server so two servers cannot silently overwrite each other or a native Zara tool. Model-visible names are sanitized from that identity.
+
+Renaming a server therefore changes the tool identity visible to the agent. Treat server names as config identifiers, not decorative labels.
+
+* A small complete example
+
+#+begin_src toml
+[mcp]
+connect_timeout = 10
+request_timeout = 45
+refresh_interval = 30
+
+[mcp.servers.filesystem]
+transport = "stdio"
+command = "npx"
+args = [
+  "-y",
+  "@modelcontextprotocol/server-filesystem",
+  "/home/me/Documents",
+]
+
+[mcp.servers.research]
+transport = "http"
+url = "https://example.com/mcp"
+headers = {
+  Authorization = "Bearer ${RESEARCH_MCP_TOKEN}"
+}
+#+end_src
+
+If this lives in main =config.toml= and you later run =zara mcp disable filesystem=, the CLI-managed companion entry for =filesystem= overrides the main declaration's enabled state/definition according to the MCP config merger.
+
+* Security notes that belong next to the config
+
+- A stdio server executes code locally as Zara's user.
+- A remote MCP server can return model-visible descriptions/content. Treat it as an external capability provider, not trusted internal prose.
+- Do not put credentials in URLs.
+- Prefer environment references for secrets.
+- Zara redacts configured secrets from its own diagnostics, but a malicious server/process is outside that guarantee.
+- Failed tool calls are not automatically replayed after reconnect.
+- MCP currently uses Zara's common tool execution path rather than a separate MCP-only approval system.
+
+* Related docs
+
+- [[file:../../wiki/mcp.org][MCP client behavior and debugging]]
+- [[file:../features.org][Feature map]]
+- [[file:../architecture.org][MCP/runtime boundary]]
+- [[file:../cli.org][MCP CLI commands]]
+- [[file:../configuration.org][Configuration ownership and precedence]]
+- [[file:main.org][Main TOML]]
