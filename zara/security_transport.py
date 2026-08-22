@@ -37,7 +37,7 @@ def _curve_key(value: str | bytes, *, name: str) -> bytes:
         raise ValueError(f"{name} must be valid Z85") from error
     if len(encoded) != 40 or len(raw) != 32:
         raise ValueError(f"{name} must encode exactly 32 bytes")
-    return raw
+    return encoded
 
 
 @dataclass(frozen=True)
@@ -118,21 +118,18 @@ class RegistryAuthenticator(Authenticator):
 def configure_curve_server_socket(socket: zmq.Socket, config: CurveServerConfig) -> None:
     if not isinstance(config, CurveServerConfig):
         raise TypeError("config must be CurveServerConfig")
-    socket.setsockopt(zmq.CURVE_PUBLICKEY, _curve_key(config.public_key, name="server public key"))
-    socket.setsockopt(zmq.CURVE_SECRETKEY, _curve_key(config.secret_key, name="server secret key"))
-    socket.setsockopt(zmq.CURVE_SERVER, 1)
-    socket.setsockopt_string(zmq.ZAP_DOMAIN, config.zap_domain)
+    socket.curve_publickey = _curve_key(config.public_key, name="server public key")
+    socket.curve_secretkey = _curve_key(config.secret_key, name="server secret key")
+    socket.curve_server = True
+    socket.zap_domain = config.zap_domain.encode("utf-8")
 
 
 def configure_curve_client_socket(socket: zmq.Socket, config: CurveClientConfig) -> None:
     if not isinstance(config, CurveClientConfig):
         raise TypeError("config must be CurveClientConfig")
-    socket.setsockopt(zmq.CURVE_PUBLICKEY, _curve_key(config.public_key, name="client public key"))
-    socket.setsockopt(zmq.CURVE_SECRETKEY, _curve_key(config.secret_key, name="client secret key"))
-    socket.setsockopt(
-        zmq.CURVE_SERVERKEY,
-        _curve_key(config.server_public_key, name="server public key"),
-    )
+    socket.curve_publickey = _curve_key(config.public_key, name="client public key")
+    socket.curve_secretkey = _curve_key(config.secret_key, name="client secret key")
+    socket.curve_serverkey = _curve_key(config.server_public_key, name="server public key")
 
 
 def authenticated_user_id(frames: Iterable[object]) -> str:
