@@ -9,7 +9,7 @@ RAGE is an issue-driven research-to-merge workflow. The GitHub Issues list is th
 - Read roadmap issue #1 plus the relevant epic and open child issues.
 - Select the first open issue whose dependencies are satisfied and whose ordering/priority makes it eligible.
 - Treat an epic as a queue/container unless it explicitly defines atomic implementation work.
-- Record the consumed issue and exact starting commit in `rage/<work-log>.org` before research, design, or implementation.
+- Record the consumed issue and exact starting commit in `rage/<work-log>.org` before research, design, tests, or implementation.
 - One RAGE iteration works one consumed issue.
 
 For the daemon epic (#127), current child ordering is #128 -> #129 -> #130 -> #131, then #132/#133 as dependencies allow, with #134 as the release proof gate.
@@ -41,9 +41,36 @@ The design must record:
 - acceptance criteria mapped to tests;
 - exact local and CI gate.
 
+Every acceptance criterion must have a planned test before implementation begins. If a behavior cannot be tested, the design must explain why and specify the closest deterministic proof available.
+
 If implementation discovers a design-level contradiction, update the design/log before continuing. Do not hide architecture changes inside patches.
 
-## 4. Implement
+## 4. Test first, then implement
+
+RAGE implementation is TDD-first.
+
+1. Write or update the smallest deterministic test that expresses the next required behavior or regression.
+2. Run it and prove it fails for the expected reason before production code is changed. Record that red result when it is non-obvious or architecture-significant.
+3. Implement the minimum coherent production change needed to make the test pass.
+4. Run the focused test again until green.
+5. Refactor only while tests remain green.
+6. Repeat for the next behavior.
+
+Do not write a pile of implementation and backfill tests afterward except when modifying code is itself required to make a test harness possible. If that exception is used, document it in the RAGE log.
+
+Coverage should be maximized meaningfully, not cosmetically. Exercise as many reachable behavioral branches as practical, especially:
+
+- happy paths;
+- invalid input and boundary values;
+- startup and shutdown transitions;
+- retries, cancellation, stale work, and races;
+- timeout and resource-exhaustion paths;
+- degraded/error recovery;
+- authorization/security/isolation boundaries where relevant;
+- packaging/entrypoint behavior;
+- regressions against previously shipped behavior.
+
+Prefer deterministic branch/path coverage over assertions that merely execute lines. Never weaken assertions, add dead tests, exclude relevant code, or manufacture trivial tests just to inflate a coverage percentage.
 
 Implement only the consumed issue's slice. Reuse Zara's existing runtime boundaries rather than spawning parallel stacks.
 
@@ -53,11 +80,11 @@ Permanent Zara constraints include:
 - do not add or revive a Prolog-RLM runtime/backend/dependency;
 - Nix owns dependencies;
 - preserve canonical RuntimeHost/TurnCoordinator/event-command boundaries unless the researched design explicitly and convincingly changes them;
-- tests accompany behavior changes.
+- tests accompany every behavior change and precede its implementation under normal TDD flow.
 
 ## 5. Gate exact head
 
-Run focused tests first, then the full repository gate:
+Run focused tests continuously during TDD, then the full repository gate:
 
 ```sh
 nix develop -c bash scripts/test-all.sh
@@ -65,7 +92,9 @@ nix flake check
 nix build
 ```
 
-Also run every issue-specific security/lifecycle/protocol/soak test required by the consumed issue. After opening/pushing the PR, verify GitHub Actions for the exact candidate SHA. Older green runs are stale.
+Also run every issue-specific security/lifecycle/protocol/soak test required by the consumed issue. Inspect coverage gaps around changed code and add meaningful tests for uncovered reachable behavior before declaring the candidate complete. The goal is the highest practical behavioral coverage, not a vanity number.
+
+After opening/pushing the PR, verify GitHub Actions for the exact candidate SHA. Older green runs are stale.
 
 ## 6. Merge or trash the attempt
 
