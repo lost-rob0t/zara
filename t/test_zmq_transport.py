@@ -81,13 +81,17 @@ def test_socket_options_are_finite_and_router_mandatory_is_server_only(zmq_conte
         assert router.getsockopt(zmq.SNDHWM) == 8
         assert router.getsockopt(zmq.RCVHWM) == 8
         assert router.getsockopt(zmq.MAXMSGSIZE) == 1024 * 1024
-        assert router.getsockopt(zmq.ROUTER_MANDATORY) == 1
         assert router.getsockopt(zmq.LINGER) == 0
 
         assert dealer.getsockopt(zmq.SNDHWM) == 8
         assert dealer.getsockopt(zmq.RCVHWM) == 8
         assert dealer.getsockopt(zmq.MAXMSGSIZE) == 1024 * 1024
         assert dealer.getsockopt(zmq.LINGER) == 0
+
+        router.bind(unique_endpoint("mandatory-option"))
+        with pytest.raises(zmq.ZMQError) as error:
+            router.send_multipart([b"missing-route", b"payload"], flags=zmq.NOBLOCK)
+        assert error.value.errno == zmq.EHOSTUNREACH
     finally:
         router.close(0)
         dealer.close(0)
