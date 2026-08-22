@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from zara.protocol import ProtocolMessage
+from zara.protocol import ProtocolMessage, encode_message
 from zara.protocol_runtime import (
     RuntimeCodecError,
     command_from_message,
@@ -147,6 +147,10 @@ def test_runtime_events_have_explicit_allowlisted_wire_mapping(event, expected_t
     assert message.conversation_id == event.conversation_id
     assert message.seq == 7
     assert message.body == expected_body
+
+    frames = encode_message(message)
+    assert frames[0] == b"ZARA/1"
+    assert len(frames) == 2
 
 
 def test_runtime_event_label_and_python_type_are_not_implicitly_serialized():
