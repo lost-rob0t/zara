@@ -1,0 +1,104 @@
+#+title: RAGE Design - Issue 131 Principal Isolation
+
+* Problem boundary
+Make private daemon state ownership structural for issue #131: conversation/message persistence, memory/session state, persistent vector namespace, reconnect ownership checks, and private event subscription. Do not implement #51's full ContextManager, #132 voice transport, or administrative cross-user browsing.
+
+* Selected architecture
+** Principal-bound state objects
+- =PrincipalContext= from =zara.server= remains the canonical server-side owner identity.
+- =ConversationStore= is bound to exactly one =PrincipalContext= at construction. Compatibility construction without an explicit principal binds to =PrincipalContext.local_owner()=; it is never ownerless.
+- =MemoryManager= is likewise bound to one principal. Ownership is not a method parameter sourced from request payloads.
+
+** Conversation schema v3
+- Add immutable =principal_id TEXT NOT NULL= to =desktop_conversations=.
+- Add =principal_id TEXT NOT NULL= to =desktop_messages= as defense in depth and to make every row independently auditable.
+- New uniqueness is owner-aware where relevant: conversation ids may remain globally unique UUIDs, but authorization never depends on uniqueness.
+- Every SELECT/UPDATE/DELETE/INSERT path includes the bound principal.
+- Message inserts verify the target conversation exists for the same bound principal.
+- Missing and foreign-owned IDs produce the same =None=/=KeyError= contract to reduce existence leakage.
+- Legacy rows use a reserved migration marker. Only a local-owner-bound store may atomically claim those rows; remote/guest principals see them as absent.
+
+** Memory ownership
+- Replace process-global session identity with principal-bound session buffers.
+- Session ids remain random, but every stored memory metadata object includes =principal_id=.
+- Local fallback records are visible only to the owning manager/principal.
+- Persistent Chroma collection name derives from =collection_name + stable principal hash=; raw principal ids are not used as collection names.
+- Chroma queries also request/validate owner metadata when the fake/backend supports it; returned records whose metadata owner differs are discarded defensively.
+- Duplicate fact detection is owner-local because each manager is principal-bound.
+- =forget(all_memories=True)= clears only the owning principal namespace.
+- Guest/ephemeral principals force local-only memory and expose an explicit clear/close path; no durable Chroma writes.
+
+** Runtime/event ownership
+- Keep =RuntimeSupervisor='s one-event-bus-per-principal design.
+- Add cross-principal regression tests for =runtime=, =submit=, and =subscribe= and ensure same external conversation/session labels cannot alter routing ownership.
+- No global =current_user= is introduced.
+
+** Reconnect ownership
+- A resume/load operation must resolve through a principal-bound store. Knowing a foreign conversation id is indistinguishable from an unknown id.
+- Transport remains responsible for authenticated principal injection from #130; persistence never accepts a payload owner override.
+
+* Invariants
+1. Every durable conversation/message row has exactly one immutable principal id.
+2. Every private store/manager object is bound to exactly one PrincipalContext.
+3. No daemon persistence method accepts an arbitrary owner id from client input.
+4. Foreign-owned and nonexistent conversation identifiers are observationally equivalent for ordinary principals.
+5. Memory retrieval, duplicate detection, listing, export/delete, and fallback behavior cannot cross the bound principal.
+6. Persistent memory namespace cannot mix principals by default.
+7. Guest/ephemeral principals leave no durable memory after teardown.
+8. Runtime event subscriptions remain bound to the principal runtime bus.
+9. Legacy single-user rows cannot be claimed by a remote authenticated principal.
+10. No #51 ContextManager substitute is created in this issue.
+
+* Threat/failure analysis
+- SQL query missing principal predicate: mandatory cross-user known-ID/search tests fail.
+- Message upsert into foreign conversation: save path must validate owner before insert/update.
+- Chroma backend ignores filter or returns malformed metadata: application owner validation drops mismatched records.
+- Chroma outage fallback: manager-local fallback preserves owner isolation.
+- Same text fact across A/B: independent ids/records are required.
+- Same session id label across A/B: independent manager state is required.
+- Legacy migration race: claim runs inside DB transaction and only under local-owner scope.
+- Error oracle: foreign and missing reads use the same public failure shape.
+- Guest persistence misconfiguration: principal kind check overrides configured persistent directory/backend.
+
+* Acceptance-to-test map
+** Conversation
+- A get/list/search B known conversation -> absent.
+- A rename/save/load B -> same failure as unknown id.
+- A/B identical conversation labels and message text remain independent.
+- Legacy rows are claimable by local owner only; remote principal cannot see/claim them.
+- Message principal must equal owning conversation principal.
+
+** Memory
+- A/B exact same fact text creates independent records.
+- A exact-match query cannot retrieve B fact/summary.
+- A forget/list affects only A.
+- A/B identical session id buffers remain independent.
+- persistent fake collection is namespaced by principal and stores owner metadata.
+- backend returns mismatched-owner metadata -> discarded.
+- guest/ephemeral manager does not initialize persistent backend and teardown clears state.
+
+** Runtime/event
+- A subscription sees A events only; B sees B only.
+- A cannot resolve B runtime using mismatched PrincipalContext metadata.
+- concurrent A/B runtimes have distinct buses/hosts.
+
+* TDD slices
+1. ConversationStore principal binding/schema/query isolation tests -> red -> minimal migration/store implementation -> green.
+2. MemoryManager principal binding/local fallback tests -> red -> minimal principal-bound implementation -> green.
+3. Persistent Chroma namespace/owner-validation tests -> red -> implementation -> green.
+4. Guest teardown and runtime event-isolation regressions -> red if needed -> implementation/verification.
+5. Focused =scripts/test-principal-isolation.sh=; wire into full deterministic gate only after focused behavior is green.
+
+* Exact gate
+- focused pytest for new principal-isolation tests on every red/green step;
+- =nix develop -c bash scripts/test-principal-isolation.sh=;
+- =nix develop -c bash scripts/test-all.sh=;
+- =nix flake check=;
+- =nix build=;
+- inspect changed-code coverage gaps and add deterministic branch/failure tests;
+- GitHub Actions green for exact final PR head before merge.
+
+* Compatibility
+- Existing standalone desktop/wake callers that do not yet pass a principal bind to =PrincipalContext.local_owner()=.
+- Existing single-user data is not handed to remote principals. Local-owner startup performs the explicit legacy claim.
+- #51 can later bind ContextManager per PrincipalContext without changing this ownership model.
