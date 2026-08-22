@@ -141,7 +141,7 @@ State matters. Passive, active, dictation, and conversation contexts are not tre
 
 The Prolog command loop reports structured success/failure. A reply sink or TTS problem does not retroactively change whether the underlying command ran.
 
-See [[file:features.org][features.org]] for the Prolog/agent split.
+See [[file:commands.org][commands.org]] for the exact deterministic command/stub surface and [[file:features.org][features.org]] for the Prolog/agent split.
 
 * Text-to-speech
 
@@ -165,6 +165,14 @@ A new utterance can replace/cancel active playback instead of queueing speech be
 When =wake.stop_tts_on_input = true=, user speech can interrupt Zara while TTS is playing.
 
 The interruption path is tracked separately from normal synthesis. Latency metrics include an interruption-to-playback-stop stage so the system can be tested for responsiveness rather than judged by vibes.
+
+* Speaker-echo guard
+
+Barge-in is not the same thing as blindly listening to the speakers.
+
+When Zara is about to collect a new utterance and a TTS task is still active, capture waits for that playback boundary and discards queued microphone audio from the playback epoch before starting the next collection pass. That prevents Zara from treating its own reply leaking through the microphone as fresh user speech.
+
+When no TTS task is active, the microphone queue is left alone. The regression tests cover both sides of that behavior so the “fix” does not become “throw away real speech whenever audio is inconvenient.”
 
 * Conversation grace
 
@@ -252,7 +260,7 @@ When voice behavior is wrong, debug it in pipeline order instead of immediately 
 4. inspect final STT text;
 5. inspect Prolog vs agent routing;
 6. inspect provider/tool result;
-7. inspect TTS synthesis/playback;
+7. inspect TTS synthesis/playback and speaker-echo queue handling;
 8. compare latency trace stages.
 
 The wake process also uses its targeted log/PID paths for operational debugging. Do not put secrets or huge provider payloads into new logging just because text files are convenient.
@@ -261,6 +269,7 @@ The wake process also uses its targeted log/PID paths for operational debugging.
 
 - [[file:STT.md][STT backend and model guide]]
 - [[file:cli.org][CLI modes and flags]]
+- [[file:commands.org][Deterministic command truth table]]
 - [[file:configuration.org][Configuration ownership and precedence]]
 - [[file:features.org][Current feature map]]
 - [[file:architecture.org][Runtime architecture]]
