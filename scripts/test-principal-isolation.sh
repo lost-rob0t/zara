@@ -7,4 +7,5 @@ cd "$repo_root"
 python -m pytest -q \
   t/test_principal_conversation_isolation.py \
   t/test_principal_memory_isolation.py \
-  t/test_principal_runtime_isolation.py
+  t/test_principal_runtime_isolation.py \
+  t/test_principal_runtime_wiring.py
