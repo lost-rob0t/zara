@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 import zara.agent as agent_module
-from zara.agent import AgentManager
+import zara.memory as memory_module
 from zara.runtime import bridge
 from zara.runtime.backend import create_runtime_backend
 from zara.server import PrincipalContext, RuntimeSupervisor
@@ -34,60 +34,86 @@ class FakeConfig:
         return "system"
 
 
-def test_supervisor_default_host_carries_authenticated_principal_into_host():
+def test_supervisor_default_host_seals_authenticated_principal_into_backend():
     supervisor = RuntimeSupervisor(config=FakeConfig())
     principal = PrincipalContext("alice", "curve")
     host = supervisor._build_default_host(principal, bridge.RuntimeEventBus())
 
-    assert host.principal_id == "alice"
-
-
-def test_agent_manager_binds_memory_builder_to_principal(monkeypatch):
-    captured = {}
-
-    monkeypatch.setattr(
-        AgentManager,
-        "_create_llm_client",
-        lambda self, _config: object(),
-    )
-
-    def fake_build_memory_manager(config, *, principal_id):
-        captured["config"] = config
-        captured["principal_id"] = principal_id
-        return SimpleNamespace()
-
-    monkeypatch.setattr(agent_module, "build_memory_manager", fake_build_memory_manager)
-    monkeypatch.setattr(
-        agent_module,
-        "ToolRegistry",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            load_builtin_tools=lambda _memory: None,
-            load_user_tools=lambda _path: None,
-        ),
-    )
-
-    manager = AgentManager(config=FakeConfig(), principal_id="alice")
-
-    assert manager.principal_id == "alice"
-    assert captured["principal_id"] == "alice"
+    backend = host._backend_factory()
+    assert backend.principal_id == "alice"
+    assert backend.principal_kind == "curve"
 
 
 @pytest.mark.asyncio
-async def test_runtime_backend_factory_constructs_principal_bound_agent(monkeypatch):
+async def test_runtime_backend_injects_principal_bound_memory_without_widening_agent_api(
+    monkeypatch,
+):
     captured = {}
+    fake_memory = SimpleNamespace(principal_id="alice", ephemeral=False)
+
+    def fake_build_memory_manager(config, *, principal_id, ephemeral=False):
+        captured["memory_config"] = config
+        captured["memory_principal_id"] = principal_id
+        captured["memory_ephemeral"] = ephemeral
+        return fake_memory
 
     class FakeManager:
-        def __init__(self, *, config, principal_id):
-            captured["config"] = config
-            captured["principal_id"] = principal_id
+        def __init__(self, *, config, memory_manager):
+            captured["manager_config"] = config
+            captured["manager_memory"] = memory_manager
 
         def exit_conversation(self):
             pass
 
+    monkeypatch.setattr(memory_module, "build_memory_manager", fake_build_memory_manager)
     monkeypatch.setattr(agent_module, "AgentManager", FakeManager)
-    backend = create_runtime_backend(FakeConfig(), principal_id="alice")
+
+    backend = create_runtime_backend(
+        FakeConfig(),
+        principal_id="alice",
+        principal_kind="curve",
+    )
     await backend.start()
     try:
-        assert captured["principal_id"] == "alice"
+        assert backend.principal_id == "alice"
+        assert backend.principal_kind == "curve"
+        assert captured["memory_principal_id"] == "alice"
+        assert captured["memory_ephemeral"] is False
+        assert captured["manager_memory"] is fake_memory
+    finally:
+        await backend.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("principal_kind", ["guest", "ephemeral"])
+async def test_guest_runtime_injects_non_durable_memory(monkeypatch, principal_kind):
+    captured = {}
+    fake_memory = SimpleNamespace(principal_id="guest-1", ephemeral=True)
+
+    def fake_build_memory_manager(config, *, principal_id, ephemeral=False):
+        captured["principal_id"] = principal_id
+        captured["ephemeral"] = ephemeral
+        return fake_memory
+
+    class FakeManager:
+        def __init__(self, *, config, memory_manager):
+            captured["memory_manager"] = memory_manager
+
+        def exit_conversation(self):
+            pass
+
+    monkeypatch.setattr(memory_module, "build_memory_manager", fake_build_memory_manager)
+    monkeypatch.setattr(agent_module, "AgentManager", FakeManager)
+
+    backend = create_runtime_backend(
+        FakeConfig(),
+        principal_id="guest-1",
+        principal_kind=principal_kind,
+    )
+    await backend.start()
+    try:
+        assert captured["principal_id"] == "guest-1"
+        assert captured["ephemeral"] is True
+        assert captured["memory_manager"] is fake_memory
     finally:
         await backend.stop()
