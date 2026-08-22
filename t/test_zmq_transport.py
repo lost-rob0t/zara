@@ -87,6 +87,13 @@ def unique_endpoint(prefix: str) -> str:
     return f"inproc://{prefix}-{time.time_ns()}"
 
 
+def receive_message(socket: zmq.Socket, *, timeout_ms: int = 1000):
+    poller = zmq.Poller()
+    poller.register(socket, zmq.POLLIN)
+    assert dict(poller.poll(timeout_ms)).get(socket) == zmq.POLLIN
+    return decode_message(socket.recv_multipart()).message
+
+
 def test_socket_options_are_finite_and_router_mandatory_is_server_only(zmq_context, transport_config):
     router = zmq_context.socket(zmq.ROUTER)
     dealer = zmq_context.socket(zmq.DEALER)
@@ -152,10 +159,7 @@ def test_gateway_rejects_command_before_hello(zmq_context, transport_config):
             )
         )
     )
-    poller = zmq.Poller()
-    poller.register(dealer, zmq.POLLIN)
-    assert dict(poller.poll(1000)).get(dealer) == zmq.POLLIN
-    decoded = decode_message(dealer.recv_multipart()).message
+    decoded = receive_message(dealer)
     assert decoded.type == "protocol.error"
     assert decoded.reply_to == "ping-before-hello"
     assert decoded.body == {
@@ -315,11 +319,16 @@ def test_gateway_restart_forgets_route_handshake_state(zmq_context, transport_co
             )
         )
     )
-    assert decode_message(dealer.recv_multipart()).message.type == "hello.ok"
+    assert receive_message(dealer).type == "hello.ok"
+    dealer.close(0)
 
     gateway.close(timeout=1.0)
     gateway.start().result(timeout=1.0)
 
+    dealer = zmq_context.socket(zmq.DEALER)
+    dealer.setsockopt(zmq.IDENTITY, b"stable-route")
+    apply_socket_options(dealer, transport_config, router=False)
+    dealer.connect(endpoint)
     dealer.send_multipart(
         encode_message(
             ProtocolMessage(
@@ -330,7 +339,7 @@ def test_gateway_restart_forgets_route_handshake_state(zmq_context, transport_co
             )
         )
     )
-    response = decode_message(dealer.recv_multipart()).message
+    response = receive_message(dealer)
     assert response.type == "protocol.error"
     assert response.body["code"] == "handshake_required"
 
