@@ -1,0 +1,49 @@
+#+title: RAGE Gate Evidence - Zara Issue #129
+#+startup: overview
+
+* Continuation
+
+- Parent work log :: =rage/daemon-139.org=, Iteration 2.
+- Consumed issue :: #129.
+- Immutable RAGE start commit :: =b0bc03590215424db01277cbc4758067a7b854ab=.
+- Branch :: =rage/129-zara1-protocol=.
+- Rule :: append-only continuation for Slice B onward and final gate evidence.
+
+The original TASK #139 work log contains the immutable run identity, queue proof, research/design artifacts, and Slice A/B red evidence. This continuation exists so later exact-head evidence can be appended without rewriting earlier history.
+
+* Exact-head regression after transport/server integration
+
+- Red candidate :: =eff3fda6ff91e7e7e4cc59b04cdd6f58996ddec8=.
+- GitHub Actions :: CI #270, run =32570146324=.
+- Focused ZARA/1 phase :: 76 passed.
+- Full pytest :: 5 failed, 828 passed, 14 warnings.
+- Arch shared-mic :: PASS.
+- Ubuntu shared-mic :: PASS.
+- Nix flake/build :: skipped after the expected pytest failure.
+
+All five failures were one coherent Unix-domain-socket boundary defect:
+
+1. default =zara-server.sock= under a long CI runtime directory exceeded libzmq's =IPC_PATH_MAX_LEN=;
+2. deterministic fallback for long paths was missing;
+3. filesystem-byte length, including Unicode paths, was not enforced;
+4. explicit overlong =ipc://= endpoints were accepted until bind.
+
+Classification :: ordinary implementation defect exposed by committed TDD coverage. The ROUTER/DEALER, reconnect/idempotency, route fairness/backpressure, protocol, and distro audio tests remained green; no design invariant was falsified.
+
+* IPC endpoint production fix
+
+- Production commit :: =67b0e8dd2ec1c076a1865e583d876e9171bb276f=.
+- Behavior :: short runtime paths keep =<runtime>/zara-server.sock=; overlong defaults use a deterministic hashed socket name inside =/tmp/zarathushtra-<uid>/=; fallback directory is current-user owned and mode 0700; limits are measured using filesystem bytes; explicit overlong IPC endpoints fail before bind.
+- CI #271 :: started as production-fix proof; superseded as final authority by the later focused-gate expansion.
+
+* Focused gate coverage correction
+
+Static acceptance review found =scripts/test-zara1-protocol.sh= omitted three #129-owned suites even though the full pytest phase eventually exercised them. The focused gate was expanded instead of accepting that blind spot.
+
+- Gate commit :: =0fdfaebbc4454c6cdecdf8683fc242b38775242e=.
+- Focused gate now includes protocol framing, runtime codecs, core transport, reconnect/idempotency, route backpressure/fairness, transport status, and server IPC endpoint/lifecycle integration tests.
+- Exact-head CI #272 :: pending at time of this checkpoint.
+
+* Final gate
+
+Pending. Final merge authority requires the exact current head to pass focused ZARA/1 gate, complete =scripts/test-all.sh=, =nix flake check=, =nix build=, Arch shared-mic, and Ubuntu shared-mic, with PR #142 mergeable and no unresolved issue-acceptance gap.
