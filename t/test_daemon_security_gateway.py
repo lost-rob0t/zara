@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import socket as net_socket
+import threading
 
 import pytest
 import zmq
@@ -45,11 +46,13 @@ class BlockingSupervisor(FakeSupervisor):
     def __init__(self) -> None:
         super().__init__()
         self.futures: list[concurrent.futures.Future] = []
+        self.command_submitted = threading.Event()
 
     def submit(self, principal, command):
         self.commands.append((principal, command))
         future = concurrent.futures.Future()
         self.futures.append(future)
+        self.command_submitted.set()
         return future
 
 
@@ -560,7 +563,9 @@ def test_concurrent_runtime_quota_releases_when_runtime_future_finishes(
         assert accepted.type == "turn.accepted"
         assert accepted.reply_to == "turn-one"
 
+        supervisor.command_submitted.clear()
         submit("turn-three", hello.session_id)
+        assert supervisor.command_submitted.wait(timeout=1.0)
         assert [command.request_id for _, command in supervisor.commands] == [
             "turn-one",
             "turn-three",
