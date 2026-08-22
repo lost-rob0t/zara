@@ -12,6 +12,7 @@ import concurrent.futures
 import enum
 import errno
 import fcntl
+import hashlib
 import json
 import logging
 import os
@@ -32,11 +33,49 @@ from zara.runtime.host import RuntimeHost
 logger = logging.getLogger(__name__)
 
 
-def default_zmq_endpoint(runtime_dir: Path | str) -> str:
-    """Return the owner-private local IPC endpoint for ``zara-server``."""
+def _ipc_path_limit() -> int:
+    import zmq
 
-    path = Path(runtime_dir).expanduser()
-    return f"ipc://{path / 'zara-server.sock'}"
+    return int(getattr(zmq, "IPC_PATH_MAX_LEN", 0) or 0)
+
+
+def _validate_ipc_endpoint(endpoint: str) -> str:
+    if not endpoint.startswith("ipc://"):
+        raise ValueError("TCP and non-IPC endpoints require authentication from issue #130")
+    path = endpoint.removeprefix("ipc://")
+    if not path:
+        raise ValueError("IPC endpoint path must not be empty")
+    max_len = _ipc_path_limit()
+    path_bytes = os.fsencode(path)
+    if max_len and len(path_bytes) > max_len:
+        raise ValueError(
+            f"IPC endpoint path is too long ({len(path_bytes)} bytes; maximum {max_len})"
+        )
+    return endpoint
+
+
+def _private_ipc_fallback(runtime_dir: Path) -> Path:
+    source = os.fsencode(os.fspath(runtime_dir.absolute()))
+    digest = hashlib.blake2s(source, digest_size=10).hexdigest()
+    parent = Path("/tmp") / f"zarathushtra-{os.getuid()}"
+    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = os.lstat(parent)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise ServerError(f"IPC fallback directory is not owner-private: {parent}")
+    if stat.S_IMODE(info.st_mode) != 0o700:
+        os.chmod(parent, 0o700)
+    return parent / f"zara-server-{digest}.sock"
+
+
+def default_zmq_endpoint(runtime_dir: Path | str) -> str:
+    """Return a bounded owner-private local IPC endpoint for ``zara-server``."""
+
+    runtime_path = Path(runtime_dir).expanduser()
+    candidate = runtime_path / "zara-server.sock"
+    max_len = _ipc_path_limit()
+    if max_len and len(os.fsencode(candidate)) > max_len:
+        candidate = _private_ipc_fallback(runtime_path)
+    return _validate_ipc_endpoint(f"ipc://{candidate}")
 
 
 class ServerError(RuntimeError):
@@ -404,8 +443,7 @@ class ZaraServer:
         if endpoint is not None:
             if not isinstance(endpoint, str) or not endpoint.strip():
                 raise ValueError("endpoint must be a non-empty string")
-            if not endpoint.startswith("ipc://"):
-                raise ValueError("TCP and non-IPC endpoints require authentication from issue #130")
+            endpoint = _validate_ipc_endpoint(endpoint)
         self._shutdown_timeout = max(0.1, float(shutdown_timeout))
         self._supervisor = supervisor or RuntimeSupervisor(
             shutdown_timeout=self._shutdown_timeout,
