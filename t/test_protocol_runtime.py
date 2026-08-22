@@ -84,6 +84,11 @@ def test_runtime_command_codec_fails_closed_on_unsupported_or_invalid_messages(m
             "turn.cancelled",
             {"reason": "user"},
         ),
+        (
+            events.AgentCompleted(turn_id="t1", conversation_id="c1", success=True),
+            "turn.completed",
+            {"success": True},
+        ),
         (events.AssistantStarted(turn_id="t1", conversation_id="c1"), "assistant.started", {}),
         (
             events.AssistantDelta(turn_id="t1", conversation_id="c1", text="delta"),
