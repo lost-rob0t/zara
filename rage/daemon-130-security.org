@@ -1,0 +1,24 @@
+#+title: RAGE Work Log - Zara daemon security #130
+
+* Run identity
+- Consumed issue :: #130 — CURVE/ZAP authentication, authorization, key lifecycle, quotas, and security audit controls.
+- Branch :: =rage/130-curve-zap-security=
+- RAGE start commit :: =2bf0adbca15ea8c161df7cf15c6c9cc4125317dc=
+- Start meaning :: Exact immutable =master= commit from which issue #130 RAGE work began.
+- Dependency evidence :: #129 is closed/merged; its merge evidence is recorded in =rage/daemon-129-gate.org=. #130 is therefore the next dependency-satisfied child of epic #127.
+
+* Iteration 1
+** Research
+Pending. Research must challenge the inherited CURVE/ZAP design against current Zara ZARA/1 transport code, ZeroMQ/PyZMQ authentication semantics, revocation behavior, listener policy, quotas, audit redaction, and hostile-client resource bounds.
+
+** Design
+Pending research. No production implementation is authorized before acceptance criteria are mapped to deterministic tests.
+
+** TDD / implementation
+Pending design.
+
+** Gate
+Required final authority: focused security script, complete =scripts/test-all.sh=, =nix flake check=, =nix build=, required platform jobs, changed-code coverage review, and GitHub Actions green for the exact candidate SHA.
+
+** Outcome
+Pending.
