@@ -43,3 +43,39 @@ Not started.
 ** Outcome
 
 Pending.
+
+* Iteration 1 checkpoint - research complete
+
+- Research artifact :: =rage/daemon-130-research.org=
+- Research commit :: =3f19fed3073b8edbc878a406f351046b11d80727=
+- Result :: CURVE/ZAP direction survived, but ZAP-only revocation was rejected.
+
+Decisive findings:
+
+1. CURVE gives transport authentication/confidentiality, not Zara capability authorization.
+2. ROUTER identity remains delivery metadata and cannot become principal identity.
+3. PyZMQ exposes ZAP-authenticated CURVE =User-Id= on =zmq.Frame= metadata when receiving with =copy=False=.
+4. PyZMQ's default successful CURVE =User-Id= is the Z85 client public key, providing a clean server-side key lookup boundary.
+5. ZAP checks connection admission, so an established connection must be revalidated against Zara's key registry on every application message for immediate revocation.
+6. Callback-backed CURVE auth is preferable to =CURVE_ALLOW_ANY= or certificate-directory state as the canonical authority.
+7. Current #129 server already rejects TCP/non-IPC endpoints. #130 should extend that safe listener gate rather than weaken it.
+8. #130 can enforce route/request/concurrent-command/malformed budgets now; provider/tool/audio quotas need later runtime message-family hooks and must not be faked.
+9. Audit records must be identifier/decision only and cannot contain =turn.submit= text, payload bodies, transcripts, prompts, audio, environment dumps, or secrets.
+10. #131 still owns persistence/context/memory isolation; authenticated principals in #130 are not a false claim that multi-user privacy is complete.
+
+* Iteration 1 checkpoint - design complete
+
+- Design artifact :: =rage/daemon-130-design.org=
+- Design commit :: =0860654eff7d3e387e7c56175d219e5974aa1cfb=
+- Selected architecture :: thread-safe key registry + callback-backed ZAP + per-message authenticated key revalidation + explicit capability policy + application quotas + bounded redacted audit.
+- Listener rule :: TCP requires complete CURVE server configuration; owner-private IPC compatibility remains available.
+- Principal rule :: runtime dispatch principal is derived only from authenticated server-side key mapping.
+- Iteration state :: DESIGN COMPLETE / TDD AUTHORIZED.
+
+* Iteration 1 checkpoint - TDD Slice A red
+
+- Test commit :: =596bc76f0b9bc3e6569ffd5cee0192b283e85207=
+- Draft PR :: #144
+- Tests :: =t/test_security.py=
+- Expected red reason :: =zara.security= does not exist yet; the tests define registry, authorization, quota, audit, key-validation, and secret-file behavior before production implementation.
+- GitHub Actions :: CI #289 / run 32575269050 started for the exact red SHA. Production security code remains untouched until the red result is recorded.
