@@ -79,3 +79,14 @@ Decisive findings:
 - Tests :: =t/test_security.py=
 - Expected red reason :: =zara.security= does not exist yet; the tests define registry, authorization, quota, audit, key-validation, and secret-file behavior before production implementation.
 - GitHub Actions :: CI #289 / run 32575269050 started for the exact red SHA. Production security code remains untouched until the red result is recorded.
+
+* Iteration 1 checkpoint - Slice B test observability correction
+
+- Candidate before correction :: =209e3f982ec05c26fb8631703921f60b710b8d2a=
+- GitHub Actions :: CI #294 / run =32576072329=.
+- Result :: regression gate reached the full pytest suite; ZARA/1 focused transport gate passed 91/91; Arch and Ubuntu shared-mic jobs passed; full pytest ended =1 failed, 866 passed=.
+- Sole failure :: =t/test_zmq_security.py::test_apply_curve_client_sets_curve_mechanism_and_server_pin= called =getsockopt(CURVE_SERVERKEY)= and libzmq returned =EINVAL=.
+- Classification :: test-observability defect, not production design failure. PyZMQ documents =curve_serverkey= as the client-side server pin and specifies that a wrong pin prevents connection, but this libzmq surface does not expose that option as a readable getsockopt.
+- Correction commit :: =f96c590c2dbb8eb92a095ad0efa84f319f9499d4=.
+- Correction :: removed the unsupported write-back assertion and replaced it with real callback-backed CURVE integration proofs: an enrolled client with the correct pinned server key must deliver a probe; the same client with a wrong server pin must fail to deliver within a bounded poll interval.
+- Production code change for this failure :: none.
