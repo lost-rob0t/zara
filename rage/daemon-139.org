@@ -108,3 +108,28 @@ Selected implementation slice:
 5. Python + Nix packaging for =zara-server=.
 6. Focused lifecycle/client/package tests and a non-interactive server gate script.
 7. No ZeroMQ, auth, hard multi-user persistence isolation, or voice transport in this issue.
+
+* Iteration 1 checkpoint - TDD/coverage policy strengthened mid-run
+
+The user explicitly strengthened the permanent LLM/agent contract during Iteration 1:
+
+- TDD is mandatory: red -> green -> refactor for behavior changes;
+- tests precede production logic whenever an ordinary deterministic test can be written;
+- maximize meaningful behavioral/path/failure/security/lifecycle coverage;
+- do not game coverage percentages with weak assertions, meaningless execution-only tests, exclusions, or trivial branches.
+
+Agent-facing instructions were updated accordingly:
+
+- =AGENTS.md= commit =e70f517281b43a1c13d65a416811b395b198c6ab=;
+- Zara-local =skills/rage/SKILL.md= commit =543aba417f22ca2c91c9672473a5eb5a8aabc873=;
+- reusable =lost-rob0t/skills= RAGE skill PR #9 updated to head =1b48fd364aa33d2c422a4b42a31f2ae9b7eed836=;
+- TASK #139 and the recurring RAGE worker prompt were updated with the same contract.
+
+The first skeleton implementation commit predated this stronger instruction. It is therefore treated as unaccepted scaffolding, not completion evidence. From this checkpoint forward, new behavior fixes must be driven by failing tests first. The existing scaffold must also receive broad edge/failure coverage before it can pass the issue gate.
+
+Design was amended before new tests to add two concrete invariants discovered during static review:
+
+1. principal identifiers/kinds reject leading/trailing whitespace rather than creating ambiguous ownership keys;
+2. =ZaraClient.close()= leaves public state =STOPPED= even when called before =start()=.
+
+Next action is a tests-only red commit covering those invariants plus broader lifecycle/error/lease/client edge paths. Production code changes wait for the expected red evidence.
