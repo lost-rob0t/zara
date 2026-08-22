@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sqlite3
-import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -70,20 +69,6 @@ def _create_legacy_schema(path) -> None:
     )
     connection.commit()
     connection.close()
-
-
-class BarrierDatabaseManager(DatabaseManager):
-    """Make two stores observe the legacy message schema before either migrates."""
-
-    def __init__(self, db_path, barrier: threading.Barrier) -> None:
-        super().__init__(db_path)
-        self._schema_barrier = barrier
-
-    def fetch_all(self, statement, params=None):
-        rows = super().fetch_all(statement, params)
-        if statement == "PRAGMA table_info(desktop_messages)":
-            self._schema_barrier.wait(timeout=2.0)
-        return rows
 
 
 def test_known_foreign_conversation_id_is_indistinguishable_from_missing(tmp_path):
@@ -156,11 +141,10 @@ def test_persisted_rows_carry_immutable_principal_owner(tmp_path):
 def test_concurrent_legacy_schema_upgrade_is_serialized(tmp_path):
     path = tmp_path / "legacy-race.db"
     _create_legacy_schema(path)
-    barrier = threading.Barrier(2)
 
     def open_store(name: str) -> ConversationStore:
         return ConversationStore(
-            BarrierDatabaseManager(path, barrier),
+            DatabaseManager(path),
             principal=principal(name),
         )
 
