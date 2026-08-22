@@ -122,12 +122,48 @@ This file guides agentic coding assistants working in this repo.
 ## Cursor / Copilot Rules
 - No `.cursor/rules/`, `.cursorrules`, or `.github/copilot-instructions.md` found.
 
+## RAGE Work Protocol
+
+When the user requests RAGE, use the repository's GitHub Issues as the work queue. Do not manufacture an implementation target from prose when an issue or epic already defines the work.
+
+### Issue consumer
+
+1. Read the relevant epic/roadmap issue and its open children.
+2. Select the first open issue whose declared dependencies are satisfied, honoring explicit priority/order. Regression blockers outrank later feature work when the roadmap says so.
+3. Record the consumed issue number and exact starting commit in `rage/<work-log>.org` before research, design, or implementation commits.
+4. One RAGE iteration works one consumed issue. An epic is a queue/container unless the epic explicitly says it is itself an atomic implementation issue.
+5. When an issue passes its gate and is merged/closed, consume the next eligible issue on the next iteration. Never silently skip an eligible blocking issue.
+
+### RAGE iteration
+
+Every iteration is ordered and evidence-driven:
+
+1. **Research** — investigate deeply enough to challenge the issue's inherited design. Read current code and tests, relevant project history/issues, authoritative upstream documentation, known failure modes, and serious alternatives. Research must be capable of changing the plan.
+2. **Architecture / Design** — derive the implementation from the research. Record decisions, rejected alternatives, invariants, threat/failure analysis, migration/compatibility constraints, acceptance criteria, and the exact verification gate.
+3. **Generate / Implement** — implement the selected design. Do not smuggle architecture changes into this phase without updating the design/log first.
+4. **Evaluate** — run focused tests plus the repository's complete gate at the exact candidate head. GitHub Actions for an older SHA is stale evidence and cannot authorize merge.
+5. **Outcome** — if the gate passes, merge and record the merge SHA. If failures falsify the design or reveal that the attempt is structurally wrong, preserve the failure evidence in the Org log, discard the failed implementation branch/attempt, and start a new RAGE iteration from research/design. Do not endlessly patch a disproven architecture until CI becomes green by exhaustion.
+
+### Work log
+
+- Keep an append-only Org-mode log under `rage/`.
+- The log must state the exact immutable RAGE start commit and consumed GitHub issue.
+- Record iteration boundaries, research sources/findings, design decisions, implementation commits, gate commands/results, CI run/SHA, failures, discarded attempts, PR, and final merge SHA.
+- A retry gets a new iteration section. Failed work stays visible as evidence.
+
+### Repository-local skills
+
+- Zara-local reusable agent procedures belong under `skills/`.
+- Read the relevant local skill before executing that procedure.
+- The RAGE skill supplements this file; it does not override repository gates or GitHub issue ordering.
+
 ## Do Not Do
 - Do not add new linters or formatters.
 - Do not change API providers or models without approval.
 - Do not move Prolog logic into Python.
 - Do not add non‑Nix dependencies without approval.
 - Do not add inline comments unless asked.
+- Do not add or revive Prolog-RLM as a Zara runtime backend or dependency.
 
 ## Logging Conventions
 - Prefer module-level loggers via `logging.getLogger(__name__)`.
@@ -144,7 +180,7 @@ This file guides agentic coding assistants working in this repo.
 - For Prolog issues, verify `main.pl` is loaded and predicates exist.
 
 ## Single‑File Changes
-- Use small edits and avoid large refactors without request.
+- Use small edits and avoid large refactors without request, except where an explicit RAGE design justifies the larger change.
 - When modifying logic, add logging only where needed.
 
 ## Tests Location
@@ -157,6 +193,8 @@ This file guides agentic coding assistants working in this repo.
 - `kb/` contains Prolog knowledge base facts.
 - `modules/` contains Prolog logic.
 - `t/` contains tests.
+- `rage/` contains append-only RAGE work evidence.
+- `skills/` contains Zara-local agent skills.
 
 ## Wiki Documentation
 - Keep `wiki/` documentation up to date with code changes.
@@ -164,6 +202,6 @@ This file guides agentic coding assistants working in this repo.
 
 ## Additional Notes
 - Keep code consistent with existing style.
-- Favor minimal, targeted changes.
-- Ask before adding new files beyond what is requested.
+- Favor minimal, targeted changes outside an approved RAGE design.
+- Ask before adding new files beyond what is requested, except RAGE logs/skills/design artifacts required by this protocol.
 - Follow repo conventions for notifications, logging, and config defaults.
