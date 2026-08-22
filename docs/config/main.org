@@ -1,0 +1,432 @@
+#+title: Literate Zara config.toml
+#+options: toc:3 num:nil
+
+* What this file is
+
+This is the readable companion to Zara's generated =config.toml=. It groups the settings by what they actually change and keeps copyable TOML next to the explanation.
+
+It is *not* a second source of defaults and is not tangled into the runtime. Canonical defaults and validation live in =zara/config.py=. If code and this document disagree, fix the document or the code rather than inventing a third truth.
+
+Main config location:
+
+#+begin_example
+$XDG_CONFIG_HOME/zarathushtra/config.toml
+# normally ~/.config/zarathushtra/config.toml
+#+end_example
+
+See [[file:../configuration.org][configuration.org]] for the other config layers and precedence.
+
+* Wake and acknowledgement
+
+=[wake]= controls the long-lived wake listener. The queue/time settings are bounds, not performance wishes.
+
+#+begin_src toml
+[wake]
+model_path = "~/.zarathushtra/models/wake.onnx"
+threshold = 0.5
+sample_rate = 16000
+stop_phrases = [
+  "goodbye",
+  "bye",
+  "end conversation",
+  "stop conversation",
+  "end session",
+  "stop session",
+]
+stop_tts_on_input = true
+silence_duration = 1.5
+first_speech_timeout = 5.0
+max_utterance_duration = 30.0
+audio_queue_chunks = 32
+#+end_src
+
+=sample_rate= is the transcription target. If the microphone cannot capture it directly, Zara can use a supported device rate and resample.
+
+=audio_queue_chunks= bounds the real-time callback queue. When full, old audio is dropped so latency does not grow forever.
+
+Acknowledgement is separate from the final response. Keep its phrases noncommittal because it plays before the command/model has finished.
+
+#+begin_src toml
+[wake.acknowledgement]
+enabled = true
+phrase = "Okay"
+phrases = [
+  "Okay",
+  "Sure",
+  "All right",
+  "Got it",
+  "One sec",
+  "One moment",
+  "Just a moment",
+  "Give me a second",
+  "Let me see",
+  "Let me check",
+  "Let me think",
+  "Checking now",
+  "Thinking",
+  "Hmm, one sec",
+  "Right, let me see",
+  "I hear you",
+  "On it",
+  "Let's see",
+]
+provider = "edge"
+voice = "en-US-AriaNeural"
+volume = 1.0
+#+end_src
+
+See [[file:../voice.org][voice.org]].
+
+* Speech-to-text and VAD
+
+The provider is swappable without replacing the microphone/VAD pipeline.
+
+#+begin_src toml
+[stt]
+provider = "faster-whisper"
+model = "small"
+device = "cpu"
+threads = 4
+
+vad_threshold = 0.5
+min_speech_ms = 128
+trailing_silence_ms = 320
+max_utterance_ms = 30000
+no_speech_timeout_ms = 5000
+pre_speech_buffer_chunks = 10
+partial_transcript_ms = 1000
+#+end_src
+
+Current provider families include faster-whisper, whisper.cpp, OpenAI Whisper, sherpa-onnx families, OpenAI remote transcription, and Groq. Backend-specific model layouts belong in [[file:../STT.md][STT.md]].
+
+For whisper.cpp GPU use, the CLI normalizes AMD/ROCm/HIP convenience names to the Vulkan path.
+
+* Text-to-speech
+
+#+begin_src toml
+[tts]
+provider = "qwen3"
+model_path = ""
+sample_rate = 16000
+connect_timeout = 5.0
+read_timeout = 20.0
+total_timeout = 30.0
+#+end_src
+
+Supported providers are =local=, =11labs=, =edge=, and =qwen3=. =qwen= remains an alias for =qwen3=.
+
+Useful provider-specific examples:
+
+#+begin_src toml
+# Edge
+[tts]
+provider = "edge"
+edge_voice = "en-US-GuyNeural"
+connect_timeout = 5.0
+read_timeout = 20.0
+total_timeout = 30.0
+#+end_src
+
+#+begin_src toml
+# Qwen3 endpoint
+[tts]
+provider = "qwen3"
+endpoint = "http://localhost:7860"
+voice = "zara"
+connect_timeout = 5.0
+read_timeout = 20.0
+total_timeout = 30.0
+#+end_src
+
+ElevenLabs additionally requires its API key and voice id fields. Do not commit real credentials to a copied config example.
+
+* LLM and agent
+
+Provider/network settings live in =[llm]=:
+
+#+begin_src toml
+[llm]
+provider = "ollama"
+model = ""
+endpoint = ""
+connect_timeout = 5.0
+read_timeout = 20.0
+total_timeout = 30.0
+max_retries = 2
+history_limit = 20
+
+# Prefer environment variables for remote credentials:
+# OPENAI_API_KEY
+# ANTHROPIC_API_KEY
+#+end_src
+
+Supported providers are =ollama=, =openai=, and =anthropic=. Leave =endpoint= empty for the provider default unless you intentionally use a compatible proxy/local endpoint.
+
+Conversation policy belongs in =[agent]=:
+
+#+begin_src toml
+[agent]
+conversation_timeout = 3600
+post_tts_silence_seconds = 2.0
+max_steps = 10
+system_prompt = ""
+# backend = "langgraph"
+#+end_src
+
+=system_prompt= may be inline text or a file path according to the agent loader. The only current runtime backend is LangGraph. Do not add old Prolog-RLM backend values; Zara rejects them.
+
+* Latency metrics
+
+#+begin_src toml
+[latency]
+enabled = true
+metrics_path = ""
+
+[latency.budgets]
+wake_to_ack_first_audio_p95_ms = 350
+speech_end_to_final_transcript_p95_ms = 700
+first_text_chunk_to_first_tts_audio_p95_ms = 500
+barge_in_to_playback_stop_p95_ms = 200
+#+end_src
+
+An empty =metrics_path= uses the XDG state path. The metrics are timing data only; transcript text, prompts, credentials, and audio do not belong in the trace.
+
+Provider LLM time is observed but not assigned a universal deterministic budget.
+
+* Prolog bootstrap
+
+#+begin_src toml
+[prolog]
+main_file = "main.pl"
+load_on_startup = true
+#+end_src
+
+This tells Python where/how to start the embedded Prolog application. Symbolic mappings themselves live in the Prolog config layer, documented in [[file:prolog.org][prolog.org]].
+
+* Agent tools
+
+#+begin_src toml
+[tools]
+calculator = true
+get_current_time = true
+query_prolog = true
+remember = true
+recall = true
+memory_list = true
+forget = true
+file_tools = false
+#+end_src
+
+Tool enable flags are deliberately explicit. File tools are off by default.
+
+#+begin_src toml
+[file_tools]
+readable_roots = ["."]
+writable_roots = ["."]
+max_bytes = 20000
+#+end_src
+
+For a personal long-lived install, narrow those roots to directories you actually intend the model/tool path to touch:
+
+#+begin_src toml
+[tools]
+file_tools = true
+
+[file_tools]
+readable_roots = ["/home/me/notes", "/home/me/projects/zara"]
+writable_roots = ["/home/me/notes"]
+max_bytes = 20000
+#+end_src
+
+Paths outside roots, symlinks, and special files are rejected. Existing-file overwrite remains explicit.
+
+* Shared database
+
+#+begin_src toml
+[database]
+path = "~/.local/share/zarathushtra/zara.db"
+#+end_src
+
+This SQLite database backs current application persistence such as desktop conversations and newer todos.
+
+* Todos
+
+#+begin_src toml
+[todo]
+default_status = "TODO"
+default_duration_minutes = 30
+#+end_src
+
+The newer SQLite todo system supports statuses, tags, priorities, recurrence and conflict-aware scheduling. Prolog also has older todo formatting/context facts; those belong in [[file:prolog.org][the Prolog config]].
+
+See [[file:../features.org][features.org]] for the distinction.
+
+* NOAA weather
+
+#+begin_src toml
+[noaa]
+# default_latitude = 39.7456
+# default_longitude = -97.0892
+# user_agent = "ZarathushtraWeather/1.0 (contact: you@example.com)"
+#+end_src
+
+Set a real contact-friendly user agent if you use the NOAA API path. The values above are examples, not location defaults you should blindly inherit.
+
+* Memory
+
+#+begin_src toml
+[memory]
+enabled = true
+persist_directory = "~/.local/share/zarathushtra/chroma"
+collection_name = "zara_memory"
+embedding_backend = "onnx"
+embedding_model = "all-MiniLM-L6-v2"
+top_k = 5
+max_chars = 1200
+summary_max_chars = 4000
+#+end_src
+
+The default embedding path uses local ONNX MiniLM.
+
+Ollama embeddings are also supported by =MemoryManager=. A typical shape is:
+
+#+begin_src toml
+[memory]
+enabled = true
+persist_directory = "~/.local/share/zarathushtra/chroma"
+collection_name = "zara_memory"
+embedding_backend = "ollama"
+embedding_model = "nomic-embed-text"
+top_k = 5
+max_chars = 1200
+summary_max_chars = 4000
+#+end_src
+
+The Ollama base URL can come from the memory-specific configuration supported by the runtime or =ZARA_MEMORY_OLLAMA_URL= / =OLLAMA_HOST=.
+
+If Chroma or the embedding path fails, Zara reports =local_fallback=. That means memory still works for the process, not that persistence secretly succeeded.
+
+* Module and plugin discovery
+
+#+begin_src toml
+[modules]
+search_paths = [
+  "~/.zarathushtra/plugins",
+  "~/.zarathushtra/modules",
+]
+autoload = []
+#+end_src
+
+Public Python files in configured search paths can provide legacy tools or service plugins.
+
+Generic service-plugin limits:
+
+#+begin_src toml
+[plugins]
+lifecycle_timeout = 5.0
+event_queue_size = 256
+max_managed_workers = 8
+#+end_src
+
+A plugin gets its private settings under a table matching its metadata name:
+
+#+begin_src toml
+[plugins.event-observer]
+enabled = true
+#+end_src
+
+Read [[file:../../wiki/plugins.org][plugins.org]] for lifecycle/threading rules.
+
+* Pets
+
+#+begin_src toml
+[pets]
+enabled = false
+selected_pet = "zara-default"
+scale = 1.0
+reduced_motion = "system"
+default_x = 100
+default_y = 100
+#+end_src
+
+=reduced_motion= is =system=, =on=, or =off=. Saved Pet runtime state can override fallback position/selection. Read [[file:../pets.md][pets.md]].
+
+* Dictation
+
+#+begin_src toml
+[dictate]
+model = "small"
+device = "cpu"
+workers = 2
+stop_phrases = []
+#+end_src
+
+An empty =stop_phrases= list lets the dictation module use its canonical defaults. The unified CLI can override these values per invocation.
+
+* MCP in the main config
+
+MCP can be declared directly in this same TOML. The management CLI writes its own companion file, so keep the conceptual layers separate.
+
+#+begin_src toml
+[mcp]
+connect_timeout = 10
+request_timeout = 60
+refresh_interval = 30
+
+[mcp.servers.filesystem]
+transport = "stdio"
+command = "npx"
+args = [
+  "-y",
+  "@modelcontextprotocol/server-filesystem",
+  "/home/me/Documents",
+]
+
+[mcp.servers.research]
+transport = "http"
+url = "https://example.com/mcp"
+headers = { Authorization = "Bearer ${RESEARCH_MCP_TOKEN}" }
+#+end_src
+
+The companion =mcp.toml= overrides same-named server definitions. See [[file:mcp.org][the literate MCP config]] and [[file:../../wiki/mcp.org][the MCP guide]].
+
+* A sane small config
+
+You do not need to customize every table just because it exists. A small personal override can be much easier to reason about:
+
+#+begin_src toml
+[stt]
+provider = "faster-whisper"
+model = "small"
+device = "cpu"
+
+[tts]
+provider = "edge"
+
+[llm]
+provider = "ollama"
+model = "qwen3:8b"
+
+[tools]
+file_tools = false
+
+[memory]
+enabled = true
+embedding_backend = "onnx"
+
+[pets]
+enabled = false
+#+end_src
+
+Zara merges/loads according to its actual config implementation, so keep generated required/default sections if your installed version expects them. This example is an orientation aid, not a promise that every future version will accept a six-table file unchanged.
+
+* Validate after editing
+
+At minimum, start the mode you changed. For repository work, run the full gate:
+
+#+begin_src sh
+nix develop -c bash scripts/test-all.sh
+nix flake check
+#+end_src
+
+Related: [[file:../configuration.org][configuration ownership]], [[file:../voice.org][voice]], [[file:../STT.md][STT]], [[file:prolog.org][Prolog config]], [[file:mcp.org][MCP config]].
