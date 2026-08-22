@@ -6,8 +6,8 @@ import json
 import logging
 import os
 import re
-import urllib.request
 import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
@@ -29,6 +29,7 @@ except Exception:
     _EMBEDDING_FUNCTIONS_AVAILABLE = False
 
 EmbeddingFunction = Callable[[List[str]], List[List[float]]]
+LOCAL_PRINCIPAL_ID = "local-owner"
 
 _SEARCH_STOP_WORDS = {
     "a", "an", "and", "are", "about", "do", "for", "from", "how", "i",
@@ -41,6 +42,14 @@ _SEARCH_STOP_WORDS = {
 
 class MemoryOperationError(RuntimeError):
     """Raised when a memory mutation cannot be completed safely."""
+
+
+def _require_principal_id(principal_id: str) -> str:
+    if not isinstance(principal_id, str) or not principal_id.strip():
+        raise ValueError("principal_id must be a non-empty string")
+    if principal_id != principal_id.strip():
+        raise ValueError("principal_id must not contain leading or trailing whitespace")
+    return principal_id
 
 
 def _normalize_ollama_base_url(url: str) -> str:
@@ -59,7 +68,6 @@ def _normalize_ollama_base_url(url: str) -> str:
 def _ollama_embed(texts: List[str], base_url: str, model: str) -> List[List[float]]:
     url = _normalize_ollama_base_url(base_url) + "/api/embeddings"
     vectors: List[List[float]] = []
-
     for text in texts:
         payload = json.dumps({"model": model, "prompt": text}).encode("utf-8")
         request = urllib.request.Request(
@@ -73,13 +81,12 @@ def _ollama_embed(texts: List[str], base_url: str, model: str) -> List[List[floa
         embedding = body.get("embedding")
         if not isinstance(embedding, list) or not embedding:
             raise ValueError("Invalid embedding response")
-        vectors.append([float(v) for v in embedding])
-
+        vectors.append([float(value) for value in embedding])
     return vectors
 
 
 class MemoryManager:
-    """Manage conversational memory sessions."""
+    """Manage conversational memory sealed to one principal."""
 
     def __init__(
         self,
@@ -90,7 +97,10 @@ class MemoryManager:
         top_k: int = 5,
         embedding_function: Optional[EmbeddingFunction] = None,
         settings: Optional[Dict[str, Any]] = None,
+        *,
+        principal_id: str = LOCAL_PRINCIPAL_ID,
     ) -> None:
+        self.principal_id = _require_principal_id(principal_id)
         self.sessions: Dict[str, List[Tuple[str, str]]] = {}
         self.collection_name = collection_name
         self.persist_directory = persist_directory
@@ -140,10 +150,8 @@ class MemoryManager:
     def _build_embedding_function(self) -> Optional[EmbeddingFunction]:
         memory_cfg = self.settings
         backend = str(memory_cfg.get("embedding_backend", "onnx")).strip().lower()
-
         if backend in {"onnx", "onnx_minilm", "onnx_minilm_l6_v2"}:
             return embedding_functions.ONNXMiniLM_L6_V2()
-
         if backend == "ollama":
             model = str(memory_cfg.get("embedding_model", "nomic-embed-text")).strip() or "nomic-embed-text"
             base_url = str(memory_cfg.get("ollama_url") or memory_cfg.get("ollama_base_url") or "").strip()
@@ -154,12 +162,10 @@ class MemoryManager:
                 return _ollama_embed(texts, base_url=base_url, model=model)
 
             return _embed
-
         if backend == "sentence_transformers" and _EMBEDDING_FUNCTIONS_AVAILABLE:
             return embedding_functions.SentenceTransformerEmbeddingFunction(
                 model_name=self.embedding_model
             )
-
         return None
 
     def _use_local_fallback(self, error: Exception) -> None:
@@ -173,10 +179,7 @@ class MemoryManager:
         )
 
     def get_health(self) -> Dict[str, Optional[str]]:
-        return {
-            "status": self.health_status,
-            "error": self.health_error,
-        }
+        return {"status": self.health_status, "error": self.health_error}
 
     def start_session(self) -> str:
         session_id = str(uuid.uuid4())
@@ -196,13 +199,11 @@ class MemoryManager:
         messages = self.sessions.get(session_id)
         if not messages:
             return None
-
         if summary_text is not None:
             summary = self._bounded_session_text(summary_text)
             if summary:
                 self.store_session_summary(session_id, summary, source=source)
             return summary
-
         transcript = self._bounded_session_text(
             "\n".join(f"{role}: {content}" for role, content in messages)
         )
@@ -267,11 +268,9 @@ class MemoryManager:
         query = query.strip()
         if not query:
             return []
-
         limit = int(k or self.top_k)
         kinds = set(include_kinds) if include_kinds else None
         tag_list = self._normalize_tags(tags)
-
         if self._collection is None:
             return self._retrieve_local(query, limit, kinds, tag_list)
         try:
@@ -327,7 +326,6 @@ class MemoryManager:
             raise ValueError("Choose exactly one memory deletion scope")
         if not self.enabled:
             return 0
-
         kinds = set(include_kinds) if include_kinds else None
         tag_list = self._normalize_tags(tags)
         records = self._all_records(require_persistent=True)
@@ -343,7 +341,6 @@ class MemoryManager:
             if query and not self._text_matches_query(record.get("text", ""), query):
                 continue
             selected_ids.append(record.get("id"))
-
         selected_ids = [memory_id for memory_id in selected_ids if memory_id]
         if self._collection is not None and selected_ids:
             try:
@@ -352,7 +349,6 @@ class MemoryManager:
                 raise MemoryOperationError(
                     f"Persistent memory deletion failed: {error}"
                 ) from error
-
         selected = set(selected_ids)
         self._memories = [
             record for record in self._memories if record.get("id") not in selected
@@ -369,12 +365,17 @@ class MemoryManager:
     def _all_records(self, require_persistent: bool = False) -> List[Dict[str, Any]]:
         if self._collection is None:
             if require_persistent and self.persist_directory and self.health_error:
-                raise MemoryOperationError(
-                    "Persistent memory is unavailable"
-                )
-            return [dict(record) for record in self._memories]
+                raise MemoryOperationError("Persistent memory is unavailable")
+            return [
+                dict(record)
+                for record in self._memories
+                if self._record_principal(record.get("metadata", {})) == self.principal_id
+            ]
         try:
-            result = self._collection.get(include=["documents", "metadatas"])
+            result = self._collection.get(
+                where={"principal_id": self.principal_id},
+                include=["documents", "metadatas"],
+            )
             ids = result.get("ids") or []
             documents = result.get("documents") or []
             metadatas = result.get("metadatas") or []
@@ -392,7 +393,11 @@ class MemoryManager:
                     f"Persistent memory could not be read: {error}"
                 ) from error
             self._use_local_fallback(error)
-            return [dict(record) for record in self._memories]
+            return [
+                dict(record)
+                for record in self._memories
+                if self._record_principal(record.get("metadata", {})) == self.principal_id
+            ]
 
     def _retrieve_chroma(
         self,
@@ -405,25 +410,25 @@ class MemoryManager:
         result = self._collection.query(
             query_texts=[query],
             n_results=candidate_count,
+            where={"principal_id": self.principal_id},
         )
         documents = (result.get("documents") or [[]])[0]
         ids = (result.get("ids") or [[]])[0]
         metadatas = (result.get("metadatas") or [[]])[0]
         distances = (result.get("distances") or [[]])[0]
-
         entries = []
         for idx, text in enumerate(documents):
             metadata = metadatas[idx] if idx < len(metadatas) else {}
             if not self._matches_filters(metadata, kinds, tags):
                 continue
-            entry = {
-                "id": ids[idx] if idx < len(ids) else None,
-                "text": text,
-                "metadata": metadata,
-                "score": distances[idx] if idx < len(distances) else None,
-            }
-            entries.append(entry)
-
+            entries.append(
+                {
+                    "id": ids[idx] if idx < len(ids) else None,
+                    "text": text,
+                    "metadata": metadata,
+                    "score": distances[idx] if idx < len(distances) else None,
+                }
+            )
         entries.sort(key=lambda item: item["score"] if item["score"] is not None else 0.0)
         return entries[:limit]
 
@@ -462,7 +467,6 @@ class MemoryManager:
                     "score": score,
                 }
             )
-
         entries.sort(key=lambda item: item["score"] if item["score"] is not None else 0.0)
         return entries[:limit]
 
@@ -479,36 +483,28 @@ class MemoryManager:
         text = (text or "").strip()
         if not text:
             return None
-
         if kind == "fact":
             duplicate_id = self._find_duplicate_fact(text)
             if duplicate_id is not None:
                 return duplicate_id
-
         memory_id = str(uuid.uuid4())
         tag_list = self._normalize_tags(tags)
-        tag_string = ",".join(tag_list)
         metadata = {
+            "principal_id": self.principal_id,
             "kind": kind,
-            "tags": tag_string,
+            "tags": ",".join(tag_list),
             "session_id": session_id or "",
             "source": source,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
-
+        local_record = {
+            "id": memory_id,
+            "text": text,
+            "metadata": {**metadata, "tags": tag_list},
+        }
         if self._collection is None:
-            self._memories.append(
-                {
-                    "id": memory_id,
-                    "text": text,
-                    "metadata": {
-                        **metadata,
-                        "tags": tag_list,
-                    },
-                }
-            )
+            self._memories.append(local_record)
             return memory_id
-
         try:
             self._collection.upsert(
                 ids=[memory_id],
@@ -518,13 +514,7 @@ class MemoryManager:
             return memory_id
         except Exception as error:
             self._use_local_fallback(error)
-            self._memories.append(
-                {
-                    "id": memory_id,
-                    "text": text,
-                    "metadata": {**metadata, "tags": tag_list},
-                }
-            )
+            self._memories.append(local_record)
             return memory_id
 
     def _find_duplicate_fact(self, text: str) -> Optional[str]:
@@ -535,7 +525,7 @@ class MemoryManager:
             return None
         for record in records:
             metadata = record.get("metadata", {})
-            if metadata.get("kind") != "fact":
+            if not self._matches_filters(metadata, {"fact"}, []):
                 continue
             if self._normalize_text(record.get("text", "")) == normalized:
                 return record.get("id")
@@ -568,16 +558,20 @@ class MemoryManager:
         cleaned = [str(tag).strip() for tag in tags if str(tag).strip()]
         return list(dict.fromkeys(cleaned))
 
+    @staticmethod
+    def _record_principal(metadata: Dict[str, Any]) -> str:
+        return str(metadata.get("principal_id") or LOCAL_PRINCIPAL_ID)
+
     def _matches_filters(
         self,
         metadata: Dict[str, Any],
         kinds: Optional[set[str]],
         tags: List[str],
     ) -> bool:
-        if kinds is not None:
-            kind_value = metadata.get("kind")
-            if kind_value not in kinds:
-                return False
+        if self._record_principal(metadata) != self.principal_id:
+            return False
+        if kinds is not None and metadata.get("kind") not in kinds:
+            return False
         if not tags:
             return True
         stored_tags = metadata.get("tags")
@@ -593,6 +587,8 @@ class MemoryManager:
 def build_memory_manager(
     config: Optional[Dict[str, Any]] = None,
     embedding_function: Optional[EmbeddingFunction] = None,
+    *,
+    principal_id: str = LOCAL_PRINCIPAL_ID,
 ) -> MemoryManager:
     settings = config or {}
     return MemoryManager(
@@ -603,4 +599,5 @@ def build_memory_manager(
         top_k=int(settings.get("top_k", 5)),
         embedding_function=embedding_function,
         settings=settings,
+        principal_id=principal_id,
     )
