@@ -1,0 +1,301 @@
+#+title: RAGE Research - ZARA/1 ZeroMQ Protocol / Issue #129
+#+startup: overview
+
+* Status
+
+- Consumed issue :: #129
+- Parent epic :: #127
+- Immutable repository baseline :: =b0bc03590215424db01277cbc4758067a7b854ab=
+- Research phase :: complete for Iteration 2
+- Scope :: versioned application framing, ROUTER/DEALER gateway, transport-neutral client implementation, correlation, bounded reconnect, protocol validation, runtime command/event mapping. Authentication/CURVE/ZAP and hard principal isolation remain #130/#131.
+
+* Questions attacked
+
+1. Does ROUTER/DEALER actually fit Zara's asynchronous request + event stream model better than REQ/REP?
+2. Which framing guarantees come from ZMTP and which must =ZARA/1= enforce itself?
+3. What is a ROUTER routing identity allowed to mean before #130 authentication exists?
+4. What happens when libzmq reconnects a DEALER after =zara-server= restarts but the application handshake state vanished?
+5. How can request replies and unsolicited runtime events share one DEALER socket without races?
+6. How should malformed or oversized multipart input be rejected without dynamically dispatching arbitrary message names?
+7. How do we preserve canonical Zara request/turn/conversation identifiers instead of creating a parallel domain model?
+8. What does backpressure mean when ZeroMQ queues are bounded but Zara event streams can outlive individual requests?
+9. Which socket owns which thread/event loop?
+10. Which issue requirements are impossible or unsafe to claim before #130/#131?
+
+* Current Zara audit at baseline
+
+** Client seam already exists
+
+=zara/client.py= defines transport-neutral =ZaraClient= plus =ZaraClientState=. =InProcessZaraClient= directly wraps a private =RuntimeHost=. #129 should add a network client behind this seam instead of changing CLI/desktop surfaces yet; their migration is #133.
+
+The current abstract API is synchronous-to-caller via =concurrent.futures.Future= and a process-local event subscription. A pure asyncio-only network class would not be a drop-in implementation. The implementation therefore needs either:
+
+- a private asyncio I/O thread that owns the DEALER socket and bridges results/events into concurrent futures + =RuntimeEventSubscription=; or
+- a deliberate expansion of the client API that would ripple into #133 prematurely.
+
+Research preference: private I/O thread. It preserves the client contract and, crucially, keeps one ZeroMQ socket on one owner thread.
+
+** Runtime supervisor is principal-explicit but intentionally single-principal
+
+=zara/server.py= defaults =RuntimeSupervisor(max_active_principals=1)= and =ZaraServer= starts =PrincipalContext.local_owner()=. This is exactly the safe #129 boundary: all pre-auth protocol connections may use the already-created local-owner runtime, but no connection may derive a principal from a ROUTER routing id or envelope field.
+
+Do not add =user_id= to the v1 envelope. If an unknown extension contains identity-looking metadata, it has no authority. #130 will bind authenticated CURVE/ZAP transport state to =PrincipalContext=.
+
+** Existing runtime commands are narrower than issue prose
+
+=zara/runtime/commands.py= currently provides =SubmitTurn=, =CancelTurn=, voice/tool/runtime controls, and stable =request_id=. There is no =ConversationOpen= command. Conversation selection is represented by =SubmitTurn.conversation_id=.
+
+Consequences:
+
+- =conversation.open= in #129 should be an application/session bookkeeping operation, not a fabricated RuntimeCommand;
+- =turn.submit= maps to =SubmitTurn(request_id=envelope.id, text, conversation_id, context_ids)=;
+- =turn.cancel= maps to =CancelTurn(request_id=envelope.id, turn_id=canonical turn id)=;
+- protocol replies preserve RuntimeHost's =CommandReceipt= rather than inventing a second receipt authority.
+
+** Runtime event vocabulary is already provider-neutral
+
+=zara/runtime/events.py= already exposes =TurnStarted=, =TurnCancelled=, =AssistantDelta=, =AssistantComplete=, =ResponseText=, =RuntimeError=, etc. #129 should use an explicit allowlisted codec from event class -> protocol type/payload and never serialize Python class paths or =__dict__= blindly.
+
+Some issue names do not have exact runtime classes (for example =turn.completed=). We should derive only protocol lifecycle messages whose semantics are unambiguous from existing events; do not pretend a =ResponseText= means a final turn completion when runtime may emit later lifecycle state. Where needed, the gateway may forward canonical existing event names as explicit =assistant.*= and =runtime.*= protocol messages.
+
+* ZeroMQ / PyZMQ evidence
+
+** DEALER/ROUTER is the correct socket pair
+
+ZeroMQ Guide chapter 3 documents DEALER and ROUTER as asynchronous request/reply building blocks. DEALER imposes no send-receive lock-step; ROUTER prepends a transport routing-id frame on receive and consumes it on send. This fits Zara because one client can have several requests in flight while runtime events arrive independently.
+
+Source: https://zguide.zeromq.org/docs/chapter3/
+
+REQ/REP is rejected because REQ's send-then-receive finite-state-machine is incompatible with unsolicited assistant deltas/events, concurrent requests, and cancellation.
+
+** Application framing is distinct from ZMTP framing/versioning
+
+ZMTP 3.1 already defines transport-level greeting/version/security framing and connection metadata. =ZARA/1= must remain an application protocol above that layer. A successful ZMTP connection therefore does not imply a successful Zara hello.
+
+Source: https://rfc.zeromq.org/spec/37/
+
+Decision: keep =b"ZARA/1"= as application frame 0 and require it on every application message. Unknown =ZARA/<major>= fails closed at the application layer even if ZMTP itself negotiated successfully.
+
+** ROUTER routing id is transport address, not user identity
+
+The Guide describes the ROUTER-added first frame as a connection identity/address whose meaning is routing. ZMTP also defines an optional Identity connection metadata property. Neither is authentication.
+
+Sources:
+- https://zguide.zeromq.org/docs/chapter3/
+- https://rfc.zeromq.org/spec/37/
+
+Invariant: the gateway stores routing ids only as opaque bytes needed to send a reply. They are never decoded into a user/principal and never copied into a trusted envelope field.
+
+** Socket thread ownership is mandatory
+
+PyZMQ documents Contexts as thread-safe and sockets as not thread-safe; sharing sockets across threads can cause uncatchable C-level crashes. Asyncio sockets return Futures for send/recv/poll.
+
+Sources:
+- https://pyzmq.readthedocs.io/en/v26.0.1/howto/morethanbindings.html
+- https://pyzmq.readthedocs.io/en/latest/api/zmq.asyncio.html
+
+Decision:
+
+- one gateway I/O thread/event loop owns the ROUTER socket;
+- one client I/O thread/event loop owns each DEALER socket;
+- RuntimeHost threads never touch ZeroMQ sockets;
+- runtime-event subscriptions feed an async-safe gateway queue; the gateway thread performs all socket writes.
+
+** Bounded socket queues are necessary but not sufficient
+
+libzmq exposes =SNDHWM=, =RCVHWM=, =MAXMSGSIZE=, =SNDTIMEO=, =RCVTIMEO=, =ROUTER_MANDATORY=, =IMMEDIATE=, reconnect interval/max, and ZMTP heartbeat options.
+
+Sources:
+- https://libzmq.readthedocs.io/en/latest/zmq_setsockopt.html
+- https://pyzmq.readthedocs.io/en/latest/api/zmq.html
+
+Important distinction: =MAXMSGSIZE= protects a whole ZeroMQ message at transport receive, but =ZARA/1= also needs explicit per-envelope and per-payload-frame bounds because:
+
+- JSON parsing happens after transport receive;
+- =payload_count= must exactly match remaining frames;
+- future audio frames can be individually bounded;
+- an attacker/client can use many legal small frames unless frame count is bounded.
+
+Decision: protocol parser validates count before decoding payload semantics, bounds envelope bytes before JSON parsing, bounds every payload frame and aggregate payload bytes, and rejects extra/missing frames.
+
+** Heartbeats are liveness, not application ping semantics
+
+libzmq's =HEARTBEAT_IVL= emits ZMTP PING and =HEARTBEAT_TIMEOUT= accepts any incoming traffic as liveness. Application =ping=/=pong= remains useful to measure Zara request correlation/session health, but it must not be described as replacing transport heartbeat.
+
+Source: https://libzmq.readthedocs.io/en/latest/zmq_setsockopt.html
+
+* Failure/reconnect research
+
+** Automatic reconnect does not restore server application state
+
+libzmq automatically reconnects connection-oriented sockets and can exponentially back off when =RECONNECT_IVL_MAX= is configured. ZMTP recommends reconnect delays to avoid storms.
+
+Sources:
+- https://libzmq.readthedocs.io/en/latest/zmq_setsockopt.html
+- https://rfc.zeromq.org/spec/37/
+
+But when =zara-server= restarts, its in-memory map from routing connection/session to negotiated =ZARA/1= state disappears. A DEALER may reconnect at transport level without the application knowing that =hello= must be repeated.
+
+This invalidates any design that equates socket reconnect with session resume.
+
+Selected recovery rule:
+
+1. Every connection route has server-side application state =UNNEGOTIATED= or =READY=.
+2. Only =hello= and transport-independent =ping= needed for diagnostics are accepted while unnegotiated; other commands receive typed =protocol.error(code="handshake_required")=.
+3. Client receiving =handshake_required= transitions to STARTING/re-negotiates hello and may retry only operations marked idempotent/safe by the client policy.
+4. Side-effecting retries use stable application request ids. Socket delivery is never treated as exactly-once execution.
+5. Optional durable session resume remains capability-negotiated and cannot be claimed in #129 unless implemented against actual durable state. v1 may negotiate =resume=false= initially.
+
+** Stable idempotency is application-level
+
+The ZeroMQ Guide's reliability chapter explicitly treats reconnect/retry as an application problem; transport reconnect does not create exactly-once request processing.
+
+Source: https://zguide.zeromq.org/docs/chapter4/
+
+Decision:
+
+- every request has a stable bounded =id=;
+- reply messages carry =reply_to=;
+- client correlation table is bounded;
+- gateway has a bounded recent-request cache per application connection/session for commands where duplicate submission would be unsafe;
+- retry policy must never silently issue a new request id for the same logical side effect.
+
+A full durable exactly-once ledger is not #129 scope. Document at-least-once retry semantics and duplicate suppression limits honestly.
+
+* Protocol schema research conclusions
+
+** Closed envelope
+
+Envelope keys are allowlisted. Core proposed fields:
+
+- =type= required bounded ASCII token;
+- =id= required bounded opaque token;
+- =reply_to= optional bounded token;
+- =session_id= optional/required by state;
+- =conversation_id= optional;
+- =turn_id= optional;
+- =stream_id= optional;
+- =seq= optional non-negative integer;
+- =timestamp_ns= required non-negative integer;
+- =trace_id= optional bounded token;
+- =content_type= optional bounded MIME-ish token;
+- =payload_count= required non-negative integer;
+- =flags= optional object with allowlisted boolean fields only;
+- =body= optional message-specific JSON object.
+
+Do not place arbitrary extensible dictionaries in v1 just because the issue says "bounded extensions". A generic extension bag becomes an accidental second untyped protocol. If extensions are required later, add a namespaced bounded key set through a minor protocol revision.
+
+** JSON canonicalization
+
+Golden fixtures need deterministic encoding: UTF-8, no NaN/Infinity, stable separators, sorted keys. Decoder accepts ordinary JSON key order but rejects duplicate keys because duplicate security-sensitive fields create parser ambiguity.
+
+Python's default =json.loads= accepts duplicate object names by keeping the last value and accepts NaN/Infinity unless configured otherwise. Therefore the decoder must use an =object_pairs_hook= that detects duplicates and =parse_constant= rejection.
+
+** Version marker
+
+Frame 0 exactly equals =b"ZARA/1"=. Do not accept whitespace, case variants, =ZARA/01=, or prefix matching. The application hello body can negotiate supported minor capabilities; the frame marker is the major wire family.
+
+* Server architecture
+
+Selected layering:
+
+1. =zara.protocol= — pure data validation/codec; no sockets, no RuntimeHost.
+2. =zara.transport.zmq= — PyZMQ socket configuration and owned I/O loops.
+3. =ZaraZmqGateway= — ROUTER-side application state and explicit message -> RuntimeSupervisor mapping.
+4. =ZmqZaraClient= — =ZaraClient= implementation with private DEALER I/O loop, correlation map, local RuntimeEventBus, reconnect/hello state.
+5. =zara-server= composes =ZaraServer= + gateway; lifecycle shutdown closes gateway sockets before terminating context and before runtime supervisor teardown completes.
+
+Avoid putting protocol parser directly into =server.py=. That file is lifecycle authority, not a wire-codec junk drawer.
+
+* Runtime mapping
+
+Initial explicit request mapping:
+
+- =hello= -> protocol/session negotiation only.
+- =ping= -> =pong=, no RuntimeHost call.
+- =runtime.status= -> serialized server/supervisor/client-safe state only.
+- =conversation.open= -> allocate/echo a bounded conversation id in connection/session bookkeeping; no fake RuntimeCommand.
+- =turn.submit= -> =SubmitTurn(request_id=id, text=body.text, conversation_id=conversation_id, context_ids=validated body.context_ids)=.
+- =turn.cancel= -> =CancelTurn(request_id=id, turn_id=turn_id)=.
+
+Explicit runtime event mapping begins with:
+
+- =TurnStarted= -> =turn.started=;
+- =TurnCancelled= -> =turn.cancelled=;
+- =AssistantStarted= -> =assistant.started=;
+- =AssistantDelta= -> =assistant.delta=;
+- =AssistantComplete= -> =assistant.completed=;
+- =ResponseText= -> =assistant.response=;
+- =RuntimeError= -> =runtime.error=;
+- =RuntimeStopped= -> =runtime.stopped=;
+- other allowlisted runtime events can be added only with explicit codecs/tests.
+
+Do not use class-name reflection/dynamic import as protocol dispatch.
+
+* Backpressure model
+
+Three bounded layers are required:
+
+1. ZeroMQ socket HWM bounds transport queues.
+2. Gateway has a bounded outbound application queue per connection/routing target (or equivalent bounded scheduling queue) so a slow client cannot consume unbounded Python memory.
+3. =ZmqZaraClient= local event bus subscription uses a finite default queue for network-originated events; an explicit caller may request a different bounded size later, but zero/unbounded must not be the network default.
+
+If a client falls behind:
+
+- noncritical deltas may eventually require coalescing in a later performance slice, but #129 should initially disconnect/fail the slow route rather than silently drop terminal/error/cancellation events;
+- one slow route must not block receive/dispatch for another route.
+
+* Security boundary for this slice
+
+#129 is not authentication.
+
+Allowed claim: local IPC/TCP protocol machinery has a principal-neutral transport address and delegates to the one already-owned local principal.
+
+Forbidden claims:
+
+- ROUTER identity authenticates a user;
+- envelope =user_id= can select a principal;
+- remote TCP listener is production safe;
+- two connections imply two isolated users;
+- reconnect proves durable session continuity.
+
+Default endpoint should therefore be local IPC under the owner-private runtime directory established by #128. Remote TCP binding stays disabled unless explicitly configured, and even then documentation must label it unauthenticated until #130.
+
+* Rejected alternatives
+
+** REQ/REP
+
+Rejected: lock-step send/receive prevents independent streamed events and concurrent cancellation.
+
+** One asyncio loop shared with RuntimeHost
+
+Rejected: RuntimeHost already owns worker loops/threads; sharing or passing PyZMQ sockets across them violates socket ownership and couples transport lifetime to assistant runtime internals.
+
+** Serialize dataclasses generically
+
+Rejected: leaks implementation names/fields, makes schema evolution accidental, risks provider/private data leakage, and violates closed message vocabulary.
+
+** Trust DEALER routing id as principal
+
+Rejected: routing is addressing, not authentication. #130 exists specifically to bind cryptographic identity to a principal.
+
+** Rely only on libzmq reconnect
+
+Rejected: reconnect restores transport, not application handshake/request semantics.
+
+** Unbounded Python queues because ZeroMQ HWM exists
+
+Rejected: HWM cannot bound application queues created after receipt or before send.
+
+* Design pressures carried forward
+
+1. =ZARA/1= parser/encoder must be pure and fuzzable.
+2. No #129 production code before test plan/design commit under current TDD contract.
+3. Gateway/client sockets each have one owner I/O thread/loop.
+4. Default protocol endpoint is local and owner-private.
+5. No trusted user identity crosses the #129 wire.
+6. Server loses per-connection negotiation state on restart; client must be able to re-hello.
+7. Stable request ids and explicit reply correlation are mandatory.
+8. All frame counts/sizes/JSON keys/message types are bounded and allowlisted.
+9. Slow-client behavior must be bounded and isolated from other routes.
+10. #129 must not quietly consume #130 authentication or #131 persistence isolation scope.
