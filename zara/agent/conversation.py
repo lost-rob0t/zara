@@ -20,13 +20,23 @@ class ConversationManager:
     - Activity tracking
     """
 
-    def __init__(self, timeout_seconds: int = 60):
+    def __init__(self, timeout_seconds: int = 60, *, principal=None):
         """
         Initialize conversation manager.
 
         Args:
             timeout_seconds: Seconds of inactivity before auto-exiting conversation mode
+            principal: Optional canonical server-side owner for daemon conversation state
         """
+        if principal is not None:
+            # Import lazily to avoid a module cycle while still rejecting
+            # request-shaped owner objects on the daemon path.
+            from zara.server import PrincipalContext
+
+            if not isinstance(principal, PrincipalContext):
+                raise TypeError("principal must be a PrincipalContext")
+
+        self.principal = principal
         self.in_conversation: bool = False
         self.last_activity: Optional[float] = None
         self.timeout_seconds: int = timeout_seconds
