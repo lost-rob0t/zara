@@ -96,7 +96,7 @@ During design review, the executable boundary was simplified:
 Issue #128 and task #139 were updated to encode this decision. Epic #127 received a superseding architecture note rather than creating a duplicate epic.
 
 - Design artifact :: =rage/daemon-128-design.org=
-- Design commit :: =736219f0b617c7ce51bb9f653d20c43e68795e87=
+- Design commit :: =736219f0b617c7ce51bb9f653d20c43e68795e87=.
 - Iteration state :: DESIGN COMPLETE / IMPLEMENTATION AUTHORIZED
 
 Selected implementation slice:
@@ -234,9 +234,32 @@ The implementation establishes =zara-server= as the foreground long-lived servic
 - Classification :: authoritative expected TDD red. The failure is exactly the missing Slice A production module; no inherited regression or design contradiction was exposed.
 - Production authorization :: implement only the minimum coherent pure codec required by the committed Slice A contract, then rerun the same tests/full CI to green before starting Slice B.
 
+*** Slice A - pure protocol codec GREEN
+
+- Production commit :: =297de324b26e3adacfb343033e46872c8d4e8a87=.
+- GitHub Actions :: CI #241, run =32558762483=.
+- Exact-head =scripts/test-all.sh= :: PASS.
+- =nix flake check= :: PASS.
+- =nix build= :: PASS.
+- Arch shared-mic :: PASS.
+- Ubuntu shared-mic :: PASS.
+- Outcome :: Slice A accepted. =zara.protocol= now provides strict/closed deterministic framing, duplicate-key/non-finite JSON rejection, bounded ids/frames/payloads, reserved message recognition, and canonical encoding. Slice B was not started until this exact head was fully green.
+
+*** Slice B - explicit runtime codecs RED
+
+- Tests-only commit :: =00a50d706d03cd8a51bea2579b0751dd22c891b9=.
+- GitHub Actions :: CI #242, run =32559212734=.
+- Arch shared-mic :: PASS.
+- Ubuntu shared-mic :: PASS.
+- Main =scripts/test-all.sh= :: EXPECTED FAILURE in Phase 5 / pytest collection.
+- Exact failure :: =ModuleNotFoundError: No module named 'zara.protocol_runtime'= while collecting =t/test_protocol_runtime.py=.
+- =nix flake check= and =nix build= :: correctly skipped after the expected main-gate failure.
+- Classification :: authoritative expected TDD red. Tests define explicit =turn.submit=/=turn.cancel= command mapping, allowlisted runtime-event codecs, unsupported-event fail-closed behavior, and sanitized internal-error output before implementation exists.
+- Production authorization :: implement only the explicit runtime codec contract; no reflection serializer, no provider/label leakage, and no raw exception text on the wire.
+
 ** Gate
 
-Slice A red established. Full issue gate remains pending.
+Slice A complete red -> full green. Slice B red established. Full issue gate remains pending.
 
 ** Outcome
 
