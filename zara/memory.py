@@ -2,6 +2,7 @@
 Conversation memory manager with optional ChromaDB persistence.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -79,7 +80,7 @@ def _ollama_embed(texts: List[str], base_url: str, model: str) -> List[List[floa
 
 
 class MemoryManager:
-    """Manage conversational memory sessions."""
+    """Manage conversational memory sealed to one principal."""
 
     def __init__(
         self,
@@ -90,6 +91,8 @@ class MemoryManager:
         top_k: int = 5,
         embedding_function: Optional[EmbeddingFunction] = None,
         settings: Optional[Dict[str, Any]] = None,
+        *,
+        principal: Optional[Any] = None,
     ) -> None:
         self.sessions: Dict[str, List[Tuple[str, str]]] = {}
         self.collection_name = collection_name
@@ -106,7 +109,14 @@ class MemoryManager:
         self.health_status = "disabled" if not self.enabled else "local_fallback"
         self.health_error: Optional[str] = None
 
-        if not self.enabled:
+        self.principal = principal
+        self.principal_id = self._principal_field(principal, "principal_id", f"uid:{os.getuid()}")
+        self.principal_kind = self._principal_field(principal, "kind", "local-owner")
+        self._guest = self.principal_kind == "guest"
+        self._local_owner = self.principal_kind == "local-owner"
+        self._effective_collection_name = self._collection_name_for_principal()
+
+        if not self.enabled or self._guest:
             return
         if not _CHROMADB_AVAILABLE:
             self.health_error = "ChromaDB is unavailable"
@@ -119,16 +129,33 @@ class MemoryManager:
         except Exception as error:
             self._use_local_fallback(error)
 
+    @staticmethod
+    def _principal_field(principal: Optional[Any], name: str, default: str) -> str:
+        value = getattr(principal, name, default)
+        if not isinstance(value, str) or not value.strip() or value != value.strip():
+            raise ValueError(f"principal {name} must be a non-empty trimmed string")
+        return value
+
+    def _collection_name_for_principal(self) -> str:
+        if self._local_owner:
+            return self.collection_name
+        digest = hashlib.blake2s(
+            self.principal_id.encode("utf-8"), digest_size=10
+        ).hexdigest()
+        return f"{self.collection_name}_{digest}"
+
     def _setup_chroma(self, embedding_function: Optional[EmbeddingFunction]) -> None:
         self._embedding_function = embedding_function or self._build_embedding_function()
         client = self._build_client()
         if self._embedding_function is not None:
             self._collection = client.get_or_create_collection(
-                name=self.collection_name,
+                name=self._effective_collection_name,
                 embedding_function=self._embedding_function,
             )
         else:
-            self._collection = client.get_or_create_collection(name=self.collection_name)
+            self._collection = client.get_or_create_collection(
+                name=self._effective_collection_name
+            )
 
     def _build_client(self):
         if not self.persist_directory:
@@ -178,8 +205,8 @@ class MemoryManager:
             "error": self.health_error,
         }
 
-    def start_session(self) -> str:
-        session_id = str(uuid.uuid4())
+    def start_session(self, session_id: Optional[str] = None) -> str:
+        session_id = session_id or str(uuid.uuid4())
         self.sessions[session_id] = []
         self.current_session_id = session_id
         return session_id
@@ -366,12 +393,31 @@ class MemoryManager:
             self.current_session_id = None
         return len(selected_ids)
 
+    def clear_principal_state(self) -> None:
+        """Destroy all state owned by this bound principal."""
+        if self._collection is not None:
+            try:
+                records = self._all_records(require_persistent=True)
+                ids = [record.get("id") for record in records if record.get("id")]
+                owned_ids = [
+                    memory_id
+                    for memory_id, record in zip(ids, [r for r in records if r.get("id")])
+                    if self._metadata_owned(record.get("metadata", {}))
+                ]
+                if owned_ids:
+                    self._collection.delete(ids=owned_ids)
+            except Exception as error:
+                raise MemoryOperationError(
+                    f"Principal memory teardown failed: {error}"
+                ) from error
+        self._memories.clear()
+        self.sessions.clear()
+        self.current_session_id = None
+
     def _all_records(self, require_persistent: bool = False) -> List[Dict[str, Any]]:
         if self._collection is None:
             if require_persistent and self.persist_directory and self.health_error:
-                raise MemoryOperationError(
-                    "Persistent memory is unavailable"
-                )
+                raise MemoryOperationError("Persistent memory is unavailable")
             return [dict(record) for record in self._memories]
         try:
             result = self._collection.get(include=["documents", "metadatas"])
@@ -402,10 +448,13 @@ class MemoryManager:
         tags: List[str],
     ) -> List[Dict[str, Any]]:
         candidate_count = max(limit * 3, limit)
-        result = self._collection.query(
-            query_texts=[query],
-            n_results=candidate_count,
-        )
+        query_kwargs: Dict[str, Any] = {
+            "query_texts": [query],
+            "n_results": candidate_count,
+        }
+        if not self._local_owner:
+            query_kwargs["where"] = {"principal_id": self.principal_id}
+        result = self._collection.query(**query_kwargs)
         documents = (result.get("documents") or [[]])[0]
         ids = (result.get("ids") or [[]])[0]
         metadatas = (result.get("metadatas") or [[]])[0]
@@ -494,6 +543,7 @@ class MemoryManager:
             "session_id": session_id or "",
             "source": source,
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "principal_id": self.principal_id,
         }
 
         if self._collection is None:
@@ -501,10 +551,7 @@ class MemoryManager:
                 {
                     "id": memory_id,
                     "text": text,
-                    "metadata": {
-                        **metadata,
-                        "tags": tag_list,
-                    },
+                    "metadata": {**metadata, "tags": tag_list},
                 }
             )
             return memory_id
@@ -535,11 +582,19 @@ class MemoryManager:
             return None
         for record in records:
             metadata = record.get("metadata", {})
+            if not self._metadata_owned(metadata):
+                continue
             if metadata.get("kind") != "fact":
                 continue
             if self._normalize_text(record.get("text", "")) == normalized:
                 return record.get("id")
         return None
+
+    def _metadata_owned(self, metadata: Dict[str, Any]) -> bool:
+        owner = metadata.get("principal_id")
+        if owner == self.principal_id:
+            return True
+        return self._local_owner and not owner
 
     @staticmethod
     def _normalize_text(text: str) -> str:
@@ -574,6 +629,8 @@ class MemoryManager:
         kinds: Optional[set[str]],
         tags: List[str],
     ) -> bool:
+        if not self._metadata_owned(metadata):
+            return False
         if kinds is not None:
             kind_value = metadata.get("kind")
             if kind_value not in kinds:
@@ -593,6 +650,8 @@ class MemoryManager:
 def build_memory_manager(
     config: Optional[Dict[str, Any]] = None,
     embedding_function: Optional[EmbeddingFunction] = None,
+    *,
+    principal: Optional[Any] = None,
 ) -> MemoryManager:
     settings = config or {}
     return MemoryManager(
@@ -603,4 +662,5 @@ def build_memory_manager(
         top_k=int(settings.get("top_k", 5)),
         embedding_function=embedding_function,
         settings=settings,
+        principal=principal,
     )
