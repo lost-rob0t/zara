@@ -65,18 +65,19 @@ def test_duplicate_submit_id_survives_client_reconnect_without_second_side_effec
     )
     client = ZmqZaraClient(endpoint, context=zmq_context, config=config)
 
-    gateway.start().result(timeout=1.0)
-    client.start().result(timeout=1.0)
+    try:
+        gateway.start().result(timeout=1.0)
+        client.start().result(timeout=1.0)
 
-    command = SubmitTurn(request_id="stable-across-reconnect", text="do this once")
-    first = client.submit(command).result(timeout=1.0)
+        command = SubmitTurn(request_id="stable-across-reconnect", text="do this once")
+        first = client.submit(command).result(timeout=1.0)
 
-    client.reconnect().result(timeout=1.0)
-    second = client.submit(command).result(timeout=1.0)
+        client.reconnect().result(timeout=1.0)
+        second = client.submit(command).result(timeout=1.0)
 
-    assert second == first
-    submitted = [item for _, item in supervisor.commands if isinstance(item, SubmitTurn)]
-    assert submitted == [command]
-
-    client.close(timeout=1.0)
-    gateway.close(timeout=1.0)
+        assert second == first
+        submitted = [item for _, item in supervisor.commands if isinstance(item, SubmitTurn)]
+        assert submitted == [command]
+    finally:
+        client.close(timeout=1.0)
+        gateway.close(timeout=1.0)
