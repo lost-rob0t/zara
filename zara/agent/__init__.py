@@ -37,15 +37,20 @@ class AgentManager:
         config: Optional[ZaraConfig] = None,
         prolog_engine=None,
         memory_manager: Optional[MemoryManager] = None,
+        principal=None,
     ):
         self.config = config if config is not None else get_config()
         self.prolog_engine = prolog_engine
+        self.principal = principal
 
         llm_config = self.config.get_llm_config()
         self.llm_client = self._create_llm_client(llm_config)
 
         memory_config = self.config.get_section("memory")
-        self.memory_manager = memory_manager or build_memory_manager(memory_config)
+        self.memory_manager = memory_manager or build_memory_manager(
+            memory_config,
+            principal=principal,
+        )
         self.memory_context_limit = int(memory_config.get("max_chars", 1200))
         self.memory_top_k = int(memory_config.get("top_k", 5))
 
@@ -57,7 +62,10 @@ class AgentManager:
 
         agent_config = self.config.get_section("agent")
         timeout = agent_config.get("conversation_timeout", 60)
-        self.conversation_manager = ConversationManager(timeout_seconds=timeout)
+        self.conversation_manager = ConversationManager(
+            timeout_seconds=timeout,
+            principal=principal,
+        )
 
     def _build_system_prompt(self):
         date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -71,11 +79,11 @@ class AgentManager:
 
         If the user's first word is one of: open, launch, run, start, stop, end, pause, resume, play, next, skip, lock, unlock, text, message, dictate, dictation, voice, mic, enable, begin, activate, deactivate, search, find, lookup, navigate, goto, set, schedule, plan, add, note, remind, remember, reminder, todo, todos, task, tasks, list, show, edit, update, export, say, timer, alarm, weather, forecast, bye, goodbye, farewell, quit — treat it as a command.
 
-        For commands, call the `query_prolog` tool ONCE with the goal `command_loop:handle_command("<exact user text>")`. That path executes apps, media control, timers, todo capture, and dictation lifecycle in the existing Prolog pipeline. Relay the tool's result to the user in one short sentence. Do NOT call any other tool for a command unless the prolog tool explicitly failed or returned no match.
+        For commands, call the `query_prolog` tool ONCE with the goal `command_loop:handle_command(\"<exact user text>\")`. That path executes apps, media control, timers, todo capture, and dictation lifecycle in the existing Prolog pipeline. Relay the tool's result to the user in one short sentence. Do NOT call any other tool for a command unless the prolog tool explicitly failed or returned no match.
 
         ## 2. Conversational utterances (everything else)
 
-        Questions, statements, chitchat, philosophy, explanations, and free-form chat are NOT commands. Answer directly in natural language. Do NOT call `query_prolog` for these. Do NOT call tools "just in case" — that adds latency and hijacks the conversation.
+        Questions, statements, chitchat, philosophy, explanations, and free-form chat are NOT commands. Answer directly in natural language. Do NOT call `query_prolog` for these. Do NOT call tools \"just in case\" — that adds latency and hijacks the conversation.
 
         Only use `remember`, `recall`, `memory_list`, `forget`, `calculator`, or file tools when the user explicitly asks for that capability. Only set `forget.all_memories=true` and `confirm=true` when the user clearly asked to forget everything.
 
