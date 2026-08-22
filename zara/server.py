@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from zara.runtime import bridge
+from zara.runtime.backend import AgentRuntimeBackend
 from zara.runtime.commands import RuntimeCommand
 from zara.runtime.host import RuntimeHost
 
@@ -178,14 +179,27 @@ class RuntimeSupervisor:
 
     def _build_default_host(
         self,
-        _principal: PrincipalContext,
+        principal: PrincipalContext,
         bus: bridge.RuntimeEventBus,
     ) -> RuntimeHost:
+        config = self._config
+        if config is None:
+            from zara.config import get_config
+
+            config = get_config()
+
+        def manager_factory():
+            from zara.agent import AgentManager
+
+            return AgentManager(config=config, principal=principal)
+
         return RuntimeHost(
+            backend_factory=lambda: AgentRuntimeBackend(manager_factory),
             publisher=bus.publish,
             subscriber=bus.subscribe,
             shutdown_timeout=self._shutdown_timeout,
-            config=self._config,
+            plugin_paths=tuple(config.get_module_search_paths()),
+            config=config,
         )
 
     @staticmethod
