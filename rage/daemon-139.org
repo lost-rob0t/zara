@@ -65,3 +65,46 @@ Not started.
 ** Outcome
 
 Pending.
+
+* Iteration 1 checkpoint - research complete
+
+- Research artifact :: =rage/daemon-128-research.org=
+- Research commit :: =eb036fc2ee5802e23acbcf2d8ad2cf08cb9852dd=
+- Result :: inherited supervisor direction survived, but several assumptions did not.
+
+Key findings:
+
+1. =RuntimeHost= is already the right process-local runtime seam; the server must wrap it rather than build another assistant stack.
+2. =PrologEngine= deliberately serializes access to one process-wide PySWIP/SWI runtime. Separate RuntimeHost threads are ownership containers, not Prolog/security sandboxes.
+3. Current durable memory and parts of the event/plugin path are not principal-isolated. Production multi-principal operation remains gated on #130/#131.
+4. Python daemon threads are abruptly abandoned at interpreter exit, so =zara-server= must explicitly shutdown and join every owned RuntimeHost before exiting.
+5. Python signal handlers belong to the main thread. The server main thread owns SIGINT/SIGTERM and only uses handlers to request normal shutdown.
+6. Modern service managers should supervise a foreground process. No double-fork/self-daemonization.
+7. A held =flock= in an owner-private local XDG runtime directory is a stronger single-instance authority than PID-file truthiness.
+8. Future ZeroMQ sockets must remain owned by the gateway thread/loop; RuntimeHost threads should communicate through ordinary commands/events, not share sockets.
+
+* Iteration 1 checkpoint - naming/design pivot
+
+During design review, the executable boundary was simplified:
+
+- =zara= remains the client-facing executable;
+- =zara-server= becomes the canonical long-lived daemon/service executable;
+- old =zara --daemon= wording in the research/epic is historical and superseded for implementation;
+- #128 establishes a transport-neutral =ZaraClient= seam plus =InProcessZaraClient=;
+- #129 will add =ZmqZaraClient= behind the same seam.
+
+Issue #128 and task #139 were updated to encode this decision. Epic #127 received a superseding architecture note rather than creating a duplicate epic.
+
+- Design artifact :: =rage/daemon-128-design.org=
+- Design commit :: =736219f0b617c7ce51bb9f653d20c43e68795e87=
+- Iteration state :: DESIGN COMPLETE / IMPLEMENTATION AUTHORIZED
+
+Selected implementation slice:
+
+1. =zara.client.ZaraClient= abstraction and =InProcessZaraClient= implementation.
+2. =zara.server.PrincipalContext=, =PrincipalRuntime=, =RuntimeSupervisor=, =ServerLease=, =ZaraServer=.
+3. =zara-server= foreground executable with minimal SIGINT/SIGTERM handlers and bounded drain/join.
+4. Default production principal cap of one until #131.
+5. Python + Nix packaging for =zara-server=.
+6. Focused lifecycle/client/package tests and a non-interactive server gate script.
+7. No ZeroMQ, auth, hard multi-user persistence isolation, or voice transport in this issue.
