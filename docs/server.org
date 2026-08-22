@@ -1,0 +1,89 @@
+#+title: Zara Server
+
+=zara= is the client-facing command. =zara-server= is the long-lived service process.
+
+This split is intentional. A client asks Zara to do work; the server owns runtime lifecycle. We do not make one executable quietly switch from caller to authority because a flag happened to be present.
+
+* Current slice: issue #128
+
+Issue #128 establishes the process boundary only:
+
+- =zara-server= runs in the foreground and is suitable for supervision by systemd, s6, runit, tmux, or an ordinary shell;
+- it owns a principal-explicit =RuntimeSupervisor=;
+- the supervisor owns existing =RuntimeHost= instances rather than bypassing them;
+- duplicate server processes are rejected with a held kernel file lock;
+- SIGINT/SIGTERM request a normal bounded shutdown;
+- every owned runtime is asked to stop and its worker thread is joined before the process releases ownership;
+- =ZaraClient= is the transport-neutral caller interface;
+- =InProcessZaraClient= preserves a standalone embedding path.
+
+No network protocol exists in this slice. That is #129.
+
+* What the principal field means today
+
+A =PrincipalContext= is server-side ownership metadata. It is not authentication.
+
+The default server starts one local-owner principal and caps active principals at one. The registry can be exercised with multiple synthetic principals in tests, but that does not magically isolate current Chroma persistence, PySWIP global state, plugin subscriptions, or every event path.
+
+Authentication belongs to #130. Hard conversation/context/memory/event isolation belongs to #131. Until those gates land, calling a string =user_id= would be security theater with a type annotation.
+
+* Runtime ownership
+
+#+begin_src text
+zara / future clients
+        |
+   ZaraClient
+        |
+   (#129 ZARA/1)
+        |
+   zara-server
+        |
+   ZaraServer
+        |
+ RuntimeSupervisor
+        |
+ PrincipalRuntime
+        |
+   RuntimeHost
+        |
+ existing agent / TurnCoordinator / tools / plugins
+#+end_src
+
+The server does not call AgentManager, Prolog, memory, tools, or Qt directly. =RuntimeHost= remains the application-service boundary.
+
+* Process ownership
+
+The server lock lives under:
+
+#+begin_src text
+$XDG_RUNTIME_DIR/zarathushtra/zara-server.lock
+#+end_src
+
+The directory is owner-only. The lock file can contain PID/start metadata for humans, but the held =flock= is authority. A crash closes the descriptor and releases the lock; Zara does not decide that a stale PID file is a distributed consensus system.
+
+If =$XDG_RUNTIME_DIR= is unavailable, Zara uses a UID-scoped temporary fallback and warns.
+
+* Shutdown
+
+The signal handler only sets a stop event. Normal process flow then:
+
+1. stops accepting new runtime slots;
+2. requests shutdown for every RuntimeHost;
+3. waits within the configured deadline;
+4. joins each worker thread;
+5. marks the server stopped or failed;
+6. releases the process lease;
+7. exits.
+
+This is required because Python daemon threads may be abandoned abruptly during interpreter shutdown.
+
+* Next slices
+
+- #129: =ZARA/1= ZeroMQ ROUTER/DEALER protocol and =ZmqZaraClient=.
+- #130: CURVE/ZAP authentication, authorization, key lifecycle, quotas, audit.
+- #131: principal-scoped conversations, context, memory, persistence, and event isolation.
+- #132: live voice/audio transport and cross-process barge-in.
+- #133: migrate normal CLI/desktop surfaces to the shared client.
+- #134: adversarial release gate deciding whether the server/client path becomes canonical.
+
+The RAGE evidence for this slice is in =rage/daemon-128-research.org=, =rage/daemon-128-design.org=, and =rage/daemon-139.org=.
