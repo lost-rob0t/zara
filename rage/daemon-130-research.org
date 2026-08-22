@@ -1,0 +1,66 @@
+#+title: RAGE Research - Zara daemon security #130
+
+* Scope
+Issue #130 owns transport authentication, principal mapping, authorization, key lifecycle, safe listener policy, abuse controls, and bounded redacted audit. It does not own #131 durable conversation/memory isolation.
+
+* Current-code findings
+- =zara/zmq_transport.py= intentionally injects one =PrincipalContext= into the gateway. ROUTER routing IDs are delivery metadata and all requests currently execute as that injected principal.
+- =ZaraZmqGateway._receive= uses =recv_multipart()= with copying enabled. That discards access to per-connection ZMTP metadata needed to read the authenticated ZAP =User-Id=.
+- idempotency is keyed by =self._principal.principal_id=, so authenticated multi-user operation requires principal resolution before command dispatch.
+- current transport bounds ZMQ HWM, =MAXMSGSIZE=, heartbeat, pending requests, event queues, and replay cache globally. #130 needs principal/session bounds above those socket bounds.
+- =server._validate_ipc_endpoint= rejects TCP entirely pending #130. This is a useful fail-closed starting point; remote TCP should only become legal when CURVE material and an authentication policy are explicitly supplied.
+- =RuntimeSupervisor= already requires explicit =PrincipalContext=. The security layer should feed that boundary rather than invent a global =current_user=.
+
+* Upstream evidence
+** ZAP RFC 27
+- One ZAP handler exists per process and must start before authenticated server sockets.
+- CURVE ZAP requests carry the peer's 32-byte long-term public key.
+- Successful ZAP replies carry a server-selected =user id= intended for application identity.
+- CURVE supplies authentication and confidentiality; PLAIN does not supply confidentiality and is unsuitable for the production remote path.
+
+** PyZMQ authentication
+- =Authenticator=/=ThreadAuthenticator= deny CURVE clients until a CURVE policy is configured.
+- Directory-backed =configure_curve= must be reconfigured after certificate additions/removals; callback-backed CURVE policy can instead consult live application state.
+- PyZMQ exposes =curve_user_id= on successful CURVE authentication and supports callback credential validation.
+
+** Authenticated identity extraction
+- PyZMQ =recv_multipart(copy=False)= returns =Frame= objects whose message properties include =User-Id=.
+- libzmq exposes the ZAP-authenticated user id as per-message metadata. Therefore the application can bind a received request to the server-selected ZAP principal without trusting payload identity or ROUTER routing ID.
+
+** Socket bounds
+- =ZMQ_MAXMSGSIZE= disconnects a peer that exceeds the inbound message-size limit. It complements but does not replace application-level envelope/payload/quota bounds.
+
+* Design-changing conclusions
+1. Do not map ROUTER routing ID to principal. It is reconnectable delivery state, not authentication identity.
+2. Do not use a static cert directory as the sole key lifecycle authority. Immediate revocation would require authenticator reload and existing authenticated connections may remain alive. Use a live key registry for new handshakes and re-check key/principal status at application message boundaries so revocation can cut off an already-connected route without daemon restart.
+3. The gateway must receive non-copying Frames long enough to read =User-Id= before converting application frames to bytes.
+4. ZAP =User-Id= should be an opaque stable key/device identifier or principal mapping token selected by Zara. The gateway resolves it through Zara's registry into =PrincipalContext= and capabilities; payload fields never choose the principal.
+5. Authorization belongs after authentication and before RuntimeSupervisor dispatch. Message type -> capability mapping must be closed/fail-deny for unknown privileged actions.
+6. Quotas need a deterministic in-process policy independent of ZMQ HWM: per-principal connection/session counts, request token bucket/window, concurrent runtime requests, malformed-message budget, and later audio/model/tool counters as those message families land.
+7. Audit must be structured and bounded with an allowlist of identifiers/result/error/timing fields. Never serialize request bodies, frames, transcripts, prompts, headers, environment, or key material.
+
+* Threat/failure matrix
+- Unknown/revoked key :: deny ZAP handshake; if revoked after connection, reject/drop subsequent route on registry re-check.
+- Wrong server pin :: CURVE handshake fails client-side; no application hello.
+- Payload identity spoof :: protocol parser already closes unknown body fields for implemented commands; security layer additionally never reads owner identity from payload.
+- Route-ID spoof/reconnect :: route is never authority; authenticated metadata is.
+- Authenticator unavailable/start ordering :: gateway startup fails before bind/readiness.
+- Wildcard/TCP without security :: configuration validation fails closed.
+- Rate/malformed flood :: per-principal/session counters plus existing HWM/MAXMSGSIZE; abusive route is dropped without poisoning healthy principals.
+- Secret leakage :: security exceptions and audit records use opaque IDs/error classes only.
+- Revocation race :: registry generation/status is checked at each message boundary, not only at handshake.
+
+* Rejected alternatives
+- ROUTER identity == user :: rejected; client controls/reuses routing identity and it is not an authentication proof.
+- CURVE_ALLOW_ANY plus application hello token :: rejected; duplicates authentication above ZMTP and permits unauthenticated transport peers to consume more application resources.
+- PLAIN for remote :: rejected; RFC explicitly lacks confidentiality.
+- Global mutable current principal :: rejected; violates RuntimeSupervisor's explicit-principal architecture and makes concurrency unsafe.
+- Static cert-directory-only revocation :: rejected as insufficient for no-restart live revocation semantics.
+
+* Sources
+- ZeroMQ RFC 25, ZMTP-CURVE: https://rfc.zeromq.org/spec/25/
+- ZeroMQ RFC 27, ZAP: https://rfc.zeromq.org/spec/27/
+- PyZMQ CURVE guide: https://pyzmq.readthedocs.io/en/latest/howto/curve.html
+- PyZMQ auth API: https://pyzmq.readthedocs.io/en/latest/api/zmq.auth.html
+- PyZMQ Frame/message properties: https://pyzmq.readthedocs.io/en/latest/api/zmq.html
+- libzmq message metadata: https://libzmq.readthedocs.io/en/latest/zmq_msg_gets.html

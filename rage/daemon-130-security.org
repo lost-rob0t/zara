@@ -1,0 +1,127 @@
+#+title: RAGE Work Log - Zara daemon security #130
+
+* Run identity
+- Consumed issue :: #130 — CURVE/ZAP authentication, authorization, key lifecycle, quotas, and security audit controls.
+- Branch :: =rage/130-curve-zap-security=
+- RAGE start commit :: =2bf0adbca15ea8c161df7cf15c6c9cc4125317dc=
+- Start meaning :: Exact immutable =master= commit from which issue #130 RAGE work began.
+- Dependency evidence :: #129 is closed/merged; its merge evidence is recorded in =rage/daemon-129-gate.org=. #130 is therefore the next dependency-satisfied child of epic #127.
+
+* Iteration 1
+** Research
+Pending. Research must challenge the inherited CURVE/ZAP design against current Zara ZARA/1 transport code, ZeroMQ/PyZMQ authentication semantics, revocation behavior, listener policy, quotas, audit redaction, and hostile-client resource bounds.
+
+** Design
+Pending research. No production implementation is authorized before acceptance criteria are mapped to deterministic tests.
+
+** TDD / implementation
+Pending design.
+
+** Gate
+Required final authority: focused security script, complete =scripts/test-all.sh=, =nix flake check=, =nix build=, required platform jobs, changed-code coverage review, and GitHub Actions green for the exact candidate SHA.
+
+** Outcome
+Pending.
+
+* Iteration 1 checkpoint - research/design complete
+
+- Research artifact :: =rage/daemon-130-research.org=
+- Design artifact :: =rage/daemon-130-design.org=
+- Result :: CURVE/ZAP direction survives, but identity authority is narrowed to authenticated ZAP =User-Id= resolved through a live server registry. ROUTER identities and payload identity fields remain non-authoritative.
+- Production multi-user persistence/context/memory isolation remains owned by #131.
+- Design requires live registry rechecks so revocation affects already-connected routes rather than only future handshakes.
+- All TCP listener modes require CURVE + ZAP in this slice; local owner IPC remains the explicit no-remote-auth compatibility policy.
+
+* Iteration 1 checkpoint - Slice A RED
+
+- Tests commit/head :: =6240578952546fc55a83ebe88b2582f7dc6ec3bf=
+- GitHub Actions :: CI #305, run =32577982741=
+- Existing ZARA/1 protocol/transport gate :: PASS, 91 tests.
+- Shared-mic Arch Linux :: PASS.
+- Shared-mic Ubuntu 24.04 :: PASS.
+- New security tests :: RED as intended during collection with =ModuleNotFoundError: No module named 'zara.security'=.
+- Interpretation :: expected TDD red boundary. No existing regression and no design contradiction. Slice A production implementation is authorized only for the tested registry, authorization, quota, audit, listener-policy, and key-file-permission primitives.
+
+* Iteration 1 checkpoint - Slice B RED
+
+- Tests/head :: =b22461a05699dc9563d267575f5480fa54211bbd=.
+- GitHub Actions :: CI #308, run =32581410611=.
+- Existing ZARA/1 protocol/transport gate :: PASS, 91 tests.
+- Shared-mic Arch Linux :: PASS.
+- Shared-mic Ubuntu 24.04 :: PASS.
+- New transport-security tests :: RED as intended during collection with =ModuleNotFoundError: No module named 'zara.security_transport'=.
+- Interpretation :: expected TDD red boundary after Slice A. No existing protocol/runtime regression and no design contradiction. Slice B production implementation is authorized only for the tested registry-backed CURVE credential provider, server-selected ZAP user id, explicit CURVE socket configuration, pinned server identity, and fail-closed authenticated metadata extraction.
+
+* Iteration 1 checkpoint - Slice B GREEN
+
+- Candidate/head :: =0277c380451964b377b45d270114d8524cb5b032=.
+- GitHub Actions :: CI #312, run =32582240470=.
+- Complete repository =scripts/test-all.sh= step :: PASS.
+- Shared-mic Arch Linux :: PASS.
+- Shared-mic Ubuntu 24.04 :: PASS.
+- PyZMQ contract correction :: direct CURVE key =setsockopt/getsockopt= assumptions were replaced with the documented socket properties; real server-pin proof remains assigned to the integration matrix rather than pretending write-only key options are readable.
+- =nix flake check= / packaged build :: still running when Slice C tests were started; final exact-head merge authority remains pending and will be rerun after all #130 slices.
+- Interpretation :: Slice B transport identity primitives are green enough to advance to the next test-first slice without claiming final issue completion.
+
+* Iteration 1 checkpoint - Slice C RED
+
+- Tests/head :: =2096ba40c744da7e1143ed84d9b1cc2c90157ce4=.
+- GitHub Actions :: CI #314, run =32582638842=.
+- Existing ZARA/1 protocol/transport gate :: PASS, 91 tests.
+- Shared-mic Arch Linux :: PASS.
+- Shared-mic Ubuntu 24.04 :: PASS.
+- Full pytest :: 857 PASS, 4 RED.
+- All four new failures :: =TypeError: ZaraZmqGateway.__init__() got an unexpected keyword argument 'security_registry'=.
+- Interpretation :: expected TDD red. No existing regression and no design contradiction. Authenticated gateway integration is now authorized.
+
+** Slice C boundary refinement
+
+The red API assumption was deliberately challenged before production implementation. Remote authenticated service ownership is clearer as a distinct =SecureZaraZmqGateway= boundary rather than optional security parameters on the local-owner =ZaraZmqGateway=.
+
+Reasons:
+- local IPC remains an explicit local-owner policy and should not acquire ambiguous optional authentication knobs;
+- TCP service construction becomes fail-closed by type/constructor: the secure gateway requires registry, server CURVE config, and security limits;
+- CURVE/ZAP authenticator lifecycle is owned by the secure gateway's one ROUTER owner loop;
+- #131 event-isolation work remains separate: the secure gateway does not subscribe a single static principal to runtime events;
+- the underlying ZARA/1 framing/backpressure implementation remains reused rather than forked.
+
+TDD consequence: update only the Slice C tests to target =SecureZaraZmqGateway=; prove the new boundary is red before creating that production class.
+
+* Iteration 1 checkpoint - Slice C refined RED
+
+- Exact head :: =64891356d73b9e8bb2d9347ee4bda2302c5c232a=.
+- GitHub Actions :: CI #316, run =32583073572=.
+- Existing ZARA/1 protocol/transport phase :: PASS, 91 tests.
+- Shared-mic Arch Linux :: PASS.
+- Shared-mic Ubuntu 24.04 :: PASS.
+- Full pytest collection :: RED exactly on =ModuleNotFoundError: No module named 'zara.security_gateway'= from =t/test_daemon_security_gateway.py=.
+- Flake/package gates :: skipped because the regression suite correctly stopped at the red TDD boundary.
+- Interpretation :: expected red for the refined boundary, not a design contradiction. Production implementation of =SecureZaraZmqGateway= is authorized now.
+- Upstream verification :: PyZMQ 27 documents that base =Authenticator= does not run its own event loop, while =ThreadAuthenticator= owns the background ZAP thread; =curve_user_id()= is the supported override for custom CURVE-key to ZAP =User-Id= mapping. The gateway implementation must therefore use the threaded authenticator lifecycle rather than merely calling =Authenticator.start()= and assuming ZAP requests are serviced.
+
+* Iteration 1 checkpoint - Slice C integration RED
+
+- Exact head :: =8f32effdd1f8f20157b8f2d10addcf9c0c5fc155=.
+- GitHub Actions :: CI #321, run =32584777546=.
+- Existing ZARA/1 protocol/transport phase :: PASS, 91 tests.
+- Shared-mic Arch Linux :: PASS.
+- Shared-mic Ubuntu 24.04 :: PASS.
+- Full pytest :: 864 PASS, 3 RED.
+- Rate-limit failure :: authenticated requests were not yet wired through the per-principal request quota; Alice's third request returned =pong= instead of =quota_exceeded=.
+- Concurrent-runtime failure :: a second in-flight runtime request was not rejected at =max_concurrent_requests=1= and produced no immediate denial.
+- Audit failure :: =SecureZaraZmqGateway= did not yet accept the tested bounded =SecurityAuditLog= injection.
+- Interpretation :: ordinary implementation incompleteness, not a design-invalidating failure. Authentication, CURVE/ZAP, protocol isolation, and platform gates remained green. The tested quota/audit wiring is therefore authorized for the same iteration.
+
+* Iteration 1 checkpoint - exact-head gate #323 test-race correction
+
+- Exact failed head :: =dc72c3d96535b2184496cfe441487ff735deebd9=.
+- GitHub Actions :: CI #323, run =32586972711=.
+- Existing ZARA/1 protocol/transport phase :: PASS, 91 tests.
+- Shared-mic Arch Linux :: PASS.
+- Shared-mic Ubuntu 24.04 :: PASS.
+- Full pytest :: 866 PASS, 1 FAIL.
+- Failure :: =test_concurrent_runtime_quota_releases_when_runtime_future_finishes= sent =turn-three= and immediately inspected =BlockingSupervisor.commands= from the test thread before the ROUTER owner loop was guaranteed to receive and dispatch the message.
+- Production evidence :: the completed runtime future already releases its held principal request quota in =SecureZaraZmqGateway._enqueue_outbound= before the accepted response is queued; CI had already observed the =turn-one= accepted response before =turn-three= was sent.
+- Interpretation :: nondeterministic test synchronization defect, not an implementation or architecture failure. Changing production semantics to satisfy an unsynchronized cross-thread assertion would violate the one-owner-loop transport design.
+- Test correction :: =BlockingSupervisor= now exposes a =threading.Event= set by actual supervisor dispatch. The test clears it before =turn-three=, sends the message, waits deterministically for dispatch, and only then asserts command ordering. No sleeps and no production behavior change.
+- Correction commit :: =76dd48f2e2cd75f8e391f63b548b6a20a1c0833d=.

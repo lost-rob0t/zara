@@ -1,0 +1,85 @@
+#+title: RAGE Design - Zara daemon security #130
+
+* Boundary
+#130 adds authenticated transport identity, authorization, key lifecycle, listener safety, quotas, and audit. #131 remains responsible for persistence/context/memory isolation after an authenticated principal reaches RuntimeSupervisor.
+
+* Architecture
+** Security registry
+Add a thread-safe =SecurityRegistry= owning enrolled client/device public keys. Each record has a stable device id, =PrincipalContext=, immutable role set/capability set, enabled/revoked state, and generation. Public keys are identifiers, never secrets. Secret keys are stored only in owner-private key files.
+
+The registry supports enroll, rotate, revoke/disable, lookup-by-CURVE-public-key, and lookup-by-ZAP-user-id. Mutation is explicit and deterministic. Duplicate active key ownership is rejected.
+
+** ZAP authenticator
+Use one process-local PyZMQ authenticator before the ROUTER binds. CURVE credential validation consults =SecurityRegistry= live. Successful authentication returns a Zara-controlled user id that resolves back to the enrolled device/principal. Unknown/revoked keys fail closed.
+
+** Gateway identity binding
+ROUTER receives with =copy=False= and extracts =User-Id= from authenticated message metadata. It resolves that user id to a live security record for every application message. Route state caches only non-authoritative delivery/session metadata plus the last authenticated device id. A registry re-check on each message means revocation can terminate an already-established route without daemon restart.
+
+Gateway no longer has one injected authority principal in secure mode. It asks RuntimeSupervisor to open/submit/subscribe using the authenticated =PrincipalContext=. Local owner-only IPC may retain an explicit local-owner development policy; TCP requires CURVE.
+
+** Authorization
+Closed =Capability= values and a message-type policy table. Unknown privileged message types fail deny. Initial mappings:
+- =session.basic=: hello/ping/conversation open;
+- =runtime.status=: runtime status;
+- =turn.submit= and =turn.cancel=: ordinary conversation actions;
+- future tool/context/memory/admin message types must declare capabilities before dispatch.
+Roles are convenience bundles only; enforcement consumes capabilities.
+
+** Listener policy
+- =ipc://= and loopback may use explicit local-owner mode.
+- any non-loopback/wildcard TCP endpoint requires server CURVE secret/public keys, ZAP registry, and secure mode.
+- wildcard TCP with NULL/no authenticator is rejected before socket bind.
+- client secure config requires client public+secret keys and pinned server public key.
+
+** Key files
+Generate via =zmq.curve_keypair()=. Write secret material atomically with mode =0600= under an owner-private directory; public material may be =0644=. Reject secret files not owned by the current uid or with group/other permission bits. Diagnostics name paths/record IDs only when safe and never include key bytes.
+
+** Quotas
+Introduce =SecurityLimits= and =QuotaManager=. First deterministic slice covers per-principal active routes, request rate, concurrent pending runtime commands, malformed protocol budget, and audit capacity. Counters are released on route drop/completion. Later audio/model/tool counters extend the same manager when those message types exist.
+
+A quota failure affects the offending route/principal only and returns a bounded generic protocol error where a safe reply is possible.
+
+** Audit
+=SecurityAuditRecord= is a closed dataclass containing timestamp, principal id, device id, session/request/turn ids, action, decision/result, error class, duration, and safe numeric counters. =SecurityAuditLog= is a bounded ring buffer. No arbitrary dict/body/exception serialization API exists.
+
+* Invariants
+1. No request reaches RuntimeSupervisor without a server-derived =PrincipalContext=.
+2. ROUTER routing ID and payload fields are never principal authority.
+3. Revoked/disabled key cannot authorize a new request, including on an existing route.
+4. Authentication does not imply authorization.
+5. Unknown capabilities/actions fail deny.
+6. Remote/wildcard TCP cannot bind without CURVE + ZAP policy.
+7. One abusive principal cannot consume unbounded gateway memory or pending runtime work.
+8. Audit/log/error surfaces contain no secret key, request body, transcript, prompt, auth header, or raw audio.
+9. All ZeroMQ sockets remain owned by their existing owner thread.
+10. #131 receives explicit principals; #130 does not create a second persistence/memory system.
+
+* Acceptance -> deterministic tests
+- enrolled client authenticates :: real inproc/TCP CURVE fixture with generated keys and hello.
+- unknown key denied :: generated unregistered key never reaches hello.ok.
+- revoked key denied live :: establish connection, revoke, next request is denied/dropped; reconnect denied.
+- wrong server pin :: client startup/hello times out/fails without application acceptance.
+- spoofed user identity :: payload cannot alter resolved principal; identity-looking fields rejected/ignored according to closed codec.
+- unauthorized capability :: authenticated low-privilege principal receives authorization error and supervisor is not called.
+- admin/user separation :: same transport, different capabilities, deterministic command decision.
+- wildcard without auth :: configuration constructor/validator raises before bind.
+- oversized/rate-limited isolation :: abusive client hits quota while healthy client still succeeds.
+- malformed flood :: route/principal budget remains bounded and route is dropped.
+- audit redaction :: secret-looking request/key/header fixtures never appear in record serialization/log rendering.
+- key permissions :: insecure secret mode/foreign owner fixture rejected where platform permits.
+- key rotation :: old key revoked/new key maps to same principal without daemon restart.
+
+* TDD slices
+A. Pure security primitives: key normalization/registry lifecycle, capability policy, quota manager, audit record/redaction, listener validation, key-file permissions.
+B. Transport identity plumbing: CURVE socket config, ZAP mapping, =Frame["User-Id"]= extraction, per-route principal resolution, secure hello.
+C. Runtime authorization + per-principal quotas + live revocation.
+D. Client pin/key configuration and hostile multi-client integration matrix.
+E. focused =scripts/test-daemon-security.sh=, full gate, coverage-gap pass, exact-head CI.
+
+* Exact gate
+- =nix develop -c pytest t/test_daemon_security.py t/test_zmq_transport.py=
+- =nix develop -c bash scripts/test-daemon-security.sh=
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- required GitHub Actions/platform jobs at exact candidate SHA.
