@@ -363,6 +363,21 @@ class QuotaTracker:
             if state.concurrent_commands > 0:
                 state.concurrent_commands -= 1
 
+    def open_route(self, principal_id: str) -> None:
+        self.acquire_route(principal_id)
+
+    def close_route(self, principal_id: str) -> None:
+        self.release_route(principal_id)
+
+    def check_request(self, principal_id: str, *, now: Optional[float] = None) -> None:
+        self.record_request(principal_id, now=now)
+
+    def begin_command(self, principal_id: str) -> None:
+        self.acquire_command(principal_id)
+
+    def end_command(self, principal_id: str) -> None:
+        self.release_command(principal_id)
+
     def snapshot(self, principal_id: str, *, now: Optional[float] = None) -> QuotaSnapshot:
         timestamp = time.monotonic() if now is None else float(now)
         with self._lock:
@@ -379,13 +394,18 @@ class QuotaTracker:
 
 def validate_secret_file(path: str | os.PathLike[str]) -> Path:
     secret = Path(path).expanduser()
-    info = secret.stat()
+    try:
+        info = secret.lstat()
+    except FileNotFoundError as error:
+        raise SecurityConfigurationError("secret file does not exist") from error
+    if stat.S_ISLNK(info.st_mode):
+        raise SecurityConfigurationError("secret file must not be a symlink")
     if not stat.S_ISREG(info.st_mode):
         raise SecurityConfigurationError("secret path must be a regular file")
     if info.st_uid != os.getuid():
         raise SecurityConfigurationError("secret file must be owned by the current user")
-    if stat.S_IMODE(info.st_mode) & 0o077:
-        raise SecurityConfigurationError("secret file permissions must not grant group/other access")
+    if stat.S_IMODE(info.st_mode) != 0o600:
+        raise SecurityConfigurationError("secret file permissions must be exactly 0600")
     return secret
 
 
