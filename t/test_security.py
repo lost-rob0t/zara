@@ -132,7 +132,7 @@ def test_validate_curve_public_key_accepts_z85_and_canonicalizes_bytes():
     assert validate_curve_public_key(public.encode("ascii")) == public
 
 
-@pytest.mark.parametrize("value", ["", " ", "short", "x" * 40, b"bad"])
+@pytest.mark.parametrize("value", ["", " ", "short", "x" * 39, "x" * 41, "~" * 40, b"bad"])
 def test_validate_curve_public_key_rejects_invalid_values(value):
     with pytest.raises(SecurityConfigurationError):
         validate_curve_public_key(value)
