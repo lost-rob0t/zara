@@ -70,7 +70,7 @@ def test_principal_event_subscriptions_do_not_cross_runtime_buses():
         alice_command = SubmitTurn(text="alice private", conversation_id="same-label")
         bob_command = SubmitTurn(text="bob private", conversation_id="same-label")
         runtime.submit(alice, alice_command).result(timeout=0.2)
-        assert alice_events.get(timeout=0.2) == TurnStarted(
+        assert alice_events.get(timeout=0.2).event == TurnStarted(
             conversation_id="same-label",
             label="alice private",
         )
@@ -78,7 +78,7 @@ def test_principal_event_subscriptions_do_not_cross_runtime_buses():
             bob_events.get(timeout=0.01)
 
         runtime.submit(bob, bob_command).result(timeout=0.2)
-        assert bob_events.get(timeout=0.2) == TurnStarted(
+        assert bob_events.get(timeout=0.2).event == TurnStarted(
             conversation_id="same-label",
             label="bob private",
         )
