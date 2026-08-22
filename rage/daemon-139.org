@@ -152,3 +152,22 @@ The red gate proved the two new production requirements before either production
 The sixth failure was a test defect, not a product defect. The client-isolation test expected the second client's event queue to be completely empty after startup, but that queue correctly contained its own =RuntimeStarted= event. The isolation claim is only that first-client turn output does not appear in the second client's stream. The test was corrected in tests-only commit =6deb0e161585b25bd66f69aec642cb7d703dcfbd= to drain local startup lifecycle events and assert specifically against cross-client =ResponseText= leakage.
 
 No production code was changed to placate that flawed assertion. The next production patch is limited to the two legitimate red requirements above.
+
+* Iteration 1 checkpoint - exact-head CI gate defect after feature tests green
+
+- Candidate head :: =9a46128da4d84a549f421ba14841e8cd35b25905=
+- GitHub Actions :: CI #233, run =32556740580=
+- Canonical =scripts/test-all.sh= :: PASS; main pytest =744 passed= and server lifecycle =37 passed=.
+- Arch shared-mic job :: PASS.
+- Ubuntu shared-mic job :: PASS.
+- =nix flake check= :: FAIL in =checks.x86_64-linux.pytest=.
+- Hermetic check aggregate :: =1 failed, 738 passed, 5 skipped, 14 warnings=.
+- Failing existing regression :: =t/test_mcp_e2e.py::test_real_streamable_http_server=.
+- Failure :: MCP HTTP client startup raised =FileNotFoundError: [Errno 2] No such file or directory= inside the isolated Nix derivation.
+
+Classification: ordinary gate/test-environment defect, not a daemon design failure. The same real HTTP MCP test passes under =nix develop= and the isolated HTTP fixture reaches its listening port before the client fails. MCP v2/httpx2 documents that HTTP clients use the operating-system trust store and that minimal environments must provide =SSL_CERT_FILE=/=SSL_CERT_DIR=. The pure =runCommand= check did not provide a CA path.
+
+TDD evidence is the red exact-head flake check above. The regression test is kept intact. No skip, xfail, weakened assertion, or MCP runtime behavior change is permitted to make the gate green.
+
+- Hermetic environment fix :: commit =5d141ae456e7edef219bd3e21061d828855650c1= adds Nix =cacert= to the isolated pytest inputs and exports =SSL_CERT_FILE= and =NIX_SSL_CERT_FILE= to the Nix store CA bundle.
+- Next gate :: rerun exact-head GitHub Actions; both =nix flake check= and =nix build= must pass before merge authority exists.
