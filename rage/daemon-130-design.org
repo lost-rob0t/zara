@@ -1,0 +1,240 @@
+#+title: RAGE Design - Zara CURVE/ZAP Security / Issue #130
+#+startup: overview
+
+* Boundary
+
+Issue #130 turns the #129 local-first transport into an authenticated/authorized service boundary without claiming #131 persistence isolation or #132 voice quotas.
+
+=zara= remains the client. =zara-server= remains the daemon. =ZaraZmqGateway= remains the ROUTER owner loop. =ZmqZaraClient= remains the shared DEALER client implementation.
+
+* Selected architecture
+
+** Security registry
+
+Add =zara/security.py= containing:
+
+- =Capability= closed string enum;
+- =KeyRecord= immutable public-key -> principal/capability/device record;
+- =KeyRegistry= thread-safe enrollment/revocation/lookup boundary;
+- =AuthorizationPolicy= message-type -> required capability mapping;
+- =SecurityAuditRecord= content-free immutable audit event;
+- =BoundedAuditSink= bounded thread-safe in-memory audit sink;
+- =PrincipalQuotaPolicy= and =QuotaTracker= for application request/concurrency/error limits;
+- CURVE keypair helpers with explicit permission validation.
+
+Registry lookup key is the authenticated Z85 CURVE public key supplied by libzmq/PyZMQ =User-Id=. No route ID or application body identity is authoritative.
+
+** ZAP authenticator
+
+Add a small =ZaraCurveAuthenticator= / credentials callback using PyZMQ's =ThreadAuthenticator= plus =configure_curve_callback=. The callback performs a thread-safe registry lookup and admits only enabled enrolled keys.
+
+The gateway owns authenticator lifecycle alongside its ROUTER socket. Ordering:
+
+1. create context;
+2. start authenticator and configure CURVE callback;
+3. configure ROUTER as CURVE server with ZAP domain;
+4. bind ROUTER;
+5. receive messages;
+6. close ROUTER;
+7. stop authenticator;
+8. terminate owned context.
+
+No downgrade to NULL/PLAIN if any security setup step fails.
+
+** Per-message principal binding
+
+Gateway changes =recv_multipart()= to =recv_multipart(copy=False)= so the authenticated =User-Id= metadata can be read from the first received frame. Convert frame bytes only after extracting metadata.
+
+For each message:
+
+1. obtain authenticated key ID from transport metadata;
+2. registry lookup key -> enabled =KeyRecord=;
+3. derive =PrincipalContext= from record;
+4. if absent/revoked, deny/drop before protocol/runtime dispatch;
+5. resolve required capability from message type;
+6. authorize before supervisor calls;
+7. apply quotas;
+8. audit decision without body/content;
+9. dispatch using that principal.
+
+Route state stores authenticated key id + principal id. A route whose registry mapping changes is invalidated rather than silently changing owner mid-session.
+
+** Revocation
+
+ZAP denies revoked keys on new connections. Per-message registry lookup denies an already-connected revoked key on its next message. This deliberately does not claim libzmq tears down the TCP connection instantly; Zara's application authority is revoked immediately.
+
+** Server/client security configuration
+
+Introduce transport security dataclasses rather than loose key arguments:
+
+- =CurveServerConfig(public_key, secret_key, registry, audit_sink, quotas, zap_domain)=;
+- =CurveClientConfig(public_key, secret_key, server_public_key)=.
+
+Client config pins the server key and configures DEALER CURVE options before connect.
+
+Gateway/server config validates key encoding/length and refuses TCP unless server CURVE config exists.
+
+IPC remains local-first and may run without CURVE by explicit default compatibility policy. TCP never silently runs NULL.
+
+** Authorization
+
+Closed capabilities for #130:
+
+- =conversation=: hello, conversation.open, turn.submit, turn.cancel;
+- =status=: ping/runtime.status;
+- =admin=: reserved boundary for future daemon admin commands;
+- =tool=, =context=, =memory=, =voice= reserved for later message families and policy integration.
+
+Unknown/unimplemented message types still fail through protocol handling; authorization never dynamically dispatches names.
+
+** Quotas
+
+=PrincipalQuotaPolicy= initially enforces:
+
+- max active authenticated routes per principal;
+- max requests per fixed monotonic window;
+- max concurrent runtime commands per principal;
+- max malformed/protocol denials per route/window.
+
+Existing =TransportConfig= HWM/MAXMSGSIZE/pending/outbound bounds remain in force.
+
+Provider/tool/audio accounting hooks may exist as named counters but #130 does not pretend a submitted text turn equals a model request/tool run/audio quota.
+
+** Audit
+
+=BoundedAuditSink= stores at most N =SecurityAuditRecord=s. Record fields are limited to identifiers and decisions:
+
+- timestamp_ns;
+- principal_id when known;
+- key_id/device_id when known;
+- session_id/request_id/turn_id when present;
+- action/message type;
+- decision;
+- error_class;
+- duration_ns optional.
+
+No request body, text, payload bytes, secret key, auth headers, prompt, transcript, audio, environment, or provider credentials.
+
+* Rejected alternatives
+
+1. ROUTER ID -> principal: rejected as client-controlled delivery metadata.
+2. payload =user_id= -> principal: rejected as spoofable and already outside protocol authority.
+3. CURVE_ALLOW_ANY + app lookup: rejected because unknown peers complete auth and consume resources before rejection.
+4. certificate directory as canonical registry: rejected due reload/mapping/revocation complexity.
+5. ZAP-only revocation: rejected because established connection authorization would remain stale.
+6. global mutable current principal: rejected; principal is derived per received message/route.
+7. full memory/context isolation in #130: rejected as #131 scope.
+
+* Invariants
+
+1. TCP cannot bind without valid CURVE server security configuration.
+2. Wrong server pin cannot complete the client handshake.
+3. Unknown/revoked client keys cannot dispatch runtime work.
+4. Every runtime dispatch principal comes from authenticated server-side key mapping.
+5. A payload field cannot override authenticated principal.
+6. Revocation affects the next application message without daemon restart.
+7. Authorization runs before supervisor/runtime dispatch.
+8. Quota rejection runs before expensive runtime work.
+9. Audit records never contain message body or secret material.
+10. Registry and quota/audit boundaries are thread-safe.
+11. Existing owner-private IPC compatibility remains green.
+12. #131 privacy is not claimed complete by #130.
+
+* TDD plan
+
+** Slice A - security primitives
+
+Red tests first for:
+
+- enrollment and lookup by canonical Z85 key;
+- duplicate/conflicting key enrollment;
+- revoke/disable and re-enable policy;
+- capability authorization allow/deny;
+- bounded audit eviction/redaction-by-construction;
+- quota request/concurrency/route boundaries;
+- secret/public file permission validation;
+- invalid key material rejected.
+
+Then implement =zara/security.py=.
+
+** Slice B - secure socket configuration
+
+Red tests first for:
+
+- gateway ROUTER gets CURVE server options and ZAP domain;
+- DEALER gets client keypair + pinned server key;
+- unknown/wrong key handshake fails;
+- valid enrolled key handshake succeeds;
+- IPC compatibility remains functional.
+
+Then implement authenticator/config wiring.
+
+** Slice C - authenticated principal / authorization dispatch
+
+Red tests first for:
+
+- two enrolled keys map to two distinct principals in gateway dispatch;
+- route identity cannot change principal;
+- body spoofing cannot override principal;
+- revoked established client denied on next message;
+- conversation capability denied while status capability can remain allowed;
+- unauthorized command never reaches supervisor;
+- audit allow/deny records contain IDs but no turn text.
+
+Then implement per-message User-Id extraction and policy dispatch.
+
+** Slice D - listener and abuse policy
+
+Red tests first for:
+
+- TCP/wildcard endpoint without CURVE rejected;
+- TCP with CURVE accepted;
+- per-principal route/request/concurrent command quota isolates offender;
+- healthy principal continues after another is limited;
+- malformed/error budget drops abusive route;
+- no secret material in errors/log-facing record representations.
+
+Then integrate server endpoint policy and quota hooks.
+
+** Slice E - lifecycle / key rotation
+
+Red tests first for:
+
+- enroll new key without restart;
+- old key revoked while new key works;
+- authenticator/gateway shutdown is deterministic;
+- restart recreates auth lifecycle without leaking threads/sockets;
+- wrong server pin fails boundedly.
+
+* Acceptance mapping
+
+- valid enrolled client -> slices B/C;
+- unknown key denied -> B;
+- revoked key denied without daemon restart -> C/E;
+- wrong pin -> B/E;
+- spoofed user identity -> C;
+- unauthorized capability/admin separation -> C;
+- wildcard without auth rejected -> D;
+- abusive client isolation -> D;
+- malformed flood bounded -> D;
+- audit redaction/no secret leakage -> A/C/D;
+- key lifecycle/rotation -> A/E.
+
+* Exact gates
+
+Focused:
+
+#+begin_src sh
+nix develop -c pytest -q t/test_security.py t/test_zmq_security.py t/test_server_zmq_security.py
+nix develop -c bash scripts/test-zara1-security.sh
+#+end_src
+
+Full:
+
+#+begin_src sh
+nix develop -c bash scripts/test-all.sh
+nix flake check
+nix build
+#+end_src
+
+Final merge authority is GitHub Actions for the exact PR head plus no unresolved review blockers. Stale green SHA is not authority.

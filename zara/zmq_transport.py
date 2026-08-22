@@ -1,9 +1,7 @@
-"""Owned-thread ZeroMQ transport for the local-first ZARA/1 protocol.
+"""Owned-thread ZeroMQ transport for the ZARA/1 protocol.
 
-Issue #129 intentionally keeps authentication out of this module. ROUTER
-routing identities are delivery metadata only; every request is dispatched to
-the explicitly injected local-owner principal until #130 binds authenticated
-transport identity to principal ownership.
+Issue #129 established the transport boundary. Issue #130 layers CURVE/ZAP
+identity onto that boundary without treating ROUTER routing ids as principals.
 """
 
 from __future__ import annotations
@@ -19,6 +17,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import zmq
+from zmq.auth.thread import ThreadAuthenticator
 
 from zara.client import ZaraClient, ZaraClientState
 from zara.protocol import (
@@ -32,6 +31,17 @@ from zara.protocol import (
 from zara.protocol_runtime import RuntimeCodecError, command_from_message, runtime_event_to_message
 from zara.runtime import bridge, events
 from zara.runtime.commands import CancelTurn, CommandReceipt, RuntimeCommand, SubmitTurn
+from zara.security import (
+    AuthorizationPolicy,
+    CurveClientConfig,
+    CurveCredentialsProvider,
+    CurveServerConfig,
+    KeyRecord,
+    SecurityConfigurationError,
+    apply_curve_client,
+    apply_curve_server,
+    validate_curve_public_key,
+)
 from zara.server import PrincipalContext
 
 
@@ -130,6 +140,8 @@ def _protocol_error(
 @dataclass
 class _RouteState:
     session_id: str
+    principal: PrincipalContext
+    public_key: Optional[str] = None
     ready: bool = False
     conversation_id: Optional[str] = None
 
@@ -158,11 +170,14 @@ class ZaraZmqGateway:
         context: Optional[zmq.Context] = None,
         config: Optional[TransportConfig] = None,
         limits: Optional[ProtocolLimits] = None,
+        security: Optional[CurveServerConfig] = None,
     ) -> None:
         if not isinstance(endpoint, str) or not endpoint.strip():
             raise ValueError("endpoint must be a non-empty string")
         if not isinstance(principal, PrincipalContext):
             raise TypeError("gateway requires PrincipalContext")
+        if security is not None and not isinstance(security, CurveServerConfig):
+            raise TypeError("security must be CurveServerConfig")
         self._endpoint = endpoint
         self._supervisor = supervisor
         self._principal = principal
@@ -170,6 +185,8 @@ class ZaraZmqGateway:
         self._owns_context = context is None
         self._config = config or TransportConfig()
         self._limits = limits or ProtocolLimits()
+        self._security = security
+        self._authorization = AuthorizationPolicy()
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._started: concurrent.futures.Future = concurrent.futures.Future()
@@ -211,8 +228,17 @@ class ZaraZmqGateway:
 
     def _run(self) -> None:
         socket = self._context.socket(zmq.ROUTER)
+        authenticator = None
         apply_socket_options(socket, self._config, router=True)
         try:
+            if self._security is not None:
+                authenticator = ThreadAuthenticator(self._context)
+                authenticator.start()
+                authenticator.configure_curve_callback(
+                    domain=self._security.zap_domain,
+                    credentials_provider=CurveCredentialsProvider(self._security.registry),
+                )
+                apply_curve_server(socket, self._security)
             socket.bind(self._endpoint)
             self._event_subscription = self._supervisor.subscribe(
                 self._principal,
@@ -236,6 +262,8 @@ class ZaraZmqGateway:
             if subscription is not None:
                 subscription.close()
             socket.close(self._config.linger_ms)
+            if authenticator is not None:
+                authenticator.stop()
 
     def _drop_route_locked(self, route: bytes) -> None:
         self._routes.pop(route, None)
@@ -265,11 +293,40 @@ class ZaraZmqGateway:
                 return False
             return True
 
+    def _record_for_frames(self, frames: list[zmq.Frame]) -> Optional[KeyRecord]:
+        if self._security is None:
+            return None
+        try:
+            user_id = frames[0]["User-Id"]
+            public_key = validate_curve_public_key(user_id)
+        except (KeyError, TypeError, ValueError, SecurityConfigurationError, zmq.ZMQError):
+            return None
+        return self._security.registry.require_enabled(public_key)
+
+    def _send_authentication_error(
+        self,
+        socket: zmq.Socket,
+        route: bytes,
+        *,
+        reply_to: Optional[str],
+    ) -> None:
+        self._send(
+            socket,
+            route,
+            _protocol_error(
+                reply_to=reply_to,
+                code="authentication_revoked",
+                message="authenticated key is no longer authorized",
+                retryable=False,
+            ),
+        )
+
     def _receive(self, socket: zmq.Socket) -> None:
-        frames = socket.recv_multipart()
-        if len(frames) < 2:
+        raw_frames = socket.recv_multipart(copy=False)
+        if len(raw_frames) < 2:
             return
-        route, app_frames = frames[0], frames[1:]
+        route = bytes(raw_frames[0])
+        app_frames = [bytes(frame) for frame in raw_frames[1:]]
         try:
             decoded = decode_message(app_frames, limits=self._limits)
         except ZaraProtocolError:
@@ -286,9 +343,34 @@ class ZaraZmqGateway:
             return
 
         message = decoded.message
+        record = self._record_for_frames(raw_frames)
         state = self._routes.get(route)
+        if self._security is not None:
+            if record is None:
+                self._send_authentication_error(socket, route, reply_to=message.id)
+                self._drop_route(route)
+                return
+            if state is not None and (
+                state.public_key != record.public_key or state.principal != record.principal
+            ):
+                self._send_authentication_error(socket, route, reply_to=message.id)
+                self._drop_route(route)
+                return
+            if not self._authorization.authorize(record, message.type):
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="forbidden",
+                        message="capability does not authorize this message",
+                        retryable=False,
+                    ),
+                )
+                return
+
         if message.type == "hello":
-            self._handle_hello(socket, route, message)
+            self._handle_hello(socket, route, message, record)
             return
         if state is None or not state.ready:
             self._send(
@@ -364,7 +446,13 @@ class ZaraZmqGateway:
             ),
         )
 
-    def _handle_hello(self, socket: zmq.Socket, route: bytes, message: ProtocolMessage) -> None:
+    def _handle_hello(
+        self,
+        socket: zmq.Socket,
+        route: bytes,
+        message: ProtocolMessage,
+        record: Optional[KeyRecord],
+    ) -> None:
         body = message.body or {}
         versions = body.get("versions", [1])
         if (
@@ -384,10 +472,17 @@ class ZaraZmqGateway:
                 ),
             )
             return
+        principal = record.principal if record is not None else self._principal
+        public_key = record.public_key if record is not None else None
         session_id = _message_id()
         with self._lock:
             self._route_outbound.pop(route, None)
-            self._routes[route] = _RouteState(session_id=session_id, ready=True)
+            self._routes[route] = _RouteState(
+                session_id=session_id,
+                principal=principal,
+                public_key=public_key,
+                ready=True,
+            )
         self._send(
             socket,
             route,
@@ -407,8 +502,9 @@ class ZaraZmqGateway:
             ),
         )
 
-    def _idempotency_key(self, message: ProtocolMessage) -> tuple[str, str]:
-        return self._principal.principal_id, message.id
+    @staticmethod
+    def _idempotency_key(state: _RouteState, message: ProtocolMessage) -> tuple[str, str]:
+        return state.principal.principal_id, message.id
 
     def _response_for_route(self, response: ProtocolMessage, route: bytes) -> ProtocolMessage:
         state = self._routes.get(route)
@@ -497,7 +593,7 @@ class ZaraZmqGateway:
             )
             return
 
-        replay_key = self._idempotency_key(message)
+        replay_key = self._idempotency_key(state, message)
         with self._lock:
             replay = self._replay.get(replay_key)
             if replay is not None:
@@ -534,7 +630,7 @@ class ZaraZmqGateway:
             self._inflight[replay_key] = _InflightEntry(command=command, routes=[route])
 
         try:
-            future = self._supervisor.submit(self._principal, command)
+            future = self._supervisor.submit(state.principal, command)
         except (RuntimeCodecError, KeyError, RuntimeError):
             with self._lock:
                 self._inflight.pop(replay_key, None)
@@ -682,14 +778,18 @@ class ZmqZaraClient(ZaraClient):
         context: Optional[zmq.Context] = None,
         config: Optional[TransportConfig] = None,
         limits: Optional[ProtocolLimits] = None,
+        security: Optional[CurveClientConfig] = None,
     ) -> None:
         if not isinstance(endpoint, str) or not endpoint.strip():
             raise ValueError("endpoint must be a non-empty string")
+        if security is not None and not isinstance(security, CurveClientConfig):
+            raise TypeError("security must be CurveClientConfig")
         self._endpoint = endpoint
         self._context = context or zmq.Context()
         self._owns_context = context is None
         self._config = config or TransportConfig()
         self._limits = limits or ProtocolLimits()
+        self._security = security
         self._bus = bridge.RuntimeEventBus()
         self._state = ZaraClientState.NEW
         self._state_lock = threading.RLock()
@@ -741,6 +841,8 @@ class ZmqZaraClient(ZaraClient):
         apply_socket_options(socket, self._config, router=False)
         poller = zmq.Poller()
         try:
+            if self._security is not None:
+                apply_curve_client(socket, self._security)
             socket.connect(self._endpoint)
             poller.register(socket, zmq.POLLIN)
             hello_id = _message_id()
