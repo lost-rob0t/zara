@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 import zmq
-from zmq.auth import Authenticator
+from zmq.auth.thread import ThreadAuthenticator
 from zmq.utils import z85
 
 from zara.security import KeyNotActive, SecurityRegistry
@@ -93,8 +93,8 @@ class RegistryCredentialsProvider:
         return self._registry.resolve_public_key(public_key).user_id
 
 
-class RegistryAuthenticator(Authenticator):
-    """ZAP authenticator whose CURVE policy is resolved from live registry state."""
+class RegistryAuthenticator(ThreadAuthenticator):
+    """Threaded ZAP authenticator whose CURVE policy uses live registry state."""
 
     def __init__(
         self,
