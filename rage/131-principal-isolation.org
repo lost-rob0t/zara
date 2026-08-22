@@ -52,3 +52,20 @@
 - Shared mic / Arch Linux :: PASS.
 - Shared mic / Ubuntu 24.04 :: PASS.
 - Interpretation :: clean feature-red evidence. Existing unrelated behavior remains green; proceed with minimal production implementation.
+
+** Post-implementation adversarial code review evidence
+- Reviewed candidate :: =82cfccbeeb5caa55e5ef375351ce5ae05f09203c= as the intended post-merge architecture baseline while still requiring exact-head merge gates.
+- PR review :: GitHub review id =5001123170= records blocking #131 integration findings.
+- Exact-head CI :: run =32598938952= / CI #352 completed RED with 884 passed, 1 failed, 14 warnings; ZARA/1 91/91 PASS; Arch and Ubuntu shared-mic jobs PASS.
+- Current red cause :: =test_principal_event_subscriptions_do_not_cross_runtime_buses= publishes a =SubmitTurn= RuntimeCommand into =RuntimeEventBus=; the bus correctly rejects non-=RuntimeEvent= values. This is a test-harness defect, not an architecture failure.
+- Structural wiring gap :: =RuntimeSupervisor._build_default_host(_principal, bus)= discards the authenticated principal; default =RuntimeHost= -> =AgentRuntimeBackend= -> =AgentManager= therefore still constructs memory via =build_memory_manager(memory_config)= without the principal. That violates the frozen research/design statement that one authenticated =PrincipalContext= binds runtime and memory manager.
+- Durable conversation gap :: principal-bound =ConversationStore= is proven directly, but default daemon =AgentManager= still owns an in-memory =ConversationManager=. The service path therefore does not yet prove the durable conversation ownership boundary required by #131; the implementation must either wire the canonical store into the daemon path or explicitly reconcile/prove the intended ownership boundary before completion.
+- Additional hardening evidence :: explicit daemon principal construction should validate the canonical =PrincipalContext= type; transient principal policy should cover both guest/ephemeral semantics centrally rather than one magic kind; SQLite principal-schema migration needs a concurrent-open regression because two stores can observe the pre-migration schema before =ALTER TABLE=.
+- Design verdict :: these findings reinforce, rather than disprove, Iteration 1's object-scoped ownership architecture. Do not start a new numbered iteration. Continue TDD-first to close the implementation/service-path gaps.
+
+** Next TDD boundaries after review
+1. Repair the currently red event-isolation fake by emitting a provider-neutral =RuntimeEvent= while preserving the command/event type boundary.
+2. Add deterministic tests proving the *default supervisor/runtime/backend construction path* carries the authenticated principal into private memory state without caller-supplied owner injection; prove red before production wiring.
+3. Add/reconcile deterministic service-path conversation ownership tests so #131 proves the runtime does not retain an unscoped durable/private conversation path.
+4. Add concurrent SQLite legacy-schema migration coverage and principal-kind/transient-state boundary coverage where reachable.
+5. Run focused isolation gate, full repository/Nix gates, inspect changed-code coverage, then exact-head GitHub Actions before merge.
