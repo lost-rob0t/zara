@@ -173,9 +173,7 @@ class ZaraZmqGateway:
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._started: concurrent.futures.Future = concurrent.futures.Future()
-        self._outbound: queue.Queue[tuple[bytes, ProtocolMessage]] = queue.Queue(
-            maxsize=self._config.event_queue_size
-        )
+        self._route_outbound: OrderedDict[bytes, queue.Queue[ProtocolMessage]] = OrderedDict()
         self._routes: dict[bytes, _RouteState] = {}
         self._turn_routes: dict[str, bytes] = {}
         self._replay: OrderedDict[tuple[str, str], _ReplayEntry] = OrderedDict()
@@ -200,7 +198,7 @@ class ZaraZmqGateway:
             self._turn_routes.clear()
             self._replay.clear()
             self._inflight.clear()
-            self._outbound = queue.Queue(maxsize=self._config.event_queue_size)
+            self._route_outbound.clear()
             self._stop.clear()
             self._started = concurrent.futures.Future()
             self._thread = threading.Thread(
@@ -238,6 +236,34 @@ class ZaraZmqGateway:
             if subscription is not None:
                 subscription.close()
             socket.close(self._config.linger_ms)
+
+    def _drop_route_locked(self, route: bytes) -> None:
+        self._routes.pop(route, None)
+        self._route_outbound.pop(route, None)
+        for turn_id, candidate in tuple(self._turn_routes.items()):
+            if candidate == route:
+                self._turn_routes.pop(turn_id, None)
+        for inflight in self._inflight.values():
+            inflight.routes[:] = [candidate for candidate in inflight.routes if candidate != route]
+
+    def _drop_route(self, route: bytes) -> None:
+        with self._lock:
+            self._drop_route_locked(route)
+
+    def _enqueue_outbound(self, route: bytes, message: ProtocolMessage) -> bool:
+        with self._lock:
+            if route not in self._routes:
+                return False
+            outbound = self._route_outbound.get(route)
+            if outbound is None:
+                outbound = queue.Queue(maxsize=self._config.event_queue_size)
+                self._route_outbound[route] = outbound
+            try:
+                outbound.put_nowait(message)
+            except queue.Full:
+                self._drop_route_locked(route)
+                return False
+            return True
 
     def _receive(self, socket: zmq.Socket) -> None:
         frames = socket.recv_multipart()
@@ -342,7 +368,9 @@ class ZaraZmqGateway:
             )
             return
         session_id = _message_id()
-        self._routes[route] = _RouteState(session_id=session_id, ready=True)
+        with self._lock:
+            self._route_outbound.pop(route, None)
+            self._routes[route] = _RouteState(session_id=session_id, ready=True)
         self._send(
             socket,
             route,
@@ -544,12 +572,7 @@ class ZaraZmqGateway:
                 self._remember_response(replay_key, command, response)
 
             for candidate in routes:
-                routed_response = self._response_for_route(response, candidate)
-                try:
-                    self._outbound.put_nowait((candidate, routed_response))
-                except queue.Full:
-                    with self._lock:
-                        self._routes.pop(candidate, None)
+                self._enqueue_outbound(candidate, self._response_for_route(response, candidate))
 
         future.add_done_callback(completed)
 
@@ -583,22 +606,29 @@ class ZaraZmqGateway:
             self._send(socket, route, message)
 
     def _drain_outbound(self, socket: zmq.Socket) -> None:
-        for _ in range(32):
-            try:
-                route, message = self._outbound.get_nowait()
-            except queue.Empty:
-                return
+        sent = 0
+        while sent < 32:
+            with self._lock:
+                if not self._route_outbound:
+                    return
+                route = next(iter(self._route_outbound))
+                outbound = self._route_outbound[route]
+                self._route_outbound.move_to_end(route)
+                try:
+                    message = outbound.get_nowait()
+                except queue.Empty:
+                    self._route_outbound.pop(route, None)
+                    continue
+                if outbound.empty():
+                    self._route_outbound.pop(route, None)
             self._send(socket, route, message)
+            sent += 1
 
     def _send(self, socket: zmq.Socket, route: bytes, message: ProtocolMessage) -> None:
         try:
             socket.send_multipart([route, *encode_message(message, limits=self._limits)], flags=zmq.NOBLOCK)
-        except zmq.Again:
-            with self._lock:
-                self._routes.pop(route, None)
-        except zmq.ZMQError:
-            with self._lock:
-                self._routes.pop(route, None)
+        except (zmq.Again, zmq.ZMQError):
+            self._drop_route(route)
 
     def close(self, timeout: Optional[float] = None) -> None:
         self._stop.set()
