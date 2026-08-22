@@ -105,6 +105,8 @@ def runtime_event_to_message(
         message_type, body = "turn.started", {}
     elif type(event) is events.TurnCancelled:
         message_type, body = "turn.cancelled", {"reason": event.reason}
+    elif type(event) is events.AgentCompleted:
+        message_type, body = "turn.completed", {"success": event.success}
     elif type(event) is events.AssistantStarted:
         message_type, body = "assistant.started", {}
     elif type(event) is events.AssistantDelta:
