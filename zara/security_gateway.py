@@ -120,7 +120,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             return Capability.TURN_SUBMIT
         if message_type == "turn.cancel":
             return Capability.TURN_CANCEL
-        return Capability.SESSION_BASIC
+        raise AuthorizationDenied("unknown daemon message capability")
 
     def _audit(
         self,
