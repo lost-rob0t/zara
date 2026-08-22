@@ -4,12 +4,10 @@ from importlib.metadata import version
 from pathlib import Path
 import sys
 
+import mcp
 import pytest
 
-pytest.importorskip("mcp")
-if int(version("mcp").split(".", 1)[0]) < 2:
-    pytest.skip("MCP SDK v2 is required", allow_module_level=True)
-pytest.importorskip("langchain_core")
+assert int(version("mcp").split(".", 1)[0]) >= 2
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
