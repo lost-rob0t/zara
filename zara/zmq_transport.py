@@ -14,6 +14,7 @@ import queue
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Optional
 
@@ -42,6 +43,10 @@ class ClientDisconnected(RuntimeError):
     pass
 
 
+class ClientBackpressureError(RuntimeError):
+    pass
+
+
 class ProtocolRemoteError(RuntimeError):
     def __init__(self, code: str, message: str, *, retryable: bool = False) -> None:
         super().__init__(message)
@@ -60,6 +65,8 @@ class TransportConfig:
     request_timeout: float = 5.0
     poll_interval_ms: int = 10
     event_queue_size: int = 256
+    pending_request_limit: int = 256
+    idempotency_cache_size: int = 512
 
     def __post_init__(self) -> None:
         for name in (
@@ -70,6 +77,8 @@ class TransportConfig:
             "heartbeat_timeout_ms",
             "poll_interval_ms",
             "event_queue_size",
+            "pending_request_limit",
+            "idempotency_cache_size",
         ):
             value = getattr(self, name)
             if type(value) is not int or value <= 0:
@@ -157,8 +166,10 @@ class ZaraZmqGateway:
         )
         self._routes: dict[bytes, _RouteState] = {}
         self._turn_routes: dict[str, bytes] = {}
+        self._replay: OrderedDict[tuple[bytes, str], ProtocolMessage] = OrderedDict()
         self._event_subscription = None
         self._lock = threading.RLock()
+        self._generation = 0
 
     @property
     def is_alive(self) -> bool:
@@ -169,6 +180,13 @@ class ZaraZmqGateway:
         with self._lock:
             if self.is_alive:
                 return self._started
+            if self._owns_context and self._context.closed:
+                self._context = zmq.Context()
+            self._generation += 1
+            self._routes.clear()
+            self._turn_routes.clear()
+            self._replay.clear()
+            self._outbound = queue.Queue(maxsize=self._config.event_queue_size)
             self._stop.clear()
             self._started = concurrent.futures.Future()
             self._thread = threading.Thread(
@@ -330,6 +348,17 @@ class ZaraZmqGateway:
             ),
         )
 
+    def _remember_response(
+        self,
+        key: tuple[bytes, str],
+        response: ProtocolMessage,
+    ) -> None:
+        with self._lock:
+            self._replay[key] = response
+            self._replay.move_to_end(key)
+            while len(self._replay) > self._config.idempotency_cache_size:
+                self._replay.popitem(last=False)
+
     def _dispatch_runtime(
         self,
         socket: zmq.Socket,
@@ -337,6 +366,13 @@ class ZaraZmqGateway:
         state: _RouteState,
         message: ProtocolMessage,
     ) -> None:
+        replay_key = (route, message.id)
+        with self._lock:
+            replay = self._replay.get(replay_key)
+        if replay is not None:
+            self._send(socket, route, replay)
+            return
+
         if message.type == "turn.submit" and message.conversation_id is None:
             message = ProtocolMessage(
                 type=message.type,
@@ -370,13 +406,13 @@ class ZaraZmqGateway:
             )
             return
 
+        generation = self._generation
+
         def completed(done: concurrent.futures.Future) -> None:
             try:
                 receipt = done.result()
                 if not isinstance(receipt, CommandReceipt):
                     raise TypeError("runtime returned invalid receipt")
-                if receipt.turn_id:
-                    self._turn_routes[receipt.turn_id] = route
                 response_type = (
                     "turn.accepted" if message.type == "turn.submit" else "turn.cancel.accepted"
                 )
@@ -397,10 +433,18 @@ class ZaraZmqGateway:
                     message="runtime command failed",
                     retryable=False,
                 )
+
+            with self._lock:
+                if generation != self._generation or self._stop.is_set():
+                    return
+                if response.turn_id:
+                    self._turn_routes[response.turn_id] = route
+                self._remember_response(replay_key, response)
             try:
                 self._outbound.put_nowait((route, response))
             except queue.Full:
-                self._routes.pop(route, None)
+                with self._lock:
+                    self._routes.pop(route, None)
 
         future.add_done_callback(completed)
 
@@ -445,9 +489,11 @@ class ZaraZmqGateway:
         try:
             socket.send_multipart([route, *encode_message(message, limits=self._limits)], flags=zmq.NOBLOCK)
         except zmq.Again:
-            self._routes.pop(route, None)
+            with self._lock:
+                self._routes.pop(route, None)
         except zmq.ZMQError:
-            self._routes.pop(route, None)
+            with self._lock:
+                self._routes.pop(route, None)
 
     def close(self, timeout: Optional[float] = None) -> None:
         self._stop.set()
@@ -456,7 +502,7 @@ class ZaraZmqGateway:
             thread.join(self._config.request_timeout if timeout is None else max(0.0, timeout))
             if thread.is_alive():
                 raise TimeoutError("gateway owner thread did not stop")
-        if self._owns_context:
+        if self._owns_context and not self._context.closed:
             self._context.term()
 
 
@@ -526,7 +572,11 @@ class ZmqZaraClient(ZaraClient):
                 return self._started
             if self._state not in {ZaraClientState.NEW, ZaraClientState.STOPPED}:
                 raise ClientNotReady(f"client cannot start from {self._state.value}")
+            if self._owns_context and self._context.closed:
+                self._context = zmq.Context()
             self._state = ZaraClientState.STARTING
+        self._session_id = None
+        self._outbound = queue.Queue(maxsize=self._config.sndhwm)
         self._stop.clear()
         self._started = concurrent.futures.Future()
         self._thread = threading.Thread(target=self._run, name="zara-zmq-client", daemon=True)
@@ -541,7 +591,8 @@ class ZmqZaraClient(ZaraClient):
             socket.connect(self._endpoint)
             poller.register(socket, zmq.POLLIN)
             hello_id = _message_id()
-            self._pending[hello_id] = _Pending(_PendingKind.HELLO, self._started)
+            with self._pending_lock:
+                self._pending[hello_id] = _Pending(_PendingKind.HELLO, self._started)
             socket.send_multipart(
                 encode_message(
                     ProtocolMessage(
@@ -592,8 +643,8 @@ class ZmqZaraClient(ZaraClient):
                 return
             socket.send_multipart(encode_message(message, limits=self._limits))
 
-    def _receive(self, _socket: zmq.Socket) -> None:
-        frames = _socket.recv_multipart()
+    def _receive(self, socket: zmq.Socket) -> None:
+        frames = socket.recv_multipart()
         decoded = decode_message(frames, limits=self._limits)
         message = decoded.message
         if message.reply_to:
@@ -693,13 +744,17 @@ class ZmqZaraClient(ZaraClient):
             raise ClientNotReady("client handshake is not ready")
         future = concurrent.futures.Future()
         with self._pending_lock:
+            if message.id in self._pending:
+                raise ClientBackpressureError("request id is already pending")
+            if len(self._pending) >= self._config.pending_request_limit:
+                raise ClientBackpressureError("client pending request limit reached")
             self._pending[message.id] = _Pending(kind, future)
         try:
             self._outbound.put_nowait(message)
         except queue.Full as error:
             with self._pending_lock:
                 self._pending.pop(message.id, None)
-            raise ClientNotReady("client outbound queue is full") from error
+            raise ClientBackpressureError("client outbound queue is full") from error
         return future
 
     def ping(self) -> concurrent.futures.Future:
@@ -767,6 +822,18 @@ class ZmqZaraClient(ZaraClient):
         future.set_result(reason)
         return future
 
+    def reconnect(self) -> concurrent.futures.Future:
+        self.shutdown(reason="client reconnect")
+        thread = self._thread
+        if thread is not None:
+            thread.join(self._config.request_timeout)
+            if thread.is_alive():
+                raise TimeoutError("client owner thread did not stop for reconnect")
+        self._session_id = None
+        with self._state_lock:
+            self._state = ZaraClientState.STOPPED
+        return self.start()
+
     def _fail_pending(self, error: BaseException) -> None:
         with self._pending_lock:
             pending = tuple(self._pending.values())
@@ -784,11 +851,12 @@ class ZmqZaraClient(ZaraClient):
                 raise TimeoutError("client owner thread did not stop")
         with self._state_lock:
             self._state = ZaraClientState.STOPPED
-        if self._owns_context:
+        if self._owns_context and not self._context.closed:
             self._context.term()
 
 
 __all__ = [
+    "ClientBackpressureError",
     "ClientDisconnected",
     "ClientNotReady",
     "ProtocolRemoteError",
