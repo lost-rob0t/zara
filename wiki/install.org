@@ -1,95 +1,200 @@
-#+title: Install & Configuration
-#+author: Zarathushtra Project
-#+options: toc:2 num:nil
+#+title: Install, Build, and Validate Zara
+#+options: toc:3 num:nil
 
-* Goals
-This page covers installation and configuration paths for Zarathushtra.
-The project prefers Nix for repeatable environments and does not offer
-support for ad-hoc setups.
+* The supported path is Nix
 
-* Nix (Recommended)
+Zara targets Linux and uses its flake as the authoritative dependency, development, package, and test definition.
+
+If you are trying to understand settings rather than install software, go to [[file:../docs/configuration.org][configuration.org]]. The annotated config files are [[file:../docs/config/main.org][main TOML]], [[file:../docs/config/prolog.org][Prolog]], and [[file:../docs/config/mcp.org][MCP]]. This page used to contain half the application's configuration manual. It has been relieved of that duty.
+
 ** Requirements
-- Nix with flakes enabled
-- Network access for dependencies
 
-** Development shell
+- Nix with flakes enabled.
+- Linux on a supported flake system (=x86_64-linux= or =aarch64-linux=).
+- Working audio devices if you intend to use voice modes.
+- Network access when Nix/model/provider dependencies need it.
+
+* Development checkout
+
 #+begin_src sh
+git clone https://github.com/lost-rob0t/zara.git
+cd zara
 nix develop
 #+end_src
 
-** Validation
+The development shell supplies the Python, SWI-Prolog, audio, Qt, MCP, STT, and test dependencies expected by the repository.
+
+Inside =nix develop=, the development wrappers execute the working checkout rather than an immutable packaged copy. That is what you want while changing code, unless debugging the wrong tree sounds entertaining.
+
+* Build
+
+Build the default package set:
+
+#+begin_src sh
+nix build
+#+end_src
+
+The flake packages Zara's Python runtime and Prolog resources together and supplies required executable dependencies through Nix wrappers.
+
+Useful packaged applications include the unified CLI, desktop, wake, dictation, and console-related package surfaces. Use [[file:../docs/cli.org][cli.org]] for the command matrix rather than maintaining two competing lists here.
+
+* Run
+
+Default CLI/help:
+
+#+begin_src sh
+nix run
+#+end_src
+
+Desktop:
+
+#+begin_src sh
+nix run .#zara-desktop
+#+end_src
+
+Wake mode:
+
+#+begin_src sh
+nix run .#zara-wake
+#+end_src
+
+Dictation:
+
+#+begin_src sh
+nix run .#zara-dictate
+#+end_src
+
+For arguments to the unified app, pass them after =--=:
+
+#+begin_src sh
+nix run .#zara -- --wake --pets --stt-provider faster-whisper --model small
+#+end_src
+
+See [[file:../docs/cli.org][CLI and entry points]] and [[file:../docs/STT.md][STT backends]].
+
+* Configuration created on first run
+
+The normal main config is:
+
+#+begin_example
+$XDG_CONFIG_HOME/zarathushtra/config.toml
+#+end_example
+
+or, without =XDG_CONFIG_HOME=:
+
+#+begin_example
+~/.config/zarathushtra/config.toml
+#+end_example
+
+Zara creates the main TOML when it does not exist. Invalid existing TOML is reported as an error; it is not silently thrown away and regenerated.
+
+Other user-facing configuration layers:
+
+- Prolog user facts/mappings: see [[file:../docs/config/prolog.org][config/prolog.org]].
+- MCP management overlay: =~/.config/zarathushtra/mcp.toml=; see [[file:../docs/config/mcp.org][config/mcp.org]].
+
+The complete explanation is in [[file:../docs/configuration.org][configuration.org]].
+
+* Voice setup
+
+The default generated config selects local faster-whisper STT and a configured TTS provider. Voice behavior is split deliberately into separate docs:
+
+- [[file:../docs/voice.org][voice.org]] — microphone, VAD, acknowledgement, routing, TTS, barge-in, latency.
+- [[file:../docs/STT.md][STT.md]] — faster-whisper, whisper.cpp, OpenAI Whisper, sherpa model families, OpenAI/Groq transcription.
+- [[file:../docs/config/main.org][config/main.org]] — the actual settings.
+
+Whisper.cpp is available as Zara's Vulkan-capable local path. The flake includes a Vulkan-enabled whisper.cpp package so AMD acceleration does not depend on pretending every GPU API is CUDA.
+
+* Models and remote providers
+
+Some model assets are fetched/managed by their backend and some are intentionally explicit local paths.
+
+- faster-whisper named models use Zara's normal observable model/cache path.
+- whisper.cpp uses a GGML model file/path.
+- sherpa-onnx model families expect explicit model directories and are not silently downloaded by Zara.
+- OpenAI transcription requires =OPENAI_API_KEY=.
+- Groq transcription requires =GROQ_API_KEY=.
+- conversational OpenAI/Anthropic providers use their normal API key environment/config path.
+
+Provider-specific examples live in [[file:../docs/STT.md][STT.md]] and [[file:../docs/config/main.org][the main config guide]].
+
+* Full regression gate
+
+Repository work is not finished because one targeted pytest passed.
+
+Run the full fail-fast gate:
+
 #+begin_src sh
 nix develop -c bash scripts/test-all.sh
+#+end_src
+
+Then run flake checks:
+
+#+begin_src sh
 nix flake check
 #+end_src
 
-=nix develop -c bash scripts/test-all.sh= is the single-command regression
-gate (ZARA-021) that runs every test phase in fail-fast order with isolated
-HOME/XDG: Python compile/import, Prolog load, pytest, security scripts,
-deterministic latency budgets, and packaging checks. =nix flake check= runs the same core checks as Nix
-derivations.
+The repository gate covers the important layers, including Python compile/import, Prolog loading, pytest, security/regression scripts, deterministic latency checks, entry points, and packaging. Exact phases evolve with the repository; =scripts/test-all.sh= is the executable source of truth.
 
-** Voice latency metrics
-Wake mode records monotonic, structured events in JSONL without transcript
-text, prompts, credentials, or audio bytes. The default path is
-=$XDG_STATE_HOME/zarathushtra/latency.jsonl=, falling back to
-=~/.local/state/zarathushtra/latency.jsonl=. Override it with
-=[latency].metrics_path= or disable metrics with =[latency].enabled = false=.
+GitHub pull requests/pushes also need the Actions test job to pass at the exact head being proposed. An old green run on an older SHA is decorative, not evidence.
 
-Deterministic local p95 budgets live under =[latency.budgets]=. The default
-gate covers wake-to-ack audio, speech-end-to-final-transcript, first text
-chunk-to-first TTS audio, and interruption-to-playback-stop. Provider LLM
-latency is measured and reported but has no global hard-coded budget.
+* Targeted tests
+
+Run one Python test file:
+
+#+begin_src sh
+nix develop -c pytest t/test_agent_history.py
+#+end_src
+
+Run one test node:
+
+#+begin_src sh
+nix develop -c pytest t/test_agent_history.py::test_multiple_results_survive_in_call_order
+#+end_src
+
+Shell/integration checks live under =scripts/test-*.sh=. Do not replace the full gate with one of them for final validation.
+
+* Voice latency regression
+
+Wake mode can record payload-free JSONL timing metrics. The default location is:
+
+#+begin_example
+$XDG_STATE_HOME/zarathushtra/latency.jsonl
+#+end_example
+
+falling back to:
+
+#+begin_example
+~/.local/state/zarathushtra/latency.jsonl
+#+end_example
+
+Run the deterministic latency metric check:
 
 #+begin_src sh
 nix develop -c bash scripts/test-latency-metrics.sh
+#+end_src
+
+Generate a fixture-backed benchmark report:
+
+#+begin_src sh
 python scripts/benchmark-voice.py \
   --jsonl /tmp/voice-latency.jsonl \
   --report /tmp/voice-latency-report.json
 #+end_src
 
-The benchmark uses fixture providers and separates cold and warm cohorts. It
-reports p50, p95, p99, and the dominant stage for every turn. Current LangChain
-and TTS provider APIs buffer complete responses; production =llm_first_token=
-and =tts_first_chunk= events therefore carry =buffered_proxy=true=. They are
-observable completion proxies, not claims of true streaming latency.
+The benchmark separates cold/warm cohorts and reports distribution statistics/stage dominance. Provider LLM latency is report-only rather than forced under a fictional universal internet SLA.
 
-The command-routing gate verifies that unsupported Prolog handlers do not report
-a successful execution. The reply gate verifies that the noncommittal
-acknowledgement precedes execution and that structured success and failure
-results reach both notification and TTS sinks.
+Metrics contain timing/stage metadata, not transcript text, prompts, credentials, or audio bytes. See [[file:../docs/voice.org][voice.org]].
 
-** Build all packages
-#+begin_src sh
-nix build
-#+end_src
+* Packaging checks
 
-** Run entrypoints
-#+begin_src sh
-nix run
-nix run .#zara-wake
-nix run .#zara-console
-nix run .#zara-dictate
-#+end_src
+The Nix build is the supported package path. It bundles the Prolog tree in the layout expected by the Python runtime.
 
-Dictation stop phrases use the canonical table in =zara.dictate=. Configure
-phrases with =[dictate].stop_phrases=, =--stop-phrases=,
-=ZARA_STOP_PHRASE=, or =ZARA_STOP_PHRASES=. Matching ignores case, spacing, and
-punctuation. Parallel transcription remains enabled, while text is committed in
-capture order.
+Zara also ships =setup.py= and =MANIFEST.in= as a best-effort Python packaging companion. A wheel/sdist can install Python modules, console scripts, and Prolog resources under =<sys.prefix>/share/zarathushtra/=.
 
-* Python (Best-effort, unsupported)
-Nix is the only supported install surface. A =setup.py= and =MANIFEST.in=
-are shipped as a best-effort companion: =pip install .= from a checkout
-installs the Python modules and console scripts (=zara=, =zara-wake=,
-=zara-console=, =zara-dictate=, =zara-agent=) plus the Prolog resources
-under =<sys.prefix>/share/zarathushtra/=. The runtime looks for =main.pl=
-in the project root (editable installs), the Nix store, that
-=<sys.prefix>/share/zarathushtra/= location, and =/usr/share/zarathushtra=.
+That does *not* mean =pip install .= can conjure SWI-Prolog, audio backends, local model binaries, Qt platform support, and every native dependency correctly on an arbitrary machine.
 
-Use it only if you fully understand the dependency set and how to provide
-SWI-Prolog, audio backends, and model assets outside Nix. There is no
-=requirements.txt=; the dependency set lives in =setup.py= and =flake.nix=.
+If you deliberately use the unsupported Python path:
 
 #+begin_src sh
 python -m venv .venv
@@ -97,150 +202,44 @@ source .venv/bin/activate
 pip install .
 #+end_src
 
-* Configuration
+There is no separate authoritative =requirements.txt=. Dependency definitions are maintained in =flake.nix= and packaging metadata.
 
-Zara creates =~/.config/zarathushtra/config.toml= by default, or uses
-=$XDG_CONFIG_HOME/zarathushtra/config.toml= when =XDG_CONFIG_HOME= is set.
-Invalid TOML stops startup with the configuration path and parser diagnostic so
-user overrides are never silently discarded. The canonical Qwen TTS provider is
-=qwen3=; existing configurations using =qwen= remain supported as an alias.
-All providers return declared WAV or MP3 data through a structured synthesis
-result. =[tts].connect_timeout=, =read_timeout=, and =total_timeout= bound remote
-work. Starting a new utterance cancels and replaces the active playback.
+* Runtime resource lookup
 
-The Python and Prolog LLM clients serialize Anthropic, OpenAI, and Ollama
-requests according to each provider's protocol. Configure
-=[llm].connect_timeout=, =read_timeout=, =total_timeout=, =max_retries=, and
-=history_limit= to bound remote work and retained conversation context. The
-Python client reuses one HTTP session until shutdown; Prolog uses bounded
-keep-alive connections. Provider failures remain typed until the user-facing
-boundary, so an HTTP or protocol error is never stored as assistant text.
-Anthropic and OpenAI credentials come from =ANTHROPIC_API_KEY= and
-=OPENAI_API_KEY=, or the existing matching =[llm]= key settings. Leave
-=[llm].endpoint= empty to use the selected provider's default endpoint; set it
-only for an explicit compatible proxy or local service.
+Packaged code searches supported locations for =main.pl= so the same runtime can work from a checkout, a Nix package, or the best-effort Python installation layout.
 
-Python runtime settings use =config.toml=. Prolog facts remain separate in
-=~/.config/zarathushtra/config.pl=. That Prolog file accepts only the generated
-fact forms; they are validated, installed into =kb_config= or =kb_intents=, and
-replace prior user overrides on reload.
+Normal development should not need hand-written =PYTHONPATH= / SWI paths. If it does, first check whether you accidentally left the Nix environment or are invoking an unwrapped interpreter.
 
-Dictation process state is determined from the configured PID file and live
-process. =ZARA_DICTATION_PIDFILE= and =ZARA_DICTATION_LOGFILE= can override the
-default paths for isolated environments.
+* Linux desktop notes
 
-Prolog application and dictation commands should be configured as executable
-and argument lists, for example =app_mapping(browser, ["xdg-open",
-"https://example.com"])= and =dictation_command(["zara-dictate", "small"])=.
-Legacy whitespace-only strings remain accepted when every token uses the
-constrained command character set. Shell syntax is rejected, and runtime
-launches never interpolate command text through a shell.
+The native desktop and Pets use PySide6/Qt6.
 
-Timer parsing, unit conversion, scheduling, and completion notifications are
-implemented in Prolog. Timer commands use the canonical shape
-=[Seconds, Name]=; alarms remain explicitly unsupported.
+Pets have additional X11/Wayland overlay behavior documented in [[file:pets.org][wiki/pets.org]] and [[file:../docs/pets.md][docs/pets.md]]. The desktop application itself is documented through [[file:../docs/features.org][features.org]] and [[file:../docs/architecture.org][architecture.org]].
 
-Timer and alarm sounds are separate Prolog settings in =config.pl=:
-=timer_sound/1= and =alarm_sound/1=. Both accept a readable audio-file path;
-the bundled defaults live in =assets/sounds/= and play through =mpv=. Set
-=timer_sound(disabled).= or =alarm_sound(disabled).= with the unquoted atom to
-disable either sound without resolving its path or starting the player. Quoted
-="disabled"= and other non-path values are rejected.
+Linux is the tested platform. Python/Qt portability does not constitute a support contract for macOS or Windows.
 
-Intent precedence is state-aware in Prolog through =resolve/4=. Conversation,
-dictation, and passive controls are distinct; missing command slots return a
-typed =pending(...)= result for the thin Python boundary to present.
+* Troubleshooting order
 
-=PrologEngine= raises =PrologStartupError= when its main program cannot be
-consulted and =PrologQueryError= for runtime or syntax failures. A logical
-no-solution remains =None=, so it cannot be confused with an engine failure.
-PySWIP uses a process-wide SWI-Prolog runtime: Zara serializes every consult and
-query across all =PrologEngine= instances. Lazy query iterators retain that
-runtime lock until exhausted or explicitly closed. User-derived strings, atoms,
-and lists pass through the engine's constrained term serializers before a goal
-is submitted.
+When a development checkout fails, check these in order:
 
-The Prolog command loop emits a short =acknowledgement= event before resolution
-or execution, followed by one =command_result(Status, Intent, Args, Detail)=
-event after execution. Final reply text uses the resolved arguments, and failed
-handlers produce failure text instead of a completion claim. Concise replies are
-the default. Set =ZARA_RICH_REPLIES=1= to include optional philosophical phrases.
-Set =ZARA_REPLY_TTS_COMMAND= to an executable name when Prolog replies should
-also be sent to a TTS command; reply sink failures never determine command
-success.
+1. Are you inside =nix develop= or using a Nix app wrapper?
+2. Does =nix flake check= evaluate/build the relevant check?
+3. Does =scripts/test-all.sh= identify a specific failing phase?
+4. For Prolog failures, does =main.pl= consult cleanly?
+5. For STT failures, confirm provider/model/device in [[file:../docs/STT.md][STT.md]].
+6. For microphone/VAD/TTS failures, use [[file:../docs/voice.org][voice.org]].
+7. For MCP failures, use =zara mcp status= and [[file:mcp.org][mcp.org]].
+8. For configuration failures, use [[file:../docs/configuration.org][configuration.org]].
 
-Agent history validation preserves complete contiguous tool-result groups in
-the originating AI tool-call order. Orphaned, duplicate, unknown, and
-cross-turn tool results are discarded before provider serialization.
+* Documentation map
 
-Wake command routing first checks explicit command verbs. If speech recognition
-drops the verb from a one- or two-word app target, Zara checks the canonical
-Prolog =app_mapping/2= table and can recover, for example, =YouTube.= as
-=open youtube=. Unknown targets remain conversational and go to the LLM.
-Repeated wake phrases are stripped from longer active utterances. A standalone
-=Zara.= clears stale conversation context and immediately listens for the next
-command without sending the wake phrase to the LLM.
-
-Agent file tools are disabled by default with =tools.file_tools = false=. To
-enable them, set that value to =true= and configure =file_tools.readable_roots=,
-=file_tools.writable_roots=, and =file_tools.max_bytes=. Relative roots resolve
-from the repository root. Paths outside those roots, symlinks, and special files
-are rejected; writes require explicit overwrite permission and are atomic.
-
-Todo records are validated and updated transactionally with their tags and
-generated occurrences. Storage updates use =PRESERVE= (leave unchanged), a new
-value (change), or =CLEAR= (remove an optional value); recurring todos must clear
-both their schedule and repeater when unscheduled. Statuses are =TODO=, =NEXT=,
-=WAITING=, =SOMEDAY=, =DONE=, and =CANCELED=, and priorities are =A=, =B=, or =C=.
-
-Repeaters support only =+Nmin=, =+Nh=, =+Nd=, =+Nw=, =+Nm=, and =+Ny= with a
-positive integer =N=. Month and year recurrences use calendar boundaries and
-clamp to the last valid day while retaining the original day for later
-occurrences. Scheduling uses half-open =[start, end)= intervals and task duration;
-back-to-back tasks are allowed, while any positive overlap with an active todo
-or generated recurrence is rejected. Missing durations use
-=todo.default_duration_minutes=, which defaults to 30.
-** Config file
-Zarathushtra reads configuration from:
-- ~/.config/zarathushtra/config.toml
-
-The file is created on first run. You can also provide a custom path when
-instantiating the config manager.
-
-** Key sections
-- [agent]: LLM settings, system prompt, and timeouts
-- [prolog]: main file and load-on-startup toggle
-- [tools]: tool enable/disable flags
-- [modules]: plugin search paths and autoload list
-- [plugins]: generic lifecycle bounds; =[plugins.<name>]= is private to that plugin
-- [wake], [stt], [tts], [dictate], [memory], [noaa]
-- Memory falls back to process-local storage when ChromaDB or its embedding backend fails. The manager reports =disabled=, =persistent=, or =local_fallback= through =get_health()=.
-- =[memory].summary_max_chars= bounds stored session summaries and transcripts. Raw session capture is stored as =transcript=; only caller-supplied summaries are stored as =summary=.
-
-** Wake audio sample rate
-- =wake.sample_rate= sets the target rate for transcription.
-- If the input device does not support that rate, Zarathushtra falls back to the
-  device default and resamples audio to the target.
-- =wake.audio_queue_chunks= bounds the real-time callback buffer. When full, the
-  oldest chunk is dropped so current audio wins.
-- =wake.first_speech_timeout= returns a wake with no speech to passive mode.
-- Passive wake detection and active command capture both use Silero VAD at
-  16 kHz. =stt.min_speech_ms= confirms speech, =stt.trailing_silence_ms= ends
-  the utterance (320 ms by default), and =stt.pre_speech_buffer_chunks=
-  preserves its onset.
-- =stt.vad_threshold= controls speech sensitivity and =stt.max_utterance_ms=
-  caps continuous speech. =wake.max_utterance_duration= remains the fallback
-  for configurations that do not set the STT cap. Conversation mode separately
-  uses =agent.conversation_timeout= as its inactivity deadline.
-- A request spoken with the wake phrase, such as “Zara, what time is it?”, is
-  routed immediately without waiting for a second utterance.
-
-Externally installed plugins live under =~/.zarathushtra/plugins/= by default.
-Legacy tool plugins and RuntimeHost-owned service plugins are documented in
-[[file:plugins.org][plugins.org]].
-
-** Example: set a custom system prompt
-#+begin_src toml
-[agent]
-system_prompt = "/home/you/.config/zarathushtra/system_prompt.txt"
-#+end_src
+- [[file:../README.org][README]]
+- [[file:../docs/index.org][Docs index]]
+- [[file:../docs/features.org][Feature map]]
+- [[file:../docs/cli.org][CLI]]
+- [[file:../docs/configuration.org][Configuration]]
+- [[file:../docs/voice.org][Voice]]
+- [[file:../docs/STT.md][STT]]
+- [[file:mcp.org][MCP]]
+- [[file:plugins.org][Plugins]]
+- [[file:../docs/pets.md][Pets]]
