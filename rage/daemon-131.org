@@ -37,3 +37,13 @@
 - Shared mic / Arch Linux :: PASS.
 - Shared mic / Ubuntu 24.04 :: PASS.
 - Design verdict :: ordinary implementation incompleteness; architecture remains selected.
+
+** Runtime binding red authority and CI merge-ref anomaly
+- Candidate head :: =0b876074347711e1f42004c0a3542cc5e0028ed4=
+- GitHub Actions run :: =32592749362=, core job =97079018067=.
+- Core gate :: FAIL in phase 6, exactly =7 failed, 874 passed, 14 warnings=.
+- ZARA/1 protocol/transport :: =91 passed=.
+- Shared mic / Arch Linux :: PASS; Ubuntu lane was not needed to establish the red contract.
+- Runtime-specific expected failures :: supervisor discarded authenticated principal; =AgentManager= and =create_runtime_backend= had no principal-binding construction contract.
+- CI anomaly :: the generated PR merge ref reported pre-#131 =ConversationStore= constructor behavior even though branch ancestry is linear and current branch content contains the owner-bound implementation. Connector comparison proves =0b876074...= is exactly one commit ahead of =cd7f57ee...=, so no implementation commit was lost. Treat this run as valid runtime-red evidence but not as green/negative evidence for the conversation or memory implementation.
+- Design refinement before runtime production :: repository inspection showed =AgentManager= already accepts an injected memory manager. The selected design now keeps =AgentManager= identity-agnostic: the trusted supervisor/backend boundary constructs a principal-bound memory dependency and injects it. Guest/ephemeral principals receive non-durable memory. The design artifact was updated before runtime production work.
