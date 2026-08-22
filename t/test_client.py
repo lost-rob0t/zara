@@ -1,3 +1,4 @@
+import queue
 import time
 
 import pytest
@@ -122,7 +123,7 @@ def test_client_subscription_queue_is_private_to_the_client():
         while time.monotonic() < deadline:
             try:
                 envelope = first_events.get(timeout=max(0.01, deadline - time.monotonic()))
-            except Exception:
+            except queue.Empty:
                 break
             observed.append(envelope.event)
             if isinstance(envelope.event, events.ResponseText):
