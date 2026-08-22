@@ -1,4 +1,4 @@
-"""SQLite persistence for desktop conversations using Zara's shared database."""
+"""SQLite persistence for principal-scoped desktop conversations."""
 
 from __future__ import annotations
 
@@ -18,17 +18,32 @@ from .models import (
 
 _CONVERSATION_MIGRATION_VERSION = 2
 _INTERRUPTED_ERROR = "Interrupted when Zara stopped."
+LOCAL_PRINCIPAL_ID = "local-owner"
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="microseconds")
 
 
-class ConversationStore:
-    """Durable conversation repository backed by :class:`DatabaseManager`."""
+def _require_principal_id(principal_id: str) -> str:
+    if not isinstance(principal_id, str) or not principal_id.strip():
+        raise ValueError("principal_id must be a non-empty string")
+    if principal_id != principal_id.strip():
+        raise ValueError("principal_id must not contain leading or trailing whitespace")
+    return principal_id
 
-    def __init__(self, db: Optional[DatabaseManager] = None) -> None:
+
+class ConversationStore:
+    """Durable conversation repository sealed to one principal."""
+
+    def __init__(
+        self,
+        db: Optional[DatabaseManager] = None,
+        *,
+        principal_id: str = LOCAL_PRINCIPAL_ID,
+    ) -> None:
         self._db = db or get_database()
+        self.principal_id = _require_principal_id(principal_id)
         self._ensure_schema()
 
     @property
@@ -40,6 +55,7 @@ class ConversationStore:
             """
             CREATE TABLE IF NOT EXISTS desktop_conversations (
                 id TEXT PRIMARY KEY,
+                principal_id TEXT NOT NULL DEFAULT 'local-owner',
                 title TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -73,10 +89,24 @@ class ConversationStore:
         try:
             self._db.register_migration(_CONVERSATION_MIGRATION_VERSION, statements)
         except ValueError:
-            # Multiple desktop surfaces may share one DatabaseManager instance.
-            # Registration is process-local; the migration itself is idempotent.
             pass
         self._db.connect()
+        self._repair_principal_schema()
+
+    def _repair_principal_schema(self) -> None:
+        """Repair pre-#131 databases without consuming another global version."""
+        columns = {
+            row["name"] for row in self._db.fetch_all("PRAGMA table_info(desktop_conversations)")
+        }
+        if "principal_id" not in columns:
+            self._db.execute(
+                "ALTER TABLE desktop_conversations "
+                "ADD COLUMN principal_id TEXT NOT NULL DEFAULT 'local-owner'"
+            )
+        self._db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_desktop_conversations_principal_updated "
+            "ON desktop_conversations(principal_id, updated_at DESC)"
+        )
 
     def create_conversation(
         self,
@@ -95,11 +125,12 @@ class ConversationStore:
         self._db.execute(
             """
             INSERT INTO desktop_conversations
-                (id, title, created_at, updated_at, provider, model)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (id, principal_id, title, created_at, updated_at, provider, model)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.id,
+                self.principal_id,
                 record.title,
                 record.created_at,
                 record.updated_at,
@@ -110,12 +141,14 @@ class ConversationStore:
         return record
 
     def save_conversation(self, record: ConversationRecord) -> None:
+        if self.get_conversation(record.id) is None:
+            raise KeyError(record.id)
         record.updated_at = _now_iso()
         self._db.execute(
             """
             UPDATE desktop_conversations
             SET title = ?, updated_at = ?, provider = ?, model = ?
-            WHERE id = ?
+            WHERE id = ? AND principal_id = ?
             """,
             (
                 record.title,
@@ -123,6 +156,7 @@ class ConversationStore:
                 record.provider,
                 record.model,
                 record.id,
+                self.principal_id,
             ),
         )
 
@@ -139,8 +173,8 @@ class ConversationStore:
 
     def get_conversation(self, conversation_id: str) -> Optional[ConversationRecord]:
         row = self._db.fetch_one(
-            "SELECT * FROM desktop_conversations WHERE id = ?",
-            (conversation_id,),
+            "SELECT * FROM desktop_conversations WHERE id = ? AND principal_id = ?",
+            (conversation_id, self.principal_id),
         )
         if row is None:
             return None
@@ -164,20 +198,22 @@ class ConversationStore:
                 SELECT DISTINCT c.*
                 FROM desktop_conversations AS c
                 LEFT JOIN desktop_messages AS m ON m.conversation_id = c.id
-                WHERE lower(c.title) LIKE ? OR lower(m.content) LIKE ?
+                WHERE c.principal_id = ?
+                  AND (lower(c.title) LIKE ? OR lower(m.content) LIKE ?)
                 ORDER BY c.updated_at DESC
                 LIMIT ?
                 """,
-                (pattern, pattern, limit),
+                (self.principal_id, pattern, pattern, limit),
             )
         else:
             rows = self._db.fetch_all(
                 """
                 SELECT * FROM desktop_conversations
+                WHERE principal_id = ?
                 ORDER BY updated_at DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (self.principal_id, limit),
             )
         return [
             ConversationRecord(
@@ -192,6 +228,8 @@ class ConversationStore:
         ]
 
     def next_sequence(self, conversation_id: str) -> int:
+        if self.get_conversation(conversation_id) is None:
+            raise KeyError(conversation_id)
         row = self._db.fetch_one(
             """
             SELECT COALESCE(MAX(sequence), 0) AS max_sequence
@@ -202,6 +240,20 @@ class ConversationStore:
         return int(row["max_sequence"] if row is not None else 0) + 1
 
     def save_message(self, message: MessageRecord) -> None:
+        if self.get_conversation(message.conversation_id) is None:
+            raise KeyError(message.conversation_id)
+        existing = self._db.fetch_one(
+            """
+            SELECT c.principal_id
+            FROM desktop_messages AS m
+            JOIN desktop_conversations AS c ON c.id = m.conversation_id
+            WHERE m.id = ?
+            """,
+            (message.id,),
+        )
+        if existing is not None and existing["principal_id"] != self.principal_id:
+            raise KeyError(message.id)
+
         message.updated_at = _now_iso()
         self._db.execute(
             """
@@ -233,11 +285,16 @@ class ConversationStore:
             ),
         )
         self._db.execute(
-            "UPDATE desktop_conversations SET updated_at = ? WHERE id = ?",
-            (message.updated_at, message.conversation_id),
+            """
+            UPDATE desktop_conversations SET updated_at = ?
+            WHERE id = ? AND principal_id = ?
+            """,
+            (message.updated_at, message.conversation_id, self.principal_id),
         )
 
     def load_messages(self, conversation_id: str) -> list[MessageRecord]:
+        if self.get_conversation(conversation_id) is None:
+            return []
         rows = self._db.fetch_all(
             """
             SELECT * FROM desktop_messages
@@ -264,15 +321,6 @@ class ConversationStore:
         ]
 
     def load_state(self, conversation_id: str) -> ConversationState:
-        """Load durable history and recover work that cannot still be live.
-
-        Runtime turn ownership is process-local to ``RuntimeHost``. If Zara is
-        constructing a fresh ``ConversationState`` from SQLite, a previously
-        persisted pending/streaming row cannot represent a live turn in this
-        service instance. Mark it interrupted instead of restoring a phantom
-        ``active_turn_id`` that would leave Send disabled forever after a crash
-        or restart.
-        """
         conversation = self.get_conversation(conversation_id)
         if conversation is None:
             raise KeyError(conversation_id)
@@ -290,4 +338,4 @@ class ConversationStore:
         )
 
 
-__all__ = ["ConversationStore"]
+__all__ = ["ConversationStore", "LOCAL_PRINCIPAL_ID"]
