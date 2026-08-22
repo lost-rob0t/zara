@@ -47,6 +47,12 @@ class IntentResult:
     args: List[Any]
 
 
+@dataclass(frozen=True)
+class CapabilityCandidate:
+    provider: str
+    priority: int
+
+
 def _compound_parts(value: Any) -> Optional[tuple[str, List[Any]]]:
     if isinstance(value, str) and value.endswith(")"):
         separator = value.find("(")
@@ -250,6 +256,45 @@ class PrologEngine:
         goal = f"kb_config:app_mapping({_prolog_atom(app_name)}, Cmd)"
         result = self.query_once(goal)
         return result.get("Cmd") if result else None
+
+    def capability_candidates(
+        self,
+        intent: str,
+        args: List[Any],
+        max_candidates: int = 100,
+    ) -> List[CapabilityCandidate]:
+        """Return every symbolic provider that can satisfy an intent."""
+        if max_candidates < 1:
+            raise ValueError("max_candidates must be at least 1")
+        goal = (
+            "capability_resolver:candidate("
+            f"{_prolog_atom(intent)}, {_prolog_term(args)}, Provider, Priority)"
+        )
+        results = self.query_all(goal, max_solutions=max_candidates)
+        candidates = [
+            CapabilityCandidate(
+                provider=str(result["Provider"]),
+                priority=int(result["Priority"]),
+            )
+            for result in results
+            if "Provider" in result and "Priority" in result
+        ]
+        return sorted(candidates, key=lambda item: item.priority, reverse=True)
+
+    def selected_capability(
+        self,
+        intent: str,
+        args: List[Any],
+    ) -> Optional[str]:
+        """Return Prolog's selected provider without executing it."""
+        goal = (
+            "capability_resolver:select("
+            f"{_prolog_atom(intent)}, {_prolog_term(args)}, Provider)"
+        )
+        result = self.query_once(goal)
+        if result is None or "Provider" not in result:
+            return None
+        return str(result["Provider"])
 
     def resolve_intent(
         self,
