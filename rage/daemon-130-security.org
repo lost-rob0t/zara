@@ -22,3 +22,22 @@ Required final authority: focused security script, complete =scripts/test-all.sh
 
 ** Outcome
 Pending.
+
+* Iteration 1 checkpoint - research/design complete
+
+- Research artifact :: =rage/daemon-130-research.org=
+- Design artifact :: =rage/daemon-130-design.org=
+- Result :: CURVE/ZAP direction survives, but identity authority is narrowed to authenticated ZAP =User-Id= resolved through a live server registry. ROUTER identities and payload identity fields remain non-authoritative.
+- Production multi-user persistence/context/memory isolation remains owned by #131.
+- Design requires live registry rechecks so revocation affects already-connected routes rather than only future handshakes.
+- All TCP listener modes require CURVE + ZAP in this slice; local owner IPC remains the explicit no-remote-auth compatibility policy.
+
+* Iteration 1 checkpoint - Slice A RED
+
+- Tests commit/head :: =6240578952546fc55a83ebe88b2582f7dc6ec3bf=
+- GitHub Actions :: CI #305, run =32577982741=
+- Existing ZARA/1 protocol/transport gate :: PASS, 91 tests.
+- Shared-mic Arch Linux :: PASS.
+- Shared-mic Ubuntu 24.04 :: PASS.
+- New security tests :: RED as intended during collection with =ModuleNotFoundError: No module named 'zara.security'=.
+- Interpretation :: expected TDD red boundary. No existing regression and no design contradiction. Slice A production implementation is authorized only for the tested registry, authorization, quota, audit, listener-policy, and key-file-permission primitives.
