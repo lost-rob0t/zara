@@ -1,8 +1,8 @@
 """Long-lived Zara service lifecycle.
 
 ``zara-server`` owns process lifecycle and RuntimeHost instances.  It does not
-implement the ZeroMQ protocol, authentication, or hard multi-user persistence
-isolation; those remain ordered work in issues #129-#131.
+implement authentication or hard multi-user persistence isolation; those
+remain ordered work in issues #130-#131.
 """
 
 from __future__ import annotations
@@ -30,6 +30,13 @@ from zara.runtime.commands import RuntimeCommand
 from zara.runtime.host import RuntimeHost
 
 logger = logging.getLogger(__name__)
+
+
+def default_zmq_endpoint(runtime_dir: Path | str) -> str:
+    """Return the owner-private local IPC endpoint for ``zara-server``."""
+
+    path = Path(runtime_dir).expanduser()
+    return f"ipc://{path / 'zara-server.sock'}"
 
 
 class ServerError(RuntimeError):
@@ -538,5 +545,6 @@ __all__ = [
     "ServerState",
     "ServerStateError",
     "ZaraServer",
+    "default_zmq_endpoint",
     "main",
 ]
