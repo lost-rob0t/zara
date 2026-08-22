@@ -1,0 +1,56 @@
+#+title: RAGE Work Log - Zara Daemon TASK #139
+#+startup: overview
+
+* Run identity
+
+- Task :: #139 - implement first-class Zara daemon via RAGE
+- Branch :: =rage/139-daemon=
+- RAGE start commit :: =12d28bcb28a2b48750875050ad7c21ebbbd636d8=
+- Start meaning :: This is the exact repository commit at which this RAGE run began. Every research, design, implementation, gate, retry, and merge record below is relative to this immutable marker.
+- Status :: ITERATION 1 / BOOTSTRAP
+- Rule :: This log is append-only except for correcting an immediately discovered factual typo. Failed attempts remain recorded.
+
+* Contract
+
+RAGE is not a euphemism for "code until CI stops complaining."
+
+Each iteration follows this order:
+
+1. Research deeply enough to falsify assumptions and challenge inherited designs.
+2. Architecture/design from the evidence, including rejected alternatives, invariants, threat/failure analysis, acceptance criteria, and the exact gate.
+3. Generate/implement the selected design.
+4. Evaluate at the exact candidate head with the repository's complete gate.
+5. If the gate passes, merge. If the attempt is architecturally invalid or the gate failure disproves the design, preserve the evidence, discard the failed implementation attempt, and begin a new RAGE iteration from research/design.
+
+A stale CI run never authorizes a merge.
+
+* Iteration 1
+
+** Bootstrap
+
+- [X] Task created before repository bootstrap: #139.
+- [X] Start commit recorded before daemon research/design/implementation work.
+- [ ] Permanent RAGE rules added to =AGENTS.md=.
+- [ ] Zara-local =skills/= directory created.
+- [ ] Zara-local RAGE skill created.
+- [ ] Reusable RAGE skill in =lost-rob0t/skills= updated once, without looping that repository.
+
+** Research
+
+Not started. Bootstrap must finish first.
+
+** Design
+
+Not started.
+
+** Implementation
+
+Not started.
+
+** Gate
+
+Not started.
+
+** Outcome
+
+Pending.
