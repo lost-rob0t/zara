@@ -7,15 +7,14 @@ metadata strings. They cover three claims:
 * ``main.pl``, ``kb/``, and ``modules/`` are shipped inside the wheel as
   ``data_files`` under ``share/zarathushtra/`` (the same layout the Nix
   packages install to).
-* All five console scripts (``zara``, ``zara-wake``, ``zara-console``,
-  ``zara-dictate``, ``zara-agent``) are declared in the wheel entry points.
+* The supported console scripts, including ``zara`` and ``zara-server``, are
+  declared in the wheel entry points.
 * The runtime dependency list in the wheel METADATA covers the import surface
   used by the runtime modules.
 """
 
 from __future__ import annotations
 
-import io
 import pathlib
 import subprocess
 import sys
@@ -99,10 +98,13 @@ def test_wheel_includes_modules_resources(wheel_names):
 def test_wheel_declares_all_console_scripts(wheel_entry_points):
     expected = {
         "zara = zara.__main__:main",
+        "zara-server = zara.server:main",
         "zara-wake = zara.wake:main",
         "zara-console = zara.console:main",
         "zara-dictate = zara.dictate:main",
         "zara-agent = zara.agent_cli:main",
+        "zara-pets = zara.pets.cli:main",
+        "zara-desktop = zara.desktop.app:main",
     }
     missing = [line for line in expected if line not in wheel_entry_points]
     assert not missing, (
@@ -166,14 +168,19 @@ def test_wheel_declares_runtime_dependencies(wheel_metadata):
 
 def test_entrypoint_functions_exist():
     """Each entrypoint must resolve to a real, callable function."""
-    from zara import agent_cli, console, dictate, wake
+    from zara import agent_cli, console, dictate, server, wake
     from zara import __main__ as zara_main
+    from zara.desktop import app as desktop_app
+    from zara.pets import cli as pets_cli
 
     assert callable(zara_main.main)
+    assert callable(server.main)
     assert callable(wake.main)
     assert callable(console.main)
     assert callable(dictate.main)
     assert callable(agent_cli.main)
+    assert callable(pets_cli.main_overlay)
+    assert callable(desktop_app.main)
 
 
 def test_find_main_pl_locates_project_root_main():
