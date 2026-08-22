@@ -10,6 +10,7 @@ from zara.runtime import bridge
 from zara.runtime.commands import CommandReceipt, SubmitTurn
 from zara.server import PrincipalContext, ServerState
 from zara.zmq_transport import (
+    ClientDisconnected,
     ProtocolRemoteError,
     TransportConfig,
     ZaraZmqGateway,
@@ -35,6 +36,17 @@ class CountingSupervisor:
     def subscribe(self, principal, *, maxsize=0):
         assert isinstance(principal, PrincipalContext)
         return self.bus.subscribe(maxsize=maxsize)
+
+
+class DeferredSupervisor(CountingSupervisor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.future = concurrent.futures.Future()
+
+    def submit(self, principal, command):
+        assert isinstance(principal, PrincipalContext)
+        self.commands.append((principal, command))
+        return self.future
 
 
 @pytest.fixture
@@ -123,6 +135,53 @@ def test_reusing_request_id_for_different_command_fails_closed_after_reconnect(z
         submitted = [item for _, item in supervisor.commands if isinstance(item, SubmitTurn)]
         assert submitted == [first]
     finally:
+        client.close(timeout=1.0)
+        gateway.close(timeout=1.0)
+
+
+def test_inflight_duplicate_after_reconnect_attaches_to_original_side_effect(zmq_context):
+    config = _config()
+    endpoint = f"inproc://reconnect-idempotency-inflight-{time.time_ns()}"
+    principal = PrincipalContext("local-owner")
+    supervisor = DeferredSupervisor()
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=supervisor,
+        principal=principal,
+        context=zmq_context,
+        config=config,
+    )
+    client = ZmqZaraClient(endpoint, context=zmq_context, config=config)
+
+    try:
+        gateway.start().result(timeout=1.0)
+        client.start().result(timeout=1.0)
+
+        command = SubmitTurn(request_id="inflight-across-reconnect", text="slow effect")
+        abandoned = client.submit(command)
+        deadline = time.monotonic() + 1.0
+        while len(supervisor.commands) != 1 and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert [item for _, item in supervisor.commands] == [command]
+
+        client.reconnect().result(timeout=1.0)
+        with pytest.raises(ClientDisconnected):
+            abandoned.result(timeout=1.0)
+
+        retried = client.submit(command)
+        time.sleep(0.05)
+        assert [item for _, item in supervisor.commands] == [command]
+
+        supervisor.future.set_result(
+            CommandReceipt(request_id=command.request_id, turn_id="turn-inflight")
+        )
+        receipt = retried.result(timeout=1.0)
+        assert receipt.request_id == command.request_id
+        assert receipt.turn_id == "turn-inflight"
+        assert [item for _, item in supervisor.commands] == [command]
+    finally:
+        if not supervisor.future.done():
+            supervisor.future.cancel()
         client.close(timeout=1.0)
         gateway.close(timeout=1.0)
 
