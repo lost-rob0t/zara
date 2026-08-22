@@ -6,7 +6,13 @@ import pytest
 import zmq
 
 from zara.security import CurveServerConfig, KeyRegistry
-from zara.server import PrincipalContext, RuntimeSupervisor, ServerLease, ZaraServer
+from zara.server import (
+    PrincipalContext,
+    RuntimeSupervisor,
+    ServerLease,
+    ZaraServer,
+    default_zmq_endpoint,
+)
 
 
 class FakeHost:
@@ -128,12 +134,11 @@ def test_wildcard_tcp_listener_requires_and_accepts_complete_curve_security(tmp_
 def test_owner_private_ipc_remains_available_without_curve_security(tmp_path):
     captured = {}
 
-    def gateway_factory(endpoint, *, supervisor, principal, security=None):
+    def gateway_factory(endpoint, *, supervisor, principal):
         captured["endpoint"] = endpoint
-        captured["security"] = security
         return FakeGateway()
 
-    endpoint = f"ipc://{tmp_path / 'zara.sock'}"
+    endpoint = default_zmq_endpoint(tmp_path)
     server = ZaraServer(
         supervisor=_supervisor(),
         lease=ServerLease(tmp_path / "runtime"),
@@ -143,6 +148,6 @@ def test_owner_private_ipc_remains_available_without_curve_security(tmp_path):
     )
     try:
         server.start()
-        assert captured == {"endpoint": endpoint, "security": None}
+        assert captured == {"endpoint": endpoint}
     finally:
         server.stop()
