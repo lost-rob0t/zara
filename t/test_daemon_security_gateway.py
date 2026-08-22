@@ -9,7 +9,12 @@ import zmq
 from zara.protocol import ProtocolMessage, decode_message, encode_message
 from zara.runtime import bridge
 from zara.runtime.commands import CommandReceipt, SubmitTurn
-from zara.security import Capability, SecurityLimits, SecurityRegistry
+from zara.security import (
+    Capability,
+    SecurityAuditLog,
+    SecurityLimits,
+    SecurityRegistry,
+)
 from zara.security_gateway import SecureZaraZmqGateway
 from zara.security_transport import (
     CurveClientConfig,
@@ -34,6 +39,18 @@ class FakeSupervisor:
 
     def subscribe(self, principal, *, maxsize=0):
         return self.bus.subscribe(maxsize=maxsize)
+
+
+class BlockingSupervisor(FakeSupervisor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.futures: list[concurrent.futures.Future] = []
+
+    def submit(self, principal, command):
+        self.commands.append((principal, command))
+        future = concurrent.futures.Future()
+        self.futures.append(future)
+        return future
 
 
 @pytest.fixture
@@ -80,7 +97,12 @@ def receive_message(socket: zmq.Socket, *, timeout_ms: int = 1500) -> ProtocolMe
     return decode_message(socket.recv_multipart()).message
 
 
-def send_hello(socket: zmq.Socket, message_id: str = "hello-secure") -> ProtocolMessage:
+def send_hello(
+    socket: zmq.Socket,
+    message_id: str = "hello-secure",
+    *,
+    body: dict[str, object] | None = None,
+) -> ProtocolMessage:
     socket.send_multipart(
         encode_message(
             ProtocolMessage(
@@ -88,7 +110,22 @@ def send_hello(socket: zmq.Socket, message_id: str = "hello-secure") -> Protocol
                 id=message_id,
                 timestamp_ns=1,
                 payload_count=0,
-                body={"versions": [1]},
+                body={"versions": [1]} if body is None else body,
+            )
+        )
+    )
+    return receive_message(socket)
+
+
+def send_ping(socket: zmq.Socket, session_id: str, message_id: str) -> ProtocolMessage:
+    socket.send_multipart(
+        encode_message(
+            ProtocolMessage(
+                type="ping",
+                id=message_id,
+                session_id=session_id,
+                timestamp_ns=2,
+                payload_count=0,
             )
         )
     )
@@ -128,7 +165,11 @@ def make_secure_gateway(
     server_public: str,
     server_secret: str,
     limits: SecurityLimits | None = None,
+    audit_log: SecurityAuditLog | None = None,
 ) -> SecureZaraZmqGateway:
+    kwargs = {}
+    if audit_log is not None:
+        kwargs["audit_log"] = audit_log
     return SecureZaraZmqGateway(
         endpoint,
         supervisor=supervisor,
@@ -141,6 +182,7 @@ def make_secure_gateway(
             zap_domain="zara",
         ),
         security_limits=limits or SecurityLimits(),
+        **kwargs,
     )
 
 
@@ -385,4 +427,398 @@ def test_connection_quota_is_per_authenticated_principal_not_global(
     finally:
         for dealer in dealers:
             dealer.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_request_rate_quota_is_per_principal_and_does_not_starve_healthy_peer(
+    zmq_context,
+    transport_config,
+):
+    endpoint = tcp_endpoint()
+    server_public, server_secret = keypair()
+    alice_public, alice_secret = keypair()
+    bob_public, bob_secret = keypair()
+    registry = SecurityRegistry()
+    for public, principal_id, device in (
+        (alice_public, "user:alice", "alice-phone"),
+        (bob_public, "user:bob", "bob-phone"),
+    ):
+        registry.enroll(
+            public,
+            principal=PrincipalContext(principal_id, kind="authenticated"),
+            device_id=device,
+            capabilities={Capability.SESSION_BASIC},
+        )
+    gateway = make_secure_gateway(
+        zmq_context,
+        endpoint,
+        transport_config,
+        supervisor=FakeSupervisor(),
+        registry=registry,
+        server_public=server_public,
+        server_secret=server_secret,
+        limits=SecurityLimits(requests_per_window=2, request_window_seconds=60.0),
+    )
+    gateway.start().result(timeout=1.0)
+    alice = secure_dealer(
+        zmq_context,
+        endpoint,
+        transport_config,
+        client_public=alice_public,
+        client_secret=alice_secret,
+        server_public=server_public,
+    )
+    bob = secure_dealer(
+        zmq_context,
+        endpoint,
+        transport_config,
+        client_public=bob_public,
+        client_secret=bob_secret,
+        server_public=server_public,
+    )
+    try:
+        alice_hello = send_hello(alice, "alice-rate-hello")
+        assert alice_hello.type == "hello.ok"
+        assert send_ping(alice, alice_hello.session_id, "alice-ping-one").type == "pong"
+        limited = send_ping(alice, alice_hello.session_id, "alice-ping-two")
+        assert limited.type == "protocol.error"
+        assert limited.body["code"] == "quota_exceeded"
+
+        bob_hello = send_hello(bob, "bob-rate-hello")
+        assert bob_hello.type == "hello.ok"
+        assert send_ping(bob, bob_hello.session_id, "bob-ping-one").type == "pong"
+    finally:
+        alice.close(0)
+        bob.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_concurrent_runtime_quota_releases_when_runtime_future_finishes(
+    zmq_context,
+    transport_config,
+):
+    endpoint = tcp_endpoint()
+    server_public, server_secret = keypair()
+    client_public, client_secret = keypair()
+    principal = PrincipalContext("user:alice", kind="authenticated")
+    registry = SecurityRegistry()
+    registry.enroll(
+        client_public,
+        principal=principal,
+        device_id="alice-phone",
+        capabilities={Capability.SESSION_BASIC, Capability.TURN_SUBMIT},
+    )
+    supervisor = BlockingSupervisor()
+    gateway = make_secure_gateway(
+        zmq_context,
+        endpoint,
+        transport_config,
+        supervisor=supervisor,
+        registry=registry,
+        server_public=server_public,
+        server_secret=server_secret,
+        limits=SecurityLimits(max_concurrent_requests=1, requests_per_window=10),
+    )
+    gateway.start().result(timeout=1.0)
+    dealer = secure_dealer(
+        zmq_context,
+        endpoint,
+        transport_config,
+        client_public=client_public,
+        client_secret=client_secret,
+        server_public=server_public,
+    )
+
+    def submit(message_id: str, session_id: str) -> None:
+        dealer.send_multipart(
+            encode_message(
+                ProtocolMessage(
+                    type="turn.submit",
+                    id=message_id,
+                    session_id=session_id,
+                    timestamp_ns=3,
+                    payload_count=0,
+                    body={"text": message_id, "context_ids": []},
+                )
+            )
+        )
+
+    try:
+        hello = send_hello(dealer, "concurrent-hello")
+        assert hello.type == "hello.ok"
+        submit("turn-one", hello.session_id)
+        submit("turn-two", hello.session_id)
+        denied = receive_message(dealer)
+        assert denied.reply_to == "turn-two"
+        assert denied.body["code"] == "quota_exceeded"
+        assert [command.request_id for _, command in supervisor.commands] == ["turn-one"]
+
+        supervisor.futures[0].set_result(
+            CommandReceipt(request_id="turn-one", turn_id="turn-one-id")
+        )
+        accepted = receive_message(dealer)
+        assert accepted.type == "turn.accepted"
+        assert accepted.reply_to == "turn-one"
+
+        submit("turn-three", hello.session_id)
+        assert [command.request_id for _, command in supervisor.commands] == [
+            "turn-one",
+            "turn-three",
+        ]
+        supervisor.futures[1].set_result(
+            CommandReceipt(request_id="turn-three", turn_id="turn-three-id")
+        )
+        assert receive_message(dealer).reply_to == "turn-three"
+    finally:
+        dealer.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_hello_payload_identity_cannot_override_authenticated_principal(
+    zmq_context,
+    transport_config,
+):
+    endpoint = tcp_endpoint()
+    server_public, server_secret = keypair()
+    client_public, client_secret = keypair()
+    principal = PrincipalContext("user:alice", kind="authenticated")
+    registry = SecurityRegistry()
+    registry.enroll(
+        client_public,
+        principal=principal,
+        device_id="alice-phone",
+        capabilities={Capability.SESSION_BASIC, Capability.TURN_SUBMIT},
+    )
+    supervisor = FakeSupervisor()
+    gateway = make_secure_gateway(
+        zmq_context,
+        endpoint,
+        transport_config,
+        supervisor=supervisor,
+        registry=registry,
+        server_public=server_public,
+        server_secret=server_secret,
+    )
+    gateway.start().result(timeout=1.0)
+    dealer = secure_dealer(
+        zmq_context,
+        endpoint,
+        transport_config,
+        client_public=client_public,
+        client_secret=client_secret,
+        server_public=server_public,
+    )
+    try:
+        hello = send_hello(
+            dealer,
+            "spoof-hello",
+            body={"versions": [1], "user_id": "user:mallory", "principal": "root"},
+        )
+        assert hello.type == "hello.ok"
+        dealer.send_multipart(
+            encode_message(
+                ProtocolMessage(
+                    type="turn.submit",
+                    id="spoof-submit",
+                    session_id=hello.session_id,
+                    timestamp_ns=2,
+                    payload_count=0,
+                    body={"text": "hello", "context_ids": []},
+                )
+            )
+        )
+        assert receive_message(dealer).type == "turn.accepted"
+        assert supervisor.commands[0][0] == principal
+    finally:
+        dealer.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_runtime_status_capability_separates_normal_and_privileged_clients(
+    zmq_context,
+    transport_config,
+):
+    endpoint = tcp_endpoint()
+    server_public, server_secret = keypair()
+    normal_public, normal_secret = keypair()
+    privileged_public, privileged_secret = keypair()
+    registry = SecurityRegistry()
+    registry.enroll(
+        normal_public,
+        principal=PrincipalContext("user:normal", kind="authenticated"),
+        device_id="normal-device",
+        capabilities={Capability.SESSION_BASIC},
+    )
+    registry.enroll(
+        privileged_public,
+        principal=PrincipalContext("user:operator", kind="authenticated"),
+        device_id="operator-device",
+        capabilities={Capability.SESSION_BASIC, Capability.RUNTIME_STATUS},
+    )
+    gateway = make_secure_gateway(
+        zmq_context,
+        endpoint,
+        transport_config,
+        supervisor=FakeSupervisor(),
+        registry=registry,
+        server_public=server_public,
+        server_secret=server_secret,
+    )
+    gateway.start().result(timeout=1.0)
+    normal = secure_dealer(
+        zmq_context,
+        endpoint,
+        transport_config,
+        client_public=normal_public,
+        client_secret=normal_secret,
+        server_public=server_public,
+    )
+    privileged = secure_dealer(
+        zmq_context,
+        endpoint,
+        transport_config,
+        client_public=privileged_public,
+        client_secret=privileged_secret,
+        server_public=server_public,
+    )
+
+    def status_request(dealer: zmq.Socket, session_id: str, message_id: str) -> ProtocolMessage:
+        dealer.send_multipart(
+            encode_message(
+                ProtocolMessage(
+                    type="runtime.status",
+                    id=message_id,
+                    session_id=session_id,
+                    timestamp_ns=2,
+                    payload_count=0,
+                )
+            )
+        )
+        return receive_message(dealer)
+
+    try:
+        normal_hello = send_hello(normal, "normal-hello")
+        privileged_hello = send_hello(privileged, "operator-hello")
+        denied = status_request(normal, normal_hello.session_id, "normal-status")
+        assert denied.body["code"] == "authorization_denied"
+        allowed = status_request(privileged, privileged_hello.session_id, "operator-status")
+        assert allowed.type == "runtime.status.ok"
+        assert allowed.body == {"state": "ready"}
+    finally:
+        normal.close(0)
+        privileged.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_unknown_curve_key_never_reaches_application_handshake(
+    zmq_context,
+    transport_config,
+):
+    endpoint = tcp_endpoint()
+    server_public, server_secret = keypair()
+    unknown_public, unknown_secret = keypair()
+    gateway = make_secure_gateway(
+        zmq_context,
+        endpoint,
+        transport_config,
+        supervisor=FakeSupervisor(),
+        registry=SecurityRegistry(),
+        server_public=server_public,
+        server_secret=server_secret,
+    )
+    gateway.start().result(timeout=1.0)
+    dealer = secure_dealer(
+        zmq_context,
+        endpoint,
+        transport_config,
+        client_public=unknown_public,
+        client_secret=unknown_secret,
+        server_public=server_public,
+    )
+    try:
+        dealer.send_multipart(
+            encode_message(
+                ProtocolMessage(
+                    type="hello",
+                    id="unknown-hello",
+                    timestamp_ns=1,
+                    payload_count=0,
+                    body={"versions": [1]},
+                )
+            )
+        )
+        poller = zmq.Poller()
+        poller.register(dealer, zmq.POLLIN)
+        assert dict(poller.poll(300)).get(dealer) is None
+    finally:
+        dealer.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_security_audit_records_closed_metadata_without_request_secrets(
+    zmq_context,
+    transport_config,
+):
+    endpoint = tcp_endpoint()
+    server_public, server_secret = keypair()
+    client_public, client_secret = keypair()
+    principal = PrincipalContext("user:alice", kind="authenticated")
+    registry = SecurityRegistry()
+    registry.enroll(
+        client_public,
+        principal=principal,
+        device_id="alice-phone",
+        capabilities={Capability.SESSION_BASIC, Capability.TURN_SUBMIT},
+    )
+    audit = SecurityAuditLog(capacity=8)
+    gateway = make_secure_gateway(
+        zmq_context,
+        endpoint,
+        transport_config,
+        supervisor=FakeSupervisor(),
+        registry=registry,
+        server_public=server_public,
+        server_secret=server_secret,
+        audit_log=audit,
+    )
+    gateway.start().result(timeout=1.0)
+    dealer = secure_dealer(
+        zmq_context,
+        endpoint,
+        transport_config,
+        client_public=client_public,
+        client_secret=client_secret,
+        server_public=server_public,
+    )
+    try:
+        hello = send_hello(dealer, "audit-hello")
+        dealer.send_multipart(
+            encode_message(
+                ProtocolMessage(
+                    type="turn.submit",
+                    id="audit-submit",
+                    session_id=hello.session_id,
+                    timestamp_ns=2,
+                    payload_count=0,
+                    body={
+                        "text": "SECRET_TRANSCRIPT_DO_NOT_LOG",
+                        "context_ids": [],
+                    },
+                )
+            )
+        )
+        assert receive_message(dealer).type == "turn.accepted"
+        rendered = repr([record.as_dict() for record in audit.snapshot()])
+        assert "SECRET_TRANSCRIPT_DO_NOT_LOG" not in rendered
+        records = [record for record in audit.snapshot() if record.request_id == "audit-submit"]
+        assert len(records) == 1
+        record = records[0]
+        assert record.principal_id == principal.principal_id
+        assert record.device_id == "alice-phone"
+        assert record.action == "turn.submit"
+        assert record.decision == "allow"
+        assert record.error_class is None
+        assert record.duration_ns >= 0
+    finally:
+        dealer.close(0)
         gateway.close(timeout=1.0)
