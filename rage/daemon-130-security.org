@@ -62,3 +62,27 @@ Pending.
 - PyZMQ contract correction :: direct CURVE key =setsockopt/getsockopt= assumptions were replaced with the documented socket properties; real server-pin proof remains assigned to the integration matrix rather than pretending write-only key options are readable.
 - =nix flake check= / packaged build :: still running when Slice C tests were started; final exact-head merge authority remains pending and will be rerun after all #130 slices.
 - Interpretation :: Slice B transport identity primitives are green enough to advance to the next test-first slice without claiming final issue completion.
+
+* Iteration 1 checkpoint - Slice C RED
+
+- Tests/head :: =2096ba40c744da7e1143ed84d9b1cc2c90157ce4=.
+- GitHub Actions :: CI #314, run =32582638842=.
+- Existing ZARA/1 protocol/transport gate :: PASS, 91 tests.
+- Shared-mic Arch Linux :: PASS.
+- Shared-mic Ubuntu 24.04 :: PASS.
+- Full pytest :: 857 PASS, 4 RED.
+- All four new failures :: =TypeError: ZaraZmqGateway.__init__() got an unexpected keyword argument 'security_registry'=.
+- Interpretation :: expected TDD red. No existing regression and no design contradiction. Authenticated gateway integration is now authorized.
+
+** Slice C boundary refinement
+
+The red API assumption was deliberately challenged before production implementation. Remote authenticated service ownership is clearer as a distinct =SecureZaraZmqGateway= boundary rather than optional security parameters on the local-owner =ZaraZmqGateway=.
+
+Reasons:
+- local IPC remains an explicit local-owner policy and should not acquire ambiguous optional authentication knobs;
+- TCP service construction becomes fail-closed by type/constructor: the secure gateway requires registry, server CURVE config, and security limits;
+- CURVE/ZAP authenticator lifecycle is owned by the secure gateway's one ROUTER owner loop;
+- #131 event-isolation work remains separate: the secure gateway does not subscribe a single static principal to runtime events;
+- the underlying ZARA/1 framing/backpressure implementation remains reused rather than forked.
+
+TDD consequence: update only the Slice C tests to target =SecureZaraZmqGateway=; prove the new boundary is red before creating that production class.
