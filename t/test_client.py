@@ -1,10 +1,9 @@
 import time
 
-from zara.client import InProcessZaraClient
+from zara.client import InProcessZaraClient, ZaraClientState
 from zara.runtime import events
 from zara.runtime.backend import RuntimeBackend, RuntimeTurnResult
 from zara.runtime.commands import SubmitTurn
-from zara.runtime.host import RuntimeHostState
 
 
 class EchoBackend(RuntimeBackend):
@@ -28,7 +27,7 @@ def test_in_process_client_hides_runtime_host_and_delivers_events():
     subscription = client.subscribe()
 
     client.start().result(timeout=1.0)
-    assert client.state is RuntimeHostState.RUNNING
+    assert client.state is ZaraClientState.READY
 
     receipt = client.submit(SubmitTurn(text="hello")).result(timeout=1.0)
     assert receipt.turn_id
@@ -47,4 +46,4 @@ def test_in_process_client_hides_runtime_host_and_delivers_events():
     client.close(timeout=1.0)
     assert backend.stopped
     assert not client.is_alive
-    assert client.state is RuntimeHostState.STOPPED
+    assert client.state is ZaraClientState.STOPPED
