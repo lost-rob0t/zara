@@ -83,6 +83,28 @@ def test_same_conversation_titles_remain_principal_local(tmp_path):
     assert [record.id for record in bob.list_conversations()] == [bob_conv.id]
 
 
+def test_conversation_delete_and_export_are_owner_scoped(tmp_path):
+    db = DatabaseManager(tmp_path / "delete-export.db")
+    alice = ConversationStore(db, principal_id="alice")
+    bob = ConversationStore(db, principal_id="bob")
+    alice_conv = alice.create_conversation("Alice private")
+    bob_conv = bob.create_conversation("Bob private", conversation_id="bob-known")
+    alice.save_message(_message(alice_conv.id, "alice-message", "alice export body"))
+    bob.save_message(_message(bob_conv.id, "bob-message", "bob export body"))
+
+    assert alice.delete_conversation(bob_conv.id) is False
+    assert bob.get_conversation(bob_conv.id) is not None
+
+    export = alice.export_conversations()
+    assert [entry["conversation"]["id"] for entry in export] == [alice_conv.id]
+    assert export[0]["messages"][0]["content"] == "alice export body"
+    assert "bob export body" not in repr(export)
+
+    assert alice.delete_conversation(alice_conv.id) is True
+    assert alice.get_conversation(alice_conv.id) is None
+    assert bob.get_conversation(bob_conv.id) is not None
+
+
 def test_memory_manager_requires_nonempty_principal(monkeypatch):
     monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", False)
     with pytest.raises(ValueError):
@@ -106,6 +128,49 @@ def test_local_memory_isolation_duplicate_retrieval_and_forget(monkeypatch):
     assert alice.forget(all_memories=True) == 1
     assert alice.list_memories() == []
     assert [entry["id"] for entry in bob.list_memories()] == [bob_id]
+
+
+def test_memory_export_is_owner_scoped(monkeypatch):
+    monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", False)
+    alice = MemoryManager(enabled=True, principal_id="alice")
+    bob = MemoryManager(enabled=True, principal_id="bob")
+    alice.remember_fact("alice export secret")
+    bob.remember_fact("bob export secret")
+
+    assert [entry["text"] for entry in alice.export_memories()] == ["alice export secret"]
+    assert [entry["text"] for entry in bob.export_memories()] == ["bob export secret"]
+
+
+def test_ephemeral_memory_never_opens_persistent_backend_and_dies_with_instance(monkeypatch):
+    class ExplodingChroma:
+        @staticmethod
+        def Client():
+            raise AssertionError("ephemeral memory must not open Chroma")
+
+        @staticmethod
+        def PersistentClient(*, path):
+            raise AssertionError(f"ephemeral memory must not persist to {path}")
+
+    monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", True)
+    monkeypatch.setattr(memory_module, "chromadb", ExplodingChroma)
+
+    first = MemoryManager(
+        enabled=True,
+        principal_id="guest-1",
+        persist_directory="/must/not/open",
+        ephemeral=True,
+    )
+    first.remember_fact("temporary guest fact")
+    assert first.get_health()["status"] == "ephemeral"
+    assert [entry["text"] for entry in first.list_memories()] == ["temporary guest fact"]
+
+    second = MemoryManager(
+        enabled=True,
+        principal_id="guest-1",
+        persist_directory="/must/not/open",
+        ephemeral=True,
+    )
+    assert second.list_memories() == []
 
 
 def test_chroma_query_pushes_owner_filter_before_candidate_selection(monkeypatch):
