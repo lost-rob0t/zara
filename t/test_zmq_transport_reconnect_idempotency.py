@@ -219,3 +219,35 @@ def test_idempotency_cache_is_bounded_and_eviction_allows_old_id_to_execute_agai
     finally:
         client.close(timeout=1.0)
         gateway.close(timeout=1.0)
+
+
+def test_reconnect_reopens_selected_conversation_before_unscoped_submit(zmq_context):
+    config = _config()
+    endpoint = f"inproc://reconnect-conversation-continuity-{time.time_ns()}"
+    principal = PrincipalContext("local-owner")
+    supervisor = CountingSupervisor()
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=supervisor,
+        principal=principal,
+        context=zmq_context,
+        config=config,
+    )
+    client = ZmqZaraClient(endpoint, context=zmq_context, config=config)
+
+    try:
+        gateway.start().result(timeout=1.0)
+        client.start().result(timeout=1.0)
+        opened = client.open_conversation("durable-conversation").result(timeout=1.0)
+        assert opened == "durable-conversation"
+
+        client.reconnect().result(timeout=1.0)
+        command = SubmitTurn(request_id="after-reconnect", text="continue here")
+        client.submit(command).result(timeout=1.0)
+
+        submitted = [item for _, item in supervisor.commands if isinstance(item, SubmitTurn)]
+        assert len(submitted) == 1
+        assert submitted[0].conversation_id == "durable-conversation"
+    finally:
+        client.close(timeout=1.0)
+        gateway.close(timeout=1.0)
