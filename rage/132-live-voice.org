@@ -77,7 +77,14 @@
 - Ingress correlation is server-owned principal plus active route conversation, stream id, trace id, and chunk sequence. No client-supplied principal field exists.
 - The existing protocol validator remains the geometry/payload gate before ingress invocation; lifecycle and sequence checks still run before any corresponding ingress call.
 - No cancellation, disconnect callback, buffering policy, STT, barge-in, output framing, or client voice API was implemented ahead of later tests.
-- Exact-head green evidence pending GitHub Actions before slice 4 may begin.
+- Exact green evidence :: head =b789d6261a9cf7665d7475a675b45991b3736a7f= passed CI #391 / run =32619810588=. Full repository tests, flake check, package build, and both shared-mic distro probes passed. Slice 4 is authorized.
+
+** TDD red candidate 4a - explicit input cancellation
+- Tests-only commit :: =850e969c1ad22872cbfe852f322131a48cf3d7bf=.
+- Added =t/test_voice_zmq_cancel.py= before production cancellation behavior.
+- Required behavior :: =audio.input.cancel= is terminal, notifies the injected ingress with the same principal/conversation/stream/trace correlation, rejects later chunks as closed, missing-stream cancellation returns the same =audio_stream_not_open= shape as other terminal operations, and cancelling one route-local stream cannot close an identical stream id on another route.
+- Expected red reason :: the protocol validator already admits =audio.input.cancel=, but =ZaraZmqGateway._receive= does not dispatch it and the closed server acknowledgement vocabulary does not yet include =audio.input.cancelled=.
+- This is intentionally the first sub-slice of slice 4. Disconnect cleanup, bounded ingress pressure, cross-principal execution, barge-in and stale-output filtering remain behind their own red proofs.
 
 ** Gate
 - Focused red/green tests per behavior.
