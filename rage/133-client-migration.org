@@ -74,7 +74,18 @@
 - Both new slice-2 lifecycle tests were green. The only failures were adjacent legacy launch-surface tests whose monkeypatched =create_application(argv, *, host=None)= doubles rejected an unconditional =client=None= keyword forwarded by =start_desktop=.
 - Architecture verdict :: not disproven. The service-boundary ownership behavior is correct; this is a narrow call-shape compatibility defect introduced by the migration seam.
 - Minimum repair :: =7d6b23c91b888689ead3fe8ebd098feb2d1c3520= forwards =client= from =start_desktop= only when an explicit client is supplied, preserving the historical host-only call shape otherwise.
-- Exact-head green evidence after repair :: pending.
+
+** TDD slice 2 - authoritative GREEN
+- Exact candidate head :: =8315ca127b10260aba6742da6f35c18335021faf=.
+- GitHub Actions :: CI #462 / run =32655889276=.
+- Result :: PASS. The complete exact-head workflow is green after the launch-surface compatibility repair.
+- Interpretation :: desktop lifecycle migration is authorized as complete for this slice; proceed to CLI client policy tests-first.
+
+** TDD slice 3 - tests-only candidate
+- Tests-only commit :: =a1b4e0192c1973fd0d80c9a373bad52cdc71f7e2=.
+- Required behavior :: =--standalone= remains an explicit local compatibility mode; =--connect <endpoint>= sends text through the reusable =ZaraClient= boundary; connect failures are surfaced without silently starting a private standalone runtime; =--connect= and =--standalone= are mutually exclusive.
+- Expected RED :: current =zara.__main__= has neither flag and routes text directly through =ZaraConsole=, so argparse should reject the new options before the required service selection can occur.
+- Production behavior is unchanged at this boundary. Authoritative CI red evidence is pending.
 
 ** Gate
 - Focused red/green tests per behavior.
