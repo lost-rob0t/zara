@@ -6,7 +6,7 @@ import time
 import pytest
 import zmq
 
-from zara.runtime import bridge
+from zara.runtime import bridge, events
 from zara.runtime.commands import CommandReceipt, SubmitTurn
 from zara.server import PrincipalContext, ServerState
 from zara.zmq_transport import (
@@ -249,5 +249,58 @@ def test_reconnect_reopens_selected_conversation_before_unscoped_submit(zmq_cont
         assert len(submitted) == 1
         assert submitted[0].conversation_id == "durable-conversation"
     finally:
+        client.close(timeout=1.0)
+        gateway.close(timeout=1.0)
+
+
+def test_reconnect_discards_queued_old_session_events_but_keeps_subscription_live(zmq_context):
+    config = _config()
+    endpoint = f"inproc://reconnect-stale-events-{time.time_ns()}"
+    principal = PrincipalContext("local-owner")
+    supervisor = CountingSupervisor()
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=supervisor,
+        principal=principal,
+        context=zmq_context,
+        config=config,
+    )
+    client = ZmqZaraClient(endpoint, context=zmq_context, config=config)
+    subscription = client.subscribe()
+
+    try:
+        gateway.start().result(timeout=1.0)
+        client.start().result(timeout=1.0)
+        client.open_conversation("durable-conversation").result(timeout=1.0)
+
+        supervisor.bus.publish(
+            events.AssistantDelta(
+                turn_id="old-turn",
+                conversation_id="durable-conversation",
+                text="stale",
+            )
+        )
+        deadline = time.monotonic() + 1.0
+        while subscription._queue.empty() and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert not subscription._queue.empty()
+
+        client.reconnect().result(timeout=1.0)
+        assert subscription.drain() == []
+
+        supervisor.bus.publish(
+            events.AssistantDelta(
+                turn_id="new-turn",
+                conversation_id="durable-conversation",
+                text="current",
+            )
+        )
+        deadline = time.monotonic() + 1.0
+        while subscription._queue.empty() and time.monotonic() < deadline:
+            time.sleep(0.005)
+        delivered = subscription.drain()
+        assert [envelope.event.text for envelope in delivered] == ["current"]
+    finally:
+        subscription.close()
         client.close(timeout=1.0)
         gateway.close(timeout=1.0)
