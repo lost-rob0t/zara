@@ -1,0 +1,34 @@
+#+title: RAGE Work Log - Zara issue 133
+
+* Run identity
+- Consumed issue :: #133
+- Branch :: =rage/133-client-migration=
+- RAGE start commit :: =4c6018b30ff4be2e168551f0cf256f8333bc58af=
+- Start meaning :: Exact live =master= commit after #132 / PR #185 merged. Immutable for this run.
+
+* Iteration 1
+** Research
+- Status :: consumed; research begins only after this identity commit.
+- Queue evidence :: #131 and #132 are closed in live issue state; #133 is the first open dependency-satisfied child of daemon epic #127. #134 depends on #133 and remains blocked.
+- Scope :: migrate CLI and desktop surfaces onto the shared authenticated daemon client with reconnect/session continuity while preserving explicit standalone fallback.
+
+** Design
+- Pending evidence-derived design.
+
+** Planned TDD
+- Pending acceptance-to-test mapping after research.
+
+** Implementation
+- None yet.
+
+** Gate
+- Focused red/green tests per behavior.
+- Issue-specific non-interactive client migration script.
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- Changed-code coverage review.
+- Exact-head GitHub Actions required before merge.
+
+** Outcome
+- In progress.
