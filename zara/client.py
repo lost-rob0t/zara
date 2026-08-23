@@ -19,6 +19,9 @@ from zara.runtime.commands import RuntimeCommand
 from zara.runtime.host import BackendFactory, RuntimeHost, RuntimeHostState, RuntimeNotReady
 
 
+_RECONNECT_LOCK_INIT = threading.Lock()
+
+
 class ZaraClientState(str, enum.Enum):
     NEW = "new"
     STARTING = "starting"
@@ -76,6 +79,17 @@ class ZaraClient(ABC):
         future.set_exception(NotImplementedError("client does not support reconnect"))
         return future
 
+    def _reconnect_controller_lock(self) -> threading.Lock:
+        lock = getattr(self, "_reconnect_backoff_lock", None)
+        if lock is not None:
+            return lock
+        with _RECONNECT_LOCK_INIT:
+            lock = getattr(self, "_reconnect_backoff_lock", None)
+            if lock is None:
+                lock = threading.Lock()
+                self._reconnect_backoff_lock = lock
+        return lock
+
     def reconnect_with_backoff(
         self,
         *,
@@ -84,7 +98,7 @@ class ZaraClient(ABC):
         max_delay: float = 1.0,
         sleeper=time.sleep,
     ) -> concurrent.futures.Future:
-        """Reconnect asynchronously with bounded capped exponential backoff."""
+        """Reconnect asynchronously with one bounded in-flight retry generation."""
         if type(max_attempts) is not int or max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
         if not isinstance(initial_delay, (int, float)) or isinstance(initial_delay, bool):
@@ -96,23 +110,34 @@ class ZaraClient(ABC):
         if not callable(sleeper):
             raise TypeError("sleeper must be callable")
 
-        result = concurrent.futures.Future()
+        lock = self._reconnect_controller_lock()
+        with lock:
+            active = getattr(self, "_reconnect_backoff_future", None)
+            if active is not None and not active.done():
+                return active
+            result = concurrent.futures.Future()
+            self._reconnect_backoff_future = result
 
         def run() -> None:
-            delay = min(float(initial_delay), float(max_delay))
-            for attempt in range(max_attempts):
-                try:
-                    reconnect_future = self.reconnect()
-                    reconnect_future.result()
-                except BaseException as error:
-                    if attempt + 1 == max_attempts:
-                        result.set_exception(error)
-                        return
-                    sleeper(delay)
-                    delay = min(delay * 2, float(max_delay))
-                    continue
-                result.set_result(True)
-                return
+            try:
+                delay = min(float(initial_delay), float(max_delay))
+                for attempt in range(max_attempts):
+                    try:
+                        reconnect_future = self.reconnect()
+                        reconnect_future.result()
+                    except BaseException as error:
+                        if attempt + 1 == max_attempts:
+                            result.set_exception(error)
+                            return
+                        sleeper(delay)
+                        delay = min(delay * 2, float(max_delay))
+                        continue
+                    result.set_result(True)
+                    return
+            finally:
+                with lock:
+                    if getattr(self, "_reconnect_backoff_future", None) is result:
+                        self._reconnect_backoff_future = None
 
         threading.Thread(
             target=run,
