@@ -94,7 +94,22 @@
 - Root cause :: the acknowledgement edit replaced =zara/protocol.py= from a stale file body and accidentally dropped the already-green printable-ASCII/no-whitespace token validator. This regression is unrelated to cancellation semantics and does not falsify the slice-4 architecture.
 - Repair commit :: =53827ddc81166c8a1340e3e20a9e391843eda6ee= restores the exact pre-slice green protocol implementation from =7c18bcbbb47984500baa38e214db20cbf489bc19= and changes only the closed server vocabulary to retain =audio.input.cancelled=.
 - No disconnect cleanup, buffering/backpressure policy, barge-in, stale-output filtering, egress framing, or client voice API was added ahead of its own red proof.
-- Green evidence :: pending exact-head GitHub Actions after repair/log update.
+- Exact green evidence :: head =9f00a48ccc5128c92758f6db8798161e14480f48= passed CI #403 / run =32625116002=. Full repository/Nix/package/shared-mic gates passed, authorizing the next degraded-ingress behavior slice.
+
+** TDD red candidate 4b - degraded ingress containment
+- Tests-only commit :: =1f5b662162a08c6276c304273cf3bfe7baf24cdb=.
+- Added deterministic failures for unexpected injected voice-ingress exceptions before production containment changes.
+- Required behavior :: a start/chunk adapter failure becomes bounded =audio_ingress_error= with retryable=true, does not terminate the ROUTER owner loop, and a failed chunk must not advance =next_seq= so the exact sequence can be retried.
+- Authoritative red :: exact tests-only head =1f5b662162a08c6276c304273cf3bfe7baf24cdb=, CI #404 / run =32625797311= completed expected RED with 2 failed, 924 passed, 14 warnings. Both failures are the new degraded-ingress tests timing out because the uncaught =RuntimeError= terminates the gateway owner thread. Existing ZARA/1 remained 91/91 green; Arch and Ubuntu shared-mic probes passed.
+- Architecture verdict :: clean degraded-path red. The injected boundary remains valid; the defect is missing route-local exception containment around adapter calls.
+
+** Implementation slice 4b
+- Production commit :: =4ad166bb5476aa8071b1d6689fe93488568b1c77=.
+- Start now invokes the ingress before publishing route-local stream state; on adapter failure it returns bounded =audio_ingress_error= and leaves no phantom open stream.
+- Chunk preserves the existing =queue.Full= -> =audio_backpressure= contract, while other adapter exceptions return =audio_ingress_error= without advancing =next_seq=.
+- Failure logging records only operation and stream id; raw PCM payload bytes are never interpolated into the log or error body.
+- Containment is deliberately local to tested start/chunk adapter failures rather than wrapping the entire ROUTER loop or weakening closed protocol validation.
+- Green evidence :: pending exact-head GitHub Actions after this implementation/log update.
 
 ** Gate
 - Focused red/green tests per behavior.
