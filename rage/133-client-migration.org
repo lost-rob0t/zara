@@ -8,25 +8,47 @@
 
 * Iteration 1
 ** Research
-- Status :: consumed; research begins only after this identity commit.
+- Dedicated artifact :: =rage/133-client-migration-research.org=.
 - Queue evidence :: #131 and #132 are closed in live issue state; #133 is the first open dependency-satisfied child of daemon epic #127. #134 depends on #133 and remains blocked.
-- Scope :: migrate CLI and desktop surfaces onto the shared authenticated daemon client with reconnect/session continuity while preserving explicit standalone fallback.
+- Structural finding :: =ZaraClient= already exists as the correct service seam and =ZmqZaraClient= already owns reconnect/idempotency, but CLI bypasses it and desktop still owns RuntimeHost directly.
+- Desktop blocker :: =QtRuntimeBridge= submits through its supplied object but subscribes through the module-global in-process runtime bus, so a remote client cannot deliver its private event bus to Qt.
+- Security blocker :: #130 provides =CurveClientConfig=/=configure_curve_client_socket=, but current =ZmqZaraClient= never applies that configuration to its DEALER. Authenticated remote surface migration must compose the existing primitive before exposing remote TCP.
 
 ** Design
-- Pending evidence-derived design.
+- Dedicated artifact :: =rage/133-client-migration-design.org=.
+- One application-facing client policy/factory returns =ZaraClient=; explicit standalone uses =InProcessZaraClient= and remote uses =ZmqZaraClient=.
+- Reuse existing request-id replay/reconnect rather than a second transport.
+- Client disconnect/desktop exit is separate from shared-daemon shutdown.
+- Authentication/pin/protocol/authorization failures fail closed and never silently fall back to a private runtime.
+- No Qt-specific ZARA/1 protocol or second conversation/runtime stack.
 
 ** Planned TDD
-- Pending acceptance-to-test mapping after research.
+1. Qt bridge supplied-client subscription boundary.
+2. Desktop app/controller dependency inversion and client-close semantics.
+3. Secure client selection/fallback plus CLI text-turn migration.
+4. Bounded reconnect generation/backoff/stale-event behavior.
+5. Voice/device cleanup and migration integration gate.
+6. Full changed-code coverage and repo/Nix/package/Actions gate.
+
+** TDD slice 1 - authoritative RED
+- Tests-only behavior introduced at =e45fc3d3fd75ee0497a21db296ab1957bc05a9ca=; subsequent research-only commit =6101479fc803304864af9fff4af93290a596f23d= preserved the same production/test behavior and became the authoritative CI candidate.
+- GitHub Actions :: CI #453 / run =32654329394=.
+- Result :: expected RED at pytest phase: 1 failed, 961 passed, 14 warnings.
+- Exact failure :: =test_qt_bridge_subscribes_through_supplied_zara_client= failed at =zara/desktop/qt_bridge.py:44= because constructor called module-global =runtime_bridge.subscribe()=. The test deliberately rejects that call and requires subscription through the supplied client.
+- Existing ZARA/1 focused gate :: 91/91 PASS.
+- Shared mic / Arch Linux :: PASS.
+- Shared mic / Ubuntu 24.04 :: PASS.
+- Interpretation :: clean feature-red evidence. Architecture is not disproven; authorize the minimum supplied-client subscription compatibility seam.
 
 ** Implementation
-- None yet.
+- Slice 1 production change authorized; pending commit.
 
 ** Gate
 - Focused red/green tests per behavior.
 - Issue-specific non-interactive client migration script.
 - =nix develop -c bash scripts/test-all.sh=
-- =nix flake check=
-- =nix build=
+- =nix flake check=.
+- =nix build=.
 - Changed-code coverage review.
 - Exact-head GitHub Actions required before merge.
 
