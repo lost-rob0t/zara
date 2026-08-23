@@ -146,6 +146,8 @@ def apply_socket_options(socket: zmq.Socket, config: TransportConfig, *, router:
         socket.setsockopt(zmq.HEARTBEAT_TIMEOUT, config.heartbeat_timeout_ms)
     if router:
         socket.setsockopt(zmq.ROUTER_MANDATORY, 1)
+        if hasattr(zmq, "ROUTER_HANDOVER"):
+            socket.setsockopt(zmq.ROUTER_HANDOVER, 1)
 
 
 def _message_id() -> str:
@@ -1009,6 +1011,7 @@ class ZmqZaraClient(ZaraClient):
             audio_output_formats or [_DEFAULT_AUDIO_OUTPUT_FORMAT]
         )
         self._audio_output_format: Optional[dict[str, object]] = None
+        self._routing_id = uuid.uuid4().hex.encode("ascii")
         self._bus = bridge.RuntimeEventBus()
         self._subscriptions: weakref.WeakSet[bridge.RuntimeEventSubscription] = weakref.WeakSet()
         self._state = ZaraClientState.NEW
@@ -1071,6 +1074,7 @@ class ZmqZaraClient(ZaraClient):
     def _run(self) -> None:
         socket = self._context.socket(zmq.DEALER)
         apply_socket_options(socket, self._config, router=False)
+        socket.setsockopt(zmq.IDENTITY, self._routing_id)
         poller = zmq.Poller()
         try:
             socket.connect(self._endpoint)
