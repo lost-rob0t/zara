@@ -67,7 +67,17 @@
 - Added the first bounded voice-ingress handoff contract before production changes.
 - Required behavior :: an injected ingress receives validated start/chunk/commit operations in order; PCM bytes are passed only on the chunk call; principal, active conversation, stream id and trace id are preserved; sequence is preserved on chunk.
 - Expected red reason :: =ZaraZmqGateway.__init__= has no =voice_ingress= seam and the current audio handler receives only the decoded envelope, so it cannot hand opaque PCM payloads to a bounded runtime adapter.
-- Production code must not advance until focused/Actions execution proves this expected red boundary.
+- Authoritative red :: exact tests-only head =77c4cce00bf6c60e4d2ef73eb32a2ed1b65615d9=, CI #389 / run =32617188987= completed RED with 1 failed, 916 passed, 14 warnings. The only failure was =test_validated_audio_is_handed_to_injected_ingress_with_owner_correlation=, failing at construction with =TypeError: ZaraZmqGateway.__init__() got an unexpected keyword argument 'voice_ingress'=.
+- Regression evidence :: ZARA/1 protocol/transport remained 91/91 green; Arch and Ubuntu shared-mic probes both passed. This is clean feature-red evidence and authorizes the minimum slice-3 production implementation.
+
+** Implementation slice 3
+- Production commit :: =063c5e3ace9fd33524bb99363f0fba73e1846eab=.
+- =ZaraZmqGateway= now accepts an injected =voice_ingress= boundary; no default STT/model stack is created by the transport.
+- The gateway preserves =DecodedMessage.payloads= through validated audio dispatch. Only =audio.input.chunk= forwards raw PCM bytes; start and commit carry metadata only.
+- Ingress correlation is server-owned principal plus active route conversation, stream id, trace id, and chunk sequence. No client-supplied principal field exists.
+- The existing protocol validator remains the geometry/payload gate before ingress invocation; lifecycle and sequence checks still run before any corresponding ingress call.
+- No cancellation, disconnect callback, buffering policy, STT, barge-in, output framing, or client voice API was implemented ahead of later tests.
+- Exact-head green evidence pending GitHub Actions before slice 4 may begin.
 
 ** Gate
 - Focused red/green tests per behavior.
