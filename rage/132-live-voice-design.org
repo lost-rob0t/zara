@@ -13,6 +13,14 @@ Implement live voice transport semantics over existing ZARA/1 and existing Zara 
 - =audio.input.commit= and =audio.input.cancel= require =stream_id= and carry no payload.
 - Audio is never embedded in JSON.
 
+** Output PCM handshake negotiation
+- Voice-capable clients advertise a bounded ordered =audio_output_formats= list in =hello=; each entry is an exact =codec/sample_rate/channels= object.
+- The server selects exactly one configured format and echoes it as =audio_output_format= in =hello.ok=.
+- An explicit offer with no compatible format fails closed as =unsupported_audio_output= before route/session state is replaced.
+- A legacy/non-audio client that omits =audio_output_formats= still completes the #129 handshake without voice negotiation, preserving non-audio compatibility.
+- =ZmqZaraClient= advertises its supported output formats, records only a server-selected format it actually offered, and clears that negotiated state across reconnect.
+- Once selected, =audio.output.start= for the session must match the negotiated format; negotiation is not cosmetic metadata.
+
 ** Two validation layers
 1. =zara.protocol= validates message-local shape/geometry and closed baseline codec fields.
 2. Principal/route-scoped stream state validates lifecycle and sequence order.
@@ -35,6 +43,13 @@ No stream resume across daemon restart. Reconnect starts a fresh stream even whe
 - Production adapter reuses existing streaming voice primitives and runtime cancellation boundaries; tests inject a deterministic fake.
 - Barge-in maps to canonical cancellation semantics rather than a daemon-only cancellation mechanism.
 
+** Authenticated remote voice boundary
+- =SecureZaraZmqGateway= remains the #130 authentication/authorization wrapper and must not grow a parallel audio protocol implementation.
+- It injects the same =voice_ingress= seam into the base gateway and resolves the live principal from the authenticated CURVE/ZAP enrollment before the base audio handler runs.
+- =audio.input.start/chunk/commit= require the existing =TURN_SUBMIT= capability; =audio.input.cancel= requires =TURN_CANCEL=. No new capability enum or #130 storage migration is introduced for this issue.
+- Client payloads never select a principal. Same =stream_id= from two authenticated principals remains independent because route state and the server-owned principal binding remain distinct.
+- Revoked/unauthorized devices fail before voice ingress invocation.
+
 ** Egress ownership
 - Outbound audio remains binary multipart ZARA/1 messages with =turn_id= + =stream_id= + monotonic =seq=.
 - Route ownership is established by the authenticated principal/active route and canonical turn mapping.
@@ -54,6 +69,8 @@ No stream resume across daemon restart. Reconnect starts a fresh stream even whe
 10. Stale output from a cancelled/superseded turn cannot be routed to playback.
 11. Per-route/per-stream queues and protocol sizes are bounded.
 12. =zara= remains client-facing; =zara-server= remains daemon-facing.
+13. A server-selected output format must be one the client explicitly advertised, and every output stream in that session must match it.
+14. Authenticated remote audio is authorized using #130 capabilities before the voice ingress adapter sees bytes.
 
 * Failure / threat analysis
 - Oversized audio: rejected by generic payload limits and stricter 1024-byte audio geometry before runtime handoff.
@@ -66,13 +83,25 @@ No stream resume across daemon restart. Reconnect starts a fresh stream even whe
 - Cross-user collision: stream keys include principal/route ownership and runtime buses remain principal-scoped from #131.
 - Barge-in race: cancellation marks output stale before/with runtime cancel; late frames fail stale-turn check.
 - Error leakage: errors include stream id/seq/reason only, never frame bytes.
+- Output downgrade/mismatch: explicit incompatible offers fail the handshake; the client rejects an unadvertised server selection; output start metadata is checked against the negotiated session format.
+- Negotiation replay across reconnect: selected output format is volatile session state and is cleared before the new hello.
+- Authenticated voice bypass: secure gateway rejects unknown/missing capabilities before delegating to base audio handling; revoked devices cannot invoke ingress.
 
 * Compatibility / migration
 - Existing non-audio ZARA/1 messages remain byte-for-byte compatible.
+- Legacy/non-audio hello requests may omit =audio_output_formats=; voice-capable clients negotiate explicitly.
 - Reserved audio message names become strict; previously accepted malformed reserved messages were not implemented behavior and therefore are safe to reject.
-- No persistent schema migration is required for volatile streams.
+- No persistent schema migration is required for volatile streams or negotiated output format.
 - Existing StreamingVAD 16 kHz/512-sample contract becomes the v1 transport baseline.
+- No #130 capability/storage migration is needed: voice submission and cancellation reuse =TURN_SUBMIT=/=TURN_CANCEL=.
 - Future Opus/variable framing requires explicit hello capability negotiation and is not silently accepted by v1 PCM paths.
+
+* Rejected alternatives
+- Server chooses an output format without client advertisement :: rejected because it makes playback assumptions client-host dependent and violates #132 negotiation acceptance.
+- Accept any positive sample rate/channel count after hello :: rejected because negotiation would become advisory and a malformed/stale output stream could bypass the selected format.
+- Require voice negotiation from every legacy ZARA/1 client :: rejected because #132 must preserve existing non-audio transport compatibility.
+- Add a new =VOICE= security capability in #132 :: rejected because #130 already defines submit/cancel authority; a new persisted authorization vocabulary would expand scope and create an unnecessary migration.
+- Bypass =SecureZaraZmqGateway= for voice :: rejected because authenticated principal ownership and revocation are security boundaries, not optional transport decoration.
 
 * Acceptance -> test map
 ** Protocol shape
@@ -82,6 +111,16 @@ No stream resume across daemon restart. Reconnect starts a fresh stream even whe
 - chunk != 1024 bytes fails;
 - wrong codec/rate/channels/frame_samples fails;
 - lifecycle messages carrying payload fail.
+
+** Output negotiation
+- client advertises supported output formats in =hello= and records the exact selected format from =hello.ok=;
+- compatible server selection succeeds;
+- explicitly incompatible offer fails without establishing/replacing route session state;
+- malformed/duplicate format offers fail closed;
+- legacy hello without output formats remains compatible for non-audio clients;
+- client rejects a server-selected format it did not advertise;
+- reconnect clears/re-negotiates output format;
+- =audio.output.start= that differs from the negotiated format never reaches playback.
 
 ** Stream lifecycle
 - start -> contiguous chunks -> commit succeeds;
@@ -99,11 +138,17 @@ No stream resume across daemon restart. Reconnect starts a fresh stream even whe
 - barge-in uses canonical turn cancellation path;
 - stale output after cancellation is dropped.
 
+** Secure authenticated path
+- enrolled principal with =TURN_SUBMIT= can start/chunk/commit and ingress observes the authenticated principal;
+- =audio.input.cancel= requires =TURN_CANCEL=;
+- missing capability/revocation rejects before ingress;
+- same stream id from two authenticated principals remains isolated.
+
 ** Hygiene / logging
 - protocol errors and audit/event representations never include PCM content.
 
 ** Packaging / integration
-- focused noninteractive =scripts/test-voice-transport.sh=;
+- focused noninteractive =scripts/test-zara1-voice.sh= is composed into the existing =scripts/test-zara1-protocol.sh= repository gate;
 - full repo/Nix gates unchanged;
 - exact final PR head Actions green before merge.
 
@@ -113,11 +158,13 @@ No stream resume across daemon restart. Reconnect starts a fresh stream even whe
 3. Injected bounded voice-ingress handoff tests -> red -> minimal adapter seam -> green.
 4. Disconnect/backpressure/two-principal/stale-output/barge-in tests -> red/green.
 5. Client API + golden multipart egress tests -> red/green.
-6. Focused script, changed-code coverage review, full Nix gates, exact-head CI.
+6. Output-format handshake negotiation + enforcement tests -> red/green.
+7. Secure authenticated voice authorization/principal-isolation tests -> red/green.
+8. Focused script, changed-code coverage review, full Nix gates, exact-head CI.
 
 * Exact gate
 - focused pytest files for each slice;
-- =nix develop -c bash scripts/test-voice-transport.sh=;
+- =nix develop -c bash scripts/test-zara1-voice.sh=;
 - =nix develop -c bash scripts/test-all.sh=;
 - =nix flake check=;
 - =nix build=;
