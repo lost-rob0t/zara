@@ -183,7 +183,7 @@ def test_new_speech_stops_active_client_playback_before_network_ack():
         client.start().result(timeout=1.0)
         assert output.started.wait(1.0)
 
-        client.start_audio_input("mic-new", trace_id="trace-new")
+        audio_future = client.start_audio_input("mic-new", trace_id="trace-new")
 
         assert [call[0] for call in output.calls] == ["start", "cancel"]
         assert output.calls[-1][1] == {
@@ -192,6 +192,7 @@ def test_new_speech_stops_active_client_playback_before_network_ack():
             "stream_id": "speaker-active",
             "trace_id": "trace-active",
         }
+        audio_future.result(timeout=1.0)
     finally:
         client.close(timeout=1.0)
         server.join(timeout=1.0)
