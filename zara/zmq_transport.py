@@ -174,6 +174,7 @@ def _protocol_error(
 
 @dataclass
 class _AudioInputState:
+    principal: PrincipalContext
     conversation_id: Optional[str]
     trace_id: Optional[str]
     next_seq: int = 0
@@ -302,7 +303,7 @@ class ZaraZmqGateway:
         stream: _AudioInputState,
     ) -> dict[str, object]:
         return {
-            "principal": self._principal,
+            "principal": stream.principal,
             "conversation_id": stream.conversation_id,
             "stream_id": stream_id,
             "trace_id": stream.trace_id,
@@ -517,6 +518,7 @@ class ZaraZmqGateway:
                 )
                 return
             stream = _AudioInputState(
+                principal=self._principal,
                 conversation_id=state.conversation_id,
                 trace_id=message.trace_id,
             )
