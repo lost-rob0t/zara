@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import threading
 
 import pytest
 import zmq
@@ -77,4 +78,46 @@ def test_reconnect_with_backoff_is_bounded_and_surfaces_last_failure(monkeypatch
         assert len(calls) == 3
         assert delays == [0.05, 0.1]
     finally:
+        context.term()
+
+
+def test_reconnect_with_backoff_coalesces_concurrent_callers(monkeypatch):
+    context = zmq.Context()
+    client = ZmqZaraClient("inproc://reconnect-backoff-single-generation", context=context)
+    reconnect_started = threading.Event()
+    pending = concurrent.futures.Future()
+    calls = []
+
+    def reconnect():
+        calls.append(True)
+        reconnect_started.set()
+        return pending
+
+    monkeypatch.setattr(client, "reconnect", reconnect)
+
+    try:
+        first = client.reconnect_with_backoff(
+            max_attempts=2,
+            initial_delay=0.01,
+            max_delay=0.02,
+            sleeper=lambda _delay: None,
+        )
+        assert reconnect_started.wait(timeout=1.0)
+
+        second = client.reconnect_with_backoff(
+            max_attempts=2,
+            initial_delay=0.01,
+            max_delay=0.02,
+            sleeper=lambda _delay: None,
+        )
+        coalesced = second is first
+        pending.set_result(True)
+
+        assert first.result(timeout=1.0) is True
+        assert second.result(timeout=1.0) is True
+        assert coalesced is True
+        assert len(calls) == 1
+    finally:
+        if not pending.done():
+            pending.set_result(True)
         context.term()
