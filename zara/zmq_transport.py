@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import zmq
@@ -128,10 +128,16 @@ def _protocol_error(
 
 
 @dataclass
+class _AudioInputState:
+    next_seq: int = 0
+
+
+@dataclass
 class _RouteState:
     session_id: str
     ready: bool = False
     conversation_id: Optional[str] = None
+    audio_inputs: dict[str, _AudioInputState] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -350,6 +356,9 @@ class ZaraZmqGateway:
                 ),
             )
             return
+        if message.type in {"audio.input.start", "audio.input.chunk", "audio.input.commit"}:
+            self._handle_audio_input(socket, route, state, message)
+            return
         if message.type in {"turn.submit", "turn.cancel"}:
             self._dispatch_runtime(socket, route, state, message)
             return
@@ -361,6 +370,102 @@ class ZaraZmqGateway:
                 code="not_implemented",
                 message="message is not implemented",
                 retryable=False,
+            ),
+        )
+
+    def _handle_audio_input(
+        self,
+        socket: zmq.Socket,
+        route: bytes,
+        state: _RouteState,
+        message: ProtocolMessage,
+    ) -> None:
+        stream_id = message.stream_id
+        if stream_id is None:
+            self._send(
+                socket,
+                route,
+                _protocol_error(
+                    reply_to=message.id,
+                    code="invalid_message",
+                    message="audio input requires stream id",
+                    retryable=False,
+                ),
+            )
+            return
+
+        stream = state.audio_inputs.get(stream_id)
+        if message.type == "audio.input.start":
+            if stream is not None:
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="audio_stream_already_open",
+                        message="audio input stream is already open",
+                        retryable=False,
+                    ),
+                )
+                return
+            state.audio_inputs[stream_id] = _AudioInputState()
+            response_type = "audio.input.started"
+        elif message.type == "audio.input.chunk":
+            if stream is None:
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="audio_stream_not_open",
+                        message="audio input stream is not open",
+                        retryable=False,
+                    ),
+                )
+                return
+            if message.seq != stream.next_seq:
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="audio_sequence_error",
+                        message="audio input sequence is not contiguous",
+                        retryable=False,
+                    ),
+                )
+                return
+            stream.next_seq += 1
+            response_type = "audio.input.accepted"
+        else:
+            if stream is None:
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="audio_stream_not_open",
+                        message="audio input stream is not open",
+                        retryable=False,
+                    ),
+                )
+                return
+            state.audio_inputs.pop(stream_id, None)
+            response_type = "audio.input.committed"
+
+        self._send(
+            socket,
+            route,
+            ProtocolMessage(
+                type=response_type,
+                id=_message_id(),
+                reply_to=message.id,
+                session_id=state.session_id,
+                conversation_id=state.conversation_id,
+                stream_id=stream_id,
+                seq=message.seq if message.type == "audio.input.chunk" else None,
+                timestamp_ns=_now_ns(),
+                payload_count=0,
             ),
         )
 
