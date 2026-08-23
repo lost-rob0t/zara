@@ -119,6 +119,14 @@
 - Regression evidence :: existing ZARA/1 protocol/transport stayed 91/91 green; Arch and Ubuntu shared-mic probes both passed.
 - Architecture verdict :: clean feature-red. The existing service boundary remains valid; the missing behavior is client-side request construction plus atomic message/payload queueing, not a reason to bypass =ZaraClient= or alter the gateway/runtime ownership model.
 
+** Implementation slice 5a
+- Production commit :: =959c4c45eaffe02a8496831d606454ab31e3ed8b=.
+- =ZmqZaraClient= now constructs strict =audio.input.start/chunk/commit/cancel= requests while preserving =trace_id= and stream/sequence correlation.
+- Client outbound queue entries now keep a =ProtocolMessage= and its binary payload tuple together atomically; =encode_message= emits multipart PCM directly and no base64/JSON audio path was introduced.
+- Audio acknowledgements resolve as bounded protocol responses without bypassing the existing =ZaraClient= service implementation.
+- Exact green evidence :: head =959c4c45eaffe02a8496831d606454ab31e3ed8b= passed CI #411 / run =32631167803=. Full repository tests, =nix flake check=, packaged Zara build, and both Arch/Ubuntu shared-mic probes passed.
+- This authorizes the remaining slice-5 output framing/negotiation work; #132 is not merge-ready yet.
+
 ** Gate
 - Focused red/green tests per behavior.
 - =nix develop -c bash scripts/test-voice-transport.sh= once the focused gate exists.
