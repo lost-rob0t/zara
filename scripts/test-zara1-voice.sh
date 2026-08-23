@@ -15,6 +15,7 @@ python -m pytest -q \
   t/test_voice_zmq_barge_in.py \
   t/test_voice_zmq_client.py \
   t/test_voice_zmq_output_client.py \
+  t/test_voice_zmq_output_negotiation.py \
   t/test_voice_secure_gateway.py \
   t/test_voice_runtime_ingress.py \
   t/test_voice_runtime_commit.py \
