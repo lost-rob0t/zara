@@ -111,9 +111,12 @@ def secure_dealer(
     client_public: str,
     client_secret: str,
     server_public: str,
+    identity: bytes | None = None,
 ) -> zmq.Socket:
     dealer = context.socket(zmq.DEALER)
     apply_socket_options(dealer, transport_config, router=False)
+    if identity is not None:
+        dealer.setsockopt(zmq.IDENTITY, identity)
     configure_curve_client_socket(
         dealer,
         CurveClientConfig(
@@ -384,4 +387,95 @@ def test_voice_cancel_requires_turn_cancel_capability_before_ingress(
         assert [call[0] for call in ingress.calls] == ["start"]
     finally:
         dealer.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_route_cleanup_keeps_same_stream_id_bound_to_authenticated_principal(
+    zmq_context,
+    transport_config,
+):
+    endpoint = tcp_endpoint()
+    server_public, server_secret = keypair()
+    alice_public, alice_secret = keypair()
+    bob_public, bob_secret = keypair()
+    alice = PrincipalContext("user:alice", kind="authenticated")
+    bob = PrincipalContext("user:bob", kind="authenticated")
+    registry = SecurityRegistry()
+    capabilities = {Capability.SESSION_BASIC, Capability.TURN_SUBMIT}
+    registry.enroll(
+        alice_public,
+        principal=alice,
+        device_id="alice-phone",
+        capabilities=capabilities,
+    )
+    registry.enroll(
+        bob_public,
+        principal=bob,
+        device_id="bob-phone",
+        capabilities=capabilities,
+    )
+    ingress = RecordingVoiceIngress()
+    gateway = make_gateway(
+        zmq_context,
+        endpoint,
+        transport_config,
+        registry=registry,
+        server_public=server_public,
+        server_secret=server_secret,
+        voice_ingress=ingress,
+    )
+    gateway.start().result(timeout=1.0)
+    alice_route = b"alice-voice-route"
+    bob_route = b"bob-voice-route"
+    alice_dealer = secure_dealer(
+        zmq_context,
+        endpoint,
+        transport_config,
+        client_public=alice_public,
+        client_secret=alice_secret,
+        server_public=server_public,
+        identity=alice_route,
+    )
+    bob_dealer = secure_dealer(
+        zmq_context,
+        endpoint,
+        transport_config,
+        client_public=bob_public,
+        client_secret=bob_secret,
+        server_public=server_public,
+        identity=bob_route,
+    )
+    try:
+        hello(alice_dealer)
+        hello(bob_dealer)
+        assert send(alice_dealer, start_message("alice-start")).type == "audio.input.started"
+        assert send(bob_dealer, start_message("bob-start")).type == "audio.input.started"
+
+        gateway._drop_route(alice_route)
+
+        assert ingress.calls[-1] == (
+            "cancel",
+            {
+                "principal": alice,
+                "conversation_id": None,
+                "stream_id": "mic-1",
+                "trace_id": "trace-secure-voice",
+            },
+        )
+        accepted = send(bob_dealer, chunk_message(), (PCM_FRAME,))
+        assert accepted.type == "audio.input.accepted"
+        assert ingress.calls[-1] == (
+            "chunk",
+            PCM_FRAME,
+            {
+                "principal": bob,
+                "conversation_id": None,
+                "stream_id": "mic-1",
+                "trace_id": "trace-secure-voice",
+                "seq": 0,
+            },
+        )
+    finally:
+        alice_dealer.close(0)
+        bob_dealer.close(0)
         gateway.close(timeout=1.0)
