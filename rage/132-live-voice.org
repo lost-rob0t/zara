@@ -1,0 +1,30 @@
+#+title: RAGE Work Log - Zara issue 132
+
+* Run identity
+- Consumed issue :: #132
+- Branch :: =rage/132-live-voice=
+- RAGE start commit :: =1a076e9921228d9d0eb18ea63225a1862f81023d=
+- Start meaning :: Exact =master= commit immediately after #131 / PR #148 merged. Immutable for this run.
+
+* Iteration 1
+** Research
+- Status :: pending; no research/design/test/production changes performed before this immutable start record.
+
+** Design
+- Pending evidence-derived design.
+
+** Planned TDD
+- Pending acceptance-to-test mapping after research.
+
+** Implementation
+- None yet.
+
+** Gate
+- Focused red/green tests per behavior.
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- Exact-head GitHub Actions required before merge.
+
+** Outcome
+- In progress.
