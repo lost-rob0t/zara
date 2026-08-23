@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import enum
+import threading
 import time
 from abc import ABC, abstractmethod
 from typing import Optional
@@ -68,6 +69,57 @@ class ZaraClient(ABC):
     @abstractmethod
     def close(self, timeout: Optional[float] = None) -> None:
         raise NotImplementedError
+
+    def reconnect(self) -> concurrent.futures.Future:
+        """Reconnect this client if the concrete transport supports it."""
+        future = concurrent.futures.Future()
+        future.set_exception(NotImplementedError("client does not support reconnect"))
+        return future
+
+    def reconnect_with_backoff(
+        self,
+        *,
+        max_attempts: int = 4,
+        initial_delay: float = 0.1,
+        max_delay: float = 1.0,
+        sleeper=time.sleep,
+    ) -> concurrent.futures.Future:
+        """Reconnect asynchronously with bounded capped exponential backoff."""
+        if type(max_attempts) is not int or max_attempts <= 0:
+            raise ValueError("max_attempts must be a positive integer")
+        if not isinstance(initial_delay, (int, float)) or isinstance(initial_delay, bool):
+            raise TypeError("initial_delay must be a number")
+        if not isinstance(max_delay, (int, float)) or isinstance(max_delay, bool):
+            raise TypeError("max_delay must be a number")
+        if initial_delay < 0 or max_delay < 0:
+            raise ValueError("reconnect delays must be non-negative")
+        if not callable(sleeper):
+            raise TypeError("sleeper must be callable")
+
+        result = concurrent.futures.Future()
+
+        def run() -> None:
+            delay = min(float(initial_delay), float(max_delay))
+            for attempt in range(max_attempts):
+                try:
+                    reconnect_future = self.reconnect()
+                    reconnect_future.result()
+                except BaseException as error:
+                    if attempt + 1 == max_attempts:
+                        result.set_exception(error)
+                        return
+                    sleeper(delay)
+                    delay = min(delay * 2, float(max_delay))
+                    continue
+                result.set_result(True)
+                return
+
+        threading.Thread(
+            target=run,
+            name="zara-client-reconnect",
+            daemon=True,
+        ).start()
+        return result
 
 
 class InProcessZaraClient(ZaraClient):
