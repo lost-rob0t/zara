@@ -127,6 +127,27 @@
 - Exact green evidence :: head =959c4c45eaffe02a8496831d606454ab31e3ed8b= passed CI #411 / run =32631167803=. Full repository tests, =nix flake check=, packaged Zara build, and both Arch/Ubuntu shared-mic probes passed.
 - This authorizes the remaining slice-5 output framing/negotiation work; #132 is not merge-ready yet.
 
+** TDD red candidate 5b - binary audio output framing
+- Tests-only exact head :: =000347da1f02b5af1afc8392602412e628a5da4d=.
+- Added =t/test_voice_output_protocol.py= before production output validation.
+- Authoritative red :: CI #413 / run =32631668171= completed expected RED with 9 failed, 930 passed, 14 warnings. All nine failures were the new output contract cases; existing ZARA/1 stayed 91/91 green and both shared-mic distro probes passed.
+- Required behavior :: =audio.output.start/chunk/done= require turn+stream correlation; start declares strict positive pcm_s16le format metadata; chunk requires sequence, one opaque even-length PCM payload, and the closed audio content type; done is metadata-only.
+- Architecture verdict :: clean feature-red at the protocol boundary. No runtime/TTS design was falsified.
+
+** Implementation slice 5b
+- Production commit :: =c88e72642c9122fed73ece6057a64a307ee65871=.
+- Added closed server vocabulary and strict message-local validation for =audio.output.start/chunk/done= without inventing TTS/runtime behavior.
+- Output PCM remains opaque multipart bytes; no JSON/base64 path was introduced.
+- Exact green evidence :: CI #414 / run =32632393939= completed SUCCESS on =c88e72642c9122fed73ece6057a64a307ee65871=. Full repository tests (939 total), =nix flake check=, packaged Zara build, and both Arch/Ubuntu shared-mic probes passed.
+
+** TDD red candidate 5c - client-owned playback handoff
+- Tests-only commit :: =bdd9cb210a7e6db063f28fa276b3e3f1507a81c5=.
+- Added =t/test_voice_zmq_output_client.py= before production client egress behavior.
+- Required behavior :: unsolicited validated =audio.output.start/chunk/done= messages are delivered to an injected client-owned playback boundary; raw PCM plus conversation, turn, stream, trace, and sequence correlation survive unchanged.
+- Authoritative red :: CI #415 / run =32632928159= completed expected RED with exactly 1 failed, 939 passed, 14 warnings. The sole failure is construction with =TypeError: ZmqZaraClient.__init__() got an unexpected keyword argument 'voice_output'=.
+- Regression evidence :: existing ZARA/1 remained 91/91 green and both Arch/Ubuntu shared-mic jobs passed.
+- Architecture verdict :: clean feature-red. The existing =ZaraClient= / DEALER owner-thread boundary remains correct; production simply lacks the injected playback sink and decoded-payload handoff.
+
 ** Gate
 - Focused red/green tests per behavior.
 - =nix develop -c bash scripts/test-voice-transport.sh= once the focused gate exists.
