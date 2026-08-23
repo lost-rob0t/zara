@@ -61,6 +61,7 @@ def hello_ok(reply_to: str) -> ProtocolMessage:
             "max_payload_frames": 16,
             "max_payload_frame_bytes": 1024 * 1024,
             "max_payload_bytes": 4 * 1024 * 1024,
+            "audio_output_format": OUTPUT_FORMAT,
         },
     )
 
@@ -95,6 +96,7 @@ def run_barge_in_server(
         frames = socket.recv_multipart()
         route, app_frames = frames[0], frames[1:]
         hello = decode_message(app_frames).message
+        assert hello.body["audio_output_formats"] == [OUTPUT_FORMAT]
         socket.send_multipart([route, *encode_message(hello_ok(hello.id))])
         socket.send_multipart([route, *encode_message(output_start())])
 
