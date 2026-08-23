@@ -1,0 +1,65 @@
+#+title: RAGE Research - Issue 132 Live Voice over ZARA/1
+
+* Scope
+Issue #132 moves the existing voice pipeline across ZARA/1. The client owns microphone capture and speaker playback; the daemon owns existing VAD/STT/runtime/model/tool/TTS work. This slice must not create a second STT/TTS/turn stack.
+
+* Repository findings at immutable start
+- =zara/protocol.py= already reserves =voice.start=, =audio.input.start/chunk/commit/cancel= and =audio.output.start/chunk/done=. Binary payload frames are already opaque multipart frames with independent per-frame and aggregate limits.
+- Reserved audio names currently have no message-specific semantic validation. For example, =audio.input.chunk= can currently carry zero payloads, no =stream_id=, no =seq= and arbitrary =content_type= while still decoding.
+- =ZaraZmqGateway._receive= handles hello/ping/status/conversation/turn commands, then returns =not_implemented= for reserved audio messages. This is the first live transport gap.
+- =StreamingVAD= is already the canonical streaming voice ingress primitive. It consumes exactly 512 samples at 16 kHz. At signed 16-bit mono PCM this is exactly 1024 bytes / 32 ms per chunk.
+- =StreamingVAD= has explicit reset/start/cancel state and emits existing typed STT events. It should be adapted, not duplicated.
+- Runtime commands already contain =StartVoice= and =StopVoice=, while turn cancellation is canonical through =CancelTurn=. There is not yet a runtime command carrying remote PCM frames.
+- =ZaraClient= / ZMQ client is already the service-facing seam established by #128/#129. Audio methods should extend that boundary rather than expose RuntimeHost.
+- #131 merged immediately before this run, so principal isolation is available as a required ownership primitive.
+
+* Upstream / protocol evidence
+- PyZMQ =send_multipart= preserves a multipart application message and automatically applies =SNDMORE= to all but the final frame. ZARA/1's binary payload design therefore fits ROUTER/DEALER without base64 conversion. Reference: https://pyzmq.readthedocs.io/en/latest/api/zmq.html
+- PyZMQ/libzmq HWM is message-count backpressure, not a byte budget, and socket option changes generally apply only to subsequent bind/connect operations. Application-level per-stream byte/chunk bounds are still necessary.
+- ZMTP defines multipart messages as frames/messages joined by MORE semantics. Reference: https://rfc.zeromq.org/spec/37/
+- The newer ZeroMQ CLIENT/SERVER socket family explicitly disallows multipart messages. Because #132 requires opaque binary multipart audio, switching socket families would contradict the protocol. ROUTER/DEALER remains the correct transport.
+- ROUTER delivery can fail/drop depending on route availability and queue state; =ROUTER_MANDATORY= plus nonblocking bounded queues should continue to make disconnect/backpressure explicit rather than silently accumulating audio.
+
+* Adversarial failure cases
+1. Client sends audio payload before =audio.input.start=.
+2. Client reuses a stream id after commit/cancel without a new start.
+3. Client sends duplicate, skipped or decreasing =seq= values.
+4. Client sends one huge protocol-legal frame that is much larger than the VAD frame and forces buffering/copy amplification.
+5. Client sends odd-length PCM, stereo-looking data or the wrong sample rate while claiming baseline PCM.
+6. Client sends =commit= and races a late chunk already queued by ZeroMQ.
+7. Disconnect occurs with an open stream; daemon leaves retained buffers or live STT state.
+8. Daemon restart invalidates volatile stream state; a reconnect tries to continue an old stream as if resumable.
+9. Two authenticated principals use the same =stream_id= and cross-route state collides.
+10. Slow outbound playback causes one route's queue to fill and blocks unrelated principals.
+11. Barge-in cancels local playback but stale server output remains routable and speaks after the new turn starts.
+12. Raw audio appears in logs/errors/audit through repr/exception payloads.
+13. A transport callback directly invokes STT/TTS/provider logic, creating a parallel daemon-only runtime path.
+14. Commit of a partial 512-sample VAD frame is mishandled. Baseline transport should require exact frame geometry instead of silently padding/resampling at this boundary.
+
+* Architecture implications
+- Make baseline PCM semantics closed and deterministic at the protocol boundary: signed 16-bit LE, mono, 16 kHz; =audio.input.chunk= is exactly one binary payload containing one 512-sample/1024-byte frame; =stream_id= and =seq= are mandatory; start/commit/cancel carry no audio payload.
+- Sequence checking is stateful and belongs to a per-principal/per-route stream receiver, not generic JSON decoding. The protocol layer should validate shape; the gateway/voice bridge validates lifecycle.
+- Start creates volatile stream state with expected sequence 0. Chunk is accepted iff sequence equals expected sequence, then expected increments. Duplicate/out-of-order/gap is rejected without advancing state. Commit/cancel terminally close the stream. Late chunks are rejected.
+- Stream state is non-resumable across daemon restart. Reconnect may preserve durable conversation ownership but must begin a new audio stream.
+- Do not aggregate unbounded utterance bytes in the gateway. Feed each validated 32 ms frame onward immediately to a bounded voice/runtime ingress adapter.
+- Keep per-route outbound queues bounded as today. Voice output payloads need the same route ownership and stale-turn filtering as text/runtime events.
+- Keep audio out of protocol-error/audit bodies; report only ids, sizes, sequence and reason codes.
+
+* Rejected alternatives
+** Base64 audio in JSON
+Rejected: issue explicitly forbids it; increases copies/size and defeats existing multipart framing.
+
+** ZeroMQ CLIENT/SERVER sockets
+Rejected: current ZeroMQ specification disallows multipart messages for that thread-safe socket family, conflicting with ZARA/1 binary payload framing.
+
+** Arbitrary chunk sizes with daemon buffering
+Rejected for baseline: complicates VAD framing, creates extra buffering and makes resource bounds harder to prove. Exact 32 ms chunks align directly with existing =StreamingVAD=.
+
+** Gateway-owned STT/TTS implementation
+Rejected: violates #127/#132 architecture. Gateway should validate/route; RuntimeHost/voice components own assistant work.
+
+** Treat sequence numbers as advisory
+Rejected: gaps/duplicates/late frames are explicit acceptance criteria and stale audio is a correctness/security boundary.
+
+* Research conclusion
+The existing architecture is usable without replacement. The smallest sound direction is to make the reserved audio protocol strict, add principal/route-scoped stream lifecycle and bounded handoff behind the existing ZaraClient/runtime seam, and reuse the 512-sample StreamingVAD contract. This changes the inherited design only by making chunk geometry exact for v1 baseline instead of allowing variable PCM chunks that would require gateway buffering.
