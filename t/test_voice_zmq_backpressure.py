@@ -66,10 +66,12 @@ class FailingVoiceIngress:
             raise RuntimeError("ingress unavailable")
 
     def commit(self, **_kwargs):
-        return None
+        if self.operation == "commit":
+            raise RuntimeError("ingress unavailable")
 
     def cancel(self, **_kwargs):
-        return None
+        if self.operation == "cancel":
+            raise RuntimeError("ingress unavailable")
 
 
 @pytest.fixture
@@ -132,6 +134,17 @@ def chunk_message(request_id: str = "chunk-0", seq: int = 0) -> ProtocolMessage:
         seq=seq,
         trace_id="trace-a",
         content_type=CONTENT_TYPE,
+    )
+
+
+def terminal_message(message_type: str, request_id: str) -> ProtocolMessage:
+    return ProtocolMessage(
+        type=message_type,
+        id=request_id,
+        timestamp_ns=1,
+        payload_count=0,
+        stream_id="mic-1",
+        trace_id="trace-a",
     )
 
 
@@ -253,6 +266,41 @@ def test_ingress_chunk_failure_is_explicit_does_not_advance_sequence_and_gateway
         retry = send(dealer, chunk_message("chunk-retry"), (PCM_FRAME,))
         assert retry.type == "audio.input.accepted"
         assert retry.seq == 0
+    finally:
+        dealer.close(0)
+        gateway.close(timeout=1.0)
+
+
+@pytest.mark.parametrize(
+    ("operation", "message_type", "success_type"),
+    [
+        ("commit", "audio.input.commit", "audio.input.committed"),
+        ("cancel", "audio.input.cancel", "audio.input.cancelled"),
+    ],
+)
+def test_terminal_ingress_failure_is_retryable_and_does_not_close_stream(
+    zmq_context,
+    operation,
+    message_type,
+    success_type,
+):
+    ingress = FailingVoiceIngress(operation)
+    gateway, dealer = connected_gateway(zmq_context, ingress)
+    try:
+        assert send(dealer, start_message()).type == "audio.input.started"
+
+        failed = send(dealer, terminal_message(message_type, f"{operation}-fails"))
+        assert failed.type == "protocol.error"
+        assert failed.body == {
+            "code": "audio_ingress_error",
+            "message": "audio input runtime is unavailable",
+            "retryable": True,
+        }
+        assert gateway.is_alive
+
+        ingress.operation = "none"
+        retry = send(dealer, terminal_message(message_type, f"{operation}-retry"))
+        assert retry.type == success_type
     finally:
         dealer.close(0)
         gateway.close(timeout=1.0)
