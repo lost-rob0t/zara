@@ -358,7 +358,12 @@ class ZaraZmqGateway:
                 ),
             )
             return
-        if message.type in {"audio.input.start", "audio.input.chunk", "audio.input.commit"}:
+        if message.type in {
+            "audio.input.start",
+            "audio.input.chunk",
+            "audio.input.commit",
+            "audio.input.cancel",
+        }:
             self._handle_audio_input(socket, route, state, message, decoded.payloads)
             return
         if message.type in {"turn.submit", "turn.cancel"}:
@@ -464,9 +469,16 @@ class ZaraZmqGateway:
                 )
                 return
             if self._voice_ingress is not None:
-                self._voice_ingress.commit(**ingress_context)
+                if message.type == "audio.input.cancel":
+                    self._voice_ingress.cancel(**ingress_context)
+                else:
+                    self._voice_ingress.commit(**ingress_context)
             state.audio_inputs.pop(stream_id, None)
-            response_type = "audio.input.committed"
+            response_type = (
+                "audio.input.cancelled"
+                if message.type == "audio.input.cancel"
+                else "audio.input.committed"
+            )
 
         self._send(
             socket,
