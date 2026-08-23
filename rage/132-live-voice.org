@@ -111,6 +111,14 @@
 - Containment is deliberately local to tested start/chunk adapter failures rather than wrapping the entire ROUTER loop or weakening closed protocol validation.
 - Green evidence :: pending exact-head GitHub Actions after this implementation/log update.
 
+** TDD red candidate 5a - ZaraClient binary audio ingress API
+- Tests-only exact head :: =bf6f12d9efa84e6b9715e26b44081d92068051ae=.
+- Added =t/test_voice_zmq_client.py= before production client voice methods.
+- Required behavior :: the =ZmqZaraClient= surface starts an input stream, sends one exact 1024-byte PCM frame as an opaque multipart payload, and commits the stream while preserving active conversation, stream id, trace id, and sequence to the already-green server-side voice ingress boundary.
+- Authoritative red :: CI #409 / run =32630248838= completed expected RED with exactly 1 failed, 928 passed, 14 warnings. The sole failure is =test_zara_client_streams_binary_pcm_with_trace_and_conversation_correlation= raising =AttributeError: 'ZmqZaraClient' object has no attribute 'start_audio_input'= before any production voice-client API exists.
+- Regression evidence :: existing ZARA/1 protocol/transport stayed 91/91 green; Arch and Ubuntu shared-mic probes both passed.
+- Architecture verdict :: clean feature-red. The existing service boundary remains valid; the missing behavior is client-side request construction plus atomic message/payload queueing, not a reason to bypass =ZaraClient= or alter the gateway/runtime ownership model.
+
 ** Gate
 - Focused red/green tests per behavior.
 - =nix develop -c bash scripts/test-voice-transport.sh= once the focused gate exists.
