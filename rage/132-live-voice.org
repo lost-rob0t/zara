@@ -84,7 +84,14 @@
 - Added =t/test_voice_zmq_cancel.py= before production cancellation behavior.
 - Required behavior :: =audio.input.cancel= is terminal, notifies the injected ingress with the same principal/conversation/stream/trace correlation, rejects later chunks as closed, missing-stream cancellation returns the same =audio_stream_not_open= shape as other terminal operations, and cancelling one route-local stream cannot close an identical stream id on another route.
 - Expected red reason :: the protocol validator already admits =audio.input.cancel=, but =ZaraZmqGateway._receive= does not dispatch it and the closed server acknowledgement vocabulary does not yet include =audio.input.cancelled=.
-- This is intentionally the first sub-slice of slice 4. Disconnect cleanup, bounded ingress pressure, cross-principal execution, barge-in and stale-output filtering remain behind their own red proofs.
+- Authoritative red :: exact tests/log head =7c18bcbbb47984500baa38e214db20cbf489bc19=, CI #393 / run =32622261524= completed expected RED with 3 failed, 917 passed, 14 warnings. Every failure is one of the new cancel lifecycle tests: explicit cancel received =protocol.error=, missing-stream cancel returned =not_implemented= rather than =audio_stream_not_open=, and cancelling one of two route-local streams was not implemented. Existing ZARA/1 remained 91/91 green; both shared-mic distro probes passed.
+- Architecture verdict :: clean feature-red evidence. Existing route-local stream ownership remains valid; only the explicit terminal transition/acknowledgement is missing.
+
+** Implementation slice 4a
+- Protocol acknowledgement commit :: =366699391b18ce6d7a82e1945d126112d4bcb5f1= adds only =audio.input.cancelled= to the closed server vocabulary.
+- Gateway implementation commit :: =2139d527420f7a85d90c2aaf5caff7d6cd0f5900= dispatches =audio.input.cancel= through the existing route-local handler, requires an open stream, invokes the injected ingress cancel callback with server-owned correlation, removes only that route/stream pair, and returns =audio.input.cancelled=.
+- No disconnect cleanup, buffering/backpressure policy, barge-in, stale-output filtering, egress framing, or client voice API was added ahead of its own red proof.
+- Green evidence :: pending exact-head GitHub Actions.
 
 ** Gate
 - Focused red/green tests per behavior.
