@@ -10,18 +10,25 @@ from __future__ import annotations
 
 import concurrent.futures
 import enum
+import logging
 import queue
 import threading
 import time
 import uuid
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import zmq
 
 from zara.client import ZaraClient, ZaraClientState
 from zara.protocol import (
+    AUDIO_INPUT_CHANNELS,
+    AUDIO_INPUT_CODEC,
+    AUDIO_INPUT_CONTENT_TYPE,
+    AUDIO_INPUT_FRAME_SAMPLES,
+    AUDIO_INPUT_SAMPLE_RATE,
+    AUDIO_OUTPUT_CODEC,
     ProtocolLimits,
     ProtocolMessage,
     ProtocolValidationError,
@@ -33,6 +40,16 @@ from zara.protocol_runtime import RuntimeCodecError, command_from_message, runti
 from zara.runtime import bridge, events
 from zara.runtime.commands import CancelTurn, CommandReceipt, RuntimeCommand, SubmitTurn
 from zara.server import PrincipalContext
+
+
+logger = logging.getLogger(__name__)
+
+_DEFAULT_AUDIO_OUTPUT_FORMAT = {
+    "codec": AUDIO_OUTPUT_CODEC,
+    "sample_rate": 24000,
+    "channels": 1,
+}
+_AUDIO_OUTPUT_FORMAT_KEYS = frozenset(_DEFAULT_AUDIO_OUTPUT_FORMAT)
 
 
 class ClientNotReady(RuntimeError):
@@ -52,6 +69,34 @@ class ProtocolRemoteError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.retryable = retryable
+
+
+def _normalize_audio_output_format(value: object) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != _AUDIO_OUTPUT_FORMAT_KEYS:
+        raise ValueError("audio output format requires codec, sample_rate and channels")
+    codec = value.get("codec")
+    sample_rate = value.get("sample_rate")
+    channels = value.get("channels")
+    if codec != AUDIO_OUTPUT_CODEC:
+        raise ValueError(f"audio output codec must be {AUDIO_OUTPUT_CODEC}")
+    if type(sample_rate) is not int or sample_rate <= 0:
+        raise ValueError("audio output sample_rate must be a positive integer")
+    if type(channels) is not int or channels <= 0:
+        raise ValueError("audio output channels must be a positive integer")
+    return {
+        "codec": codec,
+        "sample_rate": sample_rate,
+        "channels": channels,
+    }
+
+
+def _normalize_audio_output_formats(values: object) -> list[dict[str, object]]:
+    if not isinstance(values, (list, tuple)) or not values:
+        raise ValueError("audio_output_formats must be a non-empty sequence")
+    normalized = [_normalize_audio_output_format(value) for value in values]
+    if len({tuple(item.items()) for item in normalized}) != len(normalized):
+        raise ValueError("audio_output_formats must not contain duplicates")
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -128,10 +173,19 @@ def _protocol_error(
 
 
 @dataclass
+class _AudioInputState:
+    principal: PrincipalContext
+    conversation_id: Optional[str]
+    trace_id: Optional[str]
+    next_seq: int = 0
+
+
+@dataclass
 class _RouteState:
     session_id: str
     ready: bool = False
     conversation_id: Optional[str] = None
+    audio_inputs: dict[str, _AudioInputState] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -158,6 +212,8 @@ class ZaraZmqGateway:
         context: Optional[zmq.Context] = None,
         config: Optional[TransportConfig] = None,
         limits: Optional[ProtocolLimits] = None,
+        voice_ingress=None,
+        audio_output_format: Optional[dict[str, object]] = None,
     ) -> None:
         if not isinstance(endpoint, str) or not endpoint.strip():
             raise ValueError("endpoint must be a non-empty string")
@@ -170,6 +226,10 @@ class ZaraZmqGateway:
         self._owns_context = context is None
         self._config = config or TransportConfig()
         self._limits = limits or ProtocolLimits()
+        self._voice_ingress = voice_ingress
+        self._audio_output_format = _normalize_audio_output_format(
+            audio_output_format or _DEFAULT_AUDIO_OUTPUT_FORMAT
+        )
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._started: concurrent.futures.Future = concurrent.futures.Future()
@@ -237,20 +297,67 @@ class ZaraZmqGateway:
                 subscription.close()
             socket.close(self._config.linger_ms)
 
-    def _drop_route_locked(self, route: bytes) -> None:
-        self._routes.pop(route, None)
+    def _voice_ingress_context(
+        self,
+        stream_id: str,
+        stream: _AudioInputState,
+    ) -> dict[str, object]:
+        return {
+            "principal": stream.principal,
+            "conversation_id": stream.conversation_id,
+            "stream_id": stream_id,
+            "trace_id": stream.trace_id,
+        }
+
+    def _send_audio_ingress_error(
+        self,
+        socket: zmq.Socket,
+        route: bytes,
+        message: ProtocolMessage,
+    ) -> None:
+        self._send(
+            socket,
+            route,
+            _protocol_error(
+                reply_to=message.id,
+                code="audio_ingress_error",
+                message="audio input runtime is unavailable",
+                retryable=True,
+            ),
+        )
+
+    def _cancel_audio_inputs(self, state: Optional[_RouteState]) -> None:
+        if state is None:
+            return
+        streams = tuple(state.audio_inputs.items())
+        state.audio_inputs.clear()
+        if self._voice_ingress is None:
+            return
+        for stream_id, stream in streams:
+            try:
+                self._voice_ingress.cancel(
+                    **self._voice_ingress_context(stream_id, stream)
+                )
+            except BaseException:
+                logger.exception("Failed to cancel voice ingress stream %s", stream_id)
+
+    def _drop_route_locked(self, route: bytes) -> Optional[_RouteState]:
+        state = self._routes.pop(route, None)
         self._route_outbound.pop(route, None)
         for turn_id, candidate in tuple(self._turn_routes.items()):
             if candidate == route:
                 self._turn_routes.pop(turn_id, None)
         for inflight in self._inflight.values():
             inflight.routes[:] = [candidate for candidate in inflight.routes if candidate != route]
+        return state
 
     def _drop_route(self, route: bytes) -> None:
         with self._lock:
-            self._drop_route_locked(route)
+            state = self._drop_route_locked(route)
+        self._cancel_audio_inputs(state)
 
     def _enqueue_outbound(self, route: bytes, message: ProtocolMessage) -> bool:
+        dropped_state = None
         with self._lock:
             if route not in self._routes:
                 return False
@@ -261,9 +368,11 @@ class ZaraZmqGateway:
             try:
                 outbound.put_nowait(message)
             except queue.Full:
-                self._drop_route_locked(route)
-                return False
-            return True
+                dropped_state = self._drop_route_locked(route)
+        if dropped_state is not None:
+            self._cancel_audio_inputs(dropped_state)
+            return False
+        return True
 
     def _receive(self, socket: zmq.Socket) -> None:
         frames = socket.recv_multipart()
@@ -350,6 +459,14 @@ class ZaraZmqGateway:
                 ),
             )
             return
+        if message.type in {
+            "audio.input.start",
+            "audio.input.chunk",
+            "audio.input.commit",
+            "audio.input.cancel",
+        }:
+            self._handle_audio_input(socket, route, state, message, decoded.payloads)
+            return
         if message.type in {"turn.submit", "turn.cancel"}:
             self._dispatch_runtime(socket, route, state, message)
             return
@@ -361,6 +478,158 @@ class ZaraZmqGateway:
                 code="not_implemented",
                 message="message is not implemented",
                 retryable=False,
+            ),
+        )
+
+    def _handle_audio_input(
+        self,
+        socket: zmq.Socket,
+        route: bytes,
+        state: _RouteState,
+        message: ProtocolMessage,
+        payloads: tuple[bytes, ...],
+    ) -> None:
+        stream_id = message.stream_id
+        if stream_id is None:
+            self._send(
+                socket,
+                route,
+                _protocol_error(
+                    reply_to=message.id,
+                    code="invalid_message",
+                    message="audio input requires stream id",
+                    retryable=False,
+                ),
+            )
+            return
+
+        stream = state.audio_inputs.get(stream_id)
+        if message.type == "audio.input.start":
+            if stream is not None:
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="audio_stream_already_open",
+                        message="audio input stream is already open",
+                        retryable=False,
+                    ),
+                )
+                return
+            stream = _AudioInputState(
+                principal=self._principal,
+                conversation_id=state.conversation_id,
+                trace_id=message.trace_id,
+            )
+            if self._voice_ingress is not None:
+                try:
+                    self._voice_ingress.start(
+                        **self._voice_ingress_context(stream_id, stream)
+                    )
+                except Exception:
+                    logger.exception("Voice ingress start failed for stream %s", stream_id)
+                    self._send_audio_ingress_error(socket, route, message)
+                    return
+            state.audio_inputs[stream_id] = stream
+            response_type = "audio.input.started"
+        elif message.type == "audio.input.chunk":
+            if stream is None:
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="audio_stream_not_open",
+                        message="audio input stream is not open",
+                        retryable=False,
+                    ),
+                )
+                return
+            if message.seq != stream.next_seq:
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="audio_sequence_error",
+                        message="audio input sequence is not contiguous",
+                        retryable=False,
+                    ),
+                )
+                return
+            if self._voice_ingress is not None:
+                try:
+                    self._voice_ingress.chunk(
+                        payloads[0],
+                        **self._voice_ingress_context(stream_id, stream),
+                        seq=message.seq,
+                    )
+                except queue.Full:
+                    self._send(
+                        socket,
+                        route,
+                        _protocol_error(
+                            reply_to=message.id,
+                            code="audio_backpressure",
+                            message="audio input is temporarily backpressured",
+                            retryable=True,
+                        ),
+                    )
+                    return
+                except Exception:
+                    logger.exception("Voice ingress chunk failed for stream %s", stream_id)
+                    self._send_audio_ingress_error(socket, route, message)
+                    return
+            stream.next_seq += 1
+            response_type = "audio.input.accepted"
+        else:
+            if stream is None:
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="audio_stream_not_open",
+                        message="audio input stream is not open",
+                        retryable=False,
+                    ),
+                )
+                return
+            if self._voice_ingress is not None:
+                ingress_context = self._voice_ingress_context(stream_id, stream)
+                try:
+                    if message.type == "audio.input.cancel":
+                        self._voice_ingress.cancel(**ingress_context)
+                    else:
+                        self._voice_ingress.commit(**ingress_context)
+                except Exception:
+                    logger.exception(
+                        "Voice ingress terminal operation failed for stream %s",
+                        stream_id,
+                    )
+                    self._send_audio_ingress_error(socket, route, message)
+                    return
+            state.audio_inputs.pop(stream_id, None)
+            response_type = (
+                "audio.input.cancelled"
+                if message.type == "audio.input.cancel"
+                else "audio.input.committed"
+            )
+
+        self._send(
+            socket,
+            route,
+            ProtocolMessage(
+                type=response_type,
+                id=_message_id(),
+                reply_to=message.id,
+                session_id=state.session_id,
+                conversation_id=state.conversation_id,
+                stream_id=stream_id,
+                seq=message.seq if message.type == "audio.input.chunk" else None,
+                timestamp_ns=_now_ns(),
+                payload_count=0,
             ),
         )
 
@@ -384,10 +653,50 @@ class ZaraZmqGateway:
                 ),
             )
             return
+
+        selected_audio_output = None
+        if "audio_output_formats" in body:
+            try:
+                offered_formats = _normalize_audio_output_formats(body["audio_output_formats"])
+            except ValueError:
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="invalid_message",
+                        message="invalid audio output format offer",
+                        retryable=False,
+                    ),
+                )
+                return
+            if self._audio_output_format not in offered_formats:
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="unsupported_audio_output",
+                        message="no compatible audio output format",
+                        retryable=False,
+                    ),
+                )
+                return
+            selected_audio_output = dict(self._audio_output_format)
+
         session_id = _message_id()
         with self._lock:
-            self._route_outbound.pop(route, None)
+            previous_state = self._drop_route_locked(route)
             self._routes[route] = _RouteState(session_id=session_id, ready=True)
+        self._cancel_audio_inputs(previous_state)
+        response_body = {
+            "version": 1,
+            "max_payload_frames": self._limits.max_payload_frames,
+            "max_payload_frame_bytes": self._limits.max_payload_frame_bytes,
+            "max_payload_bytes": self._limits.max_payload_bytes,
+        }
+        if selected_audio_output is not None:
+            response_body["audio_output_format"] = selected_audio_output
         self._send(
             socket,
             route,
@@ -398,12 +707,7 @@ class ZaraZmqGateway:
                 session_id=session_id,
                 timestamp_ns=_now_ns(),
                 payload_count=0,
-                body={
-                    "version": 1,
-                    "max_payload_frames": self._limits.max_payload_frames,
-                    "max_payload_frame_bytes": self._limits.max_payload_frame_bytes,
-                    "max_payload_bytes": self._limits.max_payload_bytes,
-                },
+                body=response_body,
             ),
         )
 
@@ -664,12 +968,19 @@ class _PendingKind(str, enum.Enum):
     STATUS = "status"
     CONVERSATION = "conversation"
     COMMAND = "command"
+    AUDIO = "audio"
 
 
 @dataclass
 class _Pending:
     kind: _PendingKind
     future: concurrent.futures.Future
+
+
+@dataclass(frozen=True)
+class _ClientOutbound:
+    message: ProtocolMessage
+    payloads: tuple[bytes, ...] = ()
 
 
 class ZmqZaraClient(ZaraClient):
@@ -682,6 +993,8 @@ class ZmqZaraClient(ZaraClient):
         context: Optional[zmq.Context] = None,
         config: Optional[TransportConfig] = None,
         limits: Optional[ProtocolLimits] = None,
+        voice_output=None,
+        audio_output_formats: Optional[list[dict[str, object]]] = None,
     ) -> None:
         if not isinstance(endpoint, str) or not endpoint.strip():
             raise ValueError("endpoint must be a non-empty string")
@@ -690,16 +1003,23 @@ class ZmqZaraClient(ZaraClient):
         self._owns_context = context is None
         self._config = config or TransportConfig()
         self._limits = limits or ProtocolLimits()
+        self._voice_output = voice_output
+        self._audio_output_formats = _normalize_audio_output_formats(
+            audio_output_formats or [_DEFAULT_AUDIO_OUTPUT_FORMAT]
+        )
+        self._audio_output_format: Optional[dict[str, object]] = None
         self._bus = bridge.RuntimeEventBus()
         self._state = ZaraClientState.NEW
         self._state_lock = threading.RLock()
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
-        self._outbound: queue.Queue[ProtocolMessage] = queue.Queue(maxsize=self._config.sndhwm)
+        self._outbound: queue.Queue[_ClientOutbound] = queue.Queue(maxsize=self._config.sndhwm)
         self._pending: dict[str, _Pending] = {}
         self._pending_lock = threading.RLock()
         self._session_id: Optional[str] = None
         self._started: concurrent.futures.Future = concurrent.futures.Future()
+        self._active_voice_outputs: dict[str, dict[str, object]] = {}
+        self._cancelled_voice_turns: OrderedDict[str, None] = OrderedDict()
 
     @property
     def state(self) -> ZaraClientState:
@@ -709,6 +1029,12 @@ class ZmqZaraClient(ZaraClient):
     @property
     def session_id(self) -> Optional[str]:
         return self._session_id
+
+    @property
+    def audio_output_format(self) -> Optional[dict[str, object]]:
+        if self._audio_output_format is None:
+            return None
+        return dict(self._audio_output_format)
 
     @property
     def is_alive(self) -> bool:
@@ -729,7 +1055,10 @@ class ZmqZaraClient(ZaraClient):
                 self._context = zmq.Context()
             self._state = ZaraClientState.STARTING
         self._session_id = None
+        self._audio_output_format = None
         self._outbound = queue.Queue(maxsize=self._config.sndhwm)
+        self._active_voice_outputs.clear()
+        self._cancelled_voice_turns.clear()
         self._stop.clear()
         self._started = concurrent.futures.Future()
         self._thread = threading.Thread(target=self._run, name="zara-zmq-client", daemon=True)
@@ -753,7 +1082,12 @@ class ZmqZaraClient(ZaraClient):
                         id=hello_id,
                         timestamp_ns=_now_ns(),
                         payload_count=0,
-                        body={"versions": [1]},
+                        body={
+                            "versions": [1],
+                            "audio_output_formats": [
+                                dict(format_spec) for format_spec in self._audio_output_formats
+                            ],
+                        },
                     ),
                     limits=self._limits,
                 )
@@ -791,10 +1125,16 @@ class ZmqZaraClient(ZaraClient):
     def _drain_client_outbound(self, socket: zmq.Socket) -> None:
         for _ in range(32):
             try:
-                message = self._outbound.get_nowait()
+                outbound = self._outbound.get_nowait()
             except queue.Empty:
                 return
-            socket.send_multipart(encode_message(message, limits=self._limits))
+            socket.send_multipart(
+                encode_message(
+                    outbound.message,
+                    payloads=outbound.payloads,
+                    limits=self._limits,
+                )
+            )
 
     def _receive(self, socket: zmq.Socket) -> None:
         frames = socket.recv_multipart()
@@ -807,7 +1147,74 @@ class ZmqZaraClient(ZaraClient):
                 return
             self._resolve_pending(pending, message)
             return
+        if self._handle_voice_output(message, decoded.payloads):
+            return
+        if message.type == "turn.cancelled":
+            self._cancel_voice_output(message)
         self._publish_runtime_event(message)
+
+    def _remember_cancelled_voice_turn(self, turn_id: str) -> None:
+        self._cancelled_voice_turns[turn_id] = None
+        self._cancelled_voice_turns.move_to_end(turn_id)
+        while len(self._cancelled_voice_turns) > self._config.idempotency_cache_size:
+            self._cancelled_voice_turns.popitem(last=False)
+
+    def _cancel_voice_output(self, message: ProtocolMessage) -> None:
+        turn_id = message.turn_id
+        if not turn_id:
+            return
+        self._stop_voice_output_turn(turn_id)
+
+    def _stop_voice_output_turn(self, turn_id: str) -> None:
+        common = self._active_voice_outputs.pop(turn_id, None)
+        self._remember_cancelled_voice_turn(turn_id)
+        if common is not None and self._voice_output is not None:
+            try:
+                self._voice_output.cancel(**common)
+            except Exception:
+                logger.exception("Voice output cancel failed for turn %s", turn_id)
+
+    def _barge_in_active_voice_outputs(self) -> None:
+        for turn_id in tuple(self._active_voice_outputs):
+            self._stop_voice_output_turn(turn_id)
+            self.submit(CancelTurn(turn_id=turn_id))
+
+    def _handle_voice_output(
+        self,
+        message: ProtocolMessage,
+        payloads: tuple[bytes, ...],
+    ) -> bool:
+        if message.type not in {
+            "audio.output.start",
+            "audio.output.chunk",
+            "audio.output.done",
+        }:
+            return False
+        turn_id = message.turn_id
+        if turn_id and turn_id in self._cancelled_voice_turns:
+            return True
+        if self._voice_output is None:
+            return True
+        common = {
+            "conversation_id": message.conversation_id,
+            "turn_id": turn_id,
+            "stream_id": message.stream_id,
+            "trace_id": message.trace_id,
+        }
+        if message.type == "audio.output.start":
+            output_format = dict(message.body or {})
+            if output_format != self._audio_output_format:
+                return True
+            if turn_id:
+                self._active_voice_outputs[turn_id] = common
+            self._voice_output.start(format=output_format, **common)
+        elif message.type == "audio.output.chunk":
+            self._voice_output.chunk(payloads[0], seq=message.seq, **common)
+        else:
+            if turn_id:
+                self._active_voice_outputs.pop(turn_id, None)
+            self._voice_output.finish(**common)
+        return True
 
     def _resolve_pending(self, pending: _Pending, message: ProtocolMessage) -> None:
         if message.type == "protocol.error":
@@ -829,6 +1236,24 @@ class ZmqZaraClient(ZaraClient):
                 pending.future.set_exception(ProtocolValidationError("invalid hello response"))
                 self._stop.set()
                 return
+            body = message.body or {}
+            try:
+                selected_audio_output = _normalize_audio_output_format(
+                    body.get("audio_output_format")
+                )
+            except ValueError:
+                pending.future.set_exception(
+                    ProtocolValidationError("invalid negotiated audio output format")
+                )
+                self._stop.set()
+                return
+            if selected_audio_output not in self._audio_output_formats:
+                pending.future.set_exception(
+                    ProtocolValidationError("server selected unadvertised audio output format")
+                )
+                self._stop.set()
+                return
+            self._audio_output_format = selected_audio_output
             self._session_id = message.session_id
             with self._state_lock:
                 self._state = ZaraClientState.READY
@@ -861,6 +1286,17 @@ class ZmqZaraClient(ZaraClient):
                 pending.future.set_result(
                     CommandReceipt(request_id=message.reply_to or "", turn_id=message.turn_id)
                 )
+            return
+        if pending.kind is _PendingKind.AUDIO:
+            if message.type not in {
+                "audio.input.started",
+                "audio.input.accepted",
+                "audio.input.committed",
+                "audio.input.cancelled",
+            }:
+                pending.future.set_exception(ProtocolValidationError("invalid audio input response"))
+            else:
+                pending.future.set_result(message)
 
     def _publish_runtime_event(self, message: ProtocolMessage) -> None:
         body = message.body or {}
@@ -902,7 +1338,13 @@ class ZmqZaraClient(ZaraClient):
         if event is not None:
             self._bus.publish(event)
 
-    def _request(self, message: ProtocolMessage, kind: _PendingKind) -> concurrent.futures.Future:
+    def _request(
+        self,
+        message: ProtocolMessage,
+        kind: _PendingKind,
+        *,
+        payloads: tuple[bytes, ...] = (),
+    ) -> concurrent.futures.Future:
         if self.state is not ZaraClientState.READY:
             raise ClientNotReady("client handshake is not ready")
         future = concurrent.futures.Future()
@@ -913,7 +1355,7 @@ class ZmqZaraClient(ZaraClient):
                 raise ClientBackpressureError("client pending request limit reached")
             self._pending[message.id] = _Pending(kind, future)
         try:
-            self._outbound.put_nowait(message)
+            self._outbound.put_nowait(_ClientOutbound(message, payloads))
         except queue.Full as error:
             with self._pending_lock:
                 self._pending.pop(message.id, None)
@@ -955,6 +1397,94 @@ class ZmqZaraClient(ZaraClient):
                 payload_count=0,
             ),
             _PendingKind.CONVERSATION,
+        )
+
+    def start_audio_input(
+        self,
+        stream_id: str,
+        *,
+        trace_id: Optional[str] = None,
+    ) -> concurrent.futures.Future:
+        self._barge_in_active_voice_outputs()
+        return self._request(
+            ProtocolMessage(
+                type="audio.input.start",
+                id=_message_id(),
+                session_id=self._session_id,
+                stream_id=stream_id,
+                trace_id=trace_id,
+                timestamp_ns=_now_ns(),
+                payload_count=0,
+                body={
+                    "codec": AUDIO_INPUT_CODEC,
+                    "sample_rate": AUDIO_INPUT_SAMPLE_RATE,
+                    "channels": AUDIO_INPUT_CHANNELS,
+                    "frame_samples": AUDIO_INPUT_FRAME_SAMPLES,
+                },
+            ),
+            _PendingKind.AUDIO,
+        )
+
+    def send_audio_input(
+        self,
+        stream_id: str,
+        *,
+        seq: int,
+        pcm: bytes,
+        trace_id: Optional[str] = None,
+    ) -> concurrent.futures.Future:
+        return self._request(
+            ProtocolMessage(
+                type="audio.input.chunk",
+                id=_message_id(),
+                session_id=self._session_id,
+                stream_id=stream_id,
+                seq=seq,
+                trace_id=trace_id,
+                content_type=AUDIO_INPUT_CONTENT_TYPE,
+                timestamp_ns=_now_ns(),
+                payload_count=1,
+            ),
+            _PendingKind.AUDIO,
+            payloads=(pcm,),
+        )
+
+    def commit_audio_input(
+        self,
+        stream_id: str,
+        *,
+        trace_id: Optional[str] = None,
+    ) -> concurrent.futures.Future:
+        return self._request(
+            ProtocolMessage(
+                type="audio.input.commit",
+                id=_message_id(),
+                session_id=self._session_id,
+                stream_id=stream_id,
+                trace_id=trace_id,
+                timestamp_ns=_now_ns(),
+                payload_count=0,
+            ),
+            _PendingKind.AUDIO,
+        )
+
+    def cancel_audio_input(
+        self,
+        stream_id: str,
+        *,
+        trace_id: Optional[str] = None,
+    ) -> concurrent.futures.Future:
+        return self._request(
+            ProtocolMessage(
+                type="audio.input.cancel",
+                id=_message_id(),
+                session_id=self._session_id,
+                stream_id=stream_id,
+                trace_id=trace_id,
+                timestamp_ns=_now_ns(),
+                payload_count=0,
+            ),
+            _PendingKind.AUDIO,
         )
 
     def submit(self, command: RuntimeCommand) -> concurrent.futures.Future:
@@ -1005,6 +1535,7 @@ class ZmqZaraClient(ZaraClient):
             if thread.is_alive():
                 raise TimeoutError("client owner thread did not stop for reconnect")
         self._session_id = None
+        self._audio_output_format = None
         with self._state_lock:
             self._state = ZaraClientState.STOPPED
         return self.start()

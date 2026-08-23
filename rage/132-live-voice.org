@@ -1,0 +1,190 @@
+#+title: RAGE Work Log - Zara issue 132
+
+* Run identity
+- Consumed issue :: #132
+- Branch :: =rage/132-live-voice=
+- RAGE start commit :: =1a076e9921228d9d0eb18ea63225a1862f81023d=
+- Start meaning :: Exact =master= commit immediately after #131 / PR #148 merged. Immutable for this run.
+
+* Iteration 1
+** Research
+- Dedicated artifact :: =rage/132-live-voice-research.org=.
+- Current protocol already reserves voice/audio message families and already carries opaque binary multipart payloads, but audio messages have no message-specific semantic validation and the gateway returns =not_implemented=.
+- Existing =StreamingVAD= consumes exactly 512 samples at 16 kHz; PCM s16le mono maps that directly to a 1024-byte / 32 ms wire frame.
+- PyZMQ/ZeroMQ evidence confirms ROUTER/DEALER multipart framing is appropriate. The newer CLIENT/SERVER family disallows multipart messages, so replacing the established socket family would conflict with ZARA/1 binary audio.
+- HWM is a message-count queue bound, not an application byte/utterance bound; per-stream lifecycle/sequence/resource limits remain mandatory.
+- Research changed the inherited loose-chunk direction: baseline v1 input should use exact 32 ms PCM frames rather than variable chunks that force gateway buffering/reframing.
+
+** Design
+- Dedicated artifact :: =rage/132-live-voice-design.org=.
+- Baseline ingress :: =pcm_s16le=, mono, 16 kHz, 512 samples / 1024 bytes per =audio.input.chunk=.
+- Protocol layer validates message-local shape/geometry; principal/route-scoped stream state validates start/chunk/commit/cancel lifecycle and contiguous sequence numbers.
+- Stream state is volatile and non-resumable across daemon restart; durable conversation continuity remains separate.
+- Gateway validates/routes only. Existing runtime/StreamingVAD/TurnCoordinator paths own STT, cancellation, model/tool/TTS work.
+- Barge-in must map to canonical turn cancellation and stale output filtering, not a daemon-only cancellation path.
+
+** Planned TDD
+- Slice 1 :: strict message-local audio framing/codec/geometry contract.
+- Slice 2 :: per-route stream lifecycle and contiguous sequence enforcement.
+- Slice 3 :: injected bounded voice-ingress handoff preserving principal/conversation/trace correlation.
+- Slice 4 :: disconnect/backpressure/two-principal/barge-in/stale-output behavior.
+- Slice 5 :: ZaraClient voice API and binary output framing.
+- Slice 6 :: focused script, changed-code coverage review, full repo/Nix/exact-head CI gates.
+
+** TDD red candidate 1
+- Tests-only commit :: =df1f8762dc2b7d9962fcbf12e832753d85b5c6a7=.
+- Added =t/test_voice_protocol.py= before production changes.
+- Expected red reason :: current generic protocol accepts under-specified/malformed reserved audio messages and does not enforce exact baseline PCM geometry.
+- Pull request :: #185 (draft).
+- GitHub Actions :: CI #375 / run =32607216920= established the expected protocol red before implementation.
+
+** Implementation slice 1
+- Production protocol implementation added strict baseline PCM message-local validation after the red proof.
+- Exact candidate =003484c74e0491d2a314d43c7981d37a01427fe3= passed CI #381 / run =32608128277=, including the full repository job and both shared-mic distro probes.
+- This green authorizes advancing to the stateful gateway slice; it does not authorize merge because #132 acceptance is broader.
+
+** TDD red candidate 2
+- Tests-only commit :: =6734794d04a024b1c0881c8b228411104c78a5f1=.
+- Added =t/test_voice_zmq_transport.py= before touching =zara/zmq_transport.py=.
+- Required behavior :: route-scoped stream start/chunk/commit lifecycle, contiguous sequence enforcement, duplicate-start rejection, late-after-terminal rejection, and identical stream ids remaining independent on distinct DEALER routes.
+- Expected red reason :: current gateway dispatch has no =audio.input.*= handler and therefore returns =not_implemented= after handshake.
+- GitHub Actions :: exact tests-only head =275c63de47b1e0b590fe79c65b2900514335af3c=, CI #383 / run =32609765257= completed expected RED: 4 failed, 912 passed, 14 warnings. All four failures are the new gateway lifecycle tests and fail because =audio.input.*= returns =not_implemented=. ZARA/1 protocol/transport remained 91/91 green; Arch and Ubuntu shared-mic jobs passed.
+
+** Implementation slice 2
+- Authorized by CI #383 red evidence, =zara/zmq_transport.py= now owns minimal route-local audio input state: one sequence cursor per =stream_id= inside the ROUTER route state.
+- =audio.input.start= opens only a previously closed route/stream pair; =audio.input.chunk= accepts only the exact next sequence and does not advance on a gap; =audio.input.commit= terminally removes stream state.
+- Re-handshake and route teardown naturally destroy stream state with =_RouteState=, so identical stream ids remain independent across DEALER routes and daemon restart remains non-resumable as designed.
+- No audio buffering, STT dispatch, second voice runtime, or cancel behavior was added ahead of its own TDD slice.
+- Production implementation commit :: =b11fafb128f34de277525eee9e127f52bb2d84a2=.
+- Failed green candidate :: exact head =7a116a0151fca26bfc0d49d05b7e9b779bf3b824=, CI #385 / run =32612384320= completed RED with 4 failed, 912 passed, 14 warnings; both shared-mic jobs passed and the existing ZARA/1 phase remained 91/91 green.
+- Failure evidence :: all four lifecycle tests reached =audio.input.start= but received no reply. The new handler constructed acknowledgements absent from the protocol's closed server allowlist, so encoding terminated the gateway thread.
+- Architecture verdict :: ordinary closed-schema integration defect, not a design falsification.
+- Fix commit :: =efb5e771c1ca9efde7cb6ddde1b0fd0c4be6ad00= registers only the acknowledgements required by the red tests.
+- Exact green evidence :: head =7420e66aa6417b7e0ccda63e69c18b3fd7d487e4= passed CI #387 / run =32614790638=. Slice 2 is green and slice 3 is authorized.
+
+** TDD red candidate 3
+- Tests-only commit :: =19b0278ae1a7ed3bd4497708cf12c75983218687=.
+- Added the first bounded voice-ingress handoff contract before production changes.
+- Required behavior :: an injected ingress receives validated start/chunk/commit operations in order; PCM bytes are passed only on the chunk call; principal, active conversation, stream id and trace id are preserved; sequence is preserved on chunk.
+- Expected red reason :: =ZaraZmqGateway.__init__= has no =voice_ingress= seam and the current audio handler receives only the decoded envelope, so it cannot hand opaque PCM payloads to a bounded runtime adapter.
+- Authoritative red :: exact tests-only head =77c4cce00bf6c60e4d2ef73eb32a2ed1b65615d9=, CI #389 / run =32617188987= completed RED with 1 failed, 916 passed, 14 warnings. The only failure was =test_validated_audio_is_handed_to_injected_ingress_with_owner_correlation=, failing at construction with =TypeError: ZaraZmqGateway.__init__() got an unexpected keyword argument 'voice_ingress'=.
+- Regression evidence :: ZARA/1 protocol/transport remained 91/91 green; Arch and Ubuntu shared-mic probes both passed. This is clean feature-red evidence and authorizes the minimum slice-3 production implementation.
+
+** Implementation slice 3
+- Production commit :: =063c5e3ace9fd33524bb99363f0fba73e1846eab=.
+- =ZaraZmqGateway= now accepts an injected =voice_ingress= boundary; no default STT/model stack is created by the transport.
+- The gateway preserves =DecodedMessage.payloads= through validated audio dispatch. Only =audio.input.chunk= forwards raw PCM bytes; start and commit carry metadata only.
+- Ingress correlation is server-owned principal plus active route conversation, stream id, trace id, and chunk sequence. No client-supplied principal field exists.
+- The existing protocol validator remains the geometry/payload gate before ingress invocation; lifecycle and sequence checks still run before any corresponding ingress call.
+- No cancellation, disconnect callback, buffering policy, STT, barge-in, output framing, or client voice API was implemented ahead of later tests.
+- Exact green evidence :: head =b789d6261a9cf7665d7475a675b45991b3736a7f= passed CI #391 / run =32619810588=. Full repository tests, flake check, package build, and both shared-mic distro probes passed. Slice 4 is authorized.
+
+** TDD red candidate 4a - explicit input cancellation
+- Tests-only commit :: =850e969c1ad22872cbfe852f322131a48cf3d7bf=.
+- Added =t/test_voice_zmq_cancel.py= before production cancellation behavior.
+- Required behavior :: =audio.input.cancel= is terminal, notifies the injected ingress with the same principal/conversation/stream/trace correlation, rejects later chunks as closed, missing-stream cancellation returns the same =audio_stream_not_open= shape as other terminal operations, and cancelling one route-local stream cannot close an identical stream id on another route.
+- Expected red reason :: the protocol validator already admits =audio.input.cancel=, but =ZaraZmqGateway._receive= does not dispatch it and the closed server acknowledgement vocabulary does not yet include =audio.input.cancelled=.
+- Authoritative red :: exact tests/log head =7c18bcbbb47984500baa38e214db20cbf489bc19=, CI #393 / run =32622261524= completed expected RED with 3 failed, 917 passed, 14 warnings. Every failure is one of the new cancel lifecycle tests: explicit cancel received =protocol.error=, missing-stream cancel returned =not_implemented= rather than =audio_stream_not_open=, and cancelling one of two route-local streams was not implemented. Existing ZARA/1 remained 91/91 green; both shared-mic distro probes passed.
+- Architecture verdict :: clean feature-red evidence. Existing route-local stream ownership remains valid; only the explicit terminal transition/acknowledgement is missing.
+
+** Implementation slice 4a
+- Protocol acknowledgement commit :: =366699391b18ce6d7a82e1945d126112d4bcb5f1= adds only =audio.input.cancelled= to the closed server vocabulary.
+- Gateway implementation commit :: =2139d527420f7a85d90c2aaf5caff7d6cd0f5900= dispatches =audio.input.cancel= through the existing route-local handler, requires an open stream, invokes the injected ingress cancel callback with server-owned correlation, removes only that route/stream pair, and returns =audio.input.cancelled=.
+- Failed-green exact head :: =63bcd26dea378d4013e301a11aa50c0aaf1a9209=, CI #396 / run =32622688005=. Both shared-mic jobs passed, but the main gate stopped in the pre-existing ZARA/1 protocol suite because =id=" space"= no longer raised =ProtocolValidationError=.
+- Root cause :: the acknowledgement edit replaced =zara/protocol.py= from a stale file body and accidentally dropped the already-green printable-ASCII/no-whitespace token validator. This regression is unrelated to cancellation semantics and does not falsify the slice-4 architecture.
+- Repair commit :: =53827ddc81166c8a1340e3e20a9e391843eda6ee= restores the exact pre-slice green protocol implementation from =7c18bcbbb47984500baa38e214db20cbf489bc19= and changes only the closed server vocabulary to retain =audio.input.cancelled=.
+- No disconnect cleanup, buffering/backpressure policy, barge-in, stale-output filtering, egress framing, or client voice API was added ahead of its own red proof.
+- Exact green evidence :: head =9f00a48ccc5128c92758f6db8798161e14480f48= passed CI #403 / run =32625116002=. Full repository/Nix/package/shared-mic gates passed, authorizing the next degraded-ingress behavior slice.
+
+** TDD red candidate 4b - degraded ingress containment
+- Tests-only commit :: =1f5b662162a08c6276c304273cf3bfe7baf24cdb=.
+- Added deterministic failures for unexpected injected voice-ingress exceptions before production containment changes.
+- Required behavior :: a start/chunk adapter failure becomes bounded =audio_ingress_error= with retryable=true, does not terminate the ROUTER owner loop, and a failed chunk must not advance =next_seq= so the exact sequence can be retried.
+- Authoritative red :: exact tests-only head =1f5b662162a08c6276c304273cf3bfe7baf24cdb=, CI #404 / run =32625797311= completed expected RED with 2 failed, 924 passed, 14 warnings. Both failures are the new degraded-ingress tests timing out because the uncaught =RuntimeError= terminates the gateway owner thread. Existing ZARA/1 remained 91/91 green; Arch and Ubuntu shared-mic probes passed.
+- Architecture verdict :: clean degraded-path red. The injected boundary remains valid; the defect is missing route-local exception containment around adapter calls.
+
+** Implementation slice 4b
+- Production commit :: =4ad166bb5476aa8071b1d6689fe93488568b1c77=.
+- Start now invokes the ingress before publishing route-local stream state; on adapter failure it returns bounded =audio_ingress_error= and leaves no phantom open stream.
+- Chunk preserves the existing =queue.Full= -> =audio_backpressure= contract, while other adapter exceptions return =audio_ingress_error= without advancing =next_seq=.
+- Failure logging records only operation and stream id; raw PCM payload bytes are never interpolated into the log or error body.
+- Containment is deliberately local to tested start/chunk adapter failures rather than wrapping the entire ROUTER loop or weakening closed protocol validation.
+- Green evidence :: pending exact-head GitHub Actions after this implementation/log update.
+
+** TDD red candidate 5a - ZaraClient binary audio ingress API
+- Tests-only exact head :: =bf6f12d9efa84e6b9715e26b44081d92068051ae=.
+- Added =t/test_voice_zmq_client.py= before production client voice methods.
+- Required behavior :: the =ZmqZaraClient= surface starts an input stream, sends one exact 1024-byte PCM frame as an opaque multipart payload, and commits the stream while preserving active conversation, stream id, trace id, and sequence to the already-green server-side voice ingress boundary.
+- Authoritative red :: CI #409 / run =32630248838= completed expected RED with exactly 1 failed, 928 passed, 14 warnings. The sole failure is =test_zara_client_streams_binary_pcm_with_trace_and_conversation_correlation= raising =AttributeError: 'ZmqZaraClient' object has no attribute 'start_audio_input'= before any production voice-client API exists.
+- Regression evidence :: existing ZARA/1 protocol/transport stayed 91/91 green; Arch and Ubuntu shared-mic probes both passed.
+- Architecture verdict :: clean feature-red. The existing service boundary remains valid; the missing behavior is client-side request construction plus atomic message/payload queueing, not a reason to bypass =ZaraClient= or alter the gateway/runtime ownership model.
+
+** Implementation slice 5a
+- Production commit :: =959c4c45eaffe02a8496831d606454ab31e3ed8b=.
+- =ZmqZaraClient= now constructs strict =audio.input.start/chunk/commit/cancel= requests while preserving =trace_id= and stream/sequence correlation.
+- Client outbound queue entries now keep a =ProtocolMessage= and its binary payload tuple together atomically; =encode_message= emits multipart PCM directly and no base64/JSON audio path was introduced.
+- Audio acknowledgements resolve as bounded protocol responses without bypassing the existing =ZaraClient= service implementation.
+- Exact green evidence :: head =959c4c45eaffe02a8496831d606454ab31e3ed8b= passed CI #411 / run =32631167803=. Full repository tests, =nix flake check=, packaged Zara build, and both Arch/Ubuntu shared-mic probes passed.
+- This authorizes the remaining slice-5 output framing/negotiation work; #132 is not merge-ready yet.
+
+** TDD red candidate 5b - binary audio output framing
+- Tests-only exact head :: =000347da1f02b5af1afc8392602412e628a5da4d=.
+- Added =t/test_voice_output_protocol.py= before production output validation.
+- Authoritative red :: CI #413 / run =32631668171= completed expected RED with 9 failed, 930 passed, 14 warnings. All nine failures were the new output contract cases; existing ZARA/1 stayed 91/91 green and both shared-mic distro probes passed.
+- Required behavior :: =audio.output.start/chunk/done= require turn+stream correlation; start declares strict positive pcm_s16le format metadata; chunk requires sequence, one opaque even-length PCM payload, and the closed audio content type; done is metadata-only.
+- Architecture verdict :: clean feature-red at the protocol boundary. No runtime/TTS design was falsified.
+
+** Implementation slice 5b
+- Production commit :: =c88e72642c9122fed73ece6057a64a307ee65871=.
+- Added closed server vocabulary and strict message-local validation for =audio.output.start/chunk/done= without inventing TTS/runtime behavior.
+- Output PCM remains opaque multipart bytes; no JSON/base64 path was introduced.
+- Exact green evidence :: CI #414 / run =32632393939= completed SUCCESS on =c88e72642c9122fed73ece6057a64a307ee65871=. Full repository tests (939 total), =nix flake check=, packaged Zara build, and both Arch/Ubuntu shared-mic probes passed.
+
+** TDD red candidate 5c - client-owned playback handoff
+- Tests-only commit :: =bdd9cb210a7e6db063f28fa276b3e3f1507a81c5=.
+- Added =t/test_voice_zmq_output_client.py= before production client egress behavior.
+- Required behavior :: unsolicited validated =audio.output.start/chunk/done= messages are delivered to an injected client-owned playback boundary; raw PCM plus conversation, turn, stream, trace, and sequence correlation survive unchanged.
+- Authoritative red :: CI #415 / run =32632928159= completed expected RED with exactly 1 failed, 939 passed, 14 warnings. The sole failure is construction with =TypeError: ZmqZaraClient.__init__() got an unexpected keyword argument 'voice_output'=.
+- Regression evidence :: existing ZARA/1 remained 91/91 green and both Arch/Ubuntu shared-mic jobs passed.
+- Architecture verdict :: clean feature-red. The existing =ZaraClient= / DEALER owner-thread boundary remains correct; production simply lacks the injected playback sink and decoded-payload handoff.
+
+** Gate
+- Focused red/green tests per behavior.
+- =nix develop -c bash scripts/test-voice-transport.sh= once the focused gate exists.
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- Changed-code coverage review with useful deterministic tests for reachable gaps.
+- Exact-head GitHub Actions required before merge.
+
+** Outcome
+- In progress.
+
+** Acceptance audit after CI #431
+- Exact head =d7b948a9ffb69529023708eea0f786c716b48f9b= passed CI #431 completely, but exact-head green was not treated as sufficient proof of issue acceptance.
+- Gap 1 :: issue #132 requires a focused non-interactive voice transport script. PR #185 had no issue-specific script. Added =scripts/test-zara1-voice.sh= and composed it into =scripts/test-zara1-protocol.sh= so the complete repository gate executes the focused voice matrix instead of relying on an ad-hoc developer command.
+- The focused voice gate itself passed 58 tests inside CI #434 before the later full-suite red, proving the harness is executable and bounded.
+- Gap 2 :: #132 explicitly requires output PCM rate/channel negotiation in =hello=/=hello.ok=. Current gateway hello returned only protocol/payload limits and =ZmqZaraClient= advertised only =versions=[1]=; no output format was negotiated or stored.
+- Gap 3 :: authenticated remote voice is not wired through =SecureZaraZmqGateway=: its capability mapping treats =audio.input.*= as unknown/unauthorized and its constructor does not inject =voice_ingress= into the base gateway. This would make the local voice tests green while the #130 authenticated daemon path rejects live microphone traffic.
+- Architecture verdict :: these are acceptance/integration gaps, not evidence against the established ROUTER/DEALER + ZaraClient + injected-ingress architecture. Design updated to make negotiation and authenticated voice explicit slices rather than merging around them.
+
+** TDD red candidate 6 - output PCM handshake negotiation
+- Tests-only commit :: =9121980894f078443adb54d5f48c3b8517c92efc=.
+- Added =t/test_voice_zmq_negotiation.py= before production changes.
+- Required behavior :: voice-capable client advertises supported =codec/sample_rate/channels= formats; gateway selects an exact compatible configured format in =hello.ok=; explicit incompatible offer fails closed without a session; client records only a format it offered.
+- Compatibility design :: legacy/non-audio clients that omit =audio_output_formats= retain #129 handshake compatibility. Voice-capable =ZmqZaraClient= negotiates explicitly.
+- Authoritative red :: CI #434 / run =32643067541= completed expected RED in the full pytest phase with exactly 3 failed, 949 passed, 14 warnings. Both gateway tests failed at construction because =audio_output_format= was not accepted; the client test failed because =audio_output_formats= was not accepted.
+- Regression evidence :: the existing ZARA/1 protocol/transport phase remained 91/91 green; the newly composed focused voice gate passed 58 tests; Arch and Ubuntu shared-mic probes both passed. This is clean feature-red evidence.
+
+** Implementation slice 6 - output PCM handshake negotiation
+- Production commit :: =d4830639ac6040fe616688225347731d17294644=.
+- Added closed normalization for exact =pcm_s16le= output format objects, default baseline 24 kHz mono output, gateway exact-match selection, fail-closed explicit incompatibility, client advertisement, negotiated-format storage, and reconnect reset.
+- Legacy hello that omits =audio_output_formats= still receives a non-audio =hello.ok= without a selected voice format.
+- =scripts/test-zara1-voice.sh= now includes =t/test_voice_zmq_negotiation.py= so the issue-focused gate cannot omit negotiation regressions.
+- CI #435 for the production commit was superseded/cancelled by subsequent gate/design commits before completion; no green claim is made from that run.
+- Current design also requires a subsequent TDD enforcement test proving =audio.output.start= must match the negotiated format before playback; negotiation metadata alone is insufficient acceptance.
+
+** Next authorized work after slice 6 green
+- Tests-first negotiated-output enforcement at the client playback boundary.
+- Tests-first =SecureZaraZmqGateway= voice authorization/injection: start/chunk/commit use existing =TURN_SUBMIT= authority, cancel uses =TURN_CANCEL=, revoked/missing capability is rejected before ingress, and identical stream ids across authenticated principals remain isolated.
+- Only after those slices and exact-head full repo/Nix/package/shared-mic green may #185 leave draft/merge.

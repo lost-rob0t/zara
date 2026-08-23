@@ -85,6 +85,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         context: Optional[zmq.Context] = None,
         config: Optional[TransportConfig] = None,
         limits=None,
+        voice_ingress=None,
     ) -> None:
         if not isinstance(security_registry, SecurityRegistry):
             raise TypeError("security_registry must be SecurityRegistry")
@@ -100,6 +101,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             context=context,
             config=config,
             limits=limits,
+            voice_ingress=voice_ingress,
         )
         self._security_registry = security_registry
         self._curve_server = curve_server
@@ -109,6 +111,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         self._route_user_ids: dict[bytes, str] = {}
         self._route_principal_ids: dict[bytes, str] = {}
         self._runtime_quota_holds: set[tuple[str, str]] = set()
+        self._hello_route_resets: set[bytes] = set()
 
     @staticmethod
     def _capability_for(message_type: str) -> Capability:
@@ -116,9 +119,14 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             return Capability.SESSION_BASIC
         if message_type == "runtime.status":
             return Capability.RUNTIME_STATUS
-        if message_type == "turn.submit":
+        if message_type in {
+            "turn.submit",
+            "audio.input.start",
+            "audio.input.chunk",
+            "audio.input.commit",
+        }:
             return Capability.TURN_SUBMIT
-        if message_type == "turn.cancel":
+        if message_type in {"turn.cancel", "audio.input.cancel"}:
             return Capability.TURN_CANCEL
         raise AuthorizationDenied("unknown daemon message capability")
 
@@ -197,15 +205,29 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             self._runtime_quota_holds.clear()
             self._route_user_ids.clear()
             self._route_principal_ids.clear()
+            self._hello_route_resets.clear()
             socket.close(self._config.linger_ms)
             authenticator.stop()
 
-    def _drop_route_locked(self, route: bytes) -> None:
-        principal_id = self._route_principal_ids.pop(route, None)
-        self._route_user_ids.pop(route, None)
-        if principal_id is not None:
-            self._quotas.release_connection(principal_id)
-        super()._drop_route_locked(route)
+    def _drop_route_locked(self, route: bytes):
+        if route not in self._hello_route_resets:
+            principal_id = self._route_principal_ids.pop(route, None)
+            self._route_user_ids.pop(route, None)
+            if principal_id is not None:
+                self._quotas.release_connection(principal_id)
+        return super()._drop_route_locked(route)
+
+    def _handle_hello(self, socket: zmq.Socket, route: bytes, message: ProtocolMessage) -> None:
+        # The base gateway resets application/session state on every hello so an
+        # abandoned voice stream is cancelled. A secure route is already bound
+        # and charged to its authenticated principal before that reset. Preserve
+        # the security binding/quota while allowing only the base route state to
+        # be replaced.
+        self._hello_route_resets.add(route)
+        try:
+            super()._handle_hello(socket, route, message)
+        finally:
+            self._hello_route_resets.discard(route)
 
     def _receive(self, socket: zmq.Socket) -> None:
         raw_frames = socket.recv_multipart(copy=False)

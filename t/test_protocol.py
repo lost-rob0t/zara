@@ -60,14 +60,7 @@ def test_golden_hello_encoding_is_deterministic():
 
 
 def test_valid_message_round_trips_with_binary_payloads():
-    original = message(
-        type="audio.input.chunk",
-        payload_count=2,
-        stream_id="audio-1",
-        seq=4,
-        content_type="audio/pcm",
-        body={"codec": "pcm_s16le"},
-    )
+    original = message(payload_count=2)
     payloads = (b"12345678", b"abcd")
 
     frames = encode_message(original, payloads=payloads, limits=LIMITS)
@@ -139,23 +132,22 @@ def test_unknown_message_type_fails_closed():
         decode_message([PROTOCOL_MARKER, frame], limits=LIMITS)
 
 
-def test_audio_names_are_reserved_but_not_dynamically_dispatched():
+def test_audio_names_are_reserved_and_fail_closed_without_live_contract():
     assert "audio.input.chunk" in RESERVED_MESSAGE_TYPES
 
-    decoded = decode_message(
-        [
-            PROTOCOL_MARKER,
-            envelope_frame(
-                type="audio.input.chunk",
-                stream_id="s1",
-                seq=1,
-                content_type="audio/pcm",
-            ),
-        ],
-        limits=LIMITS,
-    )
-
-    assert decoded.message.type == "audio.input.chunk"
+    with pytest.raises(ProtocolValidationError):
+        decode_message(
+            [
+                PROTOCOL_MARKER,
+                envelope_frame(
+                    type="audio.input.chunk",
+                    stream_id="s1",
+                    seq=1,
+                    content_type="audio/pcm",
+                ),
+            ],
+            limits=LIMITS,
+        )
 
 
 @pytest.mark.parametrize(

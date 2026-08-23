@@ -469,17 +469,22 @@ class ZaraServer:
         self._endpoint_override = endpoint
         self._gateway_factory = gateway_factory or self._build_default_gateway
         self._gateway = None
+        self._voice_ingress = None
         self._principal = principal or PrincipalContext.local_owner()
         self._state = ServerState.NEW
         self._lock = threading.RLock()
 
     def _build_default_gateway(self, endpoint: str, *, supervisor, principal):
+        from zara.voice_runtime import RuntimeVoiceIngress
         from zara.zmq_transport import ZaraZmqGateway
 
+        voice_ingress = RuntimeVoiceIngress(supervisor, principal=principal)
+        self._voice_ingress = voice_ingress
         return ZaraZmqGateway(
             endpoint,
             supervisor=supervisor,
             principal=principal,
+            voice_ingress=voice_ingress,
         )
 
     @property
@@ -500,6 +505,18 @@ class ZaraServer:
             return self._endpoint_override
         runtime_dir = self._runtime_dir_override or lease_path.parent
         return default_zmq_endpoint(runtime_dir)
+
+    def _close_voice_ingress(self) -> bool:
+        voice_ingress = self._voice_ingress
+        self._voice_ingress = None
+        if voice_ingress is None:
+            return True
+        try:
+            voice_ingress.close(timeout=self._shutdown_timeout)
+            return True
+        except BaseException:
+            logger.exception("Failed to stop daemon voice ingress cleanly")
+            return False
 
     def start(self) -> ServerState:
         with self._lock:
@@ -538,6 +555,7 @@ class ZaraServer:
                 except BaseException:
                     logger.exception("Failed to close ZARA/1 gateway after startup failure")
             self._gateway = None
+            self._close_voice_ingress()
             if supervisor_started:
                 try:
                     self._supervisor.shutdown()
@@ -554,6 +572,7 @@ class ZaraServer:
                 return True
             if self._state is ServerState.NEW:
                 self._state = ServerState.STOPPED
+                self._close_voice_ingress()
                 self._lease.release()
                 return True
             self._state = ServerState.STOPPING
@@ -568,6 +587,7 @@ class ZaraServer:
                 except BaseException:
                     logger.exception("Failed to stop ZARA/1 gateway cleanly")
                     clean = False
+            clean = self._close_voice_ingress() and clean
             try:
                 clean = self._supervisor.shutdown() and clean
             except BaseException:
