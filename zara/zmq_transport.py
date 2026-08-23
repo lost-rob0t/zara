@@ -28,6 +28,7 @@ from zara.protocol import (
     AUDIO_INPUT_CONTENT_TYPE,
     AUDIO_INPUT_FRAME_SAMPLES,
     AUDIO_INPUT_SAMPLE_RATE,
+    AUDIO_OUTPUT_CODEC,
     ProtocolLimits,
     ProtocolMessage,
     ProtocolValidationError,
@@ -42,6 +43,13 @@ from zara.server import PrincipalContext
 
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_AUDIO_OUTPUT_FORMAT = {
+    "codec": AUDIO_OUTPUT_CODEC,
+    "sample_rate": 24000,
+    "channels": 1,
+}
+_AUDIO_OUTPUT_FORMAT_KEYS = frozenset(_DEFAULT_AUDIO_OUTPUT_FORMAT)
 
 
 class ClientNotReady(RuntimeError):
@@ -61,6 +69,34 @@ class ProtocolRemoteError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.retryable = retryable
+
+
+def _normalize_audio_output_format(value: object) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != _AUDIO_OUTPUT_FORMAT_KEYS:
+        raise ValueError("audio output format requires codec, sample_rate and channels")
+    codec = value.get("codec")
+    sample_rate = value.get("sample_rate")
+    channels = value.get("channels")
+    if codec != AUDIO_OUTPUT_CODEC:
+        raise ValueError(f"audio output codec must be {AUDIO_OUTPUT_CODEC}")
+    if type(sample_rate) is not int or sample_rate <= 0:
+        raise ValueError("audio output sample_rate must be a positive integer")
+    if type(channels) is not int or channels <= 0:
+        raise ValueError("audio output channels must be a positive integer")
+    return {
+        "codec": codec,
+        "sample_rate": sample_rate,
+        "channels": channels,
+    }
+
+
+def _normalize_audio_output_formats(values: object) -> list[dict[str, object]]:
+    if not isinstance(values, (list, tuple)) or not values:
+        raise ValueError("audio_output_formats must be a non-empty sequence")
+    normalized = [_normalize_audio_output_format(value) for value in values]
+    if len({tuple(item.items()) for item in normalized}) != len(normalized):
+        raise ValueError("audio_output_formats must not contain duplicates")
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -176,6 +212,7 @@ class ZaraZmqGateway:
         config: Optional[TransportConfig] = None,
         limits: Optional[ProtocolLimits] = None,
         voice_ingress=None,
+        audio_output_format: Optional[dict[str, object]] = None,
     ) -> None:
         if not isinstance(endpoint, str) or not endpoint.strip():
             raise ValueError("endpoint must be a non-empty string")
@@ -189,6 +226,9 @@ class ZaraZmqGateway:
         self._config = config or TransportConfig()
         self._limits = limits or ProtocolLimits()
         self._voice_ingress = voice_ingress
+        self._audio_output_format = _normalize_audio_output_format(
+            audio_output_format or _DEFAULT_AUDIO_OUTPUT_FORMAT
+        )
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._started: concurrent.futures.Future = concurrent.futures.Future()
@@ -611,11 +651,50 @@ class ZaraZmqGateway:
                 ),
             )
             return
+
+        selected_audio_output = None
+        if "audio_output_formats" in body:
+            try:
+                offered_formats = _normalize_audio_output_formats(body["audio_output_formats"])
+            except ValueError:
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="invalid_message",
+                        message="invalid audio output format offer",
+                        retryable=False,
+                    ),
+                )
+                return
+            if self._audio_output_format not in offered_formats:
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="unsupported_audio_output",
+                        message="no compatible audio output format",
+                        retryable=False,
+                    ),
+                )
+                return
+            selected_audio_output = dict(self._audio_output_format)
+
         session_id = _message_id()
         with self._lock:
             previous_state = self._drop_route_locked(route)
             self._routes[route] = _RouteState(session_id=session_id, ready=True)
         self._cancel_audio_inputs(previous_state)
+        response_body = {
+            "version": 1,
+            "max_payload_frames": self._limits.max_payload_frames,
+            "max_payload_frame_bytes": self._limits.max_payload_frame_bytes,
+            "max_payload_bytes": self._limits.max_payload_bytes,
+        }
+        if selected_audio_output is not None:
+            response_body["audio_output_format"] = selected_audio_output
         self._send(
             socket,
             route,
@@ -626,12 +705,7 @@ class ZaraZmqGateway:
                 session_id=session_id,
                 timestamp_ns=_now_ns(),
                 payload_count=0,
-                body={
-                    "version": 1,
-                    "max_payload_frames": self._limits.max_payload_frames,
-                    "max_payload_frame_bytes": self._limits.max_payload_frame_bytes,
-                    "max_payload_bytes": self._limits.max_payload_bytes,
-                },
+                body=response_body,
             ),
         )
 
@@ -918,6 +992,7 @@ class ZmqZaraClient(ZaraClient):
         config: Optional[TransportConfig] = None,
         limits: Optional[ProtocolLimits] = None,
         voice_output=None,
+        audio_output_formats: Optional[list[dict[str, object]]] = None,
     ) -> None:
         if not isinstance(endpoint, str) or not endpoint.strip():
             raise ValueError("endpoint must be a non-empty string")
@@ -927,6 +1002,10 @@ class ZmqZaraClient(ZaraClient):
         self._config = config or TransportConfig()
         self._limits = limits or ProtocolLimits()
         self._voice_output = voice_output
+        self._audio_output_formats = _normalize_audio_output_formats(
+            audio_output_formats or [_DEFAULT_AUDIO_OUTPUT_FORMAT]
+        )
+        self._audio_output_format: Optional[dict[str, object]] = None
         self._bus = bridge.RuntimeEventBus()
         self._state = ZaraClientState.NEW
         self._state_lock = threading.RLock()
@@ -950,6 +1029,12 @@ class ZmqZaraClient(ZaraClient):
         return self._session_id
 
     @property
+    def audio_output_format(self) -> Optional[dict[str, object]]:
+        if self._audio_output_format is None:
+            return None
+        return dict(self._audio_output_format)
+
+    @property
     def is_alive(self) -> bool:
         thread = self._thread
         return bool(thread and thread.is_alive())
@@ -968,6 +1053,7 @@ class ZmqZaraClient(ZaraClient):
                 self._context = zmq.Context()
             self._state = ZaraClientState.STARTING
         self._session_id = None
+        self._audio_output_format = None
         self._outbound = queue.Queue(maxsize=self._config.sndhwm)
         self._active_voice_outputs.clear()
         self._cancelled_voice_turns.clear()
@@ -994,7 +1080,12 @@ class ZmqZaraClient(ZaraClient):
                         id=hello_id,
                         timestamp_ns=_now_ns(),
                         payload_count=0,
-                        body={"versions": [1]},
+                        body={
+                            "versions": [1],
+                            "audio_output_formats": [
+                                dict(format_spec) for format_spec in self._audio_output_formats
+                            ],
+                        },
                     ),
                     limits=self._limits,
                 )
@@ -1140,6 +1231,24 @@ class ZmqZaraClient(ZaraClient):
                 pending.future.set_exception(ProtocolValidationError("invalid hello response"))
                 self._stop.set()
                 return
+            body = message.body or {}
+            try:
+                selected_audio_output = _normalize_audio_output_format(
+                    body.get("audio_output_format")
+                )
+            except ValueError:
+                pending.future.set_exception(
+                    ProtocolValidationError("invalid negotiated audio output format")
+                )
+                self._stop.set()
+                return
+            if selected_audio_output not in self._audio_output_formats:
+                pending.future.set_exception(
+                    ProtocolValidationError("server selected unadvertised audio output format")
+                )
+                self._stop.set()
+                return
+            self._audio_output_format = selected_audio_output
             self._session_id = message.session_id
             with self._state_lock:
                 self._state = ZaraClientState.READY
@@ -1421,6 +1530,7 @@ class ZmqZaraClient(ZaraClient):
             if thread.is_alive():
                 raise TimeoutError("client owner thread did not stop for reconnect")
         self._session_id = None
+        self._audio_output_format = None
         with self._state_lock:
             self._state = ZaraClientState.STOPPED
         return self.start()
