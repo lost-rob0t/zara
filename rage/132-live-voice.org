@@ -56,7 +56,11 @@
 - =audio.input.start= opens only a previously closed route/stream pair; =audio.input.chunk= accepts only the exact next sequence and does not advance on a gap; =audio.input.commit= terminally removes stream state.
 - Re-handshake and route teardown naturally destroy stream state with =_RouteState=, so identical stream ids remain independent across DEALER routes and daemon restart remains non-resumable as designed.
 - No audio buffering, STT dispatch, second voice runtime, or cancel behavior was added ahead of its own TDD slice.
-- Production implementation commit :: =b11fafb128f34de277525eee9e127f52bb2d84a2=. Exact-head CI must prove this slice green before further behavior is added.
+- Production implementation commit :: =b11fafb128f34de277525eee9e127f52bb2d84a2=.
+- Failed green candidate :: exact head =7a116a0151fca26bfc0d49d05b7e9b779bf3b824=, CI #385 / run =32612384320= completed RED with 4 failed, 912 passed, 14 warnings; both shared-mic jobs passed and the existing ZARA/1 phase remained 91/91 green.
+- Failure evidence :: all four lifecycle tests reached =audio.input.start= but received no reply. The new handler constructed =audio.input.started=/=audio.input.accepted=/=audio.input.committed= acknowledgements that were absent from the protocol's closed =SERVER_MESSAGE_TYPES=. =encode_message= therefore raised =ProtocolValidationError= inside =_send=, escaping the ROUTER owner loop and terminating the gateway thread. A pre-start chunk still returned =audio_stream_not_open= because that path emits the already-allowlisted =protocol.error=.
+- Architecture verdict :: ordinary closed-schema integration defect, not a design falsification. Route-scoped ownership/lifecycle state remains sound; the coherent minimum fix is to register the three slice-2 server acknowledgements in the closed protocol allowlist rather than weaken validation or catch-and-hide encoder errors.
+- Fix commit :: =efb5e771c1ca9efde7cb6ddde1b0fd0c4be6ad00= registers only the acknowledgements already required by the red tests. Exact-head CI must prove the slice green before slice 3 begins.
 
 ** Gate
 - Focused red/green tests per behavior.
