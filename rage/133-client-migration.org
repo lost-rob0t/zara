@@ -66,7 +66,15 @@
 - Default standalone desktop now constructs =InProcessZaraClient= rather than =RuntimeHost= directly; an explicit =client= can be injected, while =host= remains only as a temporary compatibility seam for existing standalone embedders/tests.
 - =DesktopController= owns =client= lifecycle, retains =host= only as a compatibility alias, starts through =client.start()=, and exits through =client.close()= when available. Closing the desktop no longer sends =ShutdownRuntime= to a potentially shared daemon.
 - Cleanup is idempotent across explicit Quit and Qt =aboutToQuit=.
-- Exact-head green evidence :: pending.
+
+** TDD slice 2 - first green attempt disproved by adjacent compatibility regression
+- Candidate head :: =bca489f04a79fc18df85faf8dd43ffdef2780d5c=.
+- GitHub Actions :: CI #460 / run =32655533967=.
+- Result :: RED at pytest phase: 2 failed, 961 passed, 14 warnings; existing ZARA/1 91/91 PASS; Arch and Ubuntu shared-mic jobs PASS.
+- Both new slice-2 lifecycle tests were green. The only failures were adjacent legacy launch-surface tests whose monkeypatched =create_application(argv, *, host=None)= doubles rejected an unconditional =client=None= keyword forwarded by =start_desktop=.
+- Architecture verdict :: not disproven. The service-boundary ownership behavior is correct; this is a narrow call-shape compatibility defect introduced by the migration seam.
+- Minimum repair :: =7d6b23c91b888689ead3fe8ebd098feb2d1c3520= forwards =client= from =start_desktop= only when an explicit client is supplied, preserving the historical host-only call shape otherwise.
+- Exact-head green evidence after repair :: pending.
 
 ** Gate
 - Focused red/green tests per behavior.
