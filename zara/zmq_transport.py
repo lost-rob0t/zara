@@ -551,10 +551,18 @@ class ZaraZmqGateway:
                 return
             if self._voice_ingress is not None:
                 ingress_context = self._voice_ingress_context(stream_id, stream)
-                if message.type == "audio.input.cancel":
-                    self._voice_ingress.cancel(**ingress_context)
-                else:
-                    self._voice_ingress.commit(**ingress_context)
+                try:
+                    if message.type == "audio.input.cancel":
+                        self._voice_ingress.cancel(**ingress_context)
+                    else:
+                        self._voice_ingress.commit(**ingress_context)
+                except Exception:
+                    logger.exception(
+                        "Voice ingress terminal operation failed for stream %s",
+                        stream_id,
+                    )
+                    self._send_audio_ingress_error(socket, route, message)
+                    return
             state.audio_inputs.pop(stream_id, None)
             response_type = (
                 "audio.input.cancelled"
