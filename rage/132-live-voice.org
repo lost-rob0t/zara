@@ -8,22 +8,46 @@
 
 * Iteration 1
 ** Research
-- Status :: pending; no research/design/test/production changes performed before this immutable start record.
+- Dedicated artifact :: =rage/132-live-voice-research.org=.
+- Current protocol already reserves voice/audio message families and already carries opaque binary multipart payloads, but audio messages have no message-specific semantic validation and the gateway returns =not_implemented=.
+- Existing =StreamingVAD= consumes exactly 512 samples at 16 kHz; PCM s16le mono maps that directly to a 1024-byte / 32 ms wire frame.
+- PyZMQ/ZeroMQ evidence confirms ROUTER/DEALER multipart framing is appropriate. The newer CLIENT/SERVER family disallows multipart messages, so replacing the established socket family would conflict with ZARA/1 binary audio.
+- HWM is a message-count queue bound, not an application byte/utterance bound; per-stream lifecycle/sequence/resource limits remain mandatory.
+- Research changed the inherited loose-chunk direction: baseline v1 input should use exact 32 ms PCM frames rather than variable chunks that force gateway buffering/reframing.
 
 ** Design
-- Pending evidence-derived design.
+- Dedicated artifact :: =rage/132-live-voice-design.org=.
+- Baseline ingress :: =pcm_s16le=, mono, 16 kHz, 512 samples / 1024 bytes per =audio.input.chunk=.
+- Protocol layer validates message-local shape/geometry; principal/route-scoped stream state validates start/chunk/commit/cancel lifecycle and contiguous sequence numbers.
+- Stream state is volatile and non-resumable across daemon restart; durable conversation continuity remains separate.
+- Gateway validates/routes only. Existing runtime/StreamingVAD/TurnCoordinator paths own STT, cancellation, model/tool/TTS work.
+- Barge-in must map to canonical turn cancellation and stale output filtering, not a daemon-only cancellation path.
 
 ** Planned TDD
-- Pending acceptance-to-test mapping after research.
+- Slice 1 :: strict message-local audio framing/codec/geometry contract.
+- Slice 2 :: per-route stream lifecycle and contiguous sequence enforcement.
+- Slice 3 :: injected bounded voice-ingress handoff preserving principal/conversation/trace correlation.
+- Slice 4 :: disconnect/backpressure/two-principal/barge-in/stale-output behavior.
+- Slice 5 :: ZaraClient voice API and binary output framing.
+- Slice 6 :: focused script, changed-code coverage review, full repo/Nix/exact-head CI gates.
+
+** TDD red candidate 1
+- Tests-only commit :: =df1f8762dc2b7d9962fcbf12e832753d85b5c6a7=.
+- Added =t/test_voice_protocol.py= before production changes.
+- Expected red reason :: current generic protocol accepts under-specified/malformed reserved audio messages and does not enforce exact baseline PCM geometry.
+- Pull request :: #185 (draft).
+- GitHub Actions :: CI #375 / run =32607216920= currently running at this log update; shared-mic Arch and Ubuntu jobs already green. Production code remains unchanged pending authoritative red evidence.
 
 ** Implementation
-- None yet.
+- None yet; waiting for TDD red candidate 1 evidence.
 
 ** Gate
 - Focused red/green tests per behavior.
+- =nix develop -c bash scripts/test-voice-transport.sh= once the focused gate exists.
 - =nix develop -c bash scripts/test-all.sh=
 - =nix flake check=
 - =nix build=
+- Changed-code coverage review with useful deterministic tests for reachable gaps.
 - Exact-head GitHub Actions required before merge.
 
 ** Outcome
