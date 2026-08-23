@@ -1,0 +1,182 @@
+#+title: RAGE Design - Issue 132 Live Voice over ZARA/1
+
+* Problem boundary
+Move live microphone/playback traffic across the existing authenticated ZARA/1 service boundary while preserving Zara's existing runtime, streaming STT/VAD, turn coordinator and cancellation semantics. Clients own physical input/output devices. The daemon owns runtime work. This issue does not implement #29 provider-level phrase TTS, #133 reconnect UX/client migration, or #134's final release matrix.
+
+* Selected architecture
+** Closed audio wire contract
+Use the existing ZARA/1 envelope plus opaque multipart payload frames.
+
+Baseline input format is fixed for v1:
+- codec :: =pcm_s16le=
+- sample rate :: 16000 Hz
+- channels :: 1
+- one =audio.input.chunk= payload frame per chunk
+- =content_type= :: =audio/pcm=
+- chunk bytes must be non-empty, even, and bounded by a voice-specific maximum no larger than protocol frame limits
+
+Message state:
+1. =audio.input.start= creates one stream for the authenticated route/principal; requires unique =stream_id= and initial =seq= 0; no payload.
+2. =audio.input.chunk= requires the active =stream_id=, exact next monotonic =seq=, exactly one PCM payload, and matching trace/conversation correlation. Accepted chunks advance sequence once.
+3. =audio.input.commit= closes ingress normally; no further chunks are accepted.
+4. =audio.input.cancel= closes ingress as cancelled and clears buffered/reblocked PCM; idempotent cancellation may return the same terminal state without resurrecting work.
+5. Output =start/chunk/done= mirrors stream/turn correlation and sequence rules; clients reject stale output for cancelled/replaced turns.
+
+Gaps, duplicates, reordered chunks, chunks before start, and chunks after commit/cancel fail with a bounded protocol/state error. They are not silently repaired because that would alter speech.
+
+** Payload-bearing transport item
+Introduce a small immutable internal wire item containing:
+- =ProtocolMessage=
+- tuple of payload bytes
+
+Use it in both gateway and client outbound queues. =_send= and drain paths encode the same envelope+payloads through =encode_message=. No second socket, serializer or framing format.
+
+** Route-owned stream state
+Extend route state with bounded ingress metadata (active stream id, expected seq, trace/conversation correlation and terminal status). State is route/principal scoped, so identical stream labels on different authenticated routes cannot collide.
+
+Route drop/disconnect explicitly cancels/discards its active audio stream and removes queued output association. Restart does not resume an in-flight stream.
+
+** Runtime command boundary
+Add typed in-process runtime commands rather than calling STT from the gateway:
+- =BeginAudioInput(stream_id, conversation_id, trace_id, format)=
+- =FeedAudioInput(stream_id, seq, pcm)=
+- =CommitAudioInput(stream_id)=
+- =CancelAudioInput(stream_id, turn_id?)=
+
+Exact names may be shortened to match existing conventions, but ownership is fixed: RuntimeHost validates lifecycle/correlation and delegates to a voice-ingress service/backend method. Binary bytes are in-process command data, never JSON/base64.
+
+RuntimeHost remains the canonical turn owner. The voice service converts accepted PCM s16le to float32 and reblocks to exact 512-sample frames for =StreamingTranscriber=. Speech/transcript events are adapted into runtime events. A final transcript enters the same canonical =SubmitTurn= execution path; partial transcript never executes irreversible work.
+
+** Client device boundary and barge-in
+The client owns microphone capture and speaker playback. When speech starts while output is playing:
+1. stop/flush local playback immediately;
+2. mark the old output stream/turn stale locally;
+3. send =turn.cancel= / audio cancellation tied to the canonical turn/stream;
+4. RuntimeHost cancels through TurnCoordinator/backend hook;
+5. client drops any late output chunks/text for the cancelled turn;
+6. new ingress stream produces a new canonical turn.
+
+Server-side =BargeInMonitor= is not used as a global microphone monitor in daemon mode. Its cancellation semantics remain reusable at client edges where local playback and mic state coexist.
+
+** Output transport boundary
+Add runtime events capable of carrying bounded audio output metadata/payload at the transport adapter boundary. Do not implement #29's provider phrase scheduler. If the current TTS path exposes complete PCM/audio, #132 may chunk it for transport; when #29 lands, the same output event/wire contract carries phrase-streamed chunks without protocol change.
+
+* Rejected alternatives
+** Second ZeroMQ audio socket
+Rejected: duplicates authentication, routing, lifecycle, HWM/backpressure and reconnect state and creates synchronization races with canonical turns.
+
+** Base64 audio inside JSON
+Rejected: issue explicitly requires binary multipart payloads; base64 increases memory/CPU and defeats existing native framing.
+
+** Gateway-owned VAD/STT
+Rejected: bypasses RuntimeHost, principal runtime ownership and TurnCoordinator cancellation, creating a daemon-only voice stack.
+
+** Global server microphone/playback
+Rejected: incompatible with multi-user/device ownership and principal isolation.
+
+** Silently reorder/repair chunk sequence
+Rejected: changes audio semantics and makes replay/stale bugs invisible. Fail boundedly and restart a stream when necessary.
+
+** Swap ROUTER/DEALER for CLIENT/SERVER
+Rejected: existing authenticated asynchronous routing works and multipart payloads are central to this contract; changing socket pattern is unrelated architectural churn.
+
+* Invariants
+1. Physical mic/speaker ownership is client-side in daemon mode.
+2. Every audio stream is scoped to an authenticated route/principal and one conversation/trace context.
+3. Binary audio is never base64 JSON and never included in ordinary logs/audit/errors.
+4. At most one active ingress stream per route in the initial implementation; replacement requires explicit cancel/terminal transition first.
+5. Accepted input sequence is strictly monotonic with no duplicate/reordered repair.
+6. No bytes reach STT before start/format/sequence validation.
+7. Only final transcript can trigger a canonical turn.
+8. RuntimeHost/TurnCoordinator owns canonical turn creation and cancellation.
+9. Cancelled/replaced turns cannot emit playable stale audio or mutate newer state.
+10. Generic request idempotency cache is not used as an audio-chunk replay buffer.
+11. Per-route ingress/outbound queues and buffered audio are finite.
+12. Disconnect/restart destroys in-flight stream state; durable conversation continuity is separate.
+13. #29 may improve production of output chunks without changing this wire contract.
+
+* Lifecycle/state ownership
+** Wire ingress state
+=idle -> active -> committed= or =idle -> active -> cancelled=.
+Only explicit new start returns terminal route to =active= with a new stream id. Disconnect forces terminal cancellation/cleanup.
+
+** Runtime ingress state
+RuntimeHost/voice service mirrors the active stream. It owns reblocking buffer and StreamingTranscriber instance/session. Final transcript closes transcription and invokes canonical turn submission exactly once.
+
+** Output state
+=idle -> started(turn,stream) -> chunks(seq...) -> done=, or =started -> cancelled/stale=. Client playback state is authoritative for whether bytes are actually audible; server state is authoritative for canonical turn cancellation.
+
+* Threat/failure analysis
+- forged principal/user field :: existing protocol top-level schema/auth principal injection rejects client-authoritative owner ids; audio methods never accept principal strings.
+- stream collision :: route-scoped state; same labels on another principal remain independent.
+- memory exhaustion :: voice-specific byte/chunk bounds, one active ingress stream/route, bounded queue/reblock buffer; do not concatenate unbounded raw input.
+- slow reader :: per-route outbound queue; overflow drops/cancels only that route/stream, never blocks another route.
+- malformed PCM :: reject before conversion on empty/odd/oversized payload or wrong format.
+- duplicate/reorder/gap :: explicit state error, no feed.
+- disconnect mid-utterance :: cancel stream/transcriber and any derived active turn if correlation exists; remove route mappings.
+- cancellation race :: TurnCoordinator active check remains stale-result gate; client also filters output by active turn/stream.
+- late callback after restart :: existing generation checks plus stream terminal state suppress stale outbound work.
+- STT failure :: emit bounded runtime/voice error and terminal stream state; no generic successful transcript.
+- output queue overrun :: mark/drop affected route and stale output rather than unbounded buffering.
+- raw audio leakage :: never interpolate payload bytes in exceptions/logs/audit; tests capture logs/errors.
+
+* Compatibility/migration
+- Generic ZARA/1 framing remains version 1 because audio families were already reserved in #129; this issue activates and constrains them rather than adding an incompatible major.
+- =hello.ok= adds bounded audio capability metadata while retaining existing fields. Old clients ignoring unknown =body= keys continue to work because envelope body is message-specific JSON, not dispatch authority.
+- Existing text clients and RuntimeHost submit/cancel behavior remain unchanged.
+- Standalone/local voice remains available; client migration is #133.
+- No in-flight audio session is migrated/resumed across daemon restart.
+
+* Acceptance-to-test map
+** Protocol validation
+- golden start/chunk/commit/cancel and output frames;
+- wrong/missing stream id/seq/content type/payload count;
+- empty/odd/oversized PCM;
+- exact sequence duplicate/gap/reorder behavior.
+
+** Transport payload preservation
+- client -> gateway binary frame arrives byte-exact at runtime command seam;
+- runtime audio output -> client payload event byte-exact;
+- queued wire items preserve payloads under concurrent ordinary text traffic;
+- queue full/slow route does not block another route.
+
+** Runtime/STT integration
+- deterministic fake transcriber receives reblocked 512-sample float32 chunks;
+- partial transcript publishes but does not submit a turn;
+- final transcript creates exactly one canonical turn;
+- cancel/disconnect prevents later transcript/turn creation;
+- STT failure is bounded and recoverable for a later stream.
+
+** Barge-in/stale output
+- local client playback stop occurs before upstream cancellation completion;
+- cancel reaches canonical RuntimeHost turn;
+- late old-turn audio/text is ignored;
+- new stream/turn proceeds normally.
+
+** Multi-principal/isolation
+- A/B identical stream ids have independent state and payloads;
+- A slow/cancelled/disconnected stream does not alter B;
+- no cross-principal output routing.
+
+** Lifecycle/security
+- disconnect mid-utterance, daemon restart mid-session, route replacement;
+- no raw audio bytes in captured logs/audit/error text;
+- format negotiation is bounded and only advertises implemented baseline.
+
+* Exact gate
+- focused protocol/audio transport/runtime tests for each red/green slice;
+- =nix develop -c bash scripts/test-live-voice-zara1.sh=;
+- existing ZARA/1 protocol/security/isolation tests;
+- =nix develop -c bash scripts/test-all.sh=;
+- =nix flake check=;
+- =nix build=;
+- inspect changed-code behavioral coverage and add deterministic tests for reachable branches;
+- exact final head GitHub Actions green and mergeable before merge.
+
+* First TDD slice
+Make the closed audio framing contract real before any production transport code:
+1. add deterministic protocol tests for =audio.input.start/chunk/commit/cancel= required fields/payload semantics and baseline PCM validation;
+2. run exact tests and record expected RED because current generic protocol accepts malformed reserved audio envelopes;
+3. add minimum message-specific validator in =zara/protocol.py=;
+4. rerun focused tests to GREEN;
+5. only then proceed to payload-bearing transport queue and runtime commands.
