@@ -14,6 +14,12 @@ from typing import Any, Mapping, Sequence
 
 
 PROTOCOL_MARKER = b"ZARA/1"
+AUDIO_INPUT_CONTENT_TYPE = "audio/pcm;codec=pcm_s16le"
+AUDIO_INPUT_CODEC = "pcm_s16le"
+AUDIO_INPUT_SAMPLE_RATE = 16000
+AUDIO_INPUT_CHANNELS = 1
+AUDIO_INPUT_FRAME_SAMPLES = 512
+AUDIO_INPUT_FRAME_BYTES = AUDIO_INPUT_FRAME_SAMPLES * 2
 
 CLIENT_MESSAGE_TYPES = frozenset(
     {
@@ -82,6 +88,12 @@ _ALLOWED_ENVELOPE_KEYS = frozenset(
 )
 _ALLOWED_FLAGS = frozenset({"idempotent", "resume"})
 _TYPE_RE = re.compile(r"^[a-z][a-z0-9]*(?:\.[a-z0-9]+)*$")
+_AUDIO_INPUT_START_BODY = {
+    "codec": AUDIO_INPUT_CODEC,
+    "sample_rate": AUDIO_INPUT_SAMPLE_RATE,
+    "channels": AUDIO_INPUT_CHANNELS,
+    "frame_samples": AUDIO_INPUT_FRAME_SAMPLES,
+}
 
 
 class ZaraProtocolError(ValueError):
@@ -264,6 +276,66 @@ def _validate_body(value: Any) -> dict[str, Any] | None:
     return value
 
 
+def _validate_audio_input_envelope(message: ProtocolMessage) -> None:
+    if message.type not in {
+        "audio.input.start",
+        "audio.input.chunk",
+        "audio.input.commit",
+        "audio.input.cancel",
+    }:
+        return
+
+    if message.stream_id is None:
+        raise ProtocolValidationError(f"{message.type} requires stream_id")
+
+    if message.type == "audio.input.start":
+        if message.payload_count != 0:
+            raise ProtocolValidationError("audio.input.start does not accept payload frames")
+        if message.seq is not None:
+            raise ProtocolValidationError("audio.input.start does not accept seq")
+        if message.content_type is not None:
+            raise ProtocolValidationError("audio.input.start does not accept content_type")
+        if dict(message.body or {}) != _AUDIO_INPUT_START_BODY:
+            raise ProtocolValidationError(
+                "audio.input.start requires pcm_s16le mono 16000 Hz 512-sample geometry"
+            )
+        return
+
+    if message.type == "audio.input.chunk":
+        if message.seq is None:
+            raise ProtocolValidationError("audio.input.chunk requires seq")
+        if message.content_type != AUDIO_INPUT_CONTENT_TYPE:
+            raise ProtocolValidationError(
+                f"audio.input.chunk content_type must be {AUDIO_INPUT_CONTENT_TYPE!r}"
+            )
+        if message.payload_count != 1:
+            raise ProtocolValidationError("audio.input.chunk requires exactly one payload frame")
+        if message.body is not None:
+            raise ProtocolValidationError("audio.input.chunk does not accept body")
+        return
+
+    if message.seq is not None:
+        raise ProtocolValidationError(f"{message.type} does not accept seq")
+    if message.payload_count != 0:
+        raise ProtocolValidationError(f"{message.type} does not accept payload frames")
+    if message.content_type is not None:
+        raise ProtocolValidationError(f"{message.type} does not accept content_type")
+    if message.body is not None:
+        raise ProtocolValidationError(f"{message.type} does not accept body")
+
+
+def _validate_audio_input_payloads(
+    message: ProtocolMessage,
+    payloads: Sequence[bytes],
+) -> None:
+    if message.type != "audio.input.chunk":
+        return
+    if len(payloads) != 1 or len(payloads[0]) != AUDIO_INPUT_FRAME_BYTES:
+        raise ProtocolValidationError(
+            f"audio.input.chunk payload must be exactly {AUDIO_INPUT_FRAME_BYTES} bytes"
+        )
+
+
 def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> ProtocolMessage:
     unknown = set(data) - _ALLOWED_ENVELOPE_KEYS
     if unknown:
@@ -292,7 +364,7 @@ def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> Pr
     if seq is not None:
         seq = _validate_nonnegative_int("seq", seq)
 
-    return ProtocolMessage(
+    message = ProtocolMessage(
         type=message_type,
         id=request_id,
         timestamp_ns=timestamp_ns,
@@ -308,6 +380,8 @@ def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> Pr
         flags=_validate_flags(data.get("flags")),
         body=_validate_body(data.get("body")),
     )
+    _validate_audio_input_envelope(message)
+    return message
 
 
 def _validate_payloads(
@@ -387,6 +461,7 @@ def decode_message(
         expected_count=message.payload_count,
         limits=limits,
     )
+    _validate_audio_input_payloads(message, payloads)
     return DecodedMessage(message=message, payloads=payloads)
 
 
@@ -405,6 +480,7 @@ def encode_message(
         limits=limits,
     )
     data = _message_to_mapping(message, limits)
+    _validate_audio_input_payloads(message, normalized_payloads)
     try:
         envelope = json.dumps(
             data,
@@ -421,6 +497,12 @@ def encode_message(
 
 
 __all__ = [
+    "AUDIO_INPUT_CHANNELS",
+    "AUDIO_INPUT_CODEC",
+    "AUDIO_INPUT_CONTENT_TYPE",
+    "AUDIO_INPUT_FRAME_BYTES",
+    "AUDIO_INPUT_FRAME_SAMPLES",
+    "AUDIO_INPUT_SAMPLE_RATE",
     "CLIENT_MESSAGE_TYPES",
     "DecodedMessage",
     "KNOWN_MESSAGE_TYPES",
