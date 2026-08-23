@@ -27,5 +27,15 @@
 - Existing ZARA/1 idempotency, principal isolation, voice-device ownership, and shared-mic regression gates remain green.
 - No Qt-specific protocol, second RuntimeHost/provider stack, or Prolog-RLM path was introduced.
 
+* Exact-head gate and branch-protection evidence
+- Evidence head after this file was introduced :: =c9c6bc7f318f2c8abd8190919e693188e7a2472e=.
+- GitHub Actions :: CI #482 / run =32672017193= completed PASS on that exact head.
+- Repository test job :: PASS, including full tests, =nix flake check=, and packaged Zara build.
+- Shared mic / Arch Linux :: PASS.
+- Shared mic / Ubuntu 24.04 :: PASS.
+- PR readiness transition :: #188 was marked ready only after CI #482 passed; no review threads existed.
+- First merge attempt :: GitHub rejected the merge because branch protection reported required status check =test= as expected after the draft-to-ready transition, despite CI #482 being green on the unchanged SHA.
+- Resolution :: preserve the protection failure as evidence and create this append-only evidence update so the now-ready PR receives a fresh exact-head pull-request check. Do not bypass branch protection.
+
 * Merge rule
-This evidence file itself changes the PR head, so CI #481 is historical evidence only after this commit. Merge remains forbidden until GitHub Actions is green on the new exact head containing this record. The merge SHA and final issue/epic/roadmap reconciliation are post-merge evidence and must not be invented here.
+CI #481 and #482 are historical evidence after this update. Merge remains forbidden until GitHub Actions is green on the new exact head containing this branch-protection evidence. The merge SHA and final issue/epic/roadmap reconciliation are post-merge evidence and must not be invented here.
