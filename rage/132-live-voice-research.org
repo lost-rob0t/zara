@@ -13,6 +13,18 @@ Issue #132 moves the existing voice pipeline across ZARA/1. The client owns micr
 - =ZaraClient= / ZMQ client is already the service-facing seam established by #128/#129. Audio methods should extend that boundary rather than expose RuntimeHost.
 - #131 merged immediately before this run, so principal isolation is available as a required ownership primitive.
 
+* Prior daemon research reconciliation
+The daemon baseline document is not present on =master=, but it remains recoverable from branch =research/daemon-zeromq-voice-service= at =docs/research/001-daemon-zeromq-voice-service.md=. It independently established the constraints this issue inherits:
+- DEALER client <-> ROUTER daemon for asynchronous private traffic;
+- =ZARA/1= + JSON envelope + opaque binary multipart payloads;
+- =stream_id= / monotonic =seq= / =content_type= correlation;
+- baseline microphone input signed 16-bit little-endian mono PCM at 16 kHz;
+- audio chunks are bounded and are not replayed across disconnects; gaps are explicit;
+- physical voice devices belong to clients, not a process-global daemon;
+- the daemon must expose and preserve the existing RuntimeHost command/event boundary rather than wire transport directly to STT/TTS/providers.
+
+This issue-local research therefore does not replace the baseline. It tightens one previously loose point using shipped Zara behavior: because =StreamingVAD= already requires exact 512-sample frames, v1 ingress can use exact 1024-byte/32 ms PCM chunks and avoid a second buffering/reframing layer in the gateway.
+
 * Upstream / protocol evidence
 - PyZMQ =send_multipart= preserves a multipart application message and automatically applies =SNDMORE= to all but the final frame. ZARA/1's binary payload design therefore fits ROUTER/DEALER without base64 conversion. Reference: https://pyzmq.readthedocs.io/en/latest/api/zmq.html
 - PyZMQ/libzmq HWM is message-count backpressure, not a byte budget, and socket option changes generally apply only to subsequent bind/connect operations. Application-level per-stream byte/chunk bounds are still necessary.
