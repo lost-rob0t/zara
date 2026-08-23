@@ -31,6 +31,20 @@ class FakeSupervisor:
         return future
 
 
+class RecordingVoiceIngress:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def start(self, **kwargs):
+        self.calls.append(("start", kwargs))
+
+    def chunk(self, payload: bytes, **kwargs):
+        self.calls.append(("chunk", payload, kwargs))
+
+    def commit(self, **kwargs):
+        self.calls.append(("commit", kwargs))
+
+
 @pytest.fixture
 def zmq_context():
     context = zmq.Context()
@@ -77,7 +91,7 @@ def hello(socket: zmq.Socket) -> None:
     assert response.type == "hello.ok"
 
 
-def voice(message_type: str, *, request_id: str, stream_id: str = "mic-1", seq=None, payload_count=0, content_type=None, body=None):
+def voice(message_type: str, *, request_id: str, stream_id: str = "mic-1", seq=None, payload_count=0, content_type=None, body=None, trace_id=None):
     return ProtocolMessage(
         type=message_type,
         id=request_id,
@@ -87,19 +101,21 @@ def voice(message_type: str, *, request_id: str, stream_id: str = "mic-1", seq=N
         seq=seq,
         content_type=content_type,
         body=body,
+        trace_id=trace_id,
     )
 
 
-def start_message(request_id="start", stream_id="mic-1"):
+def start_message(request_id="start", stream_id="mic-1", trace_id=None):
     return voice(
         "audio.input.start",
         request_id=request_id,
         stream_id=stream_id,
+        trace_id=trace_id,
         body={"codec": "pcm_s16le", "sample_rate": 16000, "channels": 1, "frame_samples": 512},
     )
 
 
-def chunk_message(seq: int, request_id=None, stream_id="mic-1"):
+def chunk_message(seq: int, request_id=None, stream_id="mic-1", trace_id=None):
     return voice(
         "audio.input.chunk",
         request_id=request_id or f"chunk-{seq}",
@@ -107,17 +123,22 @@ def chunk_message(seq: int, request_id=None, stream_id="mic-1"):
         seq=seq,
         payload_count=1,
         content_type=CONTENT_TYPE,
+        trace_id=trace_id,
     )
 
 
-def make_gateway(zmq_context, transport_config, name):
+def make_gateway(zmq_context, transport_config, name, *, voice_ingress=None):
     address = endpoint(name)
+    kwargs = {}
+    if voice_ingress is not None:
+        kwargs["voice_ingress"] = voice_ingress
     gateway = ZaraZmqGateway(
         address,
         supervisor=FakeSupervisor(),
         principal=PrincipalContext("user:voice"),
         context=zmq_context,
         config=transport_config,
+        **kwargs,
     )
     gateway.start().result(timeout=1.0)
     dealer = zmq_context.socket(zmq.DEALER)
@@ -198,4 +219,39 @@ def test_audio_stream_ids_are_route_scoped(zmq_context, transport_config):
     finally:
         first.close(0)
         second.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_validated_audio_is_handed_to_injected_ingress_with_owner_correlation(zmq_context, transport_config):
+    ingress = RecordingVoiceIngress()
+    gateway, dealer = make_gateway(zmq_context, transport_config, "ingress", voice_ingress=ingress)
+    try:
+        opened = send(
+            dealer,
+            ProtocolMessage(
+                type="conversation.open",
+                id="open",
+                timestamp_ns=1,
+                payload_count=0,
+                conversation_id="conversation-voice",
+            ),
+        )
+        assert opened.type == "conversation.opened"
+        assert send(dealer, start_message(trace_id="trace-voice")).type == "audio.input.started"
+        assert send(dealer, chunk_message(0, trace_id="trace-voice"), (PCM_FRAME,)).type == "audio.input.accepted"
+        assert send(dealer, voice("audio.input.commit", request_id="commit", trace_id="trace-voice")).type == "audio.input.committed"
+
+        common = {
+            "principal": PrincipalContext("user:voice"),
+            "conversation_id": "conversation-voice",
+            "stream_id": "mic-1",
+            "trace_id": "trace-voice",
+        }
+        assert ingress.calls == [
+            ("start", common),
+            ("chunk", PCM_FRAME, {**common, "seq": 0}),
+            ("commit", common),
+        ]
+    finally:
+        dealer.close(0)
         gateway.close(timeout=1.0)
