@@ -263,6 +263,23 @@ class ZaraZmqGateway:
             "trace_id": stream.trace_id,
         }
 
+    def _send_audio_ingress_error(
+        self,
+        socket: zmq.Socket,
+        route: bytes,
+        message: ProtocolMessage,
+    ) -> None:
+        self._send(
+            socket,
+            route,
+            _protocol_error(
+                reply_to=message.id,
+                code="audio_ingress_error",
+                message="audio input runtime is unavailable",
+                retryable=True,
+            ),
+        )
+
     def _cancel_audio_inputs(self, state: Optional[_RouteState]) -> None:
         if state is None:
             return
@@ -458,11 +475,16 @@ class ZaraZmqGateway:
                 conversation_id=state.conversation_id,
                 trace_id=message.trace_id,
             )
-            state.audio_inputs[stream_id] = stream
             if self._voice_ingress is not None:
-                self._voice_ingress.start(
-                    **self._voice_ingress_context(stream_id, stream)
-                )
+                try:
+                    self._voice_ingress.start(
+                        **self._voice_ingress_context(stream_id, stream)
+                    )
+                except Exception:
+                    logger.exception("Voice ingress start failed for stream %s", stream_id)
+                    self._send_audio_ingress_error(socket, route, message)
+                    return
+            state.audio_inputs[stream_id] = stream
             response_type = "audio.input.started"
         elif message.type == "audio.input.chunk":
             if stream is None:
@@ -507,6 +529,10 @@ class ZaraZmqGateway:
                             retryable=True,
                         ),
                     )
+                    return
+                except Exception:
+                    logger.exception("Voice ingress chunk failed for stream %s", stream_id)
+                    self._send_audio_ingress_error(socket, route, message)
                     return
             stream.next_seq += 1
             response_type = "audio.input.accepted"
