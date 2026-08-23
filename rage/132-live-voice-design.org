@@ -1,0 +1,125 @@
+#+title: RAGE Design - Issue 132 Live Voice over ZARA/1
+
+* Problem boundary
+Implement live voice transport semantics over existing ZARA/1 and existing Zara runtime boundaries. Clients own capture/playback. Daemon owns canonical streaming VAD/STT, turn coordination, model/tool/TTS work. Do not implement #28/#29 wholesale or create a second provider/runtime stack.
+
+* Selected architecture
+** Closed v1 PCM contract
+- Baseline ingress codec :: =pcm_s16le=, mono, 16000 Hz.
+- One =audio.input.chunk= carries exactly one binary payload frame.
+- One frame is exactly 512 samples = 1024 bytes = 32 ms, matching =StreamingVAD=.
+- =audio.input.start= declares codec/sample_rate/channels/frame_samples and carries no payload.
+- =audio.input.chunk= requires =stream_id=, =seq= and =content_type=audio/pcm;codec=pcm_s16le=.
+- =audio.input.commit= and =audio.input.cancel= require =stream_id= and carry no payload.
+- Audio is never embedded in JSON.
+
+** Two validation layers
+1. =zara.protocol= validates message-local shape/geometry and closed baseline codec fields.
+2. Principal/route-scoped stream state validates lifecycle and sequence order.
+This keeps generic framing deterministic while avoiding hidden global stream state in the codec.
+
+** Ingress lifecycle
+States per authenticated route + stream id:
+- absent -> started(expected_seq=0)
+- started -- exact next chunk --> started(expected_seq += 1)
+- started -- commit --> committed/removed
+- started -- cancel --> cancelled/removed
+- route disconnect/shutdown --> cancelled/removed
+Invalid transitions return a bounded protocol error and do not mutate state.
+
+No stream resume across daemon restart. Reconnect starts a fresh stream even when the durable conversation resumes.
+
+** Runtime ownership
+- Gateway never owns STT/model/TTS behavior.
+- Add a narrow voice-ingress adapter/service interface behind the gateway that accepts validated =start/chunk/commit/cancel= operations plus principal/session/conversation/trace metadata.
+- Production adapter reuses existing streaming voice primitives and runtime cancellation boundaries; tests inject a deterministic fake.
+- Barge-in maps to canonical cancellation semantics rather than a daemon-only cancellation mechanism.
+
+** Egress ownership
+- Outbound audio remains binary multipart ZARA/1 messages with =turn_id= + =stream_id= + monotonic =seq=.
+- Route ownership is established by the authenticated principal/active route and canonical turn mapping.
+- Once a turn/output stream is cancelled or superseded, later audio frames are not routed.
+- Slow route queues fail/drop that route without blocking other principals.
+
+* Invariants
+1. A client can never inject PCM without an authenticated, handshaken route and started stream.
+2. Stream identity is scoped by principal/route; same =stream_id= across principals is independent.
+3. Baseline input chunk geometry is exactly 1024 bytes/32 ms.
+4. Accepted sequence numbers are contiguous beginning at 0.
+5. Invalid/duplicate/gap/late chunks never advance stream state.
+6. Commit/cancel is terminal for that stream instance.
+7. Disconnect/shutdown releases all volatile stream state.
+8. No raw PCM enters logs, audit records or protocol error JSON.
+9. Gateway validation/routing never becomes a second STT/TTS/model implementation.
+10. Stale output from a cancelled/superseded turn cannot be routed to playback.
+11. Per-route/per-stream queues and protocol sizes are bounded.
+12. =zara= remains client-facing; =zara-server= remains daemon-facing.
+
+* Failure / threat analysis
+- Oversized audio: rejected by generic payload limits and stricter 1024-byte audio geometry before runtime handoff.
+- Odd PCM/malformed codec declarations: rejected at protocol shape layer.
+- Gap/duplicate/reorder: explicit state error; no buffering waiting for missing frames.
+- Flood of stream starts: stream count is bounded per route/principal; excess rejected.
+- Slow STT: bounded handoff must reject/backpressure rather than accumulate microphone audio.
+- Disconnect mid-utterance: stream cancellation/teardown invoked exactly once.
+- Restart mid-session: no volatile audio resume; stale stream ids are absent after restart.
+- Cross-user collision: stream keys include principal/route ownership and runtime buses remain principal-scoped from #131.
+- Barge-in race: cancellation marks output stale before/with runtime cancel; late frames fail stale-turn check.
+- Error leakage: errors include stream id/seq/reason only, never frame bytes.
+
+* Compatibility / migration
+- Existing non-audio ZARA/1 messages remain byte-for-byte compatible.
+- Reserved audio message names become strict; previously accepted malformed reserved messages were not implemented behavior and therefore are safe to reject.
+- No persistent schema migration is required for volatile streams.
+- Existing StreamingVAD 16 kHz/512-sample contract becomes the v1 transport baseline.
+- Future Opus/variable framing requires explicit hello capability negotiation and is not silently accepted by v1 PCM paths.
+
+* Acceptance -> test map
+** Protocol shape
+- valid start/chunk/commit/cancel golden messages round-trip;
+- chunk missing stream/seq/content type fails;
+- chunk has 0 or >1 payload fails;
+- chunk != 1024 bytes fails;
+- wrong codec/rate/channels/frame_samples fails;
+- lifecycle messages carrying payload fail.
+
+** Stream lifecycle
+- start -> contiguous chunks -> commit succeeds;
+- duplicate/gap/decreasing sequence rejected without advancing expected seq;
+- chunk before start and chunk after commit/cancel rejected;
+- duplicate start rejected;
+- disconnect clears streams;
+- same stream id on A/B remains independent;
+- configured max active streams/backpressure enforced.
+
+** Runtime bridge
+- accepted PCM is handed to injected voice ingress in order with principal/conversation/trace correlation;
+- commit/cancel propagates once;
+- malformed/rejected frames never reach voice ingress;
+- barge-in uses canonical turn cancellation path;
+- stale output after cancellation is dropped.
+
+** Hygiene / logging
+- protocol errors and audit/event representations never include PCM content.
+
+** Packaging / integration
+- focused noninteractive =scripts/test-voice-transport.sh=;
+- full repo/Nix gates unchanged;
+- exact final PR head Actions green before merge.
+
+* TDD slices
+1. Message-local audio shape/geometry tests -> red -> protocol semantic validator -> green.
+2. Route-scoped stream lifecycle/sequence tests -> red -> gateway stream state -> green.
+3. Injected bounded voice-ingress handoff tests -> red -> minimal adapter seam -> green.
+4. Disconnect/backpressure/two-principal/stale-output/barge-in tests -> red/green.
+5. Client API + golden multipart egress tests -> red/green.
+6. Focused script, changed-code coverage review, full Nix gates, exact-head CI.
+
+* Exact gate
+- focused pytest files for each slice;
+- =nix develop -c bash scripts/test-voice-transport.sh=;
+- =nix develop -c bash scripts/test-all.sh=;
+- =nix flake check=;
+- =nix build=;
+- inspect changed-code coverage gaps and add deterministic reachable-path tests;
+- exact-head GitHub Actions green and PR mergeable.
