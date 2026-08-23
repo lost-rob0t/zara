@@ -132,6 +132,10 @@ def run_server(context: zmq.Context, address: str, ready: threading.Event) -> No
         socket.close(0)
 
 
+def _call_context(call):
+    return call[2] if call[0] == "chunk" else call[1]
+
+
 def test_output_start_must_match_negotiated_format_before_playback() -> None:
     context = zmq.Context()
     address = endpoint()
@@ -153,7 +157,9 @@ def test_output_start_must_match_negotiated_format_before_playback() -> None:
         assert client.audio_output_format == NEGOTIATED_FORMAT
         assert output.valid_done.wait(1.0)
         assert [
-            call for call in output.calls if call[1].get("turn_id") == "turn-mismatch"
+            call
+            for call in output.calls
+            if _call_context(call).get("turn_id") == "turn-mismatch"
         ] == []
         assert [call[0] for call in output.calls] == ["start", "chunk", "finish"]
         assert output.calls[0][1]["format"] == NEGOTIATED_FORMAT
