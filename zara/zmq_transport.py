@@ -164,6 +164,7 @@ class ZaraZmqGateway:
         context: Optional[zmq.Context] = None,
         config: Optional[TransportConfig] = None,
         limits: Optional[ProtocolLimits] = None,
+        voice_ingress=None,
     ) -> None:
         if not isinstance(endpoint, str) or not endpoint.strip():
             raise ValueError("endpoint must be a non-empty string")
@@ -176,6 +177,7 @@ class ZaraZmqGateway:
         self._owns_context = context is None
         self._config = config or TransportConfig()
         self._limits = limits or ProtocolLimits()
+        self._voice_ingress = voice_ingress
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._started: concurrent.futures.Future = concurrent.futures.Future()
@@ -357,7 +359,7 @@ class ZaraZmqGateway:
             )
             return
         if message.type in {"audio.input.start", "audio.input.chunk", "audio.input.commit"}:
-            self._handle_audio_input(socket, route, state, message)
+            self._handle_audio_input(socket, route, state, message, decoded.payloads)
             return
         if message.type in {"turn.submit", "turn.cancel"}:
             self._dispatch_runtime(socket, route, state, message)
@@ -379,6 +381,7 @@ class ZaraZmqGateway:
         route: bytes,
         state: _RouteState,
         message: ProtocolMessage,
+        payloads: tuple[bytes, ...],
     ) -> None:
         stream_id = message.stream_id
         if stream_id is None:
@@ -395,6 +398,12 @@ class ZaraZmqGateway:
             return
 
         stream = state.audio_inputs.get(stream_id)
+        ingress_context = {
+            "principal": self._principal,
+            "conversation_id": state.conversation_id,
+            "stream_id": stream_id,
+            "trace_id": message.trace_id,
+        }
         if message.type == "audio.input.start":
             if stream is not None:
                 self._send(
@@ -409,6 +418,8 @@ class ZaraZmqGateway:
                 )
                 return
             state.audio_inputs[stream_id] = _AudioInputState()
+            if self._voice_ingress is not None:
+                self._voice_ingress.start(**ingress_context)
             response_type = "audio.input.started"
         elif message.type == "audio.input.chunk":
             if stream is None:
@@ -435,6 +446,8 @@ class ZaraZmqGateway:
                     ),
                 )
                 return
+            if self._voice_ingress is not None:
+                self._voice_ingress.chunk(payloads[0], **ingress_context, seq=message.seq)
             stream.next_seq += 1
             response_type = "audio.input.accepted"
         else:
@@ -450,6 +463,8 @@ class ZaraZmqGateway:
                     ),
                 )
                 return
+            if self._voice_ingress is not None:
+                self._voice_ingress.commit(**ingress_context)
             state.audio_inputs.pop(stream_id, None)
             response_type = "audio.input.committed"
 
