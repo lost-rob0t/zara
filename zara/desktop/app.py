@@ -63,7 +63,13 @@ def start_desktop(
     summon_quick: bool = True,
 ) -> tuple[QApplication, DesktopController]:
     """Start the canonical desktop client and expose a visible UI surface."""
-    app, controller = create_application(argv, client=client, host=host)
+    # Preserve the historical host-only call shape when no explicit client is
+    # supplied. This keeps compatibility embedders/mocks valid while the normal
+    # path is now ZaraClient-owned.
+    if client is None:
+        app, controller = create_application(argv, host=host)
+    else:
+        app, controller = create_application(argv, client=client, host=host)
     controller.start()
     if summon_quick:
         controller.show_quick_copilot()
