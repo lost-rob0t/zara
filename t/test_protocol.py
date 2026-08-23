@@ -27,12 +27,13 @@ LIMITS = ProtocolLimits(
 
 
 def message(**overrides) -> ProtocolMessage:
+    message_type = overrides.get("type", "hello")
     values = {
-        "type": "hello",
+        "type": message_type,
         "id": "req-1",
         "timestamp_ns": 123456789,
         "payload_count": 0,
-        "body": {"versions": [1]},
+        "body": {"versions": [1]} if message_type == "hello" else None,
     }
     values.update(overrides)
     return ProtocolMessage(**values)
@@ -59,16 +60,15 @@ def test_golden_hello_encoding_is_deterministic():
     ]
 
 
-def test_valid_message_round_trips_with_binary_payloads():
+def test_valid_audio_message_round_trips_with_binary_payload():
     original = message(
         type="audio.input.chunk",
-        payload_count=2,
+        payload_count=1,
         stream_id="audio-1",
         seq=4,
         content_type="audio/pcm",
-        body={"codec": "pcm_s16le"},
     )
-    payloads = (b"12345678", b"abcd")
+    payloads = (b"12345678",)
 
     frames = encode_message(original, payloads=payloads, limits=LIMITS)
     decoded = decode_message(frames, limits=LIMITS)
@@ -139,23 +139,22 @@ def test_unknown_message_type_fails_closed():
         decode_message([PROTOCOL_MARKER, frame], limits=LIMITS)
 
 
-def test_audio_names_are_reserved_but_not_dynamically_dispatched():
+def test_audio_names_are_reserved_and_require_closed_contract():
     assert "audio.input.chunk" in RESERVED_MESSAGE_TYPES
 
-    decoded = decode_message(
-        [
-            PROTOCOL_MARKER,
-            envelope_frame(
-                type="audio.input.chunk",
-                stream_id="s1",
-                seq=1,
-                content_type="audio/pcm",
-            ),
-        ],
-        limits=LIMITS,
-    )
-
-    assert decoded.message.type == "audio.input.chunk"
+    with pytest.raises(ProtocolValidationError):
+        decode_message(
+            [
+                PROTOCOL_MARKER,
+                envelope_frame(
+                    type="audio.input.chunk",
+                    stream_id="s1",
+                    seq=1,
+                    content_type="audio/pcm",
+                ),
+            ],
+            limits=LIMITS,
+        )
 
 
 @pytest.mark.parametrize(
