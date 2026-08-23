@@ -490,11 +490,24 @@ class ZaraZmqGateway:
                 )
                 return
             if self._voice_ingress is not None:
-                self._voice_ingress.chunk(
-                    payloads[0],
-                    **self._voice_ingress_context(stream_id, stream),
-                    seq=message.seq,
-                )
+                try:
+                    self._voice_ingress.chunk(
+                        payloads[0],
+                        **self._voice_ingress_context(stream_id, stream),
+                        seq=message.seq,
+                    )
+                except queue.Full:
+                    self._send(
+                        socket,
+                        route,
+                        _protocol_error(
+                            reply_to=message.id,
+                            code="audio_backpressure",
+                            message="audio input is temporarily backpressured",
+                            retryable=True,
+                        ),
+                    )
+                    return
             stream.next_seq += 1
             response_type = "audio.input.accepted"
         else:
