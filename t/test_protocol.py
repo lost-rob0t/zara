@@ -255,3 +255,126 @@ def test_allowed_flags_round_trip():
 def test_encoder_rejects_payload_count_mismatch_before_emitting_frames():
     with pytest.raises(ProtocolValidationError, match="payload_count"):
         encode_message(message(payload_count=1), payloads=(), limits=LIMITS)
+
+
+def test_audio_input_start_requires_stream_sequence_format_and_no_payload():
+    valid = message(
+        type="audio.input.start",
+        stream_id="mic-1",
+        seq=0,
+        content_type="audio/pcm",
+        body={"codec": "pcm_s16le", "sample_rate": 16000, "channels": 1},
+    )
+    decoded = decode_message(encode_message(valid, limits=LIMITS), limits=LIMITS)
+    assert decoded.message == valid
+
+    invalid_messages = (
+        message(
+            type="audio.input.start",
+            seq=0,
+            content_type="audio/pcm",
+            body={"codec": "pcm_s16le", "sample_rate": 16000, "channels": 1},
+        ),
+        message(
+            type="audio.input.start",
+            stream_id="mic-1",
+            content_type="audio/pcm",
+            body={"codec": "pcm_s16le", "sample_rate": 16000, "channels": 1},
+        ),
+        message(
+            type="audio.input.start",
+            stream_id="mic-1",
+            seq=1,
+            content_type="audio/pcm",
+            body={"codec": "pcm_s16le", "sample_rate": 16000, "channels": 1},
+        ),
+        message(
+            type="audio.input.start",
+            stream_id="mic-1",
+            seq=0,
+            content_type="audio/wav",
+            body={"codec": "pcm_s16le", "sample_rate": 16000, "channels": 1},
+        ),
+    )
+    for invalid in invalid_messages:
+        with pytest.raises(ProtocolValidationError):
+            encode_message(invalid, limits=LIMITS)
+
+
+def test_audio_input_chunk_requires_one_even_nonempty_pcm_payload_and_correlation():
+    valid = message(
+        type="audio.input.chunk",
+        stream_id="mic-1",
+        seq=1,
+        content_type="audio/pcm",
+        payload_count=1,
+    )
+    payload = b"\x00\x01\x02\x03"
+    decoded = decode_message(
+        encode_message(valid, payloads=(payload,), limits=LIMITS),
+        limits=LIMITS,
+    )
+    assert decoded.payloads == (payload,)
+
+    invalid_cases = (
+        (message(type="audio.input.chunk", seq=1, content_type="audio/pcm"), ()),
+        (
+            message(
+                type="audio.input.chunk",
+                stream_id="mic-1",
+                content_type="audio/pcm",
+                payload_count=1,
+            ),
+            (b"\x00\x00",),
+        ),
+        (
+            message(
+                type="audio.input.chunk",
+                stream_id="mic-1",
+                seq=1,
+                content_type="audio/wav",
+                payload_count=1,
+            ),
+            (b"\x00\x00",),
+        ),
+        (
+            message(
+                type="audio.input.chunk",
+                stream_id="mic-1",
+                seq=1,
+                content_type="audio/pcm",
+                payload_count=1,
+            ),
+            (b"",),
+        ),
+        (
+            message(
+                type="audio.input.chunk",
+                stream_id="mic-1",
+                seq=1,
+                content_type="audio/pcm",
+                payload_count=1,
+            ),
+            (b"\x00",),
+        ),
+    )
+    for invalid, payloads in invalid_cases:
+        with pytest.raises(ProtocolValidationError):
+            encode_message(invalid, payloads=payloads, limits=LIMITS)
+
+
+@pytest.mark.parametrize("message_type", ["audio.input.commit", "audio.input.cancel"])
+def test_audio_input_terminal_messages_require_stream_sequence_and_no_payload(message_type):
+    valid = message(type=message_type, stream_id="mic-1", seq=2)
+    assert decode_message(encode_message(valid, limits=LIMITS), limits=LIMITS).message == valid
+
+    with pytest.raises(ProtocolValidationError):
+        encode_message(message(type=message_type, seq=2), limits=LIMITS)
+    with pytest.raises(ProtocolValidationError):
+        encode_message(message(type=message_type, stream_id="mic-1"), limits=LIMITS)
+    with pytest.raises(ProtocolValidationError):
+        encode_message(
+            message(type=message_type, stream_id="mic-1", seq=2, payload_count=1),
+            payloads=(b"\x00\x00",),
+            limits=LIMITS,
+        )
