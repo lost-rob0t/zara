@@ -63,6 +63,9 @@ def test_explicit_standalone_text_command_preserves_local_console(monkeypatch):
 
 def test_connect_text_command_uses_zara_client_boundary(monkeypatch):
     calls = []
+    subscription = FakeSubscription(
+        [events.AssistantComplete(turn_id="turn-1", text="done", success=True)]
+    )
 
     class FakeClient:
         def __init__(self, endpoint):
@@ -71,6 +74,10 @@ def test_connect_text_command_uses_zara_client_boundary(monkeypatch):
         def start(self):
             calls.append(("start",))
             return resolved(None)
+
+        def subscribe(self, *, maxsize=0):
+            calls.append(("subscribe", maxsize))
+            return subscription
 
         def submit(self, command):
             calls.append(("submit", command))
@@ -86,9 +93,11 @@ def test_connect_text_command_uses_zara_client_boundary(monkeypatch):
     assert run_main(monkeypatch, ["--connect", "ipc:///tmp/zara.sock", "hello"]) == 0
     assert calls[0] == ("construct", "ipc:///tmp/zara.sock")
     assert calls[1] == ("start",)
-    assert isinstance(calls[2][1], SubmitTurn)
-    assert calls[2][1].text == "hello"
-    assert calls[3][0] == "close"
+    assert calls[2] == ("subscribe", 0)
+    assert isinstance(calls[3][1], SubmitTurn)
+    assert calls[3][1].text == "hello"
+    assert calls[4][0] == "close"
+    assert subscription.closed is True
 
 
 def test_connect_failure_is_reported_without_silent_standalone_fallback(monkeypatch, capsys):
