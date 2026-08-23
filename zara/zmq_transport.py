@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import enum
+import logging
 import queue
 import threading
 import time
@@ -33,6 +34,9 @@ from zara.protocol_runtime import RuntimeCodecError, command_from_message, runti
 from zara.runtime import bridge, events
 from zara.runtime.commands import CancelTurn, CommandReceipt, RuntimeCommand, SubmitTurn
 from zara.server import PrincipalContext
+
+
+logger = logging.getLogger(__name__)
 
 
 class ClientNotReady(RuntimeError):
@@ -129,6 +133,8 @@ def _protocol_error(
 
 @dataclass
 class _AudioInputState:
+    conversation_id: Optional[str]
+    trace_id: Optional[str]
     next_seq: int = 0
 
 
@@ -245,20 +251,50 @@ class ZaraZmqGateway:
                 subscription.close()
             socket.close(self._config.linger_ms)
 
-    def _drop_route_locked(self, route: bytes) -> None:
-        self._routes.pop(route, None)
+    def _voice_ingress_context(
+        self,
+        stream_id: str,
+        stream: _AudioInputState,
+    ) -> dict[str, object]:
+        return {
+            "principal": self._principal,
+            "conversation_id": stream.conversation_id,
+            "stream_id": stream_id,
+            "trace_id": stream.trace_id,
+        }
+
+    def _cancel_audio_inputs(self, state: Optional[_RouteState]) -> None:
+        if state is None:
+            return
+        streams = tuple(state.audio_inputs.items())
+        state.audio_inputs.clear()
+        if self._voice_ingress is None:
+            return
+        for stream_id, stream in streams:
+            try:
+                self._voice_ingress.cancel(
+                    **self._voice_ingress_context(stream_id, stream)
+                )
+            except BaseException:
+                logger.exception("Failed to cancel voice ingress stream %s", stream_id)
+
+    def _drop_route_locked(self, route: bytes) -> Optional[_RouteState]:
+        state = self._routes.pop(route, None)
         self._route_outbound.pop(route, None)
         for turn_id, candidate in tuple(self._turn_routes.items()):
             if candidate == route:
                 self._turn_routes.pop(turn_id, None)
         for inflight in self._inflight.values():
             inflight.routes[:] = [candidate for candidate in inflight.routes if candidate != route]
+        return state
 
     def _drop_route(self, route: bytes) -> None:
         with self._lock:
-            self._drop_route_locked(route)
+            state = self._drop_route_locked(route)
+        self._cancel_audio_inputs(state)
 
     def _enqueue_outbound(self, route: bytes, message: ProtocolMessage) -> bool:
+        dropped_state = None
         with self._lock:
             if route not in self._routes:
                 return False
@@ -269,9 +305,11 @@ class ZaraZmqGateway:
             try:
                 outbound.put_nowait(message)
             except queue.Full:
-                self._drop_route_locked(route)
-                return False
-            return True
+                dropped_state = self._drop_route_locked(route)
+        if dropped_state is not None:
+            self._cancel_audio_inputs(dropped_state)
+            return False
+        return True
 
     def _receive(self, socket: zmq.Socket) -> None:
         frames = socket.recv_multipart()
@@ -403,12 +441,6 @@ class ZaraZmqGateway:
             return
 
         stream = state.audio_inputs.get(stream_id)
-        ingress_context = {
-            "principal": self._principal,
-            "conversation_id": state.conversation_id,
-            "stream_id": stream_id,
-            "trace_id": message.trace_id,
-        }
         if message.type == "audio.input.start":
             if stream is not None:
                 self._send(
@@ -422,9 +454,15 @@ class ZaraZmqGateway:
                     ),
                 )
                 return
-            state.audio_inputs[stream_id] = _AudioInputState()
+            stream = _AudioInputState(
+                conversation_id=state.conversation_id,
+                trace_id=message.trace_id,
+            )
+            state.audio_inputs[stream_id] = stream
             if self._voice_ingress is not None:
-                self._voice_ingress.start(**ingress_context)
+                self._voice_ingress.start(
+                    **self._voice_ingress_context(stream_id, stream)
+                )
             response_type = "audio.input.started"
         elif message.type == "audio.input.chunk":
             if stream is None:
@@ -452,7 +490,11 @@ class ZaraZmqGateway:
                 )
                 return
             if self._voice_ingress is not None:
-                self._voice_ingress.chunk(payloads[0], **ingress_context, seq=message.seq)
+                self._voice_ingress.chunk(
+                    payloads[0],
+                    **self._voice_ingress_context(stream_id, stream),
+                    seq=message.seq,
+                )
             stream.next_seq += 1
             response_type = "audio.input.accepted"
         else:
@@ -469,6 +511,7 @@ class ZaraZmqGateway:
                 )
                 return
             if self._voice_ingress is not None:
+                ingress_context = self._voice_ingress_context(stream_id, stream)
                 if message.type == "audio.input.cancel":
                     self._voice_ingress.cancel(**ingress_context)
                 else:
@@ -518,8 +561,9 @@ class ZaraZmqGateway:
             return
         session_id = _message_id()
         with self._lock:
-            self._route_outbound.pop(route, None)
+            previous_state = self._drop_route_locked(route)
             self._routes[route] = _RouteState(session_id=session_id, ready=True)
+        self._cancel_audio_inputs(previous_state)
         self._send(
             socket,
             route,
