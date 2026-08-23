@@ -19,6 +19,12 @@ Issue #133 migrates supported CLI and desktop surfaces onto the shared authentic
 - Existing =t/test_zmq_transport_reconnect_idempotency.py= proves stable request IDs survive reconnect without duplicating server side effects, conflict reuse fails closed, an in-flight duplicate can attach after reconnect, and the replay cache is bounded.
 - Therefore #133 should not invent a second reconnecting transport. Policy/backoff and surface state belong above or around this client.
 
+** #130 client-side CURVE primitive exists but is not wired into ZmqZaraClient
+- =zara/security_transport.py= defines =CurveClientConfig= and =configure_curve_client_socket()= with explicit client keypair plus pinned server public key.
+- Search of current production code finds no call to =configure_curve_client_socket= outside tests/security helpers.
+- =ZmqZaraClient.__init__= currently accepts endpoint/context/transport limits/voice output only; =_run()= creates the DEALER and connects without applying a =CurveClientConfig=.
+- Therefore #133 cannot honestly claim authenticated remote CLI/desktop migration by merely constructing the existing client. The client factory must be able to inject the already-owned #130 CURVE configuration into =ZmqZaraClient= before =connect()=, with tests proving the pin/key material is applied and never sourced from a payload principal string.
+
 ** CLI still bypasses ZaraClient entirely
 - =zara/__main__.py= dispatches text commands by constructing =ZaraConsole= directly; desktop calls =desktop.app.main=; wake/dictate/agent likewise own their historical paths.
 - No =--connect= or =--standalone= option exists.
@@ -50,6 +56,7 @@ Issue #133 migrates supported CLI and desktop surfaces onto the shared authentic
 8. Client disconnect closes shared daemon-side runtime rather than only local transport/audio resources.
 9. CLI accepts a client-authoritative principal/user flag rather than loading authenticated key material.
 10. Remote TCP is attempted without the secure client identity/server pin required by #130.
+11. A caller supplies CURVE material but ZmqZaraClient ignores it and connects plaintext, creating a false sense of authenticated migration.
 
 * Design-changing conclusions
 - The main migration unit should be a client-construction/policy layer that returns a =ZaraClient=; surfaces must not know RuntimeHost vs ZMQ.
@@ -57,6 +64,7 @@ Issue #133 migrates supported CLI and desktop surfaces onto the shared authentic
 - Client close and daemon shutdown are different operations. Desktop application exit must close the client connection; it must not implicitly issue =ShutdownRuntime= to a shared daemon. Administrative daemon shutdown stays separate and authorization-gated.
 - Existing =ZmqZaraClient.reconnect()= and server idempotency are reused. Add bounded retry/backoff policy around connection establishment/re-establishment rather than rebuilding transport replay.
 - Explicit standalone remains =InProcessZaraClient=. Automatic fallback must be policy-controlled and may never hide authentication/protocol rejection as mere daemon absence.
+- Secure remote construction must reuse =CurveClientConfig=/=configure_curve_client_socket= from #130 by applying it to the DEALER before connect; do not create another key/pinning format.
 - Avoid a new desktop wire protocol. Existing runtime commands/events and current conversation.open are the only daemon messages used until a separately owned protocol extension exists.
 
 * Rejected alternatives
@@ -69,6 +77,9 @@ Rejected: duplicates policy and leaves reconnect/fallback semantics inconsistent
 ** Silent fallback to standalone on any connection failure
 Rejected: authentication, pin, protocol-version, or authorization failures must be visible and must not trigger a second local assistant runtime.
 
+** Reimplement CURVE key loading in the CLI
+Rejected: #130 already owns =CurveClientConfig= and socket configuration. #133 should compose those primitives, not fork security semantics.
+
 ** Shutdown daemon when desktop exits
 Rejected: shared long-lived daemon must survive client disconnect per #133.
 
@@ -76,4 +87,4 @@ Rejected: shared long-lived daemon must survive client disconnect per #133.
 Rejected: issue explicitly forbids a Qt-specific networking protocol; use the shared runtime/event model and existing conversation protocol only.
 
 * Research conclusion
-#133 should migrate ownership in layers: first make a single configurable ZaraClient factory/policy and route CLI text turns through it; then make Qt bridge/controller depend only on ZaraClient and distinguish client close from daemon administration; then add reconnect generation/state handling and stale-event rejection at the client/surface boundary; finally migrate voice-capable supported surfaces using #132's client-owned audio seam. Existing ZmqZaraClient transport/replay behavior is reused rather than replaced.
+#133 should migrate ownership in layers: first make a single configurable ZaraClient factory/policy and route CLI text turns through it; then make Qt bridge/controller depend only on ZaraClient and distinguish client close from daemon administration; wire #130 CURVE client configuration into the shared ZMQ client before remote TCP is exposed; then add reconnect generation/state handling and stale-event rejection at the client/surface boundary; finally migrate voice-capable supported surfaces using #132's client-owned audio seam. Existing ZmqZaraClient transport/replay behavior is reused rather than replaced.
