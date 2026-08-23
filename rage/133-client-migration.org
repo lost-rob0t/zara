@@ -40,8 +40,33 @@
 - Shared mic / Ubuntu 24.04 :: PASS.
 - Interpretation :: clean feature-red evidence. Architecture is not disproven; authorize the minimum supplied-client subscription compatibility seam.
 
-** Implementation
-- Slice 1 production change authorized; pending commit.
+** TDD slice 1 - implementation and GREEN
+- Production commit :: =3a3af88fc601b0f6e4af1fd5e1b78f1b133398ce=.
+- Change :: =QtRuntimeBridge= subscribes through the supplied service when it exposes =subscribe()=, with the old module-global runtime subscription retained only as a compatibility fallback for legacy direct RuntimeHost injection.
+- GitHub Actions :: CI #455 / run =32654590797= on the exact production head.
+- Result :: PASS: complete repository tests, =nix flake check=, packaged Zara build, shared mic / Arch Linux, and shared mic / Ubuntu 24.04.
+- Interpretation :: slice 1 is authoritatively green; authorize desktop lifecycle slice 2.
+
+** TDD slice 2 - authoritative RED
+- Tests-only commit :: =d78ea92de5d7da68aa1b5074ba9672c5a948591a=.
+- Required behavior :: desktop construction accepts an injected =ZaraClient=; desktop exit disconnects/closes that client and never issues =ShutdownRuntime= merely because the UI exits; non-tray =aboutToQuit= has the same ownership semantics.
+- GitHub Actions :: CI #457 / run =32655155216=.
+- Result :: expected RED at pytest phase: 3 failed, 960 passed, 14 warnings.
+- Failure 1 :: explicit quit still submitted =ShutdownRuntime(reason="desktop quit")= through the bridge.
+- Failure 2 :: =aboutToQuit= still called the supplied object's =shutdown("desktop application exiting")=.
+- Failure 3 :: =create_application(..., client=...)= was rejected because the desktop factory exposed only a direct =RuntimeHost= injection.
+- Existing ZARA/1 focused gate :: 91/91 PASS.
+- Shared mic / Arch Linux :: PASS.
+- Shared mic / Ubuntu 24.04 :: PASS.
+- Interpretation :: clean feature-red evidence at the expected ownership seams. Architecture is not disproven; authorize the minimum ZaraClient-owned desktop lifecycle.
+
+** TDD slice 2 - implementation candidate
+- Desktop factory commit :: =d3eba985abf97aafed3ccdd4bf070fd0a5c0af92=.
+- Desktop controller commit :: =655a0e13a12d86ef3186d1dd0f45dc0b3f87e698=.
+- Default standalone desktop now constructs =InProcessZaraClient= rather than =RuntimeHost= directly; an explicit =client= can be injected, while =host= remains only as a temporary compatibility seam for existing standalone embedders/tests.
+- =DesktopController= owns =client= lifecycle, retains =host= only as a compatibility alias, starts through =client.start()=, and exits through =client.close()= when available. Closing the desktop no longer sends =ShutdownRuntime= to a potentially shared daemon.
+- Cleanup is idempotent across explicit Quit and Qt =aboutToQuit=.
+- Exact-head green evidence :: pending.
 
 ** Gate
 - Focused red/green tests per behavior.
