@@ -67,6 +67,7 @@ def hello_ok(reply_to: str) -> ProtocolMessage:
             "max_payload_frames": 16,
             "max_payload_frame_bytes": 1024 * 1024,
             "max_payload_bytes": 4 * 1024 * 1024,
+            "audio_output_format": OUTPUT_FORMAT,
         },
     )
 
@@ -119,15 +120,21 @@ def output_done(turn_id: str, stream_id: str, *, timestamp_ns: int) -> ProtocolM
     )
 
 
+def receive_hello(socket: zmq.Socket) -> tuple[bytes, ProtocolMessage]:
+    frames = socket.recv_multipart()
+    route, app_frames = frames[0], frames[1:]
+    hello = decode_message(app_frames).message
+    assert hello.body["audio_output_formats"] == [OUTPUT_FORMAT]
+    return route, hello
+
+
 def run_scripted_server(context: zmq.Context, address: str, ready: threading.Event) -> None:
     socket = context.socket(zmq.ROUTER)
     socket.setsockopt(zmq.LINGER, 0)
     socket.bind(address)
     ready.set()
     try:
-        frames = socket.recv_multipart()
-        route, app_frames = frames[0], frames[1:]
-        hello = decode_message(app_frames).message
+        route, hello = receive_hello(socket)
         socket.send_multipart([route, *encode_message(hello_ok(hello.id))])
         messages = (
             (output_start("turn-1", "speaker-1", timestamp_ns=2), ()),
@@ -150,9 +157,7 @@ def run_cancelled_turn_server(
     socket.bind(address)
     ready.set()
     try:
-        frames = socket.recv_multipart()
-        route, app_frames = frames[0], frames[1:]
-        hello = decode_message(app_frames).message
+        route, hello = receive_hello(socket)
         socket.send_multipart([route, *encode_message(hello_ok(hello.id))])
         messages = (
             (output_start("turn-1", "speaker-1", timestamp_ns=2), ()),
