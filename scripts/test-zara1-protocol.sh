@@ -23,3 +23,5 @@ timeout 120s python -m pytest \
   t/test_zmq_transport_route_backpressure.py \
   t/test_zmq_transport_status.py \
   t/test_server_zmq_endpoint.py
+
+bash "$repo_root/scripts/test-zara1-voice.sh"
