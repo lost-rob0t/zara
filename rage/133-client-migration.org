@@ -112,10 +112,29 @@
 - Interpretation :: explicit client selection and fail-closed connect failure handling are green. Continue the same CLI migration slice with end-to-end turn completion semantics tests-first.
 
 ** TDD slice 3b - tests-only candidate
-- Tests-only commit :: =4fe074c04ac7075754eaf6b25ef65d68ce7b8702=.
+- Initial tests-only commit :: =4fe074c04ac7075754eaf6b25ef65d68ce7b8702=.
+- Fixture refinement :: =0312d0fcd6760ad867556401b1291a9920664fad= aligns the earlier happy-path fake client with the same subscribe/completion contract without changing production behavior.
 - Required behavior :: subscribe before submit so fast runtime events cannot be missed; ignore a completion for another turn; wait for and print the accepted turn's =AssistantComplete=; close the subscription; convert client-construction/setup exceptions to the same bounded exit-2 error path without a standalone fallback or traceback.
 - Expected RED :: current daemon CLI path waits only for the immediate =CommandReceipt= and closes the transport without subscribing/printing completion; =ZmqZaraClient= construction also occurs outside the current exception boundary.
-- Production behavior is unchanged at this boundary. Authoritative CI red evidence is pending.
+
+** TDD slice 3b - authoritative RED
+- Exact tests-only head :: =0312d0fcd6760ad867556401b1291a9920664fad=.
+- GitHub Actions :: CI #469 / run =32658344779=.
+- Result :: expected RED at pytest phase: 3 failed, 966 passed, 14 warnings.
+- Failure 1 :: daemon CLI does not subscribe before =SubmitTurn=.
+- Failure 2 :: daemon CLI prints no assistant completion because it exits immediately after =CommandReceipt=.
+- Failure 3 :: =ZmqZaraClient= constructor failure escapes the CLI boundary as an uncaught exception.
+- Existing ZARA/1 focused gate :: 91/91 PASS.
+- Shared mic / Arch Linux :: PASS.
+- Shared mic / Ubuntu 24.04 :: PASS.
+- Interpretation :: clean feature-red evidence at the expected client-surface boundary. Architecture is not disproven; authorize bounded completion/error handling.
+
+** TDD slice 3b - implementation candidate
+- Production commit :: =5aca6e36fc739b52811dee40029ebfb88a92149f=.
+- =--connect= now constructs the client inside the fail-closed error boundary, starts it, subscribes before submit, waits a bounded 30 seconds for a terminal event correlated to the accepted =turn_id=, ignores unrelated-turn events, prints successful assistant text, and maps failure/cancel/timeout/setup errors to exit status 2.
+- Subscription and client teardown are independent and always attempted; a cleanup failure is surfaced if no earlier error already owns the exit status.
+- No standalone fallback is introduced after explicit =--connect= selection.
+- Exact-head CI verification is pending.
 
 ** Gate
 - Focused red/green tests per behavior.
