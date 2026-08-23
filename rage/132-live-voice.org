@@ -36,10 +36,19 @@
 - Added =t/test_voice_protocol.py= before production changes.
 - Expected red reason :: current generic protocol accepts under-specified/malformed reserved audio messages and does not enforce exact baseline PCM geometry.
 - Pull request :: #185 (draft).
-- GitHub Actions :: CI #375 / run =32607216920= currently running at this log update; shared-mic Arch and Ubuntu jobs already green. Production code remains unchanged pending authoritative red evidence.
+- GitHub Actions :: CI #375 / run =32607216920= established the expected protocol red before implementation.
 
-** Implementation
-- None yet; waiting for TDD red candidate 1 evidence.
+** Implementation slice 1
+- Production protocol implementation added strict baseline PCM message-local validation after the red proof.
+- Exact candidate =003484c74e0491d2a314d43c7981d37a01427fe3= passed CI #381 / run =32608128277=, including the full repository job and both shared-mic distro probes.
+- This green authorizes advancing to the stateful gateway slice; it does not authorize merge because #132 acceptance is broader.
+
+** TDD red candidate 2
+- Tests-only commit :: =6734794d04a024b1c0881c8b228411104c78a5f1=.
+- Added =t/test_voice_zmq_transport.py= before touching =zara/zmq_transport.py=.
+- Required behavior :: route-scoped stream start/chunk/commit lifecycle, contiguous sequence enforcement, duplicate-start rejection, late-after-terminal rejection, and identical stream ids remaining independent on distinct DEALER routes.
+- Expected red reason :: current gateway dispatch has no =audio.input.*= handler and therefore returns =not_implemented= after handshake.
+- Local clone execution could not be used in this runner because outbound DNS for github.com is unavailable; authoritative GitHub Actions red evidence is required before production code advances.
 
 ** Gate
 - Focused red/green tests per behavior.
