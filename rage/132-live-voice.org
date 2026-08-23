@@ -90,8 +90,11 @@
 ** Implementation slice 4a
 - Protocol acknowledgement commit :: =366699391b18ce6d7a82e1945d126112d4bcb5f1= adds only =audio.input.cancelled= to the closed server vocabulary.
 - Gateway implementation commit :: =2139d527420f7a85d90c2aaf5caff7d6cd0f5900= dispatches =audio.input.cancel= through the existing route-local handler, requires an open stream, invokes the injected ingress cancel callback with server-owned correlation, removes only that route/stream pair, and returns =audio.input.cancelled=.
+- Failed-green exact head :: =63bcd26dea378d4013e301a11aa50c0aaf1a9209=, CI #396 / run =32622688005=. Both shared-mic jobs passed, but the main gate stopped in the pre-existing ZARA/1 protocol suite because =id=" space"= no longer raised =ProtocolValidationError=.
+- Root cause :: the acknowledgement edit replaced =zara/protocol.py= from a stale file body and accidentally dropped the already-green printable-ASCII/no-whitespace token validator. This regression is unrelated to cancellation semantics and does not falsify the slice-4 architecture.
+- Repair commit :: =53827ddc81166c8a1340e3e20a9e391843eda6ee= restores the exact pre-slice green protocol implementation from =7c18bcbbb47984500baa38e214db20cbf489bc19= and changes only the closed server vocabulary to retain =audio.input.cancelled=.
 - No disconnect cleanup, buffering/backpressure policy, barge-in, stale-output filtering, egress framing, or client voice API was added ahead of its own red proof.
-- Green evidence :: pending exact-head GitHub Actions.
+- Green evidence :: pending exact-head GitHub Actions after repair/log update.
 
 ** Gate
 - Focused red/green tests per behavior.
