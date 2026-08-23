@@ -37,6 +37,11 @@ class _AudioWork:
     pcm: bytes
 
 
+@dataclass(frozen=True)
+class _CommitWork:
+    stream_id: str
+
+
 _STOP = object()
 
 
@@ -158,7 +163,17 @@ class RuntimeVoiceIngress:
         with self._lock:
             stream = self._require_stream(stream_id)
             self._check_context(stream, conversation_id, trace_id)
+            if stream.committed:
+                raise KeyError(stream_id)
             stream.committed = True
+        try:
+            self._queue.put_nowait(_CommitWork(stream_id=stream_id))
+        except queue.Full:
+            with self._lock:
+                current = self._streams.get(stream_id)
+                if current is stream:
+                    stream.committed = False
+            raise
 
     def cancel(
         self,
@@ -202,22 +217,27 @@ class RuntimeVoiceIngress:
                 continue
             if item is _STOP:
                 return
-            assert isinstance(item, _AudioWork)
+            if not isinstance(item, (_AudioWork, _CommitWork)):
+                continue
             with self._lock:
                 stream = self._streams.get(item.stream_id)
             if stream is None:
                 continue
             try:
-                emitted = stream.transcriber.feed(self._pcm_float32(item.pcm))
+                if isinstance(item, _AudioWork):
+                    emitted = stream.transcriber.feed(self._pcm_float32(item.pcm))
+                else:
+                    emitted = stream.transcriber.commit(stream.stream_id)
             except Exception:
                 continue
             for event in emitted:
                 if isinstance(event, FinalTranscript):
                     self._submit_final(stream, event.text)
-            with self._lock:
-                current = self._streams.get(item.stream_id)
-                if current is stream and stream.committed and self._queue.empty():
-                    self._streams.pop(item.stream_id, None)
+            if isinstance(item, _CommitWork):
+                with self._lock:
+                    current = self._streams.get(item.stream_id)
+                    if current is stream:
+                        self._streams.pop(item.stream_id, None)
 
     def _submit_final(self, stream: _VoiceStream, text: str) -> None:
         clean = str(text or "").strip()
