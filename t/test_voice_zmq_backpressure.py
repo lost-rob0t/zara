@@ -53,6 +53,25 @@ class BackpressuredVoiceIngress:
         return None
 
 
+class FailingVoiceIngress:
+    def __init__(self, operation: str) -> None:
+        self.operation = operation
+
+    def start(self, **_kwargs):
+        if self.operation == "start":
+            raise RuntimeError("ingress unavailable")
+
+    def chunk(self, _payload: bytes, **_kwargs):
+        if self.operation == "chunk":
+            raise RuntimeError("ingress unavailable")
+
+    def commit(self, **_kwargs):
+        return None
+
+    def cancel(self, **_kwargs):
+        return None
+
+
 @pytest.fixture
 def zmq_context():
     context = zmq.Context()
@@ -86,8 +105,37 @@ def send(socket: zmq.Socket, message: ProtocolMessage, payloads=()) -> ProtocolM
     return receive(socket)
 
 
-def test_ingress_queue_full_is_explicit_and_retry_does_not_skip_sequence(zmq_context):
-    ingress = BackpressuredVoiceIngress()
+def start_message(request_id: str = "start") -> ProtocolMessage:
+    return ProtocolMessage(
+        type="audio.input.start",
+        id=request_id,
+        timestamp_ns=1,
+        payload_count=0,
+        stream_id="mic-1",
+        trace_id="trace-a",
+        body={
+            "codec": "pcm_s16le",
+            "sample_rate": 16000,
+            "channels": 1,
+            "frame_samples": 512,
+        },
+    )
+
+
+def chunk_message(request_id: str = "chunk-0", seq: int = 0) -> ProtocolMessage:
+    return ProtocolMessage(
+        type="audio.input.chunk",
+        id=request_id,
+        timestamp_ns=1,
+        payload_count=1,
+        stream_id="mic-1",
+        seq=seq,
+        trace_id="trace-a",
+        content_type=CONTENT_TYPE,
+    )
+
+
+def connected_gateway(zmq_context, ingress):
     address = f"inproc://voice-backpressure-{time.time_ns()}"
     gateway = ZaraZmqGateway(
         address,
@@ -101,61 +149,39 @@ def test_ingress_queue_full_is_explicit_and_retry_does_not_skip_sequence(zmq_con
     dealer = zmq_context.socket(zmq.DEALER)
     apply_socket_options(dealer, transport_config(), router=False)
     dealer.connect(address)
+    hello = send(
+        dealer,
+        ProtocolMessage(
+            type="hello",
+            id="hello",
+            timestamp_ns=1,
+            payload_count=0,
+            body={"versions": [1]},
+        ),
+    )
+    assert hello.type == "hello.ok"
+    opened = send(
+        dealer,
+        ProtocolMessage(
+            type="conversation.open",
+            id="open",
+            timestamp_ns=1,
+            payload_count=0,
+            conversation_id="conversation-a",
+        ),
+    )
+    assert opened.type == "conversation.opened"
+    return gateway, dealer
+
+
+def test_ingress_queue_full_is_explicit_and_retry_does_not_skip_sequence(zmq_context):
+    ingress = BackpressuredVoiceIngress()
+    gateway, dealer = connected_gateway(zmq_context, ingress)
     try:
-        hello = send(
-            dealer,
-            ProtocolMessage(
-                type="hello",
-                id="hello",
-                timestamp_ns=1,
-                payload_count=0,
-                body={"versions": [1]},
-            ),
-        )
-        assert hello.type == "hello.ok"
-
-        opened = send(
-            dealer,
-            ProtocolMessage(
-                type="conversation.open",
-                id="open",
-                timestamp_ns=1,
-                payload_count=0,
-                conversation_id="conversation-a",
-            ),
-        )
-        assert opened.type == "conversation.opened"
-
-        started = send(
-            dealer,
-            ProtocolMessage(
-                type="audio.input.start",
-                id="start",
-                timestamp_ns=1,
-                payload_count=0,
-                stream_id="mic-1",
-                trace_id="trace-a",
-                body={
-                    "codec": "pcm_s16le",
-                    "sample_rate": 16000,
-                    "channels": 1,
-                    "frame_samples": 512,
-                },
-            ),
-        )
+        started = send(dealer, start_message())
         assert started.type == "audio.input.started"
 
-        chunk = ProtocolMessage(
-            type="audio.input.chunk",
-            id="chunk-0-a",
-            timestamp_ns=1,
-            payload_count=1,
-            stream_id="mic-1",
-            seq=0,
-            trace_id="trace-a",
-            content_type=CONTENT_TYPE,
-        )
-        rejected = send(dealer, chunk, (PCM_FRAME,))
+        rejected = send(dealer, chunk_message("chunk-0-a"), (PCM_FRAME,))
         assert rejected.type == "protocol.error"
         assert rejected.body == {
             "code": "audio_backpressure",
@@ -164,17 +190,7 @@ def test_ingress_queue_full_is_explicit_and_retry_does_not_skip_sequence(zmq_con
         }
         assert PCM_FRAME.hex() not in repr(rejected.body)
 
-        retry = ProtocolMessage(
-            type="audio.input.chunk",
-            id="chunk-0-b",
-            timestamp_ns=2,
-            payload_count=1,
-            stream_id="mic-1",
-            seq=0,
-            trace_id="trace-a",
-            content_type=CONTENT_TYPE,
-        )
-        accepted = send(dealer, retry, (PCM_FRAME,))
+        accepted = send(dealer, chunk_message("chunk-0-b"), (PCM_FRAME,))
         assert accepted.type == "audio.input.accepted"
         assert accepted.seq == 0
         assert ingress.accepted == [
@@ -189,6 +205,54 @@ def test_ingress_queue_full_is_explicit_and_retry_does_not_skip_sequence(zmq_con
                 },
             )
         ]
+    finally:
+        dealer.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_ingress_start_failure_is_explicit_and_gateway_survives(zmq_context):
+    gateway, dealer = connected_gateway(zmq_context, FailingVoiceIngress("start"))
+    try:
+        response = send(dealer, start_message("start-fails"))
+        assert response.type == "protocol.error"
+        assert response.body == {
+            "code": "audio_ingress_error",
+            "message": "audio input runtime is unavailable",
+            "retryable": True,
+        }
+        assert gateway.is_alive
+        assert send(
+            dealer,
+            ProtocolMessage(
+                type="ping",
+                id="ping-after-start-failure",
+                timestamp_ns=2,
+                payload_count=0,
+            ),
+        ).type == "pong"
+    finally:
+        dealer.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_ingress_chunk_failure_is_explicit_does_not_advance_sequence_and_gateway_survives(zmq_context):
+    ingress = FailingVoiceIngress("chunk")
+    gateway, dealer = connected_gateway(zmq_context, ingress)
+    try:
+        assert send(dealer, start_message()).type == "audio.input.started"
+        response = send(dealer, chunk_message("chunk-fails"), (PCM_FRAME,))
+        assert response.type == "protocol.error"
+        assert response.body == {
+            "code": "audio_ingress_error",
+            "message": "audio input runtime is unavailable",
+            "retryable": True,
+        }
+        assert gateway.is_alive
+
+        ingress.operation = "none"
+        retry = send(dealer, chunk_message("chunk-retry"), (PCM_FRAME,))
+        assert retry.type == "audio.input.accepted"
+        assert retry.seq == 0
     finally:
         dealer.close(0)
         gateway.close(timeout=1.0)
