@@ -1070,10 +1070,21 @@ class ZmqZaraClient(ZaraClient):
         turn_id = message.turn_id
         if not turn_id:
             return
+        self._stop_voice_output_turn(turn_id)
+
+    def _stop_voice_output_turn(self, turn_id: str) -> None:
         common = self._active_voice_outputs.pop(turn_id, None)
         self._remember_cancelled_voice_turn(turn_id)
         if common is not None and self._voice_output is not None:
-            self._voice_output.cancel(**common)
+            try:
+                self._voice_output.cancel(**common)
+            except Exception:
+                logger.exception("Voice output cancel failed for turn %s", turn_id)
+
+    def _barge_in_active_voice_outputs(self) -> None:
+        for turn_id in tuple(self._active_voice_outputs):
+            self._stop_voice_output_turn(turn_id)
+            self.submit(CancelTurn(turn_id=turn_id))
 
     def _handle_voice_output(
         self,
@@ -1280,6 +1291,7 @@ class ZmqZaraClient(ZaraClient):
         *,
         trace_id: Optional[str] = None,
     ) -> concurrent.futures.Future:
+        self._barge_in_active_voice_outputs()
         return self._request(
             ProtocolMessage(
                 type="audio.input.start",
