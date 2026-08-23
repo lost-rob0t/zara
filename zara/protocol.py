@@ -50,6 +50,7 @@ SERVER_MESSAGE_TYPES = frozenset(
         "audio.input.started",
         "audio.input.accepted",
         "audio.input.committed",
+        "audio.input.cancelled",
         "runtime.error",
         "runtime.stopped",
         "protocol.error",
@@ -218,60 +219,48 @@ def _validate_ascii_token(
     try:
         encoded = value.encode("ascii")
     except UnicodeEncodeError as error:
-        raise ProtocolValidationError(f"{name} must be printable ASCII") from error
+        raise ProtocolValidationError(f"{name} must be ASCII") from error
     if len(encoded) > max_bytes:
         raise ProtocolValidationError(f"{name} exceeds byte limit")
-    if allow_dot_type:
-        if _TYPE_RE.fullmatch(value) is None:
-            raise ProtocolValidationError(f"invalid message type: {value!r}")
-    elif any(byte < 0x21 or byte > 0x7E for byte in encoded):
-        raise ProtocolValidationError(f"{name} must be printable ASCII without whitespace")
+    if allow_dot_type and not _TYPE_RE.fullmatch(value):
+        raise ProtocolValidationError(f"{name} has invalid format")
     return value
 
 
-def _validate_nonnegative_int(name: str, value: Any) -> int:
+def _validate_optional_ascii_token(
+    name: str,
+    value: Any,
+    *,
+    max_bytes: int,
+) -> str | None:
+    if value is None:
+        return None
+    return _validate_ascii_token(name, value, max_bytes=max_bytes)
+
+
+def _validate_non_negative_int(name: str, value: Any) -> int | None:
+    if value is None:
+        return None
     if type(value) is not int or value < 0:
         raise ProtocolValidationError(f"{name} must be a non-negative integer")
     return value
 
 
-def _validate_optional_id(name: str, value: Any, limits: ProtocolLimits) -> str | None:
-    if value is None:
-        return None
-    return _validate_ascii_token(name, value, max_bytes=limits.max_id_bytes)
-
-
-def _validate_content_type(value: Any) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value:
-        raise ProtocolValidationError("content_type must be a non-empty string")
-    try:
-        encoded = value.encode("ascii")
-    except UnicodeEncodeError as error:
-        raise ProtocolValidationError("content_type must be printable ASCII") from error
-    if len(encoded) > 128 or any(byte < 0x21 or byte > 0x7E for byte in encoded):
-        raise ProtocolValidationError("content_type must be bounded printable ASCII")
-    return value
-
-
-def _validate_flags(value: Any) -> dict[str, bool]:
+def _validate_flags(value: Any) -> Mapping[str, bool]:
     if value is None:
         return {}
     if not isinstance(value, dict):
         raise ProtocolValidationError("flags must be a JSON object")
     unknown = set(value) - _ALLOWED_FLAGS
     if unknown:
-        raise ProtocolValidationError(f"flags contain unknown keys: {sorted(unknown)!r}")
-    result: dict[str, bool] = {}
-    for key, item in value.items():
-        if type(item) is not bool:
-            raise ProtocolValidationError("flags values must be boolean")
-        result[key] = item
-    return result
+        raise ProtocolValidationError(f"unknown flags: {sorted(unknown)}")
+    for key, enabled in value.items():
+        if type(enabled) is not bool:
+            raise ProtocolValidationError(f"flag {key} must be boolean")
+    return value
 
 
-def _validate_body(value: Any) -> dict[str, Any] | None:
+def _validate_body(value: Any) -> Mapping[str, Any] | None:
     if value is None:
         return None
     if not isinstance(value, dict):
@@ -279,149 +268,103 @@ def _validate_body(value: Any) -> dict[str, Any] | None:
     return value
 
 
-def _validate_audio_input_envelope(message: ProtocolMessage) -> None:
-    if message.type not in {
-        "audio.input.start",
-        "audio.input.chunk",
-        "audio.input.commit",
-        "audio.input.cancel",
-    }:
-        return
-
-    if message.stream_id is None:
-        raise ProtocolValidationError(f"{message.type} requires stream_id")
-
+def _validate_audio_message(message: ProtocolMessage, payloads: Sequence[bytes]) -> None:
     if message.type == "audio.input.start":
-        if message.payload_count != 0:
-            raise ProtocolValidationError("audio.input.start does not accept payload frames")
+        if message.stream_id is None:
+            raise ProtocolValidationError("audio.input.start requires stream_id")
         if message.seq is not None:
-            raise ProtocolValidationError("audio.input.start does not accept seq")
-        if message.content_type is not None:
-            raise ProtocolValidationError("audio.input.start does not accept content_type")
+            raise ProtocolValidationError("audio.input.start must not include seq")
+        if message.payload_count != 0 or payloads:
+            raise ProtocolValidationError("audio.input.start must not carry payload")
         if dict(message.body or {}) != _AUDIO_INPUT_START_BODY:
-            raise ProtocolValidationError(
-                "audio.input.start requires pcm_s16le mono 16000 Hz 512-sample geometry"
-            )
+            raise ProtocolValidationError("audio.input.start requires baseline PCM geometry")
         return
 
     if message.type == "audio.input.chunk":
+        if message.stream_id is None:
+            raise ProtocolValidationError("audio.input.chunk requires stream_id")
         if message.seq is None:
             raise ProtocolValidationError("audio.input.chunk requires seq")
         if message.content_type != AUDIO_INPUT_CONTENT_TYPE:
-            raise ProtocolValidationError(
-                f"audio.input.chunk content_type must be {AUDIO_INPUT_CONTENT_TYPE!r}"
-            )
-        if message.payload_count != 1:
+            raise ProtocolValidationError("audio.input.chunk has unsupported content_type")
+        if message.payload_count != 1 or len(payloads) != 1:
             raise ProtocolValidationError("audio.input.chunk requires exactly one payload frame")
-        if message.body is not None:
-            raise ProtocolValidationError("audio.input.chunk does not accept body")
+        if len(payloads[0]) != AUDIO_INPUT_FRAME_BYTES:
+            raise ProtocolValidationError(
+                f"audio.input.chunk payload must be exactly {AUDIO_INPUT_FRAME_BYTES} bytes"
+            )
         return
 
-    if message.seq is not None:
-        raise ProtocolValidationError(f"{message.type} does not accept seq")
-    if message.payload_count != 0:
-        raise ProtocolValidationError(f"{message.type} does not accept payload frames")
-    if message.content_type is not None:
-        raise ProtocolValidationError(f"{message.type} does not accept content_type")
-    if message.body is not None:
-        raise ProtocolValidationError(f"{message.type} does not accept body")
+    if message.type in {"audio.input.commit", "audio.input.cancel"}:
+        if message.stream_id is None:
+            raise ProtocolValidationError(f"{message.type} requires stream_id")
+        if message.seq is not None:
+            raise ProtocolValidationError(f"{message.type} must not include seq")
+        if message.payload_count != 0 or payloads:
+            raise ProtocolValidationError(f"{message.type} must not carry payload")
 
 
-def _validate_audio_input_payloads(
-    message: ProtocolMessage,
-    payloads: Sequence[bytes],
-) -> None:
-    if message.type != "audio.input.chunk":
-        return
-    if len(payloads) != 1 or len(payloads[0]) != AUDIO_INPUT_FRAME_BYTES:
-        raise ProtocolValidationError(
-            f"audio.input.chunk payload must be exactly {AUDIO_INPUT_FRAME_BYTES} bytes"
-        )
-
-
-def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> ProtocolMessage:
-    unknown = set(data) - _ALLOWED_ENVELOPE_KEYS
+def _message_from_mapping(value: Mapping[str, Any], limits: ProtocolLimits) -> ProtocolMessage:
+    unknown = set(value) - _ALLOWED_ENVELOPE_KEYS
     if unknown:
-        raise ProtocolValidationError(f"unknown envelope keys: {sorted(unknown)!r}")
-
-    missing = {"type", "id", "timestamp_ns", "payload_count"} - set(data)
+        raise ProtocolValidationError(f"unknown envelope keys: {sorted(unknown)}")
+    required = {"type", "id", "timestamp_ns", "payload_count"}
+    missing = required - set(value)
     if missing:
-        raise ProtocolValidationError(f"missing required envelope keys: {sorted(missing)!r}")
+        raise ProtocolValidationError(f"missing envelope keys: {sorted(missing)}")
 
     message_type = _validate_ascii_token(
         "type",
-        data["type"],
+        value["type"],
         max_bytes=limits.max_type_bytes,
         allow_dot_type=True,
     )
     if message_type not in KNOWN_MESSAGE_TYPES:
-        raise ProtocolValidationError(f"unsupported message type: {message_type!r}")
+        raise ProtocolValidationError("unknown message type")
 
-    request_id = _validate_ascii_token("id", data["id"], max_bytes=limits.max_id_bytes)
-    timestamp_ns = _validate_nonnegative_int("timestamp_ns", data["timestamp_ns"])
-    payload_count = _validate_nonnegative_int("payload_count", data["payload_count"])
-    if payload_count > limits.max_payload_frames:
-        raise ProtocolValidationError("payload frame count exceeds limit")
+    payload_count = _validate_non_negative_int("payload_count", value["payload_count"])
+    assert payload_count is not None
 
-    seq = data.get("seq")
-    if seq is not None:
-        seq = _validate_nonnegative_int("seq", seq)
-
-    message = ProtocolMessage(
+    return ProtocolMessage(
         type=message_type,
-        id=request_id,
-        timestamp_ns=timestamp_ns,
+        id=_validate_ascii_token("id", value["id"], max_bytes=limits.max_id_bytes),
+        reply_to=_validate_optional_ascii_token(
+            "reply_to", value.get("reply_to"), max_bytes=limits.max_id_bytes
+        ),
+        session_id=_validate_optional_ascii_token(
+            "session_id", value.get("session_id"), max_bytes=limits.max_id_bytes
+        ),
+        conversation_id=_validate_optional_ascii_token(
+            "conversation_id", value.get("conversation_id"), max_bytes=limits.max_id_bytes
+        ),
+        turn_id=_validate_optional_ascii_token(
+            "turn_id", value.get("turn_id"), max_bytes=limits.max_id_bytes
+        ),
+        stream_id=_validate_optional_ascii_token(
+            "stream_id", value.get("stream_id"), max_bytes=limits.max_id_bytes
+        ),
+        seq=_validate_non_negative_int("seq", value.get("seq")),
+        timestamp_ns=_validate_non_negative_int("timestamp_ns", value["timestamp_ns"]),
+        trace_id=_validate_optional_ascii_token(
+            "trace_id", value.get("trace_id"), max_bytes=limits.max_id_bytes
+        ),
+        content_type=_validate_optional_ascii_token(
+            "content_type", value.get("content_type"), max_bytes=limits.max_type_bytes
+        ),
         payload_count=payload_count,
-        reply_to=_validate_optional_id("reply_to", data.get("reply_to"), limits),
-        session_id=_validate_optional_id("session_id", data.get("session_id"), limits),
-        conversation_id=_validate_optional_id("conversation_id", data.get("conversation_id"), limits),
-        turn_id=_validate_optional_id("turn_id", data.get("turn_id"), limits),
-        stream_id=_validate_optional_id("stream_id", data.get("stream_id"), limits),
-        seq=seq,
-        trace_id=_validate_optional_id("trace_id", data.get("trace_id"), limits),
-        content_type=_validate_content_type(data.get("content_type")),
-        flags=_validate_flags(data.get("flags")),
-        body=_validate_body(data.get("body")),
+        flags=_validate_flags(value.get("flags")),
+        body=_validate_body(value.get("body")),
     )
-    _validate_audio_input_envelope(message)
-    return message
 
 
-def _validate_payloads(
-    payloads: Sequence[bytes],
-    *,
-    expected_count: int,
-    limits: ProtocolLimits,
-) -> tuple[bytes, ...]:
-    if len(payloads) != expected_count:
-        raise ProtocolValidationError(
-            f"payload_count mismatch: envelope={expected_count}, frames={len(payloads)}"
-        )
-    if len(payloads) > limits.max_payload_frames:
-        raise ProtocolValidationError("payload frame count exceeds limit")
-
-    normalized: list[bytes] = []
-    aggregate = 0
-    for frame in payloads:
-        if not isinstance(frame, bytes):
-            raise ProtocolValidationError("payload frames must be bytes")
-        if len(frame) > limits.max_payload_frame_bytes:
-            raise ProtocolValidationError("payload frame exceeds byte limit")
-        aggregate += len(frame)
-        if aggregate > limits.max_payload_bytes:
-            raise ProtocolValidationError("aggregate payload exceeds byte limit")
-        normalized.append(frame)
-    return tuple(normalized)
-
-
-def _message_to_mapping(message: ProtocolMessage, limits: ProtocolLimits) -> dict[str, Any]:
-    data: dict[str, Any] = {
+def _message_to_mapping(message: ProtocolMessage) -> dict[str, Any]:
+    mapping: dict[str, Any] = {
         "type": message.type,
         "id": message.id,
         "timestamp_ns": message.timestamp_ns,
         "payload_count": message.payload_count,
     }
-    optional = {
+    optional_values = {
         "reply_to": message.reply_to,
         "session_id": message.session_id,
         "conversation_id": message.conversation_id,
@@ -430,42 +373,35 @@ def _message_to_mapping(message: ProtocolMessage, limits: ProtocolLimits) -> dic
         "seq": message.seq,
         "trace_id": message.trace_id,
         "content_type": message.content_type,
+        "body": message.body,
     }
-    for key, value in optional.items():
+    for key, value in optional_values.items():
         if value is not None:
-            data[key] = value
+            mapping[key] = value
     if message.flags:
-        data["flags"] = dict(message.flags)
-    if message.body is not None:
-        data["body"] = dict(message.body)
-
-    validated = _message_from_mapping(data, limits)
-    if validated != message:
-        raise ProtocolValidationError("message contains non-canonical field values")
-    return data
+        mapping["flags"] = dict(message.flags)
+    return mapping
 
 
-def decode_message(
-    frames: Sequence[bytes],
-    *,
-    limits: ProtocolLimits | None = None,
-) -> DecodedMessage:
-    limits = limits or ProtocolLimits()
-    if len(frames) < 2:
-        raise ProtocolValidationError("ZARA/1 message requires marker and envelope frames")
-    marker = frames[0]
-    if marker != PROTOCOL_MARKER:
-        raise ProtocolVersionError("unsupported ZARA application protocol marker")
-
-    envelope = _load_envelope(frames[1], limits)
-    message = _message_from_mapping(envelope, limits)
-    payloads = _validate_payloads(
-        frames[2:],
-        expected_count=message.payload_count,
-        limits=limits,
-    )
-    _validate_audio_input_payloads(message, payloads)
-    return DecodedMessage(message=message, payloads=payloads)
+def _validate_decoded(message: ProtocolMessage, payloads: Sequence[bytes], limits: ProtocolLimits) -> None:
+    if message.payload_count != len(payloads):
+        raise ProtocolValidationError("payload_count does not match multipart frames")
+    if len(payloads) > limits.max_payload_frames:
+        raise ProtocolValidationError("payload frame count exceeds limit")
+    total = 0
+    for payload in payloads:
+        if not isinstance(payload, bytes):
+            raise ProtocolValidationError("payload frames must be bytes")
+        if len(payload) > limits.max_payload_frame_bytes:
+            raise ProtocolValidationError("payload frame exceeds byte limit")
+        total += len(payload)
+        if total > limits.max_payload_bytes:
+            raise ProtocolValidationError("aggregate payload bytes exceed limit")
+    if message.type in RESERVED_MESSAGE_TYPES:
+        if message.type.startswith("audio.input."):
+            _validate_audio_message(message, payloads)
+        elif message.type.startswith("audio.") or message.type.startswith("voice."):
+            raise ProtocolValidationError("reserved audio message has no active contract")
 
 
 def encode_message(
@@ -475,28 +411,36 @@ def encode_message(
     limits: ProtocolLimits | None = None,
 ) -> list[bytes]:
     limits = limits or ProtocolLimits()
-    if not isinstance(message, ProtocolMessage):
-        raise ProtocolValidationError("message must be ProtocolMessage")
-    normalized_payloads = _validate_payloads(
-        payloads,
-        expected_count=message.payload_count,
-        limits=limits,
-    )
-    data = _message_to_mapping(message, limits)
-    _validate_audio_input_payloads(message, normalized_payloads)
-    try:
-        envelope = json.dumps(
-            data,
-            ensure_ascii=False,
-            allow_nan=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    except (TypeError, ValueError) as error:
-        raise ProtocolValidationError("message body is not strict JSON") from error
+    mapping = _message_to_mapping(message)
+    normalized = _message_from_mapping(mapping, limits)
+    _validate_decoded(normalized, payloads, limits)
+    envelope = json.dumps(
+        mapping,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
     if len(envelope) > limits.max_envelope_bytes:
         raise ProtocolValidationError("envelope exceeds byte limit")
-    return [PROTOCOL_MARKER, envelope, *normalized_payloads]
+    return [PROTOCOL_MARKER, envelope, *payloads]
+
+
+def decode_message(
+    frames: Sequence[bytes],
+    *,
+    limits: ProtocolLimits | None = None,
+) -> DecodedMessage:
+    limits = limits or ProtocolLimits()
+    if len(frames) < 2:
+        raise ProtocolValidationError("message requires protocol marker and envelope")
+    if frames[0] != PROTOCOL_MARKER:
+        raise ProtocolVersionError("unsupported ZARA protocol marker")
+    envelope = _load_envelope(frames[1], limits)
+    message = _message_from_mapping(envelope, limits)
+    payloads = tuple(frames[2:])
+    _validate_decoded(message, payloads, limits)
+    return DecodedMessage(message=message, payloads=payloads)
 
 
 __all__ = [
