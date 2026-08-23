@@ -49,6 +49,14 @@
 - Required behavior :: route-scoped stream start/chunk/commit lifecycle, contiguous sequence enforcement, duplicate-start rejection, late-after-terminal rejection, and identical stream ids remaining independent on distinct DEALER routes.
 - Expected red reason :: current gateway dispatch has no =audio.input.*= handler and therefore returns =not_implemented= after handshake.
 - Local clone execution could not be used in this runner because outbound DNS for github.com is unavailable; authoritative GitHub Actions red evidence is required before production code advances.
+- GitHub Actions :: exact tests-only head =275c63de47b1e0b590fe79c65b2900514335af3c=, CI #383 / run =32609765257= completed expected RED: 4 failed, 912 passed, 14 warnings. All four failures are the new gateway lifecycle tests and fail because =audio.input.*= returns =not_implemented=. ZARA/1 protocol/transport remained 91/91 green; Arch and Ubuntu shared-mic jobs passed.
+
+** Implementation slice 2
+- Authorized by CI #383 red evidence, =zara/zmq_transport.py= now owns minimal route-local audio input state: one sequence cursor per =stream_id= inside the ROUTER route state.
+- =audio.input.start= opens only a previously closed route/stream pair; =audio.input.chunk= accepts only the exact next sequence and does not advance on a gap; =audio.input.commit= terminally removes stream state.
+- Re-handshake and route teardown naturally destroy stream state with =_RouteState=, so identical stream ids remain independent across DEALER routes and daemon restart remains non-resumable as designed.
+- No audio buffering, STT dispatch, second voice runtime, or cancel behavior was added ahead of its own TDD slice.
+- Production implementation commit :: =b11fafb128f34de277525eee9e127f52bb2d84a2=. Exact-head CI must prove this slice green before further behavior is added.
 
 ** Gate
 - Focused red/green tests per behavior.
