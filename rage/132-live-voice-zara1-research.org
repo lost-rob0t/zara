@@ -1,0 +1,77 @@
+#+title: RAGE Research - Issue 132 Live Voice over ZARA/1
+
+* Scope
+Issue #132 moves live audio across the existing authenticated ZARA/1 client/server boundary. It must reuse Zara's current StreamingTranscriber/VAD, RuntimeHost/TurnCoordinator cancellation, principal isolation, and ZaraClient transport rather than create a second voice runtime.
+
+* Repository evidence
+** Protocol framing is already sufficient for binary audio
+- =zara/protocol.py= already supports strict multipart ZARA/1 framing with opaque payload frames and bounded envelope/frame/aggregate sizes.
+- Audio message names are deliberately reserved, and =ProtocolMessage= already carries =stream_id=, =seq=, =trace_id= and =content_type=.
+- Current tests prove binary payload round-trip, but deliberately prove only that reserved audio names decode. There is no per-message audio schema yet, so malformed audio states currently pass generic framing validation.
+
+** Transport discards the feature we need
+- =ZaraZmqGateway._receive()= decodes =DecodedMessage.payloads= but immediately drops them and dispatches only the envelope.
+- Gateway/client outbound queues hold =ProtocolMessage= only, and =_send= / client drain encode without payloads.
+- Reserved voice/audio message types therefore reach =not_implemented= even though framing accepts them.
+- The correct change is to make the existing queued wire item carry envelope + payload tuple. A second ZeroMQ socket or audio protocol would duplicate routing/auth/backpressure state and is rejected.
+
+** RuntimeHost already owns turn lifecycle/cancellation
+- =RuntimeHost._submit_turn()= allocates the canonical TurnCoordinator turn id.
+- =RuntimeHost._cancel_turn()= cancels the coordinator, task and backend hook, and publishes =TurnCancelled= once.
+- =_run_turn()= has an explicit active-turn check before publishing final output, preventing stale completion after cancellation.
+- This is the cancellation authority #132 must preserve across process boundaries.
+
+** Voice backend boundary is currently incomplete
+- =RuntimeBackend.start_voice()/stop_voice()/mute_speech()= are optional stubs, and the default LangGraph backend does not currently implement a full voice session.
+- Therefore dispatching decoded PCM directly from the ZMQ gateway into Whisper/VAD would bypass RuntimeHost and create exactly the daemon-only voice stack forbidden by #127/#132.
+- The required seam is typed runtime audio commands handled by RuntimeHost and delegated to a bounded voice-session service/backend adapter.
+
+** Existing STT/VAD is reusable without redesign
+- =StreamingVAD= consumes exact 512-sample, 16 kHz chunks and owns speech-start/end state, pre-roll, max utterance and no-speech bounds.
+- =StreamingTranscriber= emits SpeechStarted, PartialTranscript, SpeechEnded and FinalTranscript; its contract explicitly says only final transcript should trigger irreversible execution.
+- Input PCM s16le mono 16 kHz maps directly to this pipeline after deterministic int16->float32 conversion/reblocking.
+
+** Existing barge-in semantics are useful but device ownership changes
+- =BargeInMonitor= currently combines local microphone VAD with local playback state and invokes cancellation for a turn.
+- In daemon mode the *client* owns playback, so it must stop playback locally first and then send canonical cancellation upstream. The daemon must not run a process-global BargeInMonitor against a server microphone.
+- Server cancellation remains RuntimeHost/TurnCoordinator =CancelTurn=; client-side speech detection/playback stop is an edge responsibility.
+
+* Upstream ZeroMQ/PyZMQ research
+- ROUTER/DEALER is the correct asynchronous topology: ROUTER owns peer routing identities and DEALER provides asynchronous request/event traffic.
+- ZMTP multipart frames are native and preserve binary payloads without JSON/base64 encoding.
+- ROUTER/DEALER should remain; newer CLIENT/SERVER socket types are not a drop-in replacement for multipart audio because their message API is single-part.
+- HWM/mute behavior can drop or reject traffic depending on socket/options. Application queues therefore need explicit finite capacity and sequence/state semantics; HWM alone is not a voice-flow-control protocol.
+- Socket size/HWM/timeouts must remain configured before bind/connect.
+
+* Missing/stale research reference
+Issue #132 and epic #127 reference =docs/research/001-daemon-zeromq-voice-service.md=, but that path is absent at the immutable start commit. This iteration does not fabricate it. The live issue/epic plus shipped #129-#131 code and current upstream ZeroMQ/PyZMQ documentation are treated as authoritative evidence; this RAGE artifact becomes the issue-local research record.
+
+* Adversarial failure cases
+1. Chunk envelope is valid JSON but lacks stream id/sequence, creating uncorrelated audio.
+2. Chunk has zero/multiple payload frames or a non-PCM content type.
+3. Odd byte count or oversized chunk breaks int16 framing/reblocking.
+4. Duplicate/gapped/out-of-order =seq= is silently accepted and audio is duplicated/reordered.
+5. Chunk arrives after commit/cancel and resurrects stale speech.
+6. Two routes/principals reuse the same stream id and share state.
+7. A slow client fills outbound audio queues and blocks/drops unrelated users.
+8. Disconnect leaves an active ingress/transcriber or turn alive.
+9. Client barge-in stops playback but daemon cancellation is lost; stale output continues.
+10. Daemon cancellation succeeds but old queued output chunks still reach/play on the client.
+11. Gateway directly calls STT/TTS and bypasses RuntimeHost, breaking canonical cancellation/ownership.
+12. Raw PCM is included in logs/audit/error text.
+13. =hello= advertises an output format that implementation cannot actually emit.
+14. Restart/reconnect treats an old stream as resumable without explicit protocol state.
+15. Audio flow consumes generic command idempotency cache as if every chunk were a side-effecting request, causing unbounded/incorrect replay semantics.
+
+* Design-changing conclusions
+- Keep one ROUTER/DEALER connection and one ZARA/1 framing layer; extend its queued wire representation to include payloads.
+- Add closed per-message audio validation rather than treating reserved audio names as generic envelopes.
+- Audio streaming uses stream-local monotonic sequence state, not generic request replay semantics.
+- Keep client-owned mic/playback. Server accepts binary ingress only through typed runtime audio commands.
+- RuntimeHost/TurnCoordinator remains cancellation authority; client barge-in is immediate local playback stop plus upstream canonical cancel.
+- Reuse =StreamingTranscriber= by deterministic PCM conversion/reblocking; do not add a second STT implementation.
+- Do not implement #29's provider-level phrase-streaming TTS in this issue. #132 may transport bounded output chunks emitted by the existing/runtime TTS boundary, but phrase-generation policy remains #29.
+- Do not promise in-flight audio resume across daemon restart; reconnect starts a fresh stream/turn while durable conversation continuity remains later #133.
+
+* Research conclusion
+The inherited ZARA/1 architecture survives adversarial review. The main correction is that audio is not a new subsystem: it is a binary payload-bearing extension of the existing wire queue plus a typed RuntimeHost voice-ingress service. The protocol must enforce stream state/sequence/format before bytes reach runtime, while RuntimeHost remains the only authority that can create/cancel canonical turns and publish accepted transcript/output state.
