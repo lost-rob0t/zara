@@ -917,6 +917,7 @@ class ZmqZaraClient(ZaraClient):
         context: Optional[zmq.Context] = None,
         config: Optional[TransportConfig] = None,
         limits: Optional[ProtocolLimits] = None,
+        voice_output=None,
     ) -> None:
         if not isinstance(endpoint, str) or not endpoint.strip():
             raise ValueError("endpoint must be a non-empty string")
@@ -925,6 +926,7 @@ class ZmqZaraClient(ZaraClient):
         self._owns_context = context is None
         self._config = config or TransportConfig()
         self._limits = limits or ProtocolLimits()
+        self._voice_output = voice_output
         self._bus = bridge.RuntimeEventBus()
         self._state = ZaraClientState.NEW
         self._state_lock = threading.RLock()
@@ -1048,7 +1050,36 @@ class ZmqZaraClient(ZaraClient):
                 return
             self._resolve_pending(pending, message)
             return
+        if self._handle_voice_output(message, decoded.payloads):
+            return
         self._publish_runtime_event(message)
+
+    def _handle_voice_output(
+        self,
+        message: ProtocolMessage,
+        payloads: tuple[bytes, ...],
+    ) -> bool:
+        if message.type not in {
+            "audio.output.start",
+            "audio.output.chunk",
+            "audio.output.done",
+        }:
+            return False
+        if self._voice_output is None:
+            return True
+        common = {
+            "conversation_id": message.conversation_id,
+            "turn_id": message.turn_id,
+            "stream_id": message.stream_id,
+            "trace_id": message.trace_id,
+        }
+        if message.type == "audio.output.start":
+            self._voice_output.start(format=dict(message.body or {}), **common)
+        elif message.type == "audio.output.chunk":
+            self._voice_output.chunk(payloads[0], seq=message.seq, **common)
+        else:
+            self._voice_output.finish(**common)
+        return True
 
     def _resolve_pending(self, pending: _Pending, message: ProtocolMessage) -> None:
         if message.type == "protocol.error":
