@@ -136,6 +136,17 @@
 - No standalone fallback is introduced after explicit =--connect= selection.
 - Exact-head CI verification is pending.
 
+** TDD slice 4 - bounded reconnect/backoff authoritative RED
+- Tests-only commit :: =097c42c3e5cbc14ad2149c56abc7f03ef1b03744=.
+- GitHub Actions :: CI #477 / run =32669889132=.
+- Result :: expected RED at full pytest phase: 2 failed, 971 passed, 14 warnings.
+- Exact failures :: both =t/test_zmq_transport_reconnect_backoff.py= cases fail with =AttributeError= because =ZmqZaraClient= has no =reconnect_with_backoff()= method yet.
+- Required behavior :: retry existing =reconnect()= with bounded =max_attempts=, capped exponential delay, no real sleeps in deterministic tests, successful completion after transient failures, and surfacing the final reconnect failure after exhaustion.
+- Existing ZARA/1 focused gate :: 93/93 PASS plus reconnect/security focused phase 70/70 PASS before the full suite.
+- Shared mic / Arch Linux :: PASS.
+- Shared mic / Ubuntu 24.04 :: PASS.
+- Architecture verdict :: not disproven. The existing reconnect/session-generation design remains valid; authorize only the minimum bounded retry controller around the existing one-shot =reconnect()= seam.
+
 ** Gate
 - Focused red/green tests per behavior.
 - Issue-specific non-interactive client migration script.
