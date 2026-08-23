@@ -23,6 +23,11 @@ import zmq
 
 from zara.client import ZaraClient, ZaraClientState
 from zara.protocol import (
+    AUDIO_INPUT_CHANNELS,
+    AUDIO_INPUT_CODEC,
+    AUDIO_INPUT_CONTENT_TYPE,
+    AUDIO_INPUT_FRAME_SAMPLES,
+    AUDIO_INPUT_SAMPLE_RATE,
     ProtocolLimits,
     ProtocolMessage,
     ProtocolValidationError,
@@ -887,12 +892,19 @@ class _PendingKind(str, enum.Enum):
     STATUS = "status"
     CONVERSATION = "conversation"
     COMMAND = "command"
+    AUDIO = "audio"
 
 
 @dataclass
 class _Pending:
     kind: _PendingKind
     future: concurrent.futures.Future
+
+
+@dataclass(frozen=True)
+class _ClientOutbound:
+    message: ProtocolMessage
+    payloads: tuple[bytes, ...] = ()
 
 
 class ZmqZaraClient(ZaraClient):
@@ -918,7 +930,7 @@ class ZmqZaraClient(ZaraClient):
         self._state_lock = threading.RLock()
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
-        self._outbound: queue.Queue[ProtocolMessage] = queue.Queue(maxsize=self._config.sndhwm)
+        self._outbound: queue.Queue[_ClientOutbound] = queue.Queue(maxsize=self._config.sndhwm)
         self._pending: dict[str, _Pending] = {}
         self._pending_lock = threading.RLock()
         self._session_id: Optional[str] = None
@@ -1014,10 +1026,16 @@ class ZmqZaraClient(ZaraClient):
     def _drain_client_outbound(self, socket: zmq.Socket) -> None:
         for _ in range(32):
             try:
-                message = self._outbound.get_nowait()
+                outbound = self._outbound.get_nowait()
             except queue.Empty:
                 return
-            socket.send_multipart(encode_message(message, limits=self._limits))
+            socket.send_multipart(
+                encode_message(
+                    outbound.message,
+                    payloads=outbound.payloads,
+                    limits=self._limits,
+                )
+            )
 
     def _receive(self, socket: zmq.Socket) -> None:
         frames = socket.recv_multipart()
@@ -1084,6 +1102,17 @@ class ZmqZaraClient(ZaraClient):
                 pending.future.set_result(
                     CommandReceipt(request_id=message.reply_to or "", turn_id=message.turn_id)
                 )
+            return
+        if pending.kind is _PendingKind.AUDIO:
+            if message.type not in {
+                "audio.input.started",
+                "audio.input.accepted",
+                "audio.input.committed",
+                "audio.input.cancelled",
+            }:
+                pending.future.set_exception(ProtocolValidationError("invalid audio input response"))
+            else:
+                pending.future.set_result(message)
 
     def _publish_runtime_event(self, message: ProtocolMessage) -> None:
         body = message.body or {}
@@ -1125,7 +1154,13 @@ class ZmqZaraClient(ZaraClient):
         if event is not None:
             self._bus.publish(event)
 
-    def _request(self, message: ProtocolMessage, kind: _PendingKind) -> concurrent.futures.Future:
+    def _request(
+        self,
+        message: ProtocolMessage,
+        kind: _PendingKind,
+        *,
+        payloads: tuple[bytes, ...] = (),
+    ) -> concurrent.futures.Future:
         if self.state is not ZaraClientState.READY:
             raise ClientNotReady("client handshake is not ready")
         future = concurrent.futures.Future()
@@ -1136,7 +1171,7 @@ class ZmqZaraClient(ZaraClient):
                 raise ClientBackpressureError("client pending request limit reached")
             self._pending[message.id] = _Pending(kind, future)
         try:
-            self._outbound.put_nowait(message)
+            self._outbound.put_nowait(_ClientOutbound(message, payloads))
         except queue.Full as error:
             with self._pending_lock:
                 self._pending.pop(message.id, None)
@@ -1178,6 +1213,93 @@ class ZmqZaraClient(ZaraClient):
                 payload_count=0,
             ),
             _PendingKind.CONVERSATION,
+        )
+
+    def start_audio_input(
+        self,
+        stream_id: str,
+        *,
+        trace_id: Optional[str] = None,
+    ) -> concurrent.futures.Future:
+        return self._request(
+            ProtocolMessage(
+                type="audio.input.start",
+                id=_message_id(),
+                session_id=self._session_id,
+                stream_id=stream_id,
+                trace_id=trace_id,
+                timestamp_ns=_now_ns(),
+                payload_count=0,
+                body={
+                    "codec": AUDIO_INPUT_CODEC,
+                    "sample_rate": AUDIO_INPUT_SAMPLE_RATE,
+                    "channels": AUDIO_INPUT_CHANNELS,
+                    "frame_samples": AUDIO_INPUT_FRAME_SAMPLES,
+                },
+            ),
+            _PendingKind.AUDIO,
+        )
+
+    def send_audio_input(
+        self,
+        stream_id: str,
+        *,
+        seq: int,
+        pcm: bytes,
+        trace_id: Optional[str] = None,
+    ) -> concurrent.futures.Future:
+        return self._request(
+            ProtocolMessage(
+                type="audio.input.chunk",
+                id=_message_id(),
+                session_id=self._session_id,
+                stream_id=stream_id,
+                seq=seq,
+                trace_id=trace_id,
+                content_type=AUDIO_INPUT_CONTENT_TYPE,
+                timestamp_ns=_now_ns(),
+                payload_count=1,
+            ),
+            _PendingKind.AUDIO,
+            payloads=(pcm,),
+        )
+
+    def commit_audio_input(
+        self,
+        stream_id: str,
+        *,
+        trace_id: Optional[str] = None,
+    ) -> concurrent.futures.Future:
+        return self._request(
+            ProtocolMessage(
+                type="audio.input.commit",
+                id=_message_id(),
+                session_id=self._session_id,
+                stream_id=stream_id,
+                trace_id=trace_id,
+                timestamp_ns=_now_ns(),
+                payload_count=0,
+            ),
+            _PendingKind.AUDIO,
+        )
+
+    def cancel_audio_input(
+        self,
+        stream_id: str,
+        *,
+        trace_id: Optional[str] = None,
+    ) -> concurrent.futures.Future:
+        return self._request(
+            ProtocolMessage(
+                type="audio.input.cancel",
+                id=_message_id(),
+                session_id=self._session_id,
+                stream_id=stream_id,
+                trace_id=trace_id,
+                timestamp_ns=_now_ns(),
+                payload_count=0,
+            ),
+            _PendingKind.AUDIO,
         )
 
     def submit(self, command: RuntimeCommand) -> concurrent.futures.Future:
