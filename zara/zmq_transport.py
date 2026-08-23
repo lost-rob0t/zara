@@ -937,6 +937,8 @@ class ZmqZaraClient(ZaraClient):
         self._pending_lock = threading.RLock()
         self._session_id: Optional[str] = None
         self._started: concurrent.futures.Future = concurrent.futures.Future()
+        self._active_voice_outputs: dict[str, dict[str, object]] = {}
+        self._cancelled_voice_turns: OrderedDict[str, None] = OrderedDict()
 
     @property
     def state(self) -> ZaraClientState:
@@ -967,6 +969,8 @@ class ZmqZaraClient(ZaraClient):
             self._state = ZaraClientState.STARTING
         self._session_id = None
         self._outbound = queue.Queue(maxsize=self._config.sndhwm)
+        self._active_voice_outputs.clear()
+        self._cancelled_voice_turns.clear()
         self._stop.clear()
         self._started = concurrent.futures.Future()
         self._thread = threading.Thread(target=self._run, name="zara-zmq-client", daemon=True)
@@ -1052,7 +1056,24 @@ class ZmqZaraClient(ZaraClient):
             return
         if self._handle_voice_output(message, decoded.payloads):
             return
+        if message.type == "turn.cancelled":
+            self._cancel_voice_output(message)
         self._publish_runtime_event(message)
+
+    def _remember_cancelled_voice_turn(self, turn_id: str) -> None:
+        self._cancelled_voice_turns[turn_id] = None
+        self._cancelled_voice_turns.move_to_end(turn_id)
+        while len(self._cancelled_voice_turns) > self._config.idempotency_cache_size:
+            self._cancelled_voice_turns.popitem(last=False)
+
+    def _cancel_voice_output(self, message: ProtocolMessage) -> None:
+        turn_id = message.turn_id
+        if not turn_id:
+            return
+        common = self._active_voice_outputs.pop(turn_id, None)
+        self._remember_cancelled_voice_turn(turn_id)
+        if common is not None and self._voice_output is not None:
+            self._voice_output.cancel(**common)
 
     def _handle_voice_output(
         self,
@@ -1065,19 +1086,26 @@ class ZmqZaraClient(ZaraClient):
             "audio.output.done",
         }:
             return False
+        turn_id = message.turn_id
+        if turn_id and turn_id in self._cancelled_voice_turns:
+            return True
         if self._voice_output is None:
             return True
         common = {
             "conversation_id": message.conversation_id,
-            "turn_id": message.turn_id,
+            "turn_id": turn_id,
             "stream_id": message.stream_id,
             "trace_id": message.trace_id,
         }
         if message.type == "audio.output.start":
+            if turn_id:
+                self._active_voice_outputs[turn_id] = common
             self._voice_output.start(format=dict(message.body or {}), **common)
         elif message.type == "audio.output.chunk":
             self._voice_output.chunk(payloads[0], seq=message.seq, **common)
         else:
+            if turn_id:
+                self._active_voice_outputs.pop(turn_id, None)
             self._voice_output.finish(**common)
         return True
 
