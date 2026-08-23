@@ -1017,6 +1017,7 @@ class ZmqZaraClient(ZaraClient):
         self._pending: dict[str, _Pending] = {}
         self._pending_lock = threading.RLock()
         self._session_id: Optional[str] = None
+        self._conversation_id: Optional[str] = None
         self._started: concurrent.futures.Future = concurrent.futures.Future()
         self._active_voice_outputs: dict[str, dict[str, object]] = {}
         self._cancelled_voice_turns: OrderedDict[str, None] = OrderedDict()
@@ -1387,7 +1388,7 @@ class ZmqZaraClient(ZaraClient):
         )
 
     def open_conversation(self, conversation_id: Optional[str] = None) -> concurrent.futures.Future:
-        return self._request(
+        future = self._request(
             ProtocolMessage(
                 type="conversation.open",
                 id=_message_id(),
@@ -1398,6 +1399,17 @@ class ZmqZaraClient(ZaraClient):
             ),
             _PendingKind.CONVERSATION,
         )
+
+        def remember_opened(done: concurrent.futures.Future) -> None:
+            try:
+                opened_id = done.result()
+            except BaseException:
+                return
+            if isinstance(opened_id, str) and opened_id:
+                self._conversation_id = opened_id
+
+        future.add_done_callback(remember_opened)
+        return future
 
     def start_audio_input(
         self,
@@ -1528,6 +1540,7 @@ class ZmqZaraClient(ZaraClient):
         return future
 
     def reconnect(self) -> concurrent.futures.Future:
+        conversation_id = self._conversation_id
         self.shutdown(reason="client reconnect")
         thread = self._thread
         if thread is not None:
@@ -1538,7 +1551,32 @@ class ZmqZaraClient(ZaraClient):
         self._audio_output_format = None
         with self._state_lock:
             self._state = ZaraClientState.STOPPED
-        return self.start()
+        started = self.start()
+        if conversation_id is None:
+            return started
+
+        resumed = concurrent.futures.Future()
+
+        def started_done(done: concurrent.futures.Future) -> None:
+            try:
+                done.result()
+                opened = self.open_conversation(conversation_id)
+            except BaseException as error:
+                resumed.set_exception(error)
+                return
+
+            def opened_done(opened_done_future: concurrent.futures.Future) -> None:
+                try:
+                    opened_done_future.result()
+                except BaseException as error:
+                    resumed.set_exception(error)
+                else:
+                    resumed.set_result(True)
+
+            opened.add_done_callback(opened_done)
+
+        started.add_done_callback(started_done)
+        return resumed
 
     def _fail_pending(self, error: BaseException) -> None:
         with self._pending_lock:
