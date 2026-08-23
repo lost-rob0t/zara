@@ -1200,9 +1200,12 @@ class ZmqZaraClient(ZaraClient):
             "trace_id": message.trace_id,
         }
         if message.type == "audio.output.start":
+            output_format = dict(message.body or {})
+            if output_format != self._audio_output_format:
+                return True
             if turn_id:
                 self._active_voice_outputs[turn_id] = common
-            self._voice_output.start(format=dict(message.body or {}), **common)
+            self._voice_output.start(format=output_format, **common)
         elif message.type == "audio.output.chunk":
             self._voice_output.chunk(payloads[0], seq=message.seq, **common)
         else:
