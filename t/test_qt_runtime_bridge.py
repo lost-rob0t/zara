@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import concurrent.futures
 import os
 import threading
 import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest
 from PySide6.QtCore import QObject, QThread, Slot
 from PySide6.QtWidgets import QApplication
 
@@ -13,7 +15,7 @@ from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.runtime import bridge as runtime_bridge
 from zara.runtime import events
 from zara.runtime.backend import RuntimeBackend, RuntimeTurnResult
-from zara.runtime.commands import StartVoice, SubmitTurn
+from zara.runtime.commands import CommandReceipt, StartVoice, SubmitTurn
 from zara.runtime.host import RuntimeHost, RuntimeHostState
 
 
@@ -27,6 +29,23 @@ class FakeBackend(RuntimeBackend):
         context_ids=(),
     ) -> RuntimeTurnResult:
         return RuntimeTurnResult(response=f"reply:{text}")
+
+
+class FakeZaraClient:
+    def __init__(self) -> None:
+        self.bus = runtime_bridge.RuntimeEventBus()
+        self.subscribed = False
+        self.submitted = []
+
+    def subscribe(self, *, maxsize: int = 0):
+        self.subscribed = True
+        return self.bus.subscribe(maxsize=maxsize)
+
+    def submit(self, command):
+        self.submitted.append(command)
+        future = concurrent.futures.Future()
+        future.set_result(CommandReceipt(request_id=command.request_id, turn_id="fake-turn"))
+        return future
 
 
 class Receiver(QObject):
@@ -80,6 +99,30 @@ def stop_host(host: RuntimeHost) -> None:
         except Exception:
             pass
     host.join(timeout=5)
+
+
+def test_qt_bridge_subscribes_through_supplied_zara_client(monkeypatch):
+    qt_app = app()
+    client = FakeZaraClient()
+
+    def forbidden_global_subscribe(*_args, **_kwargs):
+        pytest.fail("QtRuntimeBridge must subscribe through its supplied ZaraClient")
+
+    monkeypatch.setattr(runtime_bridge, "subscribe", forbidden_global_subscribe)
+    qt_bridge = QtRuntimeBridge(client, auto_start_timer=False)
+    receiver = Receiver()
+    qt_bridge.runtime_event.connect(receiver.on_event)
+
+    try:
+        client.bus.publish(events.RuntimeIdle(label="remote-client"))
+        qt_bridge.drain_events()
+
+        assert client.subscribed is True
+        assert len(receiver.events) == 1
+        assert receiver.events[0].event.label == "remote-client"
+        assert receiver.event_thread == qt_app.thread()
+    finally:
+        qt_bridge.close()
 
 
 def test_qt_bridge_drains_runtime_events_on_qt_thread(monkeypatch):
