@@ -93,6 +93,8 @@ def main():
         description="Zarathustra Voice Assistant - Unified Interface",
         epilog="Examples:\n"
                "  zara 'open firefox'           # Execute text command\n"
+               "  zara --standalone 'hello'     # Explicit private local runtime\n"
+               "  zara --connect ipc:///run/user/1000/zara.sock 'hello'\n"
                "  zara --desktop                # Native desktop / Quick Copilot\n"
                "  zara --console                # Interactive REPL\n"
                "  zara --voice                  # One-shot voice command\n"
@@ -132,6 +134,18 @@ def main():
         "--agent",
         action="store_true",
         help="Direct conversation mode with agent"
+    )
+
+    client_group = parser.add_mutually_exclusive_group()
+    client_group.add_argument(
+        "--connect",
+        metavar="ENDPOINT",
+        help="Send a text command through an existing Zara daemon endpoint"
+    )
+    client_group.add_argument(
+        "--standalone",
+        action="store_true",
+        help="Use the private in-process compatibility path for a text command"
     )
 
     parser.add_argument(
@@ -280,8 +294,30 @@ def main():
         sys.exit(main_overlay())
 
     elif args.command:
-        from .console import ZaraConsole
         command_text = " ".join(args.command)
+
+        if args.connect:
+            from .runtime.commands import SubmitTurn
+            from .zmq_transport import ZmqZaraClient
+
+            client = ZmqZaraClient(args.connect)
+            exit_code = 0
+            try:
+                client.start().result()
+                client.submit(SubmitTurn(text=command_text)).result()
+            except Exception as error:
+                print(f"Error: {error}", file=sys.stderr)
+                exit_code = 2
+            finally:
+                try:
+                    client.close()
+                except Exception as error:
+                    if exit_code == 0:
+                        print(f"Error: {error}", file=sys.stderr)
+                        exit_code = 2
+            sys.exit(exit_code)
+
+        from .console import ZaraConsole
 
         try:
             console = ZaraConsole()
