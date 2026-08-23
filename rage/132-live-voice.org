@@ -48,7 +48,6 @@
 - Added =t/test_voice_zmq_transport.py= before touching =zara/zmq_transport.py=.
 - Required behavior :: route-scoped stream start/chunk/commit lifecycle, contiguous sequence enforcement, duplicate-start rejection, late-after-terminal rejection, and identical stream ids remaining independent on distinct DEALER routes.
 - Expected red reason :: current gateway dispatch has no =audio.input.*= handler and therefore returns =not_implemented= after handshake.
-- Local clone execution could not be used in this runner because outbound DNS for github.com is unavailable; authoritative GitHub Actions red evidence is required before production code advances.
 - GitHub Actions :: exact tests-only head =275c63de47b1e0b590fe79c65b2900514335af3c=, CI #383 / run =32609765257= completed expected RED: 4 failed, 912 passed, 14 warnings. All four failures are the new gateway lifecycle tests and fail because =audio.input.*= returns =not_implemented=. ZARA/1 protocol/transport remained 91/91 green; Arch and Ubuntu shared-mic jobs passed.
 
 ** Implementation slice 2
@@ -58,9 +57,17 @@
 - No audio buffering, STT dispatch, second voice runtime, or cancel behavior was added ahead of its own TDD slice.
 - Production implementation commit :: =b11fafb128f34de277525eee9e127f52bb2d84a2=.
 - Failed green candidate :: exact head =7a116a0151fca26bfc0d49d05b7e9b779bf3b824=, CI #385 / run =32612384320= completed RED with 4 failed, 912 passed, 14 warnings; both shared-mic jobs passed and the existing ZARA/1 phase remained 91/91 green.
-- Failure evidence :: all four lifecycle tests reached =audio.input.start= but received no reply. The new handler constructed =audio.input.started=/=audio.input.accepted=/=audio.input.committed= acknowledgements that were absent from the protocol's closed =SERVER_MESSAGE_TYPES=. =encode_message= therefore raised =ProtocolValidationError= inside =_send=, escaping the ROUTER owner loop and terminating the gateway thread. A pre-start chunk still returned =audio_stream_not_open= because that path emits the already-allowlisted =protocol.error=.
-- Architecture verdict :: ordinary closed-schema integration defect, not a design falsification. Route-scoped ownership/lifecycle state remains sound; the coherent minimum fix is to register the three slice-2 server acknowledgements in the closed protocol allowlist rather than weaken validation or catch-and-hide encoder errors.
-- Fix commit :: =efb5e771c1ca9efde7cb6ddde1b0fd0c4be6ad00= registers only the acknowledgements already required by the red tests. Exact-head CI must prove the slice green before slice 3 begins.
+- Failure evidence :: all four lifecycle tests reached =audio.input.start= but received no reply. The new handler constructed acknowledgements absent from the protocol's closed server allowlist, so encoding terminated the gateway thread.
+- Architecture verdict :: ordinary closed-schema integration defect, not a design falsification.
+- Fix commit :: =efb5e771c1ca9efde7cb6ddde1b0fd0c4be6ad00= registers only the acknowledgements required by the red tests.
+- Exact green evidence :: head =7420e66aa6417b7e0ccda63e69c18b3fd7d487e4= passed CI #387 / run =32614790638=. Slice 2 is green and slice 3 is authorized.
+
+** TDD red candidate 3
+- Tests-only commit :: =19b0278ae1a7ed3bd4497708cf12c75983218687=.
+- Added the first bounded voice-ingress handoff contract before production changes.
+- Required behavior :: an injected ingress receives validated start/chunk/commit operations in order; PCM bytes are passed only on the chunk call; principal, active conversation, stream id and trace id are preserved; sequence is preserved on chunk.
+- Expected red reason :: =ZaraZmqGateway.__init__= has no =voice_ingress= seam and the current audio handler receives only the decoded envelope, so it cannot hand opaque PCM payloads to a bounded runtime adapter.
+- Production code must not advance until focused/Actions execution proves this expected red boundary.
 
 ** Gate
 - Focused red/green tests per behavior.
