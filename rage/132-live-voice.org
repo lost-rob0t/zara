@@ -159,3 +159,32 @@
 
 ** Outcome
 - In progress.
+
+** Acceptance audit after CI #431
+- Exact head =d7b948a9ffb69529023708eea0f786c716b48f9b= passed CI #431 completely, but exact-head green was not treated as sufficient proof of issue acceptance.
+- Gap 1 :: issue #132 requires a focused non-interactive voice transport script. PR #185 had no issue-specific script. Added =scripts/test-zara1-voice.sh= and composed it into =scripts/test-zara1-protocol.sh= so the complete repository gate executes the focused voice matrix instead of relying on an ad-hoc developer command.
+- The focused voice gate itself passed 58 tests inside CI #434 before the later full-suite red, proving the harness is executable and bounded.
+- Gap 2 :: #132 explicitly requires output PCM rate/channel negotiation in =hello=/=hello.ok=. Current gateway hello returned only protocol/payload limits and =ZmqZaraClient= advertised only =versions=[1]=; no output format was negotiated or stored.
+- Gap 3 :: authenticated remote voice is not wired through =SecureZaraZmqGateway=: its capability mapping treats =audio.input.*= as unknown/unauthorized and its constructor does not inject =voice_ingress= into the base gateway. This would make the local voice tests green while the #130 authenticated daemon path rejects live microphone traffic.
+- Architecture verdict :: these are acceptance/integration gaps, not evidence against the established ROUTER/DEALER + ZaraClient + injected-ingress architecture. Design updated to make negotiation and authenticated voice explicit slices rather than merging around them.
+
+** TDD red candidate 6 - output PCM handshake negotiation
+- Tests-only commit :: =9121980894f078443adb54d5f48c3b8517c92efc=.
+- Added =t/test_voice_zmq_negotiation.py= before production changes.
+- Required behavior :: voice-capable client advertises supported =codec/sample_rate/channels= formats; gateway selects an exact compatible configured format in =hello.ok=; explicit incompatible offer fails closed without a session; client records only a format it offered.
+- Compatibility design :: legacy/non-audio clients that omit =audio_output_formats= retain #129 handshake compatibility. Voice-capable =ZmqZaraClient= negotiates explicitly.
+- Authoritative red :: CI #434 / run =32643067541= completed expected RED in the full pytest phase with exactly 3 failed, 949 passed, 14 warnings. Both gateway tests failed at construction because =audio_output_format= was not accepted; the client test failed because =audio_output_formats= was not accepted.
+- Regression evidence :: the existing ZARA/1 protocol/transport phase remained 91/91 green; the newly composed focused voice gate passed 58 tests; Arch and Ubuntu shared-mic probes both passed. This is clean feature-red evidence.
+
+** Implementation slice 6 - output PCM handshake negotiation
+- Production commit :: =d4830639ac6040fe616688225347731d17294644=.
+- Added closed normalization for exact =pcm_s16le= output format objects, default baseline 24 kHz mono output, gateway exact-match selection, fail-closed explicit incompatibility, client advertisement, negotiated-format storage, and reconnect reset.
+- Legacy hello that omits =audio_output_formats= still receives a non-audio =hello.ok= without a selected voice format.
+- =scripts/test-zara1-voice.sh= now includes =t/test_voice_zmq_negotiation.py= so the issue-focused gate cannot omit negotiation regressions.
+- CI #435 for the production commit was superseded/cancelled by subsequent gate/design commits before completion; no green claim is made from that run.
+- Current design also requires a subsequent TDD enforcement test proving =audio.output.start= must match the negotiated format before playback; negotiation metadata alone is insufficient acceptance.
+
+** Next authorized work after slice 6 green
+- Tests-first negotiated-output enforcement at the client playback boundary.
+- Tests-first =SecureZaraZmqGateway= voice authorization/injection: start/chunk/commit use existing =TURN_SUBMIT= authority, cancel uses =TURN_CANCEL=, revoked/missing capability is rejected before ingress, and identical stream ids across authenticated principals remain isolated.
+- Only after those slices and exact-head full repo/Nix/package/shared-mic green may #185 leave draft/merge.
