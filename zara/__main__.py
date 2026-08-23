@@ -4,9 +4,12 @@ Zara - Unified CLI Interface
 Wraps console (text), voice, and dictate modes
 """
 
-import sys
 import argparse
+import queue
+import sys
+import time
 from pathlib import Path
+
 from .config import init_config
 from .stt_backends import (
     STT_PROVIDERS,
@@ -34,6 +37,7 @@ GPU_ERROR_MARKERS = (
     "vk_",
     "gfx",
 )
+CLI_TURN_TIMEOUT_SECONDS = 30.0
 
 
 def normalize_stt_device(device: str, provider: str | None = None) -> str:
@@ -75,6 +79,75 @@ def resolve_local_stt_model(provider: str, model: str) -> str:
 
         return resolve_whisper_cpp_model(model)
     return model
+
+
+def _wait_for_daemon_turn(subscription, turn_id: str) -> str:
+    from .runtime import events
+
+    if not turn_id:
+        raise RuntimeError("daemon did not assign a turn id")
+
+    deadline = time.monotonic() + CLI_TURN_TIMEOUT_SECONDS
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("daemon turn timed out")
+        try:
+            envelope = subscription.get(timeout=remaining)
+        except queue.Empty as error:
+            raise TimeoutError("daemon turn timed out") from error
+
+        event = envelope.event
+        if event.turn_id != turn_id:
+            continue
+        if isinstance(event, events.AssistantComplete):
+            if not event.success:
+                raise RuntimeError(event.text or "assistant generation failed")
+            return event.text
+        if isinstance(event, events.ResponseText):
+            return event.text
+        if isinstance(event, (events.AssistantFailed, events.AgentFailed)):
+            raise RuntimeError(event.reason or "daemon turn failed")
+        if isinstance(event, events.TurnCancelled):
+            raise RuntimeError(event.reason or "daemon turn cancelled")
+
+
+def _run_connected_text(endpoint: str, command_text: str) -> int:
+    from .runtime.commands import SubmitTurn
+    from .zmq_transport import ZmqZaraClient
+
+    client = None
+    subscription = None
+    exit_code = 0
+    try:
+        client = ZmqZaraClient(endpoint)
+        client.start().result()
+        # Subscribe before submit so an immediately-completing daemon turn
+        # cannot publish its terminal event before this CLI is listening.
+        subscription = client.subscribe()
+        receipt = client.submit(SubmitTurn(text=command_text)).result()
+        response = _wait_for_daemon_turn(subscription, receipt.turn_id)
+        if response:
+            print(response)
+    except Exception as error:
+        print(f"Error: {error}", file=sys.stderr)
+        exit_code = 2
+    finally:
+        if subscription is not None:
+            try:
+                subscription.close()
+            except Exception as error:
+                if exit_code == 0:
+                    print(f"Error: {error}", file=sys.stderr)
+                    exit_code = 2
+        if client is not None:
+            try:
+                client.close()
+            except Exception as error:
+                if exit_code == 0:
+                    print(f"Error: {error}", file=sys.stderr)
+                    exit_code = 2
+    return exit_code
 
 
 def main():
@@ -297,25 +370,7 @@ def main():
         command_text = " ".join(args.command)
 
         if args.connect:
-            from .runtime.commands import SubmitTurn
-            from .zmq_transport import ZmqZaraClient
-
-            client = ZmqZaraClient(args.connect)
-            exit_code = 0
-            try:
-                client.start().result()
-                client.submit(SubmitTurn(text=command_text)).result()
-            except Exception as error:
-                print(f"Error: {error}", file=sys.stderr)
-                exit_code = 2
-            finally:
-                try:
-                    client.close()
-                except Exception as error:
-                    if exit_code == 0:
-                        print(f"Error: {error}", file=sys.stderr)
-                        exit_code = 2
-            sys.exit(exit_code)
+            sys.exit(_run_connected_text(args.connect, command_text))
 
         from .console import ZaraConsole
 
