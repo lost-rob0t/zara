@@ -1,0 +1,32 @@
+#+title: RAGE Work Log - Zara issue 132
+
+* Run identity
+- Consumed issue :: #132
+- Branch :: =rage/132-live-voice-zara1=
+- RAGE start commit :: =1a076e9921228d9d0eb18ea63225a1862f81023d=
+- Start meaning :: Exact =master= commit immediately after #131 / PR #148 merged. Immutable for this RAGE iteration.
+
+* Iteration 1
+** Research
+- Status :: in progress
+- Scope :: Stream live voice over ZARA/1 with client-owned audio devices and cross-process barge-in. Implement only issue #132.
+
+** Design
+- Pending evidence-derived design.
+
+** Planned TDD
+- Pending acceptance-to-test mapping after research.
+
+** Implementation
+- None yet.
+
+** Gate
+- Focused red/green tests per behavior.
+- Issue-specific non-interactive live-voice transport script.
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- Exact-head GitHub Actions required before merge.
+
+** Outcome
+- In progress.
