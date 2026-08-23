@@ -85,6 +85,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         context: Optional[zmq.Context] = None,
         config: Optional[TransportConfig] = None,
         limits=None,
+        voice_ingress=None,
     ) -> None:
         if not isinstance(security_registry, SecurityRegistry):
             raise TypeError("security_registry must be SecurityRegistry")
@@ -100,6 +101,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             context=context,
             config=config,
             limits=limits,
+            voice_ingress=voice_ingress,
         )
         self._security_registry = security_registry
         self._curve_server = curve_server
@@ -117,9 +119,14 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             return Capability.SESSION_BASIC
         if message_type == "runtime.status":
             return Capability.RUNTIME_STATUS
-        if message_type == "turn.submit":
+        if message_type in {
+            "turn.submit",
+            "audio.input.start",
+            "audio.input.chunk",
+            "audio.input.commit",
+        }:
             return Capability.TURN_SUBMIT
-        if message_type == "turn.cancel":
+        if message_type in {"turn.cancel", "audio.input.cancel"}:
             return Capability.TURN_CANCEL
         raise AuthorizationDenied("unknown daemon message capability")
 
