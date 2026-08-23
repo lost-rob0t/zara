@@ -15,6 +15,7 @@ import queue
 import threading
 import time
 import uuid
+import weakref
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Optional
@@ -1009,6 +1010,7 @@ class ZmqZaraClient(ZaraClient):
         )
         self._audio_output_format: Optional[dict[str, object]] = None
         self._bus = bridge.RuntimeEventBus()
+        self._subscriptions: weakref.WeakSet[bridge.RuntimeEventSubscription] = weakref.WeakSet()
         self._state = ZaraClientState.NEW
         self._state_lock = threading.RLock()
         self._thread: Optional[threading.Thread] = None
@@ -1526,7 +1528,9 @@ class ZmqZaraClient(ZaraClient):
         return self._request(message, _PendingKind.COMMAND)
 
     def subscribe(self, *, maxsize: int = 0) -> bridge.RuntimeEventSubscription:
-        return self._bus.subscribe(maxsize=maxsize)
+        subscription = self._bus.subscribe(maxsize=maxsize)
+        self._subscriptions.add(subscription)
+        return subscription
 
     def shutdown(self, reason: str = "client shutdown") -> concurrent.futures.Future:
         future = concurrent.futures.Future()
@@ -1547,6 +1551,9 @@ class ZmqZaraClient(ZaraClient):
             thread.join(self._config.request_timeout)
             if thread.is_alive():
                 raise TimeoutError("client owner thread did not stop for reconnect")
+        for subscription in tuple(self._subscriptions):
+            if not subscription.closed:
+                subscription.drain()
         self._session_id = None
         self._audio_output_format = None
         with self._state_lock:
