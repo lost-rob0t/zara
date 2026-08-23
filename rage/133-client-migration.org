@@ -87,6 +87,24 @@
 - Expected RED :: current =zara.__main__= has neither flag and routes text directly through =ZaraConsole=, so argparse should reject the new options before the required service selection can occur.
 - Production behavior is unchanged at this boundary. Authoritative CI red evidence is pending.
 
+** TDD slice 3 - authoritative RED
+- Exact tests-only head :: =85223a3417915cfce1ed5fbc34048ac5671ef254=.
+- GitHub Actions :: CI #464 / run =32657145206=.
+- Result :: expected RED at pytest phase: 4 failed, 963 passed, 14 warnings.
+- Failures :: all four =t/test_cli_client_migration.py= behaviors fail because argparse does not recognize =--standalone= or =--connect=; no existing runtime/protocol behavior regressed.
+- Existing ZARA/1 focused gate :: 91/91 PASS.
+- Shared mic / Arch Linux :: PASS.
+- Shared mic / Ubuntu 24.04 :: PASS.
+- Interpretation :: clean feature-red evidence. Architecture is not disproven; authorize the minimum explicit CLI client-selection implementation.
+
+** TDD slice 3 - implementation candidate
+- Production commit :: =972c5ec333c38f9d314ee721fd43ac8f35970215=.
+- Parser :: =--connect ENDPOINT= and =--standalone= are a mutually exclusive client-selection group.
+- Explicit standalone text keeps the historical =ZaraConsole= behavior and therefore preserves the migration compatibility path.
+- Explicit daemon text constructs =ZmqZaraClient=, completes its bounded start/handshake, submits one canonical =SubmitTurn= through the =ZaraClient= boundary, and closes the client in all outcomes.
+- Connect/start/submit/close failures fail closed with exit status 2 and a surfaced error; there is no fallback to =ZaraConsole= after =--connect= was selected.
+- Scope :: this slice does not yet enable daemon-by-default policy, identity enrollment, or reconnect/session-continuity UI; those remain acceptance work under #133.
+
 ** Gate
 - Focused red/green tests per behavior.
 - Issue-specific non-interactive client migration script.
