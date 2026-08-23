@@ -105,6 +105,18 @@
 - Connect/start/submit/close failures fail closed with exit status 2 and a surfaced error; there is no fallback to =ZaraConsole= after =--connect= was selected.
 - Scope :: this slice does not yet enable daemon-by-default policy, identity enrollment, or reconnect/session-continuity UI; those remain acceptance work under #133.
 
+** TDD slice 3 - authoritative GREEN
+- Exact implementation/log head :: =fd5ee35a023163e7cb048d8c3502315a7110b60b=.
+- GitHub Actions :: CI #466 / run =32657760875=.
+- Result :: PASS: complete repository test gate, =nix flake check=, packaged Zara build, shared mic / Arch Linux, and shared mic / Ubuntu 24.04.
+- Interpretation :: explicit client selection and fail-closed connect failure handling are green. Continue the same CLI migration slice with end-to-end turn completion semantics tests-first.
+
+** TDD slice 3b - tests-only candidate
+- Tests-only commit :: =4fe074c04ac7075754eaf6b25ef65d68ce7b8702=.
+- Required behavior :: subscribe before submit so fast runtime events cannot be missed; ignore a completion for another turn; wait for and print the accepted turn's =AssistantComplete=; close the subscription; convert client-construction/setup exceptions to the same bounded exit-2 error path without a standalone fallback or traceback.
+- Expected RED :: current daemon CLI path waits only for the immediate =CommandReceipt= and closes the transport without subscribing/printing completion; =ZmqZaraClient= construction also occurs outside the current exception boundary.
+- Production behavior is unchanged at this boundary. Authoritative CI red evidence is pending.
+
 ** Gate
 - Focused red/green tests per behavior.
 - Issue-specific non-interactive client migration script.
