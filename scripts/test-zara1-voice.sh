@@ -8,6 +8,7 @@ python -m pytest -q \
   t/test_voice_protocol.py \
   t/test_voice_output_protocol.py \
   t/test_voice_zmq_transport.py \
+  t/test_voice_zmq_negotiation.py \
   t/test_voice_zmq_cancel.py \
   t/test_voice_zmq_cleanup.py \
   t/test_voice_zmq_backpressure.py \
