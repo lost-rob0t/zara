@@ -109,6 +109,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         self._route_user_ids: dict[bytes, str] = {}
         self._route_principal_ids: dict[bytes, str] = {}
         self._runtime_quota_holds: set[tuple[str, str]] = set()
+        self._hello_route_resets: set[bytes] = set()
 
     @staticmethod
     def _capability_for(message_type: str) -> Capability:
@@ -197,15 +198,29 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             self._runtime_quota_holds.clear()
             self._route_user_ids.clear()
             self._route_principal_ids.clear()
+            self._hello_route_resets.clear()
             socket.close(self._config.linger_ms)
             authenticator.stop()
 
-    def _drop_route_locked(self, route: bytes) -> None:
-        principal_id = self._route_principal_ids.pop(route, None)
-        self._route_user_ids.pop(route, None)
-        if principal_id is not None:
-            self._quotas.release_connection(principal_id)
-        super()._drop_route_locked(route)
+    def _drop_route_locked(self, route: bytes):
+        if route not in self._hello_route_resets:
+            principal_id = self._route_principal_ids.pop(route, None)
+            self._route_user_ids.pop(route, None)
+            if principal_id is not None:
+                self._quotas.release_connection(principal_id)
+        return super()._drop_route_locked(route)
+
+    def _handle_hello(self, socket: zmq.Socket, route: bytes, message: ProtocolMessage) -> None:
+        # The base gateway resets application/session state on every hello so an
+        # abandoned voice stream is cancelled. A secure route is already bound
+        # and charged to its authenticated principal before that reset. Preserve
+        # the security binding/quota while allowing only the base route state to
+        # be replaced.
+        self._hello_route_resets.add(route)
+        try:
+            super()._handle_hello(socket, route, message)
+        finally:
+            self._hello_route_resets.discard(route)
 
     def _receive(self, socket: zmq.Socket) -> None:
         raw_frames = socket.recv_multipart(copy=False)
