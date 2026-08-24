@@ -1,0 +1,10 @@
+[control_plane]
+adadr_mode = "auto-rage"
+
+[auto_rage]
+research = true
+design = true
+adversarial_review = true
+decision_gate = true
+tdd_realization = true
+exact_head_verification = true
