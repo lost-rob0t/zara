@@ -11,7 +11,7 @@ from zara.protocol_runtime import (
 )
 from zara.runtime import events
 from zara.runtime.bridge import EventEnvelope
-from zara.runtime.commands import CancelTurn, SubmitTurn
+from zara.runtime.commands import ApproveTool, CancelTurn, RejectTool, SubmitTurn
 
 
 def protocol_message(message_type: str, **overrides) -> ProtocolMessage:
@@ -52,11 +52,37 @@ def test_turn_cancel_preserves_canonical_turn_id():
     command = command_from_message(
         protocol_message("turn.cancel", turn_id="turn-canonical")
     )
-
     assert command == CancelTurn(
         request_id="req-123",
         turn_id="turn-canonical",
     )
+
+
+@pytest.mark.parametrize(
+    ("message_type", "body", "expected"),
+    [
+        (
+            "tool.approve",
+            {"tool_run_id": "tool-call-1"},
+            ApproveTool(request_id="req-123", tool_run_id="tool-call-1"),
+        ),
+        (
+            "tool.reject",
+            {"tool_run_id": "tool-call-1", "reason": "not now"},
+            RejectTool(
+                request_id="req-123",
+                tool_run_id="tool-call-1",
+                reason="not now",
+            ),
+        ),
+    ],
+)
+def test_tool_decisions_map_to_existing_runtime_commands(message_type, body, expected):
+    command = command_from_message(
+        protocol_message(message_type, session_id="session-1", body=body)
+    )
+
+    assert command == expected
 
 
 @pytest.mark.parametrize(
@@ -151,6 +177,151 @@ def test_runtime_events_have_explicit_allowlisted_wire_mapping(event, expected_t
     frames = encode_message(message)
     assert frames[0] == b"ZARA/1"
     assert len(frames) == 2
+
+
+@pytest.mark.parametrize(
+    ("event", "expected_type", "expected_body"),
+    [
+        (
+            events.ToolQueued(
+                turn_id="turn-1",
+                conversation_id="conversation-1",
+                tool_run_id="tool-call-1",
+                tool_name="reviewed_effect",
+            ),
+            "tool.queued",
+            {"tool_run_id": "tool-call-1", "tool_name": "reviewed_effect"},
+        ),
+        (
+            events.ToolWaitingForUser(
+                turn_id="turn-1",
+                conversation_id="conversation-1",
+                tool_run_id="tool-call-1",
+                tool_name="reviewed_effect",
+                prompt="Approve reviewed_effect?",
+            ),
+            "tool.waiting",
+            {
+                "tool_run_id": "tool-call-1",
+                "tool_name": "reviewed_effect",
+                "kind": "approval",
+                "prompt": "Approve reviewed_effect?",
+            },
+        ),
+        (
+            events.ToolStarted(
+                turn_id="turn-1",
+                conversation_id="conversation-1",
+                tool_run_id="tool-call-1",
+                tool_name="reviewed_effect",
+            ),
+            "tool.started",
+            {"tool_run_id": "tool-call-1", "tool_name": "reviewed_effect"},
+        ),
+        (
+            events.ToolCompleted(
+                turn_id="turn-1",
+                conversation_id="conversation-1",
+                tool_run_id="tool-call-1",
+                tool_name="reviewed_effect",
+                success=True,
+            ),
+            "tool.completed",
+            {
+                "tool_run_id": "tool-call-1",
+                "tool_name": "reviewed_effect",
+                "success": True,
+            },
+        ),
+        (
+            events.ToolFailed(
+                turn_id="turn-1",
+                conversation_id="conversation-1",
+                tool_run_id="tool-call-1",
+                tool_name="reviewed_effect",
+                reason="tool execution failed",
+            ),
+            "tool.failed",
+            {
+                "tool_run_id": "tool-call-1",
+                "tool_name": "reviewed_effect",
+                "reason": "tool execution failed",
+            },
+        ),
+        (
+            events.ToolCancelled(
+                turn_id="turn-1",
+                conversation_id="conversation-1",
+                tool_run_id="tool-call-1",
+                tool_name="reviewed_effect",
+                reason="tool rejected",
+            ),
+            "tool.cancelled",
+            {
+                "tool_run_id": "tool-call-1",
+                "tool_name": "reviewed_effect",
+                "reason": "tool rejected",
+            },
+        ),
+    ],
+)
+def test_tool_events_have_closed_wire_mapping(event, expected_type, expected_body):
+    message = runtime_event_to_message(
+        envelope(event, sequence=12),
+        message_id="tool-event",
+        timestamp_ns=1001,
+    )
+
+    assert message.type == expected_type
+    assert message.turn_id == "turn-1"
+    assert message.conversation_id == "conversation-1"
+    assert message.seq == 12
+    assert message.body == expected_body
+    assert "arguments" not in repr(message)
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        events.ToolWaitingForUser(
+            turn_id="turn-1",
+            tool_run_id="tool call with spaces",
+            tool_name="reviewed_effect",
+            prompt="Approve reviewed_effect?",
+        ),
+        events.ToolWaitingForUser(
+            turn_id="turn-1",
+            tool_run_id="tool-call-1",
+            tool_name="bad tool name",
+            prompt="Approve it?",
+        ),
+        events.ToolWaitingForUser(
+            turn_id="turn-1",
+            tool_run_id="tool-call-1",
+            tool_name="reviewed_effect",
+            prompt="unsafe\nprompt",
+        ),
+        events.ToolCompleted(
+            turn_id="turn-1",
+            tool_run_id="tool-call-1",
+            tool_name="reviewed_effect",
+            success="yes",
+        ),
+        events.ToolFailed(
+            turn_id="turn-1",
+            tool_run_id="tool-call-1",
+            tool_name="reviewed_effect",
+            reason="private\nexception",
+        ),
+    ],
+)
+def test_invalid_tool_runtime_events_fail_before_transport(event):
+    with pytest.raises(RuntimeCodecError):
+        runtime_event_to_message(
+            envelope(event),
+            message_id="tool-event",
+            timestamp_ns=1001,
+        )
 
 
 @pytest.mark.parametrize(

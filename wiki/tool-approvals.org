@@ -41,6 +41,25 @@ The principal runtime bus publishes =UserResponded= followed by
 rejection, timeout and pre-execution cancellation. =ToolFailed= contains a
 bounded reason and never a raw provider exception.
 
+* Authenticated ZARA/1 clients
+
+The closed client commands are =tool.approve= and =tool.reject=. They map only
+to the existing =ApproveTool= and =RejectTool= runtime commands. Direct
+acknowledgements are =tool.approve.accepted= and =tool.reject.accepted=.
+
+Clients receive =tool.queued=, =tool.waiting=, =tool.started=,
+=tool.completed=, =tool.failed= and =tool.cancelled= as typed runtime events.
+The wire carries only the canonical turn/tool ids, bounded tool name, fixed
+approval prompt and safe terminal status. Tool arguments, results and provider
+objects never cross this approval protocol.
+
+An authenticated route may answer only an approval delivered to the exact
+application session that initiated the owning turn. A second device for the
+same principal cannot observe or claim it by guessing =tool_run_id=.
+=Capability.TOOL_APPROVE= is checked by the server for both approve and reject.
+Identical request-id replay returns the original acknowledgement; a different
+request or terminal tool id cannot run the side effect again.
+
 * Privacy and restart behavior
 
 Approval events contain no tool arguments, results, model prompts, credentials
@@ -52,11 +71,14 @@ Restart and shutdown cancel them and erase their in-memory checkpoints. Zara
 cannot safely resume an arbitrary external side effect after a crash until the
 typed capability plane supplies durable idempotency and reconciliation.
 Transport disconnect alone does not imply cancellation; the principal-owned
-request remains pending until authenticated reconnection, explicit action,
-timeout or runtime lifecycle cleanup.
+request remains pending. This protocol version does not replay or transfer an
+approval to a new session, so a disconnected request ends through its bounded
+timeout, explicit turn cancellation, restart or shutdown unless the original
+session remains live. Secure ownership transfer is future explicit work.
 
 Run the focused deterministic gate with:
 
 #+begin_src sh
 nix develop -c bash scripts/test-runtime-tool-approvals.sh
+nix develop -c bash scripts/test-zara1-tool-approvals.sh
 #+end_src

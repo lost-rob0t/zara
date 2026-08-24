@@ -39,7 +39,15 @@ from zara.protocol import (
 )
 from zara.protocol_runtime import RuntimeCodecError, command_from_message, runtime_event_to_message
 from zara.runtime import bridge, events
-from zara.runtime.commands import CancelTurn, CommandReceipt, RuntimeCommand, SubmitTurn
+from zara.runtime.commands import (
+    ApproveTool,
+    CancelTurn,
+    CommandReceipt,
+    RejectTool,
+    RuntimeCommand,
+    SubmitTurn,
+)
+from zara.security_transport import CurveClientConfig, configure_curve_client_socket
 from zara.server import PrincipalContext
 
 
@@ -186,6 +194,7 @@ class _AudioInputState:
 @dataclass
 class _RouteState:
     session_id: str
+    principal_id: str
     ready: bool = False
     conversation_id: Optional[str] = None
     audio_inputs: dict[str, _AudioInputState] = field(default_factory=dict)
@@ -200,7 +209,20 @@ class _ReplayEntry:
 @dataclass
 class _InflightEntry:
     command: RuntimeCommand
-    routes: list[bytes]
+    routes: list["_RequestRoute"]
+
+
+@dataclass(frozen=True)
+class _RequestRoute:
+    route: bytes
+    principal_id: str
+    session_id: str
+
+
+@dataclass(frozen=True)
+class _ApprovalOwner:
+    route: bytes
+    session_id: str
 
 
 class ZaraZmqGateway:
@@ -238,7 +260,8 @@ class ZaraZmqGateway:
         self._started: concurrent.futures.Future = concurrent.futures.Future()
         self._route_outbound: OrderedDict[bytes, queue.Queue[ProtocolMessage]] = OrderedDict()
         self._routes: dict[bytes, _RouteState] = {}
-        self._turn_routes: dict[str, bytes] = {}
+        self._turn_routes: dict[tuple[str, str], bytes] = {}
+        self._approval_owners: dict[tuple[str, str], _ApprovalOwner] = {}
         self._replay: OrderedDict[tuple[str, str], _ReplayEntry] = OrderedDict()
         self._inflight: dict[tuple[str, str], _InflightEntry] = {}
         self._event_subscription = None
@@ -259,6 +282,7 @@ class ZaraZmqGateway:
             self._generation += 1
             self._routes.clear()
             self._turn_routes.clear()
+            self._approval_owners.clear()
             self._replay.clear()
             self._inflight.clear()
             self._route_outbound.clear()
@@ -350,8 +374,13 @@ class ZaraZmqGateway:
         for turn_id, candidate in tuple(self._turn_routes.items()):
             if candidate == route:
                 self._turn_routes.pop(turn_id, None)
+        for key, owner in tuple(self._approval_owners.items()):
+            if owner.route == route:
+                self._approval_owners.pop(key, None)
         for inflight in self._inflight.values():
-            inflight.routes[:] = [candidate for candidate in inflight.routes if candidate != route]
+            inflight.routes[:] = [
+                candidate for candidate in inflight.routes if candidate.route != route
+            ]
         return state
 
     def _drop_route(self, route: bytes) -> None:
@@ -470,7 +499,7 @@ class ZaraZmqGateway:
         }:
             self._handle_audio_input(socket, route, state, message, decoded.payloads)
             return
-        if message.type in {"turn.submit", "turn.cancel"}:
+        if message.type in {"turn.submit", "turn.cancel", "tool.approve", "tool.reject"}:
             self._dispatch_runtime(socket, route, state, message)
             return
         self._send(
@@ -690,8 +719,28 @@ class ZaraZmqGateway:
         session_id = _message_id()
         with self._lock:
             previous_state = self._drop_route_locked(route)
-            self._routes[route] = _RouteState(session_id=session_id, ready=True)
+            state = _RouteState(
+                session_id=session_id,
+                principal_id=self._principal.principal_id,
+                ready=True,
+            )
+            self._routes[route] = state
         self._cancel_audio_inputs(previous_state)
+        try:
+            self._route_ready(route, state)
+        except (KeyError, RuntimeError):
+            self._drop_route(route)
+            self._send(
+                socket,
+                route,
+                _protocol_error(
+                    reply_to=message.id,
+                    code="runtime_unavailable",
+                    message="runtime is unavailable",
+                    retryable=True,
+                ),
+            )
+            return
         response_body = {
             "version": 1,
             "max_payload_frames": self._limits.max_payload_frames,
@@ -713,6 +762,9 @@ class ZaraZmqGateway:
                 body=response_body,
             ),
         )
+
+    def _route_ready(self, _route: bytes, _state: _RouteState) -> None:
+        pass
 
     def _idempotency_key(self, message: ProtocolMessage) -> tuple[str, str]:
         return self._principal.principal_id, message.id
@@ -805,6 +857,11 @@ class ZaraZmqGateway:
             return
 
         replay_key = self._idempotency_key(message)
+        request_route = _RequestRoute(
+            route=route,
+            principal_id=state.principal_id,
+            session_id=state.session_id,
+        )
         with self._lock:
             replay = self._replay.get(replay_key)
             if replay is not None:
@@ -813,7 +870,7 @@ class ZaraZmqGateway:
                     return
                 self._replay.move_to_end(replay_key)
                 if replay.response.turn_id:
-                    self._turn_routes[replay.response.turn_id] = route
+                    self._turn_routes[(state.principal_id, replay.response.turn_id)] = route
                 self._send(socket, route, self._response_for_route(replay.response, route))
                 return
 
@@ -822,8 +879,8 @@ class ZaraZmqGateway:
                 if inflight.command != command:
                     self._send_idempotency_conflict(socket, route, message)
                     return
-                if route not in inflight.routes:
-                    inflight.routes.append(route)
+                if request_route not in inflight.routes:
+                    inflight.routes.append(request_route)
                 return
 
             if len(self._inflight) >= self._config.pending_request_limit:
@@ -838,7 +895,30 @@ class ZaraZmqGateway:
                     ),
                 )
                 return
-            self._inflight[replay_key] = _InflightEntry(command=command, routes=[route])
+            if isinstance(command, (ApproveTool, RejectTool)):
+                owner = self._approval_owners.get((state.principal_id, command.tool_run_id))
+                if (
+                    owner is None
+                    or owner.route != route
+                    or owner.session_id != state.session_id
+                    or message.session_id != state.session_id
+                ):
+                    self._send(
+                        socket,
+                        route,
+                        _protocol_error(
+                            reply_to=message.id,
+                            code="approval_not_owned",
+                            message="tool approval is not owned by this session",
+                            retryable=False,
+                        ),
+                    )
+                    return
+                self._approval_owners.pop((state.principal_id, command.tool_run_id), None)
+            self._inflight[replay_key] = _InflightEntry(
+                command=command,
+                routes=[request_route],
+            )
 
         try:
             future = self._supervisor.submit(self._principal, command)
@@ -864,11 +944,14 @@ class ZaraZmqGateway:
                 receipt = done.result()
                 if not isinstance(receipt, CommandReceipt):
                     raise TypeError("runtime returned invalid receipt")
-                response_type = (
-                    "turn.accepted" if message.type == "turn.submit" else "turn.cancel.accepted"
-                )
+                response_types = {
+                    "turn.submit": "turn.accepted",
+                    "turn.cancel": "turn.cancel.accepted",
+                    "tool.approve": "tool.approve.accepted",
+                    "tool.reject": "tool.reject.accepted",
+                }
                 response = ProtocolMessage(
-                    type=response_type,
+                    type=response_types[message.type],
                     id=_message_id(),
                     reply_to=message.id,
                     conversation_id=message.conversation_id,
@@ -889,14 +972,28 @@ class ZaraZmqGateway:
                     self._inflight.pop(replay_key, None)
                     return
                 inflight = self._inflight.pop(replay_key, None)
-                routes = list(inflight.routes) if inflight is not None else [route]
-                live_routes = [candidate for candidate in routes if candidate in self._routes]
+                routes = list(inflight.routes) if inflight is not None else [request_route]
+                live_routes = [
+                    candidate
+                    for candidate in routes
+                    if (
+                        (current := self._routes.get(candidate.route)) is not None
+                        and current.principal_id == candidate.principal_id
+                        and current.session_id == candidate.session_id
+                    )
+                ]
                 if response.turn_id and live_routes:
-                    self._turn_routes[response.turn_id] = live_routes[-1]
+                    latest = live_routes[-1]
+                    self._turn_routes[(latest.principal_id, response.turn_id)] = latest.route
                 self._remember_response(replay_key, command, response)
 
             for candidate in routes:
-                self._enqueue_outbound(candidate, self._response_for_route(response, candidate))
+                if candidate not in live_routes:
+                    continue
+                self._enqueue_outbound(
+                    candidate.route,
+                    self._response_for_route(response, candidate.route),
+                )
 
         future.add_done_callback(completed)
 
@@ -904,16 +1001,31 @@ class ZaraZmqGateway:
         subscription = self._event_subscription
         if subscription is None:
             return
+        self._drain_runtime_subscription(
+            socket,
+            subscription,
+            principal_id=self._principal.principal_id,
+        )
+
+    def _drain_runtime_subscription(
+        self,
+        socket: zmq.Socket,
+        subscription,
+        *,
+        principal_id: str,
+    ) -> None:
         for envelope in subscription.drain(limit=32):
             route = None
             event = envelope.event
             if event.turn_id:
-                route = self._turn_routes.get(event.turn_id)
+                route = self._turn_routes.get((principal_id, event.turn_id))
             if route is None and event.conversation_id:
                 matches = [
                     candidate
                     for candidate, state in self._routes.items()
-                    if state.ready and state.conversation_id == event.conversation_id
+                    if state.ready
+                    and state.principal_id == principal_id
+                    and state.conversation_id == event.conversation_id
                 ]
                 if len(matches) == 1:
                     route = matches[0]
@@ -927,7 +1039,27 @@ class ZaraZmqGateway:
                 )
             except RuntimeCodecError:
                 continue
-            self._send(socket, route, message)
+            state = self._routes.get(route)
+            if state is None or not state.ready:
+                continue
+            tool_run_id = getattr(event, "tool_run_id", None)
+            if isinstance(event, events.ToolWaitingForUser) and tool_run_id:
+                owner_key = (principal_id, tool_run_id)
+                if (
+                    owner_key not in self._approval_owners
+                    and len(self._approval_owners) >= self._config.pending_request_limit
+                ):
+                    continue
+                self._approval_owners[owner_key] = _ApprovalOwner(
+                    route=route,
+                    session_id=state.session_id,
+                )
+            self._send(socket, route, self._response_for_route(message, route))
+            if isinstance(
+                event,
+                (events.ToolStarted, events.ToolCompleted, events.ToolFailed, events.ToolCancelled),
+            ) and tool_run_id:
+                self._approval_owners.pop((principal_id, tool_run_id), None)
 
     def _drain_outbound(self, socket: zmq.Socket) -> None:
         sent = 0
@@ -998,6 +1130,7 @@ class ZmqZaraClient(ZaraClient):
         limits: Optional[ProtocolLimits] = None,
         voice_output=None,
         audio_output_formats: Optional[list[dict[str, object]]] = None,
+        curve_client: Optional[CurveClientConfig] = None,
     ) -> None:
         if not isinstance(endpoint, str) or not endpoint.strip():
             raise ValueError("endpoint must be a non-empty string")
@@ -1006,6 +1139,9 @@ class ZmqZaraClient(ZaraClient):
         self._owns_context = context is None
         self._config = config or TransportConfig()
         self._limits = limits or ProtocolLimits()
+        if curve_client is not None and not isinstance(curve_client, CurveClientConfig):
+            raise TypeError("curve_client must be CurveClientConfig")
+        self._curve_client = curve_client
         self._voice_output = voice_output
         self._audio_output_formats = _normalize_audio_output_formats(
             audio_output_formats or [_DEFAULT_AUDIO_OUTPUT_FORMAT]
@@ -1074,6 +1210,8 @@ class ZmqZaraClient(ZaraClient):
     def _run(self) -> None:
         socket = self._context.socket(zmq.DEALER)
         apply_socket_options(socket, self._config, router=False)
+        if self._curve_client is not None:
+            configure_curve_client_socket(socket, self._curve_client)
         socket.setsockopt(zmq.IDENTITY, self._routing_id)
         poller = zmq.Poller()
         try:
@@ -1147,6 +1285,12 @@ class ZmqZaraClient(ZaraClient):
         frames = socket.recv_multipart()
         decoded = decode_message(frames, limits=self._limits)
         message = decoded.message
+        if (
+            message.type.startswith("tool.")
+            and self._session_id is not None
+            and message.session_id != self._session_id
+        ):
+            return
         if message.reply_to:
             with self._pending_lock:
                 pending = self._pending.pop(message.reply_to, None)
@@ -1287,7 +1431,12 @@ class ZmqZaraClient(ZaraClient):
                 pending.future.set_result(message.conversation_id)
             return
         if pending.kind is _PendingKind.COMMAND:
-            if message.type not in {"turn.accepted", "turn.cancel.accepted"}:
+            if message.type not in {
+                "turn.accepted",
+                "turn.cancel.accepted",
+                "tool.approve.accepted",
+                "tool.reject.accepted",
+            }:
                 pending.future.set_exception(ProtocolValidationError("invalid command response"))
             else:
                 pending.future.set_result(
@@ -1370,6 +1519,35 @@ class ZmqZaraClient(ZaraClient):
             )
         elif message.type == "runtime.stopped":
             event = events.RuntimeStopped(reason=str(body.get("reason", "")), **common)
+        elif message.type in {
+            "tool.queued",
+            "tool.waiting",
+            "tool.started",
+            "tool.completed",
+            "tool.failed",
+            "tool.cancelled",
+        }:
+            tool = {
+                "tool_run_id": body["tool_run_id"],
+                "tool_name": body["tool_name"],
+            }
+            if message.type == "tool.queued":
+                event = events.ToolQueued(**tool, **common)
+            elif message.type == "tool.waiting":
+                event = events.ToolWaitingForUser(
+                    kind=body["kind"],
+                    prompt=body["prompt"],
+                    **tool,
+                    **common,
+                )
+            elif message.type == "tool.started":
+                event = events.ToolStarted(**tool, **common)
+            elif message.type == "tool.completed":
+                event = events.ToolCompleted(success=body["success"], **tool, **common)
+            elif message.type == "tool.failed":
+                event = events.ToolFailed(reason=body["reason"], **tool, **common)
+            else:
+                event = events.ToolCancelled(reason=body["reason"], **tool, **common)
         if event is not None:
             self._bus.publish(event)
 
@@ -1555,8 +1733,28 @@ class ZmqZaraClient(ZaraClient):
                 timestamp_ns=_now_ns(),
                 payload_count=0,
             )
+        elif isinstance(command, ApproveTool):
+            message = ProtocolMessage(
+                type="tool.approve",
+                id=command.request_id,
+                session_id=self._session_id,
+                timestamp_ns=_now_ns(),
+                payload_count=0,
+                body={"tool_run_id": command.tool_run_id},
+            )
+        elif isinstance(command, RejectTool):
+            message = ProtocolMessage(
+                type="tool.reject",
+                id=command.request_id,
+                session_id=self._session_id,
+                timestamp_ns=_now_ns(),
+                payload_count=0,
+                body={"tool_run_id": command.tool_run_id, "reason": command.reason},
+            )
         else:
-            raise TypeError("ZmqZaraClient supports SubmitTurn and CancelTurn in ZARA/1 v1")
+            raise TypeError(
+                "ZmqZaraClient supports turn and tool-decision commands in ZARA/1 v1"
+            )
         return self._request(message, _PendingKind.COMMAND)
 
     def subscribe(self, *, maxsize: int = 0) -> bridge.RuntimeEventSubscription:

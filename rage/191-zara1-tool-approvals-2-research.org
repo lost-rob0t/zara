@@ -1,0 +1,65 @@
+#+title: RAGE #191 iteration 2 research - authenticated ZARA/1 tool approvals
+
+* Scope and current authority
+- Consumed issue :: #191 at immutable start =55f4f76b2906a05f289f3720e339702d5139aa6d=.
+- Control plane :: repository Auto-RAGE, previously selected and actively recorded under =rage/=.
+- Runtime prerequisite :: #209 is merged. The production LangGraph path now pauses before an approval-required side effect, owns bounded pending state per principal, and accepts =ApproveTool=/=RejectTool= through =RuntimeHost=.
+- Scope :: carry that existing lifecycle over authenticated ZARA/1. Do not create a gateway tool executor, durable cross-process resume, future device capabilities, arbitrary invocation or Prolog-RLM.
+
+* Repository evidence
+** Closed protocol and client gaps remain
+- =CLIENT_MESSAGE_TYPES= has no approve/reject command; =SERVER_MESSAGE_TYPES= has no tool lifecycle or approval acknowledgement.
+- =command_from_message= maps only =turn.submit= and =turn.cancel=. =runtime_event_to_message= rejects every tool event.
+- =ZmqZaraClient.submit= rejects =ApproveTool=/=RejectTool= and its response reducer recognizes only turn acknowledgements.
+- The protocol envelope is bounded, but ordinary JSON bodies are not message-specific. Tool commands/events therefore need exact field, scalar, correlation and zero-payload validation.
+
+** Authenticated event delivery is absent
+- =ZaraZmqGateway= subscribes once to its fixed local principal and routes events through =_turn_routes=.
+- =SecureZaraZmqGateway._run= deliberately replaces the base owner loop for CURVE/ZAP, but it never creates or drains a runtime event subscription. Authenticated clients can submit commands but receive no runtime events from their principal buses.
+- =RuntimeSupervisor= already owns a separate =RuntimeEventBus= per =PrincipalContext=. The secure gateway can subscribe to those buses without creating another event authority.
+- Existing =_turn_routes= is keyed only by =turn_id= and route state does not retain the principal id. A multi-principal gateway must qualify turn ownership by principal even if current turn ids are random and normally unique.
+- =CurveClientConfig= and =configure_curve_client_socket= exist, but production =ZmqZaraClient= cannot accept or apply them. Current authenticated transport tests use raw DEALER sockets, so they do not prove the required authenticated =ZaraClient= seam.
+
+** Existing runtime semantics bound the adapter
+- #209 emits =ToolQueued= then =ToolWaitingForUser= with canonical turn, optional conversation, bounded safe tool name and stable tool-run id before any side effect.
+- Approval/rejection atomically removes the runtime pending record. Unknown, stale and replayed ids produce the same non-enumerating runtime error; cancellation and approval are serialized by =RuntimeHost=.
+- =ToolStarted= is the irreversible generic side-effect boundary. =ToolCompleted=, =ToolFailed= and =ToolCancelled= are sanitized terminal events.
+- Runtime disconnect policy is transport-neutral: disconnect does not cancel the pending approval; timeout, explicit turn cancellation, restart and shutdown remain terminal authorities.
+
+** Current transport state can enforce a narrower session policy
+- A route receives the canonical turn id after =turn.submit= and =_turn_routes= binds that turn to the initiating route.
+- Each successful hello creates a new random application =session_id=. =ZmqZaraClient= keeps a stable DEALER routing id across reconnect but performs a new hello and receives a different session id.
+- Route removal already erases turn mappings and bounded outbound state. A fresh hello resets the old route state.
+- The gateway currently does not compare post-hello =message.session_id= with route state. Tool decisions must require that exact comparison or a stale application session can answer after a new hello on the same routing id.
+- The existing replay cache is keyed by authenticated principal plus request id and compares the typed command. Same-request replay can return one cached receipt; a different request id for a terminal tool id still reaches #209's one-shot rejection.
+
+* Upstream transport evidence
+- ZeroMQ RFC 28 defines ROUTER as explicit per-peer routing with a separate double queue for each connected peer; a disconnected peer's queue is destroyed: https://rfc.zeromq.org/spec/28/
+- ZMTP treats reconnect as a new connection and recommends bounded backoff after connection loss: https://rfc.zeromq.org/spec/23/
+- The libzmq socket reference documents =ZMQ_ROUTER_MANDATORY= fail-fast behavior for unroutable sends and the distinct optional handover policy for duplicate routing ids: https://libzmq.readthedocs.io/en/latest/zmq_setsockopt.html
+- ZAP supplies authenticated connection metadata, while ROUTER routing ids remain addressing frames rather than application principals: https://rfc.zeromq.org/spec/27/
+- PyZMQ documents that =recv(copy=False)= frames expose CURVE =User-Id= metadata; Zara already resolves that metadata through its live registry rather than trusting payload identity: https://pyzmq.readthedocs.io/en/stable/api/zmq.html
+
+* Alternatives
+** Broadcast pending approvals to every same-principal session
+- Rejected. A second device could answer work it did not initiate, and a slow device would consume bounded event capacity for unrelated turns.
+
+** Let any same-principal reconnect claim a known tool-run id
+- Rejected. Tool-run ids are correlations, not bearer capabilities. Safe transfer needs an explicit reattachment or ownership-transfer protocol outside #191.
+
+** Cancel runtime approval on transport disconnect
+- Rejected. ROUTER disconnect observation is not a reliable user-intent signal and #209 deliberately keeps transport disconnect neutral. The bounded runtime timeout remains the safe cleanup.
+
+** Store pending approval state in the gateway
+- Rejected as a second authority. The gateway may retain only bounded delivery ownership for an already-pending runtime id; it never creates, resumes or terminally decides tool work itself.
+
+** Reuse only the fixed local-principal subscription
+- Rejected. It cannot carry authenticated multi-principal events and would defeat #131's bus isolation.
+
+* Research conclusion
+- Use a small closed ZARA/1 tool family and explicit runtime codecs.
+- Let =ZmqZaraClient= accept an optional validated =CurveClientConfig= and apply it before connect; local IPC behavior remains unchanged when absent.
+- Drain one bounded runtime subscription per connected authenticated principal and route each event using =(principal_id, turn_id)=.
+- Bind =ToolWaitingForUser= to the exact initiating route and current application session. Only that route/session plus server-side =tool.approve= capability may submit the one-shot decision.
+- A route reset/disconnect erases only delivery ownership. The principal runtime remains pending until #209 reaches approval, rejection, cancellation, timeout, restart or shutdown.
+- Same-principal second devices and newly reconnected sessions neither receive nor inherit an existing approval. That conservative policy is explicit and testable; future secure transfer is a separate feature.

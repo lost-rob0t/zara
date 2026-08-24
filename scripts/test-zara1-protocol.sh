@@ -25,3 +25,4 @@ timeout 120s python -m pytest \
   t/test_server_zmq_endpoint.py
 
 bash "$repo_root/scripts/test-zara1-voice.sh"
+bash "$repo_root/scripts/test-zara1-tool-approvals.sh"

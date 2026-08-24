@@ -59,6 +59,95 @@ def test_golden_hello_encoding_is_deterministic():
     ]
 
 
+def test_golden_tool_approval_command_encoding_is_deterministic():
+    frames = encode_message(
+        message(
+            type="tool.approve",
+            session_id="session-1",
+            body={"tool_run_id": "tool-call-1"},
+        ),
+        limits=LIMITS,
+    )
+
+    assert frames == [
+        b"ZARA/1",
+        b'{"body":{"tool_run_id":"tool-call-1"},"id":"req-1","payload_count":0,"session_id":"session-1","timestamp_ns":123456789,"type":"tool.approve"}',
+    ]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"session_id": None, "body": {"tool_run_id": "tool-call-1"}},
+        {"session_id": "session-1", "body": None},
+        {"session_id": "session-1", "body": {"tool_run_id": ""}},
+        {"session_id": "session-1", "body": {"tool_run_id": 7}},
+        {
+            "session_id": "session-1",
+            "body": {"tool_run_id": "tool-call-1", "arguments": "secret"},
+        },
+        {
+            "session_id": "session-1",
+            "payload_count": 1,
+            "body": {"tool_run_id": "tool-call-1"},
+        },
+    ],
+)
+def test_tool_approval_commands_fail_closed_on_invalid_shapes(overrides):
+    with pytest.raises(ProtocolValidationError):
+        encode_message(message(type="tool.approve", **overrides), limits=LIMITS)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"tool_run_id": "tool-call-1", "reason": 3},
+        {"tool_run_id": "tool-call-1", "reason": "line one\nline two"},
+        {"tool_run_id": "tool-call-1", "reason": "x" * 257},
+    ],
+)
+def test_tool_rejection_reason_is_bounded_safe_text(body):
+    with pytest.raises(ProtocolValidationError):
+        encode_message(
+            message(type="tool.reject", session_id="session-1", body=body),
+            limits=LIMITS,
+        )
+
+
+def test_tool_waiting_event_requires_closed_public_correlation():
+    valid = message(
+        type="tool.waiting",
+        session_id="session-1",
+        turn_id="turn-1",
+        seq=4,
+        body={
+            "tool_run_id": "tool-call-1",
+            "tool_name": "reviewed_effect",
+            "kind": "approval",
+            "prompt": "Approve reviewed_effect?",
+        },
+    )
+    assert decode_message(encode_message(valid, limits=LIMITS), limits=LIMITS).message == valid
+
+    with pytest.raises(ProtocolValidationError):
+        encode_message(
+            message(
+                type="tool.waiting",
+                session_id="session-1",
+                turn_id="turn-1",
+                seq=4,
+                body={
+                    "tool_run_id": "tool-call-1",
+                    "tool_name": "reviewed_effect",
+                    "kind": "approval",
+                    "prompt": "Approve reviewed_effect?",
+                    "arguments": {"secret": True},
+                },
+            ),
+            limits=LIMITS,
+        )
+
+
 def test_valid_message_round_trips_with_binary_payloads():
     original = message(payload_count=2)
     payloads = (b"12345678", b"abcd")
