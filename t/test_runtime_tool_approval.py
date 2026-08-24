@@ -587,3 +587,73 @@ def test_registry_rejects_unbounded_or_unsafe_tool_names():
 
     with pytest.raises(ValueError, match="tool name is invalid"):
         ToolRegistry().register_tool(invalid_tool)
+
+
+@pytest.mark.parametrize(
+    ("approval_request", "message"),
+    [
+        (ApprovalRequest("call", "tool", ""), "active turn"),
+        (ApprovalRequest("", "tool", "turn"), "identifier"),
+        (ApprovalRequest("x" * 257, "tool", "turn"), "identifier"),
+        (ApprovalRequest("call", "bad name", "turn"), "metadata"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_invalid_approval_request_fails_before_publication(
+    approval_request, message
+):
+    published = []
+    controller = ToolApprovalController(publisher=published.append)
+
+    with pytest.raises(ToolApprovalError, match=message):
+        await controller.wait_for_decision(approval_request)
+
+    assert published == []
+    assert controller.pending_count == 0
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_pending_once_and_replay_fails_closed():
+    published = []
+    controller = ToolApprovalController(publisher=published.append)
+    pending = asyncio.create_task(
+        controller.wait_for_decision(ApprovalRequest("call", "tool", "turn"))
+    )
+    await asyncio.sleep(0)
+
+    with pytest.raises(ToolApprovalError, match="already pending"):
+        await controller.wait_for_decision(ApprovalRequest("call", "tool", "turn"))
+    await controller.shutdown()
+
+    assert (await pending).decision == "cancel"
+    assert controller.pending_count == 0
+    assert sum(isinstance(event, events.ToolCancelled) for event in published) == 1
+    assert published[-1].reason == "runtime shutdown"
+    with pytest.raises(ToolApprovalError, match="not pending"):
+        await controller.approve("call")
+
+
+@pytest.mark.asyncio
+async def test_first_terminal_decision_fences_approve_cancel_race():
+    approved_controller = ToolApprovalController()
+    approved = asyncio.create_task(
+        approved_controller.wait_for_decision(
+            ApprovalRequest("approved", "tool", "turn-approved")
+        )
+    )
+    await asyncio.sleep(0)
+    await approved_controller.approve("approved")
+    await approved_controller.cancel_turn("turn-approved")
+    assert (await approved).decision == "approve"
+
+    cancelled_controller = ToolApprovalController()
+    cancelled = asyncio.create_task(
+        cancelled_controller.wait_for_decision(
+            ApprovalRequest("cancelled", "tool", "turn-cancelled")
+        )
+    )
+    await asyncio.sleep(0)
+    await cancelled_controller.cancel_turn("turn-cancelled")
+    with pytest.raises(ToolApprovalError, match="not pending"):
+        await cancelled_controller.approve("cancelled")
+    assert (await cancelled).decision == "cancel"

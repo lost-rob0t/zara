@@ -52,6 +52,10 @@
 - Aggregate evidence :: 119 ZARA/1 protocol/transport tests, 75 voice tests, 25 focused approval/policy tests, 1058 full pytest tests, all security scripts, 27 latency tests and packaging/Nix checks passed. Full pytest emitted 14 existing Qt deprecation warnings and no failures.
 - The aggregate gate included the final unsafe-name hardening working tree. It is implementation evidence but not exact-head merge authority; after committing this candidate, the same complete gate must pass again at the immutable commit.
 - Remaining exact-head gates :: complete =scripts/test-all.sh=, =nix flake check=, =nix build=, GitHub Actions and mergeability.
+- Exact-head local gate at =39addc5ae729617c8bb3d9417a5fbf43aa60e927= :: all 10 aggregate phases passed again; full pytest passed 1058 tests in 175.82s, focused approval passed 25, and all security/latency/packaging phases passed.
+- Exact-head Nix evidence at =39addc5ae729617c8bb3d9417a5fbf43aa60e927= :: =nix flake check --show-trace= passed all 10 checks; =nix build --no-link --print-out-paths= produced =/nix/store/969c818ya1s9slpczk872rlrc14bnn3l-zarathushtra-full=.
+- Changed-code coverage inspection :: neither =coverage= nor =pytest-cov= is present in the pinned Nix environment. Manual reachable-branch inspection added deterministic malformed-request, pending-shutdown/replay, and approve/cancel first-terminal-wins tests. One test collection error exposed pytest's reserved =request= fixture name; the parameter was renamed without changing production code.
+- Focused post-inspection gate :: 31 approval/config tests passed in 4.24s. These tests are the only change after =39addc5=, so the final committed candidate must refresh all exact-head gates.
 
 ** Outcome
 - In progress.
