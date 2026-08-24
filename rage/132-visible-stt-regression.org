@@ -1,0 +1,49 @@
+#+title: RAGE Work Log - Zara issue 132 visible STT regression
+
+* Run identity
+- Consumed issue :: #132 (reopened regression)
+- Parent epic :: #127
+- Branch :: =rage/132-visible-stt-regression=
+- RAGE start commit :: =b9463faf4f69bcc92c0db16941ea27ae0c252327=
+- Start meaning :: Exact protected =master= commit after #133 closeout and before any reopened-#132 research/design/tests/implementation. Immutable for this run.
+- Prior #132 evidence :: =rage/132-live-voice.org=, =rage/132-live-voice-research.org=, =rage/132-live-voice-design.org=, and =rage/132-post-merge-evidence.org= remain authoritative historical evidence and are not rewritten.
+
+* Queue / reopen authority
+- #134 Auto-RAGE Iteration 2 disproved the prior #132 completion claim: production =RuntimeVoiceIngress= consumes streaming STT events but only turns =FinalTranscript= into =SubmitTurn=; speech-start, partial transcript, speech-end, and client-visible final transcript are not carried through the runtime/ZARA/1/ZaraClient event boundary.
+- #134 design explicitly authorizes reopening #132 rather than manufacturing synthetic release events.
+- #132 is a reopened P0 correctness regression in the currently active daemon epic and therefore precedes later #191 and final #134 composition work.
+- No new open repair PR was found to own this reopened #132 regression at consumption time.
+
+* Control-plane discovery
+- Canonical repository workflow :: =AGENTS.md= + =skills/rage/SKILL.md= + append-only =rage/=.
+- Canonical external procedures :: RAGE + ADADR.
+- Project mode :: Auto-RAGE, selected by the user and recorded on #134 as =control_plane.adadr_mode = "auto-rage"=.
+- This iteration autonomously performs Analyze/Research, Design, adversarial review, Decision, then TDD Realize only if the decision gate permits it.
+
+* Iteration 2 - reopened visible-STT regression
+** Analyze / Research
+- Status :: in progress.
+
+** Design
+- Pending evidence-derived design.
+
+** Adversarial review
+- Pending.
+
+** Decision gate
+- Pending.
+
+** Realize / TDD
+- Not authorized until the autonomous decision gate accepts the design.
+
+** Exact gate
+- Focused reopened-#132 tests first with expected red evidence.
+- =nix develop -c bash scripts/test-principal-isolation.sh= only where adjacent ownership is touched; otherwise use the existing voice/ZARA focused scripts plus new focused regression script if required by acceptance.
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- Changed-code coverage review with meaningful deterministic additions for reachable gaps.
+- GitHub Actions must be green for the exact final candidate SHA before merge.
+
+** Outcome
+- In progress.
