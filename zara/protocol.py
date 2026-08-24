@@ -31,6 +31,8 @@ CLIENT_MESSAGE_TYPES = frozenset(
         "conversation.open",
         "turn.submit",
         "turn.cancel",
+        "tool.approve",
+        "tool.reject",
     }
 )
 
@@ -45,6 +47,14 @@ SERVER_MESSAGE_TYPES = frozenset(
         "turn.started",
         "turn.completed",
         "turn.cancelled",
+        "tool.approve.accepted",
+        "tool.reject.accepted",
+        "tool.queued",
+        "tool.waiting",
+        "tool.started",
+        "tool.completed",
+        "tool.failed",
+        "tool.cancelled",
         "assistant.started",
         "assistant.delta",
         "assistant.completed",
@@ -114,6 +124,15 @@ _VISIBLE_STT_BODY_FIELDS = {
     "voice.speech.ended": "reason",
     "voice.transcript.final": "text",
 }
+_TOOL_EVENT_BODY_FIELDS = {
+    "tool.queued": frozenset({"tool_run_id", "tool_name"}),
+    "tool.waiting": frozenset({"tool_run_id", "tool_name", "kind", "prompt"}),
+    "tool.started": frozenset({"tool_run_id", "tool_name"}),
+    "tool.completed": frozenset({"tool_run_id", "tool_name", "success"}),
+    "tool.failed": frozenset({"tool_run_id", "tool_name", "reason"}),
+    "tool.cancelled": frozenset({"tool_run_id", "tool_name", "reason"}),
+}
+_TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
 
 
 class ZaraProtocolError(ValueError):
@@ -455,6 +474,89 @@ def _validate_visible_stt_envelope(message: ProtocolMessage) -> None:
         raise ProtocolValidationError(f"{message.type} {field} must be a string")
 
 
+def _bounded_safe_text(name: str, value: Any, *, max_bytes: int) -> str:
+    if not isinstance(value, str):
+        raise ProtocolValidationError(f"{name} must be a string")
+    if len(value.encode("utf-8")) > max_bytes:
+        raise ProtocolValidationError(f"{name} exceeds byte limit")
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
+        raise ProtocolValidationError(f"{name} contains control characters")
+    return value
+
+
+def _validate_tool_run_id(value: Any) -> str:
+    return _validate_ascii_token("tool_run_id", value, max_bytes=256)
+
+
+def _validate_tool_name(value: Any) -> str:
+    name = _validate_ascii_token("tool_name", value, max_bytes=128)
+    if _TOOL_NAME_RE.fullmatch(name) is None:
+        raise ProtocolValidationError("tool_name is invalid")
+    return name
+
+
+def _validate_tool_common(message: ProtocolMessage) -> None:
+    if message.payload_count != 0:
+        raise ProtocolValidationError(f"{message.type} does not accept payload frames")
+    if message.stream_id is not None or message.content_type is not None:
+        raise ProtocolValidationError(f"{message.type} does not accept stream payload fields")
+    if message.trace_id is not None or message.flags:
+        raise ProtocolValidationError(f"{message.type} does not accept trace or flags")
+
+
+def _validate_tool_envelope(message: ProtocolMessage) -> None:
+    if message.type in {"tool.approve", "tool.reject"}:
+        _validate_tool_common(message)
+        if message.session_id is None:
+            raise ProtocolValidationError(f"{message.type} requires session_id")
+        if message.reply_to is not None or message.conversation_id is not None:
+            raise ProtocolValidationError(f"{message.type} accepts only session correlation")
+        if message.turn_id is not None or message.seq is not None:
+            raise ProtocolValidationError(f"{message.type} accepts only session correlation")
+        body = dict(message.body or {})
+        allowed = {"tool_run_id"} if message.type == "tool.approve" else {"tool_run_id", "reason"}
+        if set(body) - allowed or "tool_run_id" not in body:
+            raise ProtocolValidationError(f"{message.type} body has invalid fields")
+        _validate_tool_run_id(body["tool_run_id"])
+        if "reason" in body:
+            _bounded_safe_text("reason", body["reason"], max_bytes=256)
+        return
+
+    if message.type in {"tool.approve.accepted", "tool.reject.accepted"}:
+        _validate_tool_common(message)
+        if message.session_id is None or message.reply_to is None:
+            raise ProtocolValidationError(f"{message.type} requires reply and session correlation")
+        if any(
+            value is not None
+            for value in (message.conversation_id, message.turn_id, message.seq)
+        ) or message.body is not None:
+            raise ProtocolValidationError(f"{message.type} has invalid fields")
+        return
+
+    required_body = _TOOL_EVENT_BODY_FIELDS.get(message.type)
+    if required_body is None:
+        return
+    _validate_tool_common(message)
+    if message.session_id is None or message.turn_id is None or message.seq is None:
+        raise ProtocolValidationError(f"{message.type} requires session, turn and sequence")
+    if message.reply_to is not None:
+        raise ProtocolValidationError(f"{message.type} does not accept reply_to")
+    body = dict(message.body or {})
+    if set(body) != required_body:
+        raise ProtocolValidationError(f"{message.type} body has invalid fields")
+    _validate_tool_run_id(body["tool_run_id"])
+    _validate_tool_name(body["tool_name"])
+    if message.type == "tool.waiting":
+        if body["kind"] != "approval":
+            raise ProtocolValidationError("tool.waiting kind must be approval")
+        _bounded_safe_text("prompt", body["prompt"], max_bytes=256)
+    elif message.type == "tool.completed":
+        if type(body["success"]) is not bool:
+            raise ProtocolValidationError("tool.completed success must be boolean")
+    elif message.type in {"tool.failed", "tool.cancelled"}:
+        _bounded_safe_text("reason", body["reason"], max_bytes=256)
+
+
 def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> ProtocolMessage:
     unknown = set(data) - _ALLOWED_ENVELOPE_KEYS
     if unknown:
@@ -502,6 +604,7 @@ def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> Pr
     _validate_audio_input_envelope(message)
     _validate_audio_output_envelope(message)
     _validate_visible_stt_envelope(message)
+    _validate_tool_envelope(message)
     return message
 
 
