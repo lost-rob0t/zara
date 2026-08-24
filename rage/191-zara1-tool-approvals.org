@@ -1,0 +1,34 @@
+#+title: RAGE #191 - authenticated ZARA/1 tool approvals
+
+* Immutable start
+- Consumed issue :: #191, P0 blocker - carry tool lifecycle and explicit approvals through authenticated =ZARA/1=.
+- Parent epic :: #127.
+- Blocks :: #134.
+- Declared dependencies :: #130, #131 and #133; all were closed before consumption.
+- Exact RAGE start commit :: =a41877367f7e0af8d936e91982e88e03912dd5c2=.
+- Branch :: =rage/191-zara1-tool-approvals=.
+- Start worktree audit :: only the pre-existing user-owned unstaged =LICENSE= deletion was present; it is outside scope and must not be staged or modified.
+- Protocol :: repository Auto-RAGE with Analyze, Design, Adversarial Review, autonomous Decision, tests-first Realization, complete local gates, exact-head GitHub Actions, and merge only when exact-head green and mergeable.
+- Scope boundary :: reuse the existing runtime approval/tool vocabulary through the existing authenticated client/runtime boundary. Do not create a second tool runtime, future #150 device-capability plane, arbitrary remote execution surface or Prolog-RLM dependency.
+
+* Iteration 1 - 2026-08-24
+** Analyze / Research
+- In progress.
+
+** Architecture / Design
+- Pending research.
+
+** Adversarial review
+- Pending design.
+
+** Autonomous decision gate
+- Pending adversarial review.
+
+** Realize / TDD
+- Not authorized until the autonomous decision gate accepts the design.
+
+** Evaluate
+- Pending realization.
+
+** Outcome
+- In progress.
