@@ -37,3 +37,28 @@
 
 ** Outcome
 - Blocked at canonical ADADR control-plane discovery gate.
+
+* Control-plane authorization
+- User decision :: =Auto-RAGE=.
+- Meaning :: the worker performs and records the complete ADADR loop autonomously, including Analyze, Design, adversarial review, decision gate, TDD realization, and exact-head verification. Human approval is not required between ADADR phases unless a later repository rule or explicit user instruction requires it.
+- Durable configuration :: =.rage.toml= selects =control_plane.adadr_mode = "auto-rage"=.
+- Gate transition :: the unresolved-mode blocker from Iteration 1 is released. Preserve Iteration 1 as evidence; continue #134 in a new iteration rather than rewriting the blocked history.
+
+* Iteration 2
+** Analyze
+- Authorized to begin autonomously under Auto-RAGE.
+
+** Design
+- Pending Analyze findings.
+
+** Adversarial review
+- Pending design.
+
+** Decision gate
+- Auto-RAGE: worker owns the decision gate and must record its evidence before realization.
+
+** Realize / TDD
+- Not started; remains downstream of Analyze, Design, adversarial review, and the autonomous decision gate.
+
+** Outcome
+- Active. Control-plane gate released; #134 may proceed.
