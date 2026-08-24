@@ -2,3 +2,107 @@
 - Consumed issue :: #132
 - Branch :: =rage/132-transcript-events=
 - RAGE start commit :: =b9463faf4f69bcc92c0db16941ea27ae0c252327=
+
+* Control-plane discovery
+- Canonical workflow :: external =rage= skill plus mandatory external =adadr= skill, with repository evidence under =rage/=
+- Control mode :: Auto-RAGE
+- Selection evidence :: the user explicitly selected and reaffirmed Auto-RAGE for Zara; the active #134 control-plane transaction also records =control_plane.adadr_mode = "auto-rage"= in =.rage.toml=
+- Discovery result :: ACTIVE; execute Analyze -> Design -> Adversarial review -> Decision -> Realize without human phase gates
+- Scope :: reopened regression in #132 only; #134 remains a blocked proof/composition gate
+
+* Iteration 1 — Analyze
+** Verified contradiction
+Issue #132 acceptance requires an authenticated client to receive partial/final transcript events. Current master does not provide that path:
+- =zara/streaming_stt.py= already emits =PartialTranscript= and =FinalTranscript= from the existing streaming transcriber.
+- =zara/voice_runtime.py::RuntimeVoiceIngress._run= consumes emitted STT events but only reacts to =FinalTranscript=, converting it directly to =SubmitTurn=. Partial transcript events are discarded and final transcript text is never published to the client event plane.
+- =zara/runtime/events.py= has a final-style =TranscriptReady= event but no partial transcript runtime event and no stream/trace correlation fields on transcript events.
+- =zara/protocol.py= has no =transcript.partial= or =transcript.final= server message vocabulary.
+- =zara/protocol_runtime.py= has no explicit transcript runtime-event mapping.
+- =ZmqZaraClient._publish_runtime_event= has no transcript wire-to-runtime mapping.
+
+** Existing ownership that must be preserved
+- Client owns microphone capture/playback; daemon owns the existing streaming VAD/STT and runtime work.
+- =ZaraClient= remains the application boundary; no caller receives =RuntimeHost= or provider objects.
+- =RuntimeSupervisor= already owns a principal-scoped =RuntimeEventBus=, and the gateway already subscribes to that bus and routes runtime events to the matching client route.
+- =ProtocolMessage= already has =conversation_id=, =turn_id=, =stream_id=, =trace_id= and =seq= fields; no second transcript transport is needed.
+- #28 and #29 still own real model streaming and phrase TTS. This repair must not absorb them.
+
+** Alternatives considered
+1. Emit transcript text directly from =RuntimeVoiceIngress= into the ZeroMQ gateway callback.
+   Rejected: couples STT/runtime code to one transport and bypasses the canonical principal runtime event bus/ZaraClient boundary.
+2. Treat the STT =stream_id= as a canonical runtime =turn_id=.
+   Rejected: the canonical runtime turn is created by =SubmitTurn= after the final transcript; inventing a turn identity would corrupt cancellation/history correlation.
+3. Add a second daemon-specific transcript stack.
+   Rejected: duplicates the existing streaming STT implementation and violates #132's runtime-bridge requirement.
+4. Publish transcript events on the existing principal-scoped runtime bus and explicitly encode/decode them in ZARA/1.
+   Selected: smallest extension of existing ownership boundaries.
+
+* Iteration 1 — Design
+** Runtime event vocabulary
+- Add =TranscriptPartial(RuntimeEvent)= with =text=, optional =stream_id= and optional =trace_id=.
+- Extend existing =TranscriptReady= compatibly with optional =stream_id= and optional =trace_id=; existing callers constructing only =text= remain valid.
+- Do not put provider implementation names or raw audio in runtime transcript events.
+
+** Voice ingress publication
+For each current =_VoiceStream=:
+- =PartialTranscript= -> publish =TranscriptPartial= on =supervisor.runtime(stream.principal).bus=.
+- non-empty =FinalTranscript= -> publish =TranscriptReady= on that same principal bus, then preserve the existing =SubmitTurn= behavior exactly once.
+- Runtime transcript events use the server-owned stream context for =conversation_id=, =stream_id= and =trace_id=; do not trust STT-returned identifiers to select a client or principal.
+- Transcript publication must be atomic with the ingress stream-current check under the ingress lock so =cancel()= cannot return and then leak a stale partial/final event.
+- Once the stream has submitted its final transcript, later transcript emissions for that stream are ignored.
+
+** ZARA/1 vocabulary
+- Add server event types =transcript.partial= and =transcript.final=.
+- =runtime_event_to_message= allowlists only =text= in the body and carries =conversation_id=, =stream_id= and =trace_id= in existing envelope fields. No Python class name, provider, label, path, or audio bytes cross the wire.
+- Existing envelope byte limits remain the bound on transcript event size; the STT utterance itself is already bounded by the streaming VAD maximum-utterance policy.
+
+** Client mapping
+- =ZmqZaraClient._publish_runtime_event= maps =transcript.partial= back to =TranscriptPartial= and =transcript.final= back to =TranscriptReady=.
+- The resulting events are published through the client's existing =ZaraClient.subscribe()= event bus, so desktop/CLI/future clients consume transport-neutral runtime events rather than protocol objects.
+
+** Routing and identity
+- Before the final =SubmitTurn= creates a canonical runtime turn id, transcript events route by the existing conversation route fallback. Do not synthesize a runtime turn id.
+- A principal's ingress publishes only to that principal's supervisor runtime bus. Existing secure gateway principal binding remains the authority boundary; client payloads do not select the principal.
+- =stream_id= and =trace_id= are correlation metadata, not authorization identities.
+
+** Compatibility
+- Existing =TranscriptReady(text=...)= construction remains source compatible.
+- Existing non-voice and audio protocol messages remain unchanged.
+- No persistent schema migration, new dependency, Prolog-RLM component, alternate STT backend, or device-ownership change.
+
+** TDD acceptance map
+1. Runtime codec test proves partial/final transcript events explicitly encode with text + stream/trace/conversation correlation and no provider/type leakage.
+2. Voice ingress test proves emitted partial/final events reach the correct principal runtime bus while final still submits exactly once.
+3. Cancellation regression proves no transcript can be published after the stream is cancelled.
+4. ZeroMQ client integration test proves gateway -> ZARA/1 -> =ZaraClient.subscribe()= yields partial then final transcript events with correlation intact.
+5. Existing #132 voice tests remain green.
+
+* Iteration 1 — Adversarial review
+** Cancel race
+Attack: worker obtains a stream reference, then another thread cancels/removes it before STT returns. A naive post-transcribe publish leaks stale transcript after cancellation.
+Resolution: perform the current-stream check and bus publication while holding =RuntimeVoiceIngress._lock=. If cancel wins first, the check fails; if publication wins first, cancel cannot return until publication completes. After =cancel()= returns, no later transcript event from that stream is authorized.
+
+** Duplicate/stale final
+Attack: a transcriber emits more than one final event or emits a late partial after final.
+Resolution: reuse/strengthen the stream's =submitted= terminal state. The first accepted non-empty final publishes and submits; subsequent transcript events are ignored.
+
+** Cross-principal leak
+Attack: a client-controlled stream/trace id collides with another principal.
+Resolution: publish only through =supervisor.runtime(stream.principal).bus= using the principal captured from authenticated ingress state. Stream/trace values never choose a runtime or authorization scope.
+
+** False canonical turn
+Attack: reuse STT stream id as =turn_id= to make gateway routing easy, causing cancellation/history to target a non-runtime turn.
+Resolution: transcript events remain pre-turn events with =turn_id=None= and carry =stream_id=/=trace_id= separately.
+
+** Provider/internal leakage
+Attack: serialize =FinalTranscript.provider= or reflect arbitrary dataclass fields.
+Resolution: explicit allowlist mapping emits only transcript text plus already-defined correlation envelope fields.
+
+** Unbounded/ambiguous routing
+Attack: transcript floods or multiple routes share one conversation id.
+Resolution: gateway/client queues and protocol envelope limits remain bounded. This repair inherits the existing runtime-event route policy; #132 acceptance requires one authenticated daemon session for this path, and this iteration does not invent a new route-ownership subsystem. A future contradictory multi-route case must return through ADADR rather than alias stream ids to canonical turns.
+
+* Iteration 1 — Decision
+- Decision :: ACCEPT REALIZATION
+- Rationale :: the design repairs the exact falsified #132 acceptance through existing principal/runtime/ZaraClient boundaries, introduces no duplicate STT/provider stack, preserves canonical turn identity, and has deterministic regression tests for the highest-risk cancellation and isolation paths.
+- Realization authorization :: write tests first and prove the expected red state; then implement only the event/protocol/ingress/client mappings above.
