@@ -159,3 +159,14 @@
 - Separate =NIX_CONFIG='experimental-features = nix-command flakes' nix build= :: PASS.
 - Worktree audit before recording evidence :: only the pre-existing user-owned unstaged =LICENSE= deletion remained; it was not staged or modified by this RAGE iteration.
 - This append-only evidence commit changes the candidate SHA. The complete local gate and exact-head GitHub Actions remain required on the resulting documentation-only head before merge.
+
+** Exact-head GitHub Actions and implementation merge
+- Published candidate :: =d63bdf350e99ca5c8fc06c4e1239b8a94e7ae51e=.
+- Exact GitHub Actions run :: #=32700582029=.
+- =test= :: PASS in 8m42s.
+- =shared mic / Ubuntu 24.04= :: PASS in 49s.
+- =shared mic / Arch Linux= :: PASS in 40s.
+- GitHub reported PR #192 =CLEAN= and =MERGEABLE= at the same exact head after every required job completed successfully.
+- PR #192 was promoted from draft only after those checks passed and merged without changing the tested head.
+- Implementation merge commit :: =30b165e4b3d08aeac2ea5be0934d63cd296ebdb5=.
+- Outcome :: the reopened visible-transcript regression in #132 is repaired through the canonical runtime, closed ZARA/1 and ZaraClient path. No daemon-only voice stack, provider duplication, fake turn identity or Prolog-RLM dependency was introduced.
