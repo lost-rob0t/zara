@@ -37,6 +37,8 @@ class _VoiceStream:
     transcriber: object
     committed: bool = False
     submitted: bool = False
+    cancel_requested: bool = False
+    inflight_events: int = 0
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,7 @@ class RuntimeVoiceIngress:
         self._queue: queue.Queue[object] = queue.Queue(maxsize=queue_size)
         self._streams: dict[str, _VoiceStream] = {}
         self._lock = threading.RLock()
+        self._event_condition = threading.Condition(self._lock)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._default_model = None
@@ -192,10 +195,13 @@ class RuntimeVoiceIngress:
         trace_id: Optional[str],
     ) -> None:
         self._check_principal(principal)
-        with self._lock:
+        with self._event_condition:
             stream = self._require_stream(stream_id)
             self._check_context(stream, conversation_id, trace_id)
+            stream.cancel_requested = True
             self._streams.pop(stream_id, None)
+            while stream.inflight_events:
+                self._event_condition.wait()
         stream.transcriber.cancel(stream_id)
 
     def _require_stream(self, stream_id: str) -> _VoiceStream:
@@ -231,11 +237,21 @@ class RuntimeVoiceIngress:
         stream: _VoiceStream,
         event: events.RuntimeEvent,
     ) -> bool:
-        with self._lock:
-            if self._streams.get(stream.stream_id) is not stream:
+        with self._event_condition:
+            if (
+                self._streams.get(stream.stream_id) is not stream
+                or stream.cancel_requested
+            ):
                 return False
+            stream.inflight_events += 1
+        try:
             self._publish(stream, event)
             return True
+        finally:
+            with self._event_condition:
+                stream.inflight_events -= 1
+                if not stream.inflight_events:
+                    self._event_condition.notify_all()
 
     def _handle_stt_event(self, stream: _VoiceStream, event: object) -> None:
         common = {
@@ -294,11 +310,13 @@ class RuntimeVoiceIngress:
         clean = str(text or "").strip()
         if not clean:
             return
-        with self._lock:
+        with self._event_condition:
             current = self._streams.get(stream.stream_id)
-            if current is not stream or stream.submitted:
+            if current is not stream or stream.submitted or stream.cancel_requested:
                 return
             stream.submitted = True
+            stream.inflight_events += 1
+        try:
             self._publish(
                 stream,
                 events.VoiceTranscriptFinal(
@@ -318,6 +336,11 @@ class RuntimeVoiceIngress:
                     request_id=request_id,
                 ),
             )
+        finally:
+            with self._event_condition:
+                stream.inflight_events -= 1
+                if not stream.inflight_events:
+                    self._event_condition.notify_all()
 
     def close(self, timeout: float = 5.0) -> None:
         self._stop.set()
