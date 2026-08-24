@@ -222,7 +222,9 @@ class RuntimeVoiceIngress:
         if callable(publisher):
             publisher(stream.principal, event)
             return
-        self.supervisor.runtime(stream.principal).bus.publish(event)
+        runtime = getattr(self.supervisor, "runtime", None)
+        if callable(runtime):
+            runtime(stream.principal).bus.publish(event)
 
     def _stream_is_current(self, stream: _VoiceStream) -> bool:
         with self._lock:
