@@ -151,3 +151,11 @@
 - Cleanup commit =c9dd998=: removed the now-obsolete runtime-introspection publication fallback; =RuntimeSupervisor.publish= is the one canonical observed-event path while observerless test seams still preserve final command submission.
 - Focused post-audit result :: 121 passed.
 - Final exact-head aggregate/Nix/build and GitHub Actions gates remain required after this evidence record.
+
+** Pre-publication exact-head gate
+- Candidate =103de087aa74b64d7f05f4be45647d2f816bc702= ran =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh=.
+- Result :: all 9 phases passed; focused protocol/voice 119 + 75, complete pytest 1006 passed with 14 warnings, security/config/process scripts passed, deterministic latency budgets passed, and packaging/Nix checks passed.
+- Separate =NIX_CONFIG='experimental-features = nix-command flakes' nix flake check= :: PASS; all compatible-system checks passed, with aarch64-linux explicitly omitted by the flake as incompatible.
+- Separate =NIX_CONFIG='experimental-features = nix-command flakes' nix build= :: PASS.
+- Worktree audit before recording evidence :: only the pre-existing user-owned unstaged =LICENSE= deletion remained; it was not staged or modified by this RAGE iteration.
+- This append-only evidence commit changes the candidate SHA. The complete local gate and exact-head GitHub Actions remain required on the resulting documentation-only head before merge.
