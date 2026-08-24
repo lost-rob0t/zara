@@ -6,7 +6,7 @@ import time
 import pytest
 import zmq
 
-from zara.runtime import bridge
+from zara.runtime import bridge, events
 from zara.server import PrincipalContext, ServerState
 from zara.zmq_transport import TransportConfig, ZaraZmqGateway, ZmqZaraClient
 
@@ -137,6 +137,89 @@ def test_zara_client_streams_binary_pcm_with_trace_and_conversation_correlation(
                 },
             ),
         ]
+    finally:
+        client.close(timeout=1.0)
+        gateway.close(timeout=1.0)
+
+
+def test_zara_client_subscription_receives_typed_visible_stt_events(
+    zmq_context,
+    transport_config,
+):
+    address = endpoint("visible-stt")
+    supervisor = FakeSupervisor()
+    principal = PrincipalContext("user:voice-client")
+    gateway = ZaraZmqGateway(
+        address,
+        supervisor=supervisor,
+        principal=principal,
+        context=zmq_context,
+        config=transport_config,
+        voice_ingress=RecordingVoiceIngress(),
+    )
+    gateway.start().result(timeout=1.0)
+    client = ZmqZaraClient(address, context=zmq_context, config=transport_config)
+
+    try:
+        client.start().result(timeout=1.0)
+        conversation_id = client.open_conversation("conversation-stt").result(timeout=1.0)
+        subscription = client.subscribe()
+        try:
+            supervisor.bus.publish(
+                events.VoiceSpeechStarted(
+                    conversation_id=conversation_id,
+                    stream_id="mic-1",
+                    trace_id="trace-voice",
+                    pre_speech_samples=512,
+                )
+            )
+            supervisor.bus.publish(
+                events.VoiceTranscriptPartial(
+                    conversation_id=conversation_id,
+                    stream_id="mic-1",
+                    trace_id="trace-voice",
+                    text="hello wor",
+                    text_length=9,
+                )
+            )
+            supervisor.bus.publish(
+                events.VoiceSpeechEnded(
+                    conversation_id=conversation_id,
+                    stream_id="mic-1",
+                    trace_id="trace-voice",
+                    reason="silence",
+                )
+            )
+            supervisor.bus.publish(
+                events.VoiceTranscriptFinal(
+                    conversation_id=conversation_id,
+                    stream_id="mic-1",
+                    trace_id="trace-voice",
+                    text="hello world",
+                    text_length=11,
+                    provider="provider-secret-must-not-cross-wire",
+                )
+            )
+
+            received = [subscription.get(timeout=1.0).event for _ in range(4)]
+            assert [type(event) for event in received] == [
+                events.VoiceSpeechStarted,
+                events.VoiceTranscriptPartial,
+                events.VoiceSpeechEnded,
+                events.VoiceTranscriptFinal,
+            ]
+            assert [event.conversation_id for event in received] == [conversation_id] * 4
+            assert [event.stream_id for event in received] == ["mic-1"] * 4
+            assert [event.trace_id for event in received] == ["trace-voice"] * 4
+            assert received[0].pre_speech_samples == 512
+            assert received[1].text == "hello wor"
+            assert received[1].text_length == 9
+            assert received[2].reason == "silence"
+            assert received[3].text == "hello world"
+            assert received[3].text_length == 11
+            assert received[3].provider == ""
+        finally:
+            subscription.close()
     finally:
         client.close(timeout=1.0)
         gateway.close(timeout=1.0)
