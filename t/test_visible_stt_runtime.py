@@ -65,6 +65,18 @@ class RecordingSupervisor:
         return future
 
 
+class BlockingPublicationSupervisor(RecordingSupervisor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.publish_entered = threading.Event()
+        self.release_publish = threading.Event()
+
+    def publish(self, principal, event):
+        self.publish_entered.set()
+        assert self.release_publish.wait(1.0)
+        super().publish(principal, event)
+
+
 def test_runtime_voice_ingress_publishes_visible_stt_events_before_submitting_final():
     principal = PrincipalContext("user:alice")
     supervisor = RecordingSupervisor()
@@ -177,4 +189,64 @@ def test_partial_transcript_is_observational_and_never_submits_a_turn():
         assert supervisor.submissions == []
         assert isinstance(supervisor.publications[1][1], events.VoiceTranscriptPartial)
     finally:
+        ingress.close(timeout=1.0)
+
+
+def test_cancel_waits_for_inflight_visible_event_and_fences_later_stt_events():
+    principal = PrincipalContext("user:alice")
+    supervisor = BlockingPublicationSupervisor()
+    transcriber = EventfulTranscriber()
+    ingress = RuntimeVoiceIngress(
+        supervisor,
+        principal=principal,
+        transcriber_factory=lambda **_kwargs: transcriber,
+        queue_size=4,
+    )
+    cancel_returned = threading.Event()
+    cancel_errors = []
+    common = {
+        "principal": principal,
+        "conversation_id": "conversation-a",
+        "stream_id": "mic-1",
+        "trace_id": "trace-1",
+    }
+
+    def cancel_stream() -> None:
+        try:
+            ingress.cancel(**common)
+        except BaseException as exc:  # pragma: no cover - assertion reports captured error
+            cancel_errors.append(exc)
+        finally:
+            cancel_returned.set()
+
+    try:
+        ingress.start(**common)
+        ingress.chunk(PCM_FRAME, **common, seq=0)
+        assert supervisor.publish_entered.wait(1.0)
+
+        cancel_thread = threading.Thread(target=cancel_stream, daemon=True)
+        cancel_thread.start()
+
+        # Publication was authorized while the stream was current. cancel() must not
+        # return until that in-flight publication completes; otherwise the worker can
+        # emit a stale client-visible event after cancellation has returned.
+        assert not cancel_returned.wait(0.1)
+
+        supervisor.release_publish.set()
+        cancel_thread.join(timeout=1.0)
+        assert cancel_returned.is_set()
+        assert cancel_errors == []
+
+        # Only the already-authorized in-flight speech-start may be observed. Once
+        # cancel returns, partial/end/final and SubmitTurn are fenced.
+        for _ in range(100):
+            if len(supervisor.publications) > 1 or supervisor.submissions:
+                break
+            threading.Event().wait(0.005)
+        assert len(supervisor.publications) == 1
+        assert isinstance(supervisor.publications[0][1], events.VoiceSpeechStarted)
+        assert supervisor.submissions == []
+        assert transcriber.cancelled == ["mic-1"]
+    finally:
+        supervisor.release_publish.set()
         ingress.close(timeout=1.0)
