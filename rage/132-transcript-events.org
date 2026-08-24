@@ -1,0 +1,4 @@
+* Run identity
+- Consumed issue :: #132
+- Branch :: =rage/132-transcript-events=
+- RAGE start commit :: =b9463faf4f69bcc92c0db16941ea27ae0c252327=
