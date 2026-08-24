@@ -99,3 +99,25 @@
 - Exact failure :: =test_visible_stt_events_have_closed_wire_mapping_without_fake_turn_or_provider[VoiceSpeechStarted]= raised =RuntimeCodecError("unsupported runtime event")= from =zara/protocol_runtime.py::runtime_event_to_message=.
 - Interpretation :: this is direct evidence of the missing explicit Voice* runtime-to-wire mapping identified by Analyze/Design. The failure is not a malformed fixture, unrelated audio failure, or packaging failure.
 - Realization status :: AUTHORIZED. Implement only the accepted explicit Voice* wire vocabulary/mappings, ZaraClient semantic reduction, and cancellation publication fence; then require exact-head green CI.
+
+* Iteration 2 closed-wire realization - 2026-08-24
+** Additional tests-first boundary proof
+- Tests-only commit :: =903217e=.
+- Added closed positive/negative protocol shapes for all four visible STT events and a direct two-principal =RuntimeSupervisor.publish= isolation test before production changes.
+- Local RED command :: =nix develop -c pytest -q t/test_protocol.py t/test_server.py t/test_protocol_runtime.py t/test_visible_stt_runtime.py t/test_voice_zmq_client.py --maxfail=12=.
+- RED result :: 11 failed, 103 passed. Failures were limited to the missing visible-STT allowlist/runtime mapping, missing supervisor publication boundary, cancellation TOCTOU and missing client delivery.
+
+** Production realization
+- Production commit :: =919096d2b0a74f81d29f1098cc971a5da90fd180=.
+- Added the four closed server event types and exact per-type envelope/body validation. Visible events require conversation, stream and sequence correlation; reject fake runtime turn ids, payloads, unknown body fields and invalid scalar types.
+- Added explicit runtime-event mapping without provider or Python-class leakage and typed =ZmqZaraClient= reduction with provider intentionally empty on the client.
+- Added principal-explicit =RuntimeSupervisor.publish= and routed it through the existing per-principal bus.
+- Made current-stream validation and observational publication one lock transaction. Final publication and its sole =SubmitTurn= transition share the same cancellation fence.
+- Added =t/test_visible_stt_runtime.py= to the existing focused =scripts/test-zara1-voice.sh= gate.
+
+** Local GREEN
+- Focused unit/integration command :: same five-file command as RED.
+- Result :: 114 passed.
+- Focused composed command :: =nix develop -c bash scripts/test-zara1-protocol.sh=.
+- Result :: 117 ZARA/1 protocol/transport tests passed, then 74 voice tests passed.
+- Exact-head full repository/Nix/package and GitHub Actions evidence remains required before merge.
