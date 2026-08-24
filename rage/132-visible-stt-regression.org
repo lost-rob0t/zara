@@ -121,3 +121,15 @@
 - Focused composed command :: =nix develop -c bash scripts/test-zara1-protocol.sh=.
 - Result :: 117 ZARA/1 protocol/transport tests passed, then 74 voice tests passed.
 - Exact-head full repository/Nix/package and GitHub Actions evidence remains required before merge.
+
+** Full-gate cancellation race and repair
+- Full-gate candidate :: =c90b5383b67b76628fc16b303da4dc3f7d9fff40=.
+- Command :: =nix develop -c bash scripts/test-all.sh=.
+- Result :: FAILED in phase 5 after the 117-test protocol half passed. The voice half failed only =test_cancel_waits_for_inflight_visible_event_and_fences_later_stt_events=: two events were observed instead of one.
+- Exposed race :: publication held the main stream lock. Once the blocked speech-start publisher was released, the worker could reacquire that lock for the next partial before the cancellation thread acquired it, so cancellation intent was not visible soon enough.
+- Architecture verdict :: ordinary lifecycle-transaction defect inside the accepted design, not a design falsification. The test and invariant remain unchanged.
+- Repair commit :: =810da2405d0db02db472ff94331167b36b7137a6=.
+- Repair :: cancellation now marks/removes the stream under a condition lock, waits for only already-authorized visible operations to drain, and prevents subsequent event authorization. Final publication and =SubmitTurn= use the same in-flight fence.
+- Focused result :: 118 passed across visible STT, ingress/commit, supervisor, protocol/runtime and client tests.
+- Scheduler stress :: the exact cancellation test passed 50/50 fresh pytest processes.
+- Full exact-head gates must be rerun after this repair and evidence commit.
