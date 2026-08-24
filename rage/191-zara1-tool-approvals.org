@@ -1,0 +1,57 @@
+#+title: RAGE #191 - authenticated ZARA/1 tool approvals
+
+* Immutable start
+- Consumed issue :: #191, P0 blocker - carry tool lifecycle and explicit approvals through authenticated =ZARA/1=.
+- Parent epic :: #127.
+- Blocks :: #134.
+- Declared dependencies :: #130, #131 and #133; all were closed before consumption.
+- Exact RAGE start commit :: =a41877367f7e0af8d936e91982e88e03912dd5c2=.
+- Branch :: =rage/191-zara1-tool-approvals=.
+- Start worktree audit :: only the pre-existing user-owned unstaged =LICENSE= deletion was present; it is outside scope and must not be staged or modified.
+- Protocol :: repository Auto-RAGE with Analyze, Design, Adversarial Review, autonomous Decision, tests-first Realization, complete local gates, exact-head GitHub Actions, and merge only when exact-head green and mergeable.
+- Scope boundary :: reuse the existing runtime approval/tool vocabulary through the existing authenticated client/runtime boundary. Do not create a second tool runtime, future #150 device-capability plane, arbitrary remote execution surface or Prolog-RLM dependency.
+
+* Iteration 1 - 2026-08-24
+** Analyze / Research
+- Completed in =rage/191-zara1-tool-approvals-research.org=.
+- The inherited premise was falsified: approval command/event schemas exist, but the production LangGraph backend cannot pause, approve, reject or resume tool work.
+- Current official LangGraph HITL requires checkpointed state, a stable thread id, an interrupt and =Command(resume=...)=. Zara compiles an uncheckpointed fresh graph per turn and executes =ToolNode= directly.
+- A wire-only implementation would produce synthetic acceptance and leave #134's real Voice tool-approval requirement unsatisfied.
+
+** Architecture / Design
+- Completed in =rage/191-zara1-tool-approvals-design.org=.
+- #209 now owns the missing canonical transport-neutral runtime approval lifecycle.
+- #191 remains the authenticated closed-wire/client/session adapter and explicitly depends on #209.
+
+** Adversarial review
+- Gateway-owned pending approval was rejected as a second tool runtime.
+- Fake-backend-only wire proof was rejected because real production approve/reject remains unsupported.
+- Blocking a tool wrapper on an ad hoc condition was rejected because it bypasses checkpoint/resume and leaves restart/reconnect behavior false.
+- The resumed design must enforce both runtime principal/turn/tool authority and transport session ownership; neither layer can substitute for the other.
+
+** Autonomous decision gate
+- Decision :: REJECT REALIZATION AT CURRENT HEAD.
+- Structural blocker :: #209.
+- GitHub issue #191 was updated to depend on #209 and records the causal evidence.
+
+** Realize / TDD
+- Not authorized. No production code or retrospective RED claim was created.
+
+** Evaluate
+- Pre-evidence candidate :: =56a75f4=.
+- =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh= :: PASS, all 9 phases; 119 protocol/transport, 75 voice and 1006 complete pytest tests.
+- =NIX_CONFIG='experimental-features = nix-command flakes' nix flake check= :: PASS, all 10 compatible-system checks; aarch64-linux is explicitly omitted by the flake as incompatible.
+- =NIX_CONFIG='experimental-features = nix-command flakes' nix build= :: PASS.
+- Worktree audit :: only the pre-existing user-owned unstaged =LICENSE= deletion remains outside the RAGE transaction.
+- This append-only evidence changes the head. The resulting documentation-only candidate still requires the complete exact-head local gate and GitHub Actions before merge.
+
+** Outcome
+- Iteration 1 architecture rejected without weakening #191 or #134 acceptance.
+- After this evidence merges, consume #209 before re-entering #191.
+
+** Exact-head GitHub failure and correction
+- Candidate =2d827c5413fd5da534bfc55ee4e25095ce1debc2= was published in PR #210 after merging concurrent master PR #208.
+- Local combined-head gates passed: all 9 aggregate phases with 119 protocol/transport, 75 voice and 1034 complete pytest tests; separate =nix flake check= and =nix build= also passed.
+- Exact GitHub Actions run #=32705326585= failed in the whitespace step before tests because both new research/design Org files had one blank line at EOF. The Ubuntu and Arch shared-mic jobs passed.
+- This is a bounded documentation-format defect, not a production/design falsification. The two blank EOF lines are removed without changing the research decision.
+- The corrected exact head requires the complete local and GitHub gates before merge.
