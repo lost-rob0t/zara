@@ -247,3 +247,87 @@ def test_allowed_flags_round_trip():
 def test_encoder_rejects_payload_count_mismatch_before_emitting_frames():
     with pytest.raises(ProtocolValidationError, match="payload_count"):
         encode_message(message(payload_count=1), payloads=(), limits=LIMITS)
+
+
+@pytest.mark.parametrize(
+    ("message_type", "body"),
+    [
+        ("voice.speech.started", {"pre_speech_samples": 512}),
+        ("voice.transcript.partial", {"text": "hello wor"}),
+        ("voice.speech.ended", {"reason": "silence"}),
+        ("voice.transcript.final", {"text": "hello world"}),
+    ],
+)
+def test_visible_stt_event_shapes_round_trip_without_payload_or_turn_id(message_type, body):
+    original = message(
+        type=message_type,
+        conversation_id="conversation-1",
+        stream_id="mic-1",
+        trace_id="trace-1",
+        seq=7,
+        body=body,
+    )
+
+    decoded = decode_message(encode_message(original, limits=LIMITS), limits=LIMITS)
+
+    assert decoded.message == original
+    assert decoded.payloads == ()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"conversation_id": None},
+        {"stream_id": None},
+        {"seq": None},
+        {"turn_id": "fake-runtime-turn"},
+        {"payload_count": 1},
+        {"content_type": "text/plain"},
+        {"body": None},
+        {"body": {"pre_speech_samples": -1}},
+        {"body": {"pre_speech_samples": True}},
+        {"body": {"pre_speech_samples": 512, "provider": "secret"}},
+    ],
+)
+def test_visible_speech_started_shape_fails_closed(overrides):
+    values = {
+        "type": "voice.speech.started",
+        "conversation_id": "conversation-1",
+        "stream_id": "mic-1",
+        "trace_id": "trace-1",
+        "seq": 7,
+        "body": {"pre_speech_samples": 512},
+    }
+    values.update(overrides)
+    payloads = (b"x",) if values.get("payload_count") == 1 else ()
+
+    with pytest.raises(ProtocolValidationError):
+        encode_message(message(**values), payloads=payloads, limits=LIMITS)
+
+
+@pytest.mark.parametrize(
+    ("message_type", "body"),
+    [
+        ("voice.transcript.partial", {}),
+        ("voice.transcript.partial", {"text": 3}),
+        ("voice.transcript.partial", {"text": "safe", "provider": "secret"}),
+        ("voice.speech.ended", {}),
+        ("voice.speech.ended", {"reason": 3}),
+        ("voice.transcript.final", {}),
+        ("voice.transcript.final", {"text": 3}),
+        ("voice.transcript.final", {"text": "safe", "provider": "secret"}),
+    ],
+)
+def test_visible_stt_text_and_end_bodies_fail_closed(message_type, body):
+    with pytest.raises(ProtocolValidationError):
+        encode_message(
+            message(
+                type=message_type,
+                conversation_id="conversation-1",
+                stream_id="mic-1",
+                trace_id="trace-1",
+                seq=7,
+                body=body,
+            ),
+            limits=LIMITS,
+        )

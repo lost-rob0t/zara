@@ -153,6 +153,77 @@ def test_runtime_events_have_explicit_allowlisted_wire_mapping(event, expected_t
     assert len(frames) == 2
 
 
+@pytest.mark.parametrize(
+    ("event", "expected_type", "expected_body"),
+    [
+        (
+            events.VoiceSpeechStarted(
+                conversation_id="voice-conversation",
+                stream_id="mic-1",
+                trace_id="trace-voice",
+                pre_speech_samples=1024,
+            ),
+            "voice.speech.started",
+            {"pre_speech_samples": 1024},
+        ),
+        (
+            events.VoiceTranscriptPartial(
+                conversation_id="voice-conversation",
+                stream_id="mic-1",
+                trace_id="trace-voice",
+                text="hello wor",
+            ),
+            "voice.transcript.partial",
+            {"text": "hello wor"},
+        ),
+        (
+            events.VoiceSpeechEnded(
+                conversation_id="voice-conversation",
+                stream_id="mic-1",
+                trace_id="trace-voice",
+                reason="silence",
+            ),
+            "voice.speech.ended",
+            {"reason": "silence"},
+        ),
+        (
+            events.VoiceTranscriptFinal(
+                conversation_id="voice-conversation",
+                stream_id="mic-1",
+                trace_id="trace-voice",
+                text="hello world",
+                provider="provider-secret-must-not-cross-wire",
+            ),
+            "voice.transcript.final",
+            {"text": "hello world"},
+        ),
+    ],
+)
+def test_visible_stt_events_have_closed_wire_mapping_without_fake_turn_or_provider(
+    event,
+    expected_type,
+    expected_body,
+):
+    message = runtime_event_to_message(
+        envelope(event, sequence=17),
+        message_id="voice-event",
+        timestamp_ns=1003,
+    )
+
+    assert message.type == expected_type
+    assert message.turn_id is None
+    assert message.conversation_id == "voice-conversation"
+    assert message.stream_id == "mic-1"
+    assert message.trace_id == "trace-voice"
+    assert message.seq == 17
+    assert message.body == expected_body
+    assert "provider-secret-must-not-cross-wire" not in repr(message)
+
+    frames = encode_message(message)
+    assert frames[0] == b"ZARA/1"
+    assert len(frames) == 2
+
+
 def test_runtime_event_label_and_python_type_are_not_implicitly_serialized():
     event = events.AssistantDelta(
         turn_id="t1",

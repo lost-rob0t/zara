@@ -1,0 +1,149 @@
+#+title: RAGE #132 Reopened STT Visibility Design
+
+* Decision status
+- Consumed issue :: #132 (reopened regression)
+- Immutable start :: =b9463faf4f69bcc92c0db16941ea27ae0c252327=
+- Research verdict :: prior architecture is preserved; completion failed because STT events were dropped at the runtime adapter.
+- Auto-RAGE decision :: ACCEPT the repair architecture below and authorize tests-first realization.
+
+* Problem boundary
+Repair only #132's missing client-visible speech/STT event contract. Do not implement #28 streamed assistant generation, #29 phrase TTS, #191 tool approval transport, or #134's final release matrix.
+
+* Architecture
+** Canonical event flow
+#+begin_src text
+StreamingTranscriber STTEvent
+        |
+        v
+RuntimeVoiceIngress
+        |  adapt + principal-bound publish
+        v
+RuntimeSupervisor principal RuntimeEventBus
+        |
+        v
+ZaraZmqGateway / runtime_event_to_message
+        |
+        v
+closed ZARA/1 speech/transcript messages
+        |
+        v
+ZmqZaraClient
+        |
+        v
+client-local RuntimeEventBus
+#+end_src
+
+No direct ZMQ/STT callback bypass is introduced.
+
+** Runtime vocabulary
+Add four provider-neutral runtime events under the existing voice section:
+- =VoiceSpeechStarted(stream_id, trace_id, pre_speech_samples)=
+- =VoiceTranscriptPartial(stream_id, trace_id, text)=
+- =VoiceSpeechEnded(stream_id, trace_id, reason)=
+- =VoiceTranscriptFinal(stream_id, trace_id, text, provider)=
+
+All inherit =conversation_id= from =RuntimeEvent=. Their canonical runtime =turn_id= remains unset before =SubmitTurn= because an assistant turn does not yet exist. =stream_id= and =trace_id= are explicit correlation fields.
+
+** Wire vocabulary
+Use a small closed server event family:
+- =voice.speech.started=
+- =voice.transcript.partial=
+- =voice.speech.ended=
+- =voice.transcript.final=
+
+=conversation_id=, =stream_id= and =trace_id= use existing envelope fields. Event-specific bounded metadata/text stays in =body=. No audio payload is attached.
+
+** Publication ownership
+Add a principal-explicit =RuntimeSupervisor.publish(principal, event)= boundary that resolves the same owned runtime slot as =submit=/=subscribe= and publishes to that slot's bus. =RuntimeVoiceIngress= uses it; it does not access route/socket state and it never accepts a payload-selected principal.
+
+** Final transcript transition
+For an accepted non-empty =FinalTranscript=:
+1. verify the stream is still current and has not already submitted;
+2. atomically mark =submitted=True=;
+3. publish one =VoiceTranscriptFinal= for the owning principal;
+4. submit the existing =SubmitTurn= with the same conversation and trace-derived request id.
+
+Partial/lifecycle events publish only while the stream remains owned/current. They never submit commands.
+
+* Invariants
+1. Only =FinalTranscript= can create =SubmitTurn=.
+2. A partial transcript can never become execution authority.
+3. Stream id is not a canonical runtime turn id.
+4. Every visible STT event is published only through the principal runtime bus.
+5. No payload/user field can choose the principal.
+6. Cancelled/removed streams emit no later queued STT events.
+7. One accepted final yields at most one visible final and one =SubmitTurn=.
+8. Empty final text yields neither final-visible text nor =SubmitTurn=.
+9. Transcript/audio content is not added to structured audit/latency logs by this slice.
+10. ZARA/1 remains closed: unknown event types/fields still fail validation.
+11. Existing ZaraClient service boundary remains authoritative; client surfaces do not import RuntimeHost/STT internals.
+12. Existing standalone voice behavior is not removed.
+
+* Lifecycle
+- =start= creates principal/conversation/stream/trace-owned transient STT state.
+- =chunk= queues bounded PCM work.
+- transcriber speech-start/partial/end events become observational runtime events while that state remains current.
+- final transcript publishes final observation and submits one canonical text turn.
+- =commit= may cause speech-end + final through the same path, then stream state is removed.
+- =cancel= removes stream state before transcriber cancellation, fencing queued work/events.
+- disconnect/daemon restart destroys volatile stream state; no partial transcript replay is implied.
+
+* Threat / failure analysis
+- Cross-principal leak :: prevented by principal-bound ingress check plus =RuntimeSupervisor.publish= owner resolution and per-principal buses.
+- Stale queued PCM after cancel :: worker lookup finds no stream and drops work before adapting events.
+- Duplicate final from buggy transcriber :: =submitted= fence suppresses duplicate final + command.
+- Protocol spoofing :: speech/transcript messages are server events only; clients cannot turn them into runtime commands.
+- Oversized/invalid text :: existing protocol body/envelope limits remain authoritative; add explicit deterministic boundary tests where needed rather than weakening limits.
+- Subscriber overload :: existing runtime/gateway/client bounded queue semantics remain; no new queue is created.
+- Transport disconnect :: events can be lost with the volatile session; they are not persisted/replayed as durable transcript state.
+- Publication exception :: treated as runtime integration failure in tests; do not catch-and-log transcript text or bypass the event bus.
+
+* Migration / compatibility
+- No persistence/schema migration.
+- New runtime event subclasses are additive.
+- New ZARA/1 server message types are additive within v1's closed allowlist; old clients that do not know them must continue to fail/ignore according to existing protocol/client compatibility policy rather than dynamic dispatch.
+- Existing =TranscriptReady= remains untouched in this slice to avoid silently changing unrelated desktop semantics.
+
+* Rejected alternatives
+- direct voice-ingress -> gateway callback;
+- assistant text event reuse;
+- runtime turn id overloading;
+- final-only visibility;
+- second STT/provider stack;
+- synthetic #134-only events without a production producer.
+
+* Acceptance -> tests
+1. Producer emits speech-start/partial/end/final with conversation/stream/trace correlation -> focused RuntimeVoiceIngress deterministic transcriber test.
+2. Final remains execution-only authority -> same test asserts one and only one =SubmitTurn=; partial never submits.
+3. Cancel/stale queued work cannot publish -> cancellation test with deterministic queued/event sequence.
+4. Principal A event never appears on B bus -> RuntimeSupervisor/ingress two-principal isolation test where applicable.
+5. Runtime codec maps all four events to closed wire messages preserving envelope correlation -> =t/test_protocol_runtime.py= focused cases.
+6. Protocol rejects malformed/unknown speech event shapes -> protocol golden/negative tests.
+7. =ZmqZaraClient= reduces wire messages back to typed runtime events -> client transport fixture.
+8. Actual local gateway/client fixture receives production-generated partial/final events -> focused process-boundary integration test, using deterministic fake transcriber through the production ingress seam.
+9. Existing input/output/barge-in/reconnect regressions remain green -> existing #132 focused scripts/tests.
+
+* TDD slices
+- Slice R1 :: runtime producer + principal event bus behavior.
+- Slice R2 :: runtime-event codec + closed protocol vocabulary.
+- Slice R3 :: client reduction + gateway process-boundary delivery.
+- Slice R4 :: stale/cancel/principal adversarial coverage, focused script, full gate and exact-head CI.
+
+* Exact gate
+- smallest focused tests per slice, with authoritative expected RED before production change;
+- existing voice/ZARA protocol suites;
+- focused non-interactive #132 regression command/script;
+- =nix develop -c bash scripts/test-all.sh=;
+- =nix flake check=;
+- =nix build=;
+- changed-code coverage review;
+- GitHub Actions green at exact final PR head;
+- merge only exact head green + mergeable.
+
+* Adversarial review
+The strongest attack is accidentally treating transcript visibility as a second command stream. The design prevents that by preserving =FinalTranscript -> SubmitTurn= as the sole command transition and making all four new events observational. Another attack is cross-principal publication; the design routes publication through =RuntimeSupervisor= using the already-authenticated =PrincipalContext= rather than a wire owner. Reconnect replay is explicitly not promised for volatile STT state.
+
+* Autonomous decision gate
+Decision :: ACCEPT.
+Reason :: research found a narrow missing adapter with existing correct producer, runtime isolation primitive, transport event path, and client event bus. The design fixes the falsified #132 acceptance criterion without expanding into sibling issues or replacing architecture.
+Realize :: AUTHORIZED, tests first.

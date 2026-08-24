@@ -49,6 +49,10 @@ SERVER_MESSAGE_TYPES = frozenset(
         "assistant.delta",
         "assistant.completed",
         "assistant.response",
+        "voice.speech.started",
+        "voice.transcript.partial",
+        "voice.speech.ended",
+        "voice.transcript.final",
         "audio.input.started",
         "audio.input.accepted",
         "audio.input.committed",
@@ -104,6 +108,12 @@ _AUDIO_INPUT_START_BODY = {
     "frame_samples": AUDIO_INPUT_FRAME_SAMPLES,
 }
 _AUDIO_OUTPUT_START_KEYS = frozenset({"codec", "sample_rate", "channels"})
+_VISIBLE_STT_BODY_FIELDS = {
+    "voice.speech.started": "pre_speech_samples",
+    "voice.transcript.partial": "text",
+    "voice.speech.ended": "reason",
+    "voice.transcript.final": "text",
+}
 
 
 class ZaraProtocolError(ValueError):
@@ -416,6 +426,35 @@ def _validate_audio_output_payloads(
         )
 
 
+def _validate_visible_stt_envelope(message: ProtocolMessage) -> None:
+    field = _VISIBLE_STT_BODY_FIELDS.get(message.type)
+    if field is None:
+        return
+    if message.conversation_id is None:
+        raise ProtocolValidationError(f"{message.type} requires conversation_id")
+    if message.stream_id is None:
+        raise ProtocolValidationError(f"{message.type} requires stream_id")
+    if message.seq is None:
+        raise ProtocolValidationError(f"{message.type} requires seq")
+    if message.turn_id is not None:
+        raise ProtocolValidationError(f"{message.type} does not accept turn_id")
+    if message.payload_count != 0:
+        raise ProtocolValidationError(f"{message.type} does not accept payload frames")
+    if message.content_type is not None:
+        raise ProtocolValidationError(f"{message.type} does not accept content_type")
+    body = dict(message.body or {})
+    if set(body) != {field}:
+        raise ProtocolValidationError(f"{message.type} requires only {field}")
+    value = body[field]
+    if field == "pre_speech_samples":
+        if type(value) is not int or value < 0:
+            raise ProtocolValidationError(
+                "voice.speech.started pre_speech_samples must be non-negative"
+            )
+    elif not isinstance(value, str):
+        raise ProtocolValidationError(f"{message.type} {field} must be a string")
+
+
 def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> ProtocolMessage:
     unknown = set(data) - _ALLOWED_ENVELOPE_KEYS
     if unknown:
@@ -462,6 +501,7 @@ def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> Pr
     )
     _validate_audio_input_envelope(message)
     _validate_audio_output_envelope(message)
+    _validate_visible_stt_envelope(message)
     return message
 
 
