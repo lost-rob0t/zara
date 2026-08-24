@@ -1,6 +1,20 @@
 # Zara Desktop Copilot: Research and Architecture
 
-**Status:** proposed architecture and implementation plan  
+## Implemented settings and customization surface
+
+The native desktop now treats customization as part of the same application boundary:
+
+- a semantic theme registry applies one complete palette and stylesheet across Quick Copilot, Full Chat, Settings, and status surfaces;
+- Signal Cabin, Dotfiles Outrun, Nord, Dracula, and ChatGPT Neutral are built-in choices, with unknown legacy theme keys falling back safely;
+- the composer has one accessible icon action that sends when idle and becomes Stop while the active turn streams;
+- Settings writes supported values to the existing XDG `config.toml` and identifies runtime changes that require restart;
+- the Prolog settings section combines an allowlisted, syntax-highlighted source editor with a guided fact list;
+- guided facts cover every fact type accepted by `modules/config_loader.pl` and write into a marked block in the actual XDG `config.pl`, preserving manual source outside the block;
+- Prolog source writes are size-bounded, UTF-8-only, syntax-validated without consulting the candidate file, and atomically replaced.
+
+This surface does not bypass the runtime boundary. Theme previews are live UI state; runtime and Prolog configuration changes use the canonical files and explicit restart/reload behavior.
+
+**Status:** implemented desktop baseline with retained architecture notes
 **Research baseline:** `master` at `48b2e482080ec4a6b8916ccc8ee892af980177b1`  
 **Primary target:** Linux desktop, with Windows/macOS kept architecturally possible  
 **UI toolkit decision:** PySide6 / Qt for Python

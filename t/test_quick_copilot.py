@@ -174,7 +174,8 @@ def test_quick_is_one_reused_keyboard_first_window(tmp_path):
             CommandReceipt(request_id=submit.request_id, turn_id="turn-quick")
         )
         qt_app.processEvents()
-        assert quick.stop_button.isEnabled()
+        assert quick.action_button.isEnabled()
+        assert quick.action_button.action_mode == "stop"
 
         quick.composer.setPlainText("line one")
         cursor = quick.composer.textCursor()
@@ -202,6 +203,42 @@ def test_quick_is_one_reused_keyboard_first_window(tmp_path):
         assert quick.close() is False
         qt_app.processEvents()
         assert not quick.isVisible()
+    finally:
+        dispose_controller(controller)
+
+
+def test_quick_copilot_exposes_signal_cabin_visual_hierarchy(tmp_path):
+    _, controller, _, _, _, _ = make_controller(tmp_path)
+    quick = controller.quick_window
+    assert quick is not None
+    try:
+        assert quick.objectName() == "zaraQuickCopilot"
+        assert quick.header_frame.objectName() == "zaraQuickHeader"
+        assert quick.status_frame.objectName() == "zaraRuntimeRail"
+        assert quick.status_lamp.objectName() == "zaraStatusLamp"
+        assert quick.status_lamp.property("runtimeState") == "starting"
+        assert quick.message_scroll.objectName() == "zaraConversationViewport"
+        assert quick.composer_shell.objectName() == "zaraComposerShell"
+        assert quick.action_button.objectName() == "zaraComposerAction"
+        assert quick.action_button.action_mode == "send"
+        assert quick.action_button.accessibleName() == "Send message"
+    finally:
+        dispose_controller(controller)
+
+
+def test_quick_send_action_tracks_meaningful_composer_text(tmp_path):
+    qt_app, controller, _, _, _, _ = make_controller(tmp_path)
+    quick = controller.quick_window
+    assert quick is not None
+    try:
+        assert quick.action_button.isEnabled() is False
+        quick.composer.setPlainText("route this")
+        qt_app.processEvents()
+        assert quick.action_button.isEnabled() is True
+        assert quick.action_button.action_mode == "send"
+        quick.composer.setPlainText("   ")
+        qt_app.processEvents()
+        assert quick.action_button.isEnabled() is False
     finally:
         dispose_controller(controller)
 
@@ -393,7 +430,7 @@ def test_stop_uses_canonical_active_turn_and_cancel_propagates(tmp_path):
         )
         qt_app.processEvents()
 
-        quick.stop_button.click()
+        quick.action_button.click()
         qt_app.processEvents()
         cancel = bridge.commands[-1]
         assert isinstance(cancel, CancelTurn)
@@ -407,7 +444,8 @@ def test_stop_uses_canonical_active_turn_and_cancel_propagates(tmp_path):
             ),
         )
         assert service.get_state(conversation_id).active_turn_id is None
-        assert not quick.stop_button.isEnabled()
+        assert quick.action_button.action_mode == "send"
+        assert not quick.action_button.isEnabled()
 
         quick.composer.setPlainText("second turn")
         quick.submit_current_text()
@@ -416,7 +454,7 @@ def test_stop_uses_canonical_active_turn_and_cancel_propagates(tmp_path):
             CommandReceipt(request_id=second.request_id, turn_id="turn-second")
         )
         qt_app.processEvents()
-        quick.stop_button.click()
+        quick.action_button.click()
         assert isinstance(bridge.commands[-1], CancelTurn)
         assert bridge.commands[-1].turn_id == "turn-second"
         assert bridge.commands[-1].turn_id != "turn-cancel"
@@ -432,7 +470,8 @@ def test_stop_uses_canonical_active_turn_and_cancel_propagates(tmp_path):
         )
         emit(bridge, events.RuntimeStopped(reason="runtime restart"))
         assert service.get_state(conversation_id).active_turn_id is None
-        assert not quick.stop_button.isEnabled()
+        assert quick.action_button.action_mode == "send"
+        assert not quick.action_button.isEnabled()
     finally:
         dispose_controller(controller)
 
