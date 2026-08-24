@@ -1,0 +1,141 @@
+#+title: RAGE #134 - Daemon Release Gate Research
+
+* Scope and authority
+This research belongs to consumed issue #134 on branch =rage/134-daemon-release-gate=.
+The immutable RAGE start remains =b9463faf4f69bcc92c0db16941ea27ae0c252327=.
+The active control plane is the repository workflow in =AGENTS.md= and =skills/rage/SKILL.md= plus the canonical external RAGE and ADADR skills. =.rage.toml= selects =control_plane.adadr_mode = "auto-rage"=, so this worker performs and records Analyze, Design, adversarial review, and the decision gate autonomously.
+
+This phase is deliberately capable of disproving the inherited assumption that #134 is ready for realization.
+
+* Live queue and transaction evidence
+- Current transaction :: issue #134, draft PR #190, branch =rage/134-daemon-release-gate=.
+- Immutable start :: =b9463faf4f69bcc92c0db16941ea27ae0c252327=, protected =master= after #133 closeout.
+- Formal #134 dependencies :: #130, #131, #132, #133 were closed when #134 was consumed.
+- Parent epic :: #127 remains open and explicitly says the final Voice replacement path reuses #28 streamed LLM output, #29 phrase TTS, #30 warm-path work, #31 full-duplex release/soak, #51 context, #82/#83 runtime contracts, #124 Prolog LLM work, and existing voice/tool/memory systems rather than forking them.
+- Roadmap #1 :: phase ordering still has the reopened provider correctness regression #17 ahead of #28; #28 before #29; #30 depends on the voice-streaming slices; #31 is the voice release gate; Phase 9 says the daemon release work reuses #28/#29/#30/#31 instead of absorbing them.
+- Open PR review sweep :: PRs #190, #184, #146, #138, #135, #126, #119, and #103 have no review submissions, no review threads, and no top-level PR discussion comments. Their historical CI state does not supersede #190 or authorize #134 realization.
+- Exact #190 head at research time :: =8797c0f7da7fe4295979f6107d0de2e3b24ed828=. Actions CI run #490 completed successfully. That run verifies the repository's current gates, not #134's not-yet-implemented release matrix.
+
+* Required #134 proof versus live implementation
+** Persistent service, transport, isolation, reconnect
+The daemon slices have substantial implemented proof already:
+- =zara-server= owns a long-lived =RuntimeSupervisor= and principal-specific runtimes.
+- =ZaraClient= remains the client-facing service boundary; =ZmqZaraClient= implements the DEALER transport behind it.
+- ZARA/1 uses closed multipart framing and bounded envelope/payload rules.
+- transport configuration bounds SNDHWM, RCVHWM, MAXMSGSIZE, event queues, pending requests, replay cache, request timeouts, heartbeat settings, and linger.
+- the ROUTER uses =ROUTER_MANDATORY= and route-local outbound queues; an overfull route is dropped rather than allowed to grow without bound.
+- reconnect and idempotency/fencing tests exist from #129/#133 work.
+- #130/#131 added authenticated-principal and persistence/isolation gates.
+
+These are real strengths and should be reused by #134 rather than replaced.
+
+** Visible streaming STT is not carried over ZARA/1
+Issue #132's acceptance criterion says an authenticated daemon client can receive partial/final transcript events.
+
+The live implementation contradicts that acceptance criterion:
+- =zara/streaming_stt.py= defines =SpeechStarted=, =PartialTranscript=, =SpeechEnded=, and =FinalTranscript= events.
+- =zara/voice_runtime.py::RuntimeVoiceIngress._run= consumes the transcriber's events but only handles =FinalTranscript=.
+- =FinalTranscript= is converted directly into =SubmitTurn= by =_submit_final=; it is not emitted to the client as a transcript event.
+- =SpeechStarted=, =PartialTranscript=, and =SpeechEnded= are discarded at this boundary.
+- =zara/protocol.py= has no STT/speech-start/speech-end/partial/final transcript message types.
+- therefore an ordinary daemon client cannot satisfy #134 contract item 4 or the speech-start/final-transcript latency spans across the process boundary.
+
+This is not merely missing #134 test coverage. It falsifies a completed #132 acceptance claim and must be repaired in the owning voice-transport slice rather than hidden in the release-gate branch.
+
+** Streamed assistant text has vocabulary but not the required production source
+- =zara/runtime/events.py= and =zara/runtime/bridge.py= contain =AssistantDelta= / =model_streaming= vocabulary.
+- =zara/protocol_runtime.py= maps =AssistantDelta= to =assistant.delta=.
+- =ZmqZaraClient= maps =assistant.delta= back into the client event bus.
+- code search finds no production call site that emits =model_streaming= from the actual LLM/agent provider path; the compatibility bridge itself is the only production definition/reference.
+- issue #28 explicitly owns the provider-neutral streaming interface, provider streaming adapters, safe sentence/phrase accumulation, tool-call interaction, cancellation, and exact final-history semantics.
+- #28 is open and depends on provider correctness ZARA-016 (#17), which is reopened.
+
+A fixture can prove that a synthetic =AssistantDelta= crosses the wire; it cannot prove #134 item 6 (real assistant output streams before completion). Treating the former as the latter would be a false green.
+
+** Phrase/audio before full response is still owned by #29
+- #132 implemented binary audio output framing, negotiation, client playback callbacks, cancellation and stale-audio rejection for already-produced audio chunks.
+- #29 is still open and owns phrase-sized synthesis, persistent low-latency playback/provider pipeline semantics, ordering, failure recovery, and the first-phrase-to-first-audio budget.
+- therefore #134 item 7 cannot be proven by merely injecting synthetic =audio.output.chunk= messages.
+
+The transport can carry audio; the required producer pipeline is not yet an accepted completed dependency.
+
+** Tools/search/approval are not a ZARA/1 client contract
+#134 requires tools/search plus explicit approval events during the voice session and multi-user approval isolation.
+
+The live ZARA/1 command/event vocabulary does not expose that contract:
+- =zara/protocol.py= client message types are =hello=, =ping=, =runtime.status=, =conversation.open=, =turn.submit=, and =turn.cancel= plus voice ingress messages.
+- =zara/protocol_runtime.py::command_from_message= maps only =turn.submit= and =turn.cancel= to runtime commands.
+- =runtime_event_to_message= maps turn/assistant/runtime events but does not map =ToolStarted=, =ToolCompleted=, =UserInputRequired=, or =UserResponded=.
+- =ZmqZaraClient.submit= explicitly supports only =SubmitTurn= and =CancelTurn=.
+- repository search finds no =tool.approval= protocol contract.
+
+The runtime already has tool/approval event types for local consumers, but the authenticated daemon client cannot observe/respond through ZARA/1. This is a distinct release blocker and must get an owning issue rather than being implemented ad hoc inside #134.
+
+** Full-duplex soak/release evidence is still owned by #31
+Issue #31 remains open. It owns the end-to-end deterministic duplex harness, short CI profile, long local soak, resource-growth tracking, stale-event proof, and p50/p95/p99 latency reporting. #134 explicitly says it integrates with #31.
+
+Creating a second soak implementation in #134 would violate issue ownership and fragment the metric/gate system.
+
+* Upstream failure-mode research
+** libzmq ROUTER behavior
+Authoritative libzmq socket documentation states that ROUTER normally silently discards messages for unroutable peers; with =ZMQ_ROUTER_MANDATORY= enabled, unroutable peers fail and HWM pressure becomes observable as blocking/EAGAIN behavior. It also documents per-peer SNDHWM behavior and =ZMQ_MAXMSGSIZE= disconnect behavior.
+
+Sources:
+- https://libzmq.readthedocs.io/en/latest/zmq_socket.html
+- https://libzmq.readthedocs.io/en/latest/zmq_setsockopt.html
+
+Implication: the existing Zara transport choices to enable =ROUTER_MANDATORY=, set finite HWM values, send nonblocking, evict a route on send/backpressure failure, and set =MAXMSGSIZE= are aligned with upstream failure semantics. #134 should attack their integration and resource behavior, not replace them.
+
+** PyZMQ CURVE/ZAP identity
+PyZMQ documents CURVE server/client key setup, ZAP authentication, and authenticated =User-Id= message metadata. The authenticator's CURVE callback/certificate model is the appropriate place to validate client keys; message payload identity is not an authentication authority.
+
+Sources:
+- https://pyzmq.readthedocs.io/en/latest/howto/curve.html
+- https://pyzmq.readthedocs.io/en/v27.0.1/api/zmq.auth.html
+- https://pyzmq.readthedocs.io/en/latest/api/zmq.html
+
+Implication: #130's transport-authenticated principal mapping remains the correct security boundary. #134 must preserve it when it adds hostile-client and multi-user matrices.
+
+** Python JSON strictness
+Python's standard =json= decoder accepts non-finite =NaN=/=Infinity= by default and accepts repeated object member names while retaining the last value. The docs explicitly expose =parse_constant= and =object_pairs_hook= to override those behaviors.
+
+Source:
+- https://docs.python.org/3.13/library/json.html
+
+Implication: =zara/protocol.py= is correctly stricter than default =json.loads= by using =parse_constant= and an =object_pairs_hook= that rejects duplicates. Deterministic fuzz should retain and expand this invariant rather than switching parsers merely for novelty.
+
+* Alternatives considered
+** A. Implement every missing capability in #134
+Rejected. #28, #29, #31, and #17 already own major missing behavior. Folding them into #134 would violate issue-driven RAGE, erase dependency evidence, and make later issues duplicate work.
+
+** B. Keep #134 moving by mocking streamed LLM/TTS/STT/approval events
+Rejected as release authority. Synthetic events are useful transport unit fixtures, but using them to satisfy end-to-end Voice replacement criteria would prove only that framing works. It would not prove the actual providers/runtime generate the required behavior.
+
+** C. Treat successful current CI as release proof
+Rejected. CI #490 ran before any #134 release matrix existed. Exact-head CI is necessary evidence after realization, never evidence that unimplemented acceptance criteria already pass.
+
+** D. Create a top-level script that runs only currently existing daemon tests
+Rejected as a final #134 gate. That would institutionalize the current coverage hole and risk a stable false green.
+
+** E. Reopen completed slice #132 for the missing transcript boundary
+Accepted. #132's own acceptance explicitly requires partial/final transcript reception, and repository roadmap policy gives regressions in completed correctness contracts priority. The release gate discovered a falsified #132 completion claim.
+
+** F. Create a focused blocker for daemon tool/approval protocol
+Accepted unless an existing issue is found to own exactly that current daemon contract. Search of the open issue queue finds the parent #127/#134 requirements and future #150 capability architecture, but no current focused issue that carries existing runtime tool lifecycle and explicit approval events over authenticated ZARA/1. The blocker must stay narrow and must not preempt #150's future typed semantic/device capability plane.
+
+* Research conclusion
+The inherited assumption that #134 can proceed directly to a green release matrix is disproven.
+
+The protocol/security/client foundation is strong enough to preserve. The release claim is not.
+
+Blocking evidence is concrete:
+1. #132's partial/final STT-over-ZARA/1 acceptance is not implemented.
+2. #17 is reopened and blocks the provider contract required by #28.
+3. #28 real streamed LLM output is open.
+4. #29 phrase streaming TTS is open.
+5. #30 warm-path/resource work is open and feeds the release path.
+6. #31 full-duplex soak/latency release gate is open and explicitly integrated by #134.
+7. tool/search explicit approval command/event transport is not exposed through current ZARA/1 and has no focused owner.
+8. this worker cannot execute the mandatory local Nix gates because the current execution environment cannot resolve GitHub for a checkout; remote exact-head Actions can verify equivalent commands, but repository/user policy still requires local-gate evidence before merge.
+
+Therefore Analyze does not authorize normal #134 realization. The next phase must design a blocker-aware release architecture and an explicit decision gate rather than start TDD on a knowingly incomplete release matrix.
