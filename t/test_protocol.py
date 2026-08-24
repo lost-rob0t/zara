@@ -277,10 +277,12 @@ def test_visible_stt_event_shapes_round_trip_without_payload_or_turn_id(message_
 @pytest.mark.parametrize(
     "overrides",
     [
+        {"conversation_id": None},
         {"stream_id": None},
         {"seq": None},
         {"turn_id": "fake-runtime-turn"},
         {"payload_count": 1},
+        {"content_type": "text/plain"},
         {"body": None},
         {"body": {"pre_speech_samples": -1}},
         {"body": {"pre_speech_samples": True}},
