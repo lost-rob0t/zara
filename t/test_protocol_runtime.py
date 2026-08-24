@@ -172,10 +172,9 @@ def test_runtime_events_have_explicit_allowlisted_wire_mapping(event, expected_t
                 stream_id="mic-1",
                 trace_id="trace-voice",
                 text="hello wor",
-                text_length=9,
             ),
             "voice.transcript.partial",
-            {"text": "hello wor", "text_length": 9},
+            {"text": "hello wor"},
         ),
         (
             events.VoiceSpeechEnded(
@@ -193,11 +192,10 @@ def test_runtime_events_have_explicit_allowlisted_wire_mapping(event, expected_t
                 stream_id="mic-1",
                 trace_id="trace-voice",
                 text="hello world",
-                text_length=11,
                 provider="provider-secret-must-not-cross-wire",
             ),
             "voice.transcript.final",
-            {"text": "hello world", "text_length": 11},
+            {"text": "hello world"},
         ),
     ],
 )
