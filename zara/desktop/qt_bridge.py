@@ -1,7 +1,7 @@
-"""Qt-safe adapter for :mod:`zara.runtime` commands and events.
+"""Qt-safe adapter for Zara runtime commands and events.
 
 This module is intentionally UI-free. It translates the queue/future based
-RuntimeHost boundary into Qt signals without ever running assistant work on the
+service boundary into Qt signals without ever running assistant work on the
 Qt main thread.
 """
 
@@ -18,7 +18,7 @@ from zara.runtime.host import RuntimeHost
 
 
 class QtRuntimeBridge(QObject):
-    """Deliver RuntimeHost events and command completions through Qt signals."""
+    """Deliver service events and command completions through Qt signals."""
 
     runtime_event = Signal(object)
     command_completed = Signal(object)
@@ -41,7 +41,10 @@ class QtRuntimeBridge(QObject):
 
         self._host = host
         self._max_events_per_tick = max_events_per_tick
-        self._subscription = runtime_bridge.subscribe()
+        subscribe = getattr(host, "subscribe", None)
+        self._subscription = (
+            subscribe() if callable(subscribe) else runtime_bridge.subscribe()
+        )
         self._closed = False
 
         self._timer = QTimer(self)

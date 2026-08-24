@@ -14,9 +14,10 @@ from zara.desktop.controller import DesktopController
 from zara.desktop.state import DesktopRuntimeState, DesktopStatus
 from zara.desktop.tray import ZaraTray
 from zara.desktop.windows import DesktopStatusWindow
+from zara.runtime import bridge as runtime_bridge
 from zara.runtime import events
 from zara.runtime.backend import RuntimeBackend
-from zara.runtime.commands import CommandReceipt, RestartRuntime, ShutdownRuntime
+from zara.runtime.commands import CommandReceipt, RestartRuntime
 from zara.runtime.host import RuntimeHost
 
 
@@ -115,14 +116,25 @@ class FakeHost:
     def __init__(self) -> None:
         self.start_calls = 0
         self.shutdown_calls = []
+        self.close_calls = 0
+        self.bus = runtime_bridge.RuntimeEventBus()
 
     def start(self):
         self.start_calls += 1
         return completed(None)
 
+    def submit(self, command):
+        return completed(CommandReceipt(request_id=command.request_id))
+
+    def subscribe(self, *, maxsize: int = 0):
+        return self.bus.subscribe(maxsize=maxsize)
+
     def shutdown(self, reason=""):
         self.shutdown_calls.append(reason)
         return completed(None)
+
+    def close(self, timeout=None):
+        self.close_calls += 1
 
 
 class NullBackend(RuntimeBackend):
@@ -252,44 +264,62 @@ def test_diagnostics_action_reopens_status_surface_and_emits_hook():
         dispose_controller(controller)
 
 
-def test_explicit_quit_waits_for_runtime_shutdown_receipt_before_cleanup():
-    _, controller, _, bridge, tray, window = make_controller()
+def test_explicit_quit_closes_client_without_daemon_shutdown_command():
+    _, controller, client, bridge, tray, window = make_controller()
     try:
         controller.request_quit()
 
         assert controller.quitting is True
-        assert len(bridge.commands) == 1
-        command = bridge.commands[0]
-        assert isinstance(command, ShutdownRuntime)
-        assert tray.hidden is False
-        assert bridge.closed is False
-        assert window.closed is False
-        assert tray.quit_action.enabled is False
-
-        bridge.command_completed.emit(
-            CommandReceipt(request_id=command.request_id, detail="runtime stopped")
-        )
-
+        assert bridge.commands == []
+        assert client.shutdown_calls == []
+        assert client.close_calls == 1
         assert bridge.closed is True
         assert tray.hidden is True
         assert window.allow_close is True
         assert window.closed is True
+        assert tray.quit_action.enabled is False
     finally:
         dispose_controller(controller)
 
 
-def test_quit_still_closes_ui_when_runtime_is_already_unavailable():
-    _, controller, _, bridge, tray, window = make_controller()
+def test_about_to_quit_closes_client_without_daemon_shutdown():
+    _, controller, client, bridge, tray, window = make_controller()
     try:
-        controller.request_quit()
-        command = bridge.commands[0]
-        bridge.command_failed.emit(command.request_id, "runtime is not ready")
+        controller._about_to_quit()
 
+        assert bridge.commands == []
+        assert client.shutdown_calls == []
+        assert client.close_calls == 1
         assert bridge.closed is True
         assert tray.hidden is True
         assert window.closed is True
     finally:
         dispose_controller(controller)
+
+
+def test_create_application_accepts_supplied_zara_client():
+    qt_app = app()
+    if hasattr(qt_app, "_zara_desktop_controller"):
+        delattr(qt_app, "_zara_desktop_controller")
+
+    client = FakeHost()
+    app_one, controller = create_application([], client=client)
+
+    try:
+        assert app_one is qt_app
+        assert controller.client is client
+        assert controller.host is client
+    finally:
+        controller.bridge.close()
+        controller.tray.hide()
+        controller.window.prepare_for_quit()
+        controller.window.close()
+        delattr(qt_app, "_zara_desktop_controller")
+        controller.setParent(None)
+        controller.deleteLater()
+        controller.tray.deleteLater()
+        controller.window.deleteLater()
+        qt_app.processEvents()
 
 
 def test_create_application_reuses_one_controller_and_canonical_tray():

@@ -8,6 +8,7 @@ from typing import Callable, Optional
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
+from zara.client import ZaraClient
 from zara.desktop.conversation import ConversationService, ConversationStore
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.state import (
@@ -18,19 +19,18 @@ from zara.desktop.state import (
 )
 from zara.desktop.tray import ZaraTray
 from zara.desktop.windows import FullChatWindow, QuickCopilotWindow
-from zara.runtime.commands import CommandReceipt, RestartRuntime, ShutdownRuntime
-from zara.runtime.host import RuntimeHost
+from zara.runtime.commands import CommandReceipt, RestartRuntime
 
 
 class DesktopController(QObject):
-    """Own the desktop shell while delegating assistant work to RuntimeHost."""
+    """Own the desktop shell while delegating assistant work to ZaraClient."""
 
     diagnostics_requested = Signal()
 
     def __init__(
         self,
         app: QApplication,
-        host: RuntimeHost,
+        client: ZaraClient,
         bridge: QtRuntimeBridge,
         *,
         tray_factory: Callable[[], ZaraTray] = ZaraTray,
@@ -39,7 +39,10 @@ class DesktopController(QObject):
     ) -> None:
         super().__init__(app)
         self.app = app
-        self.host = host
+        self.client = client
+        # Compatibility alias for existing embedders/tests while #133 migrates
+        # callers. New desktop code must use the ZaraClient-facing name.
+        self.host = client
         self.bridge = bridge
         self.tray = tray_factory()
         self.quick_window: Optional[QuickCopilotWindow] = None
@@ -68,7 +71,6 @@ class DesktopController(QObject):
         self._started = False
         self._quitting = False
         self._finalized = False
-        self._quit_request_id: Optional[str] = None
         self._restart_request_id: Optional[str] = None
 
         quick_requested = getattr(self.tray, "quick_requested", None)
@@ -98,9 +100,9 @@ class DesktopController(QObject):
         return self._quitting
 
     def start(self) -> concurrent.futures.Future:
-        """Show a reachable desktop surface and start Zara asynchronously."""
+        """Show a reachable desktop surface and start its Zara client."""
         if self._started:
-            return self.host.start()
+            return self.client.start()
         self._started = True
         self._set_status(INITIAL_STATUS)
 
@@ -108,7 +110,7 @@ class DesktopController(QObject):
         if not tray_available:
             self.window.show_raised()
 
-        return self.host.start()
+        return self.client.start()
 
     def show_quick_copilot(self) -> None:
         """Summon the one process-owned Quick Copilot instance."""
@@ -153,14 +155,12 @@ class DesktopController(QObject):
         self.diagnostics_requested.emit()
 
     def request_quit(self) -> None:
-        """Explicit Quit: stop the runtime first, then terminate QApplication."""
+        """Disconnect this desktop client without stopping a shared daemon."""
         if self._quitting:
             return
         self._quitting = True
-        command = ShutdownRuntime(reason="desktop quit")
-        self._quit_request_id = command.request_id
         self.tray.quit_action.setEnabled(False)
-        self.bridge.submit(command)
+        self._finalize_quit()
 
     def _on_surface_conversation_changed(self, update) -> None:
         if self.conversation_service is None:
@@ -193,10 +193,6 @@ class DesktopController(QObject):
         self._resync_conversation_surfaces()
 
         request_id = getattr(receipt, "request_id", None)
-        if request_id == self._quit_request_id:
-            self._quit_request_id = None
-            self._finalize_quit()
-            return
         if request_id == self._restart_request_id:
             self._restart_request_id = None
 
@@ -209,10 +205,6 @@ class DesktopController(QObject):
             self.quick_window.handle_command_failed(request_id, message)
         self._resync_conversation_surfaces()
 
-        if request_id == self._quit_request_id:
-            self._quit_request_id = None
-            self._finalize_quit()
-            return
         if request_id == self._restart_request_id:
             self._restart_request_id = None
             self._set_status(
@@ -236,10 +228,18 @@ class DesktopController(QObject):
         if self.quick_window is not None:
             self.quick_window.set_status(status)
 
-    def _finalize_quit(self) -> None:
-        if self._finalized:
+    def _close_client(self) -> None:
+        close = getattr(self.client, "close", None)
+        if callable(close):
+            close()
             return
-        self._finalized = True
+        # Temporary compatibility for legacy RuntimeHost injection. Normal
+        # application construction always supplies a ZaraClient.
+        shutdown = getattr(self.client, "shutdown", None)
+        if callable(shutdown):
+            shutdown("desktop standalone compatibility exit")
+
+    def _close_surfaces(self) -> None:
         self.bridge.close()
         self.tray.hide()
         self.window.prepare_for_quit()
@@ -247,17 +247,25 @@ class DesktopController(QObject):
         if self.quick_window is not None:
             self.quick_window.prepare_for_quit()
             self.quick_window.close()
+
+    def _finalize_quit(self) -> None:
+        if self._finalized:
+            return
+        # Mark finalized before QApplication.quit() emits aboutToQuit, keeping
+        # cleanup idempotent and preventing a second client close.
+        self._finalized = True
+        try:
+            self._close_client()
+        finally:
+            self._close_surfaces()
         self.app.quit()
 
     def _about_to_quit(self) -> None:
-        """Best-effort cleanup for exits that bypass the tray Quit action."""
-        if not self._finalized:
-            self.bridge.close()
-            self.tray.hide()
-            self.window.prepare_for_quit()
-            self.window.close()
-            if self.quick_window is not None:
-                self.quick_window.prepare_for_quit()
-                self.quick_window.close()
-            self.host.shutdown("desktop application exiting")
-            self._finalized = True
+        """Best-effort client/surface cleanup for non-tray application exits."""
+        if self._finalized:
+            return
+        self._finalized = True
+        try:
+            self._close_client()
+        finally:
+            self._close_surfaces()

@@ -15,6 +15,7 @@ import queue
 import threading
 import time
 import uuid
+import weakref
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Optional
@@ -145,6 +146,8 @@ def apply_socket_options(socket: zmq.Socket, config: TransportConfig, *, router:
         socket.setsockopt(zmq.HEARTBEAT_TIMEOUT, config.heartbeat_timeout_ms)
     if router:
         socket.setsockopt(zmq.ROUTER_MANDATORY, 1)
+        if hasattr(zmq, "ROUTER_HANDOVER"):
+            socket.setsockopt(zmq.ROUTER_HANDOVER, 1)
 
 
 def _message_id() -> str:
@@ -1008,7 +1011,9 @@ class ZmqZaraClient(ZaraClient):
             audio_output_formats or [_DEFAULT_AUDIO_OUTPUT_FORMAT]
         )
         self._audio_output_format: Optional[dict[str, object]] = None
+        self._routing_id = uuid.uuid4().hex.encode("ascii")
         self._bus = bridge.RuntimeEventBus()
+        self._subscriptions: weakref.WeakSet[bridge.RuntimeEventSubscription] = weakref.WeakSet()
         self._state = ZaraClientState.NEW
         self._state_lock = threading.RLock()
         self._thread: Optional[threading.Thread] = None
@@ -1017,6 +1022,7 @@ class ZmqZaraClient(ZaraClient):
         self._pending: dict[str, _Pending] = {}
         self._pending_lock = threading.RLock()
         self._session_id: Optional[str] = None
+        self._conversation_id: Optional[str] = None
         self._started: concurrent.futures.Future = concurrent.futures.Future()
         self._active_voice_outputs: dict[str, dict[str, object]] = {}
         self._cancelled_voice_turns: OrderedDict[str, None] = OrderedDict()
@@ -1068,6 +1074,7 @@ class ZmqZaraClient(ZaraClient):
     def _run(self) -> None:
         socket = self._context.socket(zmq.DEALER)
         apply_socket_options(socket, self._config, router=False)
+        socket.setsockopt(zmq.IDENTITY, self._routing_id)
         poller = zmq.Poller()
         try:
             socket.connect(self._endpoint)
@@ -1387,7 +1394,7 @@ class ZmqZaraClient(ZaraClient):
         )
 
     def open_conversation(self, conversation_id: Optional[str] = None) -> concurrent.futures.Future:
-        return self._request(
+        future = self._request(
             ProtocolMessage(
                 type="conversation.open",
                 id=_message_id(),
@@ -1398,6 +1405,17 @@ class ZmqZaraClient(ZaraClient):
             ),
             _PendingKind.CONVERSATION,
         )
+
+        def remember_opened(done: concurrent.futures.Future) -> None:
+            try:
+                opened_id = done.result()
+            except BaseException:
+                return
+            if isinstance(opened_id, str) and opened_id:
+                self._conversation_id = opened_id
+
+        future.add_done_callback(remember_opened)
+        return future
 
     def start_audio_input(
         self,
@@ -1514,7 +1532,9 @@ class ZmqZaraClient(ZaraClient):
         return self._request(message, _PendingKind.COMMAND)
 
     def subscribe(self, *, maxsize: int = 0) -> bridge.RuntimeEventSubscription:
-        return self._bus.subscribe(maxsize=maxsize)
+        subscription = self._bus.subscribe(maxsize=maxsize)
+        self._subscriptions.add(subscription)
+        return subscription
 
     def shutdown(self, reason: str = "client shutdown") -> concurrent.futures.Future:
         future = concurrent.futures.Future()
@@ -1528,17 +1548,46 @@ class ZmqZaraClient(ZaraClient):
         return future
 
     def reconnect(self) -> concurrent.futures.Future:
+        conversation_id = self._conversation_id
         self.shutdown(reason="client reconnect")
         thread = self._thread
         if thread is not None:
             thread.join(self._config.request_timeout)
             if thread.is_alive():
                 raise TimeoutError("client owner thread did not stop for reconnect")
+        for subscription in tuple(self._subscriptions):
+            if not subscription.closed:
+                subscription.drain()
         self._session_id = None
         self._audio_output_format = None
         with self._state_lock:
             self._state = ZaraClientState.STOPPED
-        return self.start()
+        started = self.start()
+        if conversation_id is None:
+            return started
+
+        resumed = concurrent.futures.Future()
+
+        def started_done(done: concurrent.futures.Future) -> None:
+            try:
+                done.result()
+                opened = self.open_conversation(conversation_id)
+            except BaseException as error:
+                resumed.set_exception(error)
+                return
+
+            def opened_done(opened_done_future: concurrent.futures.Future) -> None:
+                try:
+                    opened_done_future.result()
+                except BaseException as error:
+                    resumed.set_exception(error)
+                else:
+                    resumed.set_result(True)
+
+            opened.add_done_callback(opened_done)
+
+        started.add_done_callback(started_done)
+        return resumed
 
     def _fail_pending(self, error: BaseException) -> None:
         with self._pending_lock:
