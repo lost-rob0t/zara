@@ -66,11 +66,26 @@ nix build
 
 ** Run entrypoints
 #+begin_src sh
+nix run .#zara-server
 nix run
 nix run .#zara-wake
 nix run .#zara-console
 nix run .#zara-dictate
 #+end_src
+
+=zara-server= owns long-lived runtime state such as timers. The default =zara=
+CLI connects to its owner-local IPC endpoint: =zara "set a timer for 10
+minutes"= sends one command, and bare =zara= opens an interactive client.
+=--connect= overrides the endpoint; =--standalone= deliberately uses a private
+runtime whose background work ends with that client process.
+
+A daemon-owned timer continues after the creating CLI disconnects. Every
+currently connected client on the same owner principal receives scheduled and
+fired lifecycle events, while the daemon host keeps the existing timer sound
+and desktop notification. The event vocabulary is transport-neutral for future
+mobile clients. Current timers do not survive a daemon restart, late clients do
+not receive an initial timer snapshot, and offline phone push is not yet
+implemented.
 
 Dictation stop phrases use the canonical table in =zara.dictate=. Configure
 phrases with =[dictate].stop_phrases=, =--stop-phrases=,

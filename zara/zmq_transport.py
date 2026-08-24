@@ -905,8 +905,27 @@ class ZaraZmqGateway:
         if subscription is None:
             return
         for envelope in subscription.drain(limit=32):
-            route = None
             event = envelope.event
+            if isinstance(event, (events.TimerScheduled, events.TimerFired)):
+                try:
+                    message = runtime_event_to_message(
+                        envelope,
+                        message_id=_message_id(),
+                        timestamp_ns=_now_ns(),
+                    )
+                except RuntimeCodecError:
+                    continue
+                with self._lock:
+                    routes = [
+                        candidate
+                        for candidate, state in self._routes.items()
+                        if state.ready
+                    ]
+                for route in routes:
+                    self._send(socket, route, message)
+                continue
+
+            route = None
             if event.turn_id:
                 route = self._turn_routes.get(event.turn_id)
             if route is None and event.conversation_id:
@@ -1342,6 +1361,48 @@ class ZmqZaraClient(ZaraClient):
             )
         elif message.type == "runtime.stopped":
             event = events.RuntimeStopped(reason=str(body.get("reason", "")), **common)
+        elif message.type == "timer.scheduled":
+            if set(body) != {
+                "timer_id",
+                "name",
+                "created_at_ns",
+                "due_at_ns",
+                "revision",
+            }:
+                return
+            try:
+                event = events.TimerScheduled(
+                    timer_id=body["timer_id"],
+                    name=body["name"],
+                    created_at_ns=body["created_at_ns"],
+                    due_at_ns=body["due_at_ns"],
+                    revision=body["revision"],
+                )
+            except (TypeError, ValueError):
+                return
+        elif message.type == "timer.fired":
+            if set(body) != {
+                "timer_id",
+                "name",
+                "created_at_ns",
+                "due_at_ns",
+                "fired_at_ns",
+                "revision",
+                "message",
+            }:
+                return
+            try:
+                event = events.TimerFired(
+                    timer_id=body["timer_id"],
+                    name=body["name"],
+                    created_at_ns=body["created_at_ns"],
+                    due_at_ns=body["due_at_ns"],
+                    fired_at_ns=body["fired_at_ns"],
+                    revision=body["revision"],
+                    message=body["message"],
+                )
+            except (TypeError, ValueError):
+                return
         if event is not None:
             self._bus.publish(event)
 

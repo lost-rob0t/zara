@@ -7,8 +7,15 @@ canonical conversational backend.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
+
+from . import events
+
+
+logger = logging.getLogger(__name__)
 
 
 class UnsupportedRuntimeCommand(RuntimeError):
@@ -77,6 +84,11 @@ class LangGraphRuntimeBackend(RuntimeBackend):
     def __init__(self, manager_factory: Optional[Callable[[], Any]] = None) -> None:
         self._manager_factory = manager_factory
         self._manager = None
+        self._publisher = None
+        self._timer_event_task: Optional[asyncio.Task] = None
+
+    def bind_event_publisher(self, publisher) -> None:
+        self._publisher = publisher
 
     async def start(self) -> None:
         if self._manager is not None:
@@ -86,6 +98,12 @@ class LangGraphRuntimeBackend(RuntimeBackend):
 
             self._manager_factory = AgentManager
         self._manager = self._manager_factory()
+        prolog_engine = getattr(self._manager, "prolog_engine", None)
+        if callable(getattr(prolog_engine, "drain_timer_events", None)):
+            self._timer_event_task = asyncio.create_task(
+                self._pump_timer_events(),
+                name="zara-timer-events",
+            )
 
     async def submit_turn(
         self,
@@ -101,6 +119,26 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             raise UnsupportedRuntimeCommand(
                 "context attachments are not wired into the runtime backend yet"
             )
+
+        prolog_engine = getattr(self._manager, "prolog_engine", None)
+        if prolog_engine is not None:
+            try:
+                intent = await asyncio.to_thread(prolog_engine.resolve_intent, text)
+                if (
+                    intent is not None
+                    and intent.kind == "prolog"
+                    and intent.name != "ask"
+                ):
+                    response = await asyncio.to_thread(
+                        prolog_engine.execute_intent_with_response,
+                        intent.name,
+                        intent.args,
+                    )
+                    if response is not None:
+                        await self._publish_timer_events()
+                        return RuntimeTurnResult(response=response.strip())
+            except Exception:
+                logger.warning("Prolog command path failed; using agent fallback", exc_info=True)
 
         result = await self._manager.process_async(
             text,
@@ -129,6 +167,14 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             self._manager.tool_registry.unregister_tools(list(names))
 
     async def stop(self) -> None:
+        timer_event_task = self._timer_event_task
+        self._timer_event_task = None
+        if timer_event_task is not None:
+            timer_event_task.cancel()
+            try:
+                await timer_event_task
+            except asyncio.CancelledError:
+                pass
         manager = self._manager
         self._manager = None
         if manager is None:
@@ -138,6 +184,47 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             await shutdown()
         else:
             manager.exit_conversation()
+
+    async def _pump_timer_events(self) -> None:
+        while True:
+            try:
+                await self._publish_timer_events()
+            except Exception:
+                logger.warning("Timer event drain failed; retrying", exc_info=True)
+            await asyncio.sleep(0.05)
+
+    async def _publish_timer_events(self) -> None:
+        manager = self._manager
+        publisher = self._publisher
+        if manager is None or publisher is None:
+            return
+        prolog_engine = getattr(manager, "prolog_engine", None)
+        if prolog_engine is None:
+            return
+        records = await asyncio.to_thread(prolog_engine.drain_timer_events)
+        for record in records:
+            if record.kind == "scheduled":
+                publisher(
+                    events.TimerScheduled(
+                        timer_id=record.timer_id,
+                        name=record.name,
+                        created_at_ns=record.created_at_ns,
+                        due_at_ns=record.due_at_ns,
+                        revision=record.revision,
+                    )
+                )
+            elif record.kind == "fired":
+                publisher(
+                    events.TimerFired(
+                        timer_id=record.timer_id,
+                        name=record.name,
+                        created_at_ns=record.created_at_ns,
+                        due_at_ns=record.due_at_ns,
+                        fired_at_ns=record.fired_at_ns,
+                        revision=record.revision,
+                        message=record.message,
+                    )
+                )
 
 
 def create_runtime_backend(config=None) -> RuntimeBackend:

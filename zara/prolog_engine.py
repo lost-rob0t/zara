@@ -47,6 +47,18 @@ class IntentResult:
     args: List[Any]
 
 
+@dataclass(frozen=True)
+class TimerLifecycleRecord:
+    kind: str
+    timer_id: str
+    name: str
+    created_at_ns: int
+    due_at_ns: int
+    revision: int
+    fired_at_ns: Optional[int] = None
+    message: str = ""
+
+
 def _compound_parts(value: Any) -> Optional[tuple[str, List[Any]]]:
     if isinstance(value, str) and value.endswith(")"):
         separator = value.find("(")
@@ -123,6 +135,60 @@ def _normalize_value(value: Any) -> Any:
     return value
 
 
+def _timer_lifecycle_record(value: Any) -> TimerLifecycleRecord:
+    if not isinstance(value, dict):
+        raise PrologSerializationError("timer lifecycle event must be an object")
+
+    kind = value.get("type")
+    common = {
+        "type",
+        "timer_id",
+        "name",
+        "created_at_ns",
+        "due_at_ns",
+        "revision",
+    }
+    allowed = common | ({"fired_at_ns", "message"} if kind == "fired" else set())
+    if kind not in {"scheduled", "fired"} or set(value) != allowed:
+        raise PrologSerializationError("invalid timer lifecycle event shape")
+
+    timer_id = value.get("timer_id")
+    name = value.get("name")
+    created_at_ns = value.get("created_at_ns")
+    due_at_ns = value.get("due_at_ns")
+    revision = value.get("revision")
+    fired_at_ns = value.get("fired_at_ns")
+    message = value.get("message", "")
+
+    if not isinstance(timer_id, str) or not timer_id:
+        raise PrologSerializationError("timer lifecycle id must be a non-empty string")
+    if not isinstance(name, str) or not isinstance(message, str):
+        raise PrologSerializationError("timer lifecycle text fields must be strings")
+    numeric = [created_at_ns, due_at_ns, revision]
+    if kind == "fired":
+        numeric.append(fired_at_ns)
+    if any(type(item) is not int for item in numeric):
+        raise PrologSerializationError("timer lifecycle numeric fields must be integers")
+    if created_at_ns < 0 or due_at_ns < created_at_ns:
+        raise PrologSerializationError("timer lifecycle timestamps are invalid")
+    if kind == "scheduled" and revision != 1:
+        raise PrologSerializationError("scheduled timer lifecycle revision must be 1")
+    if kind == "fired":
+        if revision != 2 or fired_at_ns < due_at_ns:
+            raise PrologSerializationError("fired timer lifecycle fields are invalid")
+
+    return TimerLifecycleRecord(
+        kind=kind,
+        timer_id=timer_id,
+        name=name,
+        created_at_ns=created_at_ns,
+        due_at_ns=due_at_ns,
+        revision=revision,
+        fired_at_ns=fired_at_ns,
+        message=message,
+    )
+
+
 class PrologEngine:
     """Serialized access to the process-wide PySWIP runtime.
 
@@ -134,10 +200,21 @@ class PrologEngine:
     _runtime_lock = threading.Lock()
     _load_hook_installed = False
 
-    def __init__(self, main_file: Optional[Path] = None):
+    def __init__(
+        self,
+        main_file: Optional[Path] = None,
+        *,
+        principal_id: Optional[str] = None,
+    ):
+        if principal_id is not None:
+            if not isinstance(principal_id, str) or not principal_id.strip():
+                raise ValueError("principal_id must be a non-empty string")
+            if principal_id != principal_id.strip():
+                raise ValueError("principal_id must not contain surrounding whitespace")
         self.prolog = Prolog()
         self.loaded_files: set[Path] = set()
         self.logger = logging.getLogger(__name__)
+        self._principal_id = principal_id
 
         if main_file is not None:
             self.consult(main_file)
@@ -221,9 +298,10 @@ class PrologEngine:
     ) -> Iterator[Dict[str, Any]]:
         """Yield solutions while owning the process-wide Prolog runtime lock."""
         query = None
+        scoped_goal = self._scope_goal(goal)
         with self._runtime_lock:
             try:
-                query = self.prolog.query(goal, maxresult=max_solutions)
+                query = self.prolog.query(scoped_goal, maxresult=max_solutions)
                 for solution in query:
                     yield _normalize_value(dict(solution))
             except PrologQueryError:
@@ -239,6 +317,15 @@ class PrologEngine:
                             close()
                         except Exception as error:
                             raise PrologQueryError(goal, error) from error
+
+    def _scope_goal(self, goal: str) -> str:
+        principal_id = getattr(self, "_principal_id", None)
+        if principal_id is None:
+            return goal
+        return (
+            f"alarm:with_principal({_prolog_atom(principal_id)}, "
+            f"({goal}))"
+        )
 
     def execute_command(self, input_text: str) -> bool:
         """Execute command_loop:handle_command/1."""
@@ -272,6 +359,45 @@ class PrologEngine:
         """Execute a resolved intent and report logical success."""
         goal = f"commands:execute({_prolog_atom(intent)}, {_prolog_term(args)})"
         return self.query_once(goal) is not None
+
+    def execute_intent_with_response(
+        self,
+        intent: str,
+        args: List[Any],
+    ) -> Optional[str]:
+        """Execute a resolved intent and capture its Prolog-produced response."""
+        goal = (
+            "with_output_to(string(Response), "
+            f"commands:execute({_prolog_atom(intent)}, {_prolog_term(args)}))"
+        )
+        result = self.query_once(goal)
+        if result is None:
+            return None
+        response = result.get("Response")
+        if not isinstance(response, str):
+            raise PrologSerializationError("Prolog command response must be a string")
+        return response
+
+    def drain_timer_events(self) -> List[TimerLifecycleRecord]:
+        """Drain structured timer events owned by this engine's principal."""
+        principal_id = getattr(self, "_principal_id", None) or "local"
+        goal = (
+            "alarm:drain_timer_events_json("
+            f"{_prolog_atom(principal_id)}, Json)"
+        )
+        result = self.query_once(goal)
+        if result is None:
+            return []
+        encoded = result.get("Json")
+        if not isinstance(encoded, str):
+            raise PrologSerializationError("timer lifecycle payload must be JSON text")
+        try:
+            values = json.loads(encoded)
+        except (TypeError, ValueError) as error:
+            raise PrologSerializationError("timer lifecycle payload is invalid JSON") from error
+        if not isinstance(values, list):
+            raise PrologSerializationError("timer lifecycle payload must be a list")
+        return [_timer_lifecycle_record(value) for value in values]
 
     def schedule_has_no_overlap(
         self,

@@ -287,7 +287,30 @@ def test_two_routes_do_not_receive_each_others_runtime_events(zmq_context, trans
     with pytest.raises(queue.Empty):
         second_events.get(timeout=0.1)
 
+    scheduled = events.TimerScheduled(
+        timer_id="timer-shared",
+        name="tea",
+        created_at_ns=100,
+        due_at_ns=200,
+        revision=1,
+    )
+    supervisor.bus.publish(scheduled)
+    assert first_events.get(timeout=1.0).event == scheduled
+    assert second_events.get(timeout=1.0).event == scheduled
+
     first.close(timeout=1.0)
+    fired = events.TimerFired(
+        timer_id="timer-shared",
+        name="tea",
+        created_at_ns=100,
+        due_at_ns=200,
+        fired_at_ns=220,
+        revision=2,
+        message='Timer "tea" finished.',
+    )
+    supervisor.bus.publish(fired)
+    assert second_events.get(timeout=1.0).event == fired
+
     second.close(timeout=1.0)
     gateway.close(timeout=1.0)
 

@@ -49,6 +49,8 @@ SERVER_MESSAGE_TYPES = frozenset(
         "assistant.delta",
         "assistant.completed",
         "assistant.response",
+        "timer.scheduled",
+        "timer.fired",
         "audio.input.started",
         "audio.input.accepted",
         "audio.input.committed",

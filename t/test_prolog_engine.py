@@ -9,6 +9,7 @@ from zara.prolog_engine import (
     PrologQueryError,
     PrologSerializationError,
     PrologStartupError,
+    TimerLifecycleRecord,
 )
 
 
@@ -39,6 +40,7 @@ def build_engine(query):
     engine.prolog.query.return_value = query
     engine.logger = logging.getLogger(__name__)
     engine.loaded_files = set()
+    engine._principal_id = None
     return engine
 
 
@@ -153,3 +155,76 @@ def test_schedule_values_use_quoted_atoms():
     goal = engine.prolog.query.call_args.args[0]
     assert goal.startswith("todo_schedule:no_overlap('2026-07-19T01:00', [")
     assert "quote\\'\\\\\\nvalue" in goal
+
+
+def test_principal_scopes_public_queries_inside_prolog_boundary():
+    engine = build_engine(FakeQuery())
+    engine._principal_id = "uid:1000"
+
+    assert engine.resolve_intent("timer 10 seconds") is None
+
+    assert engine.prolog.query.call_args.args[0] == (
+        "alarm:with_principal('uid:1000', "
+        "(intent_resolver:resolve(\"timer 10 seconds\", passive, Intent, Args)))"
+    )
+
+
+def test_execute_intent_captures_prolog_response_text():
+    engine = build_engine(FakeQuery([{"Response": b"Timer set.\n"}]))
+    engine._principal_id = "uid:1000"
+
+    assert engine.execute_intent_with_response("timer", [10, "tea"]) == "Timer set.\n"
+
+    assert engine.prolog.query.call_args.args[0] == (
+        "alarm:with_principal('uid:1000', "
+        "(with_output_to(string(Response), "
+        "commands:execute('timer', [10, 'tea']))))"
+    )
+
+
+def test_timer_lifecycle_json_is_typed_and_principal_scoped():
+    engine = build_engine(FakeQuery([{
+        "Json": (
+            b'[{"type":"scheduled","timer_id":"timer-1","name":"tea",'
+            b'"created_at_ns":100,"due_at_ns":200,"revision":1},'
+            b'{"type":"fired","timer_id":"timer-1","name":"tea",'
+            b'"created_at_ns":100,"due_at_ns":200,"fired_at_ns":220,'
+            b'"revision":2,"message":"Timer tea finished."}]'
+        )
+    }]))
+    engine._principal_id = "uid:1000"
+
+    assert engine.drain_timer_events() == [
+        TimerLifecycleRecord(
+            kind="scheduled",
+            timer_id="timer-1",
+            name="tea",
+            created_at_ns=100,
+            due_at_ns=200,
+            revision=1,
+        ),
+        TimerLifecycleRecord(
+            kind="fired",
+            timer_id="timer-1",
+            name="tea",
+            created_at_ns=100,
+            due_at_ns=200,
+            revision=2,
+            fired_at_ns=220,
+            message="Timer tea finished.",
+        ),
+    ]
+    assert engine.prolog.query.call_args.args[0] == (
+        "alarm:with_principal('uid:1000', "
+        "(alarm:drain_timer_events_json('uid:1000', Json)))"
+    )
+
+
+def test_malformed_timer_lifecycle_is_rejected():
+    engine = build_engine(FakeQuery([{
+        "Json": b'[{"type":"fired","timer_id":"timer-1","name":"tea"}]'
+    }]))
+    engine._principal_id = "uid:1000"
+
+    with pytest.raises(PrologSerializationError, match="timer lifecycle"):
+        engine.drain_timer_events()

@@ -85,6 +85,26 @@ The important design rule is simple: UI code should issue runtime commands and c
 | =zara-agent=   | Conversational LLM/tool agent entry point. |
 | =zara-pets=    | Optional Zarathushtra desktop pet UI. |
 
+The main CLI connects to the owner-local =zara-server= by default. A quoted
+command is a one-shot daemon request, while bare =zara= opens an interactive
+client. Use =--standalone= only when an intentionally private, short-lived
+runtime is appropriate.
+
+Timers are owned by that daemon. The client that creates a timer can exit while
+the timer continues, and every connected client on the same owner principal
+receives =timer.scheduled= and =timer.fired= lifecycle events. The daemon host
+keeps the existing timer sound and desktop notification; future mobile clients
+can render the same provider-neutral events without depending on Dunst or Qt.
+Active timers are not yet restored after a daemon restart, replayed to clients
+that connect late, or pushed to offline devices.
+
+#+begin_src sh
+zara-server
+zara "set a timer for 10 minutes"
+zara
+zara --standalone "hello"
+#+end_src
+
 The main CLI also exposes modes such as:
 
 #+begin_src sh
@@ -120,6 +140,8 @@ nix run .#zara-desktop
 For the older/headless interaction styles:
 
 #+begin_src sh
+zara-server
+zara "open firefox"
 zara --wake
 zara --dictate
 zara-console

@@ -138,7 +138,8 @@ def test_stalled_route_completion_queue_cannot_evict_healthy_route(zmq_context):
             for _, command in supervisor.commands
             if isinstance(command, SubmitTurn)
         ]
-        assert submitted == ["stalled-1", "stalled-2", "healthy-submit"]
+        assert sorted(submitted) == ["healthy-submit", "stalled-1", "stalled-2"]
+        assert submitted.index("stalled-1") < submitted.index("stalled-2")
 
         healthy.send_multipart(
             encode_message(

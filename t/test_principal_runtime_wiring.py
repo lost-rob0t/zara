@@ -52,9 +52,10 @@ class DummyToolRegistry:
 class PrincipalCapturingManager:
     instances = []
 
-    def __init__(self, *, config, principal):
+    def __init__(self, *, config, principal, prolog_engine):
         self.config = config
         self.principal = principal
+        self.prolog_engine = prolog_engine
         self.tool_registry = DummyToolRegistry()
         type(self).instances.append(self)
 
@@ -67,12 +68,25 @@ def principal(name: str) -> PrincipalContext:
 
 
 def test_default_supervisor_threads_each_principal_into_agent_manager(monkeypatch):
-    from zara import agent, config as config_module
+    from zara import agent, config as config_module, console, prolog_engine
+
+    class PrincipalCapturingEngine:
+        instances = []
+
+        def __init__(self, path, *, principal_id):
+            self.path = path
+            self.principal_id = principal_id
+            type(self).instances.append(self)
+
+        def drain_timer_events(self):
+            return []
 
     config = MinimalRuntimeConfig()
     PrincipalCapturingManager.instances = []
     monkeypatch.setattr(agent, "AgentManager", PrincipalCapturingManager)
     monkeypatch.setattr(config_module, "get_config", lambda: config)
+    monkeypatch.setattr(console, "find_main_pl", lambda: "main.pl")
+    monkeypatch.setattr(prolog_engine, "PrologEngine", PrincipalCapturingEngine)
 
     supervisor = RuntimeSupervisor(
         config=config,
@@ -91,6 +105,10 @@ def test_default_supervisor_threads_each_principal_into_agent_manager(monkeypatc
             alice,
             bob,
         ]
+        assert [
+            manager.prolog_engine.principal_id
+            for manager in PrincipalCapturingManager.instances
+        ] == [alice.principal_id, bob.principal_id]
     finally:
         supervisor.shutdown()
 

@@ -168,13 +168,14 @@ def test_wheel_declares_runtime_dependencies(wheel_metadata):
 
 def test_entrypoint_functions_exist():
     """Each entrypoint must resolve to a real, callable function."""
-    from zara import agent_cli, console, dictate, server, wake
+    from zara import agent_cli, console, dictate, server, server_entrypoint, wake
     from zara import __main__ as zara_main
     from zara.desktop import app as desktop_app
     from zara.pets import cli as pets_cli
 
     assert callable(zara_main.main)
     assert callable(server.main)
+    assert server_entrypoint.main is server.main
     assert callable(wake.main)
     assert callable(console.main)
     assert callable(dictate.main)
@@ -200,7 +201,7 @@ def test_flake_packages_and_exposes_zara_server():
         'zara-server = mkZaraPackage {',
         'pname = "zara-server";',
         'binaryName = "zara-server";',
-        'addFlags = "-m zara.server";',
+        'addFlags = "-m zara.server_entrypoint";',
         'paths = [ zara-cli zara-server zara-desktop zara-prolog zara-wake zara-dictate ];',
         'zara-server = zara-server;',
         'program = "${zara-server}/bin/zara-server";',

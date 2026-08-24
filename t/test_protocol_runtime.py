@@ -130,6 +130,44 @@ def test_runtime_command_codec_fails_closed_on_unsupported_or_invalid_messages(m
             "runtime.stopped",
             {"reason": "shutdown"},
         ),
+        (
+            events.TimerScheduled(
+                timer_id="timer-1",
+                name="tea",
+                created_at_ns=100,
+                due_at_ns=200,
+                revision=1,
+            ),
+            "timer.scheduled",
+            {
+                "timer_id": "timer-1",
+                "name": "tea",
+                "created_at_ns": 100,
+                "due_at_ns": 200,
+                "revision": 1,
+            },
+        ),
+        (
+            events.TimerFired(
+                timer_id="timer-1",
+                name="tea",
+                created_at_ns=100,
+                due_at_ns=200,
+                fired_at_ns=220,
+                revision=2,
+                message='Timer "tea" finished.',
+            ),
+            "timer.fired",
+            {
+                "timer_id": "timer-1",
+                "name": "tea",
+                "created_at_ns": 100,
+                "due_at_ns": 200,
+                "fired_at_ns": 220,
+                "revision": 2,
+                "message": 'Timer "tea" finished.',
+            },
+        ),
     ],
 )
 def test_runtime_events_have_explicit_allowlisted_wire_mapping(event, expected_type, expected_body):

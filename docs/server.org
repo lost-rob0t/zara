@@ -4,9 +4,24 @@
 
 This split is intentional. A client asks Zara to do work; the server owns runtime lifecycle. We do not make one executable quietly switch from caller to authority because a flag happened to be present.
 
-* Current slice: issue #128
+* Client defaults
 
-Issue #128 establishes the process boundary only:
+Text and interactive CLI use the owner-local server by default:
+
+#+begin_src sh
+zara-server
+zara "set a timer for 10 minutes"
+zara
+#+end_src
+
+Both processes derive the same IPC endpoint from =$XDG_RUNTIME_DIR=. Use
+=--connect= to override it. Use =--standalone= only for an explicit private
+runtime; process-owned work such as a timer ends when that standalone process
+exits.
+
+* Current service baseline
+
+The merged #128–#133 service work and the current client migration establish:
 
 - =zara-server= runs in the foreground and is suitable for supervision by systemd, s6, runit, tmux, or an ordinary shell;
 - it owns a principal-explicit =RuntimeSupervisor=;
@@ -15,9 +30,32 @@ Issue #128 establishes the process boundary only:
 - SIGINT/SIGTERM request a normal bounded shutdown;
 - every owned runtime is asked to stop and its worker thread is joined before the process releases ownership;
 - =ZaraClient= is the transport-neutral caller interface;
+- =ZmqZaraClient= and the ZARA/1 ROUTER/DEALER gateway carry local client
+  commands and runtime events;
 - =InProcessZaraClient= preserves a standalone embedding path.
 
-No network protocol exists in this slice. That is #129.
+* Timer ownership and client fan-out
+
+The server constructs a principal-scoped =PrologEngine=. Submitted text tries
+the Prolog resolver before the conversational agent, matching wake mode. A
+resolved timer is therefore scheduled in the server's long-lived SWI-Prolog
+runtime instead of the one-shot CLI process.
+
+Prolog owns the timer ID, timestamps, state transition, completion message,
+sound, and local notification. Python drains the structured lifecycle boundary
+through =PrologEngine= and publishes provider-neutral =TimerScheduled= and
+=TimerFired= events. ZARA/1 encodes them as =timer.scheduled= and =timer.fired=.
+
+Timer events have no originating conversation. The gateway broadcasts them to
+all ready routes on its principal bus. Normal turn events keep their existing
+turn/conversation routing, so fan-out does not make chats visible to sibling
+clients.
+
+The current delivery guarantee covers connected clients. Timers are not yet
+persisted across server restart, replayed as a snapshot to late connections, or
+delivered to offline mobile devices. A later repository and APNs/FCM adapter
+can add those capabilities without introducing desktop-specific fields into the
+timer event contract.
 
 * What the principal field means today
 
@@ -77,13 +115,12 @@ The signal handler only sets a stop event. Normal process flow then:
 
 This is required because Python daemon threads may be abandoned abruptly during interpreter shutdown.
 
-* Next slices
+* Further work
 
-- #129: =ZARA/1= ZeroMQ ROUTER/DEALER protocol and =ZmqZaraClient=.
-- #130: CURVE/ZAP authentication, authorization, key lifecycle, quotas, audit.
-- #131: principal-scoped conversations, context, memory, persistence, and event isolation.
-- #132: live voice/audio transport and cross-process barge-in.
-- #133: migrate normal CLI/desktop surfaces to the shared client.
-- #134: adversarial release gate deciding whether the server/client path becomes canonical.
+- durable timer storage and restart recovery;
+- timer snapshot/list, update, and cancel commands;
+- authenticated remote/mobile connectivity beyond the owner-local endpoint;
+- offline delivery adapters such as APNs and FCM;
+- adversarial release validation for the expanded client/server path.
 
 The RAGE evidence for this slice is in =rage/daemon-128-research.org=, =rage/daemon-128-design.org=, and =rage/daemon-139.org=.

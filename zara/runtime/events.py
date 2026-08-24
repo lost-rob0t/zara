@@ -242,6 +242,76 @@ class BackgroundCompleted(RuntimeEvent):
     success: bool = True
 
 
+# Timer lifecycle ----------------------------------------------------------
+
+def _validate_timer_identity(
+    timer_id: str,
+    name: str,
+    created_at_ns: int,
+    due_at_ns: int,
+) -> None:
+    if not isinstance(timer_id, str) or not timer_id.strip():
+        raise ValueError("timer_id must be a non-empty string")
+    if timer_id != timer_id.strip():
+        raise ValueError("timer_id must not contain surrounding whitespace")
+    if not isinstance(name, str):
+        raise TypeError("timer name must be a string")
+    if type(created_at_ns) is not int or type(due_at_ns) is not int:
+        raise TypeError("timer timestamps must be integers")
+    if created_at_ns < 0 or due_at_ns < created_at_ns:
+        raise ValueError("timer timestamps are not ordered")
+
+
+@dataclass(frozen=True, kw_only=True)
+class TimerScheduled(RuntimeEvent):
+    timer_id: str
+    name: str = ""
+    created_at_ns: int
+    due_at_ns: int
+    revision: int = 1
+
+    def __post_init__(self) -> None:
+        _validate_timer_identity(
+            self.timer_id,
+            self.name,
+            self.created_at_ns,
+            self.due_at_ns,
+        )
+        if type(self.revision) is not int:
+            raise TypeError("timer revision must be an integer")
+        if self.revision != 1:
+            raise ValueError("scheduled timer revision must be 1")
+
+
+@dataclass(frozen=True, kw_only=True)
+class TimerFired(RuntimeEvent):
+    timer_id: str
+    name: str = ""
+    created_at_ns: int
+    due_at_ns: int
+    fired_at_ns: int
+    revision: int = 2
+    message: str = ""
+
+    def __post_init__(self) -> None:
+        _validate_timer_identity(
+            self.timer_id,
+            self.name,
+            self.created_at_ns,
+            self.due_at_ns,
+        )
+        if type(self.fired_at_ns) is not int:
+            raise TypeError("timer fired timestamp must be an integer")
+        if self.fired_at_ns < self.due_at_ns:
+            raise ValueError("timer fired timestamp precedes due timestamp")
+        if type(self.revision) is not int:
+            raise TypeError("timer revision must be an integer")
+        if self.revision != 2:
+            raise ValueError("fired timer revision must be 2")
+        if not isinstance(self.message, str):
+            raise TypeError("timer message must be a string")
+
+
 # Provider / notification --------------------------------------------------
 
 @dataclass(frozen=True, kw_only=True)

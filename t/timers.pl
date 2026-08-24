@@ -61,9 +61,44 @@ test(multiple_timers_complete_independently) :-
         Names = [first, second]
     )).
 
+test(lifecycle_events_are_ordered_and_principal_scoped) :-
+    with_fake_timer_runtime((
+        alarm:with_principal('uid:timer-owner',
+            commands:execute(timer, [10, tea])),
+        alarm:drain_timer_events('uid:other-owner', OtherEvents),
+        OtherEvents = [],
+        alarm:drain_timer_events('uid:timer-owner', [Scheduled]),
+        get_dict(type, Scheduled, scheduled),
+        get_dict(name, Scheduled, "tea"),
+        get_dict(revision, Scheduled, 1),
+        get_dict(created_at_ns, Scheduled, CreatedAtNs),
+        get_dict(due_at_ns, Scheduled, DueAtNs),
+        DueAtNs - CreatedAtNs =:= 10000000000,
+        get_dict(timer_id, Scheduled, TimerId),
+        atom(TimerId),
+        TimerId \== '',
+        run_pending_timers,
+        alarm:drain_timer_events('uid:timer-owner', [Fired]),
+        get_dict(type, Fired, fired),
+        get_dict(timer_id, Fired, TimerId),
+        get_dict(name, Fired, "tea"),
+        get_dict(created_at_ns, Fired, CreatedAtNs),
+        get_dict(due_at_ns, Fired, DueAtNs),
+        get_dict(fired_at_ns, Fired, FiredAtNs),
+        FiredAtNs >= DueAtNs,
+        get_dict(revision, Fired, 2),
+        get_dict(message, Fired, "Timer \"tea\" finished."),
+        \+ alarm:timer_record(
+            'uid:timer-owner', TimerId, _, _, _, _, _
+        ),
+        alarm:drain_timer_events('uid:timer-owner', [])
+    )).
+
 with_fake_timer_runtime(Goal) :-
     retractall(pending_timer(_, _)),
     retractall(notification(_, _)),
+    retractall(alarm:timer_record(_, _, _, _, _, _, _)),
+    retractall(alarm:timer_event(_, _)),
     asserta((alarm:timer_scheduler(Seconds, TimerGoal, Id) :-
              plunit_timers:fake_schedule(Seconds, TimerGoal, Id)), SchedulerRef),
     asserta((alarm:completion_notifier(Name, Message) :-
@@ -74,7 +109,9 @@ with_fake_timer_runtime(Goal) :-
         erase(NotifierRef),
         erase(PlayerRef),
         retractall(pending_timer(_, _)),
-        retractall(notification(_, _))
+        retractall(notification(_, _)),
+        retractall(alarm:timer_record(_, _, _, _, _, _, _)),
+        retractall(alarm:timer_event(_, _))
     )).
 
 fake_schedule(Seconds, Goal, fake_timer) :-

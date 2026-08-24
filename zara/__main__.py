@@ -100,37 +100,107 @@ def _wait_for_daemon_turn(subscription, turn_id: str) -> str:
         event = envelope.event
         if event.turn_id != turn_id:
             continue
-        if isinstance(event, events.AssistantComplete):
-            if not event.success:
-                raise RuntimeError(event.text or "assistant generation failed")
-            return event.text
         if isinstance(event, events.ResponseText):
             return event.text
+        if isinstance(event, events.AgentCompleted):
+            if not event.success:
+                raise RuntimeError("agent execution failed")
+            return ""
         if isinstance(event, (events.AssistantFailed, events.AgentFailed)):
             raise RuntimeError(event.reason or "daemon turn failed")
         if isinstance(event, events.TurnCancelled):
             raise RuntimeError(event.reason or "daemon turn cancelled")
 
 
-def _run_connected_text(endpoint: str, command_text: str) -> int:
-    from .runtime.commands import SubmitTurn
+def _default_daemon_endpoint() -> str:
+    from .server import default_server_runtime_dir, default_zmq_endpoint
+
+    return default_zmq_endpoint(default_server_runtime_dir())
+
+
+def _open_daemon_client(endpoint: str):
     from .zmq_transport import ZmqZaraClient
 
+    client = ZmqZaraClient(endpoint)
+    try:
+        client.start().result()
+        subscription = client.subscribe()
+    except BaseException:
+        try:
+            client.close()
+        except Exception:
+            pass
+        raise
+    return client, subscription
+
+
+def _submit_daemon_text(client, subscription, command_text: str) -> str:
+    from .runtime.commands import SubmitTurn
+
+    receipt = client.submit(SubmitTurn(text=command_text)).result()
+    return _wait_for_daemon_turn(subscription, receipt.turn_id)
+
+
+def _print_daemon_error(endpoint: str, error: BaseException) -> None:
+    print(f"Error: Zara backend unavailable at {endpoint}: {error}", file=sys.stderr)
+    print(
+        "Start it with 'zara-server', or use '--standalone' for a private runtime.",
+        file=sys.stderr,
+    )
+
+
+def _run_connected_text(endpoint: str, command_text: str) -> int:
     client = None
     subscription = None
     exit_code = 0
     try:
-        client = ZmqZaraClient(endpoint)
-        client.start().result()
-        # Subscribe before submit so an immediately-completing daemon turn
-        # cannot publish its terminal event before this CLI is listening.
-        subscription = client.subscribe()
-        receipt = client.submit(SubmitTurn(text=command_text)).result()
-        response = _wait_for_daemon_turn(subscription, receipt.turn_id)
+        client, subscription = _open_daemon_client(endpoint)
+        response = _submit_daemon_text(client, subscription, command_text)
         if response:
             print(response)
     except Exception as error:
-        print(f"Error: {error}", file=sys.stderr)
+        _print_daemon_error(endpoint, error)
+        exit_code = 2
+    finally:
+        if subscription is not None:
+            try:
+                subscription.close()
+            except Exception as error:
+                if exit_code == 0:
+                    print(f"Error: {error}", file=sys.stderr)
+                    exit_code = 2
+        if client is not None:
+            try:
+                client.close()
+            except Exception as error:
+                if exit_code == 0:
+                    print(f"Error: {error}", file=sys.stderr)
+                    exit_code = 2
+    return exit_code
+
+
+def _run_connected_console(endpoint: str) -> int:
+    client = None
+    subscription = None
+    exit_code = 0
+    try:
+        client, subscription = _open_daemon_client(endpoint)
+        print(f"Connected to Zara at {endpoint}. Type 'exit' or 'quit' to leave.")
+        while True:
+            try:
+                command_text = input("zara> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if command_text.lower() in {"exit", "quit"}:
+                break
+            if not command_text:
+                continue
+            response = _submit_daemon_text(client, subscription, command_text)
+            if response:
+                print(response)
+    except Exception as error:
+        _print_daemon_error(endpoint, error)
         exit_code = 2
     finally:
         if subscription is not None:
@@ -163,13 +233,14 @@ def main():
 
     parser = argparse.ArgumentParser(
         prog="zara",
-        description="Zarathustra Voice Assistant - Unified Interface",
+        description="Zarathustra client for the local Zara backend",
         epilog="Examples:\n"
-               "  zara 'open firefox'           # Execute text command\n"
+               "  zara                           # Interactive daemon client\n"
+               "  zara 'open firefox'           # Send command to local daemon\n"
                "  zara --standalone 'hello'     # Explicit private local runtime\n"
-               "  zara --connect ipc:///run/user/1000/zara.sock 'hello'\n"
+               "  zara --connect ipc:///run/user/1000/zarathushtra/zara-server.sock 'hello'\n"
                "  zara --desktop                # Native desktop / Quick Copilot\n"
-               "  zara --console                # Interactive REPL\n"
+               "  zara --console                # Interactive daemon client\n"
                "  zara --voice                  # One-shot voice command\n"
                "  zara --dictate                # Continuous dictation mode\n"
                "  zara --wake                   # Wake word listener\n"
@@ -186,7 +257,7 @@ def main():
     mode_group.add_argument(
         "--console",
         action="store_true",
-        help="Start interactive console (REPL)"
+        help="Start the interactive daemon client"
     )
     mode_group.add_argument(
         "--voice",
@@ -213,12 +284,12 @@ def main():
     client_group.add_argument(
         "--connect",
         metavar="ENDPOINT",
-        help="Send a text command through an existing Zara daemon endpoint"
+        help="Override the owner-local Zara daemon endpoint"
     )
     client_group.add_argument(
         "--standalone",
         action="store_true",
-        help="Use the private in-process compatibility path for a text command"
+        help="Use a private in-process runtime instead of the Zara daemon"
     )
 
     parser.add_argument(
@@ -292,8 +363,10 @@ def main():
         sys.exit(desktop_main([sys.argv[0]]))
 
     elif args.console:
-        from .console import main as console_main
-        sys.exit(console_main())
+        if args.standalone:
+            from .console import main as console_main
+            sys.exit(console_main())
+        sys.exit(_run_connected_console(args.connect or _default_daemon_endpoint()))
 
     elif args.voice:
         print("Error: Voice mode is not currently implemented.", file=sys.stderr)
@@ -369,8 +442,13 @@ def main():
     elif args.command:
         command_text = " ".join(args.command)
 
-        if args.connect:
-            sys.exit(_run_connected_text(args.connect, command_text))
+        if not args.standalone:
+            sys.exit(
+                _run_connected_text(
+                    args.connect or _default_daemon_endpoint(),
+                    command_text,
+                )
+            )
 
         from .console import ZaraConsole
 
@@ -378,13 +456,15 @@ def main():
             console = ZaraConsole()
             success = console.execute_command(command_text)
             sys.exit(0 if success else 1)
-        except Exception as e:
-            print(f"Error: {e}", file=sys.stderr)
+        except Exception as error:
+            print(f"Error: {error}", file=sys.stderr)
             sys.exit(1)
 
     else:
-        parser.print_help()
-        sys.exit(1)
+        if args.standalone:
+            from .console import main as console_main
+            sys.exit(console_main())
+        sys.exit(_run_connected_console(args.connect or _default_daemon_endpoint()))
 
 
 if __name__ == "__main__":

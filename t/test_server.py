@@ -119,6 +119,52 @@ def test_local_owner_principal_is_canonical_and_uid_scoped():
     assert principal == PrincipalContext(f"uid:{os.getuid()}", "local-owner")
 
 
+@pytest.mark.asyncio
+async def test_default_server_manager_receives_principal_scoped_prolog_engine(
+    monkeypatch,
+    tmp_path,
+):
+    constructed = {}
+    main_file = tmp_path / "main.pl"
+
+    class FakePrologEngine:
+        def __init__(self, path, *, principal_id=None):
+            constructed["engine"] = (path, principal_id)
+
+        def drain_timer_events(self):
+            return []
+
+    class FakeAgentManager:
+        def __init__(self, *, config, principal, prolog_engine):
+            constructed["manager"] = (config, principal, prolog_engine)
+            self.prolog_engine = prolog_engine
+
+        def exit_conversation(self):
+            return None
+
+    class FakeConfig:
+        def get_module_search_paths(self):
+            return []
+
+    monkeypatch.setattr("zara.console.find_main_pl", lambda: main_file)
+    monkeypatch.setattr("zara.prolog_engine.PrologEngine", FakePrologEngine)
+    monkeypatch.setattr("zara.agent.AgentManager", FakeAgentManager)
+
+    config = FakeConfig()
+    principal = PrincipalContext("uid:1000", "local-owner")
+    supervisor = RuntimeSupervisor(config=config)
+    host = supervisor._build_default_host(principal, bridge.RuntimeEventBus())
+    backend = host._backend_factory()
+    await backend.start()
+    try:
+        assert constructed["engine"] == (main_file, "uid:1000")
+        assert constructed["manager"][0] is config
+        assert constructed["manager"][1] is principal
+        assert constructed["manager"][2].__class__ is FakePrologEngine
+    finally:
+        await backend.stop()
+
+
 def test_server_lease_uses_kernel_lock_owner_private_modes_and_diagnostic_metadata(tmp_path):
     runtime_dir = tmp_path / "runtime"
     first = ServerLease(runtime_dir)

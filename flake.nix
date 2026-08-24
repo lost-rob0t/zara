@@ -292,7 +292,7 @@
           zara-server = mkZaraPackage {
             pname = "zara-server";
             binaryName = "zara-server";
-            addFlags = "-m zara.server";
+            addFlags = "-m zara.server_entrypoint";
             extraPath = [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full whisperCppVulkan ];
           };
 
@@ -459,8 +459,8 @@
                 export XDG_RUNTIME_DIR=$(mktemp -d)
                 export ZARA_DICTATION_PIDFILE=$XDG_RUNTIME_DIR/zara_dictation.pid
                 export ZARA_DICTATION_LOGFILE=$XDG_RUNTIME_DIR/zara_dictation.log
-                # zara with no args prints help and exits 1 — that proves the
-                # wrapper, Python interpreter, and zara package all resolve.
+                # Bare zara is the connected console. With no daemon in this
+                # isolated check it must fail with the actionable client error.
                 set +e
                 zara >$HOME/cli.out 2>&1
                 cli_rc=$?
@@ -470,8 +470,9 @@
                 zara-console --help >$HOME/console.out 2>&1 || true
                 zara-dictate --help >$HOME/dictate.out 2>&1 || true
                 set -e
-                test "$cli_rc" -eq 1
-                grep -q "Zarathustra Voice Assistant" $HOME/cli.out
+                test "$cli_rc" -eq 2
+                grep -q "Zara backend unavailable" $HOME/cli.out
+                grep -q "Start it with 'zara-server'" $HOME/cli.out
                 grep -q -- "--desktop" $HOME/cli-help.out
                 grep -q "Long-lived Zara assistant service" $HOME/server.out
                 grep -q "usage:" $HOME/wake.out
@@ -563,7 +564,7 @@
               echo "  nix run .#zara-desktop        # Run native desktop / Quick Copilot"
               echo "  nix run .#zara-server         # Run long-lived Zara service"
               echo "  nix build                     # Build all packages"
-              echo "  nix run                       # Run default CLI (prints help with no args)"
+              echo "  nix run                       # Run interactive client for local Zara service"
               echo "  nix run .#zara-wake           # Run wake listener"
               echo "  nix flake check               # Run all checks (pytest, scripts, syntax, prolog load)"
             '';

@@ -16,7 +16,7 @@ This file guides agentic coding assistants working in this repo.
   - `nix develop`
 - Build all packages:
   - `nix build`
-- Run default app (CLI; prints help with no args):
+- Run default app (interactive client for the local Zara service):
   - `nix run`
 - Run wake listener app:
   - `nix run .#zara-wake`

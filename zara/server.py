@@ -79,6 +79,21 @@ def default_zmq_endpoint(runtime_dir: Path | str) -> str:
     return _validate_ipc_endpoint(f"ipc://{candidate}")
 
 
+def default_server_runtime_dir() -> Path:
+    """Return the owner-local runtime directory shared by server and clients."""
+
+    xdg_runtime = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+    if xdg_runtime and Path(xdg_runtime).is_absolute():
+        return Path(xdg_runtime) / "zarathushtra"
+
+    fallback = Path(tempfile.gettempdir()) / f"zarathushtra-{os.getuid()}"
+    logger.warning(
+        "XDG_RUNTIME_DIR is unavailable; using UID-scoped fallback %s",
+        fallback,
+    )
+    return fallback
+
+
 class ServerError(RuntimeError):
     pass
 
@@ -190,8 +205,20 @@ class RuntimeSupervisor:
 
         def manager_factory():
             from zara.agent import AgentManager
+            from zara.console import find_main_pl
+            from zara.prolog_engine import PrologEngine
 
-            return AgentManager(config=config, principal=principal)
+            main_file = find_main_pl()
+            if main_file is None:
+                raise FileNotFoundError("main.pl not found for server Prolog runtime")
+            return AgentManager(
+                config=config,
+                principal=principal,
+                prolog_engine=PrologEngine(
+                    main_file,
+                    principal_id=principal.principal_id,
+                ),
+            )
 
         return RuntimeHost(
             backend_factory=lambda: AgentRuntimeBackend(manager_factory),
@@ -366,17 +393,7 @@ class ServerLease:
     def _runtime_dir(self) -> Path:
         if self._runtime_dir_override is not None:
             return self._runtime_dir_override.expanduser()
-
-        xdg_runtime = os.environ.get("XDG_RUNTIME_DIR", "").strip()
-        if xdg_runtime and Path(xdg_runtime).is_absolute():
-            return Path(xdg_runtime) / "zarathushtra"
-
-        fallback = Path(tempfile.gettempdir()) / f"zarathushtra-{os.getuid()}"
-        logger.warning(
-            "XDG_RUNTIME_DIR is unavailable; using UID-scoped fallback %s",
-            fallback,
-        )
-        return fallback
+        return default_server_runtime_dir()
 
     @staticmethod
     def _prepare_directory(path: Path) -> None:
@@ -687,6 +704,7 @@ __all__ = [
     "ServerState",
     "ServerStateError",
     "ZaraServer",
+    "default_server_runtime_dir",
     "default_zmq_endpoint",
     "main",
 ]

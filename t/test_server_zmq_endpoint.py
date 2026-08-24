@@ -1,6 +1,7 @@
 import concurrent.futures
 import os
 import stat
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from zara.server import (
     ServerState,
     ZaraServer,
     _parser,
+    default_server_runtime_dir,
     default_zmq_endpoint,
 )
 
@@ -84,6 +86,20 @@ def test_default_zmq_endpoint_accepts_string_runtime_directory():
     endpoint = default_zmq_endpoint(runtime_dir)
 
     assert endpoint == f"ipc://{Path(runtime_dir) / 'zara-server.sock'}"
+
+
+def test_default_server_runtime_dir_uses_xdg_runtime_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+
+    assert default_server_runtime_dir() == tmp_path / "zarathushtra"
+
+
+def test_default_server_runtime_dir_rejects_relative_xdg_path(monkeypatch):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "relative")
+
+    assert default_server_runtime_dir() == (
+        Path(tempfile.gettempdir()) / f"zarathushtra-{os.getuid()}"
+    )
 
 
 def test_long_runtime_directory_uses_deterministic_private_bounded_fallback(tmp_path):

@@ -140,6 +140,47 @@ def test_runtime_event_validation_rejects_invalid_progress_and_voice_state():
         events.VoiceStateChanged(state="telepathic")
 
 
+def test_timer_lifecycle_events_validate_identity_order_and_revision():
+    scheduled = events.TimerScheduled(
+        timer_id="timer-1",
+        name="tea",
+        created_at_ns=100,
+        due_at_ns=200,
+        revision=1,
+    )
+    fired = events.TimerFired(
+        timer_id="timer-1",
+        name="tea",
+        created_at_ns=100,
+        due_at_ns=200,
+        fired_at_ns=220,
+        revision=2,
+        message='Timer "tea" finished.',
+    )
+
+    assert (scheduled.timer_id, scheduled.revision) == ("timer-1", 1)
+    assert (fired.timer_id, fired.revision) == ("timer-1", 2)
+
+    with pytest.raises(ValueError):
+        events.TimerScheduled(timer_id="", created_at_ns=100, due_at_ns=200)
+    with pytest.raises(ValueError):
+        events.TimerScheduled(timer_id="timer-1", created_at_ns=200, due_at_ns=100)
+    with pytest.raises(TypeError, match="revision"):
+        events.TimerScheduled(
+            timer_id="timer-1",
+            created_at_ns=100,
+            due_at_ns=200,
+            revision=True,
+        )
+    with pytest.raises(ValueError):
+        events.TimerFired(
+            timer_id="timer-1",
+            created_at_ns=100,
+            due_at_ns=200,
+            fired_at_ns=199,
+        )
+
+
 def test_pet_adapter_maps_assistant_events_without_provider_objects():
     dispatch = adapt_runtime_event(
         events.AssistantComplete(success=True, label="llm", turn_id="turn-1")

@@ -128,6 +128,24 @@ def runtime_event_to_message(
         }
     elif type(event) is events.RuntimeStopped:
         message_type, body = "runtime.stopped", {"reason": event.reason}
+    elif type(event) is events.TimerScheduled:
+        message_type, body = "timer.scheduled", {
+            "timer_id": event.timer_id,
+            "name": event.name,
+            "created_at_ns": event.created_at_ns,
+            "due_at_ns": event.due_at_ns,
+            "revision": event.revision,
+        }
+    elif type(event) is events.TimerFired:
+        message_type, body = "timer.fired", {
+            "timer_id": event.timer_id,
+            "name": event.name,
+            "created_at_ns": event.created_at_ns,
+            "due_at_ns": event.due_at_ns,
+            "fired_at_ns": event.fired_at_ns,
+            "revision": event.revision,
+            "message": event.message,
+        }
     else:
         raise RuntimeCodecError("unsupported runtime event")
 
