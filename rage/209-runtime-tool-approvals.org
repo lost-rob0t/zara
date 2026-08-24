@@ -34,6 +34,18 @@
 - RED 1 :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c pytest -q t/test_runtime_tool_approval.py::test_required_tool_waits_for_runtime_approval_and_runs_once=
 - RED 1 result :: one failed in 6.24s. The production graph executed the protected tool directly; =recorder.waiting.wait(timeout=3)= was false because no =ToolWaitingForUser= event or resumable approval state existed.
 - RED 1 scope :: the test uses =RuntimeHost=, =LangGraphRuntimeBackend=, =AgentManager=, the canonical registry and a real deterministic LangChain tool. No approval behavior is mocked.
+- GREEN 1 :: the same production-path test passed in 3.29s after adding the principal-owned controller, checkpointed interrupt gate, RuntimeHost backend hooks and gated delegation to =ToolNode=.
+- RED 2 :: the default/policy configuration tests produced eight expected failures: no =[tool_approval]= defaults and no validation for names, timeout or capacity.
+- GREEN 2 :: nine focused configuration plus approval tests passed after adding bounded validated server policy.
+- RED 3 :: the adversarial approval file exposed two failures across 13 tests: duplicate provider tool-call ids reached the waiting state, and a private provider exception appeared in =AgentFailed=.
+- GREEN 3 :: all 13 passed after whole-batch metadata validation before the first interrupt and bounded exception replacement at the executor boundary.
+- RED 4 :: rejected =ToolMessage(status="error")= was incorrectly reported as a successful tool result because aggregation searched message text for the word =Error=.
+- GREEN 4 :: result aggregation now uses typed =ToolMessage.status=; the direct manager rejection test passed.
+- RED 5 :: unsafe whitespace-bearing tool names were accepted by both server policy and the canonical registry, allowing control text into approval metadata.
+- GREEN 5 :: policy, registry, graph and controller now enforce a shared bounded ASCII tool-name vocabulary; the focused gate passed 25 tests.
+- Meaningful coverage :: approve, reject, wrong/stale/replayed ids, cancellation before and after tool start, timeout, restart, two-call preapproval, duplicate ids, removed bindings, provider failure redaction, same-id principal isolation, pending capacity, non-approval compatibility and typed unsuccessful rejection.
+- Focused gate :: =scripts/test-runtime-tool-approvals.sh= runs the deterministic lifecycle and policy suite and is phase 4 of =scripts/test-all.sh=.
+- Documentation :: =wiki/tool-approvals.org= documents policy, typed lifecycle, privacy, disconnect behavior and the deliberate fail-closed restart rule; =wiki/install.org= links the configuration.
 
 ** Evaluate
 - Pending realization.

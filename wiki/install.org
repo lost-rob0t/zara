@@ -211,6 +211,7 @@ instantiating the config manager.
 - [agent]: LLM settings, system prompt, and timeouts
 - [prolog]: main file and load-on-startup toggle
 - [tools]: tool enable/disable flags
+- [tool_approval]: server-owned required tool names, timeout, and pending bound
 - [modules]: plugin search paths and autoload list
 - [plugins]: generic lifecycle bounds; =[plugins.<name>]= is private to that plugin
 - [wake], [stt], [tts], [dictate], [memory], [noaa]
@@ -238,6 +239,8 @@ instantiating the config manager.
 Externally installed plugins live under =~/.zarathushtra/plugins/= by default.
 Legacy tool plugins and RuntimeHost-owned service plugins are documented in
 [[file:plugins.org][plugins.org]].
+The canonical LangGraph approval lifecycle and fail-closed restart policy are
+documented in [[file:tool-approvals.org][tool-approvals.org]].
 
 ** Example: set a custom system prompt
 #+begin_src toml

@@ -1,0 +1,62 @@
+#+title: Runtime Tool Approvals
+
+Zara has one server-owned approval lifecycle for LangChain tools executed by the
+canonical LangGraph agent. It is shared by every client surface through
+=RuntimeHost= commands and runtime events; clients do not execute or classify
+tools themselves.
+
+* Policy
+
+Approval policy is explicit server configuration:
+
+#+begin_src toml
+[tool_approval]
+required_tools = ["reviewed_side_effect"]
+timeout_seconds = 300.0
+max_pending = 8
+#+end_src
+
+=required_tools= contains registered LangChain tool names. A model response,
+plugin client, or remote capability advertisement cannot downgrade this list.
+The list is immutable for the lifetime of its principal runtime; a runtime
+restart loads changed configuration.
+
+* Lifecycle
+
+For an approval-required call, LangGraph checkpoints the live turn and
+interrupts before any tool side effect. Zara publishes =ToolQueued= and
+=ToolWaitingForUser= with a bounded tool name and =tool_run_id=. The approving
+surface sends =ApproveTool(tool_run_id)= or =RejectTool(tool_run_id, reason)=
+through its existing authenticated =RuntimeHost= path.
+
+Approval resumes only that pending call. Rejection returns a matching failed
+=ToolMessage= to the model without invoking the tool. Unknown, stale,
+cancelled, duplicate, malformed and replayed ids fail closed. Multiple tool
+calls collect every required decision before the executor starts any of them.
+Approved calls still execute through LangGraph's existing =ToolNode=; Zara does
+not maintain a second executor.
+
+The principal runtime bus publishes =UserResponded= followed by
+=ToolStarted=/=ToolCompleted= for an approved call, or =ToolCancelled= for
+rejection, timeout and pre-execution cancellation. =ToolFailed= contains a
+bounded reason and never a raw provider exception.
+
+* Privacy and restart behavior
+
+Approval events contain no tool arguments, results, model prompts, credentials
+or user rejection text. The interrupt checkpoint is process-local, belongs to
+one principal manager, and is deleted when the turn reaches any terminal path.
+
+Pending generic-tool approvals deliberately do not survive process restart.
+Restart and shutdown cancel them and erase their in-memory checkpoints. Zara
+cannot safely resume an arbitrary external side effect after a crash until the
+typed capability plane supplies durable idempotency and reconciliation.
+Transport disconnect alone does not imply cancellation; the principal-owned
+request remains pending until authenticated reconnection, explicit action,
+timeout or runtime lifecycle cleanup.
+
+Run the focused deterministic gate with:
+
+#+begin_src sh
+nix develop -c bash scripts/test-runtime-tool-approvals.sh
+#+end_src

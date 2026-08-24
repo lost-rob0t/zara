@@ -1,20 +1,44 @@
-from __future__ import annotations
-
+import asyncio
+from pathlib import Path
 import threading
+import time
+
+import pytest
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
 from zara.agent import AgentManager
+from zara.agent.approval import ApprovalRequest, ToolApprovalController, ToolApprovalError
+from zara.agent.tools.registry import ToolRegistry
 from zara.runtime import bridge as runtime_bridge
 from zara.runtime import events
 from zara.runtime.backend import LangGraphRuntimeBackend
-from zara.runtime.commands import ApproveTool, SubmitTurn
+from zara.runtime.commands import (
+    ApproveTool,
+    CancelTurn,
+    RejectTool,
+    RestartRuntime,
+    SubmitTurn,
+)
 from zara.runtime.host import RuntimeHost, RuntimeHostState
 from zara.server import PrincipalContext
 
 
 class ApprovalConfig:
+    config_dir = Path("/nonexistent-zara-approval-test-config")
+
+    def __init__(
+        self,
+        *,
+        required_tools=("approval_effect",),
+        timeout_seconds=5.0,
+        max_pending=4,
+    ) -> None:
+        self.required_tools = list(required_tools)
+        self.timeout_seconds = timeout_seconds
+        self.max_pending = max_pending
+
     def get_llm_config(self):
         return {}
 
@@ -23,9 +47,9 @@ class ApprovalConfig:
             "agent": {"conversation_timeout": 60, "max_steps": 4},
             "memory": {"max_chars": 1200, "top_k": 5},
             "tool_approval": {
-                "required_tools": ["approval_effect"],
-                "timeout_seconds": 5.0,
-                "max_pending": 4,
+                "required_tools": self.required_tools,
+                "timeout_seconds": self.timeout_seconds,
+                "max_pending": self.max_pending,
             },
         }
         return sections.get(name, {})
@@ -69,6 +93,36 @@ class ApprovalLLM:
         )
 
 
+class MultipleApprovalLLM:
+    def __init__(self, *, duplicate_ids=False) -> None:
+        self.duplicate_ids = duplicate_ids
+
+    def bind_tools(self, _tools):
+        return self
+
+    async def ainvoke(self, messages):
+        if isinstance(messages[-1], ToolMessage):
+            return AIMessage(content="all effects finished")
+        second_id = "approval-call-1" if self.duplicate_ids else "approval-call-2"
+        return AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "approval_effect",
+                    "args": {"value": "first"},
+                    "id": "approval-call-1",
+                    "type": "tool_call",
+                },
+                {
+                    "name": "approval_effect",
+                    "args": {"value": "second"},
+                    "id": second_id,
+                    "type": "tool_call",
+                },
+            ],
+        )
+
+
 class EventRecorder:
     def __init__(self) -> None:
         self.bus = runtime_bridge.RuntimeEventBus()
@@ -95,13 +149,22 @@ def stop_host(host: RuntimeHost) -> None:
     host.join(timeout=5)
 
 
-def test_required_tool_waits_for_runtime_approval_and_runs_once(monkeypatch):
+def build_runtime(
+    monkeypatch,
+    *,
+    secret="PRIVATE-TOOL-ARGUMENT",
+    config=None,
+    principal_id="test:approval-owner",
+    llm=None,
+    effect_error=None,
+):
     effects: list[str] = []
-    secret = "PRIVATE-TOOL-ARGUMENT"
 
     @tool("approval_effect")
     def approval_effect(value: str) -> str:
         """Record one deterministic approval-protected side effect."""
+        if effect_error is not None:
+            raise RuntimeError(effect_error)
         effects.append(value)
         return "effect complete"
 
@@ -109,14 +172,15 @@ def test_required_tool_waits_for_runtime_approval_and_runs_once(monkeypatch):
         "zara.agent.tools.builtin_tools.get_builtin_tools",
         lambda *_args, **_kwargs: [],
     )
+    llm = llm or ApprovalLLM(secret)
     monkeypatch.setattr(
         AgentManager,
         "_create_llm_client",
-        lambda _self, _config: ApprovalLLM(secret),
+        lambda _self, _config: llm,
     )
-    principal = PrincipalContext("test:approval-owner", kind="test")
+    principal = PrincipalContext(principal_id, kind="test")
     manager = AgentManager(
-        config=ApprovalConfig(),
+        config=config or ApprovalConfig(),
         memory_manager=EmptyMemory(),
         principal=principal,
     )
@@ -126,6 +190,25 @@ def test_required_tool_waits_for_runtime_approval_and_runs_once(monkeypatch):
         lambda: LangGraphRuntimeBackend(lambda: manager),
         publisher=recorder,
     )
+    return host, recorder, manager, effects
+
+
+def wait_for_tool_event(recorder, event_type, tool_run_id, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if any(
+            isinstance(event, event_type)
+            and getattr(event, "tool_run_id", None) == tool_run_id
+            for event in recorder.events
+        ):
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def test_required_tool_waits_for_runtime_approval_and_runs_once(monkeypatch):
+    secret = "PRIVATE-TOOL-ARGUMENT"
+    host, recorder, _manager, effects = build_runtime(monkeypatch, secret=secret)
 
     try:
         host.start().result(timeout=5)
@@ -134,7 +217,7 @@ def test_required_tool_waits_for_runtime_approval_and_runs_once(monkeypatch):
         ).result(timeout=5)
 
         assert receipt.turn_id is not None
-        assert recorder.waiting.wait(timeout=3)
+        assert recorder.waiting.wait(timeout=3), recorder.events
         assert effects == []
 
         approved = host.submit(
@@ -158,3 +241,349 @@ def test_required_tool_waits_for_runtime_approval_and_runs_once(monkeypatch):
         assert all(secret not in repr(event) for event in recorder.events)
     finally:
         stop_host(host)
+
+
+def test_reject_never_runs_tool_and_replay_fails_closed(monkeypatch):
+    secret = "PRIVATE-REJECTION-ARGUMENT"
+    rejection = "PRIVATE-REJECTION-REASON"
+    host, recorder, _manager, effects = build_runtime(monkeypatch, secret=secret)
+
+    try:
+        host.start().result(timeout=5)
+        host.submit(SubmitTurn(text="reject the effect")).result(timeout=5)
+        assert recorder.waiting.wait(timeout=3), recorder.events
+
+        rejected = host.submit(
+            RejectTool(tool_run_id="approval-call-1", reason=rejection)
+        ).result(timeout=5)
+        assert rejected.detail == "tool rejected"
+        assert recorder.output_ready.wait(timeout=5)
+        assert effects == []
+        assert any(
+            isinstance(event, events.ToolCancelled)
+            and event.tool_run_id == "approval-call-1"
+            and event.reason == "tool rejected"
+            for event in recorder.events
+        )
+
+        with pytest.raises(ToolApprovalError, match="not pending"):
+            host.submit(ApproveTool(tool_run_id="approval-call-1")).result(timeout=5)
+        rendered_events = repr(recorder.events)
+        assert secret not in rendered_events
+        assert rejection not in rendered_events
+    finally:
+        stop_host(host)
+
+
+def test_wrong_id_does_not_release_pending_tool(monkeypatch):
+    host, recorder, _manager, effects = build_runtime(monkeypatch)
+
+    try:
+        host.start().result(timeout=5)
+        host.submit(SubmitTurn(text="keep waiting")).result(timeout=5)
+        assert recorder.waiting.wait(timeout=3), recorder.events
+
+        with pytest.raises(ToolApprovalError, match="not pending"):
+            host.submit(ApproveTool(tool_run_id="wrong-id")).result(timeout=5)
+        assert effects == []
+
+        host.submit(ApproveTool(tool_run_id="approval-call-1")).result(timeout=5)
+        assert recorder.output_ready.wait(timeout=5)
+        assert len(effects) == 1
+    finally:
+        stop_host(host)
+
+
+def test_cancelled_pending_turn_cannot_be_approved(monkeypatch):
+    host, recorder, manager, effects = build_runtime(monkeypatch)
+
+    try:
+        host.start().result(timeout=5)
+        receipt = host.submit(SubmitTurn(text="cancel before effect")).result(timeout=5)
+        assert receipt.turn_id is not None
+        assert recorder.waiting.wait(timeout=3), recorder.events
+
+        cancelled = host.submit(CancelTurn(turn_id=receipt.turn_id)).result(timeout=5)
+        assert cancelled.detail == "turn cancelled"
+        with pytest.raises(ToolApprovalError, match="not pending"):
+            host.submit(ApproveTool(tool_run_id="approval-call-1")).result(timeout=5)
+        assert effects == []
+        assert manager.approval_controller.pending_count == 0
+        assert any(
+            isinstance(event, events.ToolCancelled)
+            and event.tool_run_id == "approval-call-1"
+            for event in recorder.events
+        )
+    finally:
+        stop_host(host)
+
+
+def test_approval_timeout_rejects_without_side_effect(monkeypatch):
+    config = ApprovalConfig(timeout_seconds=0.05)
+    host, recorder, manager, effects = build_runtime(monkeypatch, config=config)
+
+    try:
+        host.start().result(timeout=5)
+        host.submit(SubmitTurn(text="let approval expire")).result(timeout=5)
+        assert recorder.waiting.wait(timeout=3), recorder.events
+        assert recorder.output_ready.wait(timeout=5)
+        assert effects == []
+        assert manager.approval_controller.pending_count == 0
+        assert any(
+            isinstance(event, events.ToolCancelled)
+            and event.reason == "approval timeout"
+            for event in recorder.events
+        )
+    finally:
+        stop_host(host)
+
+
+def test_tool_without_approval_policy_preserves_direct_execution(monkeypatch):
+    config = ApprovalConfig(required_tools=())
+    host, recorder, _manager, effects = build_runtime(monkeypatch, config=config)
+
+    try:
+        host.start().result(timeout=5)
+        host.submit(SubmitTurn(text="run directly")).result(timeout=5)
+        assert recorder.output_ready.wait(timeout=5)
+        assert len(effects) == 1
+        assert not any(
+            isinstance(event, events.ToolWaitingForUser)
+            for event in recorder.events
+        )
+        lifecycle = [
+            type(event)
+            for event in recorder.events
+            if getattr(event, "tool_run_id", None) == "approval-call-1"
+        ]
+        assert lifecycle == [
+            events.ToolQueued,
+            events.ToolStarted,
+            events.ToolCompleted,
+        ]
+    finally:
+        stop_host(host)
+
+
+def test_all_approvals_are_collected_before_any_tool_runs(monkeypatch):
+    host, recorder, _manager, effects = build_runtime(
+        monkeypatch,
+        llm=MultipleApprovalLLM(),
+    )
+
+    try:
+        host.start().result(timeout=5)
+        host.submit(SubmitTurn(text="run both effects")).result(timeout=5)
+        assert wait_for_tool_event(
+            recorder, events.ToolWaitingForUser, "approval-call-1"
+        )
+        host.submit(ApproveTool(tool_run_id="approval-call-1")).result(timeout=5)
+        assert wait_for_tool_event(
+            recorder, events.ToolWaitingForUser, "approval-call-2"
+        )
+        assert effects == []
+
+        host.submit(ApproveTool(tool_run_id="approval-call-2")).result(timeout=5)
+        assert recorder.output_ready.wait(timeout=5)
+        assert effects == ["first", "second"]
+    finally:
+        stop_host(host)
+
+
+def test_duplicate_tool_call_ids_fail_before_waiting_or_execution(monkeypatch):
+    host, recorder, _manager, effects = build_runtime(
+        monkeypatch,
+        llm=MultipleApprovalLLM(duplicate_ids=True),
+    )
+
+    try:
+        host.start().result(timeout=5)
+        receipt = host.submit(SubmitTurn(text="invalid duplicate calls")).result(timeout=5)
+        assert receipt.turn_id is not None
+        assert wait_for_tool_event(
+            recorder, events.AgentFailed, None
+        )
+        assert effects == []
+        assert not any(
+            isinstance(event, events.ToolWaitingForUser)
+            for event in recorder.events
+        )
+    finally:
+        stop_host(host)
+
+
+def test_removed_tool_cannot_run_after_approval(monkeypatch):
+    host, recorder, manager, effects = build_runtime(monkeypatch)
+
+    try:
+        host.start().result(timeout=5)
+        host.submit(SubmitTurn(text="remove before approval")).result(timeout=5)
+        assert recorder.waiting.wait(timeout=3), recorder.events
+        manager.tool_registry.unregister_tool("approval_effect")
+
+        host.submit(ApproveTool(tool_run_id="approval-call-1")).result(timeout=5)
+        assert recorder.output_ready.wait(timeout=5)
+        assert effects == []
+        assert any(
+            isinstance(event, events.ToolFailed)
+            and event.reason == "tool is no longer available"
+            for event in recorder.events
+        )
+    finally:
+        stop_host(host)
+
+
+def test_tool_failure_does_not_expose_provider_error(monkeypatch):
+    secret_error = "PRIVATE-PROVIDER-FAILURE"
+    host, recorder, _manager, effects = build_runtime(
+        monkeypatch,
+        effect_error=secret_error,
+    )
+
+    try:
+        host.start().result(timeout=5)
+        receipt = host.submit(SubmitTurn(text="failing approved effect")).result(timeout=5)
+        assert receipt.turn_id is not None
+        assert recorder.waiting.wait(timeout=3), recorder.events
+        host.submit(ApproveTool(tool_run_id="approval-call-1")).result(timeout=5)
+        assert wait_for_tool_event(recorder, events.AgentFailed, None)
+        assert effects == []
+        assert secret_error not in repr(recorder.events)
+    finally:
+        stop_host(host)
+
+
+def test_cancellation_after_tool_start_emits_tool_terminal(monkeypatch):
+    host, recorder, manager, effects = build_runtime(monkeypatch)
+    manager.tool_registry.unregister_tool("approval_effect")
+
+    @tool("approval_effect")
+    async def approval_effect(value: str) -> str:
+        """Wait until the runtime cancels this approved invocation."""
+        await asyncio.Event().wait()
+        effects.append(value)
+        return "unreachable"
+
+    manager.tool_registry.register_tool(approval_effect)
+
+    try:
+        host.start().result(timeout=5)
+        receipt = host.submit(SubmitTurn(text="cancel running tool")).result(timeout=5)
+        assert receipt.turn_id is not None
+        assert recorder.waiting.wait(timeout=3), recorder.events
+        host.submit(ApproveTool(tool_run_id="approval-call-1")).result(timeout=5)
+        assert wait_for_tool_event(recorder, events.ToolStarted, "approval-call-1")
+
+        host.submit(CancelTurn(turn_id=receipt.turn_id)).result(timeout=5)
+        assert wait_for_tool_event(recorder, events.ToolCancelled, "approval-call-1")
+        assert effects == []
+    finally:
+        stop_host(host)
+
+
+def test_restart_cancels_pending_approval_without_running_tool(monkeypatch):
+    host, recorder, manager, effects = build_runtime(monkeypatch)
+
+    try:
+        host.start().result(timeout=5)
+        host.submit(SubmitTurn(text="restart while waiting")).result(timeout=5)
+        assert recorder.waiting.wait(timeout=3), recorder.events
+        restarted = host.submit(RestartRuntime(reason="test restart")).result(timeout=5)
+        assert restarted.detail == "runtime restarted"
+        assert effects == []
+        assert manager.approval_controller.pending_count == 0
+        with pytest.raises(ToolApprovalError, match="not pending"):
+            host.submit(ApproveTool(tool_run_id="approval-call-1")).result(timeout=5)
+    finally:
+        stop_host(host)
+
+
+def test_principal_runtime_approval_state_is_isolated(monkeypatch):
+    first_host, first_events, _first_manager, first_effects = build_runtime(
+        monkeypatch,
+        principal_id="test:first-principal",
+    )
+    second_host, second_events, _second_manager, second_effects = build_runtime(
+        monkeypatch,
+        principal_id="test:second-principal",
+    )
+
+    try:
+        first_host.start().result(timeout=5)
+        second_host.start().result(timeout=5)
+        first_host.submit(SubmitTurn(text="first effect")).result(timeout=5)
+        second_host.submit(SubmitTurn(text="second effect")).result(timeout=5)
+        assert first_events.waiting.wait(timeout=3), first_events.events
+        assert second_events.waiting.wait(timeout=3), second_events.events
+
+        first_host.submit(ApproveTool(tool_run_id="approval-call-1")).result(timeout=5)
+        assert first_events.output_ready.wait(timeout=5)
+        assert len(first_effects) == 1
+        assert second_effects == []
+
+        second_host.submit(RejectTool(tool_run_id="approval-call-1")).result(timeout=5)
+        assert second_events.output_ready.wait(timeout=5)
+        assert second_effects == []
+    finally:
+        stop_host(first_host)
+        stop_host(second_host)
+
+
+@pytest.mark.asyncio
+async def test_pending_approval_capacity_is_bounded():
+    controller = ToolApprovalController(timeout_seconds=5.0, max_pending=1)
+    first = asyncio.create_task(
+        controller.wait_for_decision(
+            ApprovalRequest("call-1", "tool", "turn-1")
+        )
+    )
+    await asyncio.sleep(0)
+
+    with pytest.raises(ToolApprovalError, match="capacity"):
+        await controller.wait_for_decision(
+            ApprovalRequest("call-2", "tool", "turn-2")
+        )
+
+    await controller.cancel_turn("turn-1")
+    assert (await first).decision == "cancel"
+    assert controller.pending_count == 0
+
+
+@pytest.mark.asyncio
+async def test_rejected_tool_result_is_reported_as_unsuccessful(monkeypatch):
+    host, _recorder, manager, effects = build_runtime(monkeypatch)
+    task = asyncio.create_task(
+        manager.process_async(
+            "reject direct manager turn",
+            turn_id="turn-direct",
+            conversation_id="conversation-direct",
+        )
+    )
+    deadline = time.monotonic() + 3.0
+    while manager.approval_controller.pending_count == 0:
+        assert time.monotonic() < deadline
+        await asyncio.sleep(0.01)
+
+    await manager.reject_tool("approval-call-1")
+    result = await asyncio.wait_for(task, timeout=5)
+
+    assert effects == []
+    assert result["tool_results"] == [
+        {
+            "tool": "approval_effect",
+            "success": False,
+            "result": "Tool approval_effect was not approved.",
+        }
+    ]
+    await manager.shutdown_async()
+    assert host.state is RuntimeHostState.NEW
+
+
+def test_registry_rejects_unbounded_or_unsafe_tool_names():
+    @tool("bad name")
+    def invalid_tool() -> str:
+        """Never register."""
+        return "unreachable"
+
+    with pytest.raises(ValueError, match="tool name is invalid"):
+        ToolRegistry().register_tool(invalid_tool)
