@@ -38,7 +38,12 @@
 - Not authorized. No production code or retrospective RED claim was created.
 
 ** Evaluate
-- Documentation-only research/decision transaction requires the complete repository/Nix/Actions gate before merge.
+- Pre-evidence candidate :: =56a75f4=.
+- =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh= :: PASS, all 9 phases; 119 protocol/transport, 75 voice and 1006 complete pytest tests.
+- =NIX_CONFIG='experimental-features = nix-command flakes' nix flake check= :: PASS, all 10 compatible-system checks; aarch64-linux is explicitly omitted by the flake as incompatible.
+- =NIX_CONFIG='experimental-features = nix-command flakes' nix build= :: PASS.
+- Worktree audit :: only the pre-existing user-owned unstaged =LICENSE= deletion remains outside the RAGE transaction.
+- This append-only evidence changes the head. The resulting documentation-only candidate still requires the complete exact-head local gate and GitHub Actions before merge.
 
 ** Outcome
 - Iteration 1 architecture rejected without weakening #191 or #134 acceptance.
