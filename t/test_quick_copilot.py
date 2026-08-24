@@ -206,6 +206,40 @@ def test_quick_is_one_reused_keyboard_first_window(tmp_path):
         dispose_controller(controller)
 
 
+def test_quick_copilot_exposes_signal_cabin_visual_hierarchy(tmp_path):
+    _, controller, _, _, _, _ = make_controller(tmp_path)
+    quick = controller.quick_window
+    assert quick is not None
+    try:
+        assert quick.objectName() == "zaraQuickCopilot"
+        assert quick.header_frame.objectName() == "zaraQuickHeader"
+        assert quick.status_frame.objectName() == "zaraRuntimeRail"
+        assert quick.status_lamp.objectName() == "zaraStatusLamp"
+        assert quick.status_lamp.property("runtimeState") == "starting"
+        assert quick.message_scroll.objectName() == "zaraConversationViewport"
+        assert quick.composer_shell.objectName() == "zaraComposerShell"
+        assert quick.send_button.objectName() == "zaraPrimaryAction"
+        assert quick.stop_button.objectName() == "zaraDangerAction"
+    finally:
+        dispose_controller(controller)
+
+
+def test_quick_send_action_tracks_meaningful_composer_text(tmp_path):
+    qt_app, controller, _, _, _, _ = make_controller(tmp_path)
+    quick = controller.quick_window
+    assert quick is not None
+    try:
+        assert quick.send_button.isEnabled() is False
+        quick.composer.setPlainText("route this")
+        qt_app.processEvents()
+        assert quick.send_button.isEnabled() is True
+        quick.composer.setPlainText("   ")
+        qt_app.processEvents()
+        assert quick.send_button.isEnabled() is False
+    finally:
+        dispose_controller(controller)
+
+
 def test_handoff_preserves_exact_shared_state_without_resubmit_or_duplication(tmp_path):
     qt_app, controller, bridge, _, service, database = make_controller(tmp_path)
     quick = controller.quick_window
