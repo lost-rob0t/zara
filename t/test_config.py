@@ -15,6 +15,11 @@ def test_default_config_is_valid_toml():
     assert parsed["tools"]["file_tools"] is False
     assert parsed["tools"]["memory_list"] is True
     assert parsed["tools"]["forget"] is True
+    assert parsed["tool_approval"] == {
+        "required_tools": [],
+        "timeout_seconds": 300.0,
+        "max_pending": 8,
+    }
     assert parsed["file_tools"]["readable_roots"] == ["."]
     assert parsed["file_tools"]["writable_roots"] == ["."]
     assert parsed["wake"]["audio_queue_chunks"] == 32
@@ -206,4 +211,27 @@ def test_file_tool_policy_config_is_validated(tmp_path, setting):
     )
 
     with pytest.raises(ConfigError, match="file_tools"):
+        ZaraConfig(str(config_path))
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        'required_tools = "calculator"',
+        'required_tools = [""]',
+        'required_tools = ["bad name"]',
+        'required_tools = ["calculator", "calculator"]',
+        "timeout_seconds = 0",
+        "timeout_seconds = false",
+        "max_pending = 0",
+        "max_pending = 65",
+    ],
+)
+def test_tool_approval_policy_is_bounded_and_validated(tmp_path, setting):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        f'[tts]\nprovider = "qwen3"\n\n[tool_approval]\n{setting}\n'
+    )
+
+    with pytest.raises(ConfigError, match="tool_approval"):
         ZaraConfig(str(config_path))

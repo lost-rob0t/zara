@@ -10,9 +10,11 @@
 #   1. Python compile/import checks
 #   2. Prolog module load and resolver corpus
 #   3. Focused ZARA/1 protocol/transport gate
-#   4. Full pytest suite (with JUnit XML output)
-#   5. Config/process/file-tool security scripts
-#   6. Packaging/Nix checks
+#   4. Runtime tool-approval security gate
+#   5. Full pytest suite (with JUnit XML output)
+#   6. Config/process/file-tool security scripts
+#   7. Deterministic latency budgets
+#   8. Packaging/Nix checks
 #
 # Output:
 #   - JUnit XML at $ARTIFACT_DIR/junit.xml (pytest)
@@ -111,14 +113,21 @@ phase_zara1_protocol() {
 
 run_phase "ZARA/1 protocol and transport" phase_zara1_protocol
 
-# --- Phase 4: Full pytest suite -------------------------------------------
+# --- Phase 4: Runtime tool-approval gate ---------------------------------
+phase_runtime_tool_approvals() {
+  bash "$repo_root/scripts/test-runtime-tool-approvals.sh"
+}
+
+run_phase "Runtime tool approvals" phase_runtime_tool_approvals
+
+# --- Phase 5: Full pytest suite -------------------------------------------
 phase_pytest() {
   python -m pytest -q -o faulthandler_timeout=15 --junit-xml="$ARTIFACT_DIR/junit.xml" t/
 }
 
 run_phase "Pytest suite" phase_pytest
 
-# --- Phase 5: Config/process/file-tool security scripts -------------------
+# --- Phase 6: Config/process/file-tool security scripts -------------------
 phase_security_scripts() {
   local security_scripts=(
     scripts/test-config.sh
@@ -148,14 +157,14 @@ phase_security_scripts() {
 
 run_phase "Config/process/file-tool security scripts" phase_security_scripts
 
-# --- Phase 6: Deterministic latency budgets -------------------------------
+# --- Phase 7: Deterministic latency budgets -------------------------------
 phase_latency() {
   bash "$repo_root/scripts/test-latency-metrics.sh"
 }
 
 run_phase "Deterministic latency budgets" phase_latency
 
-# --- Phase 7: Packaging/Nix checks ----------------------------------------
+# --- Phase 8: Packaging/Nix checks ----------------------------------------
 phase_packaging() {
   bash "$repo_root/scripts/test-packaging.sh"
   bash "$repo_root/scripts/test-canonical-paths.sh"
