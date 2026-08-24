@@ -133,3 +133,9 @@
 - Focused result :: 118 passed across visible STT, ingress/commit, supervisor, protocol/runtime and client tests.
 - Scheduler stress :: the exact cancellation test passed 50/50 fresh pytest processes.
 - Full exact-head gates must be rerun after this repair and evidence commit.
+
+** Full-gate environment correction
+- Candidate =a50c156965854378dc1f86d067df63eddc98ce1e= passed the focused protocol/voice phase (117 + 74), the complete pytest corpus (1003 passed), security/config/process integrations, latency budgets, and packaging pytest checks.
+- The aggregate command then failed in phase 9 because nested Nix evaluation reported =experimental Nix feature 'nix-command' is disabled=.
+- This is not recorded as a passing full gate. The repository environment requires =NIX_CONFIG='experimental-features = nix-command flakes'= for these Nix gates.
+- The entire aggregate gate, not only phase 9, must be rerun with that explicit setting at the next exact evidence head.
