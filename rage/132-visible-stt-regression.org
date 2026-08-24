@@ -47,3 +47,37 @@
 
 ** Outcome
 - In progress.
+
+* Iteration 2 reconciliation - 2026-08-24
+** Analyze / Research completed
+- Canonical research evidence is recorded in =rage/132-visible-stt-regression-research.org=.
+- Verified defect remains narrow: the existing streaming STT producer exists, but client-visible speech/STT lifecycle was dropped at the runtime adapter and is absent from the ZARA/1/client mappings.
+
+** Design / adversarial review / decision completed
+- Canonical design evidence is recorded in =rage/132-visible-stt-regression-design.org=.
+- Auto-RAGE decision :: ACCEPT REALIZATION.
+- Selected flow :: =StreamingTranscriber -> RuntimeVoiceIngress -> principal RuntimeEventBus -> runtime_event_to_message/ZARA/1 -> ZmqZaraClient -> client RuntimeEventBus=.
+- New runtime vocabulary remains observational; only accepted non-empty final transcript may produce =SubmitTurn=.
+- No fake runtime turn id, provider-stack duplication, direct ZMQ callback, or Prolog-RLM dependency is authorized.
+
+** Existing realization state audit
+- PR #192 is the canonical reopened-#132 transaction.
+- Exact head =b7328da9e937a0fbbeff44b46f7b0ec9382d89c6= passed GitHub Actions run #500: full =scripts/test-all.sh=, full pytest (976 passed), =nix flake check=, =nix build=, and both shared-mic matrix jobs.
+- That green head proves only the current runtime-producer slice. It is not #132 acceptance evidence because =zara/protocol.py=, =zara/protocol_runtime.py= and =zara/zmq_transport.py= still lack the four visible-STT wire/client mappings required by the accepted design.
+- The branch currently contains runtime Voice* event classes, RuntimeVoiceIngress adaptation/publication, and focused runtime tests.
+
+** Overlap reconciliation
+- A duplicate branch/PR #193 was created during connector continuation before the pre-existing #192 branch was noticed. #193 was closed unmerged once overlap was discovered; #192 remains authoritative.
+- #193 retained useful TDD evidence: exact test-only SHA =809275b94dc57c36803431af816d6d6206962eef= failed CI run #501 exactly on the absent client-visible transcript runtime contract while both shared-mic jobs stayed green.
+- Useful adversarial coverage from the duplicate is to be ported into #192 rather than maintaining two RAGE transactions.
+
+** Adversarial realization audit - cancellation TOCTOU
+- Current #192 =RuntimeVoiceIngress._handle_stt_event= calls =_stream_is_current(stream)=, which releases =_lock= before =_publish(stream,event)=.
+- Race: worker verifies current -> concurrent =cancel()= removes stream and returns -> worker publishes stale speech/transcript event after cancellation returned.
+- This violates design invariant 6: cancelled/removed streams emit no later queued STT events.
+- Required repair :: add a deterministic in-flight transcriber cancel regression first, then make current-stream validation and observational publication atomic with respect to =RuntimeVoiceIngress._lock=. The accepted final event must similarly fence duplicate/stale publication while preserving exactly one =SubmitTurn=.
+
+** TDD continuation authorization
+- Existing runtime code predates complete recorded acceptance red evidence, so no retrospective red claim is made for it.
+- Continue tests-first for the still-missing acceptance surface: cancellation fencing, explicit four-event runtime codec/wire mapping with provider omission, closed protocol vocabulary, and gateway/ZaraClient semantic reduction.
+- Commit those tests before the corresponding production changes and require an exact-head CI failure attributable to the missing behavior before green implementation.
