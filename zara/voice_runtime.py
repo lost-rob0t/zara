@@ -227,10 +227,6 @@ class RuntimeVoiceIngress:
         publisher = getattr(self.supervisor, "publish", None)
         if callable(publisher):
             publisher(stream.principal, event)
-            return
-        runtime = getattr(self.supervisor, "runtime", None)
-        if callable(runtime):
-            runtime(stream.principal).bus.publish(event)
 
     def _publish_if_current(
         self,
