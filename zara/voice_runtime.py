@@ -15,9 +15,17 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from zara.runtime import events
 from zara.runtime.commands import SubmitTurn
 from zara.server import PrincipalContext, PrincipalMismatch
-from zara.streaming_stt import FinalTranscript, StreamingTranscriber, make_faster_whisper_transcriber
+from zara.streaming_stt import (
+    FinalTranscript,
+    PartialTranscript,
+    SpeechEnded,
+    SpeechStarted,
+    StreamingTranscriber,
+    make_faster_whisper_transcriber,
+)
 
 
 @dataclass
@@ -209,6 +217,49 @@ class RuntimeVoiceIngress:
     def _pcm_float32(pcm: bytes) -> np.ndarray:
         return np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
 
+    def _publish(self, stream: _VoiceStream, event: events.RuntimeEvent) -> None:
+        publisher = getattr(self.supervisor, "publish", None)
+        if callable(publisher):
+            publisher(stream.principal, event)
+            return
+        self.supervisor.runtime(stream.principal).bus.publish(event)
+
+    def _stream_is_current(self, stream: _VoiceStream) -> bool:
+        with self._lock:
+            return self._streams.get(stream.stream_id) is stream
+
+    def _handle_stt_event(self, stream: _VoiceStream, event: object) -> None:
+        if not self._stream_is_current(stream):
+            return
+        common = {
+            "conversation_id": stream.conversation_id,
+            "stream_id": stream.stream_id,
+            "trace_id": stream.trace_id,
+        }
+        if isinstance(event, SpeechStarted):
+            self._publish(
+                stream,
+                events.VoiceSpeechStarted(
+                    pre_speech_samples=event.pre_speech_samples,
+                    **common,
+                ),
+            )
+            return
+        if isinstance(event, PartialTranscript):
+            self._publish(
+                stream,
+                events.VoiceTranscriptPartial(text=event.text, **common),
+            )
+            return
+        if isinstance(event, SpeechEnded):
+            self._publish(
+                stream,
+                events.VoiceSpeechEnded(reason=event.reason, **common),
+            )
+            return
+        if isinstance(event, FinalTranscript):
+            self._submit_final(stream, event.text, provider=event.provider)
+
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
@@ -231,15 +282,14 @@ class RuntimeVoiceIngress:
             except Exception:
                 continue
             for event in emitted:
-                if isinstance(event, FinalTranscript):
-                    self._submit_final(stream, event.text)
+                self._handle_stt_event(stream, event)
             if isinstance(item, _CommitWork):
                 with self._lock:
                     current = self._streams.get(item.stream_id)
                     if current is stream:
                         self._streams.pop(item.stream_id, None)
 
-    def _submit_final(self, stream: _VoiceStream, text: str) -> None:
+    def _submit_final(self, stream: _VoiceStream, text: str, *, provider: str = "") -> None:
         clean = str(text or "").strip()
         if not clean:
             return
@@ -248,6 +298,16 @@ class RuntimeVoiceIngress:
             if current is not stream or stream.submitted:
                 return
             stream.submitted = True
+        self._publish(
+            stream,
+            events.VoiceTranscriptFinal(
+                conversation_id=stream.conversation_id,
+                stream_id=stream.stream_id,
+                trace_id=stream.trace_id,
+                text=clean,
+                provider=str(provider or ""),
+            ),
+        )
         request_id = stream.trace_id or uuid.uuid4().hex
         self.supervisor.submit(
             stream.principal,
