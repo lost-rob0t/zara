@@ -153,6 +153,62 @@ def test_runtime_events_have_explicit_allowlisted_wire_mapping(event, expected_t
     assert len(frames) == 2
 
 
+def test_partial_transcript_runtime_event_has_explicit_bounded_wire_mapping():
+    partial_type = getattr(events, "TranscriptPartial", None)
+    assert partial_type is not None, "#132 requires a transport-neutral partial transcript event"
+    event = partial_type(
+        conversation_id="conv-voice",
+        text="hello wor",
+        stream_id="mic-1",
+        trace_id="trace-voice",
+    )
+
+    message = runtime_event_to_message(
+        envelope(event, sequence=11),
+        message_id="evt-transcript-partial",
+        timestamp_ns=1003,
+    )
+
+    assert message.type == "transcript.partial"
+    assert message.turn_id is None
+    assert message.conversation_id == "conv-voice"
+    assert message.stream_id == "mic-1"
+    assert message.trace_id == "trace-voice"
+    assert message.seq == 11
+    assert message.body == {"text": "hello wor"}
+    frames = encode_message(message)
+    assert frames[0] == b"ZARA/1"
+    assert len(frames) == 2
+    assert "provider" not in repr(message)
+    assert "TranscriptPartial" not in repr(message.body)
+
+
+def test_final_transcript_runtime_event_preserves_stream_and_trace_without_fake_turn():
+    event = events.TranscriptReady(
+        conversation_id="conv-voice",
+        text="hello world",
+        stream_id="mic-1",
+        trace_id="trace-voice",
+    )
+
+    message = runtime_event_to_message(
+        envelope(event, sequence=12),
+        message_id="evt-transcript-final",
+        timestamp_ns=1004,
+    )
+
+    assert message.type == "transcript.final"
+    assert message.turn_id is None
+    assert message.conversation_id == "conv-voice"
+    assert message.stream_id == "mic-1"
+    assert message.trace_id == "trace-voice"
+    assert message.seq == 12
+    assert message.body == {"text": "hello world"}
+    frames = encode_message(message)
+    assert frames[0] == b"ZARA/1"
+    assert len(frames) == 2
+
+
 def test_runtime_event_label_and_python_type_are_not_implicitly_serialized():
     event = events.AssistantDelta(
         turn_id="t1",
