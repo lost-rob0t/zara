@@ -55,3 +55,14 @@
 - Exact GitHub Actions run #=32705326585= failed in the whitespace step before tests because both new research/design Org files had one blank line at EOF. The Ubuntu and Arch shared-mic jobs passed.
 - This is a bounded documentation-format defect, not a production/design falsification. The two blank EOF lines are removed without changing the research decision.
 - The corrected exact head requires the complete local and GitHub gates before merge.
+
+** Corrected exact-head outcome
+- Corrected candidate :: =b739619a09287c8633391a68147ee67b63b41990=.
+- Base-range =git diff --check origin/master...HEAD= :: PASS.
+- Complete local gate :: PASS, all 9 phases; 119 protocol/transport, 75 voice and 1034 complete pytest tests.
+- Separate =nix flake check= :: PASS, all 10 compatible-system checks.
+- Separate =nix build= :: PASS.
+- Exact GitHub Actions run :: #=32706141534=; =test= PASS in 9m05s, Ubuntu shared mic PASS in 47s, Arch shared mic PASS in 36s.
+- GitHub reported PR #210 =CLEAN= and =MERGEABLE= at the exact successful head.
+- Research/decision merge commit :: =2c608e7d4d79dc76ebfcc16bf8f064174a38df3b=.
+- #191 remains open and waits on #209; no production behavior was claimed complete.
