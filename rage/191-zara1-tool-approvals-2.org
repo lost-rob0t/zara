@@ -42,3 +42,11 @@
 - Complete repository gate :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh= passed all 10 phases: 145 ZARA/1 tests, 75 voice tests, 10 authenticated approval tests, 31 runtime approval tests, 1100 aggregate pytest tests and every script/latency/packaging check.
 - Changed-path review :: every new message kind and adapter branch has a positive mapping test; malformed command/event fields, ownership/capability denial, cross-principal and same-principal isolation, replay/stale/reconnect/cancel paths, production approve/reject effects, privacy and bounded delivery state have deterministic coverage. Existing runtime approval tests retain deterministic timeout and cancel/approve serialization coverage; existing transport tests retain slow-route and inflight reconnect coverage.
 - Hygiene :: =git diff --check= passed. Fresh =origin/master= remains the immutable RAGE start commit, so no rebase is required before creating the candidate.
+
+** Candidate and outcome
+- Candidate commit :: =c6c4e3080e7d3fb126824eae9dffaaa3dfa15e00=.
+- Exact-head local gate :: =scripts/test-all.sh= passed 10/10 phases; =nix flake check --show-trace= passed all 10 checks; =nix build --print-out-paths= produced =/nix/store/4ia4i290jv27syy99vhiq1mmnsy4nh0r-zarathushtra-full=; =git diff --check origin/master...HEAD= passed.
+- Pull request :: #213, https://github.com/lost-rob0t/zara/pull/213.
+- Exact-head CI :: run 32748728581, https://github.com/lost-rob0t/zara/actions/runs/32748728581, completed successfully for candidate =c6c4e3080e7d3fb126824eae9dffaaa3dfa15e00=. The =test= job passed the full tests, flake checks and packaged build; shared-mic Ubuntu 24.04 and Arch Linux jobs also passed.
+- Merge :: PR #213 merged as =51356e3cee216c3fb7f51aae308463b7e8f15c55= and closed issue #191.
+- Outcome :: ACCEPTED AND MERGED. The authenticated ZaraClient boundary now carries the existing runtime approval lifecycle without adding a second execution or pending-approval authority. Parent #134 is no longer blocked by #191.
