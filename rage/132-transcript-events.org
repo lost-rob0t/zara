@@ -106,3 +106,13 @@ Resolution: gateway/client queues and protocol envelope limits remain bounded. T
 - Decision :: ACCEPT REALIZATION
 - Rationale :: the design repairs the exact falsified #132 acceptance through existing principal/runtime/ZaraClient boundaries, introduces no duplicate STT/provider stack, preserves canonical turn identity, and has deterministic regression tests for the highest-risk cancellation and isolation paths.
 - Realization authorization :: write tests first and prove the expected red state; then implement only the event/protocol/ingress/client mappings above.
+
+* Iteration 1 — TDD red
+- Test-only head :: =809275b94dc57c36803431af816d6d6206962eef=
+- Draft PR :: #193
+- Exact-head CI :: run #501, id =32693895961=
+- Result :: EXPECTED FAIL
+- Focused gate :: =scripts/test-all.sh= phase 5, ZARA/1 protocol and transport
+- Exact failure :: =test_partial_transcript_runtime_event_has_explicit_bounded_wire_mapping= failed because =events.TranscriptPartial= does not exist; 59 preceding focused protocol/transport tests passed.
+- Isolation evidence :: shared-mic Ubuntu 24.04 and Arch Linux jobs both passed.
+- Interpretation :: the red head directly falsifies the missing production transcript contract identified in Analyze; no unrelated audio regression explains the failure. Realization remains authorized.
