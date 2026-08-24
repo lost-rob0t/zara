@@ -6,7 +6,7 @@ import time
 import pytest
 import zmq
 
-from zara.runtime import bridge
+from zara.runtime import bridge, events
 from zara.server import PrincipalContext, ServerState
 from zara.zmq_transport import TransportConfig, ZaraZmqGateway, ZmqZaraClient
 
@@ -138,5 +138,67 @@ def test_zara_client_streams_binary_pcm_with_trace_and_conversation_correlation(
             ),
         ]
     finally:
+        client.close(timeout=1.0)
+        gateway.close(timeout=1.0)
+
+
+def test_zara_client_subscription_receives_partial_then_final_transcript_with_correlation(
+    zmq_context,
+    transport_config,
+):
+    partial_type = getattr(events, "TranscriptPartial", None)
+    assert partial_type is not None, "#132 requires a transport-neutral partial transcript event"
+    address = endpoint("transcripts")
+    supervisor = FakeSupervisor()
+    principal = PrincipalContext("user:voice-client")
+    gateway = ZaraZmqGateway(
+        address,
+        supervisor=supervisor,
+        principal=principal,
+        context=zmq_context,
+        config=transport_config,
+        voice_ingress=RecordingVoiceIngress(),
+    )
+    gateway.start().result(timeout=1.0)
+    client = ZmqZaraClient(address, context=zmq_context, config=transport_config)
+    subscription = client.subscribe()
+
+    try:
+        client.start().result(timeout=1.0)
+        conversation_id = client.open_conversation("conversation-transcript").result(timeout=1.0)
+
+        supervisor.bus.publish(
+            partial_type(
+                conversation_id=conversation_id,
+                text="hello wor",
+                stream_id="mic-1",
+                trace_id="trace-voice",
+            )
+        )
+        supervisor.bus.publish(
+            events.TranscriptReady(
+                conversation_id=conversation_id,
+                text="hello world",
+                stream_id="mic-1",
+                trace_id="trace-voice",
+            )
+        )
+
+        partial = subscription.get(timeout=1.0).event
+        final = subscription.get(timeout=1.0).event
+        assert isinstance(partial, partial_type)
+        assert partial.text == "hello wor"
+        assert partial.conversation_id == conversation_id
+        assert partial.turn_id is None
+        assert partial.stream_id == "mic-1"
+        assert partial.trace_id == "trace-voice"
+        assert isinstance(final, events.TranscriptReady)
+        assert final.text == "hello world"
+        assert final.conversation_id == conversation_id
+        assert final.turn_id is None
+        assert final.stream_id == "mic-1"
+        assert final.trace_id == "trace-voice"
+    finally:
+        subscription.close()
         client.close(timeout=1.0)
         gateway.close(timeout=1.0)
