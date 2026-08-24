@@ -48,7 +48,10 @@
 - Documentation :: =wiki/tool-approvals.org= documents policy, typed lifecycle, privacy, disconnect behavior and the deliberate fail-closed restart rule; =wiki/install.org= links the configuration.
 
 ** Evaluate
-- Pending realization.
+- Pre-commit aggregate candidate gate :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh= passed 10/10 phases.
+- Aggregate evidence :: 119 ZARA/1 protocol/transport tests, 75 voice tests, 25 focused approval/policy tests, 1058 full pytest tests, all security scripts, 27 latency tests and packaging/Nix checks passed. Full pytest emitted 14 existing Qt deprecation warnings and no failures.
+- The aggregate gate included the final unsafe-name hardening working tree. It is implementation evidence but not exact-head merge authority; after committing this candidate, the same complete gate must pass again at the immutable commit.
+- Remaining exact-head gates :: complete =scripts/test-all.sh=, =nix flake check=, =nix build=, GitHub Actions and mergeability.
 
 ** Outcome
 - In progress.
