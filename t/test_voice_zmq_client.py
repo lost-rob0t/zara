@@ -179,7 +179,6 @@ def test_zara_client_subscription_receives_typed_visible_stt_events(
                     stream_id="mic-1",
                     trace_id="trace-voice",
                     text="hello wor",
-                    text_length=9,
                 )
             )
             supervisor.bus.publish(
@@ -196,7 +195,6 @@ def test_zara_client_subscription_receives_typed_visible_stt_events(
                     stream_id="mic-1",
                     trace_id="trace-voice",
                     text="hello world",
-                    text_length=11,
                     provider="provider-secret-must-not-cross-wire",
                 )
             )
@@ -213,10 +211,8 @@ def test_zara_client_subscription_receives_typed_visible_stt_events(
             assert [event.trace_id for event in received] == ["trace-voice"] * 4
             assert received[0].pre_speech_samples == 512
             assert received[1].text == "hello wor"
-            assert received[1].text_length == 9
             assert received[2].reason == "silence"
             assert received[3].text == "hello world"
-            assert received[3].text_length == 11
             assert received[3].provider == ""
         finally:
             subscription.close()
