@@ -13,19 +13,24 @@
 
 * Iteration 1 - 2026-08-24
 ** Analyze / Research
-- In progress.
+- Completed in =rage/209-runtime-tool-approvals-research.org=.
+- The installed LangGraph API was exercised in the Nix shell: checkpointed =ainvoke= returned =__interrupt__= and resumed with =Command(resume=...)= under a stable thread id.
+- Research rejected a plain Future-only gate, a second executor, a broad migration to middleware, and unsafe cross-process resume of generic non-idempotent tools.
+- Selected restart policy :: live asynchronous approval is resumable; timeout, cancellation, restart and shutdown fail closed and erase the process-local checkpoint.
 
 ** Architecture / Design
-- Pending research.
+- Completed in =rage/209-runtime-tool-approvals-design.org=.
+- One principal-owned controller coordinates RuntimeHost decisions with a pure LangGraph interrupt node; a separate gated node delegates approved calls to the existing =ToolNode=.
+- Server configuration is approval-policy authority. Approval envelopes and events never include tool arguments, results or user-provided rejection text.
 
 ** Adversarial review
-- Pending design.
+- Completed. The design now gathers every approval before any side effect, atomically consumes pending ids, preserves original tool-result ordering, revalidates tool bindings, and defines the exact cancellation/start boundary.
 
 ** Autonomous decision gate
-- Pending adversarial review.
+- ACCEPT. Tests-first realization is authorized. Cross-process pending approval survival remains deliberately rejected until the typed capability plane provides durable idempotency and reconciliation.
 
 ** Realize / TDD
-- Not authorized until the autonomous decision gate accepts the design.
+- Authorized. Next action is the focused failing production-backend approval lifecycle test.
 
 ** Evaluate
 - Pending realization.

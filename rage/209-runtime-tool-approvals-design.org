@@ -1,0 +1,70 @@
+#+title: Architecture and adversarial decision - #209 runtime tool approvals
+
+* Accepted architecture
+** Authority and scope
+- Each principal's existing =AgentManager= owns one bounded =ToolApprovalController=.
+- =LangGraphRuntimeBackend.bind_event_publisher= binds that controller to the principal's existing runtime bus.
+- Pending records contain only canonical turn id, optional conversation id, bounded tool name, stable tool-call id, a deadline and an in-process decision future.
+- =[tool_approval].required_tools= is the explicit server-side allowlist of tool names that require approval. Empty means no current tool is approval-gated, preserving existing behavior.
+- Approval is a one-shot decision for an already pending =tool_run_id=. It is never a tool invocation API.
+
+** Graph lifecycle
+1. Prepare dynamic providers and compile the existing graph with a per-turn =InMemorySaver=.
+2. Invoke with a stable, principal-scoped checkpoint thread id derived without exposing the raw principal id.
+3. Route model tool calls through a pure approval node. It calls =interrupt= for every configured approval-required call and performs no side effect or event publication.
+4. The conversation runner receives each typed interrupt, atomically registers it with the approval controller, publishes =ToolQueued= and =ToolWaitingForUser=, then asynchronously waits without blocking =RuntimeHost=.
+5. =ApproveTool= or =RejectTool= atomically removes exactly that pending record, publishes =UserResponded=, and resolves it once. Unknown and replayed ids fail with a non-enumerating error.
+6. Resume the same graph with =Command(resume=...)= and the same thread id. Rejection becomes a matching =ToolMessage=; approval continues.
+7. After all decisions exist, the gated tool node invokes approved calls once through the existing prebuilt =ToolNode= and publishes start/terminal lifecycle events. It returns all tool results in original call order so provider history remains valid.
+8. Delete the checkpoint thread in a =finally= block on success, rejection, timeout, cancellation or error.
+
+** Lifecycle policy
+- Approval timeout produces =ToolCancelled(reason="approval timeout")= and resumes as a coherent rejection; it never invokes the tool.
+- Explicit turn cancellation wins while pending, publishes one cancellation terminal event, and causes the graph turn to stop.
+- Runtime restart and shutdown already cancel all turns; the manager also closes the controller and deletes process-local checkpoints. Nothing is resumed after restart.
+- Transport disconnect alone changes no runtime state. The pending request stays principal-owned until an authenticated same-principal client reconnects or another terminal condition occurs.
+- A tool is considered started once =ToolStarted= is published immediately before =ToolNode.ainvoke=. Cancellation before that boundary prevents the call. Cancellation after it suppresses stale turn output but cannot reverse an external commit.
+
+** Bounds and privacy
+- Configuration supplies a positive timeout and a small positive maximum pending count.
+- Required tool names, tool-call ids and event prompts have fixed length bounds. Invalid approval metadata fails closed before execution.
+- Approval events contain only tool name, tool-run id and a fixed prompt. They never contain arguments, results, model prompts or rejection text.
+- Unknown/stale errors do not enumerate live ids or tool arguments.
+- Checkpoints are in-memory only, scoped to one principal manager and one live turn, never logged, and erased at terminal cleanup.
+
+* Acceptance-to-test map
+| Acceptance | Deterministic test |
+|-
+| Required tool pauses before effect | Production =LangGraphRuntimeBackend= with deterministic tool and fake LLM; assert waiting event and zero calls |
+| Approve resumes once | Submit =ApproveTool= through =RuntimeHost=; assert one effect and queued/waiting/responded/started/completed sequence |
+| Reject is coherent | Submit =RejectTool=; assert zero effects, cancellation terminal and final model response |
+| Unknown/stale/replay fail closed | Wrong id, second decision and post-terminal id all raise the same bounded error |
+| Cancel race | Cancel while waiting and approve afterward; assert cancellation wins and zero effects |
+| Principal isolation | Two principal runtimes with colliding provider ids; decision routed to one cannot release the other |
+| Timeout | Short deterministic timeout; assert cancellation and zero effects |
+| Restart/shutdown | Restart or stop while waiting; assert pending state is empty and no effect |
+| Bound | Fill controller capacity and assert the next request fails without leaking ids |
+| Privacy | Secret argument/rejection text absent from events, exception strings and captured logs |
+| Existing tools | Current MCP and agent graph tests remain green with no required policy |
+| Checkpoint policy | Interrupt/resume uses stable thread id and terminal cleanup removes the thread |
+
+* Adversarial review
+** Findings incorporated
+- A side effect before the last interrupt could replay. The design isolates all interrupts in a pure node before execution.
+- A client-supplied “approval required” flag could downgrade server policy. The design ignores client/model policy and uses server configuration only.
+- A replay could target a later tool if ids were reusable. Pending ids are unique within the controller and removed atomically before a decision future is resolved.
+- Publishing before registering creates a race where an immediate approval looks unknown. Registration happens before waiting publication.
+- Publishing arguments in the prompt would leak secrets. The prompt is fixed from a bounded server-known tool name.
+- Disk checkpoints could duplicate non-idempotent actions after crashes. This iteration deliberately cancels on restart and never performs cross-process resume.
+- Multiple calls can produce provider-invalid history if rejection results are out of order. The gated executor returns one =ToolMessage= per original call in original order.
+- A tool can disappear while waiting. The executor revalidates the registered binding before invocation and rejects a removed/replaced tool.
+
+** Residual limits
+- Generic synchronous tools may continue in their executor thread after cancellation once =ToolStarted= has occurred. This is an existing LangChain limitation; future typed device capabilities must supply cancellable/idempotent adapters.
+- Pending approvals do not survive a process restart. This is the selected safe policy, not silent data loss or claimed durability.
+- #191 still owns authenticated session visibility, reconnect replay and same-principal multi-device decision policy.
+
+* Autonomous decision gate
+Decision: ACCEPT.
+
+The design creates no second runtime or executor, uses the installed canonical LangGraph mechanism, preserves the existing registry and principal boundary, and defines a fail-closed lifecycle that can be tested without external providers. Realization may begin with the mapped failing tests. Any test showing side-effect replay, cross-principal release or unsanitized output falsifies the design and requires a new iteration.
