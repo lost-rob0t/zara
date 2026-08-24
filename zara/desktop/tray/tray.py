@@ -17,6 +17,7 @@ class ZaraTray(QSystemTrayIcon):
     toggle_requested = Signal()
     quick_requested = Signal()
     full_chat_requested = Signal()
+    settings_requested = Signal()
     restart_requested = Signal()
     diagnostics_requested = Signal()
     quit_requested = Signal()
@@ -44,6 +45,9 @@ class ZaraTray(QSystemTrayIcon):
         self.full_chat_action = QAction("Open Full Chat", menu)
         self.full_chat_action.triggered.connect(self.full_chat_requested.emit)
         menu.addAction(self.full_chat_action)
+        self.settings_action = QAction("Settings", menu)
+        self.settings_action.triggered.connect(self.settings_requested.emit)
+        menu.addAction(self.settings_action)
         menu.addSeparator()
 
         self.status_action = QAction("Status: starting", menu)
