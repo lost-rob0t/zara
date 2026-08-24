@@ -1,0 +1,40 @@
+#+title: RAGE Post-Merge Evidence - Zara issue 133
+
+* Authority
+- Consumed issue :: #133
+- Parent epic :: #127
+- Immutable RAGE start :: =4c6018b30ff4be2e168551f0cf256f8333bc58af=
+- Feature PR :: #188
+- Final exact feature head :: =3e626b47de7830b5c9ffbd6d516259c0be7b66af=
+
+* Exact-head final gate
+- GitHub Actions :: CI #484 / run =32679086667= completed PASS on exact head =3e626b47de7830b5c9ffbd6d516259c0be7b66af=.
+- Repository tests :: PASS.
+- =nix flake check= :: PASS.
+- Packaged Zara build :: PASS.
+- Shared mic / Arch Linux :: PASS.
+- Shared mic / Ubuntu 24.04 :: PASS.
+- Pull-request review audit :: no submitted reviews, no review threads, no PR conversation comments.
+- Mergeability immediately before merge :: mergeable and ready.
+
+* Merge outcome
+- PR #188 merged using an expected-head guard.
+- Merge SHA :: =487996d56467f5227c5c6b1178333fbf1ee6d8a0=
+- Issue #133 :: closed as completed by GitHub at merge.
+- Shipped boundary :: CLI and desktop use the shared =ZaraClient= service boundary; explicit standalone compatibility remains available; reconnect preserves durable conversation selection, fences stale old-session events, and is bounded/coalesced; closing a client does not imply daemon shutdown.
+- Permanent executable naming remains =zara= for clients and =zara-server= for the long-lived daemon/service.
+- No Prolog-RLM path was introduced.
+
+* Queue handoff
+- Live daemon children #128, #129, #130, #131, #132, and #133 are complete.
+- #134 is now dependency-satisfied and is the next daemon-epic issue by declared order.
+- Do not consume #134 inside the completed #133 iteration; a later RAGE iteration must re-read live queue state and initialize its own immutable starting commit.
+
+* ADADR control-plane discovery
+- Zara has an actively used canonical research/design workflow: repository =AGENTS.md= + =skills/rage/SKILL.md= with append-only artifacts under =rage/=.
+- The canonical installed ADADR skill was consulted before any new architecture work.
+- No durable repository instruction currently selects either human-gated =ADADR= or autonomous =Auto-RAGE= mode.
+- Therefore no #134 architecture work may begin by silently assuming Auto-RAGE. The next architecture iteration must obtain and durably persist the selected mode before crossing the ADADR decision gate.
+
+* Closeout
+Issue #133 is complete. This file records post-merge evidence only and changes no production behavior.
