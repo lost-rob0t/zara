@@ -81,3 +81,21 @@
 - Existing runtime code predates complete recorded acceptance red evidence, so no retrospective red claim is made for it.
 - Continue tests-first for the still-missing acceptance surface: cancellation fencing, explicit four-event runtime codec/wire mapping with provider omission, closed protocol vocabulary, and gateway/ZaraClient semantic reduction.
 - Commit those tests before the corresponding production changes and require an exact-head CI failure attributable to the missing behavior before green implementation.
+
+* Iteration 2 TDD gate continuation - 2026-08-24
+** Falsified test specification
+- Test-only head =457c127ac7d84c9be3d6ad585ee2efb1220d3f4d= reached CI run #506 but failed during test collection because the new test guessed a =text_length= constructor field on =VoiceTranscriptPartial=.
+- Canonical design and current runtime vocabulary were re-read. They define partial/final runtime transcript events by =text=; =text_length= is not part of the semantic runtime event contract.
+- #506 is therefore NOT accepted as implementation red. No production code was changed on the basis of that failure.
+- The tests were corrected to the canonical event vocabulary while retaining the cancellation-race, correlation, provider-omission, and ZaraClient-boundary assertions.
+
+** Valid TDD red
+- Corrected test-only branch head :: =dd081f9ada718d6b485e36675f7bb26189378ca1=
+- Exact GitHub Actions run :: #508, id =32694661749=
+- Shared-mic / Arch Linux :: PASS
+- Shared-mic / Ubuntu 24.04 :: PASS
+- Main gate :: EXPECTED FAIL in =scripts/test-all.sh= phase 5, ZARA/1 protocol and transport.
+- Focused phase collected 97 tests and passed 59 before the first new visible-STT case failed.
+- Exact failure :: =test_visible_stt_events_have_closed_wire_mapping_without_fake_turn_or_provider[VoiceSpeechStarted]= raised =RuntimeCodecError("unsupported runtime event")= from =zara/protocol_runtime.py::runtime_event_to_message=.
+- Interpretation :: this is direct evidence of the missing explicit Voice* runtime-to-wire mapping identified by Analyze/Design. The failure is not a malformed fixture, unrelated audio failure, or packaging failure.
+- Realization status :: AUTHORIZED. Implement only the accepted explicit Voice* wire vocabulary/mappings, ZaraClient semantic reduction, and cancellation publication fence; then require exact-head green CI.
