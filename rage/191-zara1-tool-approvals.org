@@ -13,22 +13,33 @@
 
 * Iteration 1 - 2026-08-24
 ** Analyze / Research
-- In progress.
+- Completed in =rage/191-zara1-tool-approvals-research.org=.
+- The inherited premise was falsified: approval command/event schemas exist, but the production LangGraph backend cannot pause, approve, reject or resume tool work.
+- Current official LangGraph HITL requires checkpointed state, a stable thread id, an interrupt and =Command(resume=...)=. Zara compiles an uncheckpointed fresh graph per turn and executes =ToolNode= directly.
+- A wire-only implementation would produce synthetic acceptance and leave #134's real Voice tool-approval requirement unsatisfied.
 
 ** Architecture / Design
-- Pending research.
+- Completed in =rage/191-zara1-tool-approvals-design.org=.
+- #209 now owns the missing canonical transport-neutral runtime approval lifecycle.
+- #191 remains the authenticated closed-wire/client/session adapter and explicitly depends on #209.
 
 ** Adversarial review
-- Pending design.
+- Gateway-owned pending approval was rejected as a second tool runtime.
+- Fake-backend-only wire proof was rejected because real production approve/reject remains unsupported.
+- Blocking a tool wrapper on an ad hoc condition was rejected because it bypasses checkpoint/resume and leaves restart/reconnect behavior false.
+- The resumed design must enforce both runtime principal/turn/tool authority and transport session ownership; neither layer can substitute for the other.
 
 ** Autonomous decision gate
-- Pending adversarial review.
+- Decision :: REJECT REALIZATION AT CURRENT HEAD.
+- Structural blocker :: #209.
+- GitHub issue #191 was updated to depend on #209 and records the causal evidence.
 
 ** Realize / TDD
-- Not authorized until the autonomous decision gate accepts the design.
+- Not authorized. No production code or retrospective RED claim was created.
 
 ** Evaluate
-- Pending realization.
+- Documentation-only research/decision transaction requires the complete repository/Nix/Actions gate before merge.
 
 ** Outcome
-- In progress.
+- Iteration 1 architecture rejected without weakening #191 or #134 acceptance.
+- After this evidence merges, consume #209 before re-entering #191.
