@@ -11,6 +11,12 @@ import zara.desktop.app as desktop_app
 from zara.desktop.chat_widgets import ChatComposer, MessageWidget
 from zara.desktop.conversation import MessageRecord, MessageRole, MessageStatus
 from zara.desktop.theme import MIN_TEXT_CONTRAST, apply_readable_palette, contrast_ratio, repair_palette
+from zara.desktop.theme import (
+    SIGNAL_CABIN_COLORS,
+    apply_desktop_theme,
+    build_signal_cabin_palette,
+    desktop_stylesheet,
+)
 
 _GROUPS = (
     QPalette.ColorGroup.Active,
@@ -107,6 +113,52 @@ def test_palette_repair_is_idempotent():
         for foreground_role, background_role in _PAIRS:
             assert twice.color(group, foreground_role) == once.color(group, foreground_role)
             assert twice.color(group, background_role) == once.color(group, background_role)
+
+
+def test_signal_cabin_palette_uses_semantic_colors_with_readable_text():
+    palette = build_signal_cabin_palette()
+
+    assert palette.color(QPalette.ColorRole.Window) == QColor(SIGNAL_CABIN_COLORS["ground"])
+    assert palette.color(QPalette.ColorRole.Base) == QColor(SIGNAL_CABIN_COLORS["panel_deep"])
+    assert palette.color(QPalette.ColorRole.Highlight) == QColor(SIGNAL_CABIN_COLORS["ready"])
+    assert_readable(palette)
+
+
+def test_signal_cabin_stylesheet_covers_the_complete_copilot_surface():
+    stylesheet = desktop_stylesheet()
+
+    for selector in (
+        "QWidget#zaraQuickCopilot",
+        "QWidget#zaraFullChat",
+        "QFrame#zaraMessage",
+        "QFrame#zaraComposerShell",
+        "QListWidget#zaraConversationHistory",
+        "QPushButton#zaraPrimaryAction",
+        "QPushButton#zaraPrimaryAction:disabled",
+        "QPushButton#zaraDangerAction",
+        "QScrollBar:vertical",
+    ):
+        assert selector in stylesheet
+    assert "#7C3AED" not in stylesheet.upper()
+    assert "QWidget#zaraMessageContainer" in stylesheet
+    assert "QTextBrowser#zaraMessageBody" in stylesheet
+    assert "QFrame#zaraMessage {\n    background: transparent;\n    border: none;" in stylesheet
+
+
+def test_apply_desktop_theme_installs_palette_and_stylesheet():
+    qt_app = app()
+    original_palette = QPalette(qt_app.palette())
+    original_stylesheet = qt_app.styleSheet()
+
+    try:
+        palette = apply_desktop_theme(qt_app)
+
+        assert palette.color(QPalette.ColorRole.Window) == QColor(SIGNAL_CABIN_COLORS["ground"])
+        assert qt_app.styleSheet() == desktop_stylesheet()
+        assert_readable(qt_app.palette())
+    finally:
+        qt_app.setPalette(original_palette)
+        qt_app.setStyleSheet(original_stylesheet)
 
 
 def test_chat_widgets_inherit_repaired_text_and_base_colors():

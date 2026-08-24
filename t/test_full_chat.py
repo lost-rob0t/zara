@@ -117,6 +117,38 @@ def test_enter_submits_shift_enter_adds_newline_and_stop_cancels(tmp_path):
         dispose(window)
 
 
+def test_full_chat_exposes_signal_cabin_visual_hierarchy(tmp_path):
+    _, _, _, window = make_window(tmp_path)
+    try:
+        assert window.objectName() == "zaraFullChat"
+        assert window.sidebar.objectName() == "zaraConversationSidebar"
+        assert window.history_list.objectName() == "zaraConversationHistory"
+        assert window.header_frame.objectName() == "zaraConversationHeader"
+        assert window.status_frame.objectName() == "zaraRuntimeRail"
+        assert window.status_lamp.objectName() == "zaraStatusLamp"
+        assert window.status_lamp.property("runtimeState") == "starting"
+        assert window.message_scroll.objectName() == "zaraConversationViewport"
+        assert window.composer_shell.objectName() == "zaraComposerShell"
+        assert window.send_button.objectName() == "zaraPrimaryAction"
+        assert window.stop_button.objectName() == "zaraDangerAction"
+    finally:
+        dispose(window)
+
+
+def test_full_chat_send_action_tracks_meaningful_composer_text(tmp_path):
+    qt_app, _, _, window = make_window(tmp_path)
+    try:
+        assert window.send_button.isEnabled() is False
+        window.composer.setPlainText("route this")
+        qt_app.processEvents()
+        assert window.send_button.isEnabled() is True
+        window.composer.setPlainText("   ")
+        qt_app.processEvents()
+        assert window.send_button.isEnabled() is False
+    finally:
+        dispose(window)
+
+
 def test_fake_streaming_updates_one_message_widget_and_code_copy(tmp_path):
     qt_app, bridge, service, window = make_window(tmp_path)
     try:

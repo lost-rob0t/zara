@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from zara.desktop.state import DesktopStatus, INITIAL_STATUS
+from zara.desktop.theme import refresh_dynamic_style
 
 
 class DesktopStatusWindow(QWidget):
@@ -24,6 +25,7 @@ class DesktopStatusWindow(QWidget):
         self._allow_close = False
         self._status = INITIAL_STATUS
 
+        self.setObjectName("zaraStatusWindow")
         self.setWindowTitle("Zara")
         self.setMinimumWidth(360)
 
@@ -60,9 +62,11 @@ class DesktopStatusWindow(QWidget):
     def set_status(self, status: DesktopStatus) -> None:
         self._status = status
         state_text = status.state.value.replace("-", " ").title()
+        self.status_label.setProperty("runtimeState", status.state.value)
         self.status_label.setText(state_text)
         self.detail_label.setText(status.detail or "Zara is running in the background.")
         self.restart_button.setEnabled(status.state.value != "starting")
+        refresh_dynamic_style(self.status_label)
 
     def show_raised(self) -> None:
         self.show()

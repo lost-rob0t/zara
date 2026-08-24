@@ -1,0 +1,204 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-24T05:55:44Z",
+  "title": "Design System: Zara Desktop — Signal Cabin",
+  "extensions": {
+    "colorMeta": {
+      "ground": {
+        "role": "neutral",
+        "displayName": "Cabin Black",
+        "canonical": "#0A1012",
+        "tonalRamp": ["oklch(15% 0.010 220.2)", "oklch(25% 0.010 220.2)", "oklch(35% 0.010 220.2)", "oklch(45% 0.010 220.2)", "oklch(55% 0.010 220.2)", "oklch(70% 0.010 220.2)", "oklch(85% 0.010 220.2)", "oklch(95% 0.010 220.2)"]
+      },
+      "panel-deep": {
+        "role": "neutral",
+        "displayName": "Recessed Charcoal",
+        "canonical": "#0D1518",
+        "tonalRamp": ["oklch(15% 0.013 223.0)", "oklch(25% 0.013 223.0)", "oklch(35% 0.013 223.0)", "oklch(45% 0.013 223.0)", "oklch(55% 0.013 223.0)", "oklch(70% 0.013 223.0)", "oklch(85% 0.013 223.0)", "oklch(95% 0.013 223.0)"]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Enamel Panel",
+        "canonical": "#111A1E",
+        "tonalRamp": ["oklch(15% 0.015 227.0)", "oklch(25% 0.015 227.0)", "oklch(35% 0.015 227.0)", "oklch(45% 0.015 227.0)", "oklch(55% 0.015 227.0)", "oklch(70% 0.015 227.0)", "oklch(85% 0.015 227.0)", "oklch(95% 0.015 227.0)"]
+      },
+      "panel-lift": {
+        "role": "neutral",
+        "displayName": "Raised Enamel",
+        "canonical": "#172226",
+        "tonalRamp": ["oklch(15% 0.017 222.3)", "oklch(25% 0.017 222.3)", "oklch(35% 0.017 222.3)", "oklch(45% 0.017 222.3)", "oklch(55% 0.017 222.3)", "oklch(70% 0.017 222.3)", "oklch(85% 0.017 222.3)", "oklch(95% 0.017 222.3)"]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Track Line",
+        "canonical": "#2A393E",
+        "tonalRamp": ["oklch(15% 0.022 220.3)", "oklch(25% 0.022 220.3)", "oklch(35% 0.022 220.3)", "oklch(45% 0.022 220.3)", "oklch(55% 0.022 220.3)", "oklch(70% 0.022 220.3)", "oklch(85% 0.022 220.3)", "oklch(95% 0.022 220.3)"]
+      },
+      "line-strong": {
+        "role": "neutral",
+        "displayName": "Route Divider",
+        "canonical": "#3C5358",
+        "tonalRamp": ["oklch(15% 0.029 212.5)", "oklch(25% 0.029 212.5)", "oklch(35% 0.029 212.5)", "oklch(45% 0.029 212.5)", "oklch(55% 0.029 212.5)", "oklch(70% 0.029 212.5)", "oklch(85% 0.029 212.5)", "oklch(95% 0.029 212.5)"]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Warm Ivory",
+        "canonical": "#F2E9D8",
+        "tonalRamp": ["oklch(15% 0.025 83.4)", "oklch(25% 0.025 83.4)", "oklch(35% 0.025 83.4)", "oklch(45% 0.025 83.4)", "oklch(55% 0.025 83.4)", "oklch(70% 0.025 83.4)", "oklch(85% 0.025 83.4)", "oklch(95% 0.025 83.4)"]
+      },
+      "text-muted": {
+        "role": "neutral",
+        "displayName": "Weathered Sage",
+        "canonical": "#A8B7B3",
+        "tonalRamp": ["oklch(15% 0.018 178.1)", "oklch(25% 0.018 178.1)", "oklch(35% 0.018 178.1)", "oklch(45% 0.018 178.1)", "oklch(55% 0.018 178.1)", "oklch(70% 0.018 178.1)", "oklch(85% 0.018 178.1)", "oklch(95% 0.018 178.1)"]
+      },
+      "ready": {
+        "role": "primary",
+        "displayName": "Route Mint",
+        "canonical": "#61D095",
+        "tonalRamp": ["oklch(15% 0.134 157.8)", "oklch(25% 0.134 157.8)", "oklch(35% 0.134 157.8)", "oklch(45% 0.134 157.8)", "oklch(55% 0.134 157.8)", "oklch(70% 0.134 157.8)", "oklch(85% 0.134 157.8)", "oklch(95% 0.134 157.8)"]
+      },
+      "ready-hover": {
+        "role": "primary",
+        "displayName": "Lit Mint",
+        "canonical": "#7ADDA8",
+        "tonalRamp": ["oklch(15% 0.121 158.8)", "oklch(25% 0.121 158.8)", "oklch(35% 0.121 158.8)", "oklch(45% 0.121 158.8)", "oklch(55% 0.121 158.8)", "oklch(70% 0.121 158.8)", "oklch(85% 0.121 158.8)", "oklch(95% 0.121 158.8)"]
+      },
+      "ready-deep": {
+        "role": "primary",
+        "displayName": "Occupied Green",
+        "canonical": "#17382B",
+        "tonalRamp": ["oklch(15% 0.046 165.5)", "oklch(25% 0.046 165.5)", "oklch(35% 0.046 165.5)", "oklch(45% 0.046 165.5)", "oklch(55% 0.046 165.5)", "oklch(70% 0.046 165.5)", "oklch(85% 0.046 165.5)", "oklch(95% 0.046 165.5)"]
+      },
+      "active": {
+        "role": "secondary",
+        "displayName": "Working Amber",
+        "canonical": "#E7B84B",
+        "tonalRamp": ["oklch(15% 0.135 85.2)", "oklch(25% 0.135 85.2)", "oklch(35% 0.135 85.2)", "oklch(45% 0.135 85.2)", "oklch(55% 0.135 85.2)", "oklch(70% 0.135 85.2)", "oklch(85% 0.135 85.2)", "oklch(95% 0.135 85.2)"]
+      },
+      "danger": {
+        "role": "tertiary",
+        "displayName": "Signal Red",
+        "canonical": "#E6544D",
+        "tonalRamp": ["oklch(15% 0.183 26.3)", "oklch(25% 0.183 26.3)", "oklch(35% 0.183 26.3)", "oklch(45% 0.183 26.3)", "oklch(55% 0.183 26.3)", "oklch(70% 0.183 26.3)", "oklch(85% 0.183 26.3)", "oklch(95% 0.183 26.3)"]
+      },
+      "danger-deep": {
+        "role": "tertiary",
+        "displayName": "Stop Well",
+        "canonical": "#562727",
+        "tonalRamp": ["oklch(15% 0.070 21.5)", "oklch(25% 0.070 21.5)", "oklch(35% 0.070 21.5)", "oklch(45% 0.070 21.5)", "oklch(55% 0.070 21.5)", "oklch(70% 0.070 21.5)", "oklch(85% 0.070 21.5)", "oklch(95% 0.070 21.5)"]
+      }
+    },
+    "typographyMeta": {
+      "title": {"displayName": "Cabin Title", "purpose": "Conversation and window titles."},
+      "brand": {"displayName": "Equipment Label", "purpose": "The compact uppercase ZARA mark."},
+      "body": {"displayName": "Conversation", "purpose": "Messages, detail, placeholders, and supporting text."},
+      "control": {"displayName": "Command", "purpose": "Buttons and interactive labels."},
+      "telemetry": {"displayName": "Route Telemetry", "purpose": "Runtime state, message role, and lifecycle status."}
+    },
+    "shadows": [],
+    "motion": [],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Decisive Send and New chat actions in Route Mint.",
+      "html": "<button class=\"ds-btn-primary\">Send</button>",
+      "css": ".ds-btn-primary { min-height: 34px; padding: 0 13px; color: #0A1012; background: #61D095; border: 1px solid #61D095; border-radius: 9px; font: 600 14px \"Adwaita Sans\", sans-serif; } .ds-btn-primary:hover { background: #7ADDA8; border-color: #7ADDA8; } .ds-btn-primary:focus-visible { outline: 2px solid #F2E9D8; outline-offset: 2px; } .ds-btn-primary:active { background: #61D095; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Supporting commands held inside the charcoal control hierarchy.",
+      "html": "<button class=\"ds-btn-secondary\">Diagnostics</button>",
+      "css": ".ds-btn-secondary { min-height: 34px; padding: 0 13px; color: #F2E9D8; background: #172226; border: 1px solid #3C5358; border-radius: 9px; font: 600 14px \"Adwaita Sans\", sans-serif; } .ds-btn-secondary:hover { background: #2A393E; } .ds-btn-secondary:focus-visible { outline: none; border-color: #61D095; } .ds-btn-secondary:active { background: #111A1E; }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Stop action reserved for interruption and failure semantics.",
+      "html": "<button class=\"ds-btn-danger\">Stop</button>",
+      "css": ".ds-btn-danger { min-height: 34px; padding: 0 13px; color: #E6544D; background: transparent; border: 1px solid #E6544D; border-radius: 9px; font: 600 14px \"Adwaita Sans\", sans-serif; } .ds-btn-danger:hover { color: #F2E9D8; background: #562727; } .ds-btn-danger:focus-visible { outline: none; border-color: #61D095; } .ds-btn-danger:active { background: #562727; }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Recessed search or text input with a border-only focus signal.",
+      "html": "<input class=\"ds-input-field\" placeholder=\"Search chats\" />",
+      "css": ".ds-input-field { min-height: 34px; padding: 9px 11px; color: #F2E9D8; background: #0D1518; border: 1px solid #2A393E; border-radius: 10px; font: 400 14px \"Adwaita Sans\", sans-serif; } .ds-input-field::placeholder { color: #A8B7B3; } .ds-input-field:hover { border-color: #3C5358; } .ds-input-field:focus-visible { outline: none; border-color: #61D095; }"
+    },
+    {
+      "name": "Runtime Rail",
+      "kind": "custom",
+      "refersTo": "runtime-rail",
+      "description": "The top status instrument shared by Quick Copilot and Full Chat.",
+      "html": "<div class=\"ds-runtime-rail\"><span class=\"ds-runtime-lamp\"></span><strong class=\"ds-runtime-state\">Ready</strong><span class=\"ds-runtime-detail\">Same trace · ready</span></div>",
+      "css": ".ds-runtime-rail { display: flex; align-items: center; gap: 10px; padding: 8px 12px; color: #F2E9D8; background: #111A1E; border: 1px solid #2A393E; border-radius: 10px; font: 400 14px \"Adwaita Sans\", sans-serif; } .ds-runtime-rail:hover { border-color: #3C5358; } .ds-runtime-lamp { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 4px; background: #61D095; } .ds-runtime-state { color: #61D095; font: 700 11px \"Hack Nerd Font Mono\", monospace; letter-spacing: 1px; } .ds-runtime-detail { color: #A8B7B3; }"
+    },
+    {
+      "name": "Composer Shell",
+      "kind": "custom",
+      "refersTo": "composer-shell",
+      "description": "The grounded control bed that keeps composition attached to the route.",
+      "html": "<div class=\"ds-composer-shell\"><textarea class=\"ds-composer-input\" placeholder=\"Message Zara…\"></textarea><div class=\"ds-composer-actions\"><button>Send</button><button>Stop</button></div></div>",
+      "css": ".ds-composer-shell { display: flex; gap: 8px; padding: 8px; color: #F2E9D8; background: #172226; border: 1px solid #3C5358; border-radius: 15px; font: 400 14px \"Adwaita Sans\", sans-serif; } .ds-composer-shell:focus-within { border-color: #61D095; } .ds-composer-input { flex: 1; min-height: 70px; resize: none; color: #F2E9D8; background: transparent; border: none; padding: 7px 8px; font: inherit; } .ds-composer-input::placeholder { color: #A8B7B3; } .ds-composer-input:focus-visible { outline: none; } .ds-composer-actions { display: flex; flex-direction: column; gap: 8px; } .ds-composer-actions button { min-height: 34px; padding: 0 13px; color: #F2E9D8; background: #172226; border: 1px solid #3C5358; border-radius: 9px; font: 600 14px \"Adwaita Sans\", sans-serif; } .ds-composer-actions button:hover { background: #2A393E; } .ds-composer-actions button:focus-visible { outline: none; border-color: #61D095; }"
+    },
+    {
+      "name": "Route Transcript",
+      "kind": "custom",
+      "refersTo": "message-route",
+      "description": "Continuous message sequence with a shared spine and turn-level track lines.",
+      "html": "<div class=\"ds-route\"><article class=\"ds-route-message ds-route-user\"><div class=\"ds-route-meta\">You</div><p>Carry this exact conversation into Full Chat.</p></article><article class=\"ds-route-message\"><div class=\"ds-route-meta\">Zara</div><p>Same conversation, same runtime state.</p></article></div>",
+      "css": ".ds-route { color: #F2E9D8; background: #0A1012; border-left: 1px solid #3C5358; padding-left: 10px; font: 400 14px \"Adwaita Sans\", sans-serif; } .ds-route-message { padding: 9px 5px 11px 12px; border-top: 1px solid #2A393E; } .ds-route-message:hover { background: #0D1518; } .ds-route-user { border-top-color: #61D095; } .ds-route-meta { color: #A8B7B3; font: 700 11px \"Hack Nerd Font Mono\", monospace; letter-spacing: 1px; } .ds-route-user .ds-route-meta { color: #61D095; } .ds-route-message p { margin: 8px 0 0; }"
+    },
+    {
+      "name": "Conversation History Item",
+      "kind": "nav",
+      "refersTo": "input-field",
+      "description": "A quiet route selector that reveals depth only on hover or selection.",
+      "html": "<nav class=\"ds-history\"><button>Earlier route</button><button class=\"ds-history-current\">Signal Cabin handoff</button></nav>",
+      "css": ".ds-history { display: grid; gap: 4px; width: 208px; padding: 4px 0; background: #0D1518; } .ds-history button { padding: 10px 12px; color: #A8B7B3; background: transparent; border: none; border-radius: 9px; text-align: left; font: 400 14px \"Adwaita Sans\", sans-serif; } .ds-history button:hover { color: #F2E9D8; background: #111A1E; } .ds-history button:focus-visible { outline: 1px solid #61D095; } .ds-history button:active, .ds-history .ds-history-current { color: #F2E9D8; background: #17382B; }"
+    },
+    {
+      "name": "Error Signal",
+      "kind": "custom",
+      "refersTo": "error-panel",
+      "description": "Contained runtime or message failure feedback in the stop palette.",
+      "html": "<div class=\"ds-error-signal\" role=\"alert\">Runtime command failed</div>",
+      "css": ".ds-error-signal { padding: 9px 11px; color: #F2E9D8; background: #562727; border: 1px solid #E6544D; border-radius: 9px; font: 400 14px \"Adwaita Sans\", sans-serif; } .ds-error-signal:hover { border-color: #F2E9D8; } .ds-error-signal:focus-visible { outline: 2px solid #61D095; outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Signal Cabin",
+    "overview": "Signal Cabin treats Zara as an operational conversation instrument: charcoal enamel grounds the workspace, warm ivory carries the exchange, and small illuminated signals report runtime truth. The atmosphere is calm, exact, and native to a Linux desktop rather than theatrical or ornamental.\n\nOne conversation follows one visible route from Quick Copilot into Full Chat. Status anchors the top, the transcript owns the field, and the composer forms a grounded control bed; the system explicitly rejects generic AI-card chrome, decorative gradients, and fabricated access cues.",
+    "keyCharacteristics": [
+      "Continuous route-divider transcript instead of message cards.",
+      "Compact status rails with restrained, fixed signal semantics.",
+      "The same material and state language at Quick and Full working scales.",
+      "Native Qt density, keyboard focus, and honest runtime copy."
+    ],
+    "rules": [
+      {"name": "The Signal Semantics Rule", "body": "Mint means ready or complete, amber means work in progress, and red means stop or failure; these meanings never drift between surfaces.", "section": "colors"},
+      {"name": "The Three-Gauge Rule", "body": "Narrow type names the instrument, Adwaita carries human language, and mono reports machine state; do not swap those roles for novelty.", "section": "typography"},
+      {"name": "The Tonal Depth Rule", "body": "A surface earns depth through charcoal tone and a precise border, never through blur, glow, glass, or drop shadow.", "section": "elevation"}
+    ],
+    "dos": [
+      "Do keep Quick Copilot and Full Chat visibly made from the same materials, tokens, and route grammar.",
+      "Do reserve saturated color for runtime meaning, selection, focus, and decisive actions.",
+      "Do keep the conversation field open and continuous, with role and state attached to the route.",
+      "Do preserve native Qt controls, keyboard behavior, readable contrast, and explicit runtime wording."
+    ],
+    "donts": [
+      "Don't turn messages, tools, or status into a stack of generic rounded AI cards.",
+      "Don't add gradients, glass, ambient glow, drop shadows, or decorative raster texture.",
+      "Don't use mint, amber, or red outside their fixed operational meanings.",
+      "Don't imply screen, clipboard, file, or application access through decoration or unsupported copy."
+    ]
+  }
+}
