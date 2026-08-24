@@ -34,7 +34,7 @@
 
 * Acceptance-to-test map
 | Acceptance | Deterministic test |
-|-
+|------------+--------------------|
 | Required tool pauses before effect | Production =LangGraphRuntimeBackend= with deterministic tool and fake LLM; assert waiting event and zero calls |
 | Approve resumes once | Submit =ApproveTool= through =RuntimeHost=; assert one effect and queued/waiting/responded/started/completed sequence |
 | Reject is coherent | Submit =RejectTool=; assert zero effects, cancellation terminal and final model response |

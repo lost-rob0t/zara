@@ -31,6 +31,9 @@
 
 ** Realize / TDD
 - Authorized. Next action is the focused failing production-backend approval lifecycle test.
+- RED 1 :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c pytest -q t/test_runtime_tool_approval.py::test_required_tool_waits_for_runtime_approval_and_runs_once=
+- RED 1 result :: one failed in 6.24s. The production graph executed the protected tool directly; =recorder.waiting.wait(timeout=3)= was false because no =ToolWaitingForUser= event or resumable approval state existed.
+- RED 1 scope :: the test uses =RuntimeHost=, =LangGraphRuntimeBackend=, =AgentManager=, the canonical registry and a real deterministic LangChain tool. No approval behavior is mocked.
 
 ** Evaluate
 - Pending realization.
