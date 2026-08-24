@@ -62,3 +62,57 @@
 
 ** Outcome
 - Active. Control-plane gate released; #134 may proceed.
+
+* Iteration 2 - Auto-RAGE evidence continuation
+** Analyze completed
+- Research artifact :: =rage/134-daemon-release-research.org=, committed as =05b339b9f27b620a69e3b67d53e6e3ba45a851ca=.
+- Live GitHub inspection covered roadmap #1, parent epic #127, complete open issue queue, all open PRs, PR reviews/threads/comments/checks, recent merges, and the unfinished #190 transaction.
+- Formal daemon dependencies #130/#131/#132/#133 were closed when #134 was consumed, but deeper acceptance-level research disproved readiness for the final release gate.
+- Completed #132 says an authenticated daemon client can receive partial/final transcript events. Current =zara/streaming_stt.py= produces =SpeechStarted=, =PartialTranscript=, =SpeechEnded=, and =FinalTranscript=, but =zara/voice_runtime.py::RuntimeVoiceIngress._run= discards every event except =FinalTranscript= and converts that final text directly into =SubmitTurn=. Current =zara/protocol.py= and =zara/protocol_runtime.py= have no STT transcript event mapping. This falsifies the completed #132 visible-transcript acceptance contract.
+- Streamed assistant text has =AssistantDelta= runtime/protocol vocabulary, but the real provider-stream producer is still owned by open #28. Code search found no actual provider-path =model_streaming= producer; a synthetic event would only prove transport framing.
+- Phrase-sized streaming TTS remains owned by open #29; #132 can carry output chunks but that does not prove the production phrase pipeline begins playback before the response completes.
+- Provider correctness #17 is reopened and is upstream of #28; #30 warm/resource work and #31 full-duplex soak/latency gate are also open. Roadmap #1 and epic #127 explicitly reuse this chain rather than assigning it to #134.
+- Runtime commands already define =ApproveTool= and =RejectTool=, and runtime events define tool/user-input lifecycle, but current ZARA/1 exposes neither the approval commands nor tool/approval events through =ZaraClient=. No existing focused current-daemon issue was found to own that gap.
+- Existing transport security/bounds are directionally sound and should be preserved: strict JSON, finite message/queue/cache bounds, nonblocking per-route behavior, =ROUTER_MANDATORY=, CURVE/ZAP principal authority, and reconnect/idempotency contracts. Upstream libzmq/PyZMQ/Python JSON research supports attacking these in integration tests rather than redesigning them without evidence.
+- Execution-environment limitation :: the current worker cannot resolve GitHub through ordinary =git= in the container, so no trustworthy local checkout exists for the mandatory Nix/local gate. Remote GitHub Actions remain useful exact-head evidence but do not authorize pretending the local gate ran.
+
+** Design completed
+- Design artifact :: =rage/134-daemon-release-design.org=, committed as =1356c43680a3ea6313476ec89f67ad8a4e36af10=.
+- #134 remains a composition/proof gate, not a mega-implementation branch.
+- Required behavior stays with its existing owner: #17 -> #28 -> #29 -> #30 -> #31; the #132 transcript regression returns to #132; one focused blocker must own current daemon tool/search/approval transport.
+- Final release design keeps one non-interactive =scripts/test-daemon-release.sh= after prerequisites exist. It composes parser/fuzz, auth, isolation, reconnect, voice, real streamed text/TTS, barge-in, tool approval, deterministic duplex/latency, and release-summary gates without manufacturing missing production events.
+- Every one of #134's 17 minimum Voice-replacement capabilities is mapped to a concrete owning contract and verification strategy in the design artifact.
+- Fixed-seed/property-like boundary generation is preferred for protocol fuzz unless research later justifies a new dependency; no test may label a transport-only synthetic event as production end-to-end parity.
+
+** Adversarial review completed
+- False-green attack :: rejected synthetic =AssistantDelta= / audio / transcript injection as final parity proof when the production producer path is absent.
+- Scope-smuggling attack :: rejected implementing #17/#28/#29/#30/#31 behavior inside #134 simply to make the final gate green.
+- Stale-work attack :: final gate must deliberately deliver late text/audio/tool events after cancel/reconnect and prove generation/turn correlation rejects them.
+- Slow-client attack :: final gate must prove route-local backpressure/eviction does not stall a healthy authenticated principal and all bounded structures return toward baseline.
+- Reconnect-storm attack :: #31/#134 lifecycle evidence must inspect task/thread/process/descriptor/queue growth rather than merely observing successful reconnect calls.
+- Approval-isolation attack :: approval response must bind authenticated principal plus request/session/turn/tool identity; another principal must neither observe nor answer it.
+- Issue-state attack :: closed GitHub issues are planning evidence only. Release authority always comes from executed behavior against the exact candidate.
+- CI-staleness attack :: Actions run #490 succeeded at prior #190 head =8797c0f7da7fe4295979f6107d0de2e3b24ed828=, but that run predates these research/design commits and contains no #134 release matrix; it cannot authorize merge or canonicality.
+
+** Decision gate completed
+- Decision :: =REJECT realization at current repository state=.
+- Evidence :: a formal completed prerequisite (#132) has a falsified acceptance criterion; #17/#28/#29/#30/#31 still own required release behavior; current authenticated ZARA/1 lacks the explicit tool/approval interaction required by #134; and mandatory local-gate execution is unavailable in this worker environment.
+- Rationale :: beginning TDD for a final release script now would either produce intentional failures against known missing contracts or tempt the worker to mock around them. Both outcomes are inferior to reconciling the true blockers with their owning issues.
+- Realize authorization :: =DENIED= for #134 Iteration 2. ADADR explicitly permits rejection when research falsifies the inherited design/readiness assumption.
+
+** Realize / TDD
+- Not started by design. No production behavior or release script was implemented after the decision gate rejected realization.
+- No assertions were weakened, no missing capability was marked xfail/optional, and no synthetic fixture was promoted to end-to-end release authority.
+
+** Evaluate
+- Focused/full local gates :: not run; no trustworthy local checkout is available because ordinary GitHub DNS resolution is inaccessible in the execution container. This is recorded as missing evidence, not PASS.
+- Existing exact-head evidence before the new research/design commits :: CI run #490 passed for =8797c0f7da7fe4295979f6107d0de2e3b24ed828=. That evidence covers existing repository gates only.
+- #134 release gate :: not executable because the decision gate rejected realization before TDD.
+- Merge authorization :: denied. PR #190 remains draft/unmerged and standalone behavior remains retained.
+
+** Outcome authorization
+- Reopen #132 with concrete acceptance-regression evidence.
+- Create a focused blocker for authenticated ZARA/1 tool lifecycle + explicit approval interaction, reusing existing =ApproveTool=/=RejectTool= and runtime event contracts instead of inventing a second tool system.
+- Reconcile #134, #127, roadmap #1, and PR #190 with the discovered blockers.
+- Preserve this transaction and all failed/readiness evidence; do not rewrite Iteration 1 or the rejected Iteration 2.
+- Do not consume a new issue by manually approximating the canonical RAGE initializer. A later worker with an accessible checkout must use the repository initializer for the next newly consumed issue where available.
