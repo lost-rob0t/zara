@@ -64,3 +64,9 @@
 
 ** Outcome
 - In progress.
+- Final candidate :: =394a0ede032b0528b9eb727512666db9a822e09f=.
+- Exact-head local gate :: =scripts/test-all.sh= passed 10/10 phases with 31 focused approval tests and 1064 full pytest tests; =nix flake check --show-trace= passed all 10 checks; =nix build --print-out-paths= produced =/nix/store/ccxhgycp02z2rpx6f16x4mb7z3w2wfnx-zarathushtra-full=.
+- Exact-head GitHub Actions :: run =32730453589= passed =test= in 9m08s, Ubuntu shared mic in 48s and Arch shared mic in 32s.
+- Pull request :: #211, =CLEAN= and =MERGEABLE= immediately before merge.
+- Merge commit :: =ddc30c737ee7eff030dd424949a490f5c6cf52dd=.
+- Consumed issue outcome :: #209 closed by PR #211. Its transport-neutral runtime prerequisite is complete; #191 is now the next dependency-satisfied P0 and must be consumed only in a fresh RAGE iteration.
