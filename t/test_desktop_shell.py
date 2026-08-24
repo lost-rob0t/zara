@@ -45,6 +45,7 @@ class FakeAction:
 
 class FakeTray(QObject):
     toggle_requested = Signal()
+    settings_requested = Signal()
     restart_requested = Signal()
     diagnostics_requested = Signal()
     quit_requested = Signal()
@@ -69,6 +70,7 @@ class FakeTray(QObject):
 class FakeWindow(QObject):
     restart_requested = Signal()
     diagnostics_requested = Signal()
+    settings_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -86,6 +88,26 @@ class FakeWindow(QObject):
 
     def toggle_visibility(self) -> None:
         self.toggle_count += 1
+
+    def prepare_for_quit(self) -> None:
+        self.allow_close = True
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeSettings(QObject):
+    theme_preview_requested = Signal(str)
+    restart_requested = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.show_count = 0
+        self.allow_close = False
+        self.closed = False
+
+    def show_raised(self) -> None:
+        self.show_count += 1
 
     def prepare_for_quit(self) -> None:
         self.allow_close = True
@@ -141,7 +163,7 @@ class NullBackend(RuntimeBackend):
     pass
 
 
-def make_controller(*, tray_available=True):
+def make_controller(*, tray_available=True, settings_factory=None):
     qt_app = app()
     host = FakeHost()
     bridge = FakeBridge()
@@ -153,8 +175,29 @@ def make_controller(*, tray_available=True):
         bridge,  # type: ignore[arg-type]
         tray_factory=lambda: tray,  # type: ignore[arg-type]
         window_factory=lambda: window,  # type: ignore[arg-type]
+        settings_factory=settings_factory,
     )
     return qt_app, controller, host, bridge, tray, window
+
+
+def test_settings_is_one_reused_surface_with_live_theme_and_restart_hooks():
+    settings = FakeSettings()
+    qt_app, controller, _, bridge, tray, window = make_controller(
+        settings_factory=lambda: settings
+    )
+    try:
+        tray.settings_requested.emit()
+        window.settings_requested.emit()
+        assert controller.settings_window is settings
+        assert settings.show_count == 2
+
+        settings.theme_preview_requested.emit("nord")
+        assert qt_app.property("zaraTheme") == "nord"
+
+        settings.restart_requested.emit()
+        assert isinstance(bridge.commands[-1], RestartRuntime)
+    finally:
+        dispose_controller(controller)
 
 
 def dispose_controller(controller: DesktopController) -> None:
@@ -185,8 +228,9 @@ def test_status_window_close_hides_but_explicit_quit_closes():
 
 def test_tray_actions_and_left_click_emit_shell_requests():
     tray = ZaraTray()
-    seen = {"toggle": 0, "restart": 0, "diagnostics": 0, "quit": 0}
+    seen = {"toggle": 0, "settings": 0, "restart": 0, "diagnostics": 0, "quit": 0}
     tray.toggle_requested.connect(lambda: seen.__setitem__("toggle", seen["toggle"] + 1))
+    tray.settings_requested.connect(lambda: seen.__setitem__("settings", seen["settings"] + 1))
     tray.restart_requested.connect(lambda: seen.__setitem__("restart", seen["restart"] + 1))
     tray.diagnostics_requested.connect(
         lambda: seen.__setitem__("diagnostics", seen["diagnostics"] + 1)
@@ -194,12 +238,13 @@ def test_tray_actions_and_left_click_emit_shell_requests():
     tray.quit_requested.connect(lambda: seen.__setitem__("quit", seen["quit"] + 1))
 
     tray.open_action.trigger()
+    tray.settings_action.trigger()
     tray.restart_action.trigger()
     tray.diagnostics_action.trigger()
     tray.quit_action.trigger()
     tray._on_activated(QSystemTrayIcon.ActivationReason.Trigger)
 
-    assert seen == {"toggle": 2, "restart": 1, "diagnostics": 1, "quit": 1}
+    assert seen == {"toggle": 2, "settings": 1, "restart": 1, "diagnostics": 1, "quit": 1}
 
     status = DesktopStatus(DesktopRuntimeState.ERROR, "provider failed")
     tray.set_status(status)

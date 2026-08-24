@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from zara.desktop.chat_widgets import ChatComposer, MessageWidget
+from zara.desktop.chat_widgets import ChatComposer, ComposerActionButton, MessageWidget
 from zara.desktop.conversation import ConversationService, ConversationUpdate
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.state import DesktopStatus, INITIAL_STATUS
@@ -96,6 +96,7 @@ class QuickCopilotWindow(QWidget):
 
     expand_requested = Signal(str)
     conversation_changed = Signal(object)
+    settings_requested = Signal()
 
     def __init__(
         self,
@@ -137,6 +138,8 @@ class QuickCopilotWindow(QWidget):
         self.new_chat_button.setObjectName("zaraSecondaryAction")
         self.expand_button = QPushButton("Full chat")
         self.expand_button.setObjectName("zaraSecondaryAction")
+        self.settings_button = QPushButton("Settings")
+        self.settings_button.setObjectName("zaraSecondaryAction")
 
         self.header_frame = QFrame()
         self.header_frame.setObjectName("zaraQuickHeader")
@@ -149,6 +152,7 @@ class QuickCopilotWindow(QWidget):
         header.addWidget(self.provider_label)
         header.addWidget(self.new_chat_button)
         header.addWidget(self.expand_button)
+        header.addWidget(self.settings_button)
 
         self.runtime_status_label = QLabel()
         self.runtime_status_label.setObjectName("zaraQuickRuntimeStatus")
@@ -190,14 +194,11 @@ class QuickCopilotWindow(QWidget):
         self.composer.setMinimumHeight(48)
         self.composer.setMaximumHeight(80)
         self.setFocusProxy(self.composer)
-        self.send_button = QPushButton("Send")
-        self.send_button.setObjectName("zaraPrimaryAction")
-        self.stop_button = QPushButton("Stop")
-        self.stop_button.setObjectName("zaraDangerAction")
+        self.action_button = ComposerActionButton()
+        self.action_button.setEnabled(False)
 
         buttons = QVBoxLayout()
-        buttons.addWidget(self.send_button)
-        buttons.addWidget(self.stop_button)
+        buttons.addWidget(self.action_button)
         buttons.addStretch(1)
 
         self.composer_shell = QFrame()
@@ -221,10 +222,10 @@ class QuickCopilotWindow(QWidget):
         self.composer.submit_requested.connect(self.submit_current_text)
         self.composer.textChanged.connect(self._sync_controls)
         self.composer.escape_requested.connect(self.hide)
-        self.send_button.clicked.connect(self.submit_current_text)
-        self.stop_button.clicked.connect(self.cancel_active_turn)
+        self.action_button.clicked.connect(self._activate_composer_action)
         self.new_chat_button.clicked.connect(self.new_chat)
         self.expand_button.clicked.connect(self._request_expand)
+        self.settings_button.clicked.connect(self.settings_requested.emit)
 
         self.set_status(INITIAL_STATUS)
         self.sync_from_shared_state()
@@ -410,6 +411,7 @@ class QuickCopilotWindow(QWidget):
             item = self.message_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.setParent(None)
                 widget.deleteLater()
         self._message_widgets.clear()
         for message in messages:
@@ -431,8 +433,17 @@ class QuickCopilotWindow(QWidget):
         has_text = bool(self.composer.toPlainText().strip())
         if not active:
             state.cancel_request_id = None
-        self.send_button.setEnabled(has_text and not pending and not active)
-        self.stop_button.setEnabled(active and state.cancel_request_id is None)
+        self.action_button.set_action_mode("stop" if active else "send")
+        self.action_button.setEnabled(
+            active and state.cancel_request_id is None
+            or has_text and not pending and not active
+        )
+
+    def _activate_composer_action(self) -> None:
+        if self.action_button.action_mode == "stop":
+            self.cancel_active_turn()
+            return
+        self.submit_current_text()
 
     def _clear_owned_cancellation(self) -> None:
         if self._cancel_conversation_id is not None:

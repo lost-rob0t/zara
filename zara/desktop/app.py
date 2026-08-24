@@ -8,6 +8,7 @@ from typing import Optional, Sequence
 from PySide6.QtWidgets import QApplication
 
 from zara.client import InProcessZaraClient, ZaraClient
+from zara.config import ZaraConfig, get_config
 from zara.desktop.controller import DesktopController
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.theme import apply_desktop_theme
@@ -21,6 +22,7 @@ def create_application(
     *,
     client: Optional[ZaraClient] = None,
     host: Optional[RuntimeHost] = None,
+    config: Optional[ZaraConfig] = None,
 ) -> tuple[QApplication, DesktopController]:
     """Create or reuse the one canonical Zara QApplication/controller."""
     if client is not None and host is not None:
@@ -37,7 +39,8 @@ def create_application(
     app.setApplicationName("Zara")
     app.setOrganizationName("Zara")
     app.setQuitOnLastWindowClosed(False)
-    apply_desktop_theme(app)
+    active_config = config or get_config()
+    apply_desktop_theme(app, str(active_config.get("desktop", "theme", "signal-cabin")))
 
     existing = getattr(app, _CONTROLLER_ATTR, None)
     if existing is not None:
@@ -60,16 +63,18 @@ def start_desktop(
     *,
     client: Optional[ZaraClient] = None,
     host: Optional[RuntimeHost] = None,
+    config: Optional[ZaraConfig] = None,
     summon_quick: bool = True,
 ) -> tuple[QApplication, DesktopController]:
     """Start the canonical desktop client and expose a visible UI surface."""
     # Preserve the historical host-only call shape when no explicit client is
     # supplied. This keeps compatibility embedders/mocks valid while the normal
     # path is now ZaraClient-owned.
+    config_args = {"config": config} if config is not None else {}
     if client is None:
-        app, controller = create_application(argv, host=host)
+        app, controller = create_application(argv, host=host, **config_args)
     else:
-        app, controller = create_application(argv, client=client, host=host)
+        app, controller = create_application(argv, client=client, host=host, **config_args)
     controller.start()
     if summon_quick:
         controller.show_quick_copilot()

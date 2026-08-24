@@ -27,6 +27,10 @@ else:
 
 DEFAULT_CONFIG_TOML = """# Zarathushtra Configuration
 
+[desktop]
+# Native desktop appearance. Unknown values fall back to Signal Cabin.
+theme = "signal-cabin"
+
 [wake]
 # Wake word detection settings
 model_path = "~/.zarathushtra/models/wake.onnx"
@@ -280,6 +284,13 @@ class ZaraConfig:
         return config
 
     def _validate_config(self, config: Dict[str, Any]) -> None:
+        desktop_config = config.get("desktop", {})
+        if not isinstance(desktop_config, dict):
+            raise ConfigError("Invalid [desktop] configuration: expected a TOML table")
+        desktop_theme = desktop_config.get("theme", "signal-cabin")
+        if not isinstance(desktop_theme, str):
+            raise ConfigError("desktop.theme must be a string")
+
         tts_config = config.get("tts", {})
         if not isinstance(tts_config, dict):
             raise ConfigError("Invalid [tts] configuration: expected a TOML table")

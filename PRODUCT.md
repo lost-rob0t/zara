@@ -29,6 +29,8 @@ Quick Copilot and Full Chat are two native projections of the same conversation 
 
 - Preserve exact-conversation handoff from Quick Copilot to Full Chat.
 - Preserve Enter to send, Shift+Enter for a newline, Escape to hide Quick Copilot, streaming updates, cancellation, history, provider information, runtime state, and error recovery.
+- Offer complete selectable desktop themes, including the user's Dotfiles Outrun palette, Nord, Dracula, and a neutral conversational theme, without fragmenting component behavior.
+- Let users tune canonical TOML settings, edit approved Prolog source with syntax highlighting, and add every supported user fact through guided controls that write to the real XDG `config.pl`.
 - Keep the desktop UI native; do not replace it with a browser shell or create a second runtime, provider, database, or tool configuration path.
 - Never imply access to screen, clipboard, files, or applications without explicit user action.
 - Unavailable capabilities remain absent or disabled rather than fabricated.

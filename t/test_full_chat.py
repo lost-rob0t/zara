@@ -11,6 +11,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from zara.database import DatabaseManager
+from zara.desktop.chat_widgets import MessageWidget
 from zara.desktop.conversation import ConversationService, ConversationStore, MessageRole, MessageStatus
 from zara.desktop.windows import FullChatWindow
 from zara.runtime import events
@@ -77,15 +78,17 @@ def test_enter_submits_shift_enter_adds_newline_and_stop_cancels(tmp_path):
         assert submit.text == "hello"
         assert submit.conversation_id == window.current_conversation_id
         assert window.composer.toPlainText() == ""
-        assert window.send_button.isEnabled() is False
+        assert window.action_button.isEnabled() is False
+        assert window.action_button.action_mode == "send"
 
         bridge.command_completed.emit(
             CommandReceipt(request_id=submit.request_id, turn_id="turn-qt")
         )
         qt_app.processEvents()
-        assert window.stop_button.isEnabled() is True
+        assert window.action_button.isEnabled() is True
+        assert window.action_button.action_mode == "stop"
 
-        window.stop_button.click()
+        window.action_button.click()
         qt_app.processEvents()
         assert len(bridge.commands) == 2
         assert isinstance(bridge.commands[1], CancelTurn)
@@ -129,8 +132,29 @@ def test_full_chat_exposes_signal_cabin_visual_hierarchy(tmp_path):
         assert window.status_lamp.property("runtimeState") == "starting"
         assert window.message_scroll.objectName() == "zaraConversationViewport"
         assert window.composer_shell.objectName() == "zaraComposerShell"
-        assert window.send_button.objectName() == "zaraPrimaryAction"
-        assert window.stop_button.objectName() == "zaraDangerAction"
+        assert window.action_button.objectName() == "zaraComposerAction"
+        assert window.action_button.action_mode == "send"
+        assert window.action_button.accessibleName() == "Send message"
+    finally:
+        dispose(window)
+
+
+def test_reloading_current_conversation_does_not_leave_duplicate_message_widgets(tmp_path):
+    qt_app, _, service, window = make_window(tmp_path)
+    try:
+        conversation_id = window.current_conversation_id
+        service.add_user_message(
+            conversation_id,
+            "one visible message",
+            request_id="duplicate-check",
+        )
+        window.load_conversation(conversation_id)
+        window.load_conversation(conversation_id)
+        qt_app.processEvents()
+
+        visible = window.findChildren(MessageWidget)
+        assert len(visible) == 1
+        assert visible[0].message.content == "one visible message"
     finally:
         dispose(window)
 
@@ -138,13 +162,14 @@ def test_full_chat_exposes_signal_cabin_visual_hierarchy(tmp_path):
 def test_full_chat_send_action_tracks_meaningful_composer_text(tmp_path):
     qt_app, _, _, window = make_window(tmp_path)
     try:
-        assert window.send_button.isEnabled() is False
+        assert window.action_button.isEnabled() is False
         window.composer.setPlainText("route this")
         qt_app.processEvents()
-        assert window.send_button.isEnabled() is True
+        assert window.action_button.isEnabled() is True
+        assert window.action_button.action_mode == "send"
         window.composer.setPlainText("   ")
         qt_app.processEvents()
-        assert window.send_button.isEnabled() is False
+        assert window.action_button.isEnabled() is False
     finally:
         dispose(window)
 
@@ -160,6 +185,8 @@ def test_fake_streaming_updates_one_message_widget_and_code_copy(tmp_path):
             CommandReceipt(request_id=submit.request_id, turn_id="turn-stream")
         )
         qt_app.processEvents()
+        assert window.action_button.action_mode == "stop"
+        assert window.action_button.isEnabled() is True
 
         emit(
             bridge,
@@ -201,6 +228,8 @@ def test_fake_streaming_updates_one_message_widget_and_code_copy(tmp_path):
         widget_after = window.message_widgets[assistant.id]
         assert widget_after is widget_before
         assert assistant.status is MessageStatus.COMPLETE
+        assert window.action_button.action_mode == "send"
+        assert window.action_button.isEnabled() is False
         assert assistant.content.endswith('print("hi")\n```')
         assert widget_after.code_blocks == ['print("hi")\n']
 

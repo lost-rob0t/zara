@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from zara.desktop.chat_widgets import ChatComposer, MessageWidget
+from zara.desktop.chat_widgets import ChatComposer, ComposerActionButton, MessageWidget
 from zara.desktop.conversation import ConversationService, ConversationUpdate
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.state import DesktopStatus, INITIAL_STATUS
@@ -34,6 +34,7 @@ class FullChatWindow(QWidget):
 
     restart_requested = Signal()
     diagnostics_requested = Signal()
+    settings_requested = Signal()
     conversation_changed = Signal(object)
 
     def __init__(
@@ -69,6 +70,8 @@ class FullChatWindow(QWidget):
         self.new_chat_button.setObjectName("zaraPrimaryAction")
         self.rename_button = QPushButton("Rename")
         self.rename_button.setObjectName("zaraSecondaryAction")
+        self.settings_button = QPushButton("Settings")
+        self.settings_button.setObjectName("zaraSecondaryAction")
 
         sidebar_buttons = QHBoxLayout()
         sidebar_buttons.addWidget(self.new_chat_button)
@@ -88,6 +91,7 @@ class FullChatWindow(QWidget):
         sidebar_layout.addWidget(self.search_edit)
         sidebar_layout.addWidget(self.history_list, 1)
         sidebar_layout.addLayout(sidebar_buttons)
+        sidebar_layout.addWidget(self.settings_button)
 
         self.title_label = QLabel("Zara")
         self.title_label.setObjectName("zaraConversationTitle")
@@ -147,15 +151,11 @@ class FullChatWindow(QWidget):
         self.composer.setPlaceholderText("Message Zara…")
         self.composer.setMinimumHeight(70)
         self.composer.setMaximumHeight(130)
-        self.send_button = QPushButton("Send")
-        self.send_button.setObjectName("zaraPrimaryAction")
-        self.stop_button = QPushButton("Stop")
-        self.stop_button.setObjectName("zaraDangerAction")
-        self.stop_button.setEnabled(False)
+        self.action_button = ComposerActionButton()
+        self.action_button.setEnabled(False)
 
         composer_buttons = QVBoxLayout()
-        composer_buttons.addWidget(self.send_button)
-        composer_buttons.addWidget(self.stop_button)
+        composer_buttons.addWidget(self.action_button)
         composer_buttons.addStretch(1)
 
         self.composer_shell = QFrame()
@@ -197,10 +197,10 @@ class FullChatWindow(QWidget):
         self.rename_button.clicked.connect(lambda _checked=False: self.rename_current())
         self.composer.submit_requested.connect(self.submit_current_text)
         self.composer.textChanged.connect(self._sync_controls)
-        self.send_button.clicked.connect(self.submit_current_text)
-        self.stop_button.clicked.connect(self.cancel_active_turn)
+        self.action_button.clicked.connect(self._activate_composer_action)
         self.restart_button.clicked.connect(self.restart_requested.emit)
         self.diagnostics_button.clicked.connect(self.diagnostics_requested.emit)
+        self.settings_button.clicked.connect(self.settings_requested.emit)
 
         if self._manage_runtime_events:
             self.bridge.runtime_event.connect(self._on_runtime_envelope)
@@ -462,6 +462,7 @@ class FullChatWindow(QWidget):
             item = self.message_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.setParent(None)
                 widget.deleteLater()
         self._message_widgets.clear()
         state = self.conversations.get_state(self.current_conversation_id)
@@ -484,8 +485,8 @@ class FullChatWindow(QWidget):
 
     def _sync_controls(self) -> None:
         if self._current_conversation_id is None:
-            self.send_button.setEnabled(False)
-            self.stop_button.setEnabled(False)
+            self.action_button.set_action_mode("send")
+            self.action_button.setEnabled(False)
             return
         state = self.conversations.get_state(self.current_conversation_id)
         pending = self.conversations.has_pending_request(self.current_conversation_id)
@@ -493,8 +494,17 @@ class FullChatWindow(QWidget):
         has_text = bool(self.composer.toPlainText().strip())
         if not active:
             state.cancel_request_id = None
-        self.send_button.setEnabled(has_text and not pending and not active)
-        self.stop_button.setEnabled(active and state.cancel_request_id is None)
+        self.action_button.set_action_mode("stop" if active else "send")
+        self.action_button.setEnabled(
+            active and state.cancel_request_id is None
+            or has_text and not pending and not active
+        )
+
+    def _activate_composer_action(self) -> None:
+        if self.action_button.action_mode == "stop":
+            self.cancel_active_turn()
+            return
+        self.submit_current_text()
 
     def _clear_owned_cancellation(self) -> None:
         if self._cancel_conversation_id is not None:

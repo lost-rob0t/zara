@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QStyle,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
@@ -39,6 +40,35 @@ class ChatComposer(QPlainTextEdit):
             event.accept()
             return
         super().keyPressEvent(event)
+
+
+class ComposerActionButton(QPushButton):
+    """One familiar composer control that becomes Stop during generation."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("zaraComposerAction")
+        self.setIconSize(QSize(17, 17))
+        self.set_action_mode("send")
+
+    @property
+    def action_mode(self) -> str:
+        return str(self.property("actionMode"))
+
+    def set_action_mode(self, mode: str) -> None:
+        if mode not in {"send", "stop"}:
+            raise ValueError(f"unsupported composer action mode: {mode}")
+        self.setProperty("actionMode", mode)
+        if mode == "stop":
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaStop)
+            label = "Stop generating"
+        else:
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp)
+            label = "Send message"
+        self.setIcon(icon)
+        self.setToolTip(label)
+        self.setAccessibleName(label)
+        refresh_dynamic_style(self)
 
 
 class MessageWidget(QFrame):
@@ -107,6 +137,7 @@ class MessageWidget(QFrame):
             item = self.content_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.setParent(None)
                 widget.deleteLater()
         self.code_copy_buttons.clear()
         self.code_blocks.clear()
@@ -208,4 +239,4 @@ class MessageWidget(QFrame):
         }[status]
 
 
-__all__ = ["ChatComposer", "MessageWidget"]
+__all__ = ["ChatComposer", "ComposerActionButton", "MessageWidget"]
