@@ -226,38 +226,37 @@ class RuntimeVoiceIngress:
         if callable(runtime):
             runtime(stream.principal).bus.publish(event)
 
-    def _stream_is_current(self, stream: _VoiceStream) -> bool:
+    def _publish_if_current(
+        self,
+        stream: _VoiceStream,
+        event: events.RuntimeEvent,
+    ) -> bool:
         with self._lock:
-            return self._streams.get(stream.stream_id) is stream
+            if self._streams.get(stream.stream_id) is not stream:
+                return False
+            self._publish(stream, event)
+            return True
 
     def _handle_stt_event(self, stream: _VoiceStream, event: object) -> None:
-        if not self._stream_is_current(stream):
-            return
         common = {
             "conversation_id": stream.conversation_id,
             "stream_id": stream.stream_id,
             "trace_id": stream.trace_id,
         }
         if isinstance(event, SpeechStarted):
-            self._publish(
-                stream,
-                events.VoiceSpeechStarted(
-                    pre_speech_samples=event.pre_speech_samples,
-                    **common,
-                ),
+            visible = events.VoiceSpeechStarted(
+                pre_speech_samples=event.pre_speech_samples,
+                **common,
             )
+            self._publish_if_current(stream, visible)
             return
         if isinstance(event, PartialTranscript):
-            self._publish(
-                stream,
-                events.VoiceTranscriptPartial(text=event.text, **common),
-            )
+            visible = events.VoiceTranscriptPartial(text=event.text, **common)
+            self._publish_if_current(stream, visible)
             return
         if isinstance(event, SpeechEnded):
-            self._publish(
-                stream,
-                events.VoiceSpeechEnded(reason=event.reason, **common),
-            )
+            visible = events.VoiceSpeechEnded(reason=event.reason, **common)
+            self._publish_if_current(stream, visible)
             return
         if isinstance(event, FinalTranscript):
             self._submit_final(stream, event.text, provider=event.provider)
@@ -300,25 +299,25 @@ class RuntimeVoiceIngress:
             if current is not stream or stream.submitted:
                 return
             stream.submitted = True
-        self._publish(
-            stream,
-            events.VoiceTranscriptFinal(
-                conversation_id=stream.conversation_id,
-                stream_id=stream.stream_id,
-                trace_id=stream.trace_id,
-                text=clean,
-                provider=str(provider or ""),
-            ),
-        )
-        request_id = stream.trace_id or uuid.uuid4().hex
-        self.supervisor.submit(
-            stream.principal,
-            SubmitTurn(
-                text=clean,
-                conversation_id=stream.conversation_id,
-                request_id=request_id,
-            ),
-        )
+            self._publish(
+                stream,
+                events.VoiceTranscriptFinal(
+                    conversation_id=stream.conversation_id,
+                    stream_id=stream.stream_id,
+                    trace_id=stream.trace_id,
+                    text=clean,
+                    provider=str(provider or ""),
+                ),
+            )
+            request_id = stream.trace_id or uuid.uuid4().hex
+            self.supervisor.submit(
+                stream.principal,
+                SubmitTurn(
+                    text=clean,
+                    conversation_id=stream.conversation_id,
+                    request_id=request_id,
+                ),
+            )
 
     def close(self, timeout: float = 5.0) -> None:
         self._stop.set()

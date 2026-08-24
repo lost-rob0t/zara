@@ -100,6 +100,8 @@ def runtime_event_to_message(
     event = envelope.event
     message_type: str
     body: dict[str, Any]
+    stream_id = None
+    trace_id = None
 
     if type(event) is events.TurnStarted:
         message_type, body = "turn.started", {}
@@ -121,6 +123,20 @@ def runtime_event_to_message(
             "text": event.text,
             "truncated": event.truncated,
         }
+    elif type(event) is events.VoiceSpeechStarted:
+        message_type, body = "voice.speech.started", {
+            "pre_speech_samples": event.pre_speech_samples,
+        }
+        stream_id, trace_id = event.stream_id, event.trace_id
+    elif type(event) is events.VoiceTranscriptPartial:
+        message_type, body = "voice.transcript.partial", {"text": event.text}
+        stream_id, trace_id = event.stream_id, event.trace_id
+    elif type(event) is events.VoiceSpeechEnded:
+        message_type, body = "voice.speech.ended", {"reason": event.reason}
+        stream_id, trace_id = event.stream_id, event.trace_id
+    elif type(event) is events.VoiceTranscriptFinal:
+        message_type, body = "voice.transcript.final", {"text": event.text}
+        stream_id, trace_id = event.stream_id, event.trace_id
     elif type(event) is events.RuntimeError:
         message_type, body = "runtime.error", {
             "reason": event.reason,
@@ -138,6 +154,8 @@ def runtime_event_to_message(
         payload_count=0,
         conversation_id=event.conversation_id,
         turn_id=event.turn_id,
+        stream_id=stream_id,
+        trace_id=trace_id,
         seq=envelope.sequence,
         body=body,
     )

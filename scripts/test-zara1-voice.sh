@@ -18,5 +18,6 @@ python -m pytest -q \
   t/test_voice_zmq_output_negotiation.py \
   t/test_voice_secure_gateway.py \
   t/test_voice_runtime_ingress.py \
+  t/test_visible_stt_runtime.py \
   t/test_voice_runtime_commit.py \
   t/test_streaming_stt_commit.py

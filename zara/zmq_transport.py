@@ -1334,6 +1334,34 @@ class ZmqZaraClient(ZaraClient):
                 truncated=bool(body.get("truncated", False)),
                 **common,
             )
+        elif message.type == "voice.speech.started":
+            event = events.VoiceSpeechStarted(
+                stream_id=message.stream_id or "",
+                trace_id=message.trace_id,
+                pre_speech_samples=body["pre_speech_samples"],
+                **common,
+            )
+        elif message.type == "voice.transcript.partial":
+            event = events.VoiceTranscriptPartial(
+                stream_id=message.stream_id or "",
+                trace_id=message.trace_id,
+                text=body["text"],
+                **common,
+            )
+        elif message.type == "voice.speech.ended":
+            event = events.VoiceSpeechEnded(
+                stream_id=message.stream_id or "",
+                trace_id=message.trace_id,
+                reason=body["reason"],
+                **common,
+            )
+        elif message.type == "voice.transcript.final":
+            event = events.VoiceTranscriptFinal(
+                stream_id=message.stream_id or "",
+                trace_id=message.trace_id,
+                text=body["text"],
+                **common,
+            )
         elif message.type == "runtime.error":
             event = events.RuntimeError(
                 reason=str(body.get("reason", "")),
