@@ -56,6 +56,11 @@
 - Exact-head Nix evidence at =39addc5ae729617c8bb3d9417a5fbf43aa60e927= :: =nix flake check --show-trace= passed all 10 checks; =nix build --no-link --print-out-paths= produced =/nix/store/969c818ya1s9slpczk872rlrc14bnn3l-zarathushtra-full=.
 - Changed-code coverage inspection :: neither =coverage= nor =pytest-cov= is present in the pinned Nix environment. Manual reachable-branch inspection added deterministic malformed-request, pending-shutdown/replay, and approve/cancel first-terminal-wins tests. One test collection error exposed pytest's reserved =request= fixture name; the parameter was renamed without changing production code.
 - Focused post-inspection gate :: 31 approval/config tests passed in 4.24s. These tests are the only change after =39addc5=, so the final committed candidate must refresh all exact-head gates.
+- Exact implementation-head aggregate gate at =77d403c54c0c170ebb63fddc42ca5321e4c188af= :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh= passed 10/10 phases. The focused approval phase passed 31 tests, full pytest passed 1064 tests in 165.42s with 14 existing Qt deprecation warnings, and all protocol, security, latency and packaging phases passed.
+- Exact implementation-head flake gate at =77d403c54c0c170ebb63fddc42ca5321e4c188af= :: =NIX_CONFIG='experimental-features = nix-command flakes' nix flake check --show-trace= passed all 10 checks. Existing warnings were limited to app outputs without =meta=, the custom =flakeouts= output and omitted =aarch64-linux= evaluation.
+- Exact implementation-head build at =77d403c54c0c170ebb63fddc42ca5321e4c188af= :: =NIX_CONFIG='experimental-features = nix-command flakes' nix build --print-out-paths= produced =/nix/store/rqwavchi984lj3zwprjmqxywf7flzrw9-zarathushtra-full=.
+- Candidate audit :: =git diff --check origin/master...HEAD= passed; the worktree was clean; review found no contradiction to the accepted principal-owned, interrupt-before-side-effect, fail-closed restart design.
+- Publication rule :: this append-only evidence commit changes documentation only. The complete aggregate gate must pass again at that final candidate commit before push; GitHub Actions must then pass for that exact pushed SHA before merge.
 
 ** Outcome
 - In progress.
