@@ -139,3 +139,15 @@
 - The aggregate command then failed in phase 9 because nested Nix evaluation reported =experimental Nix feature 'nix-command' is disabled=.
 - This is not recorded as a passing full gate. The repository environment requires =NIX_CONFIG='experimental-features = nix-command flakes'= for these Nix gates.
 - The entire aggregate gate, not only phase 9, must be rerun with that explicit setting at the next exact evidence head.
+
+** Corrected local gate and changed-branch audit
+- Corrected candidate =3e4f796fe7f505fc2b986f6b0f2353a68a7c7e1e= ran =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh=.
+- Result :: all 9 phases passed; focused protocol/voice 117 + 74, complete pytest 1003 passed with 14 warnings, security/config/process scripts passed, deterministic latency budgets passed, packaging/Nix passed.
+- Separate =nix build= :: PASS.
+- Separate =nix flake check= :: PASS, all 10 checks; aarch64-linux remains explicitly omitted as an incompatible system by the flake.
+- Numeric coverage tool status :: the repository dev shell has neither =coverage= nor pytest =--cov= support. No numeric changed-line claim is made and no unapproved dependency was added.
+- Manual changed-branch audit mapped all new runtime event branches, closed positive/negative protocol shapes, final-only command authority, principal bus isolation, cancellation drain/stress, and typed client reduction to deterministic tests.
+- Gap closed by test commit =0e675a7=: added missing conversation/content-type negative shapes and an actual =RuntimeVoiceIngress -> ZaraZmqGateway -> ZmqZaraClient= fixture instead of relying only on direct bus injection.
+- Cleanup commit =c9dd998=: removed the now-obsolete runtime-introspection publication fallback; =RuntimeSupervisor.publish= is the one canonical observed-event path while observerless test seams still preserve final command submission.
+- Focused post-audit result :: 121 passed.
+- Final exact-head aggregate/Nix/build and GitHub Actions gates remain required after this evidence record.
