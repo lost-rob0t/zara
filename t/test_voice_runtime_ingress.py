@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import concurrent.futures
 import importlib
+import queue
 import threading
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
+from zara.runtime import bridge, events
 from zara.runtime.commands import SubmitTurn
 from zara.server import PrincipalContext, ZaraServer
-from zara.streaming_stt import FinalTranscript
+from zara.streaming_stt import FinalTranscript, PartialTranscript
 
 
 PCM_FRAME = (np.arange(512, dtype=np.int16) - 256).astype("<i2").tobytes()
@@ -27,22 +30,58 @@ class RecordingTranscriber:
     def feed(self, chunk: np.ndarray):
         self.frames.append(chunk.copy())
         return [
+            PartialTranscript(
+                turn_id="untrusted-stt-stream-id",
+                text="hello from the daemon",
+                text_length=21,
+            ),
             FinalTranscript(
-                turn_id="stt-stream-1",
+                turn_id="untrusted-stt-stream-id",
                 text="hello from the daemon microphone stream",
                 text_length=39,
-                provider="fixture",
-            )
+                provider="fixture-provider-must-not-leak",
+            ),
         ]
 
     def cancel(self, turn_id=None) -> None:
         self.cancelled.append(turn_id)
 
 
+class BlockingTranscriber(RecordingTranscriber):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def feed(self, chunk: np.ndarray):
+        self.frames.append(chunk.copy())
+        self.entered.set()
+        assert self.release.wait(1.0)
+        return [
+            PartialTranscript(
+                turn_id="stale-stt-id",
+                text="stale partial",
+                text_length=13,
+            ),
+            FinalTranscript(
+                turn_id="stale-stt-id",
+                text="stale final",
+                text_length=11,
+                provider="fixture",
+            ),
+        ]
+
+
 class RecordingSupervisor:
     def __init__(self) -> None:
         self.submissions = []
         self.submitted = threading.Event()
+        self.bus = bridge.RuntimeEventBus()
+        self.runtime_principals = []
+
+    def runtime(self, principal):
+        self.runtime_principals.append(principal)
+        return SimpleNamespace(bus=self.bus)
 
     def submit(self, principal, command):
         self.submissions.append((principal, command))
@@ -99,6 +138,59 @@ def test_runtime_voice_ingress_converts_wire_pcm_and_submits_final_transcript_to
         ingress.close(timeout=1.0)
 
 
+def test_runtime_voice_ingress_publishes_partial_and_final_with_server_owned_correlation():
+    voice_runtime = importlib.import_module("zara.voice_runtime")
+    transcriber = RecordingTranscriber()
+    supervisor = RecordingSupervisor()
+    subscription = supervisor.bus.subscribe()
+    principal = PrincipalContext("user:alice")
+    ingress = voice_runtime.RuntimeVoiceIngress(
+        supervisor,
+        transcriber_factory=lambda **_kwargs: transcriber,
+        queue_size=4,
+    )
+
+    try:
+        ingress.start(
+            principal=principal,
+            conversation_id="conversation-a",
+            stream_id="mic-1",
+            trace_id="trace-voice-1",
+        )
+        ingress.chunk(
+            PCM_FRAME,
+            principal=principal,
+            conversation_id="conversation-a",
+            stream_id="mic-1",
+            trace_id="trace-voice-1",
+            seq=0,
+        )
+
+        assert supervisor.submitted.wait(1.0)
+        partial = subscription.get(timeout=1.0).event
+        final = subscription.get(timeout=1.0).event
+        partial_type = getattr(events, "TranscriptPartial", None)
+        assert partial_type is not None
+        assert isinstance(partial, partial_type)
+        assert partial.text == "hello from the daemon"
+        assert partial.conversation_id == "conversation-a"
+        assert partial.turn_id is None
+        assert partial.stream_id == "mic-1"
+        assert partial.trace_id == "trace-voice-1"
+        assert isinstance(final, events.TranscriptReady)
+        assert final.text == "hello from the daemon microphone stream"
+        assert final.conversation_id == "conversation-a"
+        assert final.turn_id is None
+        assert final.stream_id == "mic-1"
+        assert final.trace_id == "trace-voice-1"
+        assert supervisor.runtime_principals == [principal, principal]
+        assert "fixture-provider-must-not-leak" not in repr(partial)
+        assert "fixture-provider-must-not-leak" not in repr(final)
+    finally:
+        subscription.close()
+        ingress.close(timeout=1.0)
+
+
 def test_runtime_voice_ingress_cancel_is_terminal_and_does_not_submit_stale_transcript():
     voice_runtime = importlib.import_module("zara.voice_runtime")
     transcriber = RecordingTranscriber()
@@ -124,6 +216,39 @@ def test_runtime_voice_ingress_cancel_is_terminal_and_does_not_submit_stale_tran
         assert transcriber.cancelled == ["mic-1"]
         assert supervisor.submissions == []
     finally:
+        ingress.close(timeout=1.0)
+
+
+def test_cancelled_stream_drops_transcript_returned_by_inflight_stt_work():
+    voice_runtime = importlib.import_module("zara.voice_runtime")
+    transcriber = BlockingTranscriber()
+    supervisor = RecordingSupervisor()
+    subscription = supervisor.bus.subscribe()
+    principal = PrincipalContext("user:alice")
+    ingress = voice_runtime.RuntimeVoiceIngress(
+        supervisor,
+        transcriber_factory=lambda **_kwargs: transcriber,
+        queue_size=4,
+    )
+    common = {
+        "principal": principal,
+        "conversation_id": "conversation-a",
+        "stream_id": "mic-race",
+        "trace_id": "trace-race",
+    }
+
+    try:
+        ingress.start(**common)
+        ingress.chunk(PCM_FRAME, **common, seq=0)
+        assert transcriber.entered.wait(1.0)
+        ingress.cancel(**common)
+        transcriber.release.set()
+        with pytest.raises(queue.Empty):
+            subscription.get(timeout=0.2)
+        assert supervisor.submissions == []
+    finally:
+        transcriber.release.set()
+        subscription.close()
         ingress.close(timeout=1.0)
 
 
