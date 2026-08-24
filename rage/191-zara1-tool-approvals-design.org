@@ -65,4 +65,3 @@ authenticated client route/session
 * Autonomous gate outcome
 - No production test or implementation is authorized on #191 until #209 is exact-head green, merged and its runtime contract is reconciled here.
 - Next queue action :: merge this research/decision evidence, then consume #209 as the higher-priority blocker.
-

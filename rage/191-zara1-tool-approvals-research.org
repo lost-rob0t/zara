@@ -68,4 +68,3 @@
 - The inherited #191 architecture is structurally incomplete. The missing prerequisite is not another wire field; it is a real canonical runtime approval authority.
 - Issue #209 now owns that prerequisite and blocks #191 and #134.
 - #191 realization is rejected for this iteration. Its protocol design should resume only after #209 freezes and proves the pending-approval ownership, lifecycle and resume semantics.
-

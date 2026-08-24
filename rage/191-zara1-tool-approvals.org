@@ -48,3 +48,10 @@
 ** Outcome
 - Iteration 1 architecture rejected without weakening #191 or #134 acceptance.
 - After this evidence merges, consume #209 before re-entering #191.
+
+** Exact-head GitHub failure and correction
+- Candidate =2d827c5413fd5da534bfc55ee4e25095ce1debc2= was published in PR #210 after merging concurrent master PR #208.
+- Local combined-head gates passed: all 9 aggregate phases with 119 protocol/transport, 75 voice and 1034 complete pytest tests; separate =nix flake check= and =nix build= also passed.
+- Exact GitHub Actions run #=32705326585= failed in the whitespace step before tests because both new research/design Org files had one blank line at EOF. The Ubuntu and Arch shared-mic jobs passed.
+- This is a bounded documentation-format defect, not a production/design falsification. The two blank EOF lines are removed without changing the research decision.
+- The corrected exact head requires the complete local and GitHub gates before merge.
