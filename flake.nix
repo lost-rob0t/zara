@@ -14,8 +14,10 @@
         let
           pkgs = import nixpkgs { inherit system; };
 
-          # Use python3 (latest stable)
-          python = pkgs.python3;
+          # nixpkgs default Python moved to 3.14 in the 2026-08 revision. Zara's
+          # tested runtime is 3.13; stay pinned until the full dependency set
+          # (faster-whisper, pyswip, LangChain stack) is validated on 3.14.
+          python = pkgs.python313;
 
           # whisper.cpp is the AMD/Radeon STT path. Vulkan avoids tying Zara's
           # local voice acceleration to ROCm GPU support matrices.
@@ -23,55 +25,9 @@
             vulkanSupport = true;
           };
 
-          # The pinned nixpkgs revision predates its sherpa-onnx Python package.
-          # sherpa-onnx 1.12.38 moved to ONNX Runtime 1.24.4 while this flake
-          # carries ORT 1.23.2. Pin 1.12.37: it matches that ABI and already
-          # includes Moonshine v2 support introduced in 1.12.28.
-          sherpaOnnxWheel =
-            let
-              wheel =
-                if system == "x86_64-linux" then {
-                  file = "sherpa_onnx-1.12.37-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
-                  url = "https://files.pythonhosted.org/packages/fb/d7/3a3eef865c85cf799baacca65f89ea9c89244e7f8f87cb029b8b4e65aca0/sherpa_onnx-1.12.37-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
-                  sha256 = "39f58e758fbae54aa73171603db311a69d41b804ebdc0ad3d5a332064a9bc666";
-                } else if system == "aarch64-linux" then {
-                  file = "sherpa_onnx-1.12.37-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl";
-                  url = "https://files.pythonhosted.org/packages/ae/ed/fbceec1edd8590a1f279b1bc278c96da1de8b9218971976791d9fa653e79/sherpa_onnx-1.12.37-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl";
-                  sha256 = "bac7456a22ad0ee11378e2c20d5a6e7baa6a576690e6fd60962b88af83f57874";
-                } else
-                  throw "Unsupported sherpa-onnx wheel system: ${system}";
-            in
-            python.pkgs.buildPythonPackage rec {
-              pname = "sherpa-onnx";
-              version = "1.12.37";
-              format = "wheel";
-
-              src = pkgs.fetchurl {
-                inherit (wheel) url sha256;
-                name = wheel.file;
-              };
-
-              nativeBuildInputs = [ pkgs.patchelf ];
-              buildInputs = [ pkgs.onnxruntime ];
-              propagatedBuildInputs = [ python.pkgs.numpy ];
-
-              # Upstream's manylinux wheel expects loader-visible ONNX Runtime
-              # and the GCC C++ runtime. Nix keeps both in separate store paths,
-              # so patch the native extensions before pythonImportsCheck.
-              postInstall = ''
-                native_libs=$(find "$out/${python.sitePackages}/sherpa_onnx" -type f -name '*.so')
-                test -n "$native_libs" || {
-                  echo "sherpa-onnx wheel contains no native libraries" >&2
-                  exit 1
-                }
-                while IFS= read -r native_lib; do
-                  patchelf --add-rpath "${pkgs.onnxruntime}/lib:${pkgs.stdenv.cc.cc.lib}/lib" "$native_lib"
-                done <<< "$native_libs"
-              '';
-
-              doCheck = false;
-              pythonImportsCheck = [ "sherpa_onnx" ];
-            };
+          # nixpkgs now packages sherpa-onnx (1.13.3) matched against its own
+          # onnxruntime; the hand-pinned 1.12.37 wheel (ORTools 1.23.2 ABI) is
+          # retired with the old nixpkgs revision.
 
           # Build pyswip from GitHub (use the same python toolchain everywhere)
           pyswip = python.pkgs.buildPythonPackage rec {
@@ -101,11 +57,9 @@
             };
           };
 
-          # Official MCP Python SDK v2. Keep Zara's existing nixpkgs lock: the
-          # current pin already satisfies the SDK's normal dependencies, but it
-          # predates the parallel httpx2/httpcore2 packages. Package only those
-          # pure-Python wheels plus MCP v2 here instead of bumping nixpkgs and
-          # disturbing the sherpa/ONNX Runtime compatibility pin above.
+          # Official MCP Python SDK v2. Hand-packaged so the SDK's dependency
+          # set stays independent of nixpkgs churn in the httpx/httpcore
+          # namespace; revisit if nixpkgs ships MCP v2 natively.
           httpcore2V2 = python.pkgs.buildPythonPackage rec {
             pname = "httpcore2";
             version = "2.9.1";
@@ -200,7 +154,7 @@
             p.pynput
             p.faster-whisper
             p.openai-whisper
-            sherpaOnnxWheel
+            p.sherpa-onnx
             p.aiohttp
             p.soundfile
             p.pyyaml
