@@ -116,3 +116,14 @@
 - Reconcile #134, #127, roadmap #1, and PR #190 with the discovered blockers.
 - Preserve this transaction and all failed/readiness evidence; do not rewrite Iteration 1 or the rejected Iteration 2.
 - Do not consume a new issue by manually approximating the canonical RAGE initializer. A later worker with an accessible checkout must use the repository initializer for the next newly consumed issue where available.
+
+** Re-entry assessment - 2026-08-29 (iteration 3 entry check)
+- Executed by :: repository RAGE worker with a full accessible checkout (the limitation recorded under Iteration 2's Evaluate section no longer applies).
+- Blocker reconciliation since the 2026-08-24 REJECT:
+  - #132 :: re-closed 2026-08-24T07:42Z; the client-visible STT partial/final event contract is present on master (=zara/voice_runtime.py=, =zara/zmq_transport.py=, =zara/protocol_runtime.py=). RESOLVED.
+  - #191 :: merged via #213/#214 and closed; authenticated ZARA/1 tool lifecycle + explicit approvals exist. RESOLVED.
+  - #17 :: refixed via #224 (merge =634b105=, 2026-08-29) and closed; the provider error-contract regression is resolved. RESOLVED.
+  - Voice/provider release chain :: #28, #29, #30, #31 remain OPEN. The Voice-replacement contract items 6 (streamed assistant text), 7 (phrase/audio output before completion) and 17 (end-to-end latency targets) are owned by this chain.
+- Decision :: #134 realization remains blocked by the open #28 -> #29 -> #30 -> #31 chain. Re-entering ADADR now would manufacture a false green against items 6/7/17. No new iteration is opened for #134 in this run.
+- Queue correction :: =planning/backlog.pl= now models =depends_on(134, 31)= and =depends_on(139, 134)=; =next/1= resolves to #28 (ZARA-027), the head of the release chain. #139's remaining substance is #134 itself and is therefore modeled as blocked by it.
+- Protocol note :: this assessment is recorded in the append-only log without modifying Iteration 1 or the rejected Iteration 2, per their Outcome authorization.
