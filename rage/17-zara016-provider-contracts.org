@@ -1,0 +1,22 @@
+#+title: RAGE #17 - ZARA-016 LLM provider contracts
+
+* Run identity
+- Consumed issue :: #17, [P1] ZARA-016 - Correct LLM provider protocols, authentication headers, timeouts, and session reuse (reopened regression).
+- Branch :: =fix/zara-016-llm-provider-contracts=
+- RAGE start commit :: =a04435d2b73b44dffd52e00aff3bf478d5a48d6b=
+- Selection :: first eligible issue per =planning/backlog.pl= =next/1= (regressions outrank feature work; roadmap reconciliation 2026-08-22 reopens ZARA-016 and gates #124 on it).
+- Worktree audit at start :: unrelated finished latency-trace work preserved on branch =wip/latency-trace-ctor= (commit 22bfdbb, focused test green: 28 passed). Master clean at branch point. Untracked =planning/backlog.pl= planning artifact only.
+- Protocol :: AGENTS.md + RAGE skill: immutable start SHA, research, design, TDD red/green per behavior, full local gate, exact-head Actions before merge.
+
+* Issue scope (from #17)
+Two LLM client stacks with provider-specific correctness gaps:
+- =modules/llm_client.pl= :: Anthropic =system= role inside =messages= instead of top-level =system= field; OpenAI auth built as Prolog term =\"Bearer \" + KeyString= instead of literal concatenated header; no bounded timeouts; unbounded history; manual JSON helpers unsafe if used.
+- =zara/llm.py= :: new =aiohttp.ClientSession= per request; error strings returned as normal assistant responses; no cancellation/streaming contract.
+
+Reopened regression (2026-08-15, from issue comment): SWI-Prolog emits =error(socket_error(eai_noname,'Name or service not known'),_)= (arity-2 =socket_error=) while the =modules/llm_client.pl= classifier matches =error(socket_error(_),_)=, so DNS failures fall through to =malformed_response=.
+
+Required: tested provider serializers, literal auth strings, connect/read/total timeouts, bounded retries, reusable sessions, typed success/error results, bounded history. No changes to configured providers/models. Tests must include golden request tests for Anthropic/OpenAI/Ollama in both Python and Prolog paths, plus =scripts/test-llm-clients.sh= using local fake HTTP servers only.
+
+* Iteration 1 - 2026-08-29
+** Research
+- In progress.
