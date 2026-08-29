@@ -129,6 +129,35 @@ class TranscriptReady(RuntimeEvent):
     text: str = ""
 
 
+@dataclass(frozen=True, kw_only=True)
+class VoiceSpeechStarted(RuntimeEvent):
+    stream_id: str = ""
+    trace_id: Optional[str] = None
+    pre_speech_samples: int = 0
+
+
+@dataclass(frozen=True, kw_only=True)
+class VoiceTranscriptPartial(RuntimeEvent):
+    stream_id: str = ""
+    trace_id: Optional[str] = None
+    text: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
+class VoiceSpeechEnded(RuntimeEvent):
+    stream_id: str = ""
+    trace_id: Optional[str] = None
+    reason: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
+class VoiceTranscriptFinal(RuntimeEvent):
+    stream_id: str = ""
+    trace_id: Optional[str] = None
+    text: str = ""
+    provider: str = ""
+
+
 # Intent / Prolog ----------------------------------------------------------
 
 @dataclass(frozen=True, kw_only=True)

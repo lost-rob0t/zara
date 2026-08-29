@@ -1,0 +1,172 @@
+#+title: RAGE Work Log - Zara issue 132 visible STT regression
+
+* Run identity
+- Consumed issue :: #132 (reopened regression)
+- Parent epic :: #127
+- Branch :: =rage/132-visible-stt-regression=
+- RAGE start commit :: =b9463faf4f69bcc92c0db16941ea27ae0c252327=
+- Start meaning :: Exact protected =master= commit after #133 closeout and before any reopened-#132 research/design/tests/implementation. Immutable for this run.
+- Prior #132 evidence :: =rage/132-live-voice.org=, =rage/132-live-voice-research.org=, =rage/132-live-voice-design.org=, and =rage/132-post-merge-evidence.org= remain authoritative historical evidence and are not rewritten.
+
+* Queue / reopen authority
+- #134 Auto-RAGE Iteration 2 disproved the prior #132 completion claim: production =RuntimeVoiceIngress= consumes streaming STT events but only turns =FinalTranscript= into =SubmitTurn=; speech-start, partial transcript, speech-end, and client-visible final transcript are not carried through the runtime/ZARA/1/ZaraClient event boundary.
+- #134 design explicitly authorizes reopening #132 rather than manufacturing synthetic release events.
+- #132 is a reopened P0 correctness regression in the currently active daemon epic and therefore precedes later #191 and final #134 composition work.
+- No new open repair PR was found to own this reopened #132 regression at consumption time.
+
+* Control-plane discovery
+- Canonical repository workflow :: =AGENTS.md= + =skills/rage/SKILL.md= + append-only =rage/=.
+- Canonical external procedures :: RAGE + ADADR.
+- Project mode :: Auto-RAGE, selected by the user and recorded on #134 as =control_plane.adadr_mode = "auto-rage"=.
+- This iteration autonomously performs Analyze/Research, Design, adversarial review, Decision, then TDD Realize only if the decision gate permits it.
+
+* Iteration 2 - reopened visible-STT regression
+** Analyze / Research
+- Status :: in progress.
+
+** Design
+- Pending evidence-derived design.
+
+** Adversarial review
+- Pending.
+
+** Decision gate
+- Pending.
+
+** Realize / TDD
+- Not authorized until the autonomous decision gate accepts the design.
+
+** Exact gate
+- Focused reopened-#132 tests first with expected red evidence.
+- =nix develop -c bash scripts/test-principal-isolation.sh= only where adjacent ownership is touched; otherwise use the existing voice/ZARA focused scripts plus new focused regression script if required by acceptance.
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- Changed-code coverage review with meaningful deterministic additions for reachable gaps.
+- GitHub Actions must be green for the exact final candidate SHA before merge.
+
+** Outcome
+- In progress.
+
+* Iteration 2 reconciliation - 2026-08-24
+** Analyze / Research completed
+- Canonical research evidence is recorded in =rage/132-visible-stt-regression-research.org=.
+- Verified defect remains narrow: the existing streaming STT producer exists, but client-visible speech/STT lifecycle was dropped at the runtime adapter and is absent from the ZARA/1/client mappings.
+
+** Design / adversarial review / decision completed
+- Canonical design evidence is recorded in =rage/132-visible-stt-regression-design.org=.
+- Auto-RAGE decision :: ACCEPT REALIZATION.
+- Selected flow :: =StreamingTranscriber -> RuntimeVoiceIngress -> principal RuntimeEventBus -> runtime_event_to_message/ZARA/1 -> ZmqZaraClient -> client RuntimeEventBus=.
+- New runtime vocabulary remains observational; only accepted non-empty final transcript may produce =SubmitTurn=.
+- No fake runtime turn id, provider-stack duplication, direct ZMQ callback, or Prolog-RLM dependency is authorized.
+
+** Existing realization state audit
+- PR #192 is the canonical reopened-#132 transaction.
+- Exact head =b7328da9e937a0fbbeff44b46f7b0ec9382d89c6= passed GitHub Actions run #500: full =scripts/test-all.sh=, full pytest (976 passed), =nix flake check=, =nix build=, and both shared-mic matrix jobs.
+- That green head proves only the current runtime-producer slice. It is not #132 acceptance evidence because =zara/protocol.py=, =zara/protocol_runtime.py= and =zara/zmq_transport.py= still lack the four visible-STT wire/client mappings required by the accepted design.
+- The branch currently contains runtime Voice* event classes, RuntimeVoiceIngress adaptation/publication, and focused runtime tests.
+
+** Overlap reconciliation
+- A duplicate branch/PR #193 was created during connector continuation before the pre-existing #192 branch was noticed. #193 was closed unmerged once overlap was discovered; #192 remains authoritative.
+- #193 retained useful TDD evidence: exact test-only SHA =809275b94dc57c36803431af816d6d6206962eef= failed CI run #501 exactly on the absent client-visible transcript runtime contract while both shared-mic jobs stayed green.
+- Useful adversarial coverage from the duplicate is to be ported into #192 rather than maintaining two RAGE transactions.
+
+** Adversarial realization audit - cancellation TOCTOU
+- Current #192 =RuntimeVoiceIngress._handle_stt_event= calls =_stream_is_current(stream)=, which releases =_lock= before =_publish(stream,event)=.
+- Race: worker verifies current -> concurrent =cancel()= removes stream and returns -> worker publishes stale speech/transcript event after cancellation returned.
+- This violates design invariant 6: cancelled/removed streams emit no later queued STT events.
+- Required repair :: add a deterministic in-flight transcriber cancel regression first, then make current-stream validation and observational publication atomic with respect to =RuntimeVoiceIngress._lock=. The accepted final event must similarly fence duplicate/stale publication while preserving exactly one =SubmitTurn=.
+
+** TDD continuation authorization
+- Existing runtime code predates complete recorded acceptance red evidence, so no retrospective red claim is made for it.
+- Continue tests-first for the still-missing acceptance surface: cancellation fencing, explicit four-event runtime codec/wire mapping with provider omission, closed protocol vocabulary, and gateway/ZaraClient semantic reduction.
+- Commit those tests before the corresponding production changes and require an exact-head CI failure attributable to the missing behavior before green implementation.
+
+* Iteration 2 TDD gate continuation - 2026-08-24
+** Falsified test specification
+- Test-only head =457c127ac7d84c9be3d6ad585ee2efb1220d3f4d= reached CI run #506 but failed during test collection because the new test guessed a =text_length= constructor field on =VoiceTranscriptPartial=.
+- Canonical design and current runtime vocabulary were re-read. They define partial/final runtime transcript events by =text=; =text_length= is not part of the semantic runtime event contract.
+- #506 is therefore NOT accepted as implementation red. No production code was changed on the basis of that failure.
+- The tests were corrected to the canonical event vocabulary while retaining the cancellation-race, correlation, provider-omission, and ZaraClient-boundary assertions.
+
+** Valid TDD red
+- Corrected test-only branch head :: =dd081f9ada718d6b485e36675f7bb26189378ca1=
+- Exact GitHub Actions run :: #508, id =32694661749=
+- Shared-mic / Arch Linux :: PASS
+- Shared-mic / Ubuntu 24.04 :: PASS
+- Main gate :: EXPECTED FAIL in =scripts/test-all.sh= phase 5, ZARA/1 protocol and transport.
+- Focused phase collected 97 tests and passed 59 before the first new visible-STT case failed.
+- Exact failure :: =test_visible_stt_events_have_closed_wire_mapping_without_fake_turn_or_provider[VoiceSpeechStarted]= raised =RuntimeCodecError("unsupported runtime event")= from =zara/protocol_runtime.py::runtime_event_to_message=.
+- Interpretation :: this is direct evidence of the missing explicit Voice* runtime-to-wire mapping identified by Analyze/Design. The failure is not a malformed fixture, unrelated audio failure, or packaging failure.
+- Realization status :: AUTHORIZED. Implement only the accepted explicit Voice* wire vocabulary/mappings, ZaraClient semantic reduction, and cancellation publication fence; then require exact-head green CI.
+
+* Iteration 2 closed-wire realization - 2026-08-24
+** Additional tests-first boundary proof
+- Tests-only commit :: =903217e=.
+- Added closed positive/negative protocol shapes for all four visible STT events and a direct two-principal =RuntimeSupervisor.publish= isolation test before production changes.
+- Local RED command :: =nix develop -c pytest -q t/test_protocol.py t/test_server.py t/test_protocol_runtime.py t/test_visible_stt_runtime.py t/test_voice_zmq_client.py --maxfail=12=.
+- RED result :: 11 failed, 103 passed. Failures were limited to the missing visible-STT allowlist/runtime mapping, missing supervisor publication boundary, cancellation TOCTOU and missing client delivery.
+
+** Production realization
+- Production commit :: =919096d2b0a74f81d29f1098cc971a5da90fd180=.
+- Added the four closed server event types and exact per-type envelope/body validation. Visible events require conversation, stream and sequence correlation; reject fake runtime turn ids, payloads, unknown body fields and invalid scalar types.
+- Added explicit runtime-event mapping without provider or Python-class leakage and typed =ZmqZaraClient= reduction with provider intentionally empty on the client.
+- Added principal-explicit =RuntimeSupervisor.publish= and routed it through the existing per-principal bus.
+- Made current-stream validation and observational publication one lock transaction. Final publication and its sole =SubmitTurn= transition share the same cancellation fence.
+- Added =t/test_visible_stt_runtime.py= to the existing focused =scripts/test-zara1-voice.sh= gate.
+
+** Local GREEN
+- Focused unit/integration command :: same five-file command as RED.
+- Result :: 114 passed.
+- Focused composed command :: =nix develop -c bash scripts/test-zara1-protocol.sh=.
+- Result :: 117 ZARA/1 protocol/transport tests passed, then 74 voice tests passed.
+- Exact-head full repository/Nix/package and GitHub Actions evidence remains required before merge.
+
+** Full-gate cancellation race and repair
+- Full-gate candidate :: =c90b5383b67b76628fc16b303da4dc3f7d9fff40=.
+- Command :: =nix develop -c bash scripts/test-all.sh=.
+- Result :: FAILED in phase 5 after the 117-test protocol half passed. The voice half failed only =test_cancel_waits_for_inflight_visible_event_and_fences_later_stt_events=: two events were observed instead of one.
+- Exposed race :: publication held the main stream lock. Once the blocked speech-start publisher was released, the worker could reacquire that lock for the next partial before the cancellation thread acquired it, so cancellation intent was not visible soon enough.
+- Architecture verdict :: ordinary lifecycle-transaction defect inside the accepted design, not a design falsification. The test and invariant remain unchanged.
+- Repair commit :: =810da2405d0db02db472ff94331167b36b7137a6=.
+- Repair :: cancellation now marks/removes the stream under a condition lock, waits for only already-authorized visible operations to drain, and prevents subsequent event authorization. Final publication and =SubmitTurn= use the same in-flight fence.
+- Focused result :: 118 passed across visible STT, ingress/commit, supervisor, protocol/runtime and client tests.
+- Scheduler stress :: the exact cancellation test passed 50/50 fresh pytest processes.
+- Full exact-head gates must be rerun after this repair and evidence commit.
+
+** Full-gate environment correction
+- Candidate =a50c156965854378dc1f86d067df63eddc98ce1e= passed the focused protocol/voice phase (117 + 74), the complete pytest corpus (1003 passed), security/config/process integrations, latency budgets, and packaging pytest checks.
+- The aggregate command then failed in phase 9 because nested Nix evaluation reported =experimental Nix feature 'nix-command' is disabled=.
+- This is not recorded as a passing full gate. The repository environment requires =NIX_CONFIG='experimental-features = nix-command flakes'= for these Nix gates.
+- The entire aggregate gate, not only phase 9, must be rerun with that explicit setting at the next exact evidence head.
+
+** Corrected local gate and changed-branch audit
+- Corrected candidate =3e4f796fe7f505fc2b986f6b0f2353a68a7c7e1e= ran =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh=.
+- Result :: all 9 phases passed; focused protocol/voice 117 + 74, complete pytest 1003 passed with 14 warnings, security/config/process scripts passed, deterministic latency budgets passed, packaging/Nix passed.
+- Separate =nix build= :: PASS.
+- Separate =nix flake check= :: PASS, all 10 checks; aarch64-linux remains explicitly omitted as an incompatible system by the flake.
+- Numeric coverage tool status :: the repository dev shell has neither =coverage= nor pytest =--cov= support. No numeric changed-line claim is made and no unapproved dependency was added.
+- Manual changed-branch audit mapped all new runtime event branches, closed positive/negative protocol shapes, final-only command authority, principal bus isolation, cancellation drain/stress, and typed client reduction to deterministic tests.
+- Gap closed by test commit =0e675a7=: added missing conversation/content-type negative shapes and an actual =RuntimeVoiceIngress -> ZaraZmqGateway -> ZmqZaraClient= fixture instead of relying only on direct bus injection.
+- Cleanup commit =c9dd998=: removed the now-obsolete runtime-introspection publication fallback; =RuntimeSupervisor.publish= is the one canonical observed-event path while observerless test seams still preserve final command submission.
+- Focused post-audit result :: 121 passed.
+- Final exact-head aggregate/Nix/build and GitHub Actions gates remain required after this evidence record.
+
+** Pre-publication exact-head gate
+- Candidate =103de087aa74b64d7f05f4be45647d2f816bc702= ran =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh=.
+- Result :: all 9 phases passed; focused protocol/voice 119 + 75, complete pytest 1006 passed with 14 warnings, security/config/process scripts passed, deterministic latency budgets passed, and packaging/Nix checks passed.
+- Separate =NIX_CONFIG='experimental-features = nix-command flakes' nix flake check= :: PASS; all compatible-system checks passed, with aarch64-linux explicitly omitted by the flake as incompatible.
+- Separate =NIX_CONFIG='experimental-features = nix-command flakes' nix build= :: PASS.
+- Worktree audit before recording evidence :: only the pre-existing user-owned unstaged =LICENSE= deletion remained; it was not staged or modified by this RAGE iteration.
+- This append-only evidence commit changes the candidate SHA. The complete local gate and exact-head GitHub Actions remain required on the resulting documentation-only head before merge.
+
+** Exact-head GitHub Actions and implementation merge
+- Published candidate :: =d63bdf350e99ca5c8fc06c4e1239b8a94e7ae51e=.
+- Exact GitHub Actions run :: #=32700582029=.
+- =test= :: PASS in 8m42s.
+- =shared mic / Ubuntu 24.04= :: PASS in 49s.
+- =shared mic / Arch Linux= :: PASS in 40s.
+- GitHub reported PR #192 =CLEAN= and =MERGEABLE= at the same exact head after every required job completed successfully.
+- PR #192 was promoted from draft only after those checks passed and merged without changing the tested head.
+- Implementation merge commit :: =30b165e4b3d08aeac2ea5be0934d63cd296ebdb5=.
+- Outcome :: the reopened visible-transcript regression in #132 is repaired through the canonical runtime, closed ZARA/1 and ZaraClient path. No daemon-only voice stack, provider duplication, fake turn identity or Prolog-RLM dependency was introduced.

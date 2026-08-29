@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import enum
+import threading
 import time
 from abc import ABC, abstractmethod
 from typing import Optional
@@ -16,6 +17,9 @@ from typing import Optional
 from zara.runtime import bridge
 from zara.runtime.commands import RuntimeCommand
 from zara.runtime.host import BackendFactory, RuntimeHost, RuntimeHostState, RuntimeNotReady
+
+
+_RECONNECT_LOCK_INIT = threading.Lock()
 
 
 class ZaraClientState(str, enum.Enum):
@@ -68,6 +72,79 @@ class ZaraClient(ABC):
     @abstractmethod
     def close(self, timeout: Optional[float] = None) -> None:
         raise NotImplementedError
+
+    def reconnect(self) -> concurrent.futures.Future:
+        """Reconnect this client if the concrete transport supports it."""
+        future = concurrent.futures.Future()
+        future.set_exception(NotImplementedError("client does not support reconnect"))
+        return future
+
+    def _reconnect_controller_lock(self) -> threading.Lock:
+        lock = getattr(self, "_reconnect_backoff_lock", None)
+        if lock is not None:
+            return lock
+        with _RECONNECT_LOCK_INIT:
+            lock = getattr(self, "_reconnect_backoff_lock", None)
+            if lock is None:
+                lock = threading.Lock()
+                self._reconnect_backoff_lock = lock
+        return lock
+
+    def reconnect_with_backoff(
+        self,
+        *,
+        max_attempts: int = 4,
+        initial_delay: float = 0.1,
+        max_delay: float = 1.0,
+        sleeper=time.sleep,
+    ) -> concurrent.futures.Future:
+        """Reconnect asynchronously with one bounded in-flight retry generation."""
+        if type(max_attempts) is not int or max_attempts <= 0:
+            raise ValueError("max_attempts must be a positive integer")
+        if not isinstance(initial_delay, (int, float)) or isinstance(initial_delay, bool):
+            raise TypeError("initial_delay must be a number")
+        if not isinstance(max_delay, (int, float)) or isinstance(max_delay, bool):
+            raise TypeError("max_delay must be a number")
+        if initial_delay < 0 or max_delay < 0:
+            raise ValueError("reconnect delays must be non-negative")
+        if not callable(sleeper):
+            raise TypeError("sleeper must be callable")
+
+        lock = self._reconnect_controller_lock()
+        with lock:
+            active = getattr(self, "_reconnect_backoff_future", None)
+            if active is not None and not active.done():
+                return active
+            result = concurrent.futures.Future()
+            self._reconnect_backoff_future = result
+
+        def run() -> None:
+            try:
+                delay = min(float(initial_delay), float(max_delay))
+                for attempt in range(max_attempts):
+                    try:
+                        reconnect_future = self.reconnect()
+                        reconnect_future.result()
+                    except BaseException as error:
+                        if attempt + 1 == max_attempts:
+                            result.set_exception(error)
+                            return
+                        sleeper(delay)
+                        delay = min(delay * 2, float(max_delay))
+                        continue
+                    result.set_result(True)
+                    return
+            finally:
+                with lock:
+                    if getattr(self, "_reconnect_backoff_future", None) is result:
+                        self._reconnect_backoff_future = None
+
+        threading.Thread(
+            target=run,
+            name="zara-client-reconnect",
+            daemon=True,
+        ).start()
+        return result
 
 
 class InProcessZaraClient(ZaraClient):

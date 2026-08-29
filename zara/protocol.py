@@ -14,6 +14,14 @@ from typing import Any, Mapping, Sequence
 
 
 PROTOCOL_MARKER = b"ZARA/1"
+AUDIO_INPUT_CONTENT_TYPE = "audio/pcm;codec=pcm_s16le"
+AUDIO_INPUT_CODEC = "pcm_s16le"
+AUDIO_INPUT_SAMPLE_RATE = 16000
+AUDIO_INPUT_CHANNELS = 1
+AUDIO_INPUT_FRAME_SAMPLES = 512
+AUDIO_INPUT_FRAME_BYTES = AUDIO_INPUT_FRAME_SAMPLES * 2
+AUDIO_OUTPUT_CONTENT_TYPE = "audio/pcm;codec=pcm_s16le"
+AUDIO_OUTPUT_CODEC = "pcm_s16le"
 
 CLIENT_MESSAGE_TYPES = frozenset(
     {
@@ -23,6 +31,8 @@ CLIENT_MESSAGE_TYPES = frozenset(
         "conversation.open",
         "turn.submit",
         "turn.cancel",
+        "tool.approve",
+        "tool.reject",
     }
 )
 
@@ -37,10 +47,29 @@ SERVER_MESSAGE_TYPES = frozenset(
         "turn.started",
         "turn.completed",
         "turn.cancelled",
+        "tool.approve.accepted",
+        "tool.reject.accepted",
+        "tool.queued",
+        "tool.waiting",
+        "tool.started",
+        "tool.completed",
+        "tool.failed",
+        "tool.cancelled",
         "assistant.started",
         "assistant.delta",
         "assistant.completed",
         "assistant.response",
+        "voice.speech.started",
+        "voice.transcript.partial",
+        "voice.speech.ended",
+        "voice.transcript.final",
+        "audio.input.started",
+        "audio.input.accepted",
+        "audio.input.committed",
+        "audio.input.cancelled",
+        "audio.output.start",
+        "audio.output.chunk",
+        "audio.output.done",
         "runtime.error",
         "runtime.stopped",
         "protocol.error",
@@ -82,6 +111,28 @@ _ALLOWED_ENVELOPE_KEYS = frozenset(
 )
 _ALLOWED_FLAGS = frozenset({"idempotent", "resume"})
 _TYPE_RE = re.compile(r"^[a-z][a-z0-9]*(?:\.[a-z0-9]+)*$")
+_AUDIO_INPUT_START_BODY = {
+    "codec": AUDIO_INPUT_CODEC,
+    "sample_rate": AUDIO_INPUT_SAMPLE_RATE,
+    "channels": AUDIO_INPUT_CHANNELS,
+    "frame_samples": AUDIO_INPUT_FRAME_SAMPLES,
+}
+_AUDIO_OUTPUT_START_KEYS = frozenset({"codec", "sample_rate", "channels"})
+_VISIBLE_STT_BODY_FIELDS = {
+    "voice.speech.started": "pre_speech_samples",
+    "voice.transcript.partial": "text",
+    "voice.speech.ended": "reason",
+    "voice.transcript.final": "text",
+}
+_TOOL_EVENT_BODY_FIELDS = {
+    "tool.queued": frozenset({"tool_run_id", "tool_name"}),
+    "tool.waiting": frozenset({"tool_run_id", "tool_name", "kind", "prompt"}),
+    "tool.started": frozenset({"tool_run_id", "tool_name"}),
+    "tool.completed": frozenset({"tool_run_id", "tool_name", "success"}),
+    "tool.failed": frozenset({"tool_run_id", "tool_name", "reason"}),
+    "tool.cancelled": frozenset({"tool_run_id", "tool_name", "reason"}),
+}
+_TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
 
 
 class ZaraProtocolError(ValueError):
@@ -109,8 +160,8 @@ class ProtocolLimits:
         integer_fields = (
             "max_envelope_bytes",
             "max_payload_frames",
-            "max_payload_frame_bytes",
             "max_payload_bytes",
+            "max_payload_frame_bytes",
             "max_id_bytes",
             "max_type_bytes",
         )
@@ -264,6 +315,248 @@ def _validate_body(value: Any) -> dict[str, Any] | None:
     return value
 
 
+def _validate_audio_input_envelope(message: ProtocolMessage) -> None:
+    if message.type not in {
+        "audio.input.start",
+        "audio.input.chunk",
+        "audio.input.commit",
+        "audio.input.cancel",
+    }:
+        return
+
+    if message.stream_id is None:
+        raise ProtocolValidationError(f"{message.type} requires stream_id")
+
+    if message.type == "audio.input.start":
+        if message.payload_count != 0:
+            raise ProtocolValidationError("audio.input.start does not accept payload frames")
+        if message.seq is not None:
+            raise ProtocolValidationError("audio.input.start does not accept seq")
+        if message.content_type is not None:
+            raise ProtocolValidationError("audio.input.start does not accept content_type")
+        if dict(message.body or {}) != _AUDIO_INPUT_START_BODY:
+            raise ProtocolValidationError(
+                "audio.input.start requires pcm_s16le mono 16000 Hz 512-sample geometry"
+            )
+        return
+
+    if message.type == "audio.input.chunk":
+        if message.seq is None:
+            raise ProtocolValidationError("audio.input.chunk requires seq")
+        if message.content_type != AUDIO_INPUT_CONTENT_TYPE:
+            raise ProtocolValidationError(
+                f"audio.input.chunk content_type must be {AUDIO_INPUT_CONTENT_TYPE!r}"
+            )
+        if message.payload_count != 1:
+            raise ProtocolValidationError("audio.input.chunk requires exactly one payload frame")
+        if message.body is not None:
+            raise ProtocolValidationError("audio.input.chunk does not accept body")
+        return
+
+    if message.seq is not None:
+        raise ProtocolValidationError(f"{message.type} does not accept seq")
+    if message.payload_count != 0:
+        raise ProtocolValidationError(f"{message.type} does not accept payload frames")
+    if message.content_type is not None:
+        raise ProtocolValidationError(f"{message.type} does not accept content_type")
+    if message.body is not None:
+        raise ProtocolValidationError(f"{message.type} does not accept body")
+
+
+def _validate_audio_input_payloads(
+    message: ProtocolMessage,
+    payloads: Sequence[bytes],
+) -> None:
+    if message.type != "audio.input.chunk":
+        return
+    if len(payloads) != 1 or len(payloads[0]) != AUDIO_INPUT_FRAME_BYTES:
+        raise ProtocolValidationError(
+            f"audio.input.chunk payload must be exactly {AUDIO_INPUT_FRAME_BYTES} bytes"
+        )
+
+
+def _validate_audio_output_envelope(message: ProtocolMessage) -> None:
+    if message.type not in {
+        "audio.output.start",
+        "audio.output.chunk",
+        "audio.output.done",
+    }:
+        return
+
+    if message.turn_id is None:
+        raise ProtocolValidationError(f"{message.type} requires turn_id")
+    if message.stream_id is None:
+        raise ProtocolValidationError(f"{message.type} requires stream_id")
+
+    if message.type == "audio.output.start":
+        if message.payload_count != 0:
+            raise ProtocolValidationError("audio.output.start does not accept payload frames")
+        if message.seq is not None:
+            raise ProtocolValidationError("audio.output.start does not accept seq")
+        if message.content_type is not None:
+            raise ProtocolValidationError("audio.output.start does not accept content_type")
+        body = dict(message.body or {})
+        if set(body) != _AUDIO_OUTPUT_START_KEYS:
+            raise ProtocolValidationError(
+                "audio.output.start requires codec, sample_rate, and channels"
+            )
+        if body.get("codec") != AUDIO_OUTPUT_CODEC:
+            raise ProtocolValidationError("audio.output.start requires pcm_s16le codec")
+        sample_rate = body.get("sample_rate")
+        channels = body.get("channels")
+        if type(sample_rate) is not int or sample_rate <= 0:
+            raise ProtocolValidationError("audio.output.start sample_rate must be positive")
+        if type(channels) is not int or channels <= 0:
+            raise ProtocolValidationError("audio.output.start channels must be positive")
+        return
+
+    if message.type == "audio.output.chunk":
+        if message.seq is None:
+            raise ProtocolValidationError("audio.output.chunk requires seq")
+        if message.content_type != AUDIO_OUTPUT_CONTENT_TYPE:
+            raise ProtocolValidationError(
+                f"audio.output.chunk content_type must be {AUDIO_OUTPUT_CONTENT_TYPE!r}"
+            )
+        if message.payload_count != 1:
+            raise ProtocolValidationError("audio.output.chunk requires exactly one payload frame")
+        if message.body is not None:
+            raise ProtocolValidationError("audio.output.chunk does not accept body")
+        return
+
+    if message.seq is not None:
+        raise ProtocolValidationError("audio.output.done does not accept seq")
+    if message.payload_count != 0:
+        raise ProtocolValidationError("audio.output.done does not accept payload frames")
+    if message.content_type is not None:
+        raise ProtocolValidationError("audio.output.done does not accept content_type")
+    if message.body is not None:
+        raise ProtocolValidationError("audio.output.done does not accept body")
+
+
+def _validate_audio_output_payloads(
+    message: ProtocolMessage,
+    payloads: Sequence[bytes],
+) -> None:
+    if message.type != "audio.output.chunk":
+        return
+    if len(payloads) != 1 or not payloads[0] or len(payloads[0]) % 2:
+        raise ProtocolValidationError(
+            "audio.output.chunk payload must contain whole pcm_s16le samples"
+        )
+
+
+def _validate_visible_stt_envelope(message: ProtocolMessage) -> None:
+    field = _VISIBLE_STT_BODY_FIELDS.get(message.type)
+    if field is None:
+        return
+    if message.conversation_id is None:
+        raise ProtocolValidationError(f"{message.type} requires conversation_id")
+    if message.stream_id is None:
+        raise ProtocolValidationError(f"{message.type} requires stream_id")
+    if message.seq is None:
+        raise ProtocolValidationError(f"{message.type} requires seq")
+    if message.turn_id is not None:
+        raise ProtocolValidationError(f"{message.type} does not accept turn_id")
+    if message.payload_count != 0:
+        raise ProtocolValidationError(f"{message.type} does not accept payload frames")
+    if message.content_type is not None:
+        raise ProtocolValidationError(f"{message.type} does not accept content_type")
+    body = dict(message.body or {})
+    if set(body) != {field}:
+        raise ProtocolValidationError(f"{message.type} requires only {field}")
+    value = body[field]
+    if field == "pre_speech_samples":
+        if type(value) is not int or value < 0:
+            raise ProtocolValidationError(
+                "voice.speech.started pre_speech_samples must be non-negative"
+            )
+    elif not isinstance(value, str):
+        raise ProtocolValidationError(f"{message.type} {field} must be a string")
+
+
+def _bounded_safe_text(name: str, value: Any, *, max_bytes: int) -> str:
+    if not isinstance(value, str):
+        raise ProtocolValidationError(f"{name} must be a string")
+    if len(value.encode("utf-8")) > max_bytes:
+        raise ProtocolValidationError(f"{name} exceeds byte limit")
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
+        raise ProtocolValidationError(f"{name} contains control characters")
+    return value
+
+
+def _validate_tool_run_id(value: Any) -> str:
+    return _validate_ascii_token("tool_run_id", value, max_bytes=256)
+
+
+def _validate_tool_name(value: Any) -> str:
+    name = _validate_ascii_token("tool_name", value, max_bytes=128)
+    if _TOOL_NAME_RE.fullmatch(name) is None:
+        raise ProtocolValidationError("tool_name is invalid")
+    return name
+
+
+def _validate_tool_common(message: ProtocolMessage) -> None:
+    if message.payload_count != 0:
+        raise ProtocolValidationError(f"{message.type} does not accept payload frames")
+    if message.stream_id is not None or message.content_type is not None:
+        raise ProtocolValidationError(f"{message.type} does not accept stream payload fields")
+    if message.trace_id is not None or message.flags:
+        raise ProtocolValidationError(f"{message.type} does not accept trace or flags")
+
+
+def _validate_tool_envelope(message: ProtocolMessage) -> None:
+    if message.type in {"tool.approve", "tool.reject"}:
+        _validate_tool_common(message)
+        if message.session_id is None:
+            raise ProtocolValidationError(f"{message.type} requires session_id")
+        if message.reply_to is not None or message.conversation_id is not None:
+            raise ProtocolValidationError(f"{message.type} accepts only session correlation")
+        if message.turn_id is not None or message.seq is not None:
+            raise ProtocolValidationError(f"{message.type} accepts only session correlation")
+        body = dict(message.body or {})
+        allowed = {"tool_run_id"} if message.type == "tool.approve" else {"tool_run_id", "reason"}
+        if set(body) - allowed or "tool_run_id" not in body:
+            raise ProtocolValidationError(f"{message.type} body has invalid fields")
+        _validate_tool_run_id(body["tool_run_id"])
+        if "reason" in body:
+            _bounded_safe_text("reason", body["reason"], max_bytes=256)
+        return
+
+    if message.type in {"tool.approve.accepted", "tool.reject.accepted"}:
+        _validate_tool_common(message)
+        if message.session_id is None or message.reply_to is None:
+            raise ProtocolValidationError(f"{message.type} requires reply and session correlation")
+        if any(
+            value is not None
+            for value in (message.conversation_id, message.turn_id, message.seq)
+        ) or message.body is not None:
+            raise ProtocolValidationError(f"{message.type} has invalid fields")
+        return
+
+    required_body = _TOOL_EVENT_BODY_FIELDS.get(message.type)
+    if required_body is None:
+        return
+    _validate_tool_common(message)
+    if message.session_id is None or message.turn_id is None or message.seq is None:
+        raise ProtocolValidationError(f"{message.type} requires session, turn and sequence")
+    if message.reply_to is not None:
+        raise ProtocolValidationError(f"{message.type} does not accept reply_to")
+    body = dict(message.body or {})
+    if set(body) != required_body:
+        raise ProtocolValidationError(f"{message.type} body has invalid fields")
+    _validate_tool_run_id(body["tool_run_id"])
+    _validate_tool_name(body["tool_name"])
+    if message.type == "tool.waiting":
+        if body["kind"] != "approval":
+            raise ProtocolValidationError("tool.waiting kind must be approval")
+        _bounded_safe_text("prompt", body["prompt"], max_bytes=256)
+    elif message.type == "tool.completed":
+        if type(body["success"]) is not bool:
+            raise ProtocolValidationError("tool.completed success must be boolean")
+    elif message.type in {"tool.failed", "tool.cancelled"}:
+        _bounded_safe_text("reason", body["reason"], max_bytes=256)
+
+
 def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> ProtocolMessage:
     unknown = set(data) - _ALLOWED_ENVELOPE_KEYS
     if unknown:
@@ -292,7 +585,7 @@ def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> Pr
     if seq is not None:
         seq = _validate_nonnegative_int("seq", seq)
 
-    return ProtocolMessage(
+    message = ProtocolMessage(
         type=message_type,
         id=request_id,
         timestamp_ns=timestamp_ns,
@@ -308,6 +601,11 @@ def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> Pr
         flags=_validate_flags(data.get("flags")),
         body=_validate_body(data.get("body")),
     )
+    _validate_audio_input_envelope(message)
+    _validate_audio_output_envelope(message)
+    _validate_visible_stt_envelope(message)
+    _validate_tool_envelope(message)
+    return message
 
 
 def _validate_payloads(
@@ -387,6 +685,8 @@ def decode_message(
         expected_count=message.payload_count,
         limits=limits,
     )
+    _validate_audio_input_payloads(message, payloads)
+    _validate_audio_output_payloads(message, payloads)
     return DecodedMessage(message=message, payloads=payloads)
 
 
@@ -405,6 +705,8 @@ def encode_message(
         limits=limits,
     )
     data = _message_to_mapping(message, limits)
+    _validate_audio_input_payloads(message, normalized_payloads)
+    _validate_audio_output_payloads(message, normalized_payloads)
     try:
         envelope = json.dumps(
             data,
@@ -421,6 +723,14 @@ def encode_message(
 
 
 __all__ = [
+    "AUDIO_INPUT_CHANNELS",
+    "AUDIO_INPUT_CODEC",
+    "AUDIO_INPUT_CONTENT_TYPE",
+    "AUDIO_INPUT_FRAME_BYTES",
+    "AUDIO_INPUT_FRAME_SAMPLES",
+    "AUDIO_INPUT_SAMPLE_RATE",
+    "AUDIO_OUTPUT_CODEC",
+    "AUDIO_OUTPUT_CONTENT_TYPE",
     "CLIENT_MESSAGE_TYPES",
     "DecodedMessage",
     "KNOWN_MESSAGE_TYPES",

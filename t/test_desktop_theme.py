@@ -11,6 +11,14 @@ import zara.desktop.app as desktop_app
 from zara.desktop.chat_widgets import ChatComposer, MessageWidget
 from zara.desktop.conversation import MessageRecord, MessageRole, MessageStatus
 from zara.desktop.theme import MIN_TEXT_CONTRAST, apply_readable_palette, contrast_ratio, repair_palette
+from zara.desktop.theme import (
+    SIGNAL_CABIN_COLORS,
+    THEME_REGISTRY,
+    apply_desktop_theme,
+    build_theme_palette,
+    build_signal_cabin_palette,
+    desktop_stylesheet,
+)
 
 _GROUPS = (
     QPalette.ColorGroup.Active,
@@ -109,6 +117,84 @@ def test_palette_repair_is_idempotent():
             assert twice.color(group, background_role) == once.color(group, background_role)
 
 
+def test_signal_cabin_palette_uses_semantic_colors_with_readable_text():
+    palette = build_signal_cabin_palette()
+
+    assert palette.color(QPalette.ColorRole.Window) == QColor(SIGNAL_CABIN_COLORS["ground"])
+    assert palette.color(QPalette.ColorRole.Base) == QColor(SIGNAL_CABIN_COLORS["panel_deep"])
+    assert palette.color(QPalette.ColorRole.Highlight) == QColor(SIGNAL_CABIN_COLORS["ready"])
+    assert_readable(palette)
+
+
+def test_theme_registry_contains_requested_complete_themes():
+    assert list(THEME_REGISTRY) == [
+        "signal-cabin",
+        "dotfiles-outrun",
+        "nord",
+        "dracula",
+        "chatgpt-neutral",
+    ]
+    assert THEME_REGISTRY["dotfiles-outrun"].colors["ground"] == "#170C32"
+    assert THEME_REGISTRY["dotfiles-outrun"].colors["primary"] == "#2DE2E6"
+    assert THEME_REGISTRY["nord"].colors["ground"] == "#2E3440"
+    assert THEME_REGISTRY["dracula"].colors["ground"] == "#282A36"
+    assert THEME_REGISTRY["chatgpt-neutral"].colors["ground"] == "#FFFFFF"
+
+
+def test_every_theme_builds_a_readable_palette_and_scoped_stylesheet():
+    for key, theme in THEME_REGISTRY.items():
+        palette = build_theme_palette(key)
+        assert palette.color(QPalette.ColorRole.Window) == QColor(theme.colors["ground"])
+        assert_readable(palette)
+        stylesheet = desktop_stylesheet(key)
+        assert theme.colors["ground"] in stylesheet
+        assert "QWidget#zaraSettings" in stylesheet
+        assert 'QPushButton#zaraComposerAction[actionMode="stop"]' in stylesheet
+
+
+def test_unknown_theme_falls_back_to_signal_cabin():
+    assert build_theme_palette("missing") == build_theme_palette("signal-cabin")
+    assert desktop_stylesheet("missing") == desktop_stylesheet("signal-cabin")
+
+
+def test_signal_cabin_stylesheet_covers_the_complete_copilot_surface():
+    stylesheet = desktop_stylesheet()
+
+    for selector in (
+        "QWidget#zaraQuickCopilot",
+        "QWidget#zaraFullChat",
+        "QFrame#zaraMessage",
+        "QFrame#zaraComposerShell",
+        "QListWidget#zaraConversationHistory",
+        "QPushButton#zaraPrimaryAction",
+        "QPushButton#zaraPrimaryAction:disabled",
+        "QPushButton#zaraDangerAction",
+        "QScrollBar:vertical",
+    ):
+        assert selector in stylesheet
+    assert "#7C3AED" not in stylesheet.upper()
+    assert "QWidget#zaraMessageContainer" in stylesheet
+    assert "QTextBrowser#zaraMessageBody" in stylesheet
+    assert "QFrame#zaraMessage {\n    background: transparent;\n    border: none;" in stylesheet
+
+
+def test_apply_desktop_theme_installs_selected_palette_and_stylesheet():
+    qt_app = app()
+    original_palette = QPalette(qt_app.palette())
+    original_stylesheet = qt_app.styleSheet()
+
+    try:
+        palette = apply_desktop_theme(qt_app, "dracula")
+
+        assert palette.color(QPalette.ColorRole.Window) == QColor("#282A36")
+        assert qt_app.styleSheet() == desktop_stylesheet("dracula")
+        assert qt_app.property("zaraTheme") == "dracula"
+        assert_readable(qt_app.palette())
+    finally:
+        qt_app.setPalette(original_palette)
+        qt_app.setStyleSheet(original_stylesheet)
+
+
 def test_chat_widgets_inherit_repaired_text_and_base_colors():
     qt_app = app()
     original = QPalette(qt_app.palette())
@@ -164,6 +250,42 @@ def test_chat_widgets_inherit_repaired_text_and_base_colors():
         message.deleteLater()
         qt_app.setPalette(original)
         qt_app.processEvents()
+
+
+def test_streaming_message_refresh_replaces_its_body_immediately():
+    qt_app = app()
+    message = MessageWidget(
+        MessageRecord(
+            id="message-stream",
+            conversation_id="conversation-1",
+            sequence=1,
+            role=MessageRole.ASSISTANT,
+            content="first partial",
+            status=MessageStatus.STREAMING,
+            created_at="2026-08-13T00:00:00Z",
+            updated_at="2026-08-13T00:00:00Z",
+        )
+    )
+    try:
+        message.set_message(
+            MessageRecord(
+                id="message-stream",
+                conversation_id="conversation-1",
+                sequence=1,
+                role=MessageRole.ASSISTANT,
+                content="replacement partial",
+                status=MessageStatus.STREAMING,
+                created_at="2026-08-13T00:00:00Z",
+                updated_at="2026-08-13T00:00:01Z",
+            )
+        )
+        qt_app.processEvents()
+
+        bodies = message.findChildren(QTextBrowser)
+        assert len(bodies) == 1
+        assert "replacement partial" in bodies[0].toPlainText()
+    finally:
+        message.deleteLater()
 
 
 def test_create_application_repairs_palette_before_controller_construction(monkeypatch):

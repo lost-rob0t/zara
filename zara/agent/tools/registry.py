@@ -9,6 +9,8 @@ from typing import Dict, List, Optional, Any, TYPE_CHECKING
 
 from langchain_core.tools import BaseTool as LangChainTool
 
+from ..approval import valid_tool_name
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -35,6 +37,10 @@ class ToolRegistry:
         self.config = config
         self._tools: Dict[str, LangChainTool] = {}
         self._mcp_manager: Any = None
+        approval_config = config.get_section("tool_approval") if config else {}
+        self._approval_required = frozenset(
+            str(name) for name in approval_config.get("required_tools", [])
+        )
 
     def register_tool(self, tool: LangChainTool):
         """
@@ -46,6 +52,8 @@ class ToolRegistry:
         Raises:
             ValueError: If tool with same name already registered
         """
+        if not valid_tool_name(tool.name):
+            raise ValueError("tool name is invalid")
         if tool.name in self._tools:
             raise ValueError(f"Tool '{tool.name}' already registered")
 
@@ -64,6 +72,8 @@ class ToolRegistry:
         """
         pending = list(tools)
         names = [tool.name for tool in pending]
+        if any(not valid_tool_name(name) for name in names):
+            raise ValueError("tool name is invalid")
         duplicate_names = sorted({name for name in names if names.count(name) > 1})
         existing_names = sorted(set(names).intersection(self._tools))
         conflicts = duplicate_names + existing_names
@@ -100,6 +110,10 @@ class ToolRegistry:
     def to_langchain_tools(self) -> List[LangChainTool]:
         """Return the tools already registered in LangChain format."""
         return list(self._tools.values())
+
+    def requires_approval(self, name: str) -> bool:
+        """Return the immutable server policy for one registered tool name."""
+        return name in self._approval_required
 
     async def prepare_async(self) -> None:
         """Start/refresh optional dynamic capability providers before a turn."""

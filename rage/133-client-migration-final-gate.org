@@ -1,0 +1,41 @@
+#+title: RAGE Final Gate Evidence - Zara issue 133
+
+* Authority
+- Consumed issue :: #133
+- Parent epic :: #127
+- Branch :: =rage/133-client-migration=
+- Immutable RAGE start :: =4c6018b30ff4be2e168551f0cf256f8333bc58af=
+- Pre-gate candidate :: =3a34e642d9fd87ea51ce29d149da6553fca417b2=
+
+* Final pre-merge evaluation
+- Pull request :: #188
+- Mergeability at audit :: mergeable, draft, no unresolved review threads.
+- GitHub Actions :: CI #481 / run =32671474782= on exact candidate =3a34e642d9fd87ea51ce29d149da6553fca417b2=.
+- Repository test job :: PASS.
+- =nix flake check= :: PASS.
+- Packaged Zara build :: PASS.
+- Shared mic / Arch Linux :: PASS.
+- Shared mic / Ubuntu 24.04 :: PASS.
+- Review-thread audit :: no unresolved inline review threads.
+
+* Acceptance audit
+- CLI explicit daemon path uses the shared =ZaraClient= boundary and explicit standalone compatibility remains available.
+- Explicit daemon failures remain fail-closed; no silent standalone runtime is started after =--connect= selection.
+- Desktop runtime/event transport is injected through =ZaraClient= and client close is distinct from daemon/runtime shutdown.
+- Reconnect preserves durable conversation selection and stale queued pre-reconnect events are fenced from the replacement connection generation.
+- Reconnect retries are bounded/capped and concurrent callers share one reconnect generation.
+- Existing ZARA/1 idempotency, principal isolation, voice-device ownership, and shared-mic regression gates remain green.
+- No Qt-specific protocol, second RuntimeHost/provider stack, or Prolog-RLM path was introduced.
+
+* Exact-head gate and branch-protection evidence
+- Evidence head after this file was introduced :: =c9c6bc7f318f2c8abd8190919e693188e7a2472e=.
+- GitHub Actions :: CI #482 / run =32672017193= completed PASS on that exact head.
+- Repository test job :: PASS, including full tests, =nix flake check=, and packaged Zara build.
+- Shared mic / Arch Linux :: PASS.
+- Shared mic / Ubuntu 24.04 :: PASS.
+- PR readiness transition :: #188 was marked ready only after CI #482 passed; no review threads existed.
+- First merge attempt :: GitHub rejected the merge because branch protection reported required status check =test= as expected after the draft-to-ready transition, despite CI #482 being green on the unchanged SHA.
+- Resolution :: preserve the protection failure as evidence and create this append-only evidence update so the now-ready PR receives a fresh exact-head pull-request check. Do not bypass branch protection.
+
+* Merge rule
+CI #481 and #482 are historical evidence after this update. Merge remains forbidden until GitHub Actions is green on the new exact head containing this branch-protection evidence. The merge SHA and final issue/epic/roadmap reconciliation are post-merge evidence and must not be invented here.

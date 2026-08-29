@@ -158,6 +158,18 @@ class StreamingVAD:
         self.reset()
         self._turn_id = turn_id
 
+    def commit(self, turn_id: Optional[str] = None) -> List[STTEvent]:
+        """Finalize confirmed speech immediately without inventing silent speech."""
+        with self._lock:
+            if self._cancelled or self._state == "ended":
+                return []
+            if turn_id is not None and turn_id != self._turn_id:
+                return []
+            if self._state != "speaking" or not self._speech_audio:
+                return []
+            self._state = "ended"
+            return [SpeechEnded(turn_id=self._turn_id, reason="commit")]
+
     @property
     def state(self) -> str:
         return self._state
@@ -284,6 +296,8 @@ class TranscriberInterface(Protocol):
 
     def feed(self, chunk: np.ndarray) -> List[STTEvent]: ...
 
+    def commit(self, turn_id: Optional[str] = None) -> List[STTEvent]: ...
+
     def cancel(self, turn_id: Optional[str] = None) -> None: ...
 
     def reset(self) -> None: ...
@@ -330,6 +344,23 @@ class StreamingTranscriber:
     def start_turn(self, turn_id: str) -> None:
         self.reset()
         self._vad.start_turn(turn_id)
+
+    def commit(self, turn_id: Optional[str] = None) -> List[STTEvent]:
+        events = self._vad.commit(turn_id)
+        result: List[STTEvent] = []
+        for event in events:
+            if not isinstance(event, SpeechEnded):
+                continue
+            final_text = self._transcribe_fn(self._vad.speech_audio)
+            result.append(event)
+            if not self._vad._cancelled:
+                result.append(FinalTranscript(
+                    turn_id=event.turn_id,
+                    text=final_text,
+                    text_length=len(final_text),
+                    provider="faster-whisper",
+                ))
+        return result
 
     def feed(self, chunk: np.ndarray) -> List[STTEvent]:
         events = self._vad.feed(chunk)

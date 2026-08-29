@@ -21,9 +21,10 @@ from typing import Any, Dict, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from .approval import ToolApprovalController
 from .conversation import ConversationManager
-from .tools.registry import ToolRegistry
 from .graph import run_conversation_loop, validate_and_clean_messages
+from .tools.registry import ToolRegistry
 from ..config import ZaraConfig, get_config
 from ..memory import build_memory_manager, MemoryManager
 from ..latency import LatencyTrace
@@ -66,6 +67,14 @@ class AgentManager:
             timeout_seconds=timeout,
             principal=principal,
         )
+        approval_config = self.config.get_section("tool_approval")
+        self.approval_controller = ToolApprovalController(
+            timeout_seconds=float(approval_config.get("timeout_seconds", 300.0)),
+            max_pending=int(approval_config.get("max_pending", 8)),
+        )
+
+    def bind_event_publisher(self, publisher) -> None:
+        self.approval_controller.bind_event_publisher(publisher)
 
     def _build_system_prompt(self):
         date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -220,7 +229,15 @@ class AgentManager:
             user_input,
         )
 
-        result = await run_conversation_loop(self.llm_client, self.tool_registry, state)
+        principal_id = getattr(self.principal, "principal_id", "local")
+        result = await run_conversation_loop(
+            self.llm_client,
+            self.tool_registry,
+            state,
+            approval_controller=self.approval_controller,
+            publisher=self.approval_controller.publisher,
+            principal_id=principal_id,
+        )
 
         result_messages = result.get("messages", [])
         if memory_context_message is not None:
@@ -271,9 +288,19 @@ class AgentManager:
     def exit_conversation(self):
         self.conversation_manager.exit_conversation()
 
+    async def approve_tool(self, tool_run_id: str) -> None:
+        await self.approval_controller.approve(tool_run_id)
+
+    async def reject_tool(self, tool_run_id: str, reason: str = "") -> None:
+        await self.approval_controller.reject(tool_run_id, reason)
+
+    async def cancel_turn(self, turn_id: str) -> None:
+        await self.approval_controller.cancel_turn(turn_id)
+
     async def shutdown_async(self) -> None:
         """Close dynamic providers and end the conversation cleanly."""
         try:
+            await self.approval_controller.shutdown()
             self.exit_conversation()
         finally:
             await self.tool_registry.shutdown_async()

@@ -59,15 +59,97 @@ def test_golden_hello_encoding_is_deterministic():
     ]
 
 
-def test_valid_message_round_trips_with_binary_payloads():
-    original = message(
-        type="audio.input.chunk",
-        payload_count=2,
-        stream_id="audio-1",
-        seq=4,
-        content_type="audio/pcm",
-        body={"codec": "pcm_s16le"},
+def test_golden_tool_approval_command_encoding_is_deterministic():
+    frames = encode_message(
+        message(
+            type="tool.approve",
+            session_id="session-1",
+            body={"tool_run_id": "tool-call-1"},
+        ),
+        limits=LIMITS,
     )
+
+    assert frames == [
+        b"ZARA/1",
+        b'{"body":{"tool_run_id":"tool-call-1"},"id":"req-1","payload_count":0,"session_id":"session-1","timestamp_ns":123456789,"type":"tool.approve"}',
+    ]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"session_id": None, "body": {"tool_run_id": "tool-call-1"}},
+        {"session_id": "session-1", "body": None},
+        {"session_id": "session-1", "body": {"tool_run_id": ""}},
+        {"session_id": "session-1", "body": {"tool_run_id": 7}},
+        {
+            "session_id": "session-1",
+            "body": {"tool_run_id": "tool-call-1", "arguments": "secret"},
+        },
+        {
+            "session_id": "session-1",
+            "payload_count": 1,
+            "body": {"tool_run_id": "tool-call-1"},
+        },
+    ],
+)
+def test_tool_approval_commands_fail_closed_on_invalid_shapes(overrides):
+    with pytest.raises(ProtocolValidationError):
+        encode_message(message(type="tool.approve", **overrides), limits=LIMITS)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"tool_run_id": "tool-call-1", "reason": 3},
+        {"tool_run_id": "tool-call-1", "reason": "line one\nline two"},
+        {"tool_run_id": "tool-call-1", "reason": "x" * 257},
+    ],
+)
+def test_tool_rejection_reason_is_bounded_safe_text(body):
+    with pytest.raises(ProtocolValidationError):
+        encode_message(
+            message(type="tool.reject", session_id="session-1", body=body),
+            limits=LIMITS,
+        )
+
+
+def test_tool_waiting_event_requires_closed_public_correlation():
+    valid = message(
+        type="tool.waiting",
+        session_id="session-1",
+        turn_id="turn-1",
+        seq=4,
+        body={
+            "tool_run_id": "tool-call-1",
+            "tool_name": "reviewed_effect",
+            "kind": "approval",
+            "prompt": "Approve reviewed_effect?",
+        },
+    )
+    assert decode_message(encode_message(valid, limits=LIMITS), limits=LIMITS).message == valid
+
+    with pytest.raises(ProtocolValidationError):
+        encode_message(
+            message(
+                type="tool.waiting",
+                session_id="session-1",
+                turn_id="turn-1",
+                seq=4,
+                body={
+                    "tool_run_id": "tool-call-1",
+                    "tool_name": "reviewed_effect",
+                    "kind": "approval",
+                    "prompt": "Approve reviewed_effect?",
+                    "arguments": {"secret": True},
+                },
+            ),
+            limits=LIMITS,
+        )
+
+
+def test_valid_message_round_trips_with_binary_payloads():
+    original = message(payload_count=2)
     payloads = (b"12345678", b"abcd")
 
     frames = encode_message(original, payloads=payloads, limits=LIMITS)
@@ -139,23 +221,22 @@ def test_unknown_message_type_fails_closed():
         decode_message([PROTOCOL_MARKER, frame], limits=LIMITS)
 
 
-def test_audio_names_are_reserved_but_not_dynamically_dispatched():
+def test_audio_names_are_reserved_and_fail_closed_without_live_contract():
     assert "audio.input.chunk" in RESERVED_MESSAGE_TYPES
 
-    decoded = decode_message(
-        [
-            PROTOCOL_MARKER,
-            envelope_frame(
-                type="audio.input.chunk",
-                stream_id="s1",
-                seq=1,
-                content_type="audio/pcm",
-            ),
-        ],
-        limits=LIMITS,
-    )
-
-    assert decoded.message.type == "audio.input.chunk"
+    with pytest.raises(ProtocolValidationError):
+        decode_message(
+            [
+                PROTOCOL_MARKER,
+                envelope_frame(
+                    type="audio.input.chunk",
+                    stream_id="s1",
+                    seq=1,
+                    content_type="audio/pcm",
+                ),
+            ],
+            limits=LIMITS,
+        )
 
 
 @pytest.mark.parametrize(
@@ -255,3 +336,87 @@ def test_allowed_flags_round_trip():
 def test_encoder_rejects_payload_count_mismatch_before_emitting_frames():
     with pytest.raises(ProtocolValidationError, match="payload_count"):
         encode_message(message(payload_count=1), payloads=(), limits=LIMITS)
+
+
+@pytest.mark.parametrize(
+    ("message_type", "body"),
+    [
+        ("voice.speech.started", {"pre_speech_samples": 512}),
+        ("voice.transcript.partial", {"text": "hello wor"}),
+        ("voice.speech.ended", {"reason": "silence"}),
+        ("voice.transcript.final", {"text": "hello world"}),
+    ],
+)
+def test_visible_stt_event_shapes_round_trip_without_payload_or_turn_id(message_type, body):
+    original = message(
+        type=message_type,
+        conversation_id="conversation-1",
+        stream_id="mic-1",
+        trace_id="trace-1",
+        seq=7,
+        body=body,
+    )
+
+    decoded = decode_message(encode_message(original, limits=LIMITS), limits=LIMITS)
+
+    assert decoded.message == original
+    assert decoded.payloads == ()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"conversation_id": None},
+        {"stream_id": None},
+        {"seq": None},
+        {"turn_id": "fake-runtime-turn"},
+        {"payload_count": 1},
+        {"content_type": "text/plain"},
+        {"body": None},
+        {"body": {"pre_speech_samples": -1}},
+        {"body": {"pre_speech_samples": True}},
+        {"body": {"pre_speech_samples": 512, "provider": "secret"}},
+    ],
+)
+def test_visible_speech_started_shape_fails_closed(overrides):
+    values = {
+        "type": "voice.speech.started",
+        "conversation_id": "conversation-1",
+        "stream_id": "mic-1",
+        "trace_id": "trace-1",
+        "seq": 7,
+        "body": {"pre_speech_samples": 512},
+    }
+    values.update(overrides)
+    payloads = (b"x",) if values.get("payload_count") == 1 else ()
+
+    with pytest.raises(ProtocolValidationError):
+        encode_message(message(**values), payloads=payloads, limits=LIMITS)
+
+
+@pytest.mark.parametrize(
+    ("message_type", "body"),
+    [
+        ("voice.transcript.partial", {}),
+        ("voice.transcript.partial", {"text": 3}),
+        ("voice.transcript.partial", {"text": "safe", "provider": "secret"}),
+        ("voice.speech.ended", {}),
+        ("voice.speech.ended", {"reason": 3}),
+        ("voice.transcript.final", {}),
+        ("voice.transcript.final", {"text": 3}),
+        ("voice.transcript.final", {"text": "safe", "provider": "secret"}),
+    ],
+)
+def test_visible_stt_text_and_end_bodies_fail_closed(message_type, body):
+    with pytest.raises(ProtocolValidationError):
+        encode_message(
+            message(
+                type=message_type,
+                conversation_id="conversation-1",
+                stream_id="mic-1",
+                trace_id="trace-1",
+                seq=7,
+                body=body,
+            ),
+            limits=LIMITS,
+        )

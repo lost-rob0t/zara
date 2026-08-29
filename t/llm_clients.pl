@@ -189,4 +189,26 @@ test(compatibility_predicate_throws_typed_failure, [throws(error(llm_error(empty
     configure_provider(ollama, empty),
     llm_query("hello", _).
 
+test(dns_socket_error_is_typed_connection) :-
+    llm_client:request_exception_result(
+        error(socket_error(eai_noname, 'Name or service not known'), _),
+        Result
+    ),
+    assertion(Result = llm_result(error, llm_error(connection, _, none))).
+
+test(legacy_socket_error_remains_retryable) :-
+    assertion(llm_client:retryable_exception(error(socket_error(unknown_host), _))).
+
+test(missing_api_key_is_typed, [cleanup(setenv('ANTHROPIC_API_KEY', 'literal-key'))]) :-
+    unsetenv('ANTHROPIC_API_KEY'),
+    configure_provider(anthropic, success),
+    llm_query_result("hello", "system", Result),
+    assertion(Result = llm_result(error, llm_error(authentication, _, none))).
+
+test(close_llm_client_clears_session_and_history) :-
+    configure_provider(ollama, success),
+    llm_query_with_history_result("hello", llm_result(success, _)),
+    close_llm_client,
+    assertion(\+ llm_client:current_conversation(_)).
+
 :- end_tests(llm_clients).

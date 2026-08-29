@@ -1,0 +1,73 @@
+#+title: RAGE #132 Reopened STT Visibility Research
+
+* Authority
+- Consumed issue :: #132 (reopened correctness regression)
+- Immutable start :: =b9463faf4f69bcc92c0db16941ea27ae0c252327=
+- Parent :: daemon epic #127
+- Trigger :: #134 Auto-RAGE release research falsified the prior #132 completion claim.
+- Control plane :: repository RAGE + canonical ADADR in Auto-RAGE mode.
+
+* Concrete production trace
+** Existing STT producer
+=zara/streaming_stt.py= already owns the incremental speech pipeline and emits typed =SpeechStarted=, =PartialTranscript=, =SpeechEnded=, and =FinalTranscript= values. =StreamingTranscriber= is explicit that only final transcript should trigger irreversible command execution.
+
+** Dropping boundary
+=zara/voice_runtime.py::RuntimeVoiceIngress._run= receives all emitted STT values but branches only on =FinalTranscript=. It calls =_submit_final=, which strips/validates text then sends existing =SubmitTurn= through =RuntimeSupervisor=. Speech-start, partial, and speech-end are discarded; final transcript itself is not emitted to observers before submission.
+
+This is the narrow correctness defect. The PCM/VAD/STT producer exists and execution semantics are already correct; observation across the daemon boundary is missing.
+
+** Runtime event architecture
+=zara/runtime/events.py= is the provider-neutral application-event contract. It already has a voice/transcription section with =VoiceStateChanged= and =TranscriptReady=, but no event shape carrying stream/trace correlation for incremental daemon speech.
+
+=zara/runtime/bridge.py::RuntimeEventBus= is ordered and thread-safe. Each principal runtime created by =RuntimeSupervisor= owns a distinct bus, and =RuntimeSupervisor.subscribe(principal)= resolves through that principal-owned bus. Publishing through this path therefore preserves #131 isolation rather than creating a second global voice-event channel.
+
+** Wire architecture
+=zara/protocol_runtime.py::runtime_event_to_message= is the explicit closed adapter from runtime events to ZARA/1. It deliberately rejects unsupported event classes.
+
+=zara/zmq_transport.py::ZaraZmqGateway= drains the principal runtime subscription and sends supported events to the matching route. =ZmqZaraClient= converts supported unsolicited wire events back into its own local =RuntimeEventBus=. This is the existing service boundary and should carry STT events too.
+
+* Correlation findings
+The transcriber currently receives =stream_id= as its internal STT =turn_id= via =start_turn(stream_id)=. That identifier is an audio/STT stream identity, not the canonical assistant runtime turn id that exists only after final transcript becomes =SubmitTurn=. Reusing runtime =turn_id= for pre-submit STT would conflate two lifecycle domains.
+
+Therefore visible STT runtime events need explicit =stream_id= and =trace_id= fields while leaving canonical =turn_id= unset until the runtime turn exists. =conversation_id= can use the existing RuntimeEvent base correlation field.
+
+* Ownership and publication seam
+The default =ZaraServer= constructs =RuntimeVoiceIngress= after =RuntimeSupervisor.start(principal)= and before the gateway starts. The supervisor therefore already has the principal runtime/event bus when production voice begins.
+
+A clean implementation should expose a principal-explicit supervisor publication method (or equivalently inject a principal-bound event publisher) rather than teaching the voice ingress about ZMQ routes. The ingress remains transport-neutral; the gateway continues consuming the existing runtime bus.
+
+* Failure and race analysis
+- Cancelled stream :: =cancel= removes the stream before cancelling the transcriber. Queued audio work subsequently sees no stream and emits nothing. Visible events must use the same stream-presence fence.
+- Duplicate final :: =_submit_final= already fences irreversible submission with =stream.submitted=. Final-visible event and submission must share one accepted-final transition so duplicate finals cannot appear as multiple accepted turns.
+- Empty final :: empty/whitespace final currently does not submit. It should not be advertised as a usable final transcript either; speech lifecycle events may still have occurred.
+- Partial transcript :: observational only. It must never call =SubmitTurn= or mutate durable conversation authority.
+- Event publication failure :: a UI/transport subscriber cannot execute producer code because RuntimeEventBus queues. Publication itself is synchronous and should not silently convert an accepted final into a missing command. The production principal bus is in-process and is the canonical runtime boundary.
+- Principal isolation :: each =RuntimeVoiceIngress= is principal-bound in default server construction and every call still checks =PrincipalContext=. Publication must resolve through that same principal rather than accept an owner from payload data.
+- Reconnect :: pre-submit voice streams are volatile/non-resumable by #132 design. Reconnect may preserve durable conversation, not replay old partial STT as a resumed stream.
+- Transcript privacy :: transcript text is user-visible content and intentionally crosses to the owning authenticated client, but must remain absent from structured latency/security audit logs. This slice does not add logging of text.
+
+* Alternatives
+** Direct ZMQ callback from RuntimeVoiceIngress
+Rejected. It couples voice producer to transport/routes, bypasses =ZaraClient=/runtime event architecture, and complicates principal isolation.
+
+** Reuse AssistantDelta for partial STT
+Rejected. Assistant output and user speech have opposite ownership/direction and cancellation semantics.
+
+** Treat STT stream id as RuntimeEvent.turn_id
+Rejected. The canonical runtime turn does not exist until final text is submitted. Conflating ids makes cancellation/history/latency correlation ambiguous.
+
+** Only emit final TranscriptReady
+Rejected. #132 explicitly requires partial/final transcript reception and #134 also needs speech-start/end process-boundary latency spans.
+
+** Add another STT engine or daemon-only transcription path
+Rejected. Existing =StreamingTranscriber= is already the canonical producer; the defect is event adaptation only.
+
+* Research conclusion
+The inherited #132 architecture remains sound. The regression is a missing observational adapter, not a reason to replace the voice stack.
+
+Recommended repair:
+1. add explicit provider-neutral speech-start / transcript-partial / speech-end / transcript-final runtime events with conversation + stream + trace correlation;
+2. publish those events from =RuntimeVoiceIngress= through the owning principal runtime bus while preserving final-only =SubmitTurn= authority;
+3. extend the closed runtime-event -> ZARA/1 adapter and protocol vocabulary;
+4. extend =ZmqZaraClient= reduction back into the same runtime event classes;
+5. prove cancellation/stale/principal isolation and process-boundary delivery with deterministic tests.

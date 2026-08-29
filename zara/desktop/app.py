@@ -7,9 +7,11 @@ from typing import Optional, Sequence
 
 from PySide6.QtWidgets import QApplication
 
+from zara.client import InProcessZaraClient, ZaraClient
+from zara.config import ZaraConfig, get_config
 from zara.desktop.controller import DesktopController
 from zara.desktop.qt_bridge import QtRuntimeBridge
-from zara.desktop.theme import apply_readable_palette
+from zara.desktop.theme import apply_desktop_theme
 from zara.runtime.host import RuntimeHost
 
 _CONTROLLER_ATTR = "_zara_desktop_controller"
@@ -18,9 +20,14 @@ _CONTROLLER_ATTR = "_zara_desktop_controller"
 def create_application(
     argv: Optional[Sequence[str]] = None,
     *,
+    client: Optional[ZaraClient] = None,
     host: Optional[RuntimeHost] = None,
+    config: Optional[ZaraConfig] = None,
 ) -> tuple[QApplication, DesktopController]:
     """Create or reuse the one canonical Zara QApplication/controller."""
+    if client is not None and host is not None:
+        raise ValueError("choose either client or legacy host, not both")
+
     instance = QApplication.instance()
     if instance is None:
         app = QApplication(list(argv) if argv is not None else sys.argv)
@@ -32,15 +39,21 @@ def create_application(
     app.setApplicationName("Zara")
     app.setOrganizationName("Zara")
     app.setQuitOnLastWindowClosed(False)
-    apply_readable_palette(app)
+    active_config = config or get_config()
+    apply_desktop_theme(app, str(active_config.get("desktop", "theme", "signal-cabin")))
 
     existing = getattr(app, _CONTROLLER_ATTR, None)
     if existing is not None:
         return app, existing
 
-    runtime_host = host or RuntimeHost()
-    bridge = QtRuntimeBridge(runtime_host, parent=app)
-    controller = DesktopController(app, runtime_host, bridge)
+    # ``host`` is retained only as a compatibility injection seam for existing
+    # standalone tests/embedders. Normal desktop construction always owns a
+    # ZaraClient, so transport selection remains outside Qt surfaces.
+    service = client if client is not None else host
+    if service is None:
+        service = InProcessZaraClient()
+    bridge = QtRuntimeBridge(service, parent=app)
+    controller = DesktopController(app, service, bridge)
     setattr(app, _CONTROLLER_ATTR, controller)
     return app, controller
 
@@ -48,11 +61,20 @@ def create_application(
 def start_desktop(
     argv: Optional[Sequence[str]] = None,
     *,
+    client: Optional[ZaraClient] = None,
     host: Optional[RuntimeHost] = None,
+    config: Optional[ZaraConfig] = None,
     summon_quick: bool = True,
 ) -> tuple[QApplication, DesktopController]:
-    """Start the canonical desktop runtime and expose a visible UI surface."""
-    app, controller = create_application(argv, host=host)
+    """Start the canonical desktop client and expose a visible UI surface."""
+    # Preserve the historical host-only call shape when no explicit client is
+    # supplied. This keeps compatibility embedders/mocks valid while the normal
+    # path is now ZaraClient-owned.
+    config_args = {"config": config} if config is not None else {}
+    if client is None:
+        app, controller = create_application(argv, host=host, **config_args)
+    else:
+        app, controller = create_application(argv, client=client, host=host, **config_args)
     controller.start()
     if summon_quick:
         controller.show_quick_copilot()
