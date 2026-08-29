@@ -271,3 +271,13 @@ def test_history_is_bounded_in_storage_and_serialization():
     _, payload = client.serialize_request("now", chat_history=history.get_messages())
     non_system = payload["messages"][1:]
     assert [message["content"] for message in non_system] == ["6", "7", "now"]
+
+
+def test_missing_api_key_fails_fast(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with pytest.raises(ValueError):
+        LLMClient(provider="anthropic", model="test-model")
+    with pytest.raises(ValueError):
+        LLMClient(provider="openai", model="test-model")

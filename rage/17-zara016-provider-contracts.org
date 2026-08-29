@@ -1,0 +1,47 @@
+#+title: RAGE #17 - ZARA-016 LLM provider contracts
+
+* Run identity
+- Consumed issue :: #17, [P1] ZARA-016 - Correct LLM provider protocols, authentication headers, timeouts, and session reuse (reopened regression).
+- Branch :: =fix/zara-016-llm-provider-contracts=
+- RAGE start commit :: =a04435d2b73b44dffd52e00aff3bf478d5a48d6b=
+- Selection :: first eligible issue per =planning/backlog.pl= =next/1= (regressions outrank feature work; roadmap reconciliation 2026-08-22 reopens ZARA-016 and gates #124 on it).
+- Worktree audit at start :: unrelated finished latency-trace work preserved on branch =wip/latency-trace-ctor= (commit 22bfdbb, focused test green: 28 passed). Master clean at branch point. Untracked =planning/backlog.pl= planning artifact only.
+- Protocol :: AGENTS.md + RAGE skill: immutable start SHA, research, design, TDD red/green per behavior, full local gate, exact-head Actions before merge.
+
+* Issue scope (from #17)
+Two LLM client stacks with provider-specific correctness gaps:
+- =modules/llm_client.pl= :: Anthropic =system= role inside =messages= instead of top-level =system= field; OpenAI auth built as Prolog term =\"Bearer \" + KeyString= instead of literal concatenated header; no bounded timeouts; unbounded history; manual JSON helpers unsafe if used.
+- =zara/llm.py= :: new =aiohttp.ClientSession= per request; error strings returned as normal assistant responses; no cancellation/streaming contract.
+
+Reopened regression (2026-08-15, from issue comment): SWI-Prolog emits =error(socket_error(eai_noname,'Name or service not known'),_)= (arity-2 =socket_error=) while the =modules/llm_client.pl= classifier matches =error(socket_error(_),_)=, so DNS failures fall through to =malformed_response=.
+
+Required: tested provider serializers, literal auth strings, connect/read/total timeouts, bounded retries, reusable sessions, typed success/error results, bounded history. No changes to configured providers/models. Tests must include golden request tests for Anthropic/OpenAI/Ollama in both Python and Prolog paths, plus =scripts/test-llm-clients.sh= using local fake HTTP servers only.
+
+* Iteration 1 - 2026-08-29
+** Research
+- Read =modules/llm_client.pl=, =zara/llm.py=, =t/llm_clients.pl=, =t/test_llm.py=, =scripts/test-llm-clients.sh= at start SHA.
+- Finding :: a prior iteration already landed most of #17. Verified present: tested golden request serializers for all three providers on both stacks; literal =Bearer= auth (Prolog =format/3=); Anthropic top-level =system=; connect/read/total timeouts + =call_with_time_limit=; bounded retries; =aiohttp= session reuse and close; typed =LLMResult= and =llm_result/2=; bounded history; cancellation tests (Python); =scripts/test-llm-clients.sh=.
+- Reopened regression confirmed :: =modules/llm_client.pl:243= =retryable_exception(error(socket_error(_), _))= matches only arity-1 =socket_error=. SWI-Prolog emits arity-2 =error(socket_error(eai_noname,'Name or service not known'),_)=, so DNS failures skip the retryable clause and the catch-all =request_exception_result= clause classifies them =malformed_response=, contradicting the typed-failure contract.
+- Coverage gaps (issue-required, untested): Prolog DNS/socket classification, Prolog missing-API-key =authentication= error, Prolog =close_llm_client=, Python missing-API-key failure.
+- Rejected alternative :: full serializer/history re-architecture. Rejected: research shows the contract work already exists with green tests; a rewrite would violate minimal-change and risk regressions.
+** Design
+- Invariant :: network-level failures must classify as =llm_error(connection, ...)=, never as =malformed_response=; =malformed_response= is reserved for unparseable/shape-mismatched provider replies.
+- Change :: add =retryable_exception(error(socket_error(_, _), _))= clause for the arity-2 form (keep arity-1 clause for older SWI shapes). Existing =request_exception_result= retryable clause then yields =connection=; =retry_outcome(exception(Error))= makes DNS failures bounded-retryable, consistent with the Python =_retryable= connection policy.
+- Tests mapped to acceptance criteria:
+  1. RED/GREEN regression :: PlUnit =dns_socket_error_is_typed_connection= asserting =request_exception_result(error(socket_error(eai_noname, ...), _), Result) = llm_result(error, llm_error(connection, _, none))=.
+  2. Compatibility :: =legacy_socket_error_remains_retryable= (arity-1 stays retryable).
+  3. Auth (Prolog) :: unset key -> =llm_result(error, llm_error(authentication, _, none))=.
+  4. Close (Prolog) :: =close_llm_client= succeeds and clears history.
+  5. Auth (Python) :: constructing anthropic/openai =LLMClient= without a key raises =ValueError=.
+- Gate :: =bash scripts/test-llm-clients.sh=, then full =nix develop -c bash scripts/test-all.sh=, then exact-head Actions on the PR.
+** Realize / TDD
+- RED 1 :: =nix develop -c swipl -q -g run_tests -t halt t/llm_clients.pl= with =dns_socket_error_is_typed_connection= added. Result :: exactly one failure, asserting the reopened bug: =llm_result(error,llm_error(malformed_response,"error(socket_error(eai_noname,'Name or service not known'),_3504)",none))= vs expected =llm_error(connection,_,none)=.
+- GREEN 1 :: added =retryable_exception(error(socket_error(_, _), _))= to =modules/llm_client.pl=. Same command :: 17/17 passed, regression test classifies DNS failures as =connection=.
+- Coverage additions (existing correct behavior, issue-required) :: =legacy_socket_error_remains_retryable=, =missing_api_key_is_typed= (Prolog), =close_llm_client_clears_session_and_history= (Prolog), =test_missing_api_key_fails_fast= (Python).
+- Focused gate :: =nix develop -c bash scripts/test-llm-clients.sh= :: pytest green + 17/17 PlUnit green.
+- Next :: full local gate, exact-head Actions, PR.
+** Evaluate / gate
+- Implementation commit :: =7985353= fix(llm): classify arity-2 socket_error as connection failure.
+- Full gate :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh= at =7985353= :: Phases run 10, passed 10, failed 0 (ALL PHASES PASSED).
+- Gate note :: first full-gate run without =NIX_CONFIG= failed at phase 10 with =experimental Nix feature 'nix-command' is disabled=; reproduced environment limitation of nested =nix= invocations inside =nix develop=, unrelated to the change (no packaging files touched). Pre-existing repo convention is to export =NIX_CONFIG= (see =rage/209= log).
+- Pending :: exact-head GitHub Actions on PR, then merge.
