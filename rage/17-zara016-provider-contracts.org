@@ -45,3 +45,10 @@ Required: tested provider serializers, literal auth strings, connect/read/total 
 - Full gate :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh= at =7985353= :: Phases run 10, passed 10, failed 0 (ALL PHASES PASSED).
 - Gate note :: first full-gate run without =NIX_CONFIG= failed at phase 10 with =experimental Nix feature 'nix-command' is disabled=; reproduced environment limitation of nested =nix= invocations inside =nix develop=, unrelated to the change (no packaging files touched). Pre-existing repo convention is to export =NIX_CONFIG= (see =rage/209= log).
 - Pending :: exact-head GitHub Actions on PR, then merge.
+** Outcome
+- PR :: #224 (opened draft, marked ready after gates).
+- Exact-head CI :: run 33247807923 at =fe43c9e= :: test green (8m47s), shared mic Ubuntu 24.04 green (52s), shared mic Arch Linux green (35s). No stale-CI merge.
+- Merge SHA :: =634b105= (merge of #224 into master, 2026-08-29).
+- Issue state :: #17 closed with merge evidence; roadmap issue #1 phase 2 box ticked (=refixed 2026-08-29 (#224)=).
+- Acceptance check :: each provider receives valid payload/headers (golden tests both stacks); no network call can hang (timeouts + total limits both stacks); sessions reused and closed (tests both stacks); failures cannot masquerade as assistant text (typed results, regression test proves DNS =connection= classification).
+- Next eligible per =planning/backlog.pl= :: #134 (daemon release gate, P0; prior attempt REJECTED → fresh RAGE iteration required).
