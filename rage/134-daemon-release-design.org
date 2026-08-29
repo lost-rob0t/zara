@@ -1,0 +1,207 @@
+#+title: RAGE #134 - Daemon Release Gate Design
+
+* Design status
+- Consumed issue :: #134
+- Immutable RAGE start :: =b9463faf4f69bcc92c0db16941ea27ae0c252327=
+- Control plane :: Auto-RAGE / canonical ADADR
+- Research result :: inherited assumption "#134 is ready for release-matrix realization" is falsified.
+- Proposed decision :: reject realization at the current dependency state; retain standalone as the safe default; reconcile blockers; re-enter #134 Analyze after blockers close.
+
+* Objective
+Define the architecture of the final proof gate without creating a false-green release path while required producer/runtime behaviors are still incomplete or owned elsewhere.
+
+The final #134 implementation remains one non-interactive release gate, but it is only realizable when the contracts it composes exist. #134 is an integration/proof owner, not a replacement implementation owner for #17/#28/#29/#30/#31 or reopened #132.
+
+* Core invariants
+1. =zara= remains the client executable and =zara-server= remains the daemon/service executable.
+2. Supported clients depend on =ZaraClient=; they do not depend directly on =RuntimeHost=.
+3. ZeroMQ transports remain behind =ZaraClient= and the runtime service boundary.
+4. authenticated transport identity/principal mapping remains server authority; route ids or payload user fields are not principal authority.
+5. Prolog logic remains Prolog; no Prolog-RLM runtime/backend dependency is introduced.
+6. a release test may use deterministic/fake external providers, but it may not manufacture a runtime event that the production provider/runtime path cannot itself emit and then count that as end-to-end parity proof.
+7. no #134 test may weaken, skip, xfail, or reinterpret a required Voice-replacement capability merely because an owning dependency is unfinished.
+8. exact-head CI is necessary but cannot retroactively prove a behavior that is absent from the release matrix.
+9. long/local soak and hardware/provider-dependent evidence are reported distinctly from the deterministic CI profile; neither is mislabeled as the other.
+10. structured latency/security/audit evidence never contains transcript text, raw audio, provider secrets, CURVE private keys, or bearer credentials.
+11. cancellation is generational: events/audio/tool effects from cancelled or superseded work cannot be accepted merely because a late transport frame arrives.
+12. all route/session/principal queues and caches used by the gate have explicit finite bounds or a documented lifecycle proof that releases them.
+
+* Dependency ownership map
+** Reopened provider chain
+- #17 / ZARA-016 :: provider protocol correctness, auth headers, timeouts, reusable sessions, typed failures.
+- #28 / ZARA-027 :: real provider-neutral streamed LLM/agent output and cancellation-safe text events.
+- #29 / ZARA-028 :: phrase-sized streaming TTS and persistent low-latency playback/provider pipeline.
+- #30 / ZARA-029 :: warm-path/resource optimization and repeated-turn resource proof.
+- #31 / ZARA-030 :: deterministic duplex harness, short CI profile, long local soak, p50/p95/p99 report.
+
+#134 composes their accepted outputs. It does not reimplement them.
+
+** Completed daemon slice requiring reopen
+- #132 :: live ZARA/1 voice transport. Its acceptance requires partial/final transcript reception but current code drops STT state/partial events and converts final transcript directly to =SubmitTurn=. Reopen #132 and repair that contract there.
+
+** Focused missing owner
+- daemon tool/search/approval transport :: create a focused blocker issue that carries the existing runtime tool lifecycle + explicit approval interaction through authenticated ZARA/1 and =ZaraClient=. It must not absorb #150's future semantic/device capability architecture.
+
+* Final release-gate architecture after blockers close
+** One top-level non-interactive entrypoint
+Target: =scripts/test-daemon-release.sh=.
+
+It composes existing authoritative child gates plus #134-specific adversarial integration tests. It does not duplicate provider stacks or build parallel test-only runtime implementations.
+
+Expected logical phases:
+1. protocol parser/state hostile-input matrix;
+2. CURVE/ZAP enrollment/revocation/pinning/authorization matrix;
+3. principal conversation/memory/event isolation matrix;
+4. reconnect/idempotency/generation-fence matrix;
+5. live voice ingress/STT visible-event matrix;
+6. real runtime streamed text -> phrase TTS -> client playback fixture path;
+7. cross-process barge-in/cancel/stale-output matrix;
+8. tool/search/explicit approval interaction and cross-principal isolation matrix;
+9. deterministic full-duplex short soak/latency profile from #31;
+10. release summary that fails closed if any required capability has no executed proof.
+
+The full repository gate invokes the deterministic release subset. The long local soak remains an explicit separate invocation/report from #31 and is required release evidence but should not make ordinary CI run for an hour.
+
+* Acceptance-to-test mapping
+** 1 persistent daemon session
+- existing server lifecycle + multi-turn ZARA/1 integration; release composition verifies no client-owned runtime.
+
+** 2 streamed microphone input
+- #132 binary PCM framing + process-boundary voice fixture.
+
+** 3 fast speech start/end detection
+- reopened #132 must expose runtime STT state across ZARA/1; #31 latency harness measures timestamps.
+
+** 4 visible partial/final transcription
+- reopened #132 owns protocol/runtime/client event delivery; #134 verifies process-boundary visibility and principal/turn correlation.
+
+** 5 multiple turns without reconnecting
+- deterministic same-session multi-turn release fixture plus conversation persistence assertion.
+
+** 6 streamed assistant text
+- #28 owns actual production event source; #134 proves first delta precedes completion over ZARA/1 and cancelled generations stop emitting.
+
+** 7 phrase/audio before full response completes
+- #29 owns producer pipeline; #134 proves first playable audio precedes assistant completion and is correctly correlated.
+
+** 8 natural barge-in
+- #27/#132 cancellation mechanics + #31 timing; #134 composes local playback stop, upstream cancel, and stale-output rejection.
+
+** 9 typed text + voice same durable conversation
+- submit typed turn and voice-derived turn into one conversation id; verify ordered durable history.
+
+** 10 durable transcript/history across client restart
+- #131 persistence + #133 reconnect; close/recreate client and reopen same conversation without fabricating in-flight resume.
+
+** 11 principal-scoped long-term memory retrieval
+- #131 isolation fixtures; #134 uses two principals and proves no cross-principal result/event leakage.
+
+** 12 tools/search + explicit approval events
+- focused daemon blocker owns command/event wire support; #134 drives an approval-required fake/local tool and proves only the owning principal/session can answer it.
+
+** 13 reconnect honest about lost in-flight work
+- #133 generation/reconnect contract; #134 disconnects at multiple states and proves durable conversation resumes but stale in-flight events are not claimed as resumed.
+
+** 14 background daemon
+- packaged =zara-server= subprocess/service fixture; client can interact without foreground assistant runtime/UI.
+
+** 15 multiple authenticated users
+- #130/#131 secure multi-principal server; #134 runs concurrent text/voice/tool scenarios and asserts no identifier/content leakage.
+
+** 16 bounded slow/broken clients
+- transport HWM/MAXMSGSIZE/route eviction + security quotas; #134 includes slow reader/writer, malformed frames, reconnect storm and healthy-client progress assertions.
+
+** 17 end-to-end latency
+- #23 existing metrics + #31 duplex report; #134 verifies cross-process spans and release budgets without transcript/audio payloads in metrics.
+
+* Fuzz/property strategy
+Do not add a new external property framework merely for fashion when deterministic standard-library generation is sufficient. =flake.nix= does not currently provide Hypothesis.
+
+Use fixed-seed generated cases and explicit boundary tables around:
+- multipart frame counts 0..limit+1;
+- envelope bytes around maximum -1/exact/+1;
+- payload frame count/size/aggregate boundaries;
+- invalid UTF-8, duplicate JSON keys, non-finite numbers, unknown keys/types;
+- id/session/conversation/turn/stream correlation mutations;
+- audio sequence duplicate/gap/late cases;
+- duplicate request IDs with same and conflicting commands;
+- disconnect/reconnect at each protocol state;
+- cancellation interleavings represented by deterministic barriers/events rather than arbitrary sleeps.
+
+A fuzz test passes only if outcomes are from a closed expected set, execution stays bounded, unknown types never dispatch, and internal exception strings/private payloads do not cross the wire.
+
+* Failure behavior
+- Missing required producer capability :: gate fails explicitly; never synthesize the missing producer event as end-to-end proof.
+- Provider unavailable in deterministic CI :: use repository-owned local fake provider implementation through the actual provider interface; do not bypass the production streaming adapter.
+- Wrong/revoked identity :: handshake/transport fails without opening a principal runtime or leaking reason/secrets beyond stable typed diagnostics.
+- Slow route :: only that route is bounded/evicted; unrelated routes continue.
+- Reconnect :: durable conversation may reopen; in-flight audio/provider/tool work is not claimed as resumed without explicit protocol support.
+- Client cancellation :: local playback stops first; daemon cancel follows; stale later events are discarded by turn/generation correlation.
+- Daemon restart :: client reaches explicit degraded/disconnected state, reconnects under bounded policy, and reopens durable state without duplicate side effects.
+- Gate infrastructure error :: report =ERROR= distinct from behavioral =FAIL=; never convert missing tooling/dependency into =PASS=.
+
+* Persistence and compatibility
+- no schema migration belongs to #134 unless a release-gate-specific evidence store is proven necessary; prefer ephemeral test report artifacts.
+- production conversation/memory stores remain owner-principal scoped per #131.
+- existing standalone mode remains available until #134 passes.
+- existing CLI/desktop =ZaraClient= boundary remains compatible; no direct RuntimeHost shortcut is permitted for release tests.
+- protocol extensions from reopened #132 and tool/approval blocker must preserve v1 closed-schema behavior and explicit negotiation/version compatibility rules.
+
+* Security boundaries
+- remote TCP remains CURVE/ZAP authenticated and server-public-key pinned.
+- payload identity never selects principal.
+- tool approval response binds authenticated principal + session/conversation/turn/tool request id and cannot authorize another principal's request.
+- audit/metrics contain stable IDs/action/result/timing only; no transcript/audio/secrets.
+- parser never uses pickle/eval/import-based dispatch.
+- finite message, queue, pending, replay and rate limits remain exercised by hostile tests.
+
+* Adversarial review of this design
+** Attack: issue-state dependency checks become the release gate
+Rejected. GitHub issue state is planning evidence, not behavioral proof. When blockers close, #134 still executes the actual behavior.
+
+** Attack: synthetic protocol event proves a production producer
+Rejected by invariant 6. Transport fixtures may test transport semantics only. Producer parity requires traversal through the actual provider/runtime adapter using deterministic local providers.
+
+** Attack: #134 grows into a mega-implementation branch
+Prevented by dependency ownership map. Missing behavior routes back to its issue owner or a focused blocker.
+
+** Attack: tests pass while stale cancelled audio/text/tool effects leak
+The gate must bind every observable effect to principal/session/conversation/turn/stream/generation and intentionally deliver late fixture events after cancel/reconnect. Acceptance requires non-observation of stale effects, not merely a cancel acknowledgement.
+
+** Attack: slow client blocks ROUTER owner thread
+Use current nonblocking send + route-local queues and deterministic slow-reader fixtures; assert another route continues and bounded structures return to baseline after eviction.
+
+** Attack: reconnect storm leaks routes/tasks/sockets
+#31/#134 repeated lifecycle profile snapshots bounded route counts, runtime principals, client owner threads, tasks/processes/descriptors where observable. Growth trend beyond tolerance fails.
+
+** Attack: tool approval leaks across principals
+Focused blocker must make approval identity explicit and server-authoritative. #134 concurrently holds approval for principal A while principal B continues and proves B cannot observe or answer A's request.
+
+** Attack: local gate unavailable to current worker
+This is an execution-environment boundary. Remote Actions can produce valuable exact-head evidence, but the mandatory local gate must still be run in an accessible checkout before merge. The design does not weaken that requirement.
+
+** Attack: closing #132 despite missing partial transcript was accepted history
+Release research is allowed to disprove inherited architecture/completion. Preserving the closed history while reopening the issue is stronger evidence than papering over it in #134.
+
+* Decision gate
+Decision :: REJECT #134 realization at the current repository state.
+
+Rationale:
+- a mandatory formal dependency (#132) has a falsified acceptance criterion and must be reopened;
+- #17/#28/#29/#30/#31 are active owners of required provider/streaming/soak behavior;
+- tool/search approval interaction has no current daemon-wire owner and needs a focused blocker;
+- implementing/mocking those behaviors inside #134 would violate issue ownership and create false-green risk;
+- the release issue itself requires retaining standalone and creating blockers when regressions are exposed.
+
+Realize authorization :: DENIED for #134 in this iteration.
+No TDD/production implementation is permitted after this decision because the architecture gate rejected realization. Queue reconciliation is authorized as the outcome.
+
+* Authorized outcome actions
+1. preserve all existing Iteration 1/2 evidence;
+2. append this rejection to =rage/134-daemon-release-gate.org=;
+3. reopen #132 with concrete file/symbol evidence;
+4. create one focused current-daemon tool/search/approval transport blocker if no exact owner exists;
+5. update #134 to record the newly discovered blockers/dependency chain without weakening acceptance;
+6. keep PR #190 draft and unmerged;
+7. do not switch =zara= to daemon-default operation;
+8. re-enter #134 Analyze from current repository evidence only after the blockers are resolved and a later RAGE iteration is initialized according to repository workflow.
