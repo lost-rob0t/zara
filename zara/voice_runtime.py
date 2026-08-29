@@ -15,9 +15,17 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from zara.runtime import events
 from zara.runtime.commands import SubmitTurn
 from zara.server import PrincipalContext, PrincipalMismatch
-from zara.streaming_stt import FinalTranscript, StreamingTranscriber, make_faster_whisper_transcriber
+from zara.streaming_stt import (
+    FinalTranscript,
+    PartialTranscript,
+    SpeechEnded,
+    SpeechStarted,
+    StreamingTranscriber,
+    make_faster_whisper_transcriber,
+)
 
 
 @dataclass
@@ -29,6 +37,8 @@ class _VoiceStream:
     transcriber: object
     committed: bool = False
     submitted: bool = False
+    cancel_requested: bool = False
+    inflight_events: int = 0
 
 
 @dataclass(frozen=True)
@@ -66,6 +76,7 @@ class RuntimeVoiceIngress:
         self._queue: queue.Queue[object] = queue.Queue(maxsize=queue_size)
         self._streams: dict[str, _VoiceStream] = {}
         self._lock = threading.RLock()
+        self._event_condition = threading.Condition(self._lock)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._default_model = None
@@ -184,10 +195,13 @@ class RuntimeVoiceIngress:
         trace_id: Optional[str],
     ) -> None:
         self._check_principal(principal)
-        with self._lock:
+        with self._event_condition:
             stream = self._require_stream(stream_id)
             self._check_context(stream, conversation_id, trace_id)
+            stream.cancel_requested = True
             self._streams.pop(stream_id, None)
+            while stream.inflight_events:
+                self._event_condition.wait()
         stream.transcriber.cancel(stream_id)
 
     def _require_stream(self, stream_id: str) -> _VoiceStream:
@@ -208,6 +222,56 @@ class RuntimeVoiceIngress:
     @staticmethod
     def _pcm_float32(pcm: bytes) -> np.ndarray:
         return np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
+
+    def _publish(self, stream: _VoiceStream, event: events.RuntimeEvent) -> None:
+        publisher = getattr(self.supervisor, "publish", None)
+        if callable(publisher):
+            publisher(stream.principal, event)
+
+    def _publish_if_current(
+        self,
+        stream: _VoiceStream,
+        event: events.RuntimeEvent,
+    ) -> bool:
+        with self._event_condition:
+            if (
+                self._streams.get(stream.stream_id) is not stream
+                or stream.cancel_requested
+            ):
+                return False
+            stream.inflight_events += 1
+        try:
+            self._publish(stream, event)
+            return True
+        finally:
+            with self._event_condition:
+                stream.inflight_events -= 1
+                if not stream.inflight_events:
+                    self._event_condition.notify_all()
+
+    def _handle_stt_event(self, stream: _VoiceStream, event: object) -> None:
+        common = {
+            "conversation_id": stream.conversation_id,
+            "stream_id": stream.stream_id,
+            "trace_id": stream.trace_id,
+        }
+        if isinstance(event, SpeechStarted):
+            visible = events.VoiceSpeechStarted(
+                pre_speech_samples=event.pre_speech_samples,
+                **common,
+            )
+            self._publish_if_current(stream, visible)
+            return
+        if isinstance(event, PartialTranscript):
+            visible = events.VoiceTranscriptPartial(text=event.text, **common)
+            self._publish_if_current(stream, visible)
+            return
+        if isinstance(event, SpeechEnded):
+            visible = events.VoiceSpeechEnded(reason=event.reason, **common)
+            self._publish_if_current(stream, visible)
+            return
+        if isinstance(event, FinalTranscript):
+            self._submit_final(stream, event.text, provider=event.provider)
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -231,32 +295,48 @@ class RuntimeVoiceIngress:
             except Exception:
                 continue
             for event in emitted:
-                if isinstance(event, FinalTranscript):
-                    self._submit_final(stream, event.text)
+                self._handle_stt_event(stream, event)
             if isinstance(item, _CommitWork):
                 with self._lock:
                     current = self._streams.get(item.stream_id)
                     if current is stream:
                         self._streams.pop(item.stream_id, None)
 
-    def _submit_final(self, stream: _VoiceStream, text: str) -> None:
+    def _submit_final(self, stream: _VoiceStream, text: str, *, provider: str = "") -> None:
         clean = str(text or "").strip()
         if not clean:
             return
-        with self._lock:
+        with self._event_condition:
             current = self._streams.get(stream.stream_id)
-            if current is not stream or stream.submitted:
+            if current is not stream or stream.submitted or stream.cancel_requested:
                 return
             stream.submitted = True
-        request_id = stream.trace_id or uuid.uuid4().hex
-        self.supervisor.submit(
-            stream.principal,
-            SubmitTurn(
-                text=clean,
-                conversation_id=stream.conversation_id,
-                request_id=request_id,
-            ),
-        )
+            stream.inflight_events += 1
+        try:
+            self._publish(
+                stream,
+                events.VoiceTranscriptFinal(
+                    conversation_id=stream.conversation_id,
+                    stream_id=stream.stream_id,
+                    trace_id=stream.trace_id,
+                    text=clean,
+                    provider=str(provider or ""),
+                ),
+            )
+            request_id = stream.trace_id or uuid.uuid4().hex
+            self.supervisor.submit(
+                stream.principal,
+                SubmitTurn(
+                    text=clean,
+                    conversation_id=stream.conversation_id,
+                    request_id=request_id,
+                ),
+            )
+        finally:
+            with self._event_condition:
+                stream.inflight_events -= 1
+                if not stream.inflight_events:
+                    self._event_condition.notify_all()
 
     def close(self, timeout: float = 5.0) -> None:
         self._stop.set()

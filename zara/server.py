@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from zara.runtime import bridge
+from zara.runtime import bridge, events
 from zara.runtime.backend import AgentRuntimeBackend
 from zara.runtime.commands import RuntimeCommand
 from zara.runtime.host import RuntimeHost
@@ -292,6 +292,13 @@ class RuntimeSupervisor:
         maxsize: int = 0,
     ) -> bridge.RuntimeEventSubscription:
         return self.runtime(principal).bus.subscribe(maxsize=maxsize)
+
+    def publish(
+        self,
+        principal: PrincipalContext,
+        event: events.RuntimeEvent,
+    ) -> bridge.EventEnvelope:
+        return self.runtime(principal).bus.publish(event)
 
     def shutdown(self) -> bool:
         with self._shutdown_lock:

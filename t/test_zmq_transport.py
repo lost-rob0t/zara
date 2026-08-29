@@ -12,7 +12,13 @@ from zara import zmq_transport as transport
 from zara.client import ZaraClientState
 from zara.protocol import ProtocolMessage, decode_message, encode_message
 from zara.runtime import bridge, events
-from zara.runtime.commands import CancelTurn, CommandReceipt, SubmitTurn
+from zara.runtime.commands import (
+    ApproveTool,
+    CancelTurn,
+    CommandReceipt,
+    RejectTool,
+    SubmitTurn,
+)
 from zara.server import PrincipalContext, ServerState
 from zara.zmq_transport import (
     ClientNotReady,
@@ -37,6 +43,8 @@ class FakeSupervisor:
             future.set_result(CommandReceipt(request_id=command.request_id, turn_id="turn-canonical"))
         elif isinstance(command, CancelTurn):
             future.set_result(CommandReceipt(request_id=command.request_id, turn_id=command.turn_id))
+        elif isinstance(command, (ApproveTool, RejectTool)):
+            future.set_result(CommandReceipt(request_id=command.request_id))
         else:
             future.set_exception(AssertionError(f"unexpected command: {command!r}"))
         return future
@@ -251,6 +259,60 @@ def test_client_handshake_ping_conversation_submit_cancel_and_runtime_event(
     client.close(timeout=1.0)
     gateway.close(timeout=1.0)
     assert client.state is ZaraClientState.STOPPED
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ApproveTool(request_id="approve-request", tool_run_id="tool-call-1"),
+        RejectTool(
+            request_id="reject-request",
+            tool_run_id="tool-call-1",
+            reason="not now",
+        ),
+    ],
+)
+def test_client_submits_tool_decisions_through_runtime_boundary(
+    zmq_context,
+    transport_config,
+    command,
+):
+    endpoint = unique_endpoint("tool-decision")
+    supervisor = FakeSupervisor()
+    principal = PrincipalContext("local-owner")
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=supervisor,
+        principal=principal,
+        context=zmq_context,
+        config=transport_config,
+    )
+    gateway.start().result(timeout=1.0)
+    client = ZmqZaraClient(endpoint, context=zmq_context, config=transport_config)
+    subscription = client.subscribe(maxsize=8)
+    client.start().result(timeout=1.0)
+
+    try:
+        turn = client.submit(SubmitTurn(text="prepare approval")).result(timeout=1.0)
+        supervisor.bus.publish(
+            events.ToolWaitingForUser(
+                turn_id=turn.turn_id,
+                tool_run_id="tool-call-1",
+                tool_name="reviewed_effect",
+                prompt="Approve reviewed_effect?",
+            )
+        )
+        waiting = subscription.get(timeout=1.0)
+        assert waiting.event.tool_run_id == "tool-call-1"
+
+        receipt = client.submit(command).result(timeout=1.0)
+
+        assert receipt == CommandReceipt(request_id=command.request_id)
+        assert supervisor.commands[-1] == (principal, command)
+    finally:
+        subscription.close()
+        client.close(timeout=1.0)
+        gateway.close(timeout=1.0)
 
 
 def test_two_routes_do_not_receive_each_others_runtime_events(zmq_context, transport_config):

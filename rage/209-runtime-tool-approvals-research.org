@@ -1,0 +1,51 @@
+#+title: Research - #209 canonical resumable runtime tool approvals
+
+* Question
+What is the smallest production architecture that pauses Zara's existing LangGraph tool path before a side effect, accepts an asynchronous decision through =RuntimeHost=, and fails closed under cancellation and lifecycle changes without creating another executor?
+
+* Repository evidence
+- =RuntimeHost= already accepts =ApproveTool= and =RejectTool= while a submitted turn runs as a separate asyncio task. Its worker loop therefore remains responsive while the turn waits.
+- =LangGraphRuntimeBackend= inherits approval methods that always raise =UnsupportedRuntimeCommand=. Its cancellation hook is also a no-op.
+- =run_conversation_loop= compiles a new graph without a checkpointer or stable thread id and invokes it once.
+- The graph routes every model tool call directly to LangGraph's prebuilt =ToolNode=. There is no policy gate before invocation.
+- =RuntimeSupervisor= creates one =AgentManager=, =RuntimeHost= and event bus per authenticated =PrincipalContext=. This is the existing hard isolation boundary and must remain the approval owner.
+- =ToolRegistry= is the one canonical registry for built-in, user and MCP LangChain =BaseTool= instances. It has no approval policy today.
+- =RuntimeHost._cancel_turn= marks the canonical turn cancelled, cancels its task, and then calls the backend cancellation hook. Restart and shutdown cancel all turn tasks before stopping the backend.
+- Tool lifecycle dataclasses already exist, but no production approval path publishes =ToolQueued=, =ToolWaitingForUser=, =UserResponded= or a rejection terminal event.
+
+* Upstream evidence
+- The current LangGraph interrupt contract requires a checkpointer and stable =thread_id=, returns an =Interrupt= value to the caller, and resumes the same graph through =Command(resume=...)=: https://docs.langchain.com/oss/python/langgraph/interrupts
+- LangGraph persistence stores graph state as checkpoints organized into threads: https://docs.langchain.com/oss/python/langgraph/persistence
+- The official human-in-the-loop flow defines approve/reject decisions and warns that code before an interrupt is re-executed on resume: https://docs.langchain.com/oss/python/langchain/human-in-the-loop
+- The installed Nix environment was exercised directly. =StateGraph.compile= accepts a checkpointer, =InMemorySaver= yields =__interrupt__= from =ainvoke=, and the same graph resumes successfully with =Command(resume=...)= and a stable thread id.
+- The installed =ToolNode= can be invoked once per tool call from a graph node when the graph's runnable configuration is forwarded. This preserves LangGraph's tool input/injection behavior while allowing Zara to publish typed lifecycle events around each invocation.
+- =langgraph-checkpoint-sqlite= is available upstream but is not installed by the repository. Adding it would persist full graph messages, prompts and tool arguments, not merely the bounded approval envelope.
+
+* Failure analysis
+** Interrupt placement
+Putting an interrupt immediately before each side effect inside a loop is unsafe for multiple tool calls. When the second call interrupts, LangGraph re-enters the node from its beginning and can repeat the first side effect. All required decisions must be collected in a pure gate node before the separate execution node starts.
+
+** Durable restart resume
+Generic tools do not yet have durable idempotency keys or a recovery protocol. A disk checkpoint can prove that a tool node was scheduled but cannot prove whether an external side effect committed just before a crash. Blind restart resume can therefore execute an action twice. It would also persist private prompts and tool arguments outside Zara's existing memory policy.
+
+** Cancellation race
+The deterministic boundary is tool start. A cancellation or rejection that wins while the approval is pending prevents invocation. Once an approved call has entered =ToolStarted=, generic external side effects cannot be rolled back. The runtime must guarantee one terminal decision for the pending id and reject all later decisions as stale/replayed.
+
+** Transport disconnect
+This issue is transport-neutral and cannot infer whether a device disconnect represents user cancellation. A disconnect leaves the principal-owned approval pending until reconnection, explicit cancellation, timeout, restart or shutdown. #191 will expose that state only to authenticated sessions for the same principal.
+
+* Alternatives
+** Keep one asyncio task blocked on a Future without LangGraph checkpoints
+Rejected. It can work in one process, but it makes the Future a second orchestration authority and does not exercise LangGraph's canonical interrupt/resume state.
+
+** Use LangChain human-in-the-loop middleware
+Rejected for this slice. Zara owns a custom =StateGraph= and registry; migrating to =create_agent= middleware would replace the established agent architecture and widen the issue substantially.
+
+** Persist interrupted graphs to SQLite and resume after restart
+Rejected until typed capabilities provide durable idempotency/reconciliation. The current generic tool plane cannot distinguish “not run” from “committed before crash,” and plaintext checkpoint retention would expand the privacy boundary.
+
+** Reimplement tool invocation directly
+Rejected. It would lose =ToolNode= behavior for LangChain/MCP tools and create a second executor.
+
+* Research conclusion
+Use a principal-owned approval controller around LangGraph's canonical checkpointed interrupt. A pure approval node gathers all required decisions before a separate gated tool node delegates each approved call to the existing =ToolNode=. Checkpoints are process-local, bounded to one live turn, and deleted at every terminal path. Restart/shutdown are explicitly fail-closed and never resume a generic side effect. Server configuration names the tools that require approval; model output and client capability advertisement never set policy.

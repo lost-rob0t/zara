@@ -181,7 +181,7 @@ def test_cancel_in_progress_survives_handoff_and_blocks_duplicate_stop(tmp_path)
             CommandReceipt(request_id=submit.request_id, turn_id="turn-handoff-cancel")
         )
         qt_app.processEvents()
-        quick.stop_button.click()
+        quick.action_button.click()
         qt_app.processEvents()
 
         cancel = bridge.commands[-1]
@@ -194,9 +194,10 @@ def test_cancel_in_progress_survives_handoff_and_blocks_duplicate_stop(tmp_path)
         controller.expand_quick_to_full_chat()
         qt_app.processEvents()
         assert controller.window.current_conversation_id == conversation_id
-        assert controller.window.stop_button.isEnabled() is False
+        assert controller.window.action_button.isEnabled() is False
+        assert controller.window.action_button.action_mode == "stop"
 
-        controller.window.stop_button.click()
+        controller.window.action_button.click()
         qt_app.processEvents()
         assert len(bridge.commands) == command_count
 
@@ -211,6 +212,7 @@ def test_cancel_in_progress_survives_handoff_and_blocks_duplicate_stop(tmp_path)
         qt_app.processEvents()
         assert state.active_turn_id is None
         assert state.cancel_request_id is None
-        assert controller.window.stop_button.isEnabled() is False
+        assert controller.window.action_button.action_mode == "send"
+        assert controller.window.action_button.isEnabled() is False
     finally:
         dispose(controller)

@@ -1,0 +1,70 @@
+#+title: RAGE #191 research - authenticated ZARA/1 tool approvals
+
+* Scope and method
+- Issue #191 was consumed at exact master =a41877367f7e0af8d936e91982e88e03912dd5c2=.
+- The inherited claim under test was that Zara already had an executable runtime tool-approval lifecycle and only lacked a closed authenticated client/service mapping.
+- Research inspected the current production agent graph, runtime commands/events/backend/host, principal supervisor, ZARA/1 codec and gateway/client, security policy, tests, issue #82/#83 history and current official LangGraph interrupt/persistence contracts.
+
+* Sources
+- Repository =setup.py= declares =langgraph>=0.2= without an upper pin; the Nix development environment on 2026-08-24 resolves =langgraph 1.0.5=, =langchain-core 1.2.5= and =langchain 1.2.0=.
+- Installed =langgraph 1.0.5= exposes =StateGraph.compile(checkpointer=...)=, =interrupt(value)= and =Command(resume=...)=.
+- Official LangGraph interrupts documentation :: https://docs.langchain.com/oss/python/langgraph/interrupts
+- Official LangGraph persistence documentation :: https://docs.langchain.com/oss/python/langgraph/persistence
+- Official LangChain human-in-the-loop documentation :: https://docs.langchain.com/oss/python/langchain/human-in-the-loop
+- Official LangGraph =interrupt= reference :: https://reference.langchain.com/python/langgraph/types/interrupt
+- Issue #82 modeled a provider-neutral event schema; it did not require production tool approval execution.
+- Issue #83 modeled a RuntimeHost command boundary; its acceptance used deterministic fake-runtime behavior and did not require a resumable production approval path.
+
+* Findings
+** The runtime approval contract is schema-only
+- =zara/runtime/commands.py= defines =ApproveTool(tool_run_id)= and =RejectTool(tool_run_id, reason)=.
+- =zara/runtime/events.py= defines tool lifecycle and waiting/user-response events.
+- =RuntimeHost._dispatch= forwards approve/reject to its backend and returns a receipt only when the backend accepts it.
+- =RuntimeBackend.approve_tool= and =reject_tool= deliberately raise =UnsupportedRuntimeCommand=.
+- =LangGraphRuntimeBackend= does not override either method. Therefore the production =AgentRuntimeBackend= path always rejects approval and rejection.
+- No production agent or tool code publishes =ToolWaitingForUser=. Existing publications are compatibility helpers, UI reducers and deterministic test fakes.
+
+** The production graph cannot currently pause and resume
+- =create_agent_graph()= wires =agent -> ToolNode -> agent= and compiles with no checkpointer or interrupt policy.
+- =run_conversation_loop()= creates a fresh compiled graph for each turn and calls =ainvoke(state)= without a stable LangGraph =thread_id=.
+- =ToolNode= therefore executes model-selected tools directly; there is no server-side review classification before the side effect.
+- =AgentManager.process_async()= stores only the completed graph messages back into its conversation manager. It has no pending graph/checkpoint handle keyed by principal, conversation, turn or tool run.
+- Current official LangGraph behavior requires a checkpointer and stable thread identifier to persist an interrupt, then the same thread is resumed with =Command(resume=...)=. Nodes restart from their beginning on resume, so any pre-interrupt side effect must be idempotent.
+
+** A wire-only implementation would manufacture false acceptance
+- Adding message names and mapping them to =ApproveTool= would make encoding tests pass while every real production approval still fails as unsupported.
+- Publishing synthetic =ToolWaitingForUser= events from a gateway fake would not prove a tool paused before its side effect, resumed once, or rejected/cancelled safely.
+- #134 requires real tools/search plus explicit approval interaction during a voice session. A schema-only PASS would therefore repeat the completion error that reopened #132.
+
+** Existing transport pieces are reusable after runtime authority exists
+- The gateway already maps authenticated routes to a server-injected =PrincipalContext= and subscribes to that principal's private runtime bus.
+- Runtime events carrying a canonical =turn_id= are routed to the route that initiated that turn. This is a suitable starting policy for approval visibility.
+- The replay cache is principal plus request-id scoped and compares typed commands. It prevents duplicate execution for the same request id, but a different request id for the same =tool_run_id= still requires runtime-level terminal/replay fencing.
+- Route removal clears turn-route mappings. Reconnect cannot silently inherit ownership of an in-flight approval without an explicit policy.
+- =Capability.TOOL_APPROVE= already exists, but =SecureZaraZmqGateway._capability_for()= has no tool-message mapping. Closed authorization can be added in #191 after the runtime contract is real.
+- =ZaraZmqGateway._dispatch_runtime= and its quota completion logic currently recognize only turn submit/cancel. Response types and quota-held message sets must be explicit, not inferred from an else branch.
+- =ZmqZaraClient.submit= accepts only =SubmitTurn= and =CancelTurn=, and its pending response reducer accepts only their acknowledgements.
+
+** Correlation and privacy constraints
+- The existing runtime tool events allow optional =tool_run_id=, =turn_id= and =conversation_id=. An actionable approval request cannot safely use optional correlation; #209 must make the production request fully correlated.
+- The generic protocol envelope bounds identifiers and total envelope bytes. Future per-message validation must still close fields and types, prohibit binary payloads, and bound user-visible prompt/reason text.
+- Tool arguments and results are not required to cross the approval wire for #191. Sending them would unnecessarily enlarge the privacy and dynamic-dispatch surface.
+- The security audit records message type and identifiers, not body content. That invariant must remain true for approval prompts/reasons.
+
+* Alternatives considered
+** Implement codec and fake-backend tests now
+- Rejected. It creates a callable but non-functional approval command and would let #134 pass against synthetic events.
+
+** Add pending approval state inside the ZeroMQ gateway
+- Rejected. The gateway does not own tools, graph state, cancellation or side effects. This would be a second tool runtime and fail standalone/InProcess parity.
+
+** Block inside a tool wrapper on a thread condition
+- Rejected as the default architecture. It bypasses LangGraph persistence, complicates runtime shutdown/restart, and cannot honestly provide durable reconnect behavior.
+
+** Use the current LangGraph interrupt/resume contract in the canonical backend
+- Accepted as the research direction for a separate transport-neutral blocker, subject to #209 Auto-RAGE design. The exact checkpointer and durability policy remain research-owned.
+
+* Research conclusion
+- The inherited #191 architecture is structurally incomplete. The missing prerequisite is not another wire field; it is a real canonical runtime approval authority.
+- Issue #209 now owns that prerequisite and blocks #191 and #134.
+- #191 realization is rejected for this iteration. Its protocol design should resume only after #209 freezes and proves the pending-approval ownership, lifecycle and resume semantics.

@@ -5,9 +5,10 @@ Provides TOML-based configuration for the entire system with automatic
 initialization and module loading.
 """
 
-import os
-import sys
 import math
+import os
+import re
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +27,10 @@ else:
 
 
 DEFAULT_CONFIG_TOML = """# Zarathushtra Configuration
+
+[desktop]
+# Native desktop appearance. Unknown values fall back to Signal Cabin.
+theme = "signal-cabin"
 
 [wake]
 # Wake word detection settings
@@ -138,6 +143,12 @@ recall = true
 memory_list = true
 forget = true
 file_tools = false
+
+[tool_approval]
+# Server-owned tools that must pause before execution.
+required_tools = []
+timeout_seconds = 300.0
+max_pending = 8
 
 [file_tools]
 # File tools are disabled above by default. Relative roots use the repository root.
@@ -280,6 +291,13 @@ class ZaraConfig:
         return config
 
     def _validate_config(self, config: Dict[str, Any]) -> None:
+        desktop_config = config.get("desktop", {})
+        if not isinstance(desktop_config, dict):
+            raise ConfigError("Invalid [desktop] configuration: expected a TOML table")
+        desktop_theme = desktop_config.get("theme", "signal-cabin")
+        if not isinstance(desktop_theme, str):
+            raise ConfigError("desktop.theme must be a string")
+
         tts_config = config.get("tts", {})
         if not isinstance(tts_config, dict):
             raise ConfigError("Invalid [tts] configuration: expected a TOML table")
@@ -321,6 +339,40 @@ class ZaraConfig:
             raise ConfigError("Invalid [tools] configuration: expected a TOML table")
         if not isinstance(tools_config.get("file_tools", False), bool):
             raise ConfigError("tools.file_tools must be true or false")
+
+        approval_config = config.get("tool_approval", {})
+        if not isinstance(approval_config, dict):
+            raise ConfigError("Invalid [tool_approval] configuration: expected a TOML table")
+        required_tools = approval_config.get("required_tools", [])
+        if (
+            not isinstance(required_tools, list)
+            or any(
+                not isinstance(name, str)
+                or not name
+                or len(name) > 128
+                or re.fullmatch(r"[A-Za-z0-9_.:-]+", name) is None
+                for name in required_tools
+            )
+            or len(set(required_tools)) != len(required_tools)
+        ):
+            raise ConfigError(
+                "tool_approval.required_tools must be a unique list of bounded names"
+            )
+        approval_timeout = approval_config.get("timeout_seconds", 300.0)
+        if (
+            isinstance(approval_timeout, bool)
+            or not isinstance(approval_timeout, (int, float))
+            or not math.isfinite(float(approval_timeout))
+            or approval_timeout <= 0
+        ):
+            raise ConfigError("tool_approval.timeout_seconds must be a positive number")
+        max_pending = approval_config.get("max_pending", 8)
+        if (
+            isinstance(max_pending, bool)
+            or not isinstance(max_pending, int)
+            or not 1 <= max_pending <= 64
+        ):
+            raise ConfigError("tool_approval.max_pending must be an integer from 1 to 64")
 
         file_config = config.get("file_tools", {})
         if not isinstance(file_config, dict):
@@ -583,6 +635,10 @@ class ZaraConfig:
             "writable_roots": expand_roots("writable_roots"),
             "max_bytes": file_config.get("max_bytes", DEFAULT_FILE_TOOL_MAX_BYTES),
         }
+
+    def get_tool_approval_config(self) -> Dict[str, Any]:
+        """Return validated server-side tool approval policy."""
+        return self.get_section("tool_approval")
 
     def get_agent_system_prompt(self) -> Optional[str]:
         """

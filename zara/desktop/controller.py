@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
 from zara.client import ZaraClient
+from zara.config import get_config
 from zara.desktop.conversation import ConversationService, ConversationStore
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.state import (
@@ -18,7 +19,8 @@ from zara.desktop.state import (
     reduce_runtime_event,
 )
 from zara.desktop.tray import ZaraTray
-from zara.desktop.windows import FullChatWindow, QuickCopilotWindow
+from zara.desktop.theme import apply_desktop_theme
+from zara.desktop.windows import FullChatWindow, QuickCopilotWindow, SettingsWindow
 from zara.runtime.commands import CommandReceipt, RestartRuntime
 
 
@@ -35,6 +37,7 @@ class DesktopController(QObject):
         *,
         tray_factory: Callable[[], ZaraTray] = ZaraTray,
         window_factory: Optional[Callable[[], object]] = None,
+        settings_factory: Optional[Callable[[], object]] = None,
         conversation_service: Optional[ConversationService] = None,
     ) -> None:
         super().__init__(app)
@@ -46,6 +49,8 @@ class DesktopController(QObject):
         self.bridge = bridge
         self.tray = tray_factory()
         self.quick_window: Optional[QuickCopilotWindow] = None
+        self.settings_window: Optional[object] = None
+        self._settings_factory = settings_factory or (lambda: SettingsWindow(get_config()))
 
         if window_factory is None:
             self.conversation_service = conversation_service or ConversationService(ConversationStore())
@@ -62,6 +67,7 @@ class DesktopController(QObject):
             self.window.conversation_changed.connect(self._on_surface_conversation_changed)
             self.quick_window.conversation_changed.connect(self._on_surface_conversation_changed)
             self.quick_window.expand_requested.connect(self.expand_quick_to_full_chat)
+            self.quick_window.settings_requested.connect(self.open_settings)
         else:
             self.conversation_service = conversation_service
             self.window = window_factory()
@@ -75,18 +81,24 @@ class DesktopController(QObject):
 
         quick_requested = getattr(self.tray, "quick_requested", None)
         full_chat_requested = getattr(self.tray, "full_chat_requested", None)
+        settings_requested = getattr(self.tray, "settings_requested", None)
         if quick_requested is not None and self.quick_window is not None:
             quick_requested.connect(self.show_quick_copilot)
             if full_chat_requested is not None:
                 full_chat_requested.connect(self.open_full_chat)
         else:
             self.tray.toggle_requested.connect(self.window.toggle_visibility)
+        if settings_requested is not None:
+            settings_requested.connect(self.open_settings)
         self.tray.restart_requested.connect(self.restart_runtime)
         self.tray.diagnostics_requested.connect(self.show_diagnostics)
         self.tray.quit_requested.connect(self.request_quit)
 
         self.window.restart_requested.connect(self.restart_runtime)
         self.window.diagnostics_requested.connect(self.show_diagnostics)
+        window_settings_requested = getattr(self.window, "settings_requested", None)
+        if window_settings_requested is not None:
+            window_settings_requested.connect(self.open_settings)
 
         self.bridge.runtime_event.connect(self._on_runtime_envelope)
         self.bridge.command_completed.connect(self._on_command_completed)
@@ -135,6 +147,22 @@ class DesktopController(QObject):
         target = conversation_id or self.quick_window.current_conversation_id
         self.open_full_chat(target)
         self.quick_window.hide()
+
+    def open_settings(self) -> None:
+        """Create one reusable settings workspace and apply live theme previews."""
+        if self.settings_window is None:
+            self.settings_window = self._settings_factory()
+            theme_signal = getattr(self.settings_window, "theme_preview_requested", None)
+            if theme_signal is not None:
+                theme_signal.connect(self.apply_theme)
+            restart_signal = getattr(self.settings_window, "restart_requested", None)
+            if restart_signal is not None:
+                restart_signal.connect(self.restart_runtime)
+        self.settings_window.show_raised()
+
+    def apply_theme(self, theme_key: str) -> None:
+        """Preview one registered theme across every open desktop surface."""
+        apply_desktop_theme(self.app, theme_key)
 
     def restart_runtime(self) -> None:
         if self._quitting or self._restart_request_id is not None:
@@ -247,6 +275,9 @@ class DesktopController(QObject):
         if self.quick_window is not None:
             self.quick_window.prepare_for_quit()
             self.quick_window.close()
+        if self.settings_window is not None:
+            self.settings_window.prepare_for_quit()
+            self.settings_window.close()
 
     def _finalize_quit(self) -> None:
         if self._finalized:

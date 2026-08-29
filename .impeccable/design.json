@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-24T06:18:00Z",
+  "title": "Design System: Zara Desktop — Signal Cabin",
+  "extensions": {
+    "colorMeta": {
+      "ground": {"role": "neutral", "displayName": "Ground", "canonical": "#0A1012", "tonalRamp": ["oklch(15% 0.010 220.2)", "oklch(25% 0.010 220.2)", "oklch(35% 0.010 220.2)", "oklch(45% 0.010 220.2)", "oklch(55% 0.010 220.2)", "oklch(70% 0.010 220.2)", "oklch(85% 0.010 220.2)", "oklch(95% 0.010 220.2)"]},
+      "panel-deep": {"role": "neutral", "displayName": "Deep Panel", "canonical": "#0D1518", "tonalRamp": ["oklch(15% 0.013 223.0)", "oklch(25% 0.013 223.0)", "oklch(35% 0.013 223.0)", "oklch(45% 0.013 223.0)", "oklch(55% 0.013 223.0)", "oklch(70% 0.013 223.0)", "oklch(85% 0.013 223.0)", "oklch(95% 0.013 223.0)"]},
+      "panel": {"role": "neutral", "displayName": "Panel", "canonical": "#111A1E", "tonalRamp": ["oklch(15% 0.015 227.0)", "oklch(25% 0.015 227.0)", "oklch(35% 0.015 227.0)", "oklch(45% 0.015 227.0)", "oklch(55% 0.015 227.0)", "oklch(70% 0.015 227.0)", "oklch(85% 0.015 227.0)", "oklch(95% 0.015 227.0)"]},
+      "panel-lift": {"role": "neutral", "displayName": "Lifted Panel", "canonical": "#172226", "tonalRamp": ["oklch(15% 0.017 222.3)", "oklch(25% 0.017 222.3)", "oklch(35% 0.017 222.3)", "oklch(45% 0.017 222.3)", "oklch(55% 0.017 222.3)", "oklch(70% 0.017 222.3)", "oklch(85% 0.017 222.3)", "oklch(95% 0.017 222.3)"]},
+      "line": {"role": "neutral", "displayName": "Line", "canonical": "#2A393E", "tonalRamp": ["oklch(15% 0.022 220.3)", "oklch(25% 0.022 220.3)", "oklch(35% 0.022 220.3)", "oklch(45% 0.022 220.3)", "oklch(55% 0.022 220.3)", "oklch(70% 0.022 220.3)", "oklch(85% 0.022 220.3)", "oklch(95% 0.022 220.3)"]},
+      "line-strong": {"role": "neutral", "displayName": "Strong Line", "canonical": "#3C5358", "tonalRamp": ["oklch(15% 0.029 212.5)", "oklch(25% 0.029 212.5)", "oklch(35% 0.029 212.5)", "oklch(45% 0.029 212.5)", "oklch(55% 0.029 212.5)", "oklch(70% 0.029 212.5)", "oklch(85% 0.029 212.5)", "oklch(95% 0.029 212.5)"]},
+      "text": {"role": "neutral", "displayName": "Text", "canonical": "#F2E9D8", "tonalRamp": ["oklch(15% 0.025 83.4)", "oklch(25% 0.025 83.4)", "oklch(35% 0.025 83.4)", "oklch(45% 0.025 83.4)", "oklch(55% 0.025 83.4)", "oklch(70% 0.025 83.4)", "oklch(85% 0.025 83.4)", "oklch(95% 0.025 83.4)"]},
+      "text-muted": {"role": "neutral", "displayName": "Muted Text", "canonical": "#A8B7B3", "tonalRamp": ["oklch(15% 0.018 178.1)", "oklch(25% 0.018 178.1)", "oklch(35% 0.018 178.1)", "oklch(45% 0.018 178.1)", "oklch(55% 0.018 178.1)", "oklch(70% 0.018 178.1)", "oklch(85% 0.018 178.1)", "oklch(95% 0.018 178.1)"]},
+      "primary": {"role": "primary", "displayName": "Route Signal", "canonical": "#61D095", "tonalRamp": ["oklch(15% 0.134 157.8)", "oklch(25% 0.134 157.8)", "oklch(35% 0.134 157.8)", "oklch(45% 0.134 157.8)", "oklch(55% 0.134 157.8)", "oklch(70% 0.134 157.8)", "oklch(85% 0.134 157.8)", "oklch(95% 0.134 157.8)"]},
+      "primary-hover": {"role": "primary", "displayName": "Lit Route Signal", "canonical": "#7ADDA8", "tonalRamp": ["oklch(15% 0.121 158.8)", "oklch(25% 0.121 158.8)", "oklch(35% 0.121 158.8)", "oklch(45% 0.121 158.8)", "oklch(55% 0.121 158.8)", "oklch(70% 0.121 158.8)", "oklch(85% 0.121 158.8)", "oklch(95% 0.121 158.8)"]},
+      "primary-deep": {"role": "primary", "displayName": "Occupied Route", "canonical": "#17382B", "tonalRamp": ["oklch(15% 0.046 165.5)", "oklch(25% 0.046 165.5)", "oklch(35% 0.046 165.5)", "oklch(45% 0.046 165.5)", "oklch(55% 0.046 165.5)", "oklch(70% 0.046 165.5)", "oklch(85% 0.046 165.5)", "oklch(95% 0.046 165.5)"]},
+      "on-primary": {"role": "primary", "displayName": "Signal Ink", "canonical": "#0A1012", "tonalRamp": ["oklch(15% 0.010 220.2)", "oklch(25% 0.010 220.2)", "oklch(35% 0.010 220.2)", "oklch(45% 0.010 220.2)", "oklch(55% 0.010 220.2)", "oklch(70% 0.010 220.2)", "oklch(85% 0.010 220.2)", "oklch(95% 0.010 220.2)"]},
+      "active": {"role": "secondary", "displayName": "Active Signal", "canonical": "#E7B84B", "tonalRamp": ["oklch(15% 0.135 85.2)", "oklch(25% 0.135 85.2)", "oklch(35% 0.135 85.2)", "oklch(45% 0.135 85.2)", "oklch(55% 0.135 85.2)", "oklch(70% 0.135 85.2)", "oklch(85% 0.135 85.2)", "oklch(95% 0.135 85.2)"]},
+      "danger": {"role": "tertiary", "displayName": "Danger Signal", "canonical": "#E6544D", "tonalRamp": ["oklch(15% 0.183 26.3)", "oklch(25% 0.183 26.3)", "oklch(35% 0.183 26.3)", "oklch(45% 0.183 26.3)", "oklch(55% 0.183 26.3)", "oklch(70% 0.183 26.3)", "oklch(85% 0.183 26.3)", "oklch(95% 0.183 26.3)"]},
+      "danger-deep": {"role": "tertiary", "displayName": "Danger Well", "canonical": "#562727", "tonalRamp": ["oklch(15% 0.070 21.5)", "oklch(25% 0.070 21.5)", "oklch(35% 0.070 21.5)", "oklch(45% 0.070 21.5)", "oklch(55% 0.070 21.5)", "oklch(70% 0.070 21.5)", "oklch(85% 0.070 21.5)", "oklch(95% 0.070 21.5)"]}
+    },
+    "typographyMeta": {
+      "title": {"displayName": "Cabin Title", "purpose": "Conversation and window titles."},
+      "brand": {"displayName": "Equipment Label", "purpose": "The uppercase ZARA mark."},
+      "section-title": {"displayName": "Settings Heading", "purpose": "Settings task headings."},
+      "body": {"displayName": "Human Language", "purpose": "Messages, forms, descriptions, and feedback."},
+      "control": {"displayName": "Command", "purpose": "Buttons and interactive labels."},
+      "editor": {"displayName": "Source", "purpose": "Editable Prolog and TOML."},
+      "telemetry": {"displayName": "Route Telemetry", "purpose": "Runtime and message state."}
+    },
+    "shadows": [],
+    "motion": [],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Decisive save, add, and new-chat actions.",
+      "html": "<button class=\"ds-btn-primary\">Save settings</button>",
+      "css": ".ds-btn-primary { min-height: 34px; padding: 0 13px; color: #0A1012; background: #61D095; border: 1px solid #61D095; border-radius: 9px; font: 600 14px \"Adwaita Sans\", sans-serif; } .ds-btn-primary:hover { background: #7ADDA8; border-color: #7ADDA8; } .ds-btn-primary:focus-visible { outline: none; border-color: #F2E9D8; } .ds-btn-primary:active { background: #61D095; }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Native text field shared by conversation and settings forms.",
+      "html": "<input class=\"ds-input\" placeholder=\"Model\" />",
+      "css": ".ds-input { min-height: 34px; padding: 9px 11px; color: #F2E9D8; background: #0D1518; border: 1px solid #2A393E; border-radius: 10px; font: 400 14px \"Adwaita Sans\", sans-serif; } .ds-input::placeholder { color: #A8B7B3; } .ds-input:hover { border-color: #3C5358; } .ds-input:focus-visible { outline: none; border-color: #61D095; }"
+    },
+    {
+      "name": "Settings Category Rail",
+      "kind": "nav",
+      "refersTo": "rail-item-selected",
+      "description": "Persistent task categories without preference cards.",
+      "html": "<nav class=\"ds-settings-rail\"><strong>ZARA</strong><button class=\"ds-current\">Appearance</button><button>Assistant</button><button>Voice &amp; Speech</button><button>Tools &amp; Privacy</button><button>Prolog</button><button>Advanced</button></nav>",
+      "css": ".ds-settings-rail { display: grid; gap: 4px; width: 190px; padding: 18px 14px; color: #F2E9D8; background: #0D1518; border-right: 1px solid #2A393E; font: 400 14px \"Adwaita Sans\", sans-serif; } .ds-settings-rail strong { margin-bottom: 14px; font: 700 19px \"Nimbus Sans Narrow\", sans-serif; letter-spacing: 3px; } .ds-settings-rail button { padding: 10px 12px; color: #A8B7B3; background: transparent; border: none; border-radius: 9px; text-align: left; font: inherit; } .ds-settings-rail button:hover { color: #F2E9D8; background: #111A1E; } .ds-settings-rail button:focus-visible { outline: 1px solid #61D095; } .ds-settings-rail button:active, .ds-settings-rail .ds-current { color: #F2E9D8; background: #17382B; }"
+    },
+    {
+      "name": "Runtime Rail",
+      "kind": "custom",
+      "refersTo": "runtime-rail",
+      "description": "Truthful runtime state shared by both conversation scales.",
+      "html": "<div class=\"ds-runtime\"><span class=\"ds-lamp\"></span><strong>Thinking</strong><span>Streaming response…</span></div>",
+      "css": ".ds-runtime { display: flex; align-items: center; gap: 10px; padding: 8px 12px; color: #F2E9D8; background: #111A1E; border: 1px solid #2A393E; border-radius: 10px; font: 400 14px \"Adwaita Sans\", sans-serif; } .ds-runtime:hover { border-color: #3C5358; } .ds-lamp { width: 8px; height: 8px; border-radius: 4px; background: #E7B84B; } .ds-runtime strong { color: #E7B84B; font: 700 11px \"Hack Nerd Font Mono\", monospace; letter-spacing: 1px; } .ds-runtime span:last-child { color: #A8B7B3; }"
+    },
+    {
+      "name": "Unified Composer Action",
+      "kind": "button",
+      "refersTo": "composer-action-send",
+      "description": "The same platform-icon control sends at rest and stops while streaming.",
+      "html": "<div class=\"ds-composer-actions\"><button class=\"ds-send\" aria-label=\"Send message\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 19V5M6.5 10.5 12 5l5.5 5.5\" /></svg></button><button class=\"ds-stop\" aria-label=\"Stop generating\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"7\" y=\"7\" width=\"10\" height=\"10\" /></svg></button></div>",
+      "css": ".ds-composer-actions { display: flex; gap: 12px; background: #172226; padding: 8px; border: 1px solid #3C5358; border-radius: 15px; } .ds-composer-actions button { width: 38px; height: 38px; padding: 0; border-radius: 12px; display: grid; place-items: center; } .ds-composer-actions svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; } .ds-composer-actions .ds-send { color: #0A1012; background: #61D095; border: 1px solid #61D095; } .ds-composer-actions .ds-send:hover { background: #7ADDA8; } .ds-composer-actions .ds-stop { color: #F2E9D8; background: #E6544D; border: 1px solid #E6544D; } .ds-composer-actions .ds-stop svg { fill: currentColor; stroke: none; } .ds-composer-actions .ds-stop:hover { background: #562727; } .ds-composer-actions button:focus-visible { outline: none; border-color: #F2E9D8; }"
+    },
+    {
+      "name": "Theme Preview",
+      "kind": "custom",
+      "refersTo": "theme-preview",
+      "description": "A compact sample of one complete semantic palette.",
+      "html": "<button class=\"ds-theme-preview\"><span>Signal Cabin</span><i></i><i></i><i></i></button>",
+      "css": ".ds-theme-preview { width: 148px; height: 72px; padding: 9px 11px; color: #F2E9D8; background: #0A1012; border: 1px solid #3C5358; border-radius: 10px; text-align: left; font: 600 14px \"Adwaita Sans\", sans-serif; } .ds-theme-preview span { display: block; padding: 4px 8px; margin-bottom: 10px; background: #172226; border-radius: 6px; } .ds-theme-preview i { display: inline-block; width: 10px; height: 10px; margin-right: 10px; border-radius: 50%; background: #61D095; } .ds-theme-preview i:nth-of-type(2) { background: #E7B84B; } .ds-theme-preview i:nth-of-type(3) { background: #E6544D; } .ds-theme-preview:hover { border-color: #61D095; } .ds-theme-preview:focus-visible { outline: none; border: 2px solid #61D095; } .ds-theme-preview:active { background: #0D1518; }"
+    },
+    {
+      "name": "Route Transcript",
+      "kind": "custom",
+      "refersTo": "route-transcript",
+      "description": "Continuous conversation trace rather than message cards.",
+      "html": "<div class=\"ds-route\"><article class=\"ds-user\"><strong>You</strong><p>Show me the settings route.</p></article><article><strong>Zara</strong><em>Generating…</em><p>Five themes share one component system.</p></article></div>",
+      "css": ".ds-route { color: #F2E9D8; background: #0A1012; border-left: 1px solid #3C5358; padding-left: 10px; font: 400 14px \"Adwaita Sans\", sans-serif; } .ds-route article { position: relative; padding: 9px 5px 11px 12px; border-top: 1px solid #2A393E; } .ds-route article:hover { background: #0D1518; } .ds-route .ds-user { border-top-color: #61D095; } .ds-route strong, .ds-route em { color: #A8B7B3; font: 700 11px \"Hack Nerd Font Mono\", monospace; letter-spacing: 1px; } .ds-route .ds-user strong { color: #61D095; } .ds-route em { float: right; color: #E7B84B; } .ds-route p { margin: 8px 0 0; }"
+    },
+    {
+      "name": "Source Editor and Managed Facts",
+      "kind": "custom",
+      "refersTo": "source-editor",
+      "description": "Allowlisted source beside guided facts in one split workspace.",
+      "html": "<div class=\"ds-prolog\"><section><label>User config.pl</label><pre>% BEGIN ZARA MANAGED FACTS\napp_mapping(studio, [\"code\"]).</pre><button>Save source</button></section><aside><strong>Managed facts</strong><button>Add</button><p>App · studio → code</p><p>Intent · summon_studio → open</p></aside></div>",
+      "css": ".ds-prolog { display: grid; grid-template-columns: 2fr 1fr; gap: 1px; color: #F2E9D8; background: #2A393E; font: 400 14px \"Adwaita Sans\", sans-serif; } .ds-prolog section, .ds-prolog aside { padding: 16px; background: #0A1012; } .ds-prolog label, .ds-prolog strong { display: block; margin-bottom: 10px; } .ds-prolog pre { min-height: 180px; padding: 11px; color: #F2E9D8; background: #0D1518; border: 1px solid #2A393E; border-radius: 10px; font: 400 13px \"Hack Nerd Font Mono\", monospace; white-space: pre-wrap; } .ds-prolog button { min-height: 34px; padding: 0 13px; color: #0A1012; background: #61D095; border: 1px solid #61D095; border-radius: 9px; font-weight: 600; } .ds-prolog button:hover { background: #7ADDA8; } .ds-prolog button:focus-visible { outline: none; border-color: #F2E9D8; } .ds-prolog aside p { padding: 10px 12px; color: #A8B7B3; border-radius: 9px; } .ds-prolog aside p:hover { color: #F2E9D8; background: #111A1E; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Signal Cabin",
+    "overview": "Signal Cabin is Zara's native Linux operating shell: a precise route of status rails, open work fields, and grounded controls. Its charcoal enamel, warm type, and illuminated signals remain the default identity even as complete alternate themes reskin the same semantic component system.\n\nConversation and configuration share one grammar. Quick Copilot, Full Chat, and Settings expose real runtime or file state without generic AI-card chrome, decorative effects, or invented capability cues.",
+    "keyCharacteristics": [
+      "One semantic component system across five complete themes.",
+      "Continuous route-divider transcripts and rail-based navigation.",
+      "One platform-standard composer action that changes from send to stop.",
+      "Open native forms, a real source editor, and a guided managed-fact rail."
+    ],
+    "rules": [
+      {"name": "The Role, Not Hue Rule", "body": "Components consume semantic roles, never theme-specific color literals; switching theme must reskin every open Zara surface without changing behavior or hierarchy.", "section": "colors"},
+      {"name": "The Three-Gauge Rule", "body": "Narrow type names the instrument, Adwaita carries human language, and mono reports or edits machine state.", "section": "typography"},
+      {"name": "The Tonal Depth Rule", "body": "Surfaces earn depth through semantic panel tone and precise lines, never blur, glass, glow, gradient, or drop shadow.", "section": "elevation"}
+    ],
+    "dos": [
+      "Do resolve every component through the shared semantic roles in all five themes.",
+      "Do preserve visible contrast, primary focus borders, and accessible control names in every palette.",
+      "Do use Qt platform-standard icons for send and stop while keeping text labels in tooltips and accessibility metadata.",
+      "Do keep Settings as one category rail, one open task surface, and one truthful save/restart footer.",
+      "Do keep approved source and managed facts visibly connected to the real configuration path."
+    ],
+    "donts": [
+      "Don't recolor only the accent while leaving panels, lines, text, or state feedback from another theme.",
+      "Don't add gradients, glass, ambient glow, drop shadows, or nested preference cards.",
+      "Don't use Unicode arrows, squares, or other text glyphs as UI icons.",
+      "Don't hide restart requirements, failed validation, restoration, or live-reload state behind generic success copy.",
+      "Don't break the continuous route transcript into generic assistant cards or bubbles."
+    ]
+  }
+}

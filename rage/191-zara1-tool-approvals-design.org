@@ -1,0 +1,67 @@
+#+title: RAGE #191 design decision - defer wire realization to canonical runtime approval
+
+* Decision
+- Auto-RAGE decision :: REJECT REALIZATION AT CURRENT HEAD.
+- Reason :: production Zara cannot yet pause or resume an approval-required tool. A wire-only implementation would expose commands and events with no real side-effect authority behind them.
+- Owning prerequisite :: #209, canonical resumable runtime tool approval lifecycle.
+- #191 remains open and now explicitly depends on #209.
+
+* Required ownership chain after #209
+#+begin_example
+authenticated client route/session
+  -> closed ZARA/1 approve or reject command
+  -> server capability check: tool.approve
+  -> session/turn/tool ownership validation
+  -> existing ApproveTool or RejectTool RuntimeCommand
+  -> principal RuntimeHost
+  -> canonical pending approval authority from #209
+  -> checkpointed graph resume or terminal rejection
+  -> principal runtime tool/user-response events
+  -> initiating authorized client route
+#+end_example
+
+* Boundaries
+- The gateway may enforce authenticated route/session visibility and translate closed messages. It must not create pending tool work, execute tools, resume LangGraph directly or inspect provider-native state.
+- The runtime from #209 must enforce principal/conversation/turn/tool ownership, terminal state, at-most-once side effects, cancellation races and lifecycle cleanup independent of transport.
+- The client submits existing typed runtime commands and receives existing typed runtime events. It must not deserialize callable names, Python classes, tool objects or provider payloads.
+- #191 does not introduce #150's future semantic/device capability plane.
+
+* Provisional closed wire surface
+- Exact names remain subject to reconciliation with the merged #209 contract.
+- Candidate client commands :: =tool.approve= and =tool.reject=.
+- Candidate direct acknowledgements :: =tool.approve.accepted= and =tool.reject.accepted=.
+- Candidate server events :: =tool.queued=, =tool.started=, =tool.progress=, =tool.waiting=, =tool.completed=, =tool.failed=, =tool.cancelled= and =user.responded=.
+- Commands require a canonical =tool_run_id= plus correlation required by #209. Rejection may carry one bounded reason string. No payload frames, executable names, arbitrary arguments or provider objects are accepted.
+- Events must carry canonical conversation/turn/tool correlation. Tool name, progress, safe status and bounded user-visible prompt/reason fields may cross only where the merged runtime contract marks them public.
+
+* Session policy to decide in resumed #191 design
+- Default candidate :: approval requests are visible and answerable only on the authenticated session/route that initiated the owning turn.
+- Disconnect candidate :: pending runtime approval remains transport-neutral for its bounded lifetime, but a reconnect does not automatically gain answer authority. Explicit secure reattachment would require a separate closed proof; otherwise cancel/timeout safely.
+- Same-principal second device :: cannot approve merely by guessing =tool_run_id=. Cross-device approval, if desired later, needs an explicit server policy and user-visible ownership transfer.
+
+* Security invariants
+- Authenticated principal is injected by the secure transport and never accepted from the payload.
+- =Capability.TOOL_APPROVE= is checked server-side for approve and reject commands.
+- A capability grants permission to answer an owned pending approval, not permission to invoke a tool.
+- Different request ids for the same terminal =tool_run_id= cannot duplicate a side effect.
+- Cancel/reject/approve races have one terminal winner defined by #209.
+- Unknown, stale, cancelled, terminal, wrong-turn, wrong-session and wrong-principal decisions fail closed with sanitized typed errors.
+- Audit/log records exclude prompt, rejection text, tool arguments/results and secrets.
+- Pending requests, outbound events and replay state are bounded.
+
+* Acceptance-to-test map for resumed #191
+- Closed codec :: golden positive shapes plus unknown field, wrong scalar, missing correlation, payload, content-type and size failures.
+- Runtime adapters :: explicit command/event mappings; no reflection fallback or provider/private field leakage.
+- Client seam :: =ZaraClient.submit(ApproveTool/RejectTool)= returns typed receipts and publishes typed tool events.
+- Authentication :: missing/revoked key and missing =tool.approve= capability deny before runtime dispatch.
+- Isolation :: principal B and same-principal unauthorized session cannot observe or decide principal/session A's pending approval.
+- Replay :: same request id replays one receipt; different request id for a terminal tool id is rejected by the canonical runtime without a second side effect.
+- Races :: deterministic barriers cover cancel versus approve/reject and route disconnect during completion.
+- Reconnect :: stale session decision fails; selected explicit cleanup or reattachment policy is proven.
+- Backpressure :: one waiting/slow/disconnected client does not block another principal and bounded queues clean up.
+- End-to-end :: production #209 approval-required deterministic local tool pauses, crosses the authenticated local ZARA/1 client, then approve/reject resumes one coherent turn.
+- Gates :: focused non-interactive script, complete =scripts/test-all.sh=, =nix flake check=, =nix build= and exact-head GitHub Actions.
+
+* Autonomous gate outcome
+- No production test or implementation is authorized on #191 until #209 is exact-head green, merged and its runtime contract is reconciled here.
+- Next queue action :: merge this research/decision evidence, then consume #209 as the higher-priority blocker.
