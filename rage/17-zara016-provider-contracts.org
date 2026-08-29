@@ -40,3 +40,8 @@ Required: tested provider serializers, literal auth strings, connect/read/total 
 - Coverage additions (existing correct behavior, issue-required) :: =legacy_socket_error_remains_retryable=, =missing_api_key_is_typed= (Prolog), =close_llm_client_clears_session_and_history= (Prolog), =test_missing_api_key_fails_fast= (Python).
 - Focused gate :: =nix develop -c bash scripts/test-llm-clients.sh= :: pytest green + 17/17 PlUnit green.
 - Next :: full local gate, exact-head Actions, PR.
+** Evaluate / gate
+- Implementation commit :: =7985353= fix(llm): classify arity-2 socket_error as connection failure.
+- Full gate :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh= at =7985353= :: Phases run 10, passed 10, failed 0 (ALL PHASES PASSED).
+- Gate note :: first full-gate run without =NIX_CONFIG= failed at phase 10 with =experimental Nix feature 'nix-command' is disabled=; reproduced environment limitation of nested =nix= invocations inside =nix develop=, unrelated to the change (no packaging files touched). Pre-existing repo convention is to export =NIX_CONFIG= (see =rage/209= log).
+- Pending :: exact-head GitHub Actions on PR, then merge.
