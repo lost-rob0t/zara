@@ -241,6 +241,7 @@ retry_outcome(exception(Error)) :-
 retryable_exception(time_limit_exceeded).
 retryable_exception(error(timeout_error(_, _), _)).
 retryable_exception(error(socket_error(_), _)).
+retryable_exception(error(socket_error(_, _), _)).
 retryable_exception(error(io_error(_, _), _)).
 
 outcome_result(Provider, response(Status, Reply), Result) :-
