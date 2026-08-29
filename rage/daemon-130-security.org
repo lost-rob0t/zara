@@ -125,3 +125,37 @@ TDD consequence: update only the Slice C tests to target =SecureZaraZmqGateway=;
 - Interpretation :: nondeterministic test synchronization defect, not an implementation or architecture failure. Changing production semantics to satisfy an unsynchronized cross-thread assertion would violate the one-owner-loop transport design.
 - Test correction :: =BlockingSupervisor= now exposes a =threading.Event= set by actual supervisor dispatch. The test clears it before =turn-three=, sends the message, waits deterministically for dispatch, and only then asserts command ordering. No sleeps and no production behavior change.
 - Correction commit :: =76dd48f2e2cd75f8e391f63b548b6a20a1c0833d=.
+
+* Iteration 1 checkpoint - fail-closed capability coverage RED
+
+- Tests-only head :: =d14980f57cab66b674591e5271202cdbb9c49cd4=.
+- GitHub Actions :: CI #328, run =32590691581=.
+- Existing ZARA/1 protocol/transport phase :: PASS, 91 tests.
+- Shared-mic Arch Linux :: PASS.
+- Shared-mic Ubuntu 24.04 :: PASS.
+- Full pytest :: 869 PASS, 1 RED.
+- Expected failure :: =test_security_gateway_capability_policy_fails_closed_for_unmapped_message_type= did not raise =AuthorizationDenied= because unmapped message types incorrectly inherited =session.basic=.
+- Interpretation :: changed-code coverage review found a reachable future-policy fail-open default. This is an ordinary local implementation defect; the recorded design already requires unknown capabilities/actions to fail deny.
+
+* Iteration 1 final exact-head GREEN
+
+- Candidate/head :: =fdf6f9a1d4e51a03ab4f46b1f291cf262e416020=.
+- Fix :: unmapped daemon message capabilities now raise =AuthorizationDenied= instead of falling back to =SESSION_BASIC=.
+- GitHub Actions :: CI #329, run =32591012677=.
+- Complete repository =scripts/test-all.sh= :: PASS.
+- =nix flake check= :: PASS.
+- Packaged Zara build :: PASS.
+- Shared-mic Arch Linux :: PASS.
+- Shared-mic Ubuntu 24.04 :: PASS.
+- PR review threads :: none.
+- PR state before merge :: ready, mergeable, exact head unchanged.
+
+* Iteration 1 outcome - MERGED
+
+- PR :: #145 =feat: secure Zara daemon with CURVE/ZAP and abuse controls=.
+- Merge SHA :: =71615bcd4cdece940db433cb79ea46fe9ad085e3=.
+- Issue #130 :: CLOSED completed automatically by merge.
+- Epic #127 :: updated with merge/exact-head gate evidence.
+- Roadmap #1 :: updated; #131 is now the next dependency-satisfied daemon child.
+- Coverage review :: meaningful security boundary coverage includes enrollment/rotation/revocation, authorization separation, pinned CURVE/ZAP identity, listener safety, per-principal connection/rate/concurrency quotas, malformed protocol behavior, audit redaction/bounds, runtime quota release, route identity isolation, platform gates, and fail-closed unmapped capability policy. Principal-id whitespace aliasing was inspected and requires no duplicate test because =PrincipalContext= already rejects leading/trailing whitespace at construction.
+- Next issue :: #131 may be consumed only by a later RAGE iteration.
