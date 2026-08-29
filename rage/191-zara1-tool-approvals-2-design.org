@@ -1,0 +1,72 @@
+#+title: RAGE #191 iteration 2 design - authenticated ZARA/1 tool approvals
+
+* Decision
+- Auto-RAGE decision :: ACCEPT realization under this design.
+- Authority chain :: authenticated CURVE/ZAP identity -> server capability -> exact route/session delivery owner -> typed runtime command -> principal RuntimeHost -> #209 approval controller.
+- The gateway stores no arguments, results, provider state or executable object and cannot invoke a tool.
+
+* Closed wire contract
+** Client commands
+- =tool.approve= body :: exactly ={tool_run_id}=.
+- =tool.reject= body :: exactly ={tool_run_id, reason?}=, with a bounded reason that never enters audit or runtime events.
+- Both require the current application =session_id=, zero payload frames and no executable name, arguments, result, principal or device identity.
+
+** Direct acknowledgements
+- =tool.approve.accepted= and =tool.reject.accepted= correlate through =reply_to= and carry the current session id.
+- The existing principal-plus-request-id replay cache returns the same acknowledgement for an identical request. Reusing that request id for a different typed command is an idempotency conflict.
+
+** Runtime events
+- Map =ToolQueued=, =ToolWaitingForUser=, =ToolStarted=, =ToolCompleted=, =ToolFailed= and =ToolCancelled= explicitly.
+- Every wire tool event requires canonical =turn_id=, sequence, bounded =tool_run_id= and bounded safe =tool_name=. Waiting carries only its fixed approval kind/prompt; terminal events carry only safe success/reason fields.
+- Do not carry tool arguments, results, model prompts, provider objects, exception text or the runtime-only uncorrelated =UserResponded= event.
+
+* Routing and lifecycle
+1. =ZmqZaraClient= optionally receives explicit CURVE client credentials/server pin and configures its owned socket before connect. A successful hello records the server-injected principal id in route state. Secure transport creates one bounded subscription for that principal bus.
+2. Turn routing is keyed by =(principal_id, turn_id)=. Conversation fallback considers only routes for that principal and remains valid only when exactly one route matches.
+3. =ToolWaitingForUser= records a bounded delivery owner =(principal_id, tool_run_id) -> (route, session_id, turn_id)= before it is sent.
+4. Approve/reject first pass closed decoding, authenticated capability and existing request replay checks. A new decision must match the delivery owner's principal, route and current session exactly.
+5. The decision is submitted as the existing typed runtime command. #209 remains the only pending/terminal authority and fences cancel, timeout, stale ids and side-effect execution.
+6. Tool terminal events, route reset, route send failure and disconnect remove delivery ownership. They never fabricate a runtime decision.
+7. Reconnect creates a new session and cannot inherit an old delivery owner. The runtime request remains pending until another runtime terminal condition; no waiting event is replayed in this issue.
+8. Secure subscriptions close when their last route disappears and at gateway shutdown. Event and outbound queues retain existing finite bounds.
+
+* Security invariants
+- Payload identity is ignored; authenticated registry principal remains authoritative.
+- =Capability.TOOL_APPROVE= gates both approve and reject after authentication.
+- Same-principal capability alone is insufficient: only the initiating route/session can answer.
+- A different principal cannot observe the event or answer the id, even when provider tool-call ids collide.
+- A stale session, unknown id, terminal id, different request replay and cancelled turn fail closed without revealing whether another approval exists.
+- Audit records request/session/turn/action/decision/timing metadata only. Rejection text, prompt, tool arguments/results, credentials and keys never enter audit output.
+- Slow or disconnected routes are dropped by existing bounded queues; another principal's subscription and runtime continue independently.
+
+* Acceptance-to-test map
+| Acceptance | Deterministic proof |
+|------------+---------------------|
+| Closed protocol | Golden encode/decode plus missing session/id, unknown body field, wrong type, oversized/control text and payload rejection |
+| Runtime adapters | Approve/reject command equality and exact tool event mappings; secret argument/result fields never appear |
+| Client seam | =ZmqZaraClient.submit= produces both commands, returns typed receipts and reconstructs typed runtime events |
+| Authenticated client | Optional =CurveClientConfig= reaches the owned DEALER socket; absent config preserves local IPC behavior |
+| Real approval flow | Production =RuntimeHost=/LangGraph deterministic local tool waits over ZARA/1, approve executes once, reject executes zero times and the conversation terminates coherently |
+| Principal isolation | Two authenticated principal buses with colliding tool ids; only each initiating client receives/answers its own request |
+| Same-principal session policy | Second route cannot see or answer; stale pre-reconnect session cannot answer after route reset |
+| Replay/stale/cancel | Identical request replays one receipt; different request/terminal/unknown/cancelled ids cannot execute a side effect |
+| Responsiveness | One waiting or backpressured client does not prevent another principal command/event round trip |
+| Authentication/authorization | Missing/revoked key and missing =tool.approve= capability deny before supervisor dispatch |
+| Privacy/audit | Secrets and user rejection text are absent from wire events, errors, logs and audit snapshots |
+| Bounds/cleanup | Subscription, outbound and approval-owner state remain finite and are removed on terminal route/lifecycle paths |
+
+* Adversarial review
+- Counterexample: turn ids collide across principals. Principal-qualified keys prevent cross-routing.
+- Counterexample: a new hello reuses one DEALER routing id. Exact session comparison and route reset remove the old owner.
+- Counterexample: two different decision request ids race. Delivery ownership is claimed once; #209 independently atomically removes the pending runtime id.
+- Counterexample: a duplicate network request arrives while its first decision is in flight. Existing typed inflight replay attaches to the original request rather than submitting twice.
+- Counterexample: terminal runtime event and a decision cross. RuntimeHost serialization and #209 decide the winner; the gateway cannot resurrect terminal state.
+- Counterexample: per-principal subscriptions accidentally drain a shared bus into another principal route. Drain always carries an explicit principal id and filters route state by it.
+- Counterexample: outbound saturation silently authorizes work. Dropping a route removes delivery authority but never sends a runtime approval.
+- Counterexample: rejection reason or provider exception leaks. The runtime ignores rejection text for publication; wire errors and terminal reasons stay sanitized and audits omit bodies.
+
+* Exact gate
+- Focused red/green script :: =nix develop -c bash scripts/test-zara1-tool-approvals.sh=.
+- Existing protocol and runtime approval scripts remain mandatory through =scripts/test-all.sh=.
+- Candidate head :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh=, =nix flake check=, =nix build= and =git diff --check=.
+- Publication :: exact PR head must pass GitHub Actions =test= plus both shared-mic jobs and be mergeable before merge.

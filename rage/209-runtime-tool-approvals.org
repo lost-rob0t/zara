@@ -1,0 +1,72 @@
+#+title: RAGE #209 - canonical resumable runtime tool approval lifecycle
+
+* Immutable start
+- Consumed issue :: #209, P0 blocker - implement canonical resumable runtime tool approval lifecycle.
+- Parent epic :: #127.
+- Blocks :: #191 and #134.
+- Declared dependencies :: #131 and #133; both were closed before consumption.
+- Exact RAGE start commit :: =2c608e7d4d79dc76ebfcc16bf8f064174a38df3b=.
+- Branch :: =rage/209-runtime-tool-approvals=.
+- Start worktree audit :: only the pre-existing user-owned unstaged =LICENSE= deletion was present; it is outside scope and must not be staged or modified.
+- Protocol :: repository Auto-RAGE with Analyze, Design, Adversarial Review, autonomous Decision, tests-first Realization, complete local gates, exact-head GitHub Actions, and merge only when exact-head green and mergeable.
+- Scope boundary :: implement one transport-neutral approval authority in the existing production runtime/LangGraph tool path. Do not add ZARA/1 messages, a second executor, arbitrary tool/shell invocation, the future #150 device capability plane or Prolog-RLM.
+
+* Iteration 1 - 2026-08-24
+** Analyze / Research
+- Completed in =rage/209-runtime-tool-approvals-research.org=.
+- The installed LangGraph API was exercised in the Nix shell: checkpointed =ainvoke= returned =__interrupt__= and resumed with =Command(resume=...)= under a stable thread id.
+- Research rejected a plain Future-only gate, a second executor, a broad migration to middleware, and unsafe cross-process resume of generic non-idempotent tools.
+- Selected restart policy :: live asynchronous approval is resumable; timeout, cancellation, restart and shutdown fail closed and erase the process-local checkpoint.
+
+** Architecture / Design
+- Completed in =rage/209-runtime-tool-approvals-design.org=.
+- One principal-owned controller coordinates RuntimeHost decisions with a pure LangGraph interrupt node; a separate gated node delegates approved calls to the existing =ToolNode=.
+- Server configuration is approval-policy authority. Approval envelopes and events never include tool arguments, results or user-provided rejection text.
+
+** Adversarial review
+- Completed. The design now gathers every approval before any side effect, atomically consumes pending ids, preserves original tool-result ordering, revalidates tool bindings, and defines the exact cancellation/start boundary.
+
+** Autonomous decision gate
+- ACCEPT. Tests-first realization is authorized. Cross-process pending approval survival remains deliberately rejected until the typed capability plane provides durable idempotency and reconciliation.
+
+** Realize / TDD
+- Authorized. Next action is the focused failing production-backend approval lifecycle test.
+- RED 1 :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c pytest -q t/test_runtime_tool_approval.py::test_required_tool_waits_for_runtime_approval_and_runs_once=
+- RED 1 result :: one failed in 6.24s. The production graph executed the protected tool directly; =recorder.waiting.wait(timeout=3)= was false because no =ToolWaitingForUser= event or resumable approval state existed.
+- RED 1 scope :: the test uses =RuntimeHost=, =LangGraphRuntimeBackend=, =AgentManager=, the canonical registry and a real deterministic LangChain tool. No approval behavior is mocked.
+- GREEN 1 :: the same production-path test passed in 3.29s after adding the principal-owned controller, checkpointed interrupt gate, RuntimeHost backend hooks and gated delegation to =ToolNode=.
+- RED 2 :: the default/policy configuration tests produced eight expected failures: no =[tool_approval]= defaults and no validation for names, timeout or capacity.
+- GREEN 2 :: nine focused configuration plus approval tests passed after adding bounded validated server policy.
+- RED 3 :: the adversarial approval file exposed two failures across 13 tests: duplicate provider tool-call ids reached the waiting state, and a private provider exception appeared in =AgentFailed=.
+- GREEN 3 :: all 13 passed after whole-batch metadata validation before the first interrupt and bounded exception replacement at the executor boundary.
+- RED 4 :: rejected =ToolMessage(status="error")= was incorrectly reported as a successful tool result because aggregation searched message text for the word =Error=.
+- GREEN 4 :: result aggregation now uses typed =ToolMessage.status=; the direct manager rejection test passed.
+- RED 5 :: unsafe whitespace-bearing tool names were accepted by both server policy and the canonical registry, allowing control text into approval metadata.
+- GREEN 5 :: policy, registry, graph and controller now enforce a shared bounded ASCII tool-name vocabulary; the focused gate passed 25 tests.
+- Meaningful coverage :: approve, reject, wrong/stale/replayed ids, cancellation before and after tool start, timeout, restart, two-call preapproval, duplicate ids, removed bindings, provider failure redaction, same-id principal isolation, pending capacity, non-approval compatibility and typed unsuccessful rejection.
+- Focused gate :: =scripts/test-runtime-tool-approvals.sh= runs the deterministic lifecycle and policy suite and is phase 4 of =scripts/test-all.sh=.
+- Documentation :: =wiki/tool-approvals.org= documents policy, typed lifecycle, privacy, disconnect behavior and the deliberate fail-closed restart rule; =wiki/install.org= links the configuration.
+
+** Evaluate
+- Pre-commit aggregate candidate gate :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh= passed 10/10 phases.
+- Aggregate evidence :: 119 ZARA/1 protocol/transport tests, 75 voice tests, 25 focused approval/policy tests, 1058 full pytest tests, all security scripts, 27 latency tests and packaging/Nix checks passed. Full pytest emitted 14 existing Qt deprecation warnings and no failures.
+- The aggregate gate included the final unsafe-name hardening working tree. It is implementation evidence but not exact-head merge authority; after committing this candidate, the same complete gate must pass again at the immutable commit.
+- Remaining exact-head gates :: complete =scripts/test-all.sh=, =nix flake check=, =nix build=, GitHub Actions and mergeability.
+- Exact-head local gate at =39addc5ae729617c8bb3d9417a5fbf43aa60e927= :: all 10 aggregate phases passed again; full pytest passed 1058 tests in 175.82s, focused approval passed 25, and all security/latency/packaging phases passed.
+- Exact-head Nix evidence at =39addc5ae729617c8bb3d9417a5fbf43aa60e927= :: =nix flake check --show-trace= passed all 10 checks; =nix build --no-link --print-out-paths= produced =/nix/store/969c818ya1s9slpczk872rlrc14bnn3l-zarathushtra-full=.
+- Changed-code coverage inspection :: neither =coverage= nor =pytest-cov= is present in the pinned Nix environment. Manual reachable-branch inspection added deterministic malformed-request, pending-shutdown/replay, and approve/cancel first-terminal-wins tests. One test collection error exposed pytest's reserved =request= fixture name; the parameter was renamed without changing production code.
+- Focused post-inspection gate :: 31 approval/config tests passed in 4.24s. These tests are the only change after =39addc5=, so the final committed candidate must refresh all exact-head gates.
+- Exact implementation-head aggregate gate at =77d403c54c0c170ebb63fddc42ca5321e4c188af= :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh= passed 10/10 phases. The focused approval phase passed 31 tests, full pytest passed 1064 tests in 165.42s with 14 existing Qt deprecation warnings, and all protocol, security, latency and packaging phases passed.
+- Exact implementation-head flake gate at =77d403c54c0c170ebb63fddc42ca5321e4c188af= :: =NIX_CONFIG='experimental-features = nix-command flakes' nix flake check --show-trace= passed all 10 checks. Existing warnings were limited to app outputs without =meta=, the custom =flakeouts= output and omitted =aarch64-linux= evaluation.
+- Exact implementation-head build at =77d403c54c0c170ebb63fddc42ca5321e4c188af= :: =NIX_CONFIG='experimental-features = nix-command flakes' nix build --print-out-paths= produced =/nix/store/rqwavchi984lj3zwprjmqxywf7flzrw9-zarathushtra-full=.
+- Candidate audit :: =git diff --check origin/master...HEAD= passed; the worktree was clean; review found no contradiction to the accepted principal-owned, interrupt-before-side-effect, fail-closed restart design.
+- Publication rule :: this append-only evidence commit changes documentation only. The complete aggregate gate must pass again at that final candidate commit before push; GitHub Actions must then pass for that exact pushed SHA before merge.
+
+** Outcome
+- In progress.
+- Final candidate :: =394a0ede032b0528b9eb727512666db9a822e09f=.
+- Exact-head local gate :: =scripts/test-all.sh= passed 10/10 phases with 31 focused approval tests and 1064 full pytest tests; =nix flake check --show-trace= passed all 10 checks; =nix build --print-out-paths= produced =/nix/store/ccxhgycp02z2rpx6f16x4mb7z3w2wfnx-zarathushtra-full=.
+- Exact-head GitHub Actions :: run =32730453589= passed =test= in 9m08s, Ubuntu shared mic in 48s and Arch shared mic in 32s.
+- Pull request :: #211, =CLEAN= and =MERGEABLE= immediately before merge.
+- Merge commit :: =ddc30c737ee7eff030dd424949a490f5c6cf52dd=.
+- Consumed issue outcome :: #209 closed by PR #211. Its transport-neutral runtime prerequisite is complete; #191 is now the next dependency-satisfied P0 and must be consumed only in a fresh RAGE iteration.

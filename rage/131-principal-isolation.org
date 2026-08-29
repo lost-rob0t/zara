@@ -1,0 +1,99 @@
+#+title: RAGE Work Log - Zara issue 131
+
+* Run identity
+- Consumed issue :: #131
+- Branch :: =rage/131-principal-isolation=
+- RAGE start commit :: =71615bcd4cdece940db433cb79ea46fe9ad085e3=
+- Start meaning :: Exact =master= commit immediately after #130 / PR #145 merged. Immutable for this run.
+
+* Iteration 1
+** Research
+- Queue eligibility :: #130 is closed as completed; #131 depends on #130 and is therefore the next dependency-satisfied child of daemon epic #127.
+- Status :: research in progress; no production behavior changed in this iteration yet.
+
+** Design
+- Pending evidence-derived design.
+
+** Planned TDD
+- Pending acceptance-to-test mapping after research.
+
+** Implementation
+- None yet.
+
+** Gate
+- Focused red/green tests per behavior.
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- Exact-head GitHub Actions required before merge.
+
+** Outcome
+- In progress.
+
+** Research completed
+- Dedicated artifact :: =rage/131-principal-isolation-research.org=
+- Decisive finding :: private persistence must be structurally bound to server-side =PrincipalContext=; caller-supplied owner filtering is rejected as too easy to spoof or omit.
+- Existing =RuntimeSupervisor= per-principal event buses are retained as the runtime isolation root rather than replaced.
+
+** Design completed
+- Dedicated artifact :: =rage/131-principal-isolation-design.org=
+- Conversation rows/messages gain immutable principal ownership and every operation predicates on the bound owner.
+- Legacy single-user rows may be claimed only by =PrincipalContext.local_owner()=.
+- =MemoryManager= becomes principal-bound; remote persistent memory uses per-principal collection namespaces plus owner metadata validation; guest/ephemeral principals remain local-only.
+- #51 ContextManager remains separate work; this issue only establishes the ownership boundary it will consume.
+
+** TDD red authority
+- Tests-only candidate :: =1cbfe6b53833e70e4a418a0854080fb1cfa6a188=
+- GitHub Actions :: CI #346, run =32593930022=.
+- Full regression result :: expected RED at pytest phase: 12 failed, 870 passed, 14 warnings.
+- Conversation failures :: 6/6 new tests failed because =ConversationStore.__init__()= does not yet accept =principal=.
+- Memory failures :: 6/6 new tests failed because =MemoryManager.__init__()= does not yet accept =principal=.
+- ZARA/1 protocol/transport :: 91 passed.
+- Shared mic / Arch Linux :: PASS.
+- Shared mic / Ubuntu 24.04 :: PASS.
+- Interpretation :: clean feature-red evidence. Existing unrelated behavior remains green; proceed with minimal production implementation.
+
+** Post-implementation adversarial code review evidence
+- Reviewed candidate :: =82cfccbeeb5caa55e5ef375351ce5ae05f09203c= as the intended post-merge architecture baseline while still requiring exact-head merge gates.
+- PR review :: GitHub review id =5001123170= records blocking #131 integration findings.
+- Exact-head CI :: run =32598938952= / CI #352 completed RED with 884 passed, 1 failed, 14 warnings; ZARA/1 91/91 PASS; Arch and Ubuntu shared-mic jobs PASS.
+- Current red cause :: =test_principal_event_subscriptions_do_not_cross_runtime_buses= publishes a =SubmitTurn= RuntimeCommand into =RuntimeEventBus=; the bus correctly rejects non-=RuntimeEvent= values. This is a test-harness defect, not an architecture failure.
+- Structural wiring gap :: =RuntimeSupervisor._build_default_host(_principal, bus)= discards the authenticated principal; default =RuntimeHost= -> =AgentRuntimeBackend= -> =AgentManager= therefore still constructs memory via =build_memory_manager(memory_config)= without the principal. That violates the frozen research/design statement that one authenticated =PrincipalContext= binds runtime and memory manager.
+- Durable conversation gap :: principal-bound =ConversationStore= is proven directly, but default daemon =AgentManager= still owns an in-memory =ConversationManager=. The service path therefore does not yet prove the durable conversation ownership boundary required by #131; the implementation must either wire the canonical store into the daemon path or explicitly reconcile/prove the intended ownership boundary before completion.
+- Additional hardening evidence :: explicit daemon principal construction should validate the canonical =PrincipalContext= type; transient principal policy should cover both guest/ephemeral semantics centrally rather than one magic kind; SQLite principal-schema migration needs a concurrent-open regression because two stores can observe the pre-migration schema before =ALTER TABLE=.
+- Design verdict :: these findings reinforce, rather than disprove, Iteration 1's object-scoped ownership architecture. Do not start a new numbered iteration. Continue TDD-first to close the implementation/service-path gaps.
+
+** Next TDD boundaries after review
+1. Repair the currently red event-isolation fake by emitting a provider-neutral =RuntimeEvent= while preserving the command/event type boundary.
+2. Add deterministic tests proving the *default supervisor/runtime/backend construction path* carries the authenticated principal into private memory state without caller-supplied owner injection; prove red before production wiring.
+3. Add/reconcile deterministic service-path conversation ownership tests so #131 proves the runtime does not retain an unscoped durable/private conversation path.
+4. Add concurrent SQLite legacy-schema migration coverage and principal-kind/transient-state boundary coverage where reachable.
+5. Run focused isolation gate, full repository/Nix gates, inspect changed-code coverage, then exact-head GitHub Actions before merge.
+
+** Runtime wiring red evidence and implementation
+- Red candidate :: =50e26ab780b7395c7b453927acfd1a59b5a726fb=.
+- GitHub Actions :: CI #357, run =32601373622=.
+- Full regression :: 3 failed, 884 passed, 14 warnings; ZARA/1 91/91 PASS; Arch and Ubuntu shared-mic jobs PASS.
+- Wiring red #1 :: =test_default_supervisor_threads_each_principal_into_agent_manager= failed because the default supervisor did not pass the authenticated principal to the agent manager.
+- Wiring red #2 :: =test_agent_manager_binds_memory_manager_to_explicit_principal= failed because =AgentManager= did not accept/bind =principal=.
+- Harness red :: =test_principal_event_subscriptions_do_not_cross_runtime_buses= compared =RuntimeEventSubscription.get()= directly with a raw =TurnStarted= even though the public subscription contract returns =EventEnvelope=; production bus behavior was correct.
+- Minimal agent implementation :: =b414076c675f283054348f78db5f1aec84793ab9= adds optional =principal= to =AgentManager= and passes it into =build_memory_manager=; existing injected memory-manager callers remain compatible.
+- Minimal daemon implementation :: =3a7b307f72016e01ca8869a40e6ed79c9edccc59= threads the supervisor's authenticated principal into the existing =AgentRuntimeBackend -> AgentManager= path. It explicitly preserves service-plugin management by supplying =plugin_paths= when using the principal-aware backend factory.
+- Test-contract correction :: =fa098b2e52c48e69edf95ef8ebc24ef31c0da20d= unwraps the =EventEnvelope.event= field in the event-isolation assertions; no runtime semantics are weakened.
+- Candidate gate :: exact-head CI #358 / run =32601832386= started for =fa098b2e52c48e69edf95ef8ebc24ef31c0da20d=; result pending at log update time.
+
+** Live conversation-context ownership TDD
+- Pre-slice review baseline :: =0420d98da746d6efbdd848b13c6907843fae95c5= was exact-head green in CI #368 before this additional adversarial boundary was added.
+- Rationale :: daemon isolation previously depended on one =AgentManager= instance per principal but the mutable LangChain =ConversationManager= itself carried no owner identity. Make that ownership explicit without inventing a second durable conversation subsystem.
+- Tests-only candidate :: =46a8330f453def30f060af9dc4fb9bfa283dc684=.
+- GitHub Actions :: CI #369, run =32603697114=.
+- Expected red :: 1 failed, 890 passed, 14 warnings; ZARA/1 91/91 PASS; Arch and Ubuntu shared-mic jobs PASS.
+- Exact red reason :: =test_agent_manager_binds_live_conversation_context_to_explicit_principal= failed with =AttributeError: 'ConversationManager' object has no attribute 'principal'=.
+- Minimal production commits :: =981ae77113c09f3712a565acbd13dd2f4b8e1f31= adds optional canonical-principal binding and fail-closed type validation to =ConversationManager=; =4880f2adb2b66265b70d860c64378c4f7d804d6e= threads the daemon/runtime principal from =AgentManager= into that live conversation context.
+- Green candidate :: =4880f2adb2b66265b70d860c64378c4f7d804d6e=.
+- GitHub Actions :: CI #371, run =32603997715= completed GREEN: full =Run all tests= PASS, =nix flake check= PASS, packaged Zara build PASS, shared-mic Arch PASS, shared-mic Ubuntu PASS.
+- Ownership reconciliation :: durable conversation/message persistence remains the existing principal-bound =ConversationStore= and is not duplicated. =ConversationManager= is transient live model context scoped to the exact server-side =PrincipalContext= and remains object-distinct for concurrent principal runtimes. The daemon does not accept a payload-selected owner for either boundary.
+- Architecture verdict :: no new iteration required; the added evidence strengthens Iteration 1's object-scoped ownership design.
+
+** Final merge gate
+- This log update changes the PR head, so its resulting exact-head CI is authoritative for merge. Merge only after that final head is green and PR #148 remains mergeable.

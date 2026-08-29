@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-from zara.runtime import bridge
+from zara.runtime import bridge, events
 from zara.runtime.backend import RuntimeBackend, RuntimeTurnResult
 from zara.runtime.commands import SubmitTurn
 from zara.runtime.host import RuntimeHost, RuntimeHostState
@@ -223,6 +223,38 @@ def test_synthetic_multi_principal_slots_have_separate_hosts_and_buses():
     assert first_slot.bus is not second_slot.bus
     assert supervisor.principals == (first, second)
     assert supervisor.shutdown()
+
+
+def test_supervisor_publishes_voice_event_only_to_owning_principal_bus():
+    supervisor = RuntimeSupervisor(
+        host_factory=lambda _principal, _bus: FakeHost(),
+        max_active_principals=2,
+        shutdown_timeout=0.2,
+    )
+    first = PrincipalContext("a")
+    second = PrincipalContext("b")
+    supervisor.start(first)
+    supervisor.open_principal(second)
+    first_events = supervisor.subscribe(first)
+    second_events = supervisor.subscribe(second)
+
+    try:
+        published = supervisor.publish(
+            first,
+            events.VoiceTranscriptPartial(
+                conversation_id="conversation-a",
+                stream_id="mic-a",
+                trace_id="trace-a",
+                text="private transcript",
+            ),
+        )
+
+        assert first_events.get(timeout=0.1) == published
+        assert second_events.drain() == []
+    finally:
+        first_events.close()
+        second_events.close()
+        assert supervisor.shutdown()
 
 
 def test_supervisor_factory_failure_is_terminal_failed_state_without_phantom_principal():

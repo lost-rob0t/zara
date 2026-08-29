@@ -85,6 +85,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         context: Optional[zmq.Context] = None,
         config: Optional[TransportConfig] = None,
         limits=None,
+        voice_ingress=None,
     ) -> None:
         if not isinstance(security_registry, SecurityRegistry):
             raise TypeError("security_registry must be SecurityRegistry")
@@ -100,6 +101,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             context=context,
             config=config,
             limits=limits,
+            voice_ingress=voice_ingress,
         )
         self._security_registry = security_registry
         self._curve_server = curve_server
@@ -109,6 +111,8 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         self._route_user_ids: dict[bytes, str] = {}
         self._route_principal_ids: dict[bytes, str] = {}
         self._runtime_quota_holds: set[tuple[str, str]] = set()
+        self._hello_route_resets: set[bytes] = set()
+        self._principal_subscriptions = {}
 
     @staticmethod
     def _capability_for(message_type: str) -> Capability:
@@ -116,11 +120,38 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             return Capability.SESSION_BASIC
         if message_type == "runtime.status":
             return Capability.RUNTIME_STATUS
-        if message_type == "turn.submit":
+        if message_type in {
+            "turn.submit",
+            "audio.input.start",
+            "audio.input.chunk",
+            "audio.input.commit",
+        }:
             return Capability.TURN_SUBMIT
-        if message_type == "turn.cancel":
+        if message_type in {"turn.cancel", "audio.input.cancel"}:
             return Capability.TURN_CANCEL
+        if message_type in {"tool.approve", "tool.reject"}:
+            return Capability.TOOL_APPROVE
         raise AuthorizationDenied("unknown daemon message capability")
+
+    def _ensure_principal_subscription(self, principal: PrincipalContext) -> None:
+        principal_id = principal.principal_id
+        if principal_id in self._principal_subscriptions:
+            return
+        try:
+            subscription = self._supervisor.subscribe(
+                principal,
+                maxsize=self._config.event_queue_size,
+            )
+        except KeyError:
+            self._supervisor.open_principal(principal)
+            subscription = self._supervisor.subscribe(
+                principal,
+                maxsize=self._config.event_queue_size,
+            )
+        self._principal_subscriptions[principal_id] = subscription
+
+    def _route_ready(self, _route, _state) -> None:
+        self._ensure_principal_subscription(self._principal)
 
     def _audit(
         self,
@@ -182,6 +213,12 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             poller = zmq.Poller()
             poller.register(socket, zmq.POLLIN)
             while not self._stop.is_set():
+                for principal_id, subscription in tuple(self._principal_subscriptions.items()):
+                    self._drain_runtime_subscription(
+                        socket,
+                        subscription,
+                        principal_id=principal_id,
+                    )
                 self._drain_outbound(socket)
                 ready = dict(poller.poll(self._config.poll_interval_ms))
                 if ready.get(socket) == zmq.POLLIN:
@@ -197,15 +234,46 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             self._runtime_quota_holds.clear()
             self._route_user_ids.clear()
             self._route_principal_ids.clear()
+            self._hello_route_resets.clear()
+            for subscription in tuple(self._principal_subscriptions.values()):
+                subscription.close()
+            self._principal_subscriptions.clear()
             socket.close(self._config.linger_ms)
             authenticator.stop()
 
-    def _drop_route_locked(self, route: bytes) -> None:
-        principal_id = self._route_principal_ids.pop(route, None)
-        self._route_user_ids.pop(route, None)
-        if principal_id is not None:
-            self._quotas.release_connection(principal_id)
-        super()._drop_route_locked(route)
+    def _drop_route_locked(self, route: bytes):
+        resetting = route in self._hello_route_resets
+        principal_id = self._route_principal_ids.get(route)
+        if not resetting:
+            principal_id = self._route_principal_ids.pop(route, None)
+            self._route_user_ids.pop(route, None)
+            if principal_id is not None:
+                self._quotas.release_connection(principal_id)
+        state = super()._drop_route_locked(route)
+        if (
+            not resetting
+            and principal_id is not None
+            and not any(
+                route_state.principal_id == principal_id
+                for route_state in self._routes.values()
+            )
+        ):
+            subscription = self._principal_subscriptions.pop(principal_id, None)
+            if subscription is not None:
+                subscription.close()
+        return state
+
+    def _handle_hello(self, socket: zmq.Socket, route: bytes, message: ProtocolMessage) -> None:
+        # The base gateway resets application/session state on every hello so an
+        # abandoned voice stream is cancelled. A secure route is already bound
+        # and charged to its authenticated principal before that reset. Preserve
+        # the security binding/quota while allowing only the base route state to
+        # be replaced.
+        self._hello_route_resets.add(route)
+        try:
+            super()._handle_hello(socket, route, message)
+        finally:
+            self._hello_route_resets.discard(route)
 
     def _receive(self, socket: zmq.Socket) -> None:
         raw_frames = socket.recv_multipart(copy=False)
@@ -353,7 +421,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         replay_key = (principal_id, message.id)
         with self._lock:
             runtime_pending = (
-                message.type in {"turn.submit", "turn.cancel"}
+                message.type in {"turn.submit", "turn.cancel", "tool.approve", "tool.reject"}
                 and replay_key in self._inflight
             )
             if runtime_pending:

@@ -77,6 +77,14 @@ class LangGraphRuntimeBackend(RuntimeBackend):
     def __init__(self, manager_factory: Optional[Callable[[], Any]] = None) -> None:
         self._manager_factory = manager_factory
         self._manager = None
+        self._publisher = None
+
+    def bind_event_publisher(self, publisher) -> None:
+        self._publisher = publisher
+        if self._manager is not None:
+            bind = getattr(self._manager, "bind_event_publisher", None)
+            if bind is not None:
+                bind(publisher)
 
     async def start(self) -> None:
         if self._manager is not None:
@@ -86,6 +94,10 @@ class LangGraphRuntimeBackend(RuntimeBackend):
 
             self._manager_factory = AgentManager
         self._manager = self._manager_factory()
+        if self._publisher is not None:
+            bind = getattr(self._manager, "bind_event_publisher", None)
+            if bind is not None:
+                bind(self._publisher)
 
     async def submit_turn(
         self,
@@ -117,7 +129,26 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         )
 
     async def cancel_turn(self, turn_id: str) -> None:
-        return None
+        if self._manager is not None:
+            cancel = getattr(self._manager, "cancel_turn", None)
+            if cancel is not None:
+                await cancel(turn_id)
+
+    async def approve_tool(self, tool_run_id: str) -> None:
+        if self._manager is None:
+            raise RuntimeError("runtime backend is not started")
+        approve = getattr(self._manager, "approve_tool", None)
+        if approve is None:
+            raise UnsupportedRuntimeCommand("tool approval is not available in this runtime backend")
+        await approve(tool_run_id)
+
+    async def reject_tool(self, tool_run_id: str, reason: str = "") -> None:
+        if self._manager is None:
+            raise RuntimeError("runtime backend is not started")
+        reject = getattr(self._manager, "reject_tool", None)
+        if reject is None:
+            raise UnsupportedRuntimeCommand("tool rejection is not available in this runtime backend")
+        await reject(tool_run_id, reason)
 
     def register_tools(self, tools) -> None:
         if self._manager is None:

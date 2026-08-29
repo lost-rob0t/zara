@@ -2,14 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
-from typing import Any, Dict, List, Literal, Optional, TypedDict, Annotated
+import uuid
+from typing import Annotated, Any, Dict, List, Literal, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
+from langgraph.types import Command, interrupt
 
 from zara.runtime import bridge as runtime_bridge
+from zara.runtime import events
+
+from .approval import (
+    ApprovalRequest,
+    MAX_TOOL_RUN_ID_LENGTH,
+    ToolApprovalController,
+    valid_tool_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +61,7 @@ class AgentState(TypedDict, total=False):
     response: Optional[str]
     tool_calls: List[Dict[str, Any]]
     tool_results: List[Dict[str, Any]]
+    tool_decisions: Dict[str, Dict[str, str]]
     latency_trace: Any
 
 
@@ -64,6 +79,14 @@ def _tool_call_id(tool_call: Any) -> Optional[str]:
     if isinstance(tool_call, dict):
         return tool_call.get("id")
     return getattr(tool_call, "id", None)
+
+
+def _tool_call_name(tool_call: Any) -> Optional[str]:
+    if tool_call is None:
+        return None
+    if isinstance(tool_call, dict):
+        return tool_call.get("name")
+    return getattr(tool_call, "name", None)
 
 
 def validate_and_clean_messages(messages: List[BaseMessage]) -> List[BaseMessage]:
@@ -207,12 +230,191 @@ def create_agent_node(llm_client, tool_registry):
     return agent_node
 
 
-def create_tools_node(tool_registry):
+def create_approval_node(tool_registry):
+    def approval_node(state: Dict[str, Any]) -> Dict[str, Any]:
+        messages = state.get("messages", [])
+        if not messages or not isinstance(messages[-1], AIMessage):
+            raise ValueError("approval gate requires a pending assistant tool call")
+
+        tool_calls = messages[-1].tool_calls
+        tool_run_ids = [_tool_call_id(tool_call) for tool_call in tool_calls]
+        tool_names = [_tool_call_name(tool_call) for tool_call in tool_calls]
+        if (
+            any(
+                not tool_run_id or len(tool_run_id) > MAX_TOOL_RUN_ID_LENGTH
+                for tool_run_id in tool_run_ids
+            )
+            or len(set(tool_run_ids)) != len(tool_run_ids)
+            or any(not valid_tool_name(tool_name) for tool_name in tool_names)
+        ):
+            raise ValueError("tool call metadata is invalid")
+
+        decisions: Dict[str, Dict[str, str]] = {}
+        for tool_call in tool_calls:
+            tool_name = _tool_call_name(tool_call)
+            if not tool_name or not tool_registry.requires_approval(tool_name):
+                continue
+            tool_run_id = _tool_call_id(tool_call)
+            resolution = interrupt(
+                {
+                    "tool_run_id": tool_run_id,
+                    "tool_name": tool_name,
+                }
+            )
+            if not isinstance(resolution, dict):
+                raise ValueError("tool approval decision is invalid")
+            decision = resolution.get("decision")
+            if decision not in {"approve", "reject"}:
+                raise ValueError("tool approval decision is invalid")
+            decisions[str(tool_run_id)] = {
+                "decision": decision,
+            }
+        return {"tool_decisions": decisions}
+
+    return approval_node
+
+
+def create_tools_node(tool_registry, publisher=None):
     tools = tool_registry.to_langchain_tools()
-    return ToolNode(tools)
+    tool_node = ToolNode(tools)
+    bindings = {tool.name: tool for tool in tools}
+    publish = publisher or runtime_bridge.publish
+
+    async def gated_tools_node(
+        state: Dict[str, Any],
+        config: RunnableConfig,
+    ) -> Dict[str, Any]:
+        messages = state.get("messages", [])
+        if not messages or not isinstance(messages[-1], AIMessage):
+            raise ValueError("tool executor requires a pending assistant tool call")
+
+        decisions = state.get("tool_decisions", {})
+        results: List[ToolMessage] = []
+        turn_id = state.get("turn_id")
+        conversation_id = state.get("conversation_id")
+        for tool_call in messages[-1].tool_calls:
+            tool_name = _tool_call_name(tool_call)
+            tool_run_id = _tool_call_id(tool_call)
+            if not tool_name or not tool_run_id:
+                raise ValueError("tool call metadata is invalid")
+
+            if tool_registry.requires_approval(tool_name):
+                decision = decisions.get(tool_run_id, {}).get("decision")
+                if decision != "approve":
+                    results.append(
+                        ToolMessage(
+                            content=f"Tool {tool_name} was not approved.",
+                            name=tool_name,
+                            tool_call_id=tool_run_id,
+                            status="error",
+                        )
+                    )
+                    continue
+            else:
+                publish(
+                    events.ToolQueued(
+                        turn_id=turn_id,
+                        conversation_id=conversation_id,
+                        label=tool_name,
+                        tool_run_id=tool_run_id,
+                        tool_name=tool_name,
+                    )
+                )
+
+            if tool_registry.get_tool(tool_name) is not bindings.get(tool_name):
+                publish(
+                    events.ToolFailed(
+                        turn_id=turn_id,
+                        conversation_id=conversation_id,
+                        label=tool_name,
+                        tool_run_id=tool_run_id,
+                        tool_name=tool_name,
+                        reason="tool is no longer available",
+                    )
+                )
+                results.append(
+                    ToolMessage(
+                        content=f"Tool {tool_name} is no longer available.",
+                        name=tool_name,
+                        tool_call_id=tool_run_id,
+                        status="error",
+                    )
+                )
+                continue
+
+            publish(
+                events.ToolStarted(
+                    turn_id=turn_id,
+                    conversation_id=conversation_id,
+                    label=tool_name,
+                    tool_run_id=tool_run_id,
+                    tool_name=tool_name,
+                )
+            )
+            single_call = AIMessage(content="", tool_calls=[tool_call])
+            try:
+                output = await tool_node.ainvoke(
+                    {"messages": [single_call]},
+                    config,
+                )
+            except asyncio.CancelledError:
+                publish(
+                    events.ToolCancelled(
+                        turn_id=turn_id,
+                        conversation_id=conversation_id,
+                        label=tool_name,
+                        tool_run_id=tool_run_id,
+                        tool_name=tool_name,
+                        reason="turn cancelled",
+                    )
+                )
+                raise
+            except Exception:
+                publish(
+                    events.ToolFailed(
+                        turn_id=turn_id,
+                        conversation_id=conversation_id,
+                        label=tool_name,
+                        tool_run_id=tool_run_id,
+                        tool_name=tool_name,
+                        reason="tool execution failed",
+                    )
+                )
+                raise RuntimeError(f"tool {tool_name} execution failed") from None
+
+            tool_messages = output.get("messages", [])
+            if len(tool_messages) != 1 or not isinstance(tool_messages[0], ToolMessage):
+                raise RuntimeError("tool executor returned an invalid result")
+            result = tool_messages[0]
+            results.append(result)
+            if getattr(result, "status", "success") == "error":
+                publish(
+                    events.ToolFailed(
+                        turn_id=turn_id,
+                        conversation_id=conversation_id,
+                        label=tool_name,
+                        tool_run_id=tool_run_id,
+                        tool_name=tool_name,
+                        reason="tool execution failed",
+                    )
+                )
+            else:
+                publish(
+                    events.ToolCompleted(
+                        turn_id=turn_id,
+                        conversation_id=conversation_id,
+                        label=tool_name,
+                        tool_run_id=tool_run_id,
+                        tool_name=tool_name,
+                        success=True,
+                    )
+                )
+        return {"messages": results, "tool_decisions": {}}
+
+    return gated_tools_node
 
 
-def should_continue(state: Dict[str, Any]) -> Literal["tools", "end"]:
+def should_continue(state: Dict[str, Any]) -> Literal["approval", "end"]:
     msgs = state.get("messages", [])
     assert isinstance(msgs, list) and msgs, "state['messages'] must be a non-empty list"
     last = msgs[-1]
@@ -226,7 +428,7 @@ def should_continue(state: Dict[str, Any]) -> Literal["tools", "end"]:
         return "end"
 
     if isinstance(last, AIMessage) and getattr(last, "tool_calls", None):
-        return "tools"
+        return "approval"
 
     return "end"
 
@@ -234,13 +436,15 @@ def should_continue(state: Dict[str, Any]) -> Literal["tools", "end"]:
 # ----------------------------------------------------------------------
 # Graph + runner
 
-def create_agent_graph(llm_client, tool_registry):
+def create_agent_graph(llm_client, tool_registry, *, checkpointer=None, publisher=None):
     agent_node = create_agent_node(llm_client, tool_registry)
-    tools_node = create_tools_node(tool_registry)
+    approval_node = create_approval_node(tool_registry)
+    tools_node = create_tools_node(tool_registry, publisher)
 
     workflow = StateGraph(AgentState)
 
     workflow.add_node("agent", agent_node)
+    workflow.add_node("approval", approval_node)
     workflow.add_node("tools", tools_node)
 
     workflow.set_entry_point("agent")
@@ -249,17 +453,26 @@ def create_agent_graph(llm_client, tool_registry):
         "agent",
         should_continue,
         {
-            "tools": "tools",
+            "approval": "approval",
             "end": END,
         },
     )
 
+    workflow.add_edge("approval", "tools")
     workflow.add_edge("tools", "agent")
 
-    return workflow.compile()
+    return workflow.compile(checkpointer=checkpointer)
 
 
-async def run_conversation_loop(llm_client, tool_registry, state: Dict[str, Any]) -> Dict[str, Any]:
+async def run_conversation_loop(
+    llm_client,
+    tool_registry,
+    state: Dict[str, Any],
+    *,
+    approval_controller: Optional[ToolApprovalController] = None,
+    publisher=None,
+    principal_id: str = "local",
+) -> Dict[str, Any]:
     """
     Execute the graph until a final answer is produced or max_steps is hit.
 
@@ -287,8 +500,43 @@ async def run_conversation_loop(llm_client, tool_registry, state: Dict[str, Any]
         state = dict(state)
         state["messages"] = messages
 
-    graph = create_agent_graph(llm_client, tool_registry)
-    result: Dict[str, Any] = await graph.ainvoke(state)
+    saver = InMemorySaver()
+    graph = create_agent_graph(
+        llm_client,
+        tool_registry,
+        checkpointer=saver,
+        publisher=publisher,
+    )
+    turn_id = str(state.get("turn_id") or f"agent-{uuid.uuid4().hex}")
+    conversation_id = state.get("conversation_id")
+    scope = hashlib.blake2s(principal_id.encode("utf-8"), digest_size=10).hexdigest()
+    checkpoint_thread_id = f"zara:{scope}:{turn_id}"
+    config = {"configurable": {"thread_id": checkpoint_thread_id}}
+
+    try:
+        result: Dict[str, Any] = await graph.ainvoke(state, config)
+        while result.get("__interrupt__"):
+            if approval_controller is None:
+                raise RuntimeError("tool approval controller is unavailable")
+            interrupts = result["__interrupt__"]
+            if len(interrupts) != 1 or not isinstance(interrupts[0].value, dict):
+                raise RuntimeError("tool approval interrupt is invalid")
+            value = interrupts[0].value
+            request = ApprovalRequest(
+                tool_run_id=str(value.get("tool_run_id") or ""),
+                tool_name=str(value.get("tool_name") or ""),
+                turn_id=turn_id,
+                conversation_id=conversation_id,
+            )
+            resolution = await approval_controller.wait_for_decision(request)
+            if resolution.decision == "cancel":
+                raise asyncio.CancelledError
+            result = await graph.ainvoke(
+                Command(resume={"decision": resolution.decision}),
+                config,
+            )
+    finally:
+        await saver.adelete_thread(checkpoint_thread_id)
 
     messages = result.get("messages", [])
     if not messages:
@@ -313,7 +561,7 @@ async def run_conversation_loop(llm_client, tool_registry, state: Dict[str, Any]
             tool_results.append(
                 {
                     "tool": getattr(msg, "name", "unknown"),
-                    "success": "Error" not in (msg.content or ""),
+                    "success": getattr(msg, "status", "success") != "error",
                     "result": msg.content,
                 }
             )

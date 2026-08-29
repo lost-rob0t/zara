@@ -1,0 +1,127 @@
+#+title: RAGE Design - Issue 133 Client Migration
+
+* Problem boundary
+Migrate supported Zara CLI/desktop surfaces from private RuntimeHost ownership to the shared ZaraClient boundary, using authenticated ZARA/1 where selected, while preserving explicit standalone compatibility. Do not remove standalone mode, add a Qt-specific protocol, change daemon authentication, or invent new conversation/runtime/provider stacks.
+
+* Selected architecture
+** One application-facing client factory/policy
+Add a small client-selection layer that produces exactly one =ZaraClient= for a surface:
+- explicit standalone -> =InProcessZaraClient=;
+- explicit daemon endpoint -> =ZmqZaraClient= configured through existing #129/#130 transport/security facilities;
+- configured daemon-default mode -> bounded connect/reconnect according to policy;
+- fallback to standalone only for explicitly classified daemon-unavailable conditions when policy permits it.
+
+Authentication/protocol/pin/authorization failures are terminal and visible; they never trigger silent standalone fallback.
+
+** Surface dependency inversion
+- CLI and desktop depend on =ZaraClient=, never directly on RuntimeHost.
+- =QtRuntimeBridge= accepts a =ZaraClient= and creates its subscription from =client.subscribe()=.
+- =DesktopController= owns a client connection lifecycle, not daemon runtime ownership.
+- Existing =InProcessZaraClient= preserves standalone semantics without a second UI code path.
+
+** Connection vs daemon lifecycle
+Client =close()= means disconnect local transport/resources. It must not imply daemon shutdown. Shared-daemon administrative restart/shutdown remains a separate explicitly authorized command/action. Desktop exit therefore closes its client and leaves =zara-server= alive.
+
+** Reconnect
+Reuse =ZmqZaraClient.reconnect()= and server-side request-id replay from #129/#132. A bounded reconnect controller tracks generation/state and retries connection with capped exponential backoff. It does not regenerate request IDs for a logical retry. Old-generation subscriptions are closed and their events cannot reach the active surface.
+
+** Conversation continuity
+Use current =conversation.open= and runtime event correlation. A reconnect may reopen/select the durable conversation ID but must not claim an in-flight turn resumed unless the daemon confirms it. Desktop may keep its current local ConversationService as a UI projection/cache during this issue, but runtime events/receipts are authoritative. No desktop-only CRUD wire types are introduced.
+
+* Lifecycle/state ownership
+Client states exposed to surfaces:
+1. NEW
+2. STARTING / authenticating
+3. READY
+4. DEGRADED / reconnecting where policy permits
+5. STOPPING
+6. STOPPED
+7. FAILED
+
+Connection generation owns one transport subscription. Reconnect closes the old generation before making a new subscription active. Surface windows own only projections and local device resources.
+
+* Invariants
+1. Supported migrated surfaces depend only on ZaraClient for runtime command/event transport.
+2. Exactly one client/runtime path is active per surface invocation.
+3. Silent fallback is never allowed for authentication, server-pin, protocol-version, or authorization failure.
+4. Closing a client does not stop a shared daemon.
+5. A logical retried side effect reuses the same request ID.
+6. Events from a stale connection generation cannot mutate the active UI/conversation.
+7. ZMQ/Qt callbacks never block the Qt main thread.
+8. Client audio devices remain client-owned; daemon never opens desktop/client microphones or speakers.
+9. No payload/flag can select another authenticated principal by string.
+10. Standalone remains explicit compatibility behavior until #134 parity gate.
+
+* Threat/failure analysis
+- daemon absent: bounded timeout, visible unavailable state; standalone only if policy explicitly allows unavailable-only fallback;
+- wrong/revoked identity or server pin: fail closed, no fallback;
+- protocol major mismatch: fail closed;
+- reconnect storm: capped backoff and one active generation;
+- duplicate side effect: same RuntimeCommand/request_id is retried, relying on existing daemon replay cache;
+- stale old event: generation/subscription is discarded before new generation activation;
+- desktop quit: close client transport only;
+- daemon restart: reconnect and reopen durable conversation; active turn marked lost/non-resumable unless confirmed;
+- local projection drift: runtime events/receipts remain authoritative; full durable CRUD protocol is not invented here;
+- slow consumer: existing bounded event/outbound queues apply; desktop drains bounded batches.
+
+* Compatibility/migration constraints
+- =zara= remains client executable; =zara-server= remains daemon executable.
+- Existing direct modes may migrate incrementally through the same client factory; no second CLI program.
+- =InProcessZaraClient= is the compatibility adapter for current standalone RuntimeHost behavior.
+- Existing ZARA/1 schema remains closed; no Qt-specific message types.
+- Existing #130 identity/key loading must be reused where remote TCP is selected; no new credential format.
+- Existing #132 voice input/output methods are reused by voice-capable clients.
+
+* Rejected alternatives
+- RuntimeHost remote mode: rejects service-boundary separation.
+- Separate desktop networking adapter: duplicates protocol/policy.
+- fallback on all errors: masks security failures and can duplicate assistant ownership.
+- daemon shutdown on UI quit: violates long-lived shared service semantics.
+- new conversation CRUD messages in this slice: protocol invention beyond issue ownership.
+
+* Acceptance-to-test map
+** Client/bridge boundary
+- QtRuntimeBridge subscribes through supplied ZaraClient, not global runtime bridge.
+- bridge submit/completion/failure behavior remains transport-neutral.
+- InProcessZaraClient and a fake remote client satisfy the same bridge tests.
+
+** CLI
+- =--connect endpoint command= constructs daemon client, starts, opens/uses conversation, submits text turn, observes completion, and closes client.
+- =--standalone command= uses InProcessZaraClient explicitly.
+- missing daemon with no fallback returns bounded actionable failure.
+- allowed unavailable-only fallback selects standalone exactly once.
+- auth/protocol failures never fallback.
+
+** Desktop
+- application/controller can be constructed with ZaraClient instead of RuntimeHost.
+- closing desktop closes client but does not submit ShutdownRuntime merely to exit.
+- reconnect state/events are reflected without blocking Qt.
+- stale old-generation event cannot mutate current state.
+
+** Reconnect/session
+- bounded backoff with fake clock; no real sleeps.
+- retry preserves request id for side effects.
+- reconnect reopens durable conversation but does not invent in-flight resumption.
+- two clients/one principal and two principals remain isolated through existing daemon fixtures.
+
+** Voice/device
+- disconnect releases client playback/mic resources from #132 without daemon shutdown.
+- stale audio after reconnect/cancel remains suppressed by #132 contracts.
+
+* TDD slices
+1. QtRuntimeBridge ZaraClient subscription boundary -> RED on current global subscription -> minimal bridge type/subscribe change -> GREEN.
+2. Desktop app/controller dependency inversion and client-close semantics -> tests first -> implementation.
+3. Client selection/fallback policy + CLI text-turn path -> tests first -> implementation.
+4. Bounded reconnect generation/backoff/stale-event behavior -> tests first -> implementation.
+5. Voice-capable surface/device cleanup + focused migration integration script.
+6. Full coverage/gate/docs/packaging verification.
+
+* Exact gate
+- focused pytest per red/green slice;
+- =nix develop -c bash scripts/test-client-migration.sh=;
+- existing ZARA/1/reconnect/security/voice focused tests;
+- =nix develop -c bash scripts/test-all.sh=;
+- =nix flake check=;
+- =nix build=;
+- changed-code coverage review and deterministic tests for reachable gaps;
+- exact-head GitHub Actions green before merge.

@@ -303,10 +303,12 @@ async def test_memory_context_is_transient_across_turns(monkeypatch):
     manager.memory_context_limit = 1200
     manager.memory_top_k = 5
     manager.conversation_manager = ConversationManager()
+    manager.principal = None
+    manager.approval_controller = SimpleNamespace(publisher=None)
 
     calls = []
 
-    async def fake_loop(llm_client, tool_registry, state):
+    async def fake_loop(llm_client, tool_registry, state, **_kwargs):
         calls.append(list(state["messages"]))
         return {
             "messages": [*state["messages"], AIMessage(content="answer")],

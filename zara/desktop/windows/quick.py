@@ -8,6 +8,7 @@ from PySide6.QtCore import QRect, QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QCursor, QHideEvent, QKeyEvent, QShowEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -16,10 +17,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from zara.desktop.chat_widgets import ChatComposer, MessageWidget
+from zara.desktop.chat_widgets import ChatComposer, ComposerActionButton, MessageWidget
 from zara.desktop.conversation import ConversationService, ConversationUpdate
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.state import DesktopStatus, INITIAL_STATUS
+from zara.desktop.theme import refresh_dynamic_style
 from zara.runtime.commands import CancelTurn, SubmitTurn
 
 _DEFAULT_SIZE = QSize(680, 460)
@@ -94,6 +96,7 @@ class QuickCopilotWindow(QWidget):
 
     expand_requested = Signal(str)
     conversation_changed = Signal(object)
+    settings_requested = Signal()
 
     def __init__(
         self,
@@ -117,6 +120,7 @@ class QuickCopilotWindow(QWidget):
         self._cancel_conversation_id: Optional[str] = None
         self._submit_request_id: Optional[str] = None
 
+        self.setObjectName("zaraQuickCopilot")
         self.setWindowTitle("Ask Zara")
         self.setWindowFlag(Qt.WindowType.Tool, True)
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
@@ -124,19 +128,31 @@ class QuickCopilotWindow(QWidget):
         self.setMinimumSize(480, 320)
         self.resize(_DEFAULT_SIZE)
 
-        self.title_label = QLabel("Ask Zara")
+        self.brand_label = QLabel("ZARA")
+        self.brand_label.setObjectName("zaraBrandName")
+        self.title_label = QLabel("Quick Copilot")
         self.title_label.setObjectName("zaraQuickTitle")
         self.provider_label = QLabel()
         self.provider_label.setObjectName("zaraQuickProvider")
-        self.new_chat_button = QPushButton("New Chat")
-        self.expand_button = QPushButton("Open in Chat")
+        self.new_chat_button = QPushButton("New chat")
+        self.new_chat_button.setObjectName("zaraSecondaryAction")
+        self.expand_button = QPushButton("Full chat")
+        self.expand_button.setObjectName("zaraSecondaryAction")
+        self.settings_button = QPushButton("Settings")
+        self.settings_button.setObjectName("zaraSecondaryAction")
 
-        header = QHBoxLayout()
+        self.header_frame = QFrame()
+        self.header_frame.setObjectName("zaraQuickHeader")
+        header = QHBoxLayout(self.header_frame)
+        header.setContentsMargins(0, 0, 0, 12)
+        header.setSpacing(10)
+        header.addWidget(self.brand_label)
         header.addWidget(self.title_label)
         header.addStretch(1)
         header.addWidget(self.provider_label)
         header.addWidget(self.new_chat_button)
         header.addWidget(self.expand_button)
+        header.addWidget(self.settings_button)
 
         self.runtime_status_label = QLabel()
         self.runtime_status_label.setObjectName("zaraQuickRuntimeStatus")
@@ -148,50 +164,68 @@ class QuickCopilotWindow(QWidget):
         self.command_error_label.setWordWrap(True)
         self.command_error_label.hide()
 
-        status_row = QHBoxLayout()
+        self.status_frame = QFrame()
+        self.status_frame.setObjectName("zaraRuntimeRail")
+        status_row = QHBoxLayout(self.status_frame)
+        status_row.setContentsMargins(12, 8, 12, 8)
+        status_row.setSpacing(10)
+        self.status_lamp = QFrame()
+        self.status_lamp.setObjectName("zaraStatusLamp")
+        self.status_lamp.setFixedSize(8, 8)
+        status_row.addWidget(self.status_lamp)
         status_row.addWidget(self.runtime_status_label)
         status_row.addWidget(self.runtime_detail_label, 1)
 
         self.message_container = QWidget()
+        self.message_container.setObjectName("zaraMessageContainer")
         self.message_layout = QVBoxLayout(self.message_container)
         self.message_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.message_layout.setContentsMargins(6, 6, 6, 6)
-        self.message_layout.setSpacing(6)
+        self.message_layout.setContentsMargins(10, 4, 8, 4)
+        self.message_layout.setSpacing(10)
 
         self.message_scroll = QScrollArea()
+        self.message_scroll.setObjectName("zaraConversationViewport")
+        self.message_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.message_scroll.setWidgetResizable(True)
         self.message_scroll.setWidget(self.message_container)
 
         self.composer = QuickComposer()
         self.composer.setPlaceholderText("Ask Zara…")
-        self.composer.setMaximumHeight(120)
+        self.composer.setMinimumHeight(48)
+        self.composer.setMaximumHeight(80)
         self.setFocusProxy(self.composer)
-        self.send_button = QPushButton("Send")
-        self.stop_button = QPushButton("Stop")
+        self.action_button = ComposerActionButton()
+        self.action_button.setEnabled(False)
 
         buttons = QVBoxLayout()
-        buttons.addWidget(self.send_button)
-        buttons.addWidget(self.stop_button)
+        buttons.addWidget(self.action_button)
         buttons.addStretch(1)
 
-        composer_row = QHBoxLayout()
+        self.composer_shell = QFrame()
+        self.composer_shell.setObjectName("zaraComposerShell")
+        self.composer_shell.setMaximumHeight(102)
+        composer_row = QHBoxLayout(self.composer_shell)
+        composer_row.setContentsMargins(8, 8, 8, 8)
+        composer_row.setSpacing(8)
         composer_row.addWidget(self.composer, 1)
         composer_row.addLayout(buttons)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.addLayout(header)
-        layout.addLayout(status_row)
+        layout.setContentsMargins(18, 16, 18, 18)
+        layout.setSpacing(12)
+        layout.addWidget(self.header_frame)
+        layout.addWidget(self.status_frame)
         layout.addWidget(self.command_error_label)
         layout.addWidget(self.message_scroll, 1)
-        layout.addLayout(composer_row)
+        layout.addWidget(self.composer_shell)
 
         self.composer.submit_requested.connect(self.submit_current_text)
+        self.composer.textChanged.connect(self._sync_controls)
         self.composer.escape_requested.connect(self.hide)
-        self.send_button.clicked.connect(self.submit_current_text)
-        self.stop_button.clicked.connect(self.cancel_active_turn)
+        self.action_button.clicked.connect(self._activate_composer_action)
         self.new_chat_button.clicked.connect(self.new_chat)
         self.expand_button.clicked.connect(self._request_expand)
+        self.settings_button.clicked.connect(self.settings_requested.emit)
 
         self.set_status(INITIAL_STATUS)
         self.sync_from_shared_state()
@@ -267,8 +301,12 @@ class QuickCopilotWindow(QWidget):
 
     def set_status(self, status: DesktopStatus) -> None:
         self._status = status
+        self.status_lamp.setProperty("runtimeState", status.state.value)
+        self.runtime_status_label.setProperty("runtimeState", status.state.value)
         self.runtime_status_label.setText(status.state.value.replace("-", " ").title())
         self.runtime_detail_label.setText(status.detail or "Zara is ready.")
+        refresh_dynamic_style(self.status_lamp)
+        refresh_dynamic_style(self.runtime_status_label)
 
     def sync_from_shared_state(self, _event: object = None) -> None:
         state = self.conversations.get_state(self.current_conversation_id)
@@ -373,6 +411,7 @@ class QuickCopilotWindow(QWidget):
             item = self.message_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.setParent(None)
                 widget.deleteLater()
         self._message_widgets.clear()
         for message in messages:
@@ -391,10 +430,20 @@ class QuickCopilotWindow(QWidget):
         state = self.conversations.get_state(self.current_conversation_id)
         pending = self.conversations.has_pending_request(self.current_conversation_id)
         active = bool(state.active_turn_id)
+        has_text = bool(self.composer.toPlainText().strip())
         if not active:
             state.cancel_request_id = None
-        self.send_button.setEnabled(not pending and not active)
-        self.stop_button.setEnabled(active and state.cancel_request_id is None)
+        self.action_button.set_action_mode("stop" if active else "send")
+        self.action_button.setEnabled(
+            active and state.cancel_request_id is None
+            or has_text and not pending and not active
+        )
+
+    def _activate_composer_action(self) -> None:
+        if self.action_button.action_mode == "stop":
+            self.cancel_active_turn()
+            return
+        self.submit_current_text()
 
     def _clear_owned_cancellation(self) -> None:
         if self._cancel_conversation_id is not None:

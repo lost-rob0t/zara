@@ -3,6 +3,7 @@
 from typing import Optional
 
 from zara.database import DatabaseManager
+from zara.server import PrincipalContext
 
 from .migrations import repair_conversation_schema
 from .models import (
@@ -18,9 +19,14 @@ from .store import ConversationStore as _ConversationStore
 class ConversationStore(_ConversationStore):
     """Conversation store with compatibility repair for legacy v2 databases."""
 
-    def __init__(self, db: Optional[DatabaseManager] = None) -> None:
+    def __init__(
+        self,
+        db: Optional[DatabaseManager] = None,
+        *,
+        principal: Optional[PrincipalContext] = None,
+    ) -> None:
         repair_conversation_schema(db)
-        super().__init__(db)
+        super().__init__(db, principal=principal)
 
 
 from .service import ConversationService, ConversationUpdate  # noqa: E402

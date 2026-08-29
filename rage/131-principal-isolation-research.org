@@ -1,0 +1,78 @@
+#+title: RAGE Research - Issue 131 Principal Isolation
+
+* Scope
+Issue #131 must make private conversation, memory, runtime-event, and reconnect state structurally principal-scoped after #130 established authenticated =PrincipalContext= identities. It must not implement #51's full ContextManager or a second memory stack.
+
+* Current-state findings
+** Runtime isolation already has a useful root
+- =RuntimeSupervisor= keys runtimes by =PrincipalContext.principal_id=, creates a distinct =RuntimeEventBus= per principal, and =subscribe(principal)= resolves through that principal's runtime slot.
+- This is a strong event-isolation primitive, but persistence is not yet tied to the same principal key.
+- =PrincipalContext= rejects empty/whitespace-ambiguous identifiers, so it is suitable as the canonical owner value.
+
+** Conversation persistence is globally addressable
+- =ConversationStore= stores =desktop_conversations.id= as a global primary key with no owner column.
+- =get_conversation=, =list_conversations=, =rename_conversation=, =save_message=, =load_messages=, =load_state= and =next_sequence= are all unscoped SQL operations.
+- Therefore possession/guessing of another conversation ID is currently enough to read or mutate it if the shared store is used in daemon mode.
+- Search joins message content globally, so even list/search can leak another principal's content.
+
+** MemoryManager is process-oriented
+- =MemoryManager.sessions= is keyed only by session id and owns one mutable =current_session_id=.
+- Local fallback =_memories= is one global list.
+- Persistent Chroma uses one configured collection and retrieval queries candidates without an owner predicate, then filters only kind/tags.
+- =_find_duplicate_fact= is global, so identical text across users can collapse into one user's record.
+- =forget(all_memories=True)= and =forget(session_id=...)= are global destructive operations.
+- This directly violates #131's requirement that exact matching queries, duplicate labels, export/delete, and local fallback remain isolated.
+
+** #51 is not implemented yet
+- The roadmap still has #51 open. #131 must create a principal ownership boundary that future ContextManager state can consume, but must not implement the full truncate/compress/skill-selection subsystem here.
+
+* Adversarial failure cases
+1. A learns B's conversation id and calls get/load/rename/save/delete APIs.
+2. A searches for a phrase unique to B and infers B's conversation from list/search results.
+3. A and B use the same session label/id and one overwrites or reads the other's session buffer.
+4. A stores the same fact text as B; global duplicate detection returns B's memory id.
+5. Chroma returns mixed-principal candidates and application post-filtering is forgotten on one code path.
+6. Backend failure switches to local fallback; if fallback is not partitioned, isolation silently disappears exactly during degraded operation.
+7. Guest/ephemeral principal writes durable memory and later reconnects or another guest sees it.
+8. Reconnect presents a valid conversation id owned by B; transport authentication is valid for A, so persistence must still reject access.
+9. Legacy single-user SQLite rows have no owner. Silently assigning them to the first authenticated remote principal would be an ownership-confusion vulnerability.
+10. Error differences such as KeyError for foreign IDs vs missing IDs can become an existence oracle.
+
+* Migration research
+SQLite supports adding columns, but adding =NOT NULL= requires a non-NULL default for existing rows. Arbitrary constraint changes generally require a table rebuild. Reference: https://www.sqlite.org/lang_altertable.html
+
+A safe compatibility direction is:
+- add =principal_id TEXT NOT NULL= with a reserved legacy marker default;
+- only an explicit local-owner migration path may claim reserved legacy rows for =PrincipalContext.local_owner()=;
+- authenticated remote principals never inherit legacy rows merely by being first to open the DB;
+- all new writes use the real principal id and all read/mutation SQL predicates include it.
+
+* Chroma ownership decision
+Issue #131 explicitly allows either separate namespace/collection per principal or a structurally mandatory owner filter. The easiest property to prove with current code is a per-principal collection name plus owner metadata defense-in-depth. This avoids one forgotten =where= filter becoming cross-user disclosure and keeps degraded local fallback partitioned by the same principal object. Collection names must be derived from a stable hash of principal id rather than raw identifiers to avoid backend naming/path surprises.
+
+* Design consequences
+- Make principal scope an object held by the store/manager, not a caller-supplied owner string on every method. This prevents a request payload from selecting another owner.
+- =ConversationStore= should always be constructed with a =PrincipalContext=; standalone/default callers may default to =local_owner()= for compatibility, so the object is still scoped rather than unscoped.
+- SQL rows carry immutable =principal_id= and every query/mutation predicate includes it.
+- Foreign/missing conversation ids return the same not-found behavior to reduce existence oracles.
+- =MemoryManager= should own one principal; daemon code constructs a manager per principal. Remove global mutable current-session assumptions from daemon-facing APIs and partition session/local memory state.
+- Persistent collection namespace is principal-specific. Owner metadata remains stored and checked.
+- Guest/ephemeral principals (kind =guest= or =ephemeral=) must never initialize/use durable Chroma persistence; their state is local-only and explicitly clearable.
+- Event routing should continue using the already per-principal RuntimeEventBus; add regression tests rather than replacing it.
+- #51 integration is a future adapter point: a ContextManager instance must be created per principal/runtime and must not accept an owner from payload data.
+
+* Rejected alternatives
+** Shared global store plus UI filtering
+Rejected: UI is not a security boundary and daemon/non-UI callers can bypass it.
+
+** Caller passes =principal_id= to each operation
+Rejected: too easy for transport/request code to accidentally forward a client-supplied owner. Scope should be captured from authenticated server state at construction/binding time.
+
+** One Chroma collection with ad-hoc post-filtering
+Rejected for initial proof: one forgotten filter leaks data. Separate per-principal namespaces are simpler to audit, while owner metadata provides additional validation.
+
+** Implement #51 ContextManager now
+Rejected: #51 is separate open work. #131 should establish ownership hooks/invariants without duplicating context architecture.
+
+* Research conclusion
+The inherited direction is sound but the strongest implementation is object-scoped ownership: one authenticated =PrincipalContext= binds runtime, conversation store, and memory manager. Durable rows/metadata repeat that owner. Remote clients never choose ownership by payload. Legacy data is claimable only by local-owner migration. This preserves current single-user compatibility while making daemon isolation structural rather than conventional.

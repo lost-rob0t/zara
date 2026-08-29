@@ -1,0 +1,26 @@
+#+title: RAGE Post-Merge Evidence - Zara issue 132
+
+* Continuation
+- Canonical work log :: =rage/132-live-voice.org=
+- Consumed issue :: #132
+- Immutable RAGE start :: =1a076e9921228d9d0eb18ea63225a1862f81023d=
+- Implementation PR :: #185
+
+* Final exact-head gate
+- Exact implementation head :: =06f23ede1120d482dfa6b28c1168adf7c335951f=
+- GitHub Actions :: CI #449 / run =32647239993=.
+- Repository test job :: PASS, including =scripts/test-all.sh=.
+- =nix flake check= :: PASS.
+- Packaged Zara build :: PASS.
+- Shared microphone / Arch Linux :: PASS.
+- Shared microphone / Ubuntu 24.04 :: PASS.
+- Pull request review threads :: none unresolved.
+- Mergeability at gate :: mergeable.
+
+* Outcome
+- PR #185 was marked ready only after exact-head CI was green.
+- Merge method :: merge commit with expected head SHA guard.
+- Merge SHA :: =4c6018b30ff4be2e168551f0cf256f8333bc58af=.
+- Issue #132 :: closed as completed by the merge.
+- Architecture outcome :: client-owned microphone/playback, binary multipart ZARA/1 voice transport, bounded ingress/egress, authenticated principal isolation, canonical cancellation/barge-in and stale-output suppression merged without a daemon-only voice/provider stack.
+- Next daemon child :: #133 is now dependency-satisfied, but per RAGE one consumed issue is worked per iteration; #133 must be freshly consumed in a later iteration from the then-current immutable =master= SHA.

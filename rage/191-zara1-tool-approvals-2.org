@@ -1,0 +1,52 @@
+* Run identity
+- Consumed issue :: #191
+- Branch :: =rage/191-zara1-tool-approvals-2=
+- RAGE start commit :: =55f4f76b2906a05f289f3720e339702d5139aa6d=
+
+* Iteration 2 - 2026-08-24
+** Analyze / Research
+- Completed in =rage/191-zara1-tool-approvals-2-research.org=.
+- #209 removed the former runtime blocker. Research exposed the remaining authenticated transport defect: =SecureZaraZmqGateway= does not subscribe to or drain principal runtime event buses.
+- Selected policy :: approval visibility and decision authority belong only to the authenticated route/session that initiated the owning turn. Disconnect or reconnect does not transfer ownership.
+
+** Architecture / Design
+- Completed in =rage/191-zara1-tool-approvals-2-design.org=.
+- Closed tool messages adapt only to existing runtime commands/events. Principal-qualified routing and bounded delivery ownership do not become a second pending approval authority.
+
+** Adversarial review
+- Completed in the design artifact. Turn-id collision, same-principal device guessing, stale session reuse, competing decisions, cancellation races, outbound saturation, secret leakage and shared-bus misrouting are explicitly fenced.
+
+** Autonomous decision gate
+- Decision :: ACCEPT REALIZATION.
+- Authorization :: begin with the smallest failing closed-codec/client tests, then the authenticated routing and production approval flow.
+
+** TDD / Realize
+- RED 1 :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c pytest -q t/test_protocol.py t/test_protocol_runtime.py t/test_zmq_transport.py -k 'tool_'=.
+- RED 1 result :: 12 failed, 9 passed, 99 deselected. The failures expose unsupported =tool.approve=/=tool.waiting= message types, absent approve/reject command codecs, absent tool event codecs and no client-visible waiting event/client submission path.
+- GREEN 1 :: the same focused selection passed 21 tests with 99 deselected after adding the closed wire family, explicit runtime adapters, exact client event reconstruction and typed client decision submission.
+- Analyze refinement :: authenticated tests previously used raw DEALER sockets because =ZmqZaraClient= could not apply =CurveClientConfig=. The research/design now include the optional authenticated client transport seam required by #191's acceptance.
+- RED 2 :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c pytest -q t/test_zara1_tool_approvals.py=.
+- RED 2 result :: four tests failed immediately because =ZmqZaraClient.__init__= rejected =curve_client=. This proves the public client seam could not establish an authenticated ZARA/1 session before event isolation was even exercised.
+- GREEN 2 :: all four authenticated transport tests passed after adding optional CURVE client configuration, bounded per-principal secure-gateway subscriptions, principal-qualified turn routing, exact route/session approval ownership, server capability checks and typed replay behavior.
+- Adjacent regression gate :: 145 protocol, base transport, secure gateway, abuse, voice-security and tool-transport tests passed together.
+- Production-path coverage :: nine focused authenticated tool tests pass, including approve/reject through a real =RuntimeHost=/LangGraph tool, cancellation, reconnect non-transfer, capability denial, cross-principal isolation, same-principal session isolation, replay and audit redaction.
+- Harness correction :: the first cancellation run was denied because the test enrollment intentionally omitted =turn.cancel=. Adding that required server capability fixed the fixture; no production behavior was changed for that failure.
+- RED 3 :: the delivery-bound test configured a maximum of two pending requests, published three waiting events and received all three. The gateway's transport-only approval-owner map was not independently bounded against a faulty runtime publisher.
+- GREEN 3 :: approval delivery ownership is capped by the configured pending-request limit; the bound, reconnect/idempotency regressions and secure daemon tests pass together (17 passed).
+- Routing hardening :: inflight callbacks now retain the initiating principal and session, so a route-id reconnect cannot receive a response or acquire approval ownership from an older session.
+- RED 4 :: five malformed runtime tool events reached message construction: whitespace tool ids, invalid tool names, control-bearing prompt/reason text and a non-boolean completion flag were not rejected at the runtime codec boundary.
+- GREEN 4 :: the same five cases now fail closed before transport after adding bounded token/text and exact-type validation to the explicit runtime event adapter (5 passed, 32 deselected).
+
+** Evaluate - pre-candidate
+- Focused gate :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-zara1-tool-approvals.sh= passed all 10 tests.
+- Complete repository gate :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh= passed all 10 phases: 145 ZARA/1 tests, 75 voice tests, 10 authenticated approval tests, 31 runtime approval tests, 1100 aggregate pytest tests and every script/latency/packaging check.
+- Changed-path review :: every new message kind and adapter branch has a positive mapping test; malformed command/event fields, ownership/capability denial, cross-principal and same-principal isolation, replay/stale/reconnect/cancel paths, production approve/reject effects, privacy and bounded delivery state have deterministic coverage. Existing runtime approval tests retain deterministic timeout and cancel/approve serialization coverage; existing transport tests retain slow-route and inflight reconnect coverage.
+- Hygiene :: =git diff --check= passed. Fresh =origin/master= remains the immutable RAGE start commit, so no rebase is required before creating the candidate.
+
+** Candidate and outcome
+- Candidate commit :: =c6c4e3080e7d3fb126824eae9dffaaa3dfa15e00=.
+- Exact-head local gate :: =scripts/test-all.sh= passed 10/10 phases; =nix flake check --show-trace= passed all 10 checks; =nix build --print-out-paths= produced =/nix/store/4ia4i290jv27syy99vhiq1mmnsy4nh0r-zarathushtra-full=; =git diff --check origin/master...HEAD= passed.
+- Pull request :: #213, https://github.com/lost-rob0t/zara/pull/213.
+- Exact-head CI :: run 32748728581, https://github.com/lost-rob0t/zara/actions/runs/32748728581, completed successfully for candidate =c6c4e3080e7d3fb126824eae9dffaaa3dfa15e00=. The =test= job passed the full tests, flake checks and packaged build; shared-mic Ubuntu 24.04 and Arch Linux jobs also passed.
+- Merge :: PR #213 merged as =51356e3cee216c3fb7f51aae308463b7e8f15c55= and closed issue #191.
+- Outcome :: ACCEPTED AND MERGED. The authenticated ZaraClient boundary now carries the existing runtime approval lifecycle without adding a second execution or pending-approval authority. Parent #134 is no longer blocked by #191.
