@@ -1,0 +1,71 @@
+#+title: RAGE #154 design - IntentFrame contract freeze, migration map, test matrix
+
+Companion to =rage/154-intentframe-research.org= (evidence + adversarial review) and =docs/intentframe-contract.md= (normative contract). Start commit =0661a2d=, consumed issue #154.
+
+* Decisions
+- D1 :: One frozen contract, =IntentFrame v1= (=docs/intentframe-contract.md=): =frame(intent(ns(NS),name(N)), Slots, Status)= compounds + typed slot values; JSON mirror with =\"if\": 1=; envelope carries all correlation metadata.
+- D2 :: Slot-filling dialogue state is a *clarification session* owned by the runtime host, scoped to one conversation and principal; Prolog =resolve_frames/4= is pure and stateless; prompts derive from =missing([...])=.
+- D3 :: =pending= stops being a result *kind*; it is the =missing= *status* of an open frame. Old kinds map: prolog -> ns(device|conversation|dictation|media) execution intents; python(Skill) -> ns(skill); pending(X) -> partial frame with status missing.
+- D4 :: Capability/provider selection happens after frame freeze (#157, PR #119 shape: frame -> capability reasoning -> ExecutionPlan -> typed adapters). Unavailability is plan-level, never semantic.
+- D5 :: The single Prolog entry point for agents/clients is =resolve_frames/4= (typed); the raw =query_once= tool surface is retired for intents.
+- D6 :: Verb authority is single-sourced: KB facts are the only verb/intent store; the agent prompt verb list, command_gate copy, LLM-rewrite list, and tool descriptions are generated or deleted, never hand-copied.
+- D7 :: Unicode-preserving normalization replaces the ASCII-only tokenizer; normalization lives in the portable core (shared SWI/Trealla), with #122's rewriter as an optional upstream input.
+- D8 :: =kb/config.kb= (kb_user_intents) is deleted; user intent overrides remain =config_loader= -> =kb_intents= only.
+
+* Invariants
+1. Resolution is pure (no assert/retract/network/process). Execution consumes frames only through typed ExecutionPlans.
+2. Frames never contain shell/provider strings, package ids, principal/turn ids, or raw compound dumps.
+3. One clarification session per conversation; sessions are principal-scoped; closed/superseded sessions reject late follow-ups (stale gate mirrors TurnCoordinator).
+4. Side effects execute at most once per envelope request_id; cancelled/superseded frames never execute.
+5. The same frame corpus resolves identically on SWI and Trealla; divergence is only ever a platform-provider difference (contract example 13).
+6. Evidence is deterministic resolver provenance only; no LLM internals; excluded from fixture comparison.
+
+* Lifecycle / state ownership
+| State | Owner | Notes |
+|---+---|---|
+| Open clarification session (partial frame + missing slots) | Runtime host (conversation-scoped) | created on status=missing/invalid/ambiguous frame; closed on complete/cancelled/timeout |
+| Frame ids, supersedes chain | Runtime host (envelope) | frames immutable once emitted |
+| Turn ids, cancellation, stale rejection | TurnCoordinator (unchanged) | frames ride existing turn lifecycle |
+| Conversation history, memory | ConversationManager / MemoryManager (unchanged, #51) | clarification references context ids, never duplicates history |
+| Prolog dynamic DB | none for semantics | resolve_frames is pure; kb dynamic predicates remain config-level only |
+
+* Threat / failure analysis
+- Slot-text injection into adapters -> adapters validate typed values; text(A) never executed; adapters are the only execution boundary (extends #194 invariants; enforced by #174/#199/#201 reviews).
+- Malformed/oversized frames on the wire -> codec validates the closed field set; unknown fields rejected (matches protocol_runtime.py allowlist style); frames fail closed with runtime.error.
+- Clarification timeout/restart :: sessions are runtime-host state; on process restart open sessions are rebuilt from the last open frame in conversation history or dropped with a typed degraded state - never silently resumed (#155 tests cover restart/persistence).
+- Cross-runtime serialization drift :: single serializer implementation; property tests pin term<->JSON round-trip (#172).
+- Denial via ambiguous floods :: ambiguous status requires >= 2 equally-ranked readings; resolver caps alternatives and clarifies - no exponential frame fan-out; corpus includes ambiguity cases.
+
+* Migration map (every current intent result/path -> target)
+| Today | Target |
+|---+---|
+| IntentResult(prolog, Name, Args) (wake.py:992) | frame(ns(device|conversation|dictation|media), Name') with typed slots; wake submits frame to execution plan |
+| IntentResult(python, Skill, Args) | frame(ns(skill), ...) -> server-side skill execution via plan |
+| IntentResult(pending, X, Slots) (intent_resolver.pl:59) | frame status=missing([...]) + clarification session |
+| missing_slots/3 table (intent_resolver.pl:66-73) | per-intent slot schemas (kb), resolver consults them; bare-verb entries become missing-status frames |
+| parse_timer_command/3 (intent_resolver.pl:75-105) | duration/label typed slots (duration slot type) |
+| command_loop LLM rewrite (command_loop.pl:43-45,61-75) | deleted; server LLM path handles non-commands; no Prolog-internal LLM |
+| AgentManager prompt verb list (agent/__init__.py:89) | generated from KB; agent consumes frames/events |
+| query_prolog raw tool (builtin_tools.py:270-317) | typed resolve_frames query; execution only via approved plans |
+| daemon path without Prolog (server.py:194) | runtime backend gains Prolog-first frame resolution before LLM fallback (order preserved from wake path) |
+| zara_hooks phrase tables + Python reply strings | one reply path per surface; frames drive reply templates |
+| kb/config.kb | deleted |
+| ASCII normalizer (normalizer.pl:252-257) | Unicode-preserving portable normalizer (#122/#156); current behavior recorded as a defect |
+| alarm.pl SWI alarm/4, commands.pl process_create | platform adapters; Prolog core stays pure (timers become runtime-owned capabilities) |
+
+* Acceptance criteria -> owning issues and tests
+| # | Criterion | Owner | Test mapping |
+|---+---|---|---|
+| A1 | Contract frozen with required examples | #154 (this) | contract examples 1-13 become the corpus seed (#156) |
+| A2 | Typed slots + clarification dialogue, host-owned | #155 | host tests: open/missing -> session -> follow_up completes; correction replaces with supersedes; cancel closes; two concurrent submits cannot double-hold; late follow-up rejected stale |
+| A3 | Prolog resolver adapts to frames on portable subset | #156 | corpus runs on SWI; resolve_frames purity (no dynamic state) asserted; Unicode cases |
+| A4 | Same fixtures equivalent on SWI and Trealla | #172 | dual-runtime fixture gate + single serializer round-trip property |
+| A5 | Capability reasoning -> ExecutionPlan, unavailable typed | #157 | plan tests incl. example 12/13; explain/4 evidence |
+| A6 | Wire: frames over ZARA/1 without parallel protocol | #173/#159 | codec allowlist extension for intent/clarification events; IntentResolved emitted |
+| A7 | Agent/daemon consume frames, no raw goals | #157/#160 | agent tests: no query_prolog tool; prompt verb list generated |
+| A8 | Legacy paths removed/adapted without behavior fork | #156/#157 | migration-map row tests (per row) |
+| A9 | kb/config.kb deleted; overrides single-sourced | #156 | config_loader tests updated; load check updated |
+
+* Gates
+- This slice :: docs + planning only. =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh= + =nix flake check= must stay green.
+- Implementation slices (#155+) :: full TDD per AGENTS.md, exact-head CI, android job where packaging changes.

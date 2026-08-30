@@ -1,0 +1,23 @@
+#+title: RAGE #154 - IntentFrame research and contract freeze work log
+
+* Run identity
+- Consumed issue :: #154 (parent epic #150). Head of the chain unblocking the Android/Samsung epic (#194): #155 -> #156 -> #172 -> #173 -> #196/#197.
+- Branch :: =rage/154-intentframe-contract=.
+- RAGE start commit :: =0661a2d=.
+- Mode :: repository Auto-RAGE.
+- Artifacts :: =rage/154-intentframe-research.org= (audit + research + adversarial review + decision), =rage/154-intentframe-design.org= (decisions, invariants, lifecycle ownership, threats, migration map, test matrix), =docs/intentframe-contract.md= (normative IntentFrame v1).
+
+* Iteration 1 - 2026-08-30
+** Analyze / Research
+- Backlog state verified in Prolog via the generated mirror (PR #231): #172 blocked by #156; user directed the Android chain; #154 selected as first unblock step.
+- Mandatory code audit completed (repo exploration, file:line evidence): five divergent verb authorities; pending/1 stateless (no slot-fill loop); daemon path lacks Prolog authority while its prompt demands it; execution split wake-vs-Prolog; four dialogue-state owners; no intent plane on the wire; ASCII tokenizer deletes non-ASCII; PySWIP marshalling fragility; kb/config.kb dead authority; PR #119 capability prior art assessed.
+- External research: Alexa dialog/slot model (primary docs), session/tracker ownership patterns, Trealla dict support refuted empirically (compounds+lists mandated).
+** Design
+- Contract frozen: IntentFrame v1 (frame/3 compounds, typed slots, status algebra, single serializer, envelope metadata split).
+** Adversarial review
+- Stale/concurrent/cross-principal/injection/replay/drift counterexamples examined; mitigations recorded; rejected alternatives documented with reasons.
+** Verification
+- Docs-only slice: full suite + flake check green at candidate head before merge; no production implementation per issue acceptance.
+
+* Next
+- #155 (typed slots + clarification dialogue) becomes eligible at merge; implement host-owned clarification sessions against the frozen contract.

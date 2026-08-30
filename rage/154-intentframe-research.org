@@ -1,0 +1,72 @@
+#+title: RAGE #154 research - IntentFrame adversarial research and code audit (P1)
+
+* Run identity
+- Consumed issue :: #154, P1 - RAGE research the post-client-split semantic intent architecture and freeze an IntentFrame contract (parent epic #150; head of the chain that gates #155, #156, #172, #173 and the whole Android/Samsung chain).
+- Branch :: =rage/154-intentframe-contract=.
+- RAGE start commit :: =0661a2d= (master after #231; queue mirror now generated from GitHub state).
+- Dependencies :: #133 closed. Backlog state verified in Prolog at slice start: =blockers(172)=[156]=, =blockers(196)=[173]= - this issue is the first unblock step of the Android chain (user-directed).
+- Mode :: repository Auto-RAGE per #194/#152 conventions.
+- Sibling artifact :: =rage/154-intentframe-design.org= (decisions, migration map, test matrix); normative contract :: =docs/intentframe-contract.md=.
+
+* Research
+
+** Code audit (mandatory; full evidence map produced by repo exploration at this commit)
+Paths inventory (all paths verified with file:line):
+
+| # | Path | Entry | Authority today | Result shape |
+|---+---+---+---+---|
+| 1 | Wake/voice passive | zara/wake.py:946 -> intent_resolver.pl:21 | kb_intents:verb_intent/3 + resolver special cases; Python routes | IntentResult(kind in {prolog,python,pending}, name, args) |
+| 2 | Conversation stop | wake.py:492 -> prolog_engine.py:302 | state_control + kb_intents stop phrases | bool |
+| 3 | Dictation stop | wake.py:1603 | state_control(dictation) | dictation_stop |
+| 4 | CLI/console | console.py:66 -> command_loop.pl:12 | Prolog command_loop incl. LLM rewrite fallback | command_result/4, Prolog prints |
+| 5 | Daemon ZARA/1 turn | zmq_transport.py:845 -> protocol_runtime.py:100 -> RuntimeHost host.py:469 -> AgentManager | LLM only - no Prolog-first gate; query_prolog absent (prolog_engine=None, server.py:194) | RuntimeTurnResult -> assistant.response |
+| 6 | LLM tool route (when prolog present) | builtin_tools.py:270 raw query_once | LLM-chosen goals; prompt nominates command_loop:handle_command | stringified solution |
+| 7 | Voice ingress / desktop windows | voice_runtime.py:327, desktop quick/chat | same as 5 | same |
+| 8 | Agent prompt verb list | agent/__init__.py:89 | hand-written copy | n/a |
+
+** Verified structural findings
+1. Five divergent copies of verb semantics :: kb/intents.pl (authoritative), AgentManager prompt (agent/__init__.py:89), command_gate.py:29-92 COMMAND_TRIGGER_WORDS ("Sourced from kb/intents.pl"), command_loop.pl:63 LLM-rewrite list (subset, no todo/timer/weather), builtin_tools.py tool description (285-307). Dead sixth: kb/config.kb declares kb_user_intents but nothing loads or queries it (its double-quoted surface "bro" would also fail config_loader's atom(Surface) validation, and "bro" is a filler token anyway).
+2. pending/1 is a return shape, not state :: missing_slots/3 (intent_resolver.pl:66-73) recomputes per utterance; nobody asserts/retracts pending state; no slot-fill loop exists. Clarification prompt generated in Python (wake.py:971-976 "Please provide: {required}."); the next utterance is re-resolved from scratch, so a bare slot answer ("firefox") can never complete the intent.
+3. The daemon path has no semantic authority :: server.py:191-194 builds AgentManager without prolog_engine; builtin_tools.py:348-349 then omits query_prolog while the prompt still instructs the model to call it - on ZARA/1 turns the routing protocol is unimplementable as written.
+4. Execution is split :: wake path executes prolog intents from Python (wake.py:992) with Python-built replies ("Executed: {intent} {args}", wake.py:991-1001) while commands.pl executes the same intents in Prolog with different phrase tables (zara_hooks.pl:15-52); python(Skill) intents have no commands:execute clause and run only on the wake path (wake.py:978-989).
+5. Prolog does side effects directly :: commands.pl:104-132 process_create (app open), commands.pl:54-65 HTTP LLM call from Prolog for ask, dictate.pl OS process + /tmp pidfile, alarm.pl SWI alarm/4, zara_hooks.pl:122-138 external TTS process - all invisible to the runtime event bus.
+6. Dialogue lifecycle has four owners :: TurnCoordinator (actors.py:254-266, turn ids/cancel), ConversationManager (agent/__init__.py:66-69), MemoryManager sessions (wake.py:981-997), and Prolog llm_client.pl:- dynamic current_conversation/1 (line 22).
+7. Wire has no intent plane :: protocol.py CLIENT/SERVER message types contain no intent/clarification type; runtime events IntentResolved (runtime/events.py:163-167) and PrologQueryCompleted (170-173) are defined but never emitted anywhere.
+8. Linux-shaped knowledge base :: kb/config.pl: 13 dynamic predicates; ~160 app_mapping/2 + 27 direct_app/1 with xdg-open, gnome-*, x-terminal-emulator, systemctl; search_engine duckduckgo; dictation_command; timer_sound path; config_loader.pl:162-167 asserts user overrides into live modules with atom(Surface) validation.
+9. Tokenizer deletes non-ASCII silently :: normalizer.pl:252-257 keep_code retains only a-z 0-9 space apostrophe - Unicode/numeric boundary risk is real today, not hypothetical.
+10. PySWIP marshalling fragility :: prolog_engine.py:50-60 _compound_parts accepts both compound objects and "name(args)" string reprs; result interpretation differs by pyswip version; process-wide runtime lock (127-134).
+11. PR #119 prior art (closed draft; files not in tree) :: kb/capabilities.pl + capability_resolver as "the single symbolic provider-selection layer"; language -> intent/args -> Prolog capability reasoning -> existing command executor; require/exclude constraints, candidate/5, select/4, explain/4 evidence; explicitly "no second dispatcher or execution stack". Reusable shape; obsolete mechanics (pre-IntentFrame args).
+12. ZARA/1 today :: turn.submit body {text, context_ids}; closed envelope keys (protocol.py:94-111) with flags {idempotent, resume}; command_from_message (protocol_runtime.py:94-145) is the only text entry - an intent/clarification message type is the natural extension point and does not exist yet.
+13. wake._pending_wake_command (wake.py:288,1554,1610) is pre-LLM command buffering - a distinct Python-side pending concept that must not be confused with dialogue slot state.
+
+** External primary-source research
+- Alexa IntentRequest + slots (developer.amazon.com, Dialog Interface Reference + Define the Dialog, accessed 2026-08-30) :: intent object = {name, confirmationStatus NONE|CONFIRMED|DENIED, slots map {name -> {value, confirmationStatus}}}; dialog directives = Dialog.Delegate / ElicitSlot(slotToElicit, updatedIntent) / ConfirmSlot / ConfirmIntent; the service owns the dialog model (delegationStrategy SKILL_RESPONSE vs ALWAYS); updatedIntent is how a follow-up replaces the in-progress intent. This validates: typed slot maps + explicit dialogue statuses + host-owned clarification with frame replacement (supersedes) as the composition mechanism, and that the *slot map*, not positional args, is the durable representation.
+- Dialogflow session parameters (conceptual comparison; primary docs not fetched this pass) :: session-scoped parameter map owned by the session, not by the NLU call - corroborates "pending-dialogue state lives with the conversation owner, not the resolver".
+- Rasa/assistant literature (general) :: slot events + active-loop state owned by the tracker, not the NLU - same ownership conclusion.
+- Trealla dicts :: SWI dict docs describe dicts as SWI-native; Trealla 2.106.1 empirically rejects the dict syntax (nix shell trealla, catch((X = a{b:1}), _, fail) -> syntax error). Contract therefore uses plain compounds + lists only. SWI reads the same terms unchanged.
+
+** Research questions -> answers (each grounded above)
+1. Minimum typed semantic representation working in Prolog/Python/wire/Android Prolog :: frame/3 compounds + tagged typed slot values (contract section 2-3); no dicts; one serializer.
+2. Semantic facts vs correlation metadata :: the "same words, same user, same conversation" test; frame_id/turn/conversation/principal/trace live in the envelope only.
+3. Typed slots without serializing arbitrary objects :: closed tagged value set (text/number/duration/datetime/ref/boolean); ref for aliases; never raw compound dumps across the boundary (fixes _compound_parts fragility by construction).
+4. Ambiguity/invalid/missing/correction/cancellation composition :: status algebra + clarification session contract (contract section 4); correction = new frame with origin(correction) + envelope supersedes; cancellation emits conversation.end/cancelled and never executes.
+5. Where pending-dialogue state lives :: conversation-scoped clarification session owned by the runtime host (TurnCoordinator side), keyed by conversation_id; Prolog resolves purely with Context; prompts generated from missing lists. Nothing global, nothing prompt-managed, nothing in a Prolog dynamic DB.
+6. Portable across runtimes :: compounds+lists core (Trealla-verified), Unicode-safe normalization required (current ASCII tokenizer is a verified defect), single term<->JSON serializer, same fixture corpus both runtimes (#172 gate).
+7. Resolver evidence without hidden model reasoning :: evidence.steps from deterministic resolver rules (verb head, unit normalization, object-word refinement, capability explain/4 from #119 prior art); LLM internals excluded by contract.
+8. #122 feeding without authority :: rewritten text is resolver *input*; frames record evidence only; no rewrite dict survives into slots.
+9. What disappears :: prompt verb list (generated from KB), raw query_prolog tool (typed resolve_frames only), Prolog-internal LLM rewrite + ask HTTP calls, Prolog process_create for apps (adapters/platform providers own execution), duplicate reply phrase tables vs Python strings (single reply path per surface).
+
+** Adversarial review (counterexamples the contract must survive)
+- Stale follow-up :: a late "2 minutes" after the clarification session closed must not silently attach - context(partial_frame) is minted per open session; the host rejects frames referencing closed/superseded sessions (turn-state gate mirrors actors.py stale-event rejection).
+- Concurrent turns in one conversation :: TurnCoordinator already serializes turns per conversation; clarification sessions are per-conversation singletons - two concurrent submits cannot both hold the open frame; second one either queues or is rejected as stale.
+- Cross-principal leakage :: clarification sessions are principal-scoped like conversations; frame slots never carry principal data by contract.
+- Prompt injection via slots :: slot text is inert text(A) by contract; adapters validate typed values; no adapter may eval/execute slot content (extends #194's "no arbitrary Intent plane").
+- Replay/idempotency of side effects :: side-effectful frames execute at most once per request_id in the envelope; the frame itself is not an idempotency key.
+- Portability divergence (parser drift) :: same corpus, same normalizer core, single serializer, comparator excludes evidence - divergence allowed only as explicit platform-provider difference (contract example 13), never as silent parse drift; #172 CI gates equivalence on SWI and Trealla.
+- kb/config.kb zombie authority :: deletion is part of the migration (design artifact); keeping an unloaded "user override" file would be a second hidden authority.
+- Prompt-injection through AgentManager :: the prompt verb list and raw query tool disappear; the agent consumes frames/events, not raw goals (migration).
+
+* Decision record (Auto-RAGE decision gate, 2026-08-30)
+- Freeze IntentFrame v1 exactly as docs/intentframe-contract.md; implement in #155 (host-owned clarification sessions + typed slots), #156 (Prolog adaptation + corpus on the portable subset), #157 (capability reasoning to ExecutionPlans), #172 (portable core + dual-runtime fixtures).
+- Reject: raw positional args lists (no types, the proven source of pending/1 fragility); arbitrary JSON bodies on the wire (unbounded schema, no validation anchor); prompt-managed clarification (LLM-owned state - unverifiable, already contradicted by the daemon path having no prompt authority); a global pending command store (hidden mutable state, cross-conversation leakage); direct shell/provider strings in slots (breaks platform parity and the security invariants).
+- No production implementation in this slice: docs + planning changes only, per the issue's acceptance rule.
