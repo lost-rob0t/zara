@@ -88,6 +88,10 @@ write_default_config(Stream) :-
     writeln(Stream, '% Configure how zara-dictate is launched:'),
     writeln(Stream, '% dictation_command(["zara-dictate", "small", "cpu", "16", "2"]).'),
     writeln(Stream, ''),
+    writeln(Stream, '% ---- Wake Words ----'),
+    writeln(Stream, '% Wake phrases for the voice listener (edit-distance matched):'),
+    writeln(Stream, '% wake_word("jarvis").'),
+    writeln(Stream, ''),
     writeln(Stream, '% ---- Timer and Alarm Sounds ----'),
     writeln(Stream, '% Use the unquoted atom disabled to turn either sound off:'),
     writeln(Stream, '% timer_sound(disabled).'),
@@ -188,6 +192,10 @@ validate_user_fact(timer_sound(Setting), kb_config, timer_sound(Setting)) :-
     sound_setting(Setting).
 validate_user_fact(alarm_sound(Setting), kb_config, alarm_sound(Setting)) :-
     sound_setting(Setting).
+validate_user_fact(wake_word(Word), kb_config, wake_word(Word)) :-
+    text_value(Word),
+    text_string(Word, Text),
+    Text \= "".
 validate_user_fact(llm_provider(Provider), kb_config, llm_provider(Provider)) :-
     memberchk(Provider, [ollama, openai, openrouter, anthropic]).
 validate_user_fact(llm_model(Model), kb_config, llm_model(Model)) :-

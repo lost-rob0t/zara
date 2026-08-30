@@ -1,0 +1,36 @@
+#+title: RAGE #171 - in-repo Android project skeleton with reproducible Gradle/SDK CI
+
+* Run identity
+- Consumed issue :: #171, P2 - add the in-repo Android project skeleton with reproducible Gradle/SDK/NDK CI.
+- Depends on :: #170 (satisfied by =rage/170-android-bakeoff.org= decision record), #133 (server-side ZARA/1 auth, closed).
+- Branch :: =feat/android-app=; RAGE start commit :: =e5a4f26=.
+- Mode :: repository Auto-RAGE.
+
+* Design (derived from #170 decision)
+- Subtree :: =android/= Gradle project, single =app= module; =ai.zara.app= application id.
+- Toolchain pins (from #170 research, as-built) :: AGP 9.2.0 with **built-in Kotlin** (the separate =org.jetbrains.kotlin.android= plugin is rejected by AGP 9 and was removed during realization), Gradle 9.5.1 (=pkgs.gradle_9=), JDK 21, compileSdk 37, targetSdk 36, minSdk 29 (RoleManager.ROLE_ASSISTANT floor). Compose BOM 2026.08.00 is pinned in the version catalog for #197 but not consumed by the skeleton (Compose arrives with #197 per dependency order; skeleton screen is a plain native View lifecycle proof per issue text "simple native screen"). Manifest theme uses the framework =Theme.DeviceDefault.Light= (=Theme.Material.Light.DayNight= is not a framework style; DayNight requires appcompat).
+- Nix integration :: =flake.nix= gains a =devShells.android= providing JDK 21, Gradle 9.5.1, and the Android SDK (API 37 platform + build-tools 36.0.0 + platform-tools). Nix provides the toolchain; Gradle keeps Android build semantics (AGENTS.md rule respected, no pretending otherwise).
+- androidenv deviation (documented, not silent) :: the composite =androidsdk= attribute of =composeAndroidPackages= fails to evaluate in the pinned nixpkgs revision (its cmdline-tools composite is not forceable; sibling package attrs are healthy). The SDK root is therefore **assembled** in a =runCommand= from the individually deployed =platform-tools=, =build-tools=, and =platforms= packages, plus accepted-license hash files derived from androidenv's own =repo.json= (sha1 of the license texts, matching androidenv's =mkLicenseHashes=). AGP needs neither cmdline-tools nor sdkmanager for =testDebugUnitTest=/=assembleDebug=. Unfree/license acceptance is scoped to a dedicated =androidPkgs= import (=allowUnfree= + =android_sdk.accept_license=); the main package set is untouched.
+- Gate :: =scripts/test-android.sh= runs JVM unit tests + =assembleDebug= + APK existence/secret-marker inspection; wired as a dedicated =android= GitHub Actions job (45 min) uploading the debug APK artifact. Deliberately *not* added to =scripts/test-all.sh=/=nix flake check= yet: the main =test= job has a 30-minute cap and a cold SDK/Gradle cache would break it; the additive-job decision is recorded here and revisited when NDK/prolog packaging lands.
+- Shared runtime state seed :: =ai.zara.app.runtime= defines the single typed runtime state + pure reducer (server connection states, assistant-role states) that #196 (role surface) and #197 (Compose shell) must extend rather than fork - the "no parallel state machine" invariant starts here.
+- Secrets :: no keys in source/resources; =local.properties= gitignored; APK inspected for private-key/secret markers in the gate script.
+
+* TDD evidence
+1. RED :: =android/app/src/test/java/ai/zara/app/runtime/RuntimeStateTest.kt= written first (initial state, connected transition, stale-established rejection, loss->reconnecting attempt growth, bounded reconnect -> offline degraded, role assessment held/not-held/unavailable, idempotent connect, offline retry, isolation of connection events from role state). First gate run fails at =compileDebugKotlin= with unresolved =RuntimeState= references - expected red; proves the whole Nix->Gradle->AGP-9->Kotlin toolchain executes.
+2. Intermediate fixes during red-green (toolchain, not behavior) :: AGP 9 rejects the separate Kotlin android plugin (removed; built-in Kotlin used), manifest theme corrected to a framework style.
+3. GREEN attempt 1 :: one test failed for a test-setup bug (stale-event path used instead of a connected setup) - test fixed, production reducer unchanged.
+4. GREEN :: all 10 unit tests pass; =assembleDebug= produces =app/build/outputs/apk/debug/app-debug.apk=; secret-marker inspection passes; gate prints =android gate ok=.
+5. Coverage :: stale-event rejection, reconnect bound, degraded transition and retry, role tri-state, idempotent connect, connection/role isolation - each a distinct failure path, not line coverage.
+
+* Acceptance mapping
+| #171 criterion | Realization |
+|---+---|
+| documented subtree/module layout | =android/= + this log |
+| pinned versions | version catalog =gradle/libs.versions.toml= |
+| Nix toolchain integration | =devShells.android= |
+| debug APK + JVM unit tests in CI | =android= job runs =scripts/test-android.sh=, uploads APK |
+| no signing secrets/API keys | no secrets in tree; APK marker inspection in gate |
+| application id/versioning/minSdk/targetSdk documented | here: =ai.zara.app=, versionCode 1/versionName 0.1.0-skeleton, min 29/target 36/compile 37 |
+| deterministic resource packaging for shared Prolog fixtures | reserved: =app/src/main/assets/prolog/= (empty, =.gitkeep=) - #172 fills it |
+| simple native screen proving app lifecycle, no network/voice | =MainActivity= renders typed runtime state; no INTERNET/mic permissions in manifest |
+| full existing Zara Nix gate remains green | =scripts/test-all.sh= + =nix flake check= unchanged and passing |

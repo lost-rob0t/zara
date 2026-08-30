@@ -7,6 +7,7 @@ Fully async for maximum responsiveness
 
 import os
 import math
+import logging
 import re
 import sys
 import time
@@ -47,12 +48,129 @@ CHANNELS = 1
 DEFAULT_SILENCE_DURATION = 5.0
 MAX_RECORDING_DURATION = 30.0
 DEFAULT_AUDIO_QUEUE_CHUNKS = 32
-WAKE_WORDS = ["zarathustra", "hey zara", "zara", "sarah", "sara"]
-WAKE_PATTERN = re.compile(
-    r"\b(" + "|".join(re.escape(word) for word in WAKE_WORDS) + r")\b",
-    re.IGNORECASE,
-)
+WAKE_WORDS = ["zarathushtra", "zarathustra", "hey zara", "zara", "sarah", "sara"]
+WAKE_TOKEN_STRIP = " \t\r\n,.:;!?-\"'`()[]{}<>…"
 TIMEOUT_ACTIVE = 5
+
+
+def edit_distance(left: str, right: str) -> int:
+    """Levenshtein distance (insertions, deletions, substitutions)."""
+    if left == right:
+        return 0
+    if not left:
+        return len(right)
+    if not right:
+        return len(left)
+    previous = list(range(len(right) + 1))
+    for i, left_char in enumerate(left, 1):
+        current = [i]
+        for j, right_char in enumerate(right, 1):
+            substitution_cost = 0 if left_char == right_char else 1
+            current.append(
+                min(
+                    previous[j] + 1,
+                    current[j - 1] + 1,
+                    previous[j - 1] + substitution_cost,
+                )
+            )
+        previous = current
+    return previous[-1]
+
+
+def wake_distance_threshold(wake_word: str) -> int:
+    """Tolerated edit distance for a wake word (~25% of its length)."""
+    return max(1, len(wake_word) // 4)
+
+
+def _wake_tokens(text: str) -> list:
+    tokens = []
+    for match in re.finditer(r"\S+", text):
+        raw_token = match.group()
+        stripped = raw_token.strip(WAKE_TOKEN_STRIP)
+        if not stripped:
+            continue
+        leading = len(raw_token) - len(raw_token.lstrip(WAKE_TOKEN_STRIP))
+        start = match.start() + leading
+        tokens.append((start, start + len(stripped), stripped.lower()))
+    return tokens
+
+
+def find_wake_span(text: str, wake_words) -> Optional[Tuple[int, int]]:
+    """Return the best wake-word match span in ``text`` using edit distance.
+
+    Preference: smallest edit distance, then longest phrase, then earliest
+    position. Returns ``None`` when no candidate is within tolerance.
+    """
+    words = []
+    for word in wake_words or []:
+        normalized = " ".join(str(word).split()).lower()
+        if normalized:
+            words.append(normalized)
+    if not words:
+        return None
+    tokens = _wake_tokens(text or "")
+    if not tokens:
+        return None
+    max_tokens = max(len(word.split()) for word in words)
+    best = None
+    for phrase_length in range(1, max_tokens + 1):
+        for index in range(0, len(tokens) - phrase_length + 1):
+            candidate = " ".join(
+                token for _, _, token in tokens[index:index + phrase_length]
+            )
+            for word in words:
+                if edit_distance(candidate, word) <= wake_distance_threshold(word):
+                    key = (edit_distance(candidate, word), -phrase_length, index)
+                    if best is None or key < best[0]:
+                        best = (
+                            key,
+                            tokens[index][0],
+                            tokens[index + phrase_length - 1][1],
+                        )
+                    break
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
+def _normalize_wake_words(raw_words) -> list:
+    normalized = []
+    seen = set()
+    for raw in raw_words or []:
+        word = " ".join(str(raw).split()).lower().strip(WAKE_TOKEN_STRIP)
+        if word and word not in seen:
+            seen.add(word)
+            normalized.append(word)
+    return normalized
+
+
+def resolve_wake_words(config=None, prolog_engine=None) -> list:
+    """Resolve wake words: config.toml override, Prolog facts, then defaults."""
+    words: list = []
+    if config is not None:
+        try:
+            section = config.get_section("wake") or {}
+        except Exception:
+            section = {}
+        if isinstance(section, dict):
+            raw_words = section.get("words")
+            if isinstance(raw_words, str):
+                raw_words = [raw_words]
+            if isinstance(raw_words, (list, tuple)):
+                words = _normalize_wake_words(raw_words)
+    if words:
+        return words
+
+    if prolog_engine is not None:
+        try:
+            words = _normalize_wake_words(prolog_engine.get_wake_words())
+        except Exception as error:
+            logging.getLogger(__name__).warning(
+                "Wake word Prolog query failed, using defaults: %s", error
+            )
+    if words:
+        return words
+    return list(WAKE_WORDS)
 
 PIDFILE = "/tmp/zara_wakeword.pid"
 LOGFILE = "/tmp/zara_wakeword.log"
@@ -209,6 +327,11 @@ class WakeWordListener:
         self.prolog = PrologEngine(prolog_path)
         self.log("Prolog engine ready")
 
+        self.wake_words = resolve_wake_words(self.config, self.prolog)
+        self.wake_prompt = (
+            ". ".join(word.capitalize() for word in self.wake_words) + "."
+        )
+
         load_started = self._clock()
         self.log(
             f"Loading Whisper {model} "
@@ -326,10 +449,13 @@ class WakeWordListener:
         return factory(self.vad_config)
 
     def _wake_command(self, text: str) -> Optional[str]:
-        match = WAKE_PATTERN.search(text or "")
-        if match is None:
+        raw_text = text or ""
+        span = find_wake_span(raw_text, getattr(self, "wake_words", None) or WAKE_WORDS)
+        if span is None:
             return None
-        command = f"{text[:match.start()]} {text[match.end():]}"
+        start, end = span
+        command = f"{raw_text[:start]} {raw_text[end:]}"
+        command = " ".join(command.split())
         return command.strip(" \t\r\n,.:;!?-")
 
     def _condition_stt_audio(self, audio: np.ndarray) -> np.ndarray:
@@ -375,7 +501,9 @@ class WakeWordListener:
             for stop in ("disable", "end", "goodbye", "bye", "stop"):
                 if text_lower == stop:
                     return True
-                if len(words) == 2 and words[0] in WAKE_WORDS and words[1] == stop:
+                if len(words) == 2 and words[0] in getattr(
+                    self, "wake_words", WAKE_WORDS
+                ) and words[1] == stop:
                     return True
         return False
 
@@ -573,7 +701,9 @@ class WakeWordListener:
                 beam_size=beam_size,
                 vad_filter=False,
                 language=self.stt_language,
-                initial_prompt="Zara. Hey Zara. Zarathushtra." if wake_mode else None,
+                initial_prompt=getattr(
+                    self, "wake_prompt", "Zara. Hey Zara. Zarathushtra."
+                ) if wake_mode else None,
                 condition_on_previous_text=False,
                 no_speech_threshold=0.8 if wake_mode else 0.5,
             )
@@ -1370,7 +1500,9 @@ class WakeWordListener:
         self.stop_event = asyncio.Event()
 
         self.log("🔥 Starting Wake Word Listener (ASYNC)")
-        self.log(f"Wake words: {', '.join(WAKE_WORDS)}")
+        self.log(
+            f"Wake words: {', '.join(getattr(self, 'wake_words', None) or WAKE_WORDS)}"
+        )
 
         with open(PIDFILE, "w") as f:
             f.write(str(os.getpid()))
@@ -1386,7 +1518,8 @@ class WakeWordListener:
                 source = getattr(capture_stream, "source", None)
                 source_note = f" source='{source}'" if source else ""
                 self.log(
-                    "✅ Wake listener ready; say 'Zara' or 'Hey Zara'."
+                    "✅ Wake listener ready; say "
+                    f"'{(getattr(self, 'wake_words', None) or WAKE_WORDS)[-1].capitalize()}'."
                     f"{source_note}"
                 )
                 while not self._stopping():

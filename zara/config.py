@@ -37,6 +37,10 @@ theme = "signal-cabin"
 model_path = "~/.zarathushtra/models/wake.onnx"
 threshold = 0.5
 sample_rate = 16000
+# Wake phrases that activate the listener (edit-distance fuzzy matched).
+# Leave empty to load wake words from Prolog (kb_config:wake_word/1),
+# falling back to the built-in defaults.
+words = []
 # Optional phrases to end conversation mode
 stop_phrases = ["goodbye", "bye", "end conversation", "stop conversation", "end session", "stop session"]
 # Stop TTS playback when user starts speaking
