@@ -29,6 +29,72 @@
           # onnxruntime; the hand-pinned 1.12.37 wheel (ORTools 1.23.2 ABI) is
           # retired with the old nixpkgs revision.
 
+          # Android SDK for the Zara Android client (#171). Nix supplies the
+          # toolchain; Gradle/AGP keep Android build semantics. No NDK yet:
+          # the Trealla/NDK spike lands with #172 per the #170 bakeoff record.
+          #
+          # Scoped pkgs instance: the SDK is unfree and its license must be
+          # accepted; the main Zara package set stays untouched.
+          androidPkgs = import nixpkgs {
+            inherit system;
+            config = {
+              allowUnfree = true;
+              android_sdk.accept_license = true;
+            };
+          };
+
+          androidEnv = androidPkgs.androidenv.composeAndroidPackages {
+            cmdLineToolsVersion = "11";
+            platformVersions = [ "37" ];
+            buildToolsVersions = [ "36.0.0" ];
+            includeEmulator = false;
+            includeNDK = false;
+            includeSources = false;
+            includeSystemImages = false;
+          };
+
+          # The composite androidenv `androidsdk` attribute is broken in the
+          # pinned nixpkgs revision (its cmdline-tools composite fails to
+          # evaluate), so the SDK root is assembled from the individually
+          # deployed platform-tools/build-tools/platforms packages plus the
+          # accepted-license hash files derived from androidenv's repo.json.
+          # AGP needs none of cmdline-tools/sdkmanager for assemble/test.
+          androidSdk = androidPkgs.runCommand "zara-android-sdk" { } ''
+            sdk=$out/libexec/android-sdk
+            mkdir -p $sdk/licenses $sdk/build-tools $sdk/platforms
+
+            ln -s ${androidEnv.platform-tools}/libexec/android-sdk/platform-tools $sdk/platform-tools
+
+            ${androidPkgs.lib.concatMapStrings (bt: ''
+              for d in ${bt}/libexec/android-sdk/build-tools/*; do
+                ln -s "$d" $sdk/build-tools/$(basename $d)
+              done
+            '') androidEnv."build-tools"}
+
+            ${androidPkgs.lib.concatMapStrings (pl: ''
+              for d in ${pl}/libexec/android-sdk/platforms/*; do
+                ln -s "$d" $sdk/platforms/$(basename $d)
+              done
+            '') androidEnv.platforms}
+
+            ${androidPkgs.lib.concatMapStrings (name: ''
+              ln -s ${
+                androidPkgs.writeText "zara-android-sdk-license-${name}"
+                  (androidPkgs.lib.concatStringsSep "\n"
+                    (map (t: builtins.hashString "sha1" t)
+                      androidEnvRepo.licenses.${name}))
+              } $sdk/licenses/${name}
+            '') [ "android-sdk-license" ]}
+
+            mkdir -p $out/bin
+            for i in ${androidEnv.platform-tools}/bin/*; do
+              ln -s $i $out/bin
+            done
+          '';
+
+          androidEnvRepo = builtins.fromJSON
+            (builtins.readFile "${androidPkgs.path}/pkgs/development/mobile/androidenv/repo.json");
+
           # Build pyswip from GitHub (use the same python toolchain everywhere)
           pyswip = python.pkgs.buildPythonPackage rec {
             pname = "pyswip";
@@ -520,6 +586,24 @@
               echo "  nix run                       # Run default CLI (prints help with no args)"
               echo "  nix run .#zara-wake           # Run wake listener"
               echo "  nix flake check               # Run all checks (pytest, scripts, syntax, prolog load)"
+            '';
+          };
+
+          devShells.android = pkgs.mkShell {
+            name = "zara-android-dev-shell";
+
+            packages = [
+              pkgs.jdk21
+              pkgs.gradle_9
+              androidSdk
+            ];
+
+            shellHook = ''
+              export ANDROID_HOME=${androidSdk}/libexec/android-sdk
+              export ANDROID_SDK_ROOT=$ANDROID_HOME
+              export JAVA_HOME=${pkgs.jdk21.home}
+              echo "Zara Android toolchain ready: Gradle 9 + JDK 21 + SDK (API 37)"
+              echo "  nix develop .#android -c bash scripts/test-android.sh"
             '';
           };
 

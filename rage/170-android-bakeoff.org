@@ -1,0 +1,101 @@
+#+title: RAGE #170 - Android Prolog/transport/build feasibility bakeoff and architecture decision
+
+* Run identity
+- Consumed issue :: #170, P2 - RAGE Android Prolog/ZeroMQ/NDK/WASM feasibility bakeoff and architecture decision.
+- Parent epic :: #152 (Android client); Samsung system-assistant epic #194 consumes this as the P0 research gate prerequisite (#195).
+- Branch :: =feat/android-app=.
+- RAGE start commit :: =e5a4f26= (master after #227).
+- Mode :: repository Auto-RAGE per #194 ("Every implementation child uses repository Auto-RAGE ... autonomous decision gate"); ADADR analyze/design/adversarial/decision evidence recorded here.
+- Protocol :: AGENTS.md + skills/rage + skills/adadr; research before design, decision recorded before any implementation.
+
+* Research (primary sources, accessed 2026-08-29)
+
+** Prolog runtime bakeoff
+*** SWI-Prolog on Android/NDK
+- Sources: swi-prolog.org build docs (=linuxonandroid.md=), SWI-Prolog mailing list (Wielemaker, 2014, groups.google.com/g/swi-prolog/c/ByRbOTem2kk), Stack Overflow state check.
+- Finding :: there is no maintained upstream SWI-Prolog Android/NDK embedding. Upstream documents only Termux (proot userland, outside the app sandbox) and the obsolete rooted LinuxOnAndroid chroot. NDK/JNI embedding is described upstream as "fiddling with the build environment" and was never productized. Embedding SWI in-process would mean forking upstream.
+- SWI WebAssembly (=swipl-wasm=) exists and is maintained, but embeds via a JS bridge inside a WebView: cross-boundary calls, fragile service-process lifecycle, tens of MB of heap overhead.
+
+*** Trealla Prolog
+- Source: github.com/trealla-prolog/trealla README (main, accessed 2026-08-29), 8296 commits, active.
+- Facts :: MIT license; plain C99 + Makefile; officially "Runs on Linux, Android, MacOS, *BSD, ..."; C API for embedding ("API for calling from C"); WASI/WebAssembly and Go/JS embeddings exist; concurrency via threads/tasks/futures/engines (generators); threads optional (=NOTHREADS=1=); unbounded ints/rationals; UTF-8 atoms/strings; SWI-compatible surface where it matters to us (=read_from_chars/2=, =write_term_to_atom/3=, =catch/3=, =call_residue_vars/2=, =with_output_to/2=, =split_string/4=, soft-cut =*->/2=, =limit/2=, =call_with_time_limit/2=, DCGs, CLP(Z), attributed variables =freeze=,=dif=,=when=).
+- Footprint :: ~1.5MB native binary; static library suitable for NDK; no JNI requirement of its own (we own the thin JNI boundary).
+
+*** Scryer Prolog
+- Rust-compiler-focused engine; embeddability on Android would be via WASM or a Rust FFI shim; no stable C embedding ABI comparable to Trealla's; startup/size acceptable but embedding story is the weakest of the candidates for an NDK service process.
+
+*** Tau-Prolog
+- Pure JS; requires WebView/JS runtime in-process; performance and predicate coverage insufficient for the semantic core; rejected on the same grounds as swipl-wasm with worse coverage.
+
+** Transport bakeoff
+- Server reality (local evidence at =e5a4f26=) :: ZARA/1 rides pyzmq (flake.nix =p.pyzmq=); =zara/security_transport.py= configures CURVE server sockets with ZAP callback authentication (=CurveServerConfig=, =configure_curve_server_socket=, live SecurityRegistry credential provider); =zara/zmq_transport.py= keeps auth out and uses ROUTER-style routing. So the Android client must speak ZMTP/3.0 + CURVE (client side) and be wire-compatible with pyzmq/libzmq; ZAP is server-side only.
+- jeromq (github.com/zeromq/jeromq, master, accessed 2026-08-29) :: pure Java, ZMTP/3.0, tcp:// and inproc:// wire-compatible with libzmq, implements PLAIN **and CURVE**, MPL-2.0, current 0.6.0 line, 2.5k stars/active. Unsupported: ipc:// (not needed), pgm/norm/tipc (not needed), GSSAPI (not needed), thread-interrupt (design constraint: dedicated worker threads, no interrupt reliance).
+- libzmq/NDK + JNI :: viable but adds native build matrix per ABI + libsodium packaging for CURVE, for no capability gain over jeromq for a tcp client.
+
+** Android platform constraints
+- Sources: developer.android.com/about/versions/14/changes/fgs-types-required and /develop/background-work/services/fgs/service-types (accessed 2026-08-29); while-in-use exemption list (foreground-services#restrictions-exemptions).
+- Facts :: since API 34 a microphone foreground service requires =foregroundServiceType="microphone"=, =FOREGROUND_SERVICE_MICROPHONE=, and granted =RECORD_AUDIO=; mic FGS cannot be started from background or =BOOT_COMPLETED= (exceptions: system component, widget/notification interaction, visible-app PendingIntent, device owner, **"an app which provides the VoiceInteractionService"**).
+- Consequence :: wake-word-style always-listening must not be assumed; the deterministic always-available voice path is assistant-role invocation (VoiceInteractionService), which carries the while-in-use exemption for services started by the assistant app. A hot-word FGS, if ever added (#175), is user-initiated foreground with degraded-background semantics.
+- Assistant role :: =RoleManager.ROLE_ASSISTANT= (API 29+); role is always user-driven (Settings / RoleManager role request intent); silent role change is impossible by platform design and forbidden by #194.
+
+** Toolchain
+- Sources: android-developers.googleblog.com Compose August '26 release (2026-08-12); developer.android.com compose setup + runtime release notes (2026-08-26); AGP 9 built-in-Kotlin migration note (kotl.in/gradle/agp-built-in-kotlin, discovered during #171 realization).
+- Facts :: current stable Compose BOM =2026.08.00= (Compose 1.12) targets compileSdk API 37 and requires AGP >= 9.1.1 (runtime notes state 9.2.0 with the API-37 compileSdk bump); current Kotlin =2.3.21=. **AGP 9 correction (as-built)** :: AGP 9 provides built-in Kotlin support and rejects the separate =org.jetbrains.kotlin.android= plugin; the Kotlin language version is carried by AGP itself. Gradle 9.5.1 (nixpkgs =gradle_9=) is the paired version.
+
+* Decision matrix (summary)
+
+| Option | Embed path | Maintenance | Size/RSS | Wire fit | Verdict |
+|---+---+---+---+---+---|
+| SWI-Prolog NDK | none maintained; fork required | we own fork forever | large | perfect | rejected |
+| SWI WASM in WebView | JS bridge | upstream | heavy | perfect | rejected |
+| Scryer | Rust/WASM shim | upstream | medium | subset | rejected |
+| Tau-Prolog | JS | upstream | small | subset, slow | rejected |
+| *Trealla NDK embed* | C API + thin JNI we own | active upstream, MIT | ~1.5MB | SWI-compatible subset | *selected* |
+
+| Transport | Path | Verdict |
+|---+---+---|
+| libzmq NDK | native ABI matrix + libsodium | rejected (cost without gain) |
+| *jeromq 0.6.x* | pure Java, ZMTP/3.0 + CURVE | *selected* |
+
+* Selected architecture (decision record - Auto-RAGE decision gate, 2026-08-29)
+1. Prolog runtime :: Trealla Prolog compiled by NDK as a static/shared lib per ABI, owned thin JNI boundary in the app; the portable semantic core (#172) executes on Trealla both on Linux (spike) and Android. Linux Zara keeps SWI via pyswip for the full runtime; the *portable subset* is the shared contract. No Prolog-RLM.
+2. Portable subset proposal :: pure ISO+SWI-compatible core over Trealla's supported surface: DCG parsing, =atom/string= manipulation, =findall/=bagof=, =dif/2=, =freeze/2=, CLP(Z) where needed, =catch/3=, =limit/2=, =call_with_time_limit/2=, =with_output_to=, =read_from_chars=/=write_term_to_atom=, module-qualified consult. Excluded server-only predicates (sockets, HTTP, foreign libs, =pyswip= specifics) stay server-side. #172 owns the extraction and the fixture proof gate.
+3. Transport :: jeromq 0.6.x on Android speaking ZMTP/3.0 CURVE client against the existing pyzmq CURVE/ZAP server. Client keys via Android Keystore-backed storage (#173 owns the design); no ipc://, no ZAP on client.
+4. UI/build :: Kotlin + Gradle + AGP 9.2.0 + Kotlin 2.3.21; Compose BOM 2026.08.00 selected for #197 (min compileSdk 37); skeleton (#171) ships without Compose to keep the first CI gate deterministic; Compose lands with #197 per its own dependency gate. minSdk 29 (RoleManager.ROLE_ASSISTANT), targetSdk 36, compileSdk 37.
+5. Voice :: assistant-role invocation is the primary always-available path (platform exemption above); background hot-word is out of scope until #175 designs within the recorded constraints.
+
+** Rejected alternatives (with reasons)
+- SWI-Prolog NDK fork :: permanent fork burden, large RSS/startup, upstream explicitly unproductized; loses free upstream maintenance.
+- swipl-wasm/WebView or Tau-Prolog in WebView :: JS bridge across every semantic call, fragile inside an assistant service process, memory overhead; violates lightweight assistant process requirement (#196).
+- Replacing ZARA/1 with HTTP/WebSocket :: forbidden silent protocol fork; jeromq proves CURVE wire compat, so the conflict clause never triggers.
+- Hot-word FGS as primary voice path :: API 34 background-start prohibitions make it nondeterministic for assistant use; assistant role is the platform-blessed entry.
+
+** Failure modes and fallbacks
+- Trealla cannot execute a required semantic fixture (gate in #172) :: fallback = server-authoritative semantics with typed degraded/offline local behavior (#176 scope); Trealla spike evidence preserved; no silent subset widening.
+- jeromq CURVE incompatibility with pyzmq discovered in #173 :: issue #170 contract requires documenting the architecture conflict before any replacement proposal; fallback documented there, not improvised.
+- NDK/Trealla build breaks on an ABI :: gate runs per-ABI; arm64-v8a is the Samsung acceptance floor; x86_64 emulator second; armeabi-v7a best-effort.
+
+** Invariants
+- One ZARA/1, one semantic vocabulary, one principal (#194); Android owns mic/playback/audio focus; server owns voice processing.
+- No arbitrary Intent plane, no reflection/dynamic invocation, no raw Prolog goal execution from the client surface.
+- Unknown Samsung behaviors stay marked unverified until #195/#206 hardware evidence.
+
+* Child-gate plan (informs #171, #172, #173, #195, #196, #197)
+1. #171 skeleton: android/ subtree, pinned toolchain, JVM unit tests, debug APK in dedicated CI job, secret inspection gate.
+2. #172: extract portable core + Trealla fixture gate on Linux; spike NDK build.
+3. #173: jeromq enrollment/reconnect against local daemon fixture; keystore design.
+4. #195: Samsung-specific research gate consuming this decision record.
+5. #196: VoiceInteractionService/SessionService + role state machine (extends the #171 typed runtime state).
+6. #197: Compose shell over the same typed state (Compose BOM 2026.08.00).
+
+* Acceptance mapping for #170
+| Requirement | Evidence |
+|---+---|
+| Prolog bakeoff w/ primary sources | Research section above; sources dated |
+| Transport bakeoff incl. CURVE caution | Transport section; jeromq CURVE verified, ZAP server-side only |
+| Platform/background-mic research | Platform section with FGS-type facts + exemption quote |
+| Gradle/SDK/Nix reproducibility | Pinned toolchain in this record; realized by #171 flake integration |
+| Decision matrix + selected/rejected | Tables above |
+| Portable subset proposal | Decision 2 |
+| Fallback if preferred option not viable | Failure modes section |
+| No production client implementation in this issue | Only decision artifacts + #171 skeleton follow |

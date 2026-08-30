@@ -133,3 +133,26 @@ jobs:
           id zara >/dev/null 2>&1 || useradd --create-home --shell /bin/bash zara
           chown -R zara:zara "$GITHUB_WORKSPACE"
           su zara -s /bin/bash -c "cd '$GITHUB_WORKSPACE' && HOME=/home/zara RUNNER_TEMP=/tmp PATH='$GITHUB_WORKSPACE/.venv/bin':\$PATH bash scripts/test-linux-shared-audio.sh"
+
+  android:
+    name: android skeleton gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Run Android gate (unit tests + debug APK + secret inspection)
+        run: nix develop .#android -c bash scripts/test-android.sh
+
+      - name: Upload debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zara-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: warn
