@@ -1,0 +1,36 @@
+#+title: Android app
+
+The native Android Zara client (issues #152, #170–#179, Samsung epic #194).
+
+## Layout
+
+- =android/= — Gradle project, single =app= module, application id =ai.zara.app=.
+- =android/gradle/libs.versions.toml= — version catalog; pins live here.
+- =android/app/src/main/java/ai/zara/app/runtime/= — the single typed runtime state + pure reducer (server connection, assistant role). The assistant surface (#196) and the Compose shell (#197) must extend this state, never fork it.
+- =android/app/src/main/assets/prolog/= — reserved for the shared Prolog semantic fixtures (#172).
+
+## Toolchain pins
+
+| Component | Pin |
+|---+---|
+| Gradle | 9.5.1 (=pkgs.gradle_9=) |
+| AGP | 9.2.0 (built-in Kotlin; the separate kotlin-android plugin is rejected by AGP 9) |
+| compileSdk / targetSdk / minSdk | 37 / 36 / 29 (min 29 = =RoleManager.ROLE_ASSISTANT=) |
+| Compose BOM (for #197) | 2026.08.00 |
+| JDK | 21 |
+
+## Build / test
+
+```sh
+nix develop .#android -c bash scripts/test-android.sh
+```
+
+Runs JVM unit tests, =assembleDebug=, and an APK secret-marker inspection. The debug APK lands at =android/app/build/outputs/apk/debug/app-debug.apk= and is uploaded by the CI =android= job as an artifact.
+
+## Architecture decisions
+
+See =rage/170-android-bakeoff.org= (Prolog runtime: Trealla via NDK + thin JNI; transport: jeromq pure-Java ZMTP/3.0 CURVE against the pyzmq CURVE/ZAP server) and =rage/171-android-skeleton.org= (skeleton, gates, toolchain as-built evidence).
+
+## Queue
+
+#170 → #171 → #172/#173/#195 → #196 (assistant role + VoiceInteractionService) → #197 (Compose chat shell) → #198+ (Prolog-controlled adapters, SmartThings, Termux) → #206 (real Samsung acceptance + exact APK).
