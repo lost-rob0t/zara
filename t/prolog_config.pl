@@ -64,4 +64,19 @@ invalid_sound_config('timer_sound("").\n').
 invalid_sound_config('timer_sound(["tone.wav"]).\n').
 invalid_sound_config('timer_sound("disabled").\n').
 
+test(default_wake_words_include_zarathushtra) :-
+    once(kb_config:wake_word("zarathushtra")).
+
+test(wake_word_override_is_supported) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, 'wake_word("jarvis").\n'),
+    config_loader:reload_user_config,
+    once(kb_config:wake_word("jarvis")).
+
+test(empty_wake_word_is_rejected,
+     [throws(error(domain_error(zarathushtra_user_config_fact, _), _))]) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, 'wake_word("").\n'),
+    config_loader:reload_user_config.
+
 :- end_tests(prolog_config).
