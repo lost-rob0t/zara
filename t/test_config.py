@@ -149,7 +149,7 @@ def test_llm_bounds_are_validated(tmp_path, setting):
         ZaraConfig(str(config_path))
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+@pytest.mark.parametrize("provider", ["anthropic", "openai", "openrouter"])
 def test_remote_provider_does_not_inherit_ollama_default_endpoint(
     monkeypatch, tmp_path, provider
 ):
@@ -167,18 +167,44 @@ def test_remote_provider_does_not_inherit_ollama_default_endpoint(
     assert config.get_llm_config()["endpoint"] is None
 
 
-def test_remote_provider_preserves_explicit_custom_endpoint(monkeypatch, tmp_path):
+@pytest.mark.parametrize("provider", ["anthropic", "openai", "openrouter"])
+def test_remote_provider_preserves_explicit_custom_endpoint(monkeypatch, tmp_path, provider):
     monkeypatch.delenv("ZARA_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("ZARA_LLM_ENDPOINT", raising=False)
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         '[tts]\nprovider = "qwen3"\n\n'
-        '[llm]\nprovider = "openai"\nendpoint = "http://proxy.test/v1/chat"\n'
+        f'[llm]\nprovider = "{provider}"\nendpoint = "http://proxy.test/v1/chat"\n'
     )
 
     config = ZaraConfig(str(config_path))
 
     assert config.get_llm_config()["endpoint"] == "http://proxy.test/v1/chat"
+
+
+def test_openrouter_api_key_resolves_config_then_environment(monkeypatch, tmp_path):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[tts]\nprovider = "qwen3"\n\n'
+        '[llm]\nprovider = "openrouter"\nopenrouter_api_key = "config-key"\n'
+    )
+    config = ZaraConfig(str(config_path))
+
+    assert config.get_llm_config()["openrouter_api_key"] == "config-key"
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "env-key")
+
+    assert config.get_llm_config()["openrouter_api_key"] == "env-key"
+
+
+def test_openrouter_api_key_defaults_to_none(monkeypatch, tmp_path):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[tts]\nprovider = "qwen3"\n\n[llm]\nprovider = "openrouter"\n')
+    config = ZaraConfig(str(config_path))
+
+    assert config.get_llm_config()["openrouter_api_key"] is None
 
 
 @pytest.mark.parametrize(

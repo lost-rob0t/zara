@@ -57,6 +57,16 @@ def test_invalid_theme_or_value_preserves_the_previous_file(tmp_path):
     assert config.config_file.read_bytes() == before
 
 
+def test_openrouter_is_a_supported_assistant_provider(tmp_path):
+    config = make_config(tmp_path)
+    document = SettingsDocument(config)
+
+    document.update({"llm.provider": "openrouter"})
+
+    parsed = tomllib.loads(config.config_file.read_text(encoding="utf-8"))
+    assert parsed["llm"]["provider"] == "openrouter"
+
+
 def test_string_serialization_cannot_escape_its_toml_value(tmp_path):
     config = make_config(tmp_path)
     document = SettingsDocument(config)

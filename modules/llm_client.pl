@@ -45,6 +45,7 @@ get_llm_endpoint(Endpoint) :-
 
 default_endpoint(ollama, "http://localhost:11434/api/chat").
 default_endpoint(openai, "https://api.openai.com/v1/chat/completions").
+default_endpoint(openrouter, "https://openrouter.ai/api/v1/chat/completions").
 default_endpoint(anthropic, "https://api.anthropic.com/v1/messages").
 
 provider_endpoint(anthropic, Endpoint) :-
@@ -52,11 +53,12 @@ provider_endpoint(anthropic, Endpoint) :-
     -> atom_string(Value, Endpoint)
     ; default_endpoint(anthropic, Endpoint)
     ), !.
-provider_endpoint(openai, Endpoint) :-
+provider_endpoint(Provider, Endpoint) :-
+    memberchk(Provider, [openai, openrouter]),
     get_llm_endpoint(Configured),
     default_endpoint(ollama, OllamaDefault),
     ( Configured == OllamaDefault
-    -> default_endpoint(openai, Endpoint)
+    -> default_endpoint(Provider, Endpoint)
     ; Endpoint = Configured
     ), !.
 provider_endpoint(_, Endpoint) :-
@@ -66,6 +68,8 @@ get_api_key(anthropic, Key) :-
     getenv('ANTHROPIC_API_KEY', Key), Key \== '', !.
 get_api_key(openai, Key) :-
     getenv('OPENAI_API_KEY', Key), Key \== '', !.
+get_api_key(openrouter, Key) :-
+    getenv('OPENROUTER_API_KEY', Key), Key \== '', !.
 get_api_key(Provider, _) :-
     throw(error(missing_api_key(Provider), _)).
 
@@ -151,6 +155,15 @@ serialize_llm_request(anthropic, Model, Key, System, Messages, Headers, Request)
         messages:Messages
     }.
 serialize_llm_request(openai, Model, Key, System, Messages, Headers, Request) :-
+    text_string(Key, KeyString),
+    format(string(Authorization), 'Bearer ~s', [KeyString]),
+    Headers = ['Authorization'=Authorization],
+    Request = _{
+        model:Model,
+        messages:[_{role:system, content:System}|Messages],
+        max_tokens:1024
+    }.
+serialize_llm_request(openrouter, Model, Key, System, Messages, Headers, Request) :-
     text_string(Key, KeyString),
     format(string(Authorization), 'Bearer ~s', [KeyString]),
     Headers = ['Authorization'=Authorization],
@@ -293,6 +306,16 @@ parse_provider_response(openai, Reply, Result) :-
     ; Result = llm_result(
           error,
           llm_error(malformed_response, "OpenAI response schema mismatch", none)
+      )
+    ).
+parse_provider_response(openrouter, Reply, Result) :-
+    ( get_dict(choices, Reply, [First|_]),
+      get_dict(message, First, Message),
+      get_dict(content, Message, Text)
+    -> response_text_result(Text, Result)
+    ; Result = llm_result(
+          error,
+          llm_error(malformed_response, "OpenRouter response schema mismatch", none)
       )
     ).
 parse_provider_response(ollama, Reply, Result) :-

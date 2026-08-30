@@ -96,7 +96,7 @@ write_default_config(Stream) :-
     writeln(Stream, '% alarm_sound("/path/to/alarm.wav").'),
     writeln(Stream, ''),
     writeln(Stream, '% ---- LLM Provider (for conversational queries) ----'),
-    writeln(Stream, '% Choose provider: ollama (default, local) | openai | anthropic'),
+    writeln(Stream, '% Choose provider: ollama (default, local) | openai | openrouter | anthropic'),
     writeln(Stream, '% llm_provider(ollama).'),
     writeln(Stream, '% llm_model("llama3.2").'),
     writeln(Stream, '% llm_endpoint("http://localhost:11434/api/chat").'),
@@ -105,9 +105,19 @@ write_default_config(Stream) :-
     writeln(Stream, '% llm_provider(openai).'),
     writeln(Stream, '% llm_model("gpt-4o-mini").'),
     writeln(Stream, '%'),
+    writeln(Stream, '% For OpenRouter (requires OPENROUTER_API_KEY env var):'),
+    writeln(Stream, '% llm_provider(openrouter).'),
+    writeln(Stream, '% llm_model("openrouter/free").'),
+    writeln(Stream, '%'),
     writeln(Stream, '% For Anthropic (requires ANTHROPIC_API_KEY env var):'),
     writeln(Stream, '% llm_provider(anthropic).'),
     writeln(Stream, '% llm_model("claude-sonnet-4-20250514").'),
+    writeln(Stream, ''),
+    writeln(Stream, '% ---- Prolog-RLM Direct-Mode Rewrites ----'),
+    writeln(Stream, '% Route Prolog command fallback rewrites through Prolog-RLM direct mode.'),
+    writeln(Stream, '% Requires ZARA_PROLOG_RLM_ROOT and OPENROUTER_API_KEY env vars.'),
+    writeln(Stream, '% prolog_rlm_enabled(true).'),
+    writeln(Stream, '% prolog_rlm_model("openrouter/free").'),
     writeln(Stream, ''),
     writeln(Stream, '% ---- OSINT/Security Shortcuts ----'),
     writeln(Stream, '% app_mapping(shodan, ["brave", "--new-window", "https://shodan.io"]).'),
@@ -179,11 +189,15 @@ validate_user_fact(timer_sound(Setting), kb_config, timer_sound(Setting)) :-
 validate_user_fact(alarm_sound(Setting), kb_config, alarm_sound(Setting)) :-
     sound_setting(Setting).
 validate_user_fact(llm_provider(Provider), kb_config, llm_provider(Provider)) :-
-    memberchk(Provider, [ollama, openai, anthropic]).
+    memberchk(Provider, [ollama, openai, openrouter, anthropic]).
 validate_user_fact(llm_model(Model), kb_config, llm_model(Model)) :-
     text_value(Model).
 validate_user_fact(llm_endpoint(Endpoint), kb_config, llm_endpoint(Endpoint)) :-
     text_value(Endpoint).
+validate_user_fact(prolog_rlm_enabled(Enabled), kb_config, prolog_rlm_enabled(Enabled)) :-
+    memberchk(Enabled, [true, false]).
+validate_user_fact(prolog_rlm_model(Model), kb_config, prolog_rlm_model(Model)) :-
+    text_value(Model).
 validate_user_fact(todo_destination(Path), kb_config, todo_destination(Path)) :-
     text_value(Path).
 validate_user_fact(todo_context_mode(Mode), kb_config, todo_context_mode(Mode)) :-

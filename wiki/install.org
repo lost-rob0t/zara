@@ -108,22 +108,47 @@ All providers return declared WAV or MP3 data through a structured synthesis
 result. =[tts].connect_timeout=, =read_timeout=, and =total_timeout= bound remote
 work. Starting a new utterance cancels and replaces the active playback.
 
-The Python and Prolog LLM clients serialize Anthropic, OpenAI, and Ollama
-requests according to each provider's protocol. Configure
+The Python and Prolog LLM clients serialize Anthropic, OpenAI, OpenRouter, and
+Ollama requests according to each provider's protocol. Configure
 =[llm].connect_timeout=, =read_timeout=, =total_timeout=, =max_retries=, and
 =history_limit= to bound remote work and retained conversation context. The
 Python client reuses one HTTP session until shutdown; Prolog uses bounded
 keep-alive connections. Provider failures remain typed until the user-facing
 boundary, so an HTTP or protocol error is never stored as assistant text.
-Anthropic and OpenAI credentials come from =ANTHROPIC_API_KEY= and
-=OPENAI_API_KEY=, or the existing matching =[llm]= key settings. Leave
-=[llm].endpoint= empty to use the selected provider's default endpoint; set it
-only for an explicit compatible proxy or local service.
+Anthropic, OpenAI, and OpenRouter credentials come from =ANTHROPIC_API_KEY=,
+=OPENAI_API_KEY=, and =OPENROUTER_API_KEY=, or the existing matching =[llm]=
+key settings. Leave =[llm].endpoint= empty to use the selected provider's
+default endpoint; set it only for an explicit compatible proxy or local service.
 
 Python runtime settings use =config.toml=. Prolog facts remain separate in
 =~/.config/zarathushtra/config.pl=. That Prolog file accepts only the generated
 fact forms; they are validated, installed into =kb_config= or =kb_intents=, and
 replace prior user overrides on reload.
+
+* Prolog-RLM direct-mode rewrites
+
+When Prolog command resolution fails, the fallback rewrite can run through the
+pinned Prolog-RLM native direct runtime instead of the plain LLM client query.
+The Nix wrappers inject the pinned Prolog-RLM source as =ZARA_PROLOG_RLM_ROOT=;
+=modules/rlm_rewrite.pl= loads it lazily inside Zara's SWI-Prolog runtime and
+calls =rlm_direct/4= over OpenRouter with no tools, no context operations, a
+bounded budget (two model calls, 45 second wall limit), and temperature zero.
+Every failure path is closed: a missing or invalid =ZARA_PROLOG_RLM_ROOT=, a
+missing =OPENROUTER_API_KEY=, a runtime contract mismatch, or a direct-runtime
+error becomes a typed =rlm_rewrite_error/1= exception and the command resolution
+fails without contacting any other provider.
+
+Enable it with Prolog user configuration (disabled by default):
+
+#+begin_example
+prolog_rlm_enabled(true).
+prolog_rlm_model("openrouter/free").
+#+end_example
+
+=prolog_rlm_model= names the OpenRouter model id passed to
+=rlm_chain:openrouter_provider/2=. The credential is read only from the
+=OPENROUTER_API_KEY= environment variable; keep it out of any configuration
+file.
 
 Dictation process state is determined from the configured PID file and live
 process. =ZARA_DICTATION_PIDFILE= and =ZARA_DICTATION_LOGFILE= can override the

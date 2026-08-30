@@ -454,7 +454,7 @@ class SettingsWindow(QWidget):
 
     def _assistant_page(self) -> QWidget:
         page, form = self._page("Assistant", "Provider, model, conversation depth, and agent behavior.")
-        self._combo_setting(form, "llm.provider", "Provider", [("Ollama", "ollama"), ("OpenAI", "openai"), ("Anthropic", "anthropic")], "ollama")
+        self._combo_setting(form, "llm.provider", "Provider", [("Ollama", "ollama"), ("OpenAI", "openai"), ("Anthropic", "anthropic"), ("OpenRouter", "openrouter")], "ollama")
         self._line_setting(form, "llm.model", "Model")
         self._line_setting(form, "llm.endpoint", "Endpoint")
         self._spin_setting(form, "llm.history_limit", "History messages", 20, 1, 500)

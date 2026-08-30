@@ -17,7 +17,8 @@ start_fake_server :-
     http_server(http_dispatch, [port(Port)]),
     asserta(server_port(Port)),
     setenv('ANTHROPIC_API_KEY', 'literal-key'),
-    setenv('OPENAI_API_KEY', 'literal-key').
+    setenv('OPENAI_API_KEY', 'literal-key'),
+    setenv('OPENROUTER_API_KEY', 'literal-key').
 
 stop_fake_server :-
     close_llm_client,
@@ -75,6 +76,8 @@ success_reply(anthropic) :-
     reply_json_dict(_{content:[_{type:"text", text:"anthropic-ok"}]}).
 success_reply(openai) :-
     reply_json_dict(_{choices:[_{message:_{content:"openai-ok"}}]}).
+success_reply(openrouter) :-
+    reply_json_dict(_{choices:[_{message:_{content:"openrouter-ok"}}]}).
 success_reply(ollama) :-
     reply_json_dict(_{message:_{content:"ollama-ok"}}).
 
@@ -99,6 +102,24 @@ test(openai_golden_request) :-
     assertion(memberchk('Authorization'="Bearer literal-key", Headers)),
     assertion(Request.messages =@= [_{role:system, content:"system"}|Messages]).
 
+test(openrouter_golden_request) :-
+    Messages = [_{role:user, content:"hello"}],
+    serialize_llm_request(
+        openrouter, "model", "literal-key", "system", Messages, Headers, Request
+    ),
+    assertion(memberchk('Authorization'="Bearer literal-key", Headers)),
+    assertion(Request.messages =@= [_{role:system, content:"system"}|Messages]).
+
+test(openrouter_key_comes_from_environment) :-
+    llm_client:get_api_key(openrouter, Key),
+    assertion(Key == 'literal-key').
+
+test(openrouter_missing_key_is_typed,
+     [throws(error(missing_api_key(openrouter), _)),
+      cleanup(setenv('OPENROUTER_API_KEY', 'literal-key'))]) :-
+    unsetenv('OPENROUTER_API_KEY'),
+    llm_client:get_api_key(openrouter, _).
+
 test(ollama_golden_request) :-
     Messages = [_{role:user, content:"hello"}],
     serialize_llm_request(
@@ -111,6 +132,7 @@ test(ollama_golden_request) :-
 test(provider_round_trips, [forall(member(Provider-Expected, [
     anthropic-"anthropic-ok",
     openai-"openai-ok",
+    openrouter-"openrouter-ok",
     ollama-"ollama-ok"
 ]))]) :-
     configure_provider(Provider, success),
@@ -138,6 +160,14 @@ test(openai_does_not_inherit_ollama_default_endpoint) :-
     asserta(kb_config:llm_endpoint("http://localhost:11434/api/chat")),
     llm_client:provider_endpoint(openai, Endpoint),
     assertion(Endpoint == "https://api.openai.com/v1/chat/completions").
+
+test(openrouter_does_not_inherit_ollama_default_endpoint) :-
+    retractall(kb_config:llm_provider(_)),
+    asserta(kb_config:llm_provider(openrouter)),
+    retractall(kb_config:llm_endpoint(_)),
+    asserta(kb_config:llm_endpoint("http://localhost:11434/api/chat")),
+    llm_client:provider_endpoint(openrouter, Endpoint),
+    assertion(Endpoint == "https://openrouter.ai/api/v1/chat/completions").
 
 test(rate_limit_retries_are_bounded) :-
     configure_provider(openai, rate_limit),

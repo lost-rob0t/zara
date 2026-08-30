@@ -23,7 +23,7 @@ async def fake_server(handler):
 
 
 def make_client(provider, endpoint="http://provider.test/llm", **kwargs):
-    api_key = "literal-key" if provider in {"anthropic", "openai"} else None
+    api_key = "literal-key" if provider in {"anthropic", "openai", "openrouter"} else None
     return LLMClient(
         provider=provider,
         model="test-model",
@@ -34,7 +34,7 @@ def make_client(provider, endpoint="http://provider.test/llm", **kwargs):
     )
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "openai", "ollama"])
+@pytest.mark.parametrize("provider", ["anthropic", "openai", "openrouter", "ollama"])
 def test_provider_golden_requests(provider):
     client = make_client(provider)
     history = [{"role": "assistant", "content": "earlier"}]
@@ -59,7 +59,7 @@ def test_provider_golden_requests(provider):
                 {"role": "user", "content": "now"},
             ],
         }
-    elif provider == "openai":
+    elif provider in {"openai", "openrouter"}:
         assert headers["Authorization"] == "Bearer literal-key"
         assert payload["messages"][0] == {"role": "system", "content": "system"}
         assert payload["max_tokens"] == 77
@@ -85,6 +85,11 @@ def test_timeout_dimensions_are_configured_independently():
     [
         ("anthropic", {"content": [{"type": "text", "text": "anthropic"}]}, "anthropic"),
         ("openai", {"choices": [{"message": {"content": "openai"}}]}, "openai"),
+        (
+            "openrouter",
+            {"choices": [{"message": {"content": "openrouter"}}]},
+            "openrouter",
+        ),
         ("ollama", {"message": {"content": "ollama"}}, "ollama"),
     ],
 )
@@ -276,8 +281,21 @@ def test_history_is_bounded_in_storage_and_serialization():
 def test_missing_api_key_fails_fast(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 
     with pytest.raises(ValueError):
         LLMClient(provider="anthropic", model="test-model")
     with pytest.raises(ValueError):
         LLMClient(provider="openai", model="test-model")
+    with pytest.raises(ValueError):
+        LLMClient(provider="openrouter", model="test-model")
+
+
+def test_openrouter_defaults_to_free_model_and_canonical_endpoint(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "env-or-key")
+
+    client = LLMClient(provider="openrouter")
+
+    assert client.model == "openrouter/free"
+    assert client.endpoint == "https://openrouter.ai/api/v1/chat/completions"
+    assert client.api_key == "env-or-key"

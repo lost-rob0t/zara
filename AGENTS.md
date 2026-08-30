@@ -196,7 +196,6 @@ Every iteration is ordered and evidence-driven:
 - Do not move Prolog logic into Python.
 - Do not add non‑Nix dependencies without approval.
 - Do not add inline comments unless asked.
-- Do not add or revive Prolog-RLM as a Zara runtime backend or dependency.
 - Do not implement behavior first and backfill tests later when ordinary TDD is possible.
 - Do not game coverage metrics.
 

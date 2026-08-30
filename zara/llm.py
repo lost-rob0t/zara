@@ -114,6 +114,15 @@ class LLMClient:
                 endpoint or "https://api.openai.com/v1/chat/completions",
                 resolved_key,
             )
+        if provider == "openrouter":
+            resolved_key = api_key or os.getenv("OPENROUTER_API_KEY")
+            if not resolved_key:
+                raise ValueError("OPENROUTER_API_KEY is not set")
+            return (
+                model or "openrouter/free",
+                endpoint or "https://openrouter.ai/api/v1/chat/completions",
+                resolved_key,
+            )
         if provider == "ollama":
             return (
                 model or "llama3.2",
@@ -121,7 +130,8 @@ class LLMClient:
                 None,
             )
         raise ValueError(
-            f"Unsupported provider: {provider}. Use: anthropic, openai, or ollama"
+            f"Unsupported provider: {provider}. "
+            "Use: anthropic, openai, openrouter, or ollama"
         )
 
     async def __aenter__(self) -> "LLMClient":
@@ -181,7 +191,7 @@ class LLMClient:
                 "system": system,
                 "messages": messages,
             }
-        elif self.provider == "openai":
+        elif self.provider in {"openai", "openrouter"}:
             headers["Authorization"] = f"Bearer {self.api_key}"
             payload = {
                 "model": self.model,
@@ -271,7 +281,7 @@ class LLMClient:
                     and block.get("type") == "text"
                     and block.get("text")
                 )
-            elif self.provider == "openai":
+            elif self.provider in {"openai", "openrouter"}:
                 text = data["choices"][0]["message"]["content"]
             else:
                 text = data["message"]["content"]

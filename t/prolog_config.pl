@@ -64,4 +64,36 @@ invalid_sound_config('timer_sound("").\n').
 invalid_sound_config('timer_sound(["tone.wav"]).\n').
 invalid_sound_config('timer_sound("disabled").\n').
 
+test(openrouter_provider_override_is_accepted) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, 'llm_provider(openrouter).\n'),
+    config_loader:reload_user_config,
+    once(kb_config:llm_provider(openrouter)).
+
+test(unknown_llm_provider_override_is_rejected,
+     [throws(error(domain_error(zarathushtra_user_config_fact, _), _))]) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, 'llm_provider(gpt4all).\n'),
+    config_loader:reload_user_config.
+
+test(prolog_rlm_facts_are_accepted_and_validated) :-
+    config_loader:user_config_path(Path),
+    write_config(Path,
+        'prolog_rlm_enabled(true).\nprolog_rlm_model("openrouter/free").\n'),
+    config_loader:reload_user_config,
+    once(kb_config:prolog_rlm_enabled(true)),
+    once(kb_config:prolog_rlm_model("openrouter/free")).
+
+test(invalid_prolog_rlm_facts_are_rejected,
+     [ forall(invalid_prolog_rlm_config(Config)),
+       throws(error(domain_error(zarathushtra_user_config_fact, _), _))
+     ]) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, Config),
+    config_loader:reload_user_config.
+
+invalid_prolog_rlm_config('prolog_rlm_enabled("yes").\n').
+invalid_prolog_rlm_config('prolog_rlm_enabled(1).\n').
+invalid_prolog_rlm_config('prolog_rlm_model(12345).\n').
+
 :- end_tests(prolog_config).
