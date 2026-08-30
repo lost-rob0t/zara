@@ -236,6 +236,27 @@ instantiating the config manager.
 - A request spoken with the wake phrase, such as “Zara, what time is it?”, is
   routed immediately without waiting for a second utterance.
 
+** Wake words
+- Wake detection matches phrases with edit-distance tolerance (~25% of the
+  phrase length, at least one edit), so close transcriptions such as
+  “Zaratustra” or “Sara” still trigger the listener.
+- Default wake words: =zarathushtra=, =zarathustra=, =hey zara=, =zara=,
+  =sarah=, =sara=.
+- =[wake].words= in config.toml overrides the phrase list entirely:
+  #+begin_src toml
+  [wake]
+  words = ["jarvis", "computer"]
+  #+end_src
+- When =words= is empty, the listener loads phrases from the Prolog knowledge
+  base (=kb_config:wake_word/1= in =kb/config.pl=). Users can add or override
+  phrases in =~/.zarathushtra/config.pl=:
+  #+begin_src prolog
+  wake_word("jarvis").
+  #+end_src
+- If Prolog is unavailable or returns nothing, the built-in defaults are used.
+- Custom phrases replace the defaults entirely, so include every phrase you
+  want to answer to.
+
 Externally installed plugins live under =~/.zarathushtra/plugins/= by default.
 Legacy tool plugins and RuntimeHost-owned service plugins are documented in
 [[file:plugins.org][plugins.org]].

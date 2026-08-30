@@ -251,6 +251,20 @@ class PrologEngine:
         result = self.query_once(goal)
         return result.get("Cmd") if result else None
 
+    def get_wake_words(self) -> List[str]:
+        """Query wake words from ``kb_config:wake_word/1``."""
+        results = self.query_all("kb_config:wake_word(W)", max_solutions=64)
+        words: List[str] = []
+        for result in results:
+            value = result.get("W")
+            if isinstance(value, bytes):
+                value = value.decode("utf-8")
+            if not isinstance(value, str):
+                value = getattr(value, "value", None) or str(value)
+            if isinstance(value, str) and value.strip():
+                words.append(value.strip())
+        return words
+
     def resolve_intent(
         self,
         text: str,
