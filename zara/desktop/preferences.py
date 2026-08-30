@@ -60,7 +60,7 @@ def _boolean(value: Any) -> bool:
 
 SETTING_VALIDATORS: Mapping[str, Callable[[Any], bool]] = {
     "desktop.theme": _choice(*THEME_REGISTRY),
-    "llm.provider": _choice("ollama", "openai", "anthropic"),
+    "llm.provider": _choice("ollama", "openai", "anthropic", "openrouter"),
     "llm.model": _string,
     "llm.endpoint": _string,
     "llm.connect_timeout": _positive_number,

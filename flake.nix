@@ -3,9 +3,13 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    prolog-rlm = {
+      url = "github:lost-rob0t/prolog-rlm/b654831a0150a593821179da1d3886dfd64deb5c";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs, ... }:
+  outputs = { self, nixpkgs, prolog-rlm, ... }:
     let
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
       eachSystem = nixpkgs.lib.genAttrs supportedSystems;
@@ -297,6 +301,7 @@
                   --prefix PATH : ${pkgs.lib.makeBinPath ([ pkgs.swi-prolog pkgs.mpv ] ++ extraPath)} \
                   --set PYTHONPATH $out/lib/python${if withProlog then ":$out/share/zarathushtra" else ""}:${pythonLibs}/${python.sitePackages} \
                   --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [ pkgs.libsndfile pkgs.portaudio ]} \
+                  ${if withProlog then "--set ZARA_PROLOG_RLM_ROOT ${prolog-rlm}" else ""} \
                   ${if withProlog then "--set SWI_HOME_DIR ${pkgs.swi-prolog}/lib/swipl" else ""} \
                   --run "${if withProlog then "cd $out/share/zarathushtra" else ""}"
               '';
@@ -361,6 +366,7 @@
                 --add-flags "-m zara --console" \
                 --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.swi-prolog pkgs.mpv ]} \
                 --set PYTHONPATH $out/share/zarathushtra:${pythonLibs}/${python.sitePackages} \
+                --set ZARA_PROLOG_RLM_ROOT ${prolog-rlm} \
                 --set SWI_HOME_DIR ${pkgs.swi-prolog}/lib/swipl \
                 --run "cd $out/share/zarathushtra"
             '';
@@ -375,11 +381,13 @@
           # not the immutable package copy in the Nix store.
           zara-dev = pkgs.writeShellScriptBin "zara" ''
             export PYTHONPATH="$PWD''${PYTHONPATH:+:$PYTHONPATH}"
+            export ZARA_PROLOG_RLM_ROOT="${prolog-rlm}"
             exec ${pythonLibs}/bin/python -m zara "$@"
           '';
 
           zara-desktop-dev = pkgs.writeShellScriptBin "zara-desktop" ''
             export PYTHONPATH="$PWD''${PYTHONPATH:+:$PYTHONPATH}"
+            export ZARA_PROLOG_RLM_ROOT="${prolog-rlm}"
             exec ${pythonLibs}/bin/python -m zara.desktop.app "$@"
           '';
 
@@ -464,6 +472,26 @@
                 export PYTHONPATH="$out-src''${PYTHONPATH:+:$PYTHONPATH}"
                 export ARTIFACT_DIR=$out
                 bash scripts/test-latency-metrics.sh
+              '';
+
+            # Exercise the pinned Prolog-RLM direct-mode rewrite runtime. The
+            # scripted model handler keeps this deterministic; no OpenRouter
+            # credential or network access is used.
+            rlm-contract = pkgs.runCommand "zara-check-rlm-contract"
+              {
+                nativeBuildInputs = [ pkgs.swi-prolog pkgs.bash ];
+                src = ./.;
+              }
+              ''
+                cp -r $src $out-src
+                chmod -R u+w $out-src
+                cd $out-src
+                export HOME=$(mktemp -d)
+                export XDG_CONFIG_HOME=$HOME/.config
+                export ZARA_PROLOG_RLM_ROOT=${prolog-rlm}
+                export OPENROUTER_API_KEY=test-only-key
+                bash scripts/test-rlm-rewrite.sh
+                touch $out
               '';
 
             # Exercise the installed Nix wrappers with isolated HOME and
@@ -564,6 +592,7 @@
 
             shellHook = ''
               export PYTHONPATH="$PWD''${PYTHONPATH:+:$PYTHONPATH}"
+              export ZARA_PROLOG_RLM_ROOT="${prolog-rlm}"
               echo "Python + Whisper + whisper.cpp/Vulkan + SWI-Prolog + LangChain + MCP v2 ready"
               echo ""
               echo "Commands:"

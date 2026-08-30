@@ -97,7 +97,7 @@ total_timeout = 30.0
 
 [llm]
 # LLM provider for agent mode
-provider = "ollama"  # "anthropic", "openai", or "ollama"
+provider = "ollama"  # "anthropic", "openai", "openrouter", or "ollama"
 model = ""  # Leave empty for provider defaults
 endpoint = ""
 connect_timeout = 5.0
@@ -109,6 +109,7 @@ history_limit = 20
 # API keys (can also be set via environment variables)
 # anthropic_api_key = ""
 # openai_api_key = ""
+# openrouter_api_key = ""
 
 [agent]
 # Conversational agent settings
@@ -327,7 +328,7 @@ class ZaraConfig:
         if not isinstance(llm_config, dict):
             raise ConfigError("Invalid [llm] configuration: expected a TOML table")
         llm_provider = llm_config.get("provider", "ollama")
-        if llm_provider not in {"anthropic", "openai", "ollama"}:
+        if llm_provider not in {"anthropic", "openai", "openrouter", "ollama"}:
             raise ConfigError(f"Unsupported LLM provider {llm_provider!r}")
         for key in ("connect_timeout", "read_timeout", "total_timeout"):
             value = llm_config.get(key, 1.0)
@@ -534,6 +535,9 @@ class ZaraConfig:
         # Get API keys from config or environment
         anthropic_key = os.getenv("ANTHROPIC_API_KEY", llm_config.get("anthropic_api_key", ""))
         openai_key = os.getenv("OPENAI_API_KEY", llm_config.get("openai_api_key", ""))
+        openrouter_key = os.getenv(
+            "OPENROUTER_API_KEY", llm_config.get("openrouter_api_key", "")
+        )
 
         return {
             "provider": provider,
@@ -541,6 +545,7 @@ class ZaraConfig:
             "endpoint": endpoint if endpoint else None,
             "anthropic_api_key": anthropic_key if anthropic_key else None,
             "openai_api_key": openai_key if openai_key else None,
+            "openrouter_api_key": openrouter_key if openrouter_key else None,
             "connect_timeout": float(llm_config.get("connect_timeout", 5.0)),
             "read_timeout": float(llm_config.get("read_timeout", 20.0)),
             "total_timeout": float(llm_config.get("total_timeout", 30.0)),

@@ -35,6 +35,16 @@ cd "$repo_root"
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"; rm -rf "$repo_root/t/fixtures/audio"' EXIT
 
+# Packaging/Nix phases invoke nested `nix` commands. Nix resolves its own
+# configuration relative to XDG_CONFIG_HOME, which this gate redirects, so
+# carry the ambient nix configuration through NIX_CONFIG (read by nix
+# regardless of XDG state) to keep experimental features enabled.
+AMBIENT_NIX_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/nix/nix.conf"
+if [ -f "$AMBIENT_NIX_CONF" ]; then
+  export NIX_CONFIG="$(cat "$AMBIENT_NIX_CONF")
+${NIX_CONFIG:-}"
+fi
+
 export HOME="$TEST_ROOT/home"
 export XDG_CONFIG_HOME="$TEST_ROOT/config"
 export XDG_RUNTIME_DIR="$TEST_ROOT/run"
@@ -143,6 +153,7 @@ phase_security_scripts() {
     scripts/test-timers.sh
     scripts/test-todos.sh
     scripts/test-llm-clients.sh
+    scripts/test-rlm-rewrite.sh
     scripts/test-memory.sh
     scripts/test-tts.sh
     scripts/test-wake-lifecycle.sh

@@ -20,9 +20,12 @@
 
         wake_word/1,                % wake phrase accepted by the listener
 
-        llm_provider/1,             % anthropic | openai | ollama
+        llm_provider/1,             % anthropic | openai | openrouter | ollama
         llm_model/1,                % model name/ID
-        llm_endpoint/1              % API endpoint URL
+        llm_endpoint/1,             % API endpoint URL
+
+        prolog_rlm_enabled/1,       % route LLM command rewrites through Prolog-RLM direct mode
+        prolog_rlm_model/1          % OpenRouter model id used by direct-mode rewrites
     ]).
 
 :- use_module('../modules/config_loader').
@@ -49,6 +52,8 @@
 :- dynamic llm_provider/1.
 :- dynamic llm_model/1.
 :- dynamic llm_endpoint/1.
+:- dynamic prolog_rlm_enabled/1.
+:- dynamic prolog_rlm_model/1.
 
 :- initialization(config_loader:load_user_config).
 
@@ -126,7 +131,7 @@ wake_word("sara").
 % ---- LLM Provider Configuration ----
 
 % Used by Python wake listener for conversational queries.
-% Options: anthropic | openai | ollama
+% Options: anthropic | openai | openrouter | ollama
 llm_provider(ollama).
 
 % Model name (provider-specific)
@@ -138,8 +143,18 @@ llm_model("llama3.2:latest").
 % API endpoint (optional, uses provider defaults if not specified)
 % Ollama default: http://localhost:11434/api/chat
 % OpenAI default: https://api.openai.com/v1/chat/completions
+% OpenRouter default: https://openrouter.ai/api/v1/chat/completions
 % Anthropic: handled by SDK (don't override)
 llm_endpoint("http://localhost:11434/api/chat").
+
+% ---- Prolog-RLM Direct-Mode Rewrites ----
+%
+% When enabled, Prolog command fallback rewrites are routed through the
+% pinned Prolog-RLM direct runtime (rlm_direct/4) over OpenRouter instead
+% of the plain llm_client query path. Requires ZARA_PROLOG_RLM_ROOT to
+% point at a Prolog-RLM checkout and OPENROUTER_API_KEY to be set.
+prolog_rlm_enabled(false).
+prolog_rlm_model("openrouter/free").
 
 % ============================================================
 % WEB APPLICATIONS
