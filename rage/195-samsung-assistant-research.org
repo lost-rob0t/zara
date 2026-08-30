@@ -1,0 +1,79 @@
+#+title: RAGE #195 - Samsung assistant role and Android integration research gate (P0)
+
+* Run identity
+- Consumed issue :: #195, P0 research gate - Samsung assistant role and Android integration architecture (parent epic #194).
+- Branch :: =rage/195-samsung-assistant-research=.
+- RAGE start commit :: =38e98a4= (master after #229; #170 decision record and #171 skeleton merged).
+- Dependencies :: #170 (bakeoff decision) satisfied and merged. Research gate only: no production implementation in this issue (its acceptance forbids implementation before this decision record).
+- Mode :: repository Auto-RAGE per #194.
+
+* Method
+- Primary-source web research (Brave) across the ten required areas of #195; exact URLs, versions and dates recorded; anything not confirmed against a primary source or real hardware is marked UNVERIFIED and left for #206 hardware acceptance.
+- Design output extends the #170 decision record; no second runtime, protocol, semantic vocabulary or LLM stack (#194 constraint).
+
+* Research
+** Android Assistant role and voice-interaction contracts
+(Brave + developer.android.com primary sources, accessed 2026-08-29/30)
+- =RoleManager.ROLE_ASSISTANT= (API 29+): role request via =createRequestRoleIntent=; user confirms in system UI. Zara never attempts silent role change (#194 forbids; platform makes it impossible anyway).
+- Voice interaction surface: =VoiceInteractionService= + =VoiceInteractionSessionService= + =VoiceInteractionSession=; assistant metadata =android.service.voice.VoiceInteractionService= with =android:supportsAssist=, =sessionService= binding; hotword/conversation variants exist but are separate capabilities (=supportsHardwareVoiceCommand= etc. not required).
+- Mic/FGS facts (from #170, reaffirmed): API 34+ microphone FGS requires =foregroundServiceType="microphone"=, =FOREGROUND_SERVICE_MICROPHONE=, granted =RECORD_AUDIO=; background start prohibited except - among others - "an app which provides the VoiceInteractionService". This exemption is the architectural basis of the Zara assistant voice path.
+- Android 15/16 assistant changes: no removal of the assistant role or voice-interaction APIs found in release notes through Android 16; per-app assistant role remains user-selected. (Watch item, not a blocker.)
+
+** Samsung Galaxy specifics (One UI)
+- Digital-assistant selection :: One UI exposes Settings > Apps > Choose default apps > Digital assistant app; the picker lists every app advertising a =VoiceInteractionService=. Samsung's own support page (One UI 7, samsung.com, 2025-05-19) documents that side-button long-press follows the assigned assistant and that a **third-party digital assistant** can be chosen via the gear icon next to "Digital assistant" - Samsung Members guidance (2026-04-27) confirms the default-assistant app "is now used for the side button long press" with Google, ChatGPT "or others" selectable. Zara eligibility therefore follows the manifest contracts above; Bixby coexistence is user preference, not a platform restriction.
+- Side button :: Since One UI 7 the long-press default is Google Gemini (Samsung support page above); Settings > Advanced features > Side button > Long press offers Bixby / Digital assistant assignment. Community fallback path: Good Lock Routines+ side-key remap (xdaforums, 2023) - recorded as guidance only, never the primary contract. Double-press option set per One UI version remains UNVERIFIED pending #206 hardware evidence.
+- Samsung battery/kill behavior :: One UI aggressively restricts background processes; assistant-role apps are exempt from process death for the voice surface, but the chat/runtime process still needs "unrestricted" battery setting + "never auto-optimize" guidance in onboarding. UNVERIFIED on real hardware (#206).
+- Package visibility :: Samsung's app inventory is queried with =<queries>= declarations; =open_app= must use =queryIntentActivities= with =MATCH_DEFAULT_ONLY=-style filters and handle visibility-limited results as typed unavailability (#199 owns the adapter; the semantic layer never carries package ids).
+
+** SmartThings (server-side provider, #202)
+- API Access Apps :: current developer.smartthings.com service-integration docs (accessed 2026-08-30): an API Access App is a web service authenticated via OAuth 2.0 authorization-code flow; registration defines target URL, redirect URIs and scopes (community example: =r:devices:*=, =x:devices:*=, =r:locations:*=), app type =API_ONLY=/"OAuth-In"; REST endpoints cover device discovery, control, state; subscriptions deliver events via webhooks; token management via refresh tokens. Official example repo: SmartThingsCommunity/api-app-subscription-example-js (2024-09-03).
+- Transition watch :: the SmartThings docs banner states "SmartThings API updates are on the way! ... some features described in this section are coming soon" - #202 must pin scope names, webhook signature scheme and subscription lifecycle against the docs current at implementation time; frozen here as model, not as a versioned contract.
+- Credential authority :: stays server-side (#194 invariant); the Android app hosts account-linking UX only.
+
+** Device-integration contracts
+- Termux :: verified against the official termux-app wiki (RUN_COMMAND Intent, updated 2024-03-17). Mandatory: =com.termux.permission.RUN_COMMAND= granted in App Info, and =allow-external-apps=true= in =~/.termux/termux.properties=. Contract: intent action =com.termux.RUN_COMMAND= to =com.termux.app.RunCommandService= with extras =RUN_COMMAND_PATH= (=e.g. /data/data/com.termux/files/usr/bin/...=), =RUN_COMMAND_ARGUMENTS= (String[]), =RUN_COMMAND_WORKDIR=, =RUN_COMMAND_BACKGROUND=, optional session action. Results (Termux >= 0.109): =RUN_COMMAND_SERVICE.EXTRA_PENDING_INTENT= carries a =PendingIntent= (=FLAG_ONE_SHOT=, plus =FLAG_MUTABLE= on API 31+); result bundle returns =STDOUT=/=STDERR=/=EXIT_CODE= (foreground commands return the session transcript), truncated to a combined 100KB to avoid TransactionTooLargeException. targetSdk >= 30 additionally requires package visibility for =com.termux=. Named-action security model from #194/#201: Zara resolves =termux_named_action(notes_sync)= through validated local Prolog config to a reviewed executable+args; unknown raw commands fail closed; the wiki's privacy note (result grants transcript access) is a reason the named-action allowlist must be explicit and small.
+- AlarmClock/calendar :: public =AlarmClock.ACTION_SET_TIMER= / =ACTION_SET_ALARM= / =ACTION_SHOW_TIMERS/ALARMS= intent contracts with extras (=EXTRA_LENGTH=, =EXTRA_MESSAGE=, =EXTRA_SKIP_UI=); calendar via =CalendarContract= provider + =CalendarContract.ACTION_*= intents. Samsung Calendar implements the standard provider/intents; no undocumented Samsung Clock API (#194).
+- ChatGPT app :: no guaranteed public prompt-handoff contract; feature-detect share/intent support at runtime and return typed unsupported-handoff when absent (#199 owns; no AccessibilityService scraping per #194).
+- YouTube :: =watch?v=...= URIs and =YouTube.Intent.Search= style launches vary by package; resolution order configured ReVanced/Vanced -> stock YouTube -> browser is Prolog provider-preference policy (#198/#199 own it).
+
+** Play distribution vs sideload
+- Assistant-role and Termux RUN_COMMAND behavior work for sideloaded APKs; Play policy adds review requirements (FGS type declarations, assistant app review) but sideload-first distribution (#206 "exact downloadable Zara APK") avoids Play review latency. Play-distribution constraints recorded but not gating.
+
+* Design (extends #170 decision record)
+1. Assistant surface (#196): =ZaraVoiceInteractionService= (=supportsAssist=, =supportsSpeechCommands= false until #175) + =ZaraVoiceInteractionSessionService= + session that renders the shared typed runtime state and hands audio to the #132/#175 voice pipeline over ZARA/1. Lightweight assistant process = same :voice process hosting the runtime client; no assistant-only semantic stack.
+2. Role state machine: extends =ai.zara.app.runtime= with =RoleAssessed= outcomes (already seeded in #171): HELD / NOT_HELD / PLATFORM_UNAVAILABLE, re-assessed on =onRoleHeldChanged=, on resume, and on service create; degraded UI state when not held (#196 owns).
+3. Onboarding: user-driven =createRequestRoleIntent(ROLE_ASSISTANT)= flow from Settings + explicit Samsung guidance text (Digital assistant picker, Side button mapping); Zara reports role status honestly, never claims to change it (#196).
+4. Capability schema: device capabilities advertise availability (not privilege) over ZARA/1 (#159); adapters are typed Kotlin with Prolog-configured aliases/preferences (#198); no arbitrary Intent plane.
+5. Package layout: =app= (UI + assistant services + runtime client) with adapters in a typed registry; NDK/Trealla lands via #172/#176 spike-then-integrate; version pins carried from #171 (=AGP 9.2.0 built-in Kotlin, Gradle 9.5.1, compileSdk 37, targetSdk 36, minSdk 29=).
+6. Hardware test matrix (#206 owns execution): assistant selection, Side button, UI-closed invocation, voice+barge-in, timer, app launch, YouTube variants, browser, ChatGPT handoff, device+Zara calendar, tasks, Termux named action, SmartThings command, Prolog hot-reload verb, restart persistence, offline/reconnect, revocation, APK/head identity.
+7. CI/Nix/Gradle gates: unchanged from #171 (android job + scripts/test-android.sh) plus per-issue additions; NDK arrives with #172 spike.
+
+* Adversarial review
+- Attack: assistant service restarted while ZARA/1 reconnect is in flight -> session must render degraded/typed state, never fabricate connected (#196 tests own this; state machine already rejects stale established events).
+- Attack: Samsung kills the chat process but keeps assistant service -> session re-binds runtime client lazily; no static singletons across processes; process-recreation tests required (#196).
+- Attack: role revoked while voice session active -> =onRoleHeldChanged= path emits RoleAssessed(NOT_HELD); session must stop mic immediately (mic FGS exemption lapses with the role) - lifecycle cleanup test (#196).
+- Attack: Termux allow-external-apps disabled or Termux absent -> typed unavailability, fail closed (#201).
+- Attack: webhook signature drift or SmartThings token leak -> secrets server-side only; Android never holds refresh tokens (#202 owns; #194 invariant).
+- Attack: package-id drift (ReVanced variants) -> Prolog provider preference resolves; typed fallback chain configured->stock->browser (#198/#199).
+- Residual UNVERIFIED set (hardware): Side-button double-press options per One UI version, Samsung battery-kill behavior specifics, Samsung Calendar intent coverage, Bixby coexistence. All delegated to #206 human acceptance; never inferred.
+
+* Decision record (Auto-RAGE decision gate, 2026-08-30)
+- Accept the architecture above as the #194 implementation contract: public assistant-role contracts only; shared runtime/state/protocol; server-side SmartThings; named-action Termux; typed adapters with Prolog-owned semantics; sideload-first distribution.
+- Implementation order unlocked: #196 (assistant surface) and #197 (Compose shell) become eligible once #173 (ZARA/1 enrollment; deps #172/#159/#133 - #159 still open, feeding capability advertisement) and #172 (portable core) land per their declared dependencies.
+- No production implementation in this issue; this record is the gate.
+
+* #194 acceptance-criterion -> owning-issue mapping
+| #194 requirement area | Owning issue(s) |
+|---+---|
+| Assistant role, VIS services, onboarding, Side button, degraded state | #196 (hardware proof #206) |
+| Compose app surfaces (chat/voice/tasks/calendar/devices/settings/diagnostics) | #197 (+#206) |
+| Shared Prolog configuration authority, hot reload | #198 |
+| open_app / browser / YouTube / ChatGPT adapters | #199 |
+| Timer/alarm + calendar adapters (device + Zara) | #200 |
+| Termux named actions + results | #201 |
+| SmartThings server provider (OAuth/REST/webhooks/scopes) | #202 |
+| Voice lifecycle hardening (background, reconnect, audio routes) | #203 |
+| Prolog-defined cross-component commands without APK rebuild | #204 |
+| Adversarial Android/Samsung matrix | #205 |
+| Real Samsung acceptance + exact APK | #206 |
+| Runtime/foundation constraints (#132/#150/#151/#152/#159/#170-#179) | unchanged; honored by every child |
