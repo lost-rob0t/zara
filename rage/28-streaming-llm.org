@@ -1,0 +1,42 @@
+#+title: RAGE #28 - ZARA-027 stream LLM/agent output with cancellation-safe text events
+
+* Run identity
+- Consumed issue :: #28, [P2] ZARA-027 - Stream LLM and agent output with cancellation-safe text events.
+- Branch :: =perf/zara-027-streaming-llm= (issue-specified name).
+- RAGE start commit :: =dc51f12= (master after #226; includes =planning/backlog.pl= queue state resolving =next/1= to this issue).
+- Selection :: first eligible issue per =planning/backlog.pl= =next/1=. #134's re-entry assessment (merged via #226) names this issue the head of the voice/provider release chain blocking the P0 daemon gate #134; the roadmap order (phases 5-8) places ZARA-027 ahead of phase-8 model work.
+- Dependencies :: ZARA-016 closed (#224, 2026-08-29); ZARA-023 turn coordinator closed; ZARA-026 barge-in/cancellation closed. All satisfied.
+- Protocol :: AGENTS.md + =skills/rage/SKILL.md= + RAGE skill: immutable start SHA, research, design, TDD red/green per behavior, full local gate, exact-head Actions before merge.
+
+* Research
+** Current production behavior (at =dc51f12=)
+- =zara/agent/graph.py:187= :: the agent node calls =llm_with_tools.ainvoke(msgs)=, which buffers the complete =AIMessage=. The latency trace records =llm_first_token= with =buffered_proxy=True= (graph.py:199-205) - an explicit proxy marker awaiting this issue. First visible text is impossible today; first audio waits for the full model response.
+- Two LLM client stacks are in the voice path:
+  1. Agent/conversation path :: LangChain chat models bound with tools inside the LangGraph agent node (the conversational core behind =run_conversation_loop=, used by wake, desktop and daemon surfaces).
+  2. Direct query path :: =zara/llm.py= =LLMClient= (typed =LLMResult=, aiohttp, session reuse) used by =zara/wake.py= =query_llm_async= for non-agent queries.
+- Cancellation infrastructure exists (ZARA-026): turn coordinator with bounded mailboxes, true barge-in, stale-work cancellation. The streaming path must plug into existing turn cancellation, not invent a second one.
+- The pending user branch =wip/latency-trace-ctor= (preserved 2026-08-29, green) moves =latency_trace= from =AgentState= into node/graph constructor args. #28 rewrites the same node; realization must coordinate with that branch (rebase onto it or absorb its constructor-injection approach) rather than silently discarding user work.
+- =zara/llm.py= has no streaming endpoint support today; LangChain chat models expose native =astream()= yielding =AIMessageChunk= increments, including tool-call argument fragments.
+- TTS boundary today receives complete text (ZARA-026 ack aside); #29 (phrase-sized TTS player) is the downstream consumer of this issue's =sentence_ready= events and must not be blocked by this issue.
+** Library/authority findings
+- LangChain =astream()= is the provider-neutral mechanism for Anthropic/OpenAI/Ollama chat models; AIMessageChunk supports =+= accumulation. Tool calls surface as chunk fragments; user-facing speech must hold until a complete tool call plus result exists (issue requirement).
+- The one provider-neutral interface required by the issue is therefore a typed event protocol emitted by the agent node (LangChain-backed) and, secondarily, by =LLMClient=; both producers map their provider stream into the same event shapes. Rejected: making the LangGraph node depend on =zara/llm.py= internals (would fork the tool-binding path); adding a custom provider SDK layer (violates repo LangChain policy and duplicates ZARA-016-tested clients).
+** Failure modes to design against
+- Malformed/partial provider chunks; chunk errors mid-stream (must emit =failed=, close stream, keep history exact).
+- Cancellation mid-delta (must stop future deltas, close stream/session, emit =cancelled=; no orphan TTS chunks).
+- Tool-call fragments accidentally spoken (must never emit tool-call syntax as text deltas).
+- Abbreviations/URLs/code breaking naive punctuation chunking; unbounded clauses with no punctuation (max-length + max-wait thresholds force emission).
+- Unicode grapheme splitting at chunk boundaries.
+** Open questions for design
+1. Event delivery shape: async generator of typed events vs callback/queue. Candidate: bounded =asyncio.Queue= aligned with the actor-style turn coordinator (ZARA-023), preserving backpressure and cancellation semantics.
+2. Exact =sentence_ready= chunk policy: punctuation set, abbreviation guard list, max chars, max wait ms; how code/URLs suppress mid-URL breaks.
+3. How delivered-chunk tracking integrates with conversation history (exact final text persisted regardless of what was spoken).
+4. Whether =LLMClient= gains =stream_events_async= in this issue or the agent node alone satisfies the release chain (issue says implement for configured providers where supported; wake direct path is part of configured surface).
+
+* Design
+- In progress; must be recorded in a dedicated =rage/28-streaming-llm-design.org= artifact before implementation, with every acceptance criterion mapped to a planned test.
+
+* Iteration 1 - 2026-08-29
+** Analyze / Research
+- This file opened at =dc51f12=; research recorded above.
+- Next :: finish design artifact, map acceptance criteria to tests, then RED 1.

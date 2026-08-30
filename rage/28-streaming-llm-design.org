@@ -1,0 +1,47 @@
+#+title: RAGE #28 design - streaming LLM/agent output (ZARA-027)
+
+* Problem boundary and non-goals
+- Boundary :: make model output observable incrementally as typed, cancellation-safe events, with speakable sentence chunking, in both LLM producer stacks (LangChain agent node; =zara/llm.py= direct client), without corrupting history or leaking tool-call/protocol content.
+- Non-goals :: phrase-sized TTS playback and the persistent audio player (#29 consumes =sentence_ready=; this issue must not require it); provider/model configuration changes (ZARA-016 contract); tool-execution semantics changes (#209/#191 own approvals); daemon transport changes.
+
+* Selected architecture
+1. Typed event protocol (=zara/agent/stream_events.py=):
+   - =LLMStreamEvent= variants :: =text_delta(text)=, =sentence_ready(text, is_final)=, =tool_call_started(name, id)=, =tool_result(name, id)=, =completed(full_text)=, =cancelled=, =failed(error_type)=.
+   - Frozen dataclasses; no provider-specific fields; no raw protocol payloads.
+2. Streaming agent node :: =create_agent_node= gains optional =stream_publisher= (constructor injection, matching the preserved =wip/latency-trace-ctor= direction of constructor-injected =latency_trace=). When the LLM supports =astream=, the node iterates chunks, accumulates =AIMessageChunk=, publishes =text_delta= for content increments only (never tool-call argument fragments), emits =sentence_ready= via the chunker, and returns the exact aggregated =AIMessage= so LangGraph state/history semantics are unchanged. Non-streaming LLMs fall back to the existing buffered path (single =completed=; tested fallback).
+3. Sentence chunker (=zara/agent/sentence_chunker.py=, pure logic):
+   - Sentence break on =.!?…= followed by whitespace/end; guards: no break inside URLs (=http(s)://=, =www.=) or between digits+period (decimals), abbreviation guard set (e.g. ="Dr."=, ="e.g."=, ="i.e."=, ="vs."=, ="St."=).
+   - Force-flush at =max_chars= (default 180) on the last word boundary, and at =max_wait_ms= (default 500) on a timer so punctuation-less streams still emit.
+   - Unicode-safe: operate on str with grapheme-aware slicing via existing text utils; never split surrogate pairs (Python str is codepoint-safe; tests cover CJK/emoji).
+4. Event transport :: events are published through the existing runtime event publisher boundary used by the turn coordinator/runtime host (same backpressure/cancellation machinery as =runtime/events.py=), not a second bus. =run_conversation_loop= wires the graph publisher into the node.
+5. =zara/llm.py= producer :: =LLMClient.stream_events_async()= consumes provider SSE streams, yielding the same event types, with the non-streaming =query_async= retained as tested fallback. Cancellation and close reuse the ZARA-016 session lifecycle.
+6. History integrity :: the aggregated =AIMessage= (exact final text, including any post-chunk remainder) is the only thing persisted; delivered-chunk tracking rides on =sentence_ready= events (consumer-side reconciliation for #29); tool-call content never enters =text_delta=.
+
+* Rejected alternatives
+- Callback-based streaming API :: loses backpressure; bounded publisher queue already provides it.
+- Replacing =ainvoke= with a raw provider SDK inside the node :: duplicates ZARA-016-tested client stacks and violates the repo LangChain policy.
+- Emitting =sentence_ready= from inside =zara/llm.py= only :: the conversational release-chain path is the agent node; chunker must live in one shared pure module used by both producers.
+
+* Invariants
+- History text == exact concatenation of all provider text deltas (property-tested).
+- No =text_delta= is emitted while an incomplete tool call is being received.
+- Cancellation stops deltas within one chunk cycle and closes the provider stream.
+- =failed= and =cancelled= are mutually exclusive terminal events; every stream ends in exactly one terminal event.
+
+* Acceptance criteria mapped to tests
+| # | Criterion | Test |
+|---+-----------+------|
+| A1 | First text delta observable before completion | RED 1: fake =astream= LLM; recorded publisher sees >= 2 =text_delta= before node returns |
+| A2 | Sentence chunking: punctuation, abbreviations, URLs/code, no punctuation, long clauses, Unicode | chunker unit tests (pure logic) |
+| A3 | Tool calls pause speech until safe result exists | fake LLM emits tool-call chunks then result; no =text_delta=/=sentence_ready= contains tool syntax; =tool_call_started=/=tool_result= emitted |
+| A4 | Cancellation stops future deltas, closes stream | cancel mid-stream; =cancelled= terminal; no further deltas; stream closed |
+| A5 | Malformed/error mid-stream -> =failed=, exact partial history retained | error-injection fake |
+| A6 | Non-streaming fallback adapter | LLM without =astream= -> buffered path, single =completed= |
+| A7 | Final history exact, no protocol content | aggregated message equality; history excludes tool fragments |
+| A8 | =LLMClient= streaming events (Anthropic/OpenAI/Ollama fakes) + close | fake SSE servers; =scripts/test-streaming-llm.sh= |
+| A9 | Latency benchmarks extended: first token/first sentence | benchmark script emits both metrics |
+
+* Gate plan
+- Focused :: =pytest t/test_llm_streaming.py= (new), chunker tests, =scripts/test-streaming-llm.sh= (local fake servers only).
+- Full :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh=.
+- CI :: exact-head GitHub Actions on the PR; no stale-green merges.
