@@ -18,6 +18,8 @@
         timer_sound/1,
         alarm_sound/1,
 
+        wake_word/1,                % wake phrase accepted by the listener
+
         llm_provider/1,             % anthropic | openai | ollama
         llm_model/1,                % model name/ID
         llm_endpoint/1              % API endpoint URL
@@ -34,6 +36,7 @@
 :- discontiguous kb_config:llm_provider/1.
 :- discontiguous kb_config:llm_model/1.
 :- discontiguous kb_config:llm_endpoint/1.
+:- discontiguous kb_config:wake_word/1.
 :- dynamic app_mapping/2.
 :- dynamic direct_app/1.
 :- dynamic todo_destination/1.
@@ -42,6 +45,7 @@
 :- dynamic dictation_command/1.
 :- dynamic timer_sound/1.
 :- dynamic alarm_sound/1.
+:- dynamic wake_word/1.
 :- dynamic llm_provider/1.
 :- dynamic llm_model/1.
 :- dynamic llm_endpoint/1.
@@ -106,6 +110,18 @@ dictation_command(["zara-dictate"]).
 
 timer_sound("assets/sounds/timer.wav").
 alarm_sound("assets/sounds/alarm.wav").
+
+% ---- Wake Words ----
+% Phrases that activate the Python wake listener. Matching tolerates small
+% transcription errors (edit distance ~25% of the phrase length), so close
+% variants such as "Zaratustra" still trigger. Override or add in
+% ~/.zarathushtra/config.pl, e.g.: wake_word("jarvis").
+wake_word("zarathushtra").
+wake_word("zarathustra").
+wake_word("hey zara").
+wake_word("zara").
+wake_word("sarah").
+wake_word("sara").
 
 % ---- LLM Provider Configuration ----
 
