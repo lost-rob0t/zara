@@ -1,0 +1,291 @@
+#+title: ARADR Research - Local High-Fidelity TTS Voice Cloning and Creation
+#+date: 2026-08-29
+#+status: RESEARCH ONLY - architecture/design and implementation are not authorized by this document
+#+branch: research/aradr-local-tts-voice-cloning
+
+* Question
+Which local TTS systems are worth integrating into Zara when the target is very high perceived quality, reusable voice cloning, voice creation, and local execution across NVIDIA CUDA, CPU-only hosts, and AMD GPUs?
+
+The hardware requirement is a hard gate. A model is not a Zara default merely because upstream PyTorch could theoretically run it. CUDA, CPU, and AMD need an explicit supported or demonstrated path, and Zara must prove all three in its own smoke/bakeoff matrix before promoting a backend to default.
+
+* Scope
+This is the research stage of ARADR only.
+
+In scope:
+- high-fidelity local TTS;
+- zero/few-shot voice cloning;
+- creating new synthetic voices, including natural-language voice design where available;
+- reusable local voice assets;
+- CUDA, CPU, and AMD/ROCm viability;
+- latency and interactive-agent suitability;
+- licensing and redistribution/commercial constraints;
+- how the capability should fit Zara's existing TTS boundary;
+- a bakeoff that can falsify upstream quality claims.
+
+Out of scope for this slice:
+- implementing a backend;
+- choosing final public API names;
+- changing =TTSEngine=;
+- downloading model weights into the repository;
+- accepting an upstream benchmark as Zara's release proof;
+- replacing the existing voice/turn pipeline.
+
+* Existing Zara seam
+Zara already has the right place to integrate this work.
+
+- =zara/tts/engine.py= is already a provider-neutral TTS boundary. It supports =local=, =11labs=, =edge=, and =qwen3=; local currently selects Piper or espeak.
+- =zara/tts/qwen.py= already has rough voice operations in the Qwen-specific client: =upload_voice(...)= and =change_voice(...)= in addition to synthesis.
+- Existing TTS streaming work and live-voice work should remain authoritative for playback, cancellation, barge-in, and latency. Voice cloning must not create a second conversation/audio pipeline.
+- =scripts/benchmark-voice.py= already establishes Zara's latency-event vocabulary around =tts_request=, =tts_first_chunk=, and =tts_first_playback=. A real-model bakeoff should extend that measurement discipline instead of inventing unrelated timing semantics.
+
+Research implication: add provider capabilities and typed voice assets behind the existing TTS boundary later. Do not build a parallel "voice cloning service" that bypasses =TTSEngine= and the existing runtime.
+
+* Hard acceptance constraints
+A backend can be a normal Zara local backend only after it proves all of these:
+
+1. CUDA inference on Linux.
+2. CPU-only inference on Linux, even if slower than interactive realtime.
+3. AMD GPU inference on Linux. ROCm is preferred. A portable backend such as Vulkan/ONNX can count only if the exact Zara integration is maintained and tested; "PyTorch should work" does not count.
+4. Fully local inference after weights/assets are present; no required cloud inference path.
+5. Voice cloning from a short local reference clip.
+6. Stable reusable voice state or a deterministic way for Zara to reconstruct it from a voice manifest.
+7. Output quality high enough to survive a human blind A/B, not merely a MOS proxy.
+8. Bounded startup/inference/cancellation behavior suitable for Zara's runtime.
+9. License terms compatible with the intended Zara deployment. Code license and model-weight license are separate gates.
+10. No provider-specific raw filesystem path or Python object may become the long-term public Zara voice identity.
+
+* Candidate matrix
+The support column distinguishes upstream first-party support from community/stack evidence. "Conditional" means it must not be selected as Zara's default until the missing device leg is proven.
+
+| Candidate | Clone / create capability | CUDA | CPU | AMD | License concern | Zara research rank |
+|-----------+---------------------------+------+-----+-----+-----------------+--------------------|
+| GPT-SoVITS | 5s zero-shot clone; ~1 min few-shot tuning; training/data prep tools | upstream | upstream | upstream ROCm on Linux | MIT repo; audit transitive deps before redistribution | A - safest hard-gate baseline |
+| Qwen3-TTS | Base voice clone; reusable clone prompts; 1.7B VoiceDesign creates voices from natural-language descriptions | upstream | upstream device path | demonstrated on ROCm/community but not a clean first-party support promise | Apache-2.0 code; verify exact weight cards | A - best feature fit, conditional on AMD bakeoff |
+| Chatterbox Turbo/Nano/V3 | zero-shot cloning; Turbo agent focus; Nano CPU; V3 multilingual clone | upstream | upstream | community ROCm recipe; upstream issue history means not first-party enough yet | MIT | A - best live-agent candidate, conditional on AMD bakeoff |
+| F5-TTS v1 | reference-audio cloning; multi-speaker/style; training/fine-tuning available | upstream | code has CPU fallback/explicit device | upstream ROCm docs | code MIT; official pretrained weights CC-BY-NC | B - excellent technical control, bad default weight license |
+| Fish Audio S2 | reference-audio conditioning/cloning | upstream | upstream | upstream ROCm docs, verified RDNA4 | Fish Audio Research License; commercial use needs separate license | B/C - quality experiment, heavy/restricted |
+| CosyVoice 3 | multilingual/cross-lingual zero-shot voice clone, streaming | upstream | possible but not the target fast path | no sufficiently clear first-party ROCm path found in this research | verify before adoption | C - defer until AMD story is boring |
+| IndexTTS2 | zero-shot clone plus strong emotion control | upstream CUDA path | upstream CPU path, slow | no sufficiently clear first-party ROCm path found | current project uses custom Bilibili model license | C - defer |
+| Piper | fixed local voices; no high-fidelity clone workflow | depends build/runtime | excellent | portable builds possible | model-specific | fallback only, not this feature |
+
+* Candidate findings
+** GPT-SoVITS - strongest baseline under the hard portability rule
+The official project advertises:
+- zero-shot TTS from a 5-second vocal sample;
+- few-shot fine-tuning from about 1 minute of training data for improved similarity/realism;
+- integrated dataset tooling for separation, segmentation, ASR and labeling;
+- Linux installer device choices =CU126=, =CU128=, =ROCM=, and =CPU=;
+- reported v2 ProPlus RTF 0.028 on RTX 4060 Ti, 0.014 on RTX 4090, and 0.526 on an M4 CPU.
+
+This is the least hand-wavy candidate for the user's CUDA + CPU + AMD rule because ROCm is an explicit upstream install target, not an inferred torch behavior.
+
+Tradeoffs:
+- the stack is larger and more operationally complex than a small inference-only library;
+- few-shot tuning is a job, not an inline tool call;
+- the repository is MIT but there is an open upstream concern about a GPL transitive dependency. Zara must do an actual dependency/license audit before redistributing a bundled environment.
+
+Research role: baseline clone/voice-lab backend and portability reference implementation.
+
+Sources:
+- https://github.com/RVC-Boss/GPT-SoVITS/blob/main/README.md
+- https://github.com/RVC-Boss/GPT-SoVITS/blob/main/install.sh
+- https://github.com/RVC-Boss/GPT-SoVITS/blob/main/LICENSE
+- https://github.com/RVC-Boss/GPT-SoVITS/issues/2776
+
+** Qwen3-TTS - strongest exact match for "clone and create voices"
+Qwen3-TTS exposes distinct model capabilities behind one family:
+- =Base=: =generate_voice_clone()= and =create_voice_clone_prompt()=;
+- =VoiceDesign=: =generate_voice_design()= from a natural-language description;
+- =CustomVoice=: named/preset custom voice generation.
+
+The Base model can extract a reusable prompt containing reference speech codes and a speaker embedding. Its ICL clone mode uses reference audio plus transcript; x-vector-only mode can avoid the transcript at lower conditioning fidelity.
+
+The most interesting Zara workflow is explicitly documented upstream: generate a short reference clip with VoiceDesign, convert that synthetic clip into a reusable Base clone prompt, then use that prompt as a consistent character voice. That directly maps to "create a new voice" rather than only copying a real person.
+
+Portability status:
+- official CLI exposes =--device cpu= as well as CUDA;
+- ROCm execution is real enough to have reproduced upstream PyTorch ROCm bugs with Qwen3-TTS and there are working community AMD packages/recipes;
+- however, the official Qwen3-TTS documentation is still CUDA-centric and does not currently provide the same explicit ROCm support contract as GPT-SoVITS or F5-TTS.
+
+Therefore Qwen3-TTS does NOT pass Zara's AMD hard gate yet. It gets a priority portability spike, not a free pass.
+
+Known failure worth testing: an open July 2026 issue reports ICL voice cloning sometimes echoing the last words / first 1-2 seconds of the reference audio before the requested text. Zara must include reference-tail leakage in its clone stability test.
+
+Sources:
+- https://github.com/QwenLM/Qwen3-TTS/blob/main/qwen_tts/inference/qwen3_tts_model.py
+- https://github.com/QwenLM/Qwen3-TTS/blob/main/qwen_tts/cli/demo.py
+- https://github.com/QwenLM/Qwen3-TTS/issues/341
+- https://github.com/pytorch/pytorch/issues/186174
+- https://github.com/trevortai/Qwen3-TTS-AMD
+
+** Chatterbox - strongest live conversational candidate if ROCm proves clean
+Current upstream model zoo is unusually aligned with Zara:
+- Turbo: 350M, designed for low-latency English voice agents, single-step speech-token-to-mel decoder, high-fidelity output, native tags such as =[laugh]= and =[chuckle]=;
+- Nano: 110M, targets CPU/on-device inference and upstream reports 3x realtime on 8 CPU cores;
+- Multilingual V3: 500M, 23+ languages, improved speaker similarity, reduced hallucination, more natural multilingual speech and cross-language voice cloning;
+- zero-shot cloning uses an =audio_prompt_path= reference clip.
+
+The repository is MIT.
+
+AMD is the blocker. Community instructions demonstrate Chatterbox on ROCm by replacing the pinned PyTorch wheels and testing on Radeon hardware, but this is not the same thing as an upstream-supported AMD matrix. An older upstream issue explicitly requested ROCm support. Zara should treat ROCm as conditional until its own Nix/dev environment runs the exact model without CUDA-only assumptions.
+
+Research role: first live-agent bakeoff candidate; Nano is also a serious CPU fallback if its voice quality survives human comparison.
+
+Sources:
+- https://github.com/resemble-ai/chatterbox/blob/master/README.md
+- https://github.com/resemble-ai/chatterbox/blob/master/LICENSE
+- https://github.com/resemble-ai/chatterbox/issues/445
+- https://github.com/resemble-ai/chatterbox/issues/52
+
+** F5-TTS v1 - technically portable, licensing blocks the obvious default
+F5-TTS is a strong clone/control implementation:
+- inference takes reference audio + reference transcript + generated text;
+- supports chunk inference and multi-style/multi-speaker generation;
+- code exposes explicit device selection and falls back to CPU;
+- upstream installation documents both CUDA and ROCm, including ROCm 7.x guidance for RDNA 3.5/4 and ROCm 6.2 guidance for older RDNA generations;
+- upstream L20 benchmark reports 253 ms average client/server latency and PyTorch offline RTF 0.1467 for the documented benchmark configuration.
+
+The blocker is licensing: code is MIT, but official pretrained weights are CC-BY-NC because of the Emilia training data. Those weights are not a safe default for a generally distributable/commercial Zara configuration. F5 remains useful as a quality/portability comparator or with differently licensed weights.
+
+Sources:
+- https://github.com/SWivid/F5-TTS
+- https://github.com/SWivid/F5-TTS/blob/main/src/f5_tts/api.py
+
+** Fish Audio S2 - real ROCm support, but heavy and license-restricted
+The current Fish Speech documentation now has a real ROCm path:
+- CUDA and CPU installs;
+- an AMD ROCm Docker path based on =rocm/pytorch=;
+- verified RDNA4 Radeon AI PRO R9700 / gfx1201 with ROCm 7.2.3; docs say RDNA3 should also work;
+- reference audio is converted into VQ tokens and used with prompt text/tokens for conditioned generation.
+
+But it recommends at least 24 GB GPU memory for inference, and its March 2026 Fish Audio Research License allows research/non-commercial use while commercial use requires a separate license.
+
+Research role: quality-ceiling comparator, not the default Zara backend.
+
+Sources:
+- https://github.com/fishaudio/fish-speech/blob/main/docs/en/install.md
+- https://github.com/fishaudio/fish-speech/blob/main/docs/en/inference.md
+- https://github.com/fishaudio/fish-speech/blob/main/LICENSE
+
+* Research recommendation
+Do not choose one monolithic "Zara TTS model" yet. Advance a three-candidate bakeoff with different intended roles:
+
+1. GPT-SoVITS as the portability-safe baseline and voice-lab implementation.
+2. Qwen3-TTS as the preferred voice-design + clone family IF it passes the AMD/CPU matrix cleanly.
+3. Chatterbox Turbo/Nano/V3 as the preferred conversational inference family IF its ROCm path is maintainable in Zara.
+
+Use F5-TTS as an additional quality/portability control during evaluation, but do not promote its official CC-BY-NC weights to the default distribution. Use Fish S2 only as a high-resource quality comparator unless its licensing strategy changes.
+
+This recommendation deliberately leaves room for a split backend:
+- a voice can be created/trained by one provider;
+- a manifest can preserve source/provenance and provider-specific artifacts;
+- realtime synthesis can use the compatible provider for that voice asset;
+- no model should be silently converted across providers unless identity/quality is revalidated.
+
+* Voice capability surface to preserve for design
+The user wants only a few Zara-facing tools. Research suggests four conceptual user tools are enough; exact API names belong to design:
+
+1. *Clone voice* - ingest one or more reference recordings, validate/normalize them, optionally obtain/transcribe reference text, preview a clone, then save a versioned voice asset.
+2. *Design voice* - describe a new synthetic voice in natural language, generate several candidates, audition them, and save the selected candidate as a reusable voice asset. Qwen3 VoiceDesign is the first backend that must be evaluated for this capability.
+3. *Preview/compare voice* - synthesize the same controlled phrase with a selected voice/backend/settings, including blind A/B for quality evaluation.
+4. *Manage voices* - list, inspect, rename/version, export, and delete local voice assets.
+
+Long-running fine-tuning should NOT be modeled as a blocking chat tool. If design later enables GPT-SoVITS/F5 training, it should be a bounded asynchronous runtime job/actor with progress/cancel/result state, while the LLM-facing tool starts or inspects the job.
+
+* Voice asset requirements
+A future Zara voice should be a typed local asset with a stable Zara identity, not a provider string such as =zara= and not a raw Python embedding.
+
+Research minimum manifest fields:
+- Zara voice id and human label;
+- origin: =clone=, =designed=, =trained=, or =preset=;
+- provider/backend and exact model/version/hash;
+- hardware-independent source references where possible;
+- reference transcript when required by the backend;
+- preprocessing/resampling recipe;
+- provider-specific reusable artifact location/hash;
+- creation time and schema version;
+- license metadata for the model/voice artifact;
+- consent/provenance declaration for cloned human voices;
+- evaluation results per backend/device.
+
+Provider-specific tensors/embeddings/prompts remain private implementation artifacts referenced by the manifest. Zara code and the agent should use the stable voice id.
+
+* Privacy and abuse boundaries
+Voice cloning is an impersonation-capable feature. Local-first does not remove the need for explicit provenance.
+
+Design must preserve these constraints:
+- cloning a real person's voice requires an explicit rights/consent assertion at creation time;
+- store =origin= and provenance with the voice asset; do not let a clone silently masquerade as a designed synthetic voice;
+- reference recordings, embeddings/tokens, and generated clone artifacts are private principal-scoped assets;
+- raw reference audio and embeddings must not be written into ordinary logs, latency metrics, prompts, or error bodies;
+- remote protocol surfaces should pass Zara resource/attachment ids, not arbitrary daemon filesystem paths;
+- deleting a voice must define whether source audio, derived embeddings/tokens, fine-tuned checkpoints, previews, and caches are deleted together;
+- export must preserve provenance/license metadata;
+- remote/cloud providers must never be used as an implicit fallback for a local-only voice operation.
+
+* Bakeoff plan before architecture approval
+The next ARADR stage should consume measured Zara evidence, not upstream marketing.
+
+** Device matrix
+Each finalist must be run on:
+- one NVIDIA CUDA Linux host;
+- one supported AMD ROCm Linux host;
+- one x86_64 CPU-only Linux host with GPU access disabled.
+
+Record exact GPU/CPU, driver, ROCm/CUDA, PyTorch/runtime, model revision and precision. A model that requires per-card magic must state it in the backend probe/manifest rather than hide it.
+
+** Reference corpus
+Use consented/synthetic references with at least:
+- clean 5-second sample;
+- clean 10-15 second sample;
+- 30-second sample where accepted;
+- reference with punctuation and proper nouns;
+- a deliberately noisy sample to test rejection/quality warning behavior;
+- at least one voice not present in obvious demo material.
+
+** Synthesis corpus
+Same text for every backend:
+- short conversational acknowledgement;
+- numbers, dates and abbreviations;
+- names/proper nouns;
+- question + exclamation/emotional line;
+- long paragraph for drift/repetition/hallucination;
+- sentence whose first words differ strongly from the reference tail to expose Qwen-style leakage;
+- multilingual/cross-language line only for models claiming it.
+
+** Measurements
+Per backend/device/case record:
+- cold load time;
+- warm synthesis time and real-time factor;
+- time to first playable audio/chunk where streaming exists;
+- peak RAM and VRAM;
+- cancellation latency and cleanup;
+- output sample format;
+- ASR WER/CER as an intelligibility proxy;
+- speaker-embedding similarity as a clone-identity proxy;
+- NISQA/DNSMOS-like quality proxy if practical;
+- hallucinated/repeated/omitted text rate;
+- reference-tail leakage;
+- deterministic failure/recovery behavior.
+
+Objective metrics only screen failures. Final quality gate is a randomized blind human A/B/MOS pass because "very very good" is perceptual and speaker-dependent.
+
+** Promotion rule
+A default Zara backend must pass the same functional clone suite on CUDA, CPU, and AMD. It may use different optimized kernels/packages per device, but the voice asset semantics and output contract must remain the same. A backend with an unmaintained community-only AMD patch remains experimental even if it wins quality.
+
+* Questions the next stage must answer with experiments
+1. Does Qwen3-TTS Base + VoiceDesign run reliably on the target AMD class under Zara's Nix environment without CUDA-only FlashAttention assumptions?
+2. Is Chatterbox ROCm maintainable without permanently pinning an obsolete torch/ROCm combination?
+3. Which of GPT-SoVITS, Qwen3-TTS and Chatterbox wins blind naturalness and clone similarity for Zara-style short conversational replies?
+4. Is Chatterbox Nano actually good enough to become the CPU fallback, or is its speed advantage bought with an audible quality drop?
+5. Does Qwen3's Design -> Clone pipeline preserve a created character consistently across many turns and process restarts?
+6. How often does Qwen3 ICL clone exhibit reference-tail echo on Zara's corpus?
+7. Can GPT-SoVITS inference be packaged narrowly enough for Zara without dragging its full training WebUI/runtime into the normal daemon?
+8. What exact licenses attach to every chosen model weight and transitive runtime dependency at the pinned revisions?
+
+* Research conclusion
+There is no reason to settle for Piper-quality local speech, and there is also no reason to make Zara depend on a CUDA-only cloning demo.
+
+The strongest immediately defensible portability baseline is GPT-SoVITS because upstream explicitly supports Linux CUDA, ROCm and CPU while providing zero-shot and few-shot cloning. Qwen3-TTS is the most compelling product fit because it uniquely combines high-quality cloning with natural-language VoiceDesign and reusable clone prompts, and Zara already has a Qwen TTS seam; however it remains conditional until AMD is proven in Zara. Chatterbox is the most compelling low-latency conversational candidate, with a particularly attractive CPU Nano model, but its AMD support is currently community-proven rather than first-party enough for the hard gate.
+
+Next action is a hardware bakeoff/portability research slice. Architecture should only select defaults and finalize the four-tool/voice-asset contract after those measurements exist.
