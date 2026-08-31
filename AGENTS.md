@@ -119,6 +119,22 @@ Do not game coverage. Never weaken assertions, add meaningless execution-only te
 - Plugin loader expects tools to be `langchain_core.tools.BaseTool` instances.
 - Avoid custom tool registries; prefer LangChain `tool` or `StructuredTool`.
 
+## External service-plugin configuration
+
+- External service plugins own their private configuration under
+  `$XDG_CONFIG_HOME/zarathushtra/plugins/<plugin-name>/` (falling back to
+  `~/.config/zarathushtra/plugins/<plugin-name>/`). Do not move plugin-owned
+  settings into Zara's root configuration or expose them through diagnostics.
+- Zara service-plugin discovery still uses public Python entry files in the
+  configured `[modules].search_paths` (the default is
+  `~/.zarathushtra/plugins/`). An installed entry may load implementation and
+  dependency files from its private XDG plugin directory.
+- `zara-discord` is an external `ServicePlugin`: its Discord token is a
+  bootstrap secret supplied through `ZARA_DISCORD_TOKEN` or its mode-0600
+  `token` file; its guild access and channel policy are Discord-owned state
+  managed by slash commands. Do not add that token or policy to Zara source,
+  fixtures, logs, or commits.
+
 ## System Prompt
 - System prompt is configured in `config.toml` under `[agent].system_prompt`.
 - If the value is a filepath, it should be read from disk.
