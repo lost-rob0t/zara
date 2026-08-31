@@ -1,0 +1,78 @@
+#+title: RAGE #156 - Prolog IntentFrame adaptation + canonical command corpus
+
+* Run identity
+- Consumed issue :: #156, P1 - adapt Prolog resolution to IntentFrame and establish the canonical realistic command corpus (parent epic #150; depends #155 closed; integrates #122, kb/intents.pl, modules/intent_resolver.pl, PrologEngine).
+- Branch :: =rage/156-prolog-frames=.
+- RAGE start commit :: =55b3bb8= (master =f053f41= after PR #236 merged #155; backlog regenerated post-merge).
+- Queue state at consumption :: verified with Prolog MCP against regenerated =planning/backlog.pl=: =queue=[100-134,301-216,306-122,400-149,502-156,900-87,...]; strict phase-rank head is #134 (P0 daemon release gate) - owner continues driving the Android chain (standing directive); =blockers(156)=none=; epic #150 progress 2/8 after #155.
+- Mode :: repository Auto-RAGE per #194.
+- Contract :: =docs/intentframe-contract.md= (NORMATIVE v1). Prior slices :: #154 contract, #155 host clarification machine (PR #236, merge =f053f41=).
+
+* Research
+
+** Current resolver surface (verified at f053f41)
+- =intent_resolver:resolve/3,4= (modules/intent_resolver.pl:18-41): normalize_string -> strip_fillers -> state_control special cases -> timer special case -> hello -> todo_search -> canonicalize -> resolve_canonical. Returns =(Intent, Args)= with =Intent= an atom, =python(Skill)=, or =pending(PendingIntent)=.
+- =missing_slots/3= (lines 66-73): the one-off pending table (open->[app], text->[contact,message], text+1 arg->[message], schedule->[task]). "set a timer" never yields pending: =parse_timer_command/3= requires Amount+Unit, else falls through to =verb_intent(timer,timer,rest)= with =Args=[]= (kb/intents.pl:158).
+- =adapt_intent_result= (zara/prolog_engine.py:63-76): pending/python/prolog split; wake path (zara/wake.py:971-1014) branches on kind with =PENDING_DIALOGUE_TEMPLATES= mapping =open=/=text=/=python(schedule_todo)= to #155 templates; unknown pending shapes keep the legacy prompt.
+- PrologEngine marshalling: =_compound_parts= accepts pyswip compounds or "name(args)" strings; =resolve_intent= builds a goal string =intent_resolver:resolve(Text, State, Intent, Args)=.
+- Normalizer (modules/normalizer.pl): ASCII-only keep_code (252-257) - Unicode deletion is a recorded defect (#154 research finding 9); full Unicode-preserving normalizer is part of the portable core work but #156 must not regress on ASCII paths.
+- #155 templates: =TIMER_SET_TEMPLATE= (duration required, label optional), =OPEN_APP_TEMPLATE= (target ref), =TEXT_MESSAGE_TEMPLATE= (contact ref + message text), =SCHEDULE_TODO_TEMPLATE= (task text) - the Python-side dialogue templates are the authoritative slot schemas for the compat boundary.
+- Contract section 2: =frame(intent(ns(NS),name(N)), Slots, Status)=; slot/3 =slot(name(S), value(V), origin(O)); typed values text/1, number/1, duration/1, datetime/7, ref/2, boolean/1; statuses complete/missing/ambiguous/invalid/cancelled/superseded. =resolve_frames(+Text, +State, +Context, -Frames)= pure; Context = [] or partial_frame(Frame0, Missing) when a clarification session is open.
+- Trealla constraint: plain compounds + lists only (no dicts), verified in #154 research.
+- Latency traces record route events; structured metrics must not contain transcript text (AGENTS.md wake-loop rules).
+
+** Research questions
+1. Where does frame construction live? -> In Prolog: =resolve_frames/4= wraps the existing deterministic resolution and projects the result into frame/3 + typed slots. The legacy =resolve/4= stays for the compatibility boundary (single projection point in Python =adapt_frame_result=, not spread across callers).
+2. How do bare-verb missing frames get produced? -> Per-intent slot schema facts in the portable core (frame_slot_spec) consulted by the resolver; bare verb head with required slots unfilled -> status=missing([Names]) with prefilled slots carried through (fixes the "text sarah loses sarah" defect at the Prolog layer).
+3. What about #155's Python dialogue templates? -> They remain the dialogue-layer schema; the compat boundary maps resolver frames onto them by intent name (single mapping table, tested for drift).
+4. Corpus format? -> One checked-in declarative Prolog corpus file with cases: utterance, state, expected frames; consumed by a Python driver test over =PrologEngine= (SWI runtime) and reusable by #172 Trealla fixtures. Deterministic repeated runs.
+5. Compatibility for ask/python skills/unsupported intents? -> ask -> LLM conversation fallback status (no frame; resolver returns empty or a conversation frame per contract ns(conversation)); python(skill) -> ns(skill) frame with text slots (compat boundary knows the skill names); unsupported -> no frame (existing no_match semantics).
+
+** External research
+- No new external sources needed this slice; #154's Alexa/Dialogflow/Rasa findings stand (slot maps as durable representation; service owns dialog model). Contract + #155 design are the authoritative inputs.
+
+* Design (decisions)
+- D1 :: New portable module =modules/intent_frames.pl= defining =resolve_frames(+Text, +State, +Context, -Frames)= as the only new public entry point. Pure: no assert/retract, no I/O, no dynamic goals from user strings. Reuses =normalizer= normalization + =kb_intents= verb tables (single verb authority, D6 of #154 design).
+- D2 :: =frame_intent/3= projection: legacy =(Intent, Args)= -> =frame(intent(ns(NS),name(N)), Slots, Status)=. ns mapping: timer/alarm/lock etc -> device; open/launch -> app; text/message -> message; search/find -> web; hello/stop/ask-style -> conversation; python(Skill) -> skill; dictation -> dictation; play/pause etc -> media. Unknown verbs keep =resolve/4= behavior (no frame).
+- D3 :: Slot schemas in Prolog =frame_slot_spec(Intent, SlotName, Type, Required)= for the shipped built-ins (timer.set: duration required, label optional; open: target ref(app_alias) required; text: contact ref(contact) + message text required; search: query text; schedule_todo: task text). Bare verb with unfilled required slots -> =missing([Names])= and prefilled slots keep values with origin(utterance) - bare "set a timer" becomes a typed missing-duration frame.
+- D4 :: Context handling: =Context=[]= -> resolve from scratch. =partial_frame(Frame0, Missing)= -> the follow-up text is parsed for the FIRST missing slot's type only (duration/text/ref/number); unambiguous parse -> frame completes with origin(follow_up); invalid -> =invalid(SlotName, reason)=; ambiguity -> =ambiguous(Alternatives)=. Correction markers ("actually ...") -> origin(correction) on replaced slot.
+- D5 :: Cancellation: stop/cancel phrases in context resolve to =frame(intent(ns(conversation),name(cancel)), [], complete)= and the open frame becomes superseded at the HOST layer (#155 already owns that; resolver only emits the cancel frame).
+- D6 :: Compatibility boundary: =zara/prolog_engine.py= gains =resolve_frames()= returning a typed Python mirror (same shapes as zara/runtime/frames.py) and =adapt_frame_result=; =wake.py= pending branch migrates to frames when the resolver returns them, keeping the #155 templates as the dialogue schema. Legacy =resolve_intent= path stays for non-frame callers (console/command_loop) - isolated, not authoritative.
+- D7 :: Corpus: =kb/corpus.pl= (or =planning/corpus.pl=) one case/6 table: =corpus_case(Id, Utterance, State, Context, ExpectedFrames, Tags)= covering the issue's minimum set (timer complete/pending/correction/cancel; open complete/pending; text complete/pending; search; memory; screenshot/device; unavailable; quoted/literal; question/conversation non-hijack; misspellings only via #122). Python driver =t/test_semantic_corpus.py= runs every case through PrologEngine on SWI and asserts normalized frame equality (evidence excluded per contract comparator rules).
+- D8 :: Evidence: bounded =evidence(resolver, Steps)= derived from deterministic rule names only (verb_head, unit_normalization, slot_fill, correction_marker). No LLM internals.
+- D9 :: Keep #122 upstream: rewritten text is input; resolver never accepts slot/provider names from rewrite metadata.
+
+* Threat / failure analysis
+- Dynamic goal injection :: resolver builds no goals from user strings; corpus case asserts =no dynamic goal= by construction (pure pattern matching only).
+- Unbounded slot text :: literal slot content bounded (<= 512 chars at the compat boundary; corpus case pins it).
+- Unicode regression :: corpus includes punctuation-heavy and non-ASCII cases with documented current-normalizer behavior (ASCII deletion remains the recorded defect; portable Unicode normalizer is #172/#122 follow-up, but corpus must not silently encode ASCII-deleted expectations as "correct").
+- Determinism :: repeated corpus runs byte-identical (test asserts run-twice equality).
+- Legacy fixtures :: existing intent fixtures keep passing through the compat boundary (documented mapping, no behavior fork).
+- Precedence conflicts :: state_control phrases outrank verb frames (stop/end before anything); corpus pins precedence.
+
+* Adversarial review
+- "open firefox" with an app named "stop" -> state_control(passive,[stop|_]) only fires on verb-head stop; "open stop" keeps open frame. Corpus pins it.
+- "set a timer for zero seconds" -> duration(0) is valid (non-negative); huge (> 7 days) -> invalid(value(duration), out_of_range). Corpus pins both.
+- Empty/whitespace -> no frames (no crash).
+- "text stop" -> contact ref "stop" - slot text containing command words must not hijack: frame slot is inert text/ref; corpus pins.
+- Ambiguous verbs ("run" maps in kb to open and also schedule?) -> resolver picks deterministic first-match by verb_intent clause order; corpus pins.
+- #122 rewrite upstream -> corpus includes a rewritten-input case where the rewrite only changes tokens, not slot authority.
+
+* Test matrix (corpus ids map to t/test_semantic_corpus.py + t/test_intent_frames_prolog.py)
+- (TDD evidence appended below)
+
+* Gates
+- Focused: pytest t/test_semantic_corpus.py + t/test_intent_frames_prolog.py + Prolog load gate.
+- Full: scripts/test-all.sh, nix flake check, nix build, exact-head CI, android job where packaging changes.
+
+* TDD / gate evidence
+- RED (corpus) :: =t/test_semantic_corpus.py= + =kb/semantic_corpus.pl= written before the resolver; =ModuleNotFoundError: decode_frame_list= then engine decode failures (expected red).
+- GREEN (resolver) :: =modules/intent_frames.pl= + engine adapter; 86/86 corpus tests (40 case + 40 determinism + 6 structural/mirror).
+- Debugging evidence (Prolog MCP + swipl probes, preserved in iteration narrative) :: (a) SWI parses =timer.set= as dict-access syntax -> all dotted intent names must be quoted atoms; (b) swapped head/body variables in =label_rest= produced phantom 'for' labels -> fixed; (c) =frame_head_/2-4= lacked recursion past the first token -> fixed via =frame_head_/3= wrapper; (d) =verb_intent(set, python(schedule_todo), rest)= exists in the KB, so legacy timer precedence (memberchk(timer) before head selection) is mirrored to keep "set a timer" a timer frame; (e) =missing_required= failed instead of returning [] on complete frames -> findall form; (f) pyswip stringifies nested compounds, so decoding goes through flat =frame_head_row/9= / =frame_slot_row/8= projections (atoms, integers, lists of atoms only); (g) =python(Skill)= intents need an unwrap clause in =frame_from_args=.
+- RED (adapter) :: =t/test_prolog_frame_adapter.py= round-trip/context/injection tests before adapter completion.
+- GREEN (adapter) :: 10/10; corpus + legacy adapter + routing = 118 passed. Fixes: bounded slot text (512 chars) on fresh frames (=bounded_atom/2= for rest/text/ref/label paths); intent_resolver consulted in the adapter fixture; the injection utterance resolves to an inert ref slot (no throw) - the security property is non-execution, asserted directly.
+- Full local gate :: =scripts/test-all.sh= 10/10 phases; =nix flake check= green; =nix build= green.
+- Migration notes :: =text_quoted_command_words= expectation adjusted ('now' is a normalizer filler; deterministic current behavior); =timer_negative= pinned as =known_behavior_sign_stripped= (normalizer removes '-'; negative rejection is host-side via frames.py validators); bare "set a timer" now yields a typed missing-duration frame (previously None -> LLM fallback) - documented intentional migration; "search todos milk" now yields skill/search_todos with the todo word omitted (legacy kept it) - documented intentional migration.
+
+* Outcome
+- (pending)

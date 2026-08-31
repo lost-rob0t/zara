@@ -98,4 +98,7 @@
 - Observation :: =t/test_zmq_transport_route_backpressure.py::test_stalled_route_completion_queue_cannot_evict_healthy_route= failed once under full-suite load and in one burst of repeat runs; 23/23 passes across controlled re-runs with the full change applied (and 11/11 with subsets). No import path connects the changed modules to that test; recorded as a load-sensitive test, not a regression of this slice.
 
 * Outcome
-- (pending)
+- PR :: #236 (=Closes #155= in body). CI green on exact pre-update head =0f5734b= (run 33407981976); master moved to =ec89bd4= (PR #235) so =gh pr update-branch= rebased the PR to =7c31c45= and the full check suite was re-watched green on run 33408876380 (exact updated head).
+- Merge :: merged on green as master commit =f053f41f2997a8c4054baef5238a84554d0826d8= (merge of PR #236). Post-merge master CI: run for =f053f41= (see below).
+- Scope note :: machine-level coverage of bare-timer ("set a timer" -> ask duration) is delivered by the timer.set template; the resolver-side frame production for bare-timer utterances lands with #156's =resolve_frames/4= corpus. events.IntentResolved emission remains #173 scope (A6).
+- Post-merge :: master CI all green on =f053f41= (test, android skeleton gate, shared mic Arch/Ubuntu). Issue #155 CLOSED. Backlog regenerated post-merge and verified in Prolog: #155 removed from queue; =blockers(156)=none=; epic #150 progress 2/8; next Android-chain slice = #156 (rank 502-156); strict phase-rank head remains #134 (owner continues driving the Android chain).
