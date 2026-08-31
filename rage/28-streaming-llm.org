@@ -132,3 +132,15 @@
 - =nix build= :: zarathushtra-full built successfully.
 - Commits :: =a4ccec2= (events+chunker), =24643d7= (streaming node+client+gates),
   =aa5c396= (RAGE evidence + wiki).
+** Merge closeout
+- PR :: #237 (perf/zara-027-streaming-llm-impl -> master).
+- Exact-head CI :: run 33415067554 (head =c72a930=) all checks passed; branch was
+  BEHIND master on merge attempt, so master was merged in (=14a6fdf=), the full
+  local gate re-ran (ALL PHASES PASSED), and run 33416715438 for the exact new
+  head =14a6fdfdf0b5a1d165ffdb1986f71e89b4d84d00= passed all checks before merge.
+- Merge SHA :: =1ff26122e32baba1446f6a07461a668412db6afc= (2026-08-31).
+- Consumed issue :: #28 closed automatically by the merge.
+- Outcome :: ZARA-027 shipped. ZARA-016/ZARA-023/ZARA-026 dependency chain
+  intact; =sentence_ready= available for #29 (phrase-sized TTS player); no
+  daemon protocol semantics, tool approval, or Prolog-RLM changes.
+- Next :: re-read the issue queue before consuming another issue.
