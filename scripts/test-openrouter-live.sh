@@ -47,7 +47,7 @@ async def main() -> None:
     result = await client.query_async(
         "Reply with exactly one word: acknowledged",
         system_prompt="You are a smoke test. Obey the instruction exactly.",
-        max_tokens=16,
+        max_tokens=512,
     )
     await client.close()
 

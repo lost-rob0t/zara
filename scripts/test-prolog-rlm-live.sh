@@ -65,7 +65,7 @@ live :-
     ),
     get_time(End),
     Duration is End - Start,
-    format("intent=~w args=~w duration=~2f s~n", [Intent, Args]),
+    format("intent=~w args=~w duration=~2f s~n", [Intent, Args, Duration]),
     (   Intent == ask
     ->  format(user_error,
                "WARNING: model returned a non-canonical rewrite (ask fallback)~n", [])
