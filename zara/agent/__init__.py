@@ -132,6 +132,17 @@ class AgentManager:
                 max_retries=2,
             )
 
+        if provider == "openrouter":
+            from langchain_openai import ChatOpenAI
+            api_key = llm_config.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")
+            return ChatOpenAI(
+                model=model or "openrouter/free",
+                api_key=api_key,
+                openai_api_base=endpoint or "https://openrouter.ai/api/v1",
+                timeout=60.0,
+                max_retries=2,
+            )
+
         if provider == "ollama":
             from langchain_ollama import ChatOllama
             base_url = endpoint.replace("/api/chat", "") if endpoint else "http://localhost:11434"

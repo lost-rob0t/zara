@@ -15,9 +15,10 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from zara.principals import PrincipalContext
 from zara.runtime import events
 from zara.runtime.commands import SubmitTurn
-from zara.server import PrincipalContext, PrincipalMismatch
+from zara.server import PrincipalMismatch
 from zara.streaming_stt import (
     FinalTranscript,
     PartialTranscript,
