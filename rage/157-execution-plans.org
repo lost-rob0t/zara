@@ -292,3 +292,66 @@ already (all Prolog tests are flake-gated). Verdict: no change.
 
 Review outcome: design stands with Attack 2/3/5 caveats documented. Proceed
 to TDD.
+
+** TDD / implementation evidence
+
+*** RED 1 (plunit) — t/capability_plans.pl written first
+31 tests, all failing with "Unknown procedure:
+capability_plans:plan_for_frame/3" (modules absent), zero singleton warnings.
+Commit of tests-first state rode the implementation commit (single feat
+commit; red output captured here).
+
+*** GREEN 1 — kb/capabilities.pl + modules/capability_plans.pl
+Commit 3da07e5. 34 plunit tests green. Defects caught and fixed by the red
+suite before it could ship:
+- if-then-else COMMIT silently picked the first device candidate instead of
+  producing typed ambiguity (two-devices case) — exactly the silent pick the
+  design forbids; fixed with has_device_candidate guard + enumeration.
+- decide/8 clause 2 bound _Intent in the head but called
+  denied_plan(Intent, ...) — denied plans would have carried FREE intent
+  variables; the singleton-variable warning exposed it (assertion patterns
+  had masked the defect).
+- stale_adjust emitted a bare [] instead of evidence([]).
+- plan_text_bound was used as an arithmetic function (must call as predicate).
+- unavailable reasons redefined during red: declared-but-unreachable is
+  provider_unavailable; no_provider reserved for nothing-declared (KB is the
+  authority on what could serve).
+
+*** RED 2 (pytest) — boundary/mirror/executor tests first
+All three files failed collection: ModuleNotFoundError: zara.runtime.plans.
+
+*** GREEN 2 — zara/runtime/plans.py + PrologEngine plan boundary
+Commit 205da6e. Defect found while wiring:
+- encode_frame_term emitted slot(name(X), V, origin(O)) WITHOUT the
+  value(...) wrapper - inconsistent with the contract's slot/3 and with
+  intent_frames' own terms. Existing consumers never read input slot values
+  so it went unnoticed; the plan layer reads them and failed closed.
+  Fixed to the contract shape; all pre-existing frame/clarification suites
+  still green (173 tests with the new files).
+- plan_head_row extended 12 -> 13 columns to project Evidence (the mirror
+  must carry structured evidence); export list and plunit updated together.
+
+*** Vocabulary alignment (attack 6)
+t/test_capability_plans.py::test_requires_auth_vocabulary_matches_security_capability
+pins provider requires_auth atoms to zara/security.Capability values
+(admin_restart uses 'daemon.admin').
+
+*** Property-style coverage (issue gate)
+plunit loops: every declared KB intent yields a typed plan under an empty
+environment (never a crash, never an untyped result); candidates are always
+ordered by descending priority across every intent in the fully-available
+environment; unknown facts (unknown intent, ghost provider ids) yield empty
+candidate sets and typed unavailable.
+
+*** Harness notes
+- scripts/test-capability-plans.sh registered as "Capability plan selection"
+  phase (2b) in scripts/test-all.sh; 34 plunit + 40 pytest locally.
+- t/capability_plans.pl property tests were initially appended after
+  :- end_tests/0 and silently never ran; moved inside the block.
+- wiki/capability-plans.org documents the architecture and PR #119
+  reconciliation.
+
+*** Full local gate
+NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash
+scripts/test-all.sh -> 11/11 phases passed (candidate head at commit with
+wiki/gate registration).
