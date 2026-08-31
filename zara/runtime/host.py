@@ -24,6 +24,7 @@ from zara.plugins.manager import PluginDiagnostic, PluginManager
 
 from . import bridge, events
 from .backend import AgentRuntimeBackend, RuntimeBackend, RuntimeTurnResult, UnsupportedRuntimeCommand
+from .clarification import ClarificationCoordinator, SessionCloseReason
 from .commands import (
     ApproveTool,
     CancelTurn,
@@ -117,6 +118,7 @@ class RuntimeHost:
         self._backend: Optional[RuntimeBackend] = None
         self._coordinator = None
         self._turn_tasks: dict[str, asyncio.Task] = {}
+        self._clarifications = ClarificationCoordinator()
         self._plugin_manager: Optional[PluginManager] = None
         self._last_plugin_diagnostics: tuple[PluginDiagnostic, ...] = ()
 
@@ -124,6 +126,10 @@ class RuntimeHost:
     def state(self) -> RuntimeHostState:
         with self._state_lock:
             return self._state
+
+    @property
+    def clarifications(self) -> ClarificationCoordinator:
+        return self._clarifications
 
     @property
     def thread_id(self) -> Optional[int]:
@@ -606,6 +612,7 @@ class RuntimeHost:
         await self._stop_backend()
         if self._coordinator is not None:
             await self._coordinator_ask(Drain())
+        self._clarifications.drop_all(reason=SessionCloseReason.RESTART)
         self._publisher(events.RuntimeStopped(reason=command.reason, label="runtime-host"))
         await self._stop_plugins()
 
@@ -641,6 +648,7 @@ class RuntimeHost:
 
         await self._cancel_all_turns(reason="runtime shutdown")
         await self._stop_backend()
+        self._clarifications.drop_all(reason=SessionCloseReason.SHUTDOWN)
         self._publisher(events.RuntimeStopped(reason=command.reason, label="runtime-host"))
         await self._stop_plugins()
         await self._stop_coordinator()
