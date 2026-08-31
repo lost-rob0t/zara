@@ -170,7 +170,7 @@ def test_command_failure_becomes_compact_durable_error(tmp_path):
 
 
 class BufferedBackend(RuntimeBackend):
-    async def submit_turn(self, text, *, turn_id, conversation_id=None, context_ids=()):
+    async def submit_turn(self, text, *, turn_id, conversation_id=None, context_ids=(), latency_trace=None):
         return RuntimeTurnResult(response=f"echo: {text}")
 
 

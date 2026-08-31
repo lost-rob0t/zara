@@ -19,6 +19,7 @@ from zara.actors import (
     TurnCoordinator,
     TurnStartedReply,
 )
+from zara.latency import JSONLMetricsSink, LatencyTrace, metrics_path
 from zara.plugins.api import RuntimeStatus
 from zara.plugins.manager import PluginDiagnostic, PluginManager
 
@@ -493,6 +494,26 @@ class RuntimeHost:
         task.add_done_callback(lambda _task, tid=turn_id: self._turn_tasks.pop(tid, None))
         return CommandReceipt(request_id=command.request_id, turn_id=turn_id, detail="turn accepted")
 
+    def _build_turn_latency_trace(self, command: SubmitTurn):
+        config = self._config
+        if config is None:
+            try:
+                from zara.config import get_config
+
+                config = get_config()
+            except Exception:
+                return None
+        try:
+            latency_config = config.get_latency_config()
+        except Exception:
+            return None
+        if not latency_config.get("enabled", False):
+            return LatencyTrace(trace_id=command.request_id)
+        return LatencyTrace(
+            trace_id=command.request_id,
+            sink=JSONLMetricsSink(metrics_path(latency_config)),
+        )
+
     async def _run_turn(self, command: SubmitTurn, turn_id: str) -> None:
         backend = self._require_backend()
         self._publisher(
@@ -503,12 +524,14 @@ class RuntimeHost:
             )
         )
 
+        latency_trace = self._build_turn_latency_trace(command)
         try:
             result = await backend.submit_turn(
                 command.text,
                 turn_id=turn_id,
                 conversation_id=command.conversation_id,
                 context_ids=command.context_ids,
+                latency_trace=latency_trace,
             )
         except asyncio.CancelledError:
             raise
@@ -523,6 +546,9 @@ class RuntimeHost:
                     )
                 )
             return
+        finally:
+            if latency_trace is not None:
+                latency_trace.flush()
 
         if not isinstance(result, RuntimeTurnResult):
             if await self._turn_is_active(turn_id):

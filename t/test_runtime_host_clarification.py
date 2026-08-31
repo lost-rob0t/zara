@@ -22,7 +22,7 @@ class ImmediateBackend:
     async def start(self) -> None:
         pass
 
-    async def submit_turn(self, text, *, turn_id, conversation_id=None, context_ids=()):
+    async def submit_turn(self, text, *, turn_id, conversation_id=None, context_ids=(), latency_trace=None):
         self.turns.append(text)
         from zara.runtime.backend import RuntimeTurnResult
 

@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
+from ..latency import LatencyTrace
+
 
 class UnsupportedRuntimeCommand(RuntimeError):
     """Raised when a backend does not implement an optional capability."""
@@ -38,6 +40,7 @@ class RuntimeBackend:
         turn_id: str,
         conversation_id: Optional[str] = None,
         context_ids: tuple[str, ...] = (),
+        latency_trace: Optional[LatencyTrace] = None,
     ) -> RuntimeTurnResult:
         raise NotImplementedError
 
@@ -74,10 +77,16 @@ class RuntimeBackend:
 class LangGraphRuntimeBackend(RuntimeBackend):
     """Thin adapter over Zara's existing :class:`AgentManager`."""
 
-    def __init__(self, manager_factory: Optional[Callable[[], Any]] = None) -> None:
+    def __init__(
+        self,
+        manager_factory: Optional[Callable[[], Any]] = None,
+        *,
+        router=None,
+    ) -> None:
         self._manager_factory = manager_factory
         self._manager = None
         self._publisher = None
+        self._router = router
 
     def bind_event_publisher(self, publisher) -> None:
         self._publisher = publisher
@@ -106,6 +115,7 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         turn_id: str,
         conversation_id: Optional[str] = None,
         context_ids: tuple[str, ...] = (),
+        latency_trace: Optional[LatencyTrace] = None,
     ) -> RuntimeTurnResult:
         if self._manager is None:
             raise RuntimeError("runtime backend is not started")
@@ -114,10 +124,34 @@ class LangGraphRuntimeBackend(RuntimeBackend):
                 "context attachments are not wired into the runtime backend yet"
             )
 
+        if self._router is not None:
+            conversation_manager = self._manager.conversation_manager
+            in_conversation = bool(getattr(conversation_manager, "in_conversation", False))
+            state = "conversation" if in_conversation else "passive"
+            decision = await self._router.route(
+                text,
+                state=state,
+                latency_trace=latency_trace,
+                conversation_id=conversation_id,
+            )
+            if decision.action == "greeting":
+                conversation_manager.enter_conversation()
+                conversation_manager.conversation_history.clear()
+                return RuntimeTurnResult(response=decision.response)
+            if decision.action == "end_conversation":
+                conversation_manager.exit_conversation()
+                return RuntimeTurnResult(response=decision.response)
+            if decision.action == "respond":
+                return RuntimeTurnResult(response=decision.response)
+            if not in_conversation:
+                conversation_manager.enter_conversation()
+                conversation_manager.conversation_history.clear()
+
         result = await self._manager.process_async(
             text,
             turn_id=turn_id,
             conversation_id=conversation_id,
+            latency_trace=latency_trace,
         )
         raw_tool_results = result.get("tool_results", [])
         return RuntimeTurnResult(
@@ -207,9 +241,13 @@ class AgentRuntimeBackend(RuntimeBackend):
         manager_factory: Optional[Callable[[], Any]] = None,
         *,
         config=None,
+        router=None,
     ) -> None:
         if manager_factory is not None:
-            self._delegate: RuntimeBackend = LangGraphRuntimeBackend(manager_factory)
+            self._delegate: RuntimeBackend = LangGraphRuntimeBackend(
+                manager_factory,
+                router=router,
+            )
         else:
             self._delegate = create_runtime_backend(config)
 
@@ -226,12 +264,14 @@ class AgentRuntimeBackend(RuntimeBackend):
         turn_id: str,
         conversation_id: Optional[str] = None,
         context_ids: tuple[str, ...] = (),
+        latency_trace: Optional[LatencyTrace] = None,
     ) -> RuntimeTurnResult:
         return await self._delegate.submit_turn(
             text,
             turn_id=turn_id,
             conversation_id=conversation_id,
             context_ids=context_ids,
+            latency_trace=latency_trace,
         )
 
     async def cancel_turn(self, turn_id: str) -> None:

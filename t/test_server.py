@@ -85,7 +85,7 @@ class BlockingBackend(RuntimeBackend):
     async def start(self):
         return None
 
-    async def submit_turn(self, text, *, turn_id, conversation_id=None, context_ids=()):
+    async def submit_turn(self, text, *, turn_id, conversation_id=None, context_ids=(), latency_trace=None):
         import asyncio
 
         self.entered.set()

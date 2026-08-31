@@ -169,19 +169,56 @@ class RuntimeSupervisor:
 
             config = get_config()
 
+        prolog_engine = self._build_principal_prolog(config, principal)
+        router = None
+        if prolog_engine is not None:
+            from zara.runtime.intent_router import PrologFirstRouter
+            from zara.wake_words import resolve_wake_words
+
+            router = PrologFirstRouter(
+                prolog_engine,
+                wake_words=resolve_wake_words(config, prolog_engine),
+                principal_id=principal.principal_id,
+            )
+
         def manager_factory():
             from zara.agent import AgentManager
 
-            return AgentManager(config=config, principal=principal)
+            return AgentManager(
+                config=config,
+                principal=principal,
+                prolog_engine=prolog_engine,
+            )
 
         return RuntimeHost(
-            backend_factory=lambda: AgentRuntimeBackend(manager_factory),
+            backend_factory=lambda: AgentRuntimeBackend(manager_factory, router=router),
             publisher=bus.publish,
             subscriber=bus.subscribe,
             shutdown_timeout=self._shutdown_timeout,
             plugin_paths=tuple(config.get_module_search_paths()),
             config=config,
         )
+
+    @staticmethod
+    def _build_principal_prolog(config, principal: PrincipalContext):
+        from zara.prolog_engine import PrologEngine, locate_main_pl
+
+        try:
+            prolog_path = locate_main_pl()
+            logger.info(
+                "Loading principal Prolog engine for %s from %s",
+                principal.principal_id,
+                prolog_path,
+            )
+            return PrologEngine(prolog_path)
+        except Exception as error:
+            logger.warning(
+                "Prolog engine unavailable for principal %s; "
+                "deterministic intent routing is disabled: %s",
+                principal.principal_id,
+                error,
+            )
+            return None
 
     @staticmethod
     def _require_principal(principal: PrincipalContext) -> PrincipalContext:

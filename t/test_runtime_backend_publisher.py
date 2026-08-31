@@ -26,6 +26,7 @@ class PublisherAwareBackend(RuntimeBackend):
         turn_id: str,
         conversation_id=None,
         context_ids=(),
+    latency_trace=None,
     ) -> RuntimeTurnResult:
         self.publisher(
             events.ToolStarted(
