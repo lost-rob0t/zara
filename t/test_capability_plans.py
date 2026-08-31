@@ -206,3 +206,21 @@ def test_plan_environment_rejects_oversized_device_list():
     )
     with pytest.raises(ValueError, match="bound"):
         PlanEnvironment(principal="alice", devices=devices)
+
+
+def test_requires_auth_vocabulary_matches_security_capability():
+    from zara.security import Capability
+
+    env = PlanEnvironment(
+        principal="alice",
+        auths=(Capability.DAEMON_ADMIN.value,),
+        providers=("admin_restart",),
+    )
+    frame = IntentFrame(
+        intent_ns="skill",
+        intent_name="admin.restart",
+        status=FrameStatus.COMPLETE,
+    )
+    plan = get_engine().plan_for_frame(frame, env)
+    assert plan.status is PlanStatus.READY
+    assert plan.requires_auth == Capability.DAEMON_ADMIN.value
