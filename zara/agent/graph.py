@@ -24,8 +24,29 @@ from .approval import (
     ToolApprovalController,
     valid_tool_name,
 )
+from . import stream_events
+from .sentence_chunker import SentenceChunker
 
 logger = logging.getLogger(__name__)
+
+
+def _content_text(content: Any) -> str:
+    """Extract user-facing text from a message content payload.
+
+    Provider content-block lists (Anthropic) may carry hidden reasoning or
+    tool protocol blocks; only text blocks are surfaced.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+    return ""
 
 # ----------------------------------------------------------------------
 # LangGraph message reducer (critical)
@@ -145,9 +166,175 @@ def validate_and_clean_messages(messages: List[BaseMessage]) -> List[BaseMessage
 # ----------------------------------------------------------------------
 # Nodes
 
-def create_agent_node(llm_client, tool_registry):
+def _tool_call_fragment_field(fragment: Any, field: str) -> Any:
+    if isinstance(fragment, dict):
+        return fragment.get(field)
+    return getattr(fragment, field, None)
+
+
+def _fragment_key(fragment: Any) -> Any:
+    key = _tool_call_fragment_field(fragment, "index")
+    if key is not None:
+        return key
+    return _tool_call_fragment_field(fragment, "id")
+
+
+def _streamed_response(
+    llm_with_tools,
+    msgs: List[BaseMessage],
+    publish,
+    *,
+    trace: Any,
+    request_index: int,
+    provider_label: str,
+    turn_id: Optional[str],
+    conversation_id: Optional[str],
+):
+    """Consume ``astream`` chunks, publish typed events, return the exact aggregate.
+
+    The provider stream is pumped by a dedicated task so the consumer can
+    enforce the chunker's max-wait budget with a queue wait timeout; a timed
+    out ``wait_for`` around a generator's ``__anext__`` would cancel and kill
+    the stream instead.
+    """
+    stream = llm_with_tools.astream(msgs)
+    queue: asyncio.Queue = asyncio.Queue()
+    sentinel = object()
+    chunker = SentenceChunker()
+    aggregated: Any = None
+    seen_fragments: set = set()
+    first_token_recorded = False
+    first_sentence_recorded = False
+
+    async def pump() -> None:
+        try:
+            async for piece in stream:
+                await queue.put(piece)
+        except BaseException as error:
+            queue.put_nowait(error)
+        finally:
+            queue.put_nowait(sentinel)
+
+    async def record_first_sentence() -> None:
+        nonlocal first_sentence_recorded
+        if trace is not None and not first_sentence_recorded:
+            trace.record(
+                "llm_first_sentence",
+                provider=provider_label,
+                request_index=request_index,
+            )
+            first_sentence_recorded = True
+
+    def publish_delta(text: str) -> None:
+        runtime_bridge.model_streaming(
+            label="llm",
+            text=text,
+            turn_id=turn_id,
+            conversation_id=conversation_id,
+        )
+        publish(stream_events.TextDelta(text=text))
+
+    async def consume():
+        nonlocal aggregated, first_token_recorded
+        while True:
+            try:
+                item = await asyncio.wait_for(
+                    queue.get(), timeout=chunker.wait_budget()
+                )
+            except TimeoutError:
+                for piece in chunker.take_due():
+                    publish(stream_events.SentenceReady(text=piece, is_final=False))
+                    await record_first_sentence()
+                continue
+            if item is sentinel:
+                break
+            if isinstance(item, BaseException):
+                raise item
+
+            aggregated = item if aggregated is None else aggregated + item
+
+            for fragment in getattr(item, "tool_call_chunks", None) or []:
+                key = _fragment_key(fragment)
+                if key not in seen_fragments:
+                    seen_fragments.add(key)
+                    publish(
+                        stream_events.ToolCallStarted(
+                            name=_tool_call_fragment_field(fragment, "name") or "",
+                            id=_tool_call_fragment_field(fragment, "id") or "",
+                        )
+                    )
+
+            if getattr(item, "tool_call_chunks", None):
+                continue
+
+            text = _content_text(getattr(item, "content", ""))
+            if not text:
+                continue
+            if trace is not None and not first_token_recorded:
+                trace.record(
+                    "llm_first_token",
+                    provider=provider_label,
+                    request_index=request_index,
+                    buffered_proxy=False,
+                )
+                first_token_recorded = True
+            publish_delta(text)
+            for sentence in chunker.feed(text):
+                publish(stream_events.SentenceReady(text=sentence, is_final=False))
+                await record_first_sentence()
+        return aggregated
+
+    async def run() -> AIMessage:
+        nonlocal aggregated
+        pump_task = asyncio.ensure_future(pump())
+        try:
+            aggregated = await consume()
+        finally:
+            if not pump_task.done():
+                pump_task.cancel()
+            try:
+                await pump_task
+            except BaseException:
+                pass
+            await stream.aclose()
+
+        final_sentences = chunker.flush()
+        for index, sentence in enumerate(final_sentences):
+            publish(
+                stream_events.SentenceReady(
+                    text=sentence,
+                    is_final=index == len(final_sentences) - 1,
+                )
+            )
+            await record_first_sentence()
+
+        if trace is not None:
+            trace.record(
+                "llm_final_token",
+                provider=provider_label,
+                request_index=request_index,
+            )
+            trace.flush()
+
+        full_text = _content_text(aggregated.content) if aggregated is not None else ""
+        publish(stream_events.Completed(full_text=full_text))
+        if aggregated is None:
+            return AIMessage(content="")
+        return AIMessage(
+            content=aggregated.content,
+            additional_kwargs=aggregated.additional_kwargs,
+            tool_calls=aggregated.tool_calls,
+            id=aggregated.id,
+            response_metadata=aggregated.response_metadata,
+        )
+
+    return run()
+
+
+def create_agent_node(llm_client, tool_registry, stream_publisher=None):
     tools = tool_registry.to_langchain_tools()
     llm_with_tools = llm_client.bind_tools(tools) if tools else llm_client
+    can_stream = callable(getattr(llm_with_tools, "astream", None))
 
     async def agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         import time
@@ -183,9 +370,34 @@ def create_agent_node(llm_client, tool_registry):
                 request_index=request_index,
             )
         start_time = time.monotonic()
+        streaming = stream_publisher is not None and can_stream
         try:
-            response = await llm_with_tools.ainvoke(msgs)
+            if streaming:
+                response = await _streamed_response(
+                    llm_with_tools,
+                    msgs,
+                    stream_publisher,
+                    trace=trace,
+                    request_index=request_index,
+                    provider_label=type(llm_client).__name__,
+                    turn_id=turn_id,
+                    conversation_id=conversation_id,
+                )
+            else:
+                response = await llm_with_tools.ainvoke(msgs)
+                if stream_publisher is not None:
+                    stream_publisher(
+                        stream_events.Completed(full_text=_content_text(response.content))
+                    )
+        except asyncio.CancelledError:
+            if stream_publisher is not None:
+                stream_publisher(stream_events.Cancelled())
+            raise
         except Exception as error:
+            if stream_publisher is not None:
+                stream_publisher(
+                    stream_events.Failed(error_type=type(error).__name__)
+                )
             runtime_bridge.model_failed(
                 reason=str(error),
                 label="llm",
@@ -195,7 +407,7 @@ def create_agent_node(llm_client, tool_registry):
             raise
         elapsed = time.monotonic() - start_time
 
-        if trace is not None:
+        if trace is not None and not streaming:
             # ainvoke() buffers a complete AIMessage. Record the observable
             # completion boundary as an explicit buffered first-token proxy.
             trace.record(
@@ -222,6 +434,7 @@ def create_agent_node(llm_client, tool_registry):
         runtime_bridge.model_completed(
             success=True,
             label="llm",
+            text=_content_text(response.content),
             turn_id=turn_id,
             conversation_id=conversation_id,
         )
@@ -274,11 +487,17 @@ def create_approval_node(tool_registry):
     return approval_node
 
 
-def create_tools_node(tool_registry, publisher=None):
+def create_tools_node(tool_registry, publisher=None, stream_publisher=None):
     tools = tool_registry.to_langchain_tools()
     tool_node = ToolNode(tools)
     bindings = {tool.name: tool for tool in tools}
     publish = publisher or runtime_bridge.publish
+
+    def publish_tool_result(tool_name: str, tool_run_id: str) -> None:
+        if stream_publisher is not None:
+            stream_publisher(
+                stream_events.ToolResult(name=tool_name, id=tool_run_id)
+            )
 
     async def gated_tools_node(
         state: Dict[str, Any],
@@ -309,6 +528,7 @@ def create_tools_node(tool_registry, publisher=None):
                             status="error",
                         )
                     )
+                    publish_tool_result(tool_name, tool_run_id)
                     continue
             else:
                 publish(
@@ -340,6 +560,7 @@ def create_tools_node(tool_registry, publisher=None):
                         status="error",
                     )
                 )
+                publish_tool_result(tool_name, tool_run_id)
                 continue
 
             publish(
@@ -387,6 +608,7 @@ def create_tools_node(tool_registry, publisher=None):
                 raise RuntimeError("tool executor returned an invalid result")
             result = tool_messages[0]
             results.append(result)
+            publish_tool_result(tool_name, tool_run_id)
             if getattr(result, "status", "success") == "error":
                 publish(
                     events.ToolFailed(
@@ -436,10 +658,10 @@ def should_continue(state: Dict[str, Any]) -> Literal["approval", "end"]:
 # ----------------------------------------------------------------------
 # Graph + runner
 
-def create_agent_graph(llm_client, tool_registry, *, checkpointer=None, publisher=None):
-    agent_node = create_agent_node(llm_client, tool_registry)
+def create_agent_graph(llm_client, tool_registry, *, checkpointer=None, publisher=None, stream_publisher=None):
+    agent_node = create_agent_node(llm_client, tool_registry, stream_publisher)
     approval_node = create_approval_node(tool_registry)
-    tools_node = create_tools_node(tool_registry, publisher)
+    tools_node = create_tools_node(tool_registry, publisher, stream_publisher)
 
     workflow = StateGraph(AgentState)
 
@@ -472,6 +694,7 @@ async def run_conversation_loop(
     approval_controller: Optional[ToolApprovalController] = None,
     publisher=None,
     principal_id: str = "local",
+    stream_publisher=None,
 ) -> Dict[str, Any]:
     """
     Execute the graph until a final answer is produced or max_steps is hit.
@@ -506,6 +729,7 @@ async def run_conversation_loop(
         tool_registry,
         checkpointer=saver,
         publisher=publisher,
+        stream_publisher=stream_publisher,
     )
     turn_id = str(state.get("turn_id") or f"agent-{uuid.uuid4().hex}")
     conversation_id = state.get("conversation_id")
