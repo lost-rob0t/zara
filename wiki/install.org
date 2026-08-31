@@ -150,6 +150,18 @@ prolog_rlm_model("openrouter/free").
 =OPENROUTER_API_KEY= environment variable; keep it out of any configuration
 file.
 
+Both OpenRouter paths have live smoke tests that require a real credential and
+never run in the deterministic gate:
+
+#+begin_example
+export OPENROUTER_API_KEY='sk-or-...'
+nix develop -c bash scripts/test-openrouter-live.sh      # plain Python client
+nix develop -c bash scripts/test-prolog-rlm-live.sh      # direct-mode rewrite
+#+end_example
+
+=ZARA_LLM_LIVE_MODEL= and =ZARA_RLM_LIVE_MODEL= override the default
+=openrouter/free= model for each smoke.
+
 Dictation process state is determined from the configured PID file and live
 process. =ZARA_DICTATION_PIDFILE= and =ZARA_DICTATION_LOGFILE= can override the
 default paths for isolated environments.
