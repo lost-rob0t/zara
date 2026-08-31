@@ -86,7 +86,16 @@
   15. RuntimeHost restart/shutdown drops sessions (typed degraded, follow-up stale)
 
 * TDD / gate evidence
-- (appended below as the iteration proceeds)
+- RED (machine) :: =t/test_clarification_session.py= written first at =04734f2=; collection error =ModuleNotFoundError: No module named 'zara.runtime.clarification'= (expected red).
+- GREEN (machine) :: 26/26 after implementing =zara/runtime/frames.py= + =zara/runtime/clarification.py=. Fixes during green: digit tokens in =_parse_number_words= ("90 seconds"); stale outcomes carry the uniform message and session snapshot.
+- RED (wake wire-up) :: =t/test_wake_clarification.py= written before wake changes; =assert (False, 'Which app?') != (False, 'Please provide: app.')= (expected red) plus missing-attribute failures.
+- GREEN (wake) :: 9/9. Test corrections during green: 1-2 token answers are valid =ref(app_alias)= values (alias resolution is capability-layer per contract example 6), so the focused-retry case uses a 3+ token answer; unknown pending shapes require a command-like utterance ("run") to reach the resolver.
+- RED (host) :: =t/test_runtime_host_clarification.py=; =AttributeError: 'RuntimeHost' object has no attribute 'clarifications'= (expected red).
+- GREEN (host) :: 3/3 after coordinator ownership + =drop_all= on restart/shutdown.
+- Migration of existing tests :: =t/test_command_routing.py= fixtures carry the coordinator (production =__init__= guarantees it; =__new__= fixtures must match). =test_pending_result_returns_clarification_without_execution= now asserts the NEW required behavior (deterministic question "Which app?" + open session) - the old "Please provide: app." string is the stateless prompt this issue removes. =t/test_latency_metrics.py= fixture updated; trace assertions unchanged (no session open => no extra route events).
+- Dialogue script :: =t/test_dialogue_script.py= walks all mandatory examples as one deterministic non-interactive conversation (timer ask/fill/correct/cancel/stale/retry, open app, two-slot text flow, principal/conversation isolation, virtual-clock timeout, byte-identical rejection wording).
+- Full local gate at candidate =1911487= :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh= -> 10/10 phases passed (1166+ tests); =nix flake check= -> all checks passed; =nix build= -> OK.
+- Observation :: =t/test_zmq_transport_route_backpressure.py::test_stalled_route_completion_queue_cannot_evict_healthy_route= failed once under full-suite load and in one burst of repeat runs; 23/23 passes across controlled re-runs with the full change applied (and 11/11 with subsets). No import path connects the changed modules to that test; recorded as a load-sensitive test, not a regression of this slice.
 
 * Outcome
 - (pending)
