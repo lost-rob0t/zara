@@ -8,7 +8,7 @@
 %   nix develop -c swipl -s planning/backlog.pl  % then: next(I). queue(Q). blockers(122, Bs).
 
 % Closed issues referenced by dependency edges, phases or epics.
-closed(2). closed(3). closed(4). closed(5). closed(6). closed(7). closed(8). closed(9). closed(17). closed(124). closed(128). closed(129). closed(130). closed(131). closed(132). closed(133). closed(139). closed(154). closed(155). closed(170). closed(171). closed(191). closed(195). closed(209).
+closed(2). closed(3). closed(4). closed(5). closed(6). closed(7). closed(8). closed(9). closed(17). closed(28). closed(124). closed(128). closed(129). closed(130). closed(131). closed(132). closed(133). closed(139). closed(154). closed(155). closed(156). closed(170). closed(171). closed(191). closed(195). closed(209).
 
 % Open issues: issue(Id, Priority, Status, ShortTitle).
 issue(87, p1, open, "P1 — add Linux global shortcut backends for Wayland and X11").
@@ -23,7 +23,6 @@ issue(95, p3, open, "P3 — package Zara Desktop and harden platform lifecycle b
 issue(122, p0, open, "P0 — add a bounded utterance rewriter before Prolog intent resolution").
 issue(134, p0, open, "P0 release gate — prove Zara daemon can replace the core ChatGPT Voice workflow safely").
 issue(149, p1, open, "P1 — publish Nix-built `zara-server` OCI image to GHCR").
-issue(156, p1, open, "P1 — adapt Prolog resolution to `IntentFrame` and establish the canonical realistic command corpus").
 issue(157, p1, open, "P1 — add capability/provider reasoning and typed `ExecutionPlan` without reviving draft architecture blindly").
 issue(158, p1, open, "P1 — add server `api_service` providers and split semantic/server/device Prolog configuration").
 issue(159, p1, open, "P1 — extend `ZARA/1` with bounded client capability advertisement and typed device action lifecycle").
@@ -65,6 +64,9 @@ issue(217, p1, open, "P1 — implement local S1-mini transcript normalizer backe
 issue(218, p1, open, "P1 — add transcript-normalizer configuration, selection, status and diagnostics").
 issue(219, p1, open, "P1 — wire transcript normalization into voice, dictation and semantic routing before #122").
 issue(220, p1, open, "P1 release gate — prove transcript normalization preserves intent, privacy and voice latency").
+issue(238, p2, open, "P2 — implement plugin download and installation from the zara-plugins registry").
+issue(240, p2, open, "P2 — let the Zara flake consume and configure zara-plugins").
+issue(244, p1, open, "P1 — migrate the zara wake listener onto the daemon ZARA/1 voice client with principal-scoped memory").
 
 % Roadmap order: phase(N, OrderedIssueIds). Rank = N*100 + index.
 phase(0, [17]).                                    % regression: always first
@@ -83,7 +85,6 @@ depends_on(134, 130).
 depends_on(134, 131).
 depends_on(134, 132).
 depends_on(134, 133).
-depends_on(156, 155).
 depends_on(157, 156).
 depends_on(158, 157).
 depends_on(159, 129).
@@ -191,9 +192,10 @@ depends_on(219, 216).
 depends_on(219, 217).
 depends_on(219, 218).
 depends_on(220, 219).
+depends_on(244, 134).
 
 % Epics: epic_children(EpicId, ChildIds).
-epic_children(127, [128,129,130,131,132,133,134,191,209]).
+epic_children(127, [128,129,130,131,132,133,134,191,209,244]).
 epic_children(150, [154,155,156,157,158,159,160,161]).
 epic_children(151, [162,163,164,165,166,167,168,169]).
 epic_children(152, [170,171,172,173,174,175,176,177,178,179,194]).
