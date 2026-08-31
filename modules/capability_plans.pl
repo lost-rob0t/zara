@@ -3,7 +3,7 @@
     plan_candidates/3,
     plan_explanation/3,
     plan_stale/4,
-    plan_head_row/12,
+    plan_head_row/13,
     plan_arg_row/7
 ]).
 % Typed ExecutionPlan selection (issue #157, contract
@@ -50,7 +50,7 @@
 % formerly-ready now-unavailable selection unavailable(provider_missing) -
 % no unsafe fallback.
 %
-% plan_head_row/12 and plan_arg_row/7 are flat projections for marshalling
+% plan_head_row/13 and plan_arg_row/7 are flat projections for marshalling
 % (pyswip stringifies nested compounds; 'none' sentinels as in #156).
 
 :- use_module('../kb/capabilities').
@@ -444,14 +444,14 @@ bound_value(datetime(Y, Mo, D, H, Mi, S)) :-
 %% ============================================================
 
 plan_head_row(Plans, Idx, NS, Name, StatusKind, Reason, ProviderId, Location,
-        DeviceRef, SideEffect, RequiresAuth, Alternatives) :-
+        DeviceRef, SideEffect, RequiresAuth, Evidence, Alternatives) :-
     nth0(Idx, Plans, execution_plan(
         intent(ns(NS), name(Name)),
         provider(id(ProviderId), location(Location), device(DeviceRef),
                  side_effect(SideEffect), requires_auth(RequiresAuth)),
         Status,
         _Arguments,
-        _Evidence,
+        evidence(Evidence),
         alternatives(Alternatives))),
     plan_status_fields(Status, StatusKind, Reason).
 

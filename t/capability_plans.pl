@@ -434,7 +434,7 @@ test(plan_head_row_projects_flat_fields) :-
     capability_plans:plan_for_frame(Frame, Env, Plan),
     capability_plans:plan_head_row(Plans, 0, NS, Name, StatusKind, Reason,
         ProviderId, Location, DeviceRef, SideEffect, RequiresAuth,
-        Alternatives),
+        Evidence, Alternatives),
     assertion(NS == app),
     assertion(Name == open),
     assertion(StatusKind == ready),
@@ -444,6 +444,7 @@ test(plan_head_row_projects_flat_fields) :-
     assertion(DeviceRef == droid),
     assertion(SideEffect == external),
     assertion(RequiresAuth == none),
+    assertion(Evidence == ['prio(100)', 'cap(app.open)', 'dev(droid)']),
     assertion(Alternatives == []).
 
 test(plan_arg_row_projects_typed_values) :-
@@ -458,3 +459,58 @@ test(plan_arg_row_projects_typed_values) :-
     assertion(A2 == firefox).
 
 :- end_tests(capability_plans).
+
+% --- property-style loops over the whole declared KB -------------------------
+
+test(every_declared_intent_yields_a_typed_plan_without_availability) :-
+    env_empty(environment(principal(nobody), auths([]),
+        devices([]), providers([]), aliases([]), policies([]))),
+    forall(
+        ( kb_capabilities:capability_provider(NS, Name, _, _),
+          frame_for_intent(NS, Name, Frame)
+        ),
+        ( capability_plans:plan_for_frame(Frame, env_empty, Plan),
+          Plan = execution_plan(_, _, Status, _, _, _),
+          member(Status, [ready, unavailable(_), ambiguous, denied(_)])
+        )
+    ).
+
+frame_for_intent(NS, Name, frame(intent(ns(NS), name(Name)), Slots, complete)) :-
+    findall(slot(name(SlotName), value(Value), origin(utterance)),
+        ( kb_capabilities:capability_binding(_Provider, _, SlotName),
+          slot_value_for_type(Value)
+        ),
+        Slots).
+
+slot_value_for_type(text(example)).
+slot_value_for_type(duration(30)).
+slot_value_for_type(ref(kind(app_alias), id(firefox))).
+slot_value_for_type(ref(kind(contact), id(alice))).
+slot_value_for_type(ref(kind(media_alias), id(news))).
+
+test(candidates_always_ordered_by_descending_priority) :-
+    env_open(environment(principal(alice), auths(['daemon.admin']),
+        devices([device(d1, alice, ['app.open', 'timer.set',
+                                   'screen.capture', 'media.pause'])]),
+        providers([open_desktop, search_server, timer_server,
+                   screen_server, pause_server, admin_restart]),
+        aliases([alias(open_desktop, firefox)]), policies([]))),
+    forall(
+        frame_for_any_intent(Frame),
+        ( capability_plans:plan_candidates(Frame, env_open, Candidates),
+          priorities_descending(Candidates)
+        )
+    ).
+
+frame_for_any_intent(Frame) :-
+    kb_capabilities:capability_provider(NS, Name, _, _),
+    frame_for_intent(NS, Name, Frame).
+
+priorities_descending([]).
+priorities_descending([candidate(P, _, _, _)|Rest]) :-
+    priorities_descending_from(P, Rest).
+
+priorities_descending_from(_, []).
+priorities_descending_from(P, [candidate(P2, _, _, _)|Rest]) :-
+    P >= P2,
+    priorities_descending_from(P2, Rest).

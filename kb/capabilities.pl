@@ -26,6 +26,10 @@
     capability_binding/3
 ]).
 
+:- discontiguous capability_provider/4.
+:- discontiguous capability_property/2.
+:- discontiguous capability_binding/3.
+
 % --- app opening (contract examples 6/13) ------------------------------------
 % Device provider outranks the desktop provider: the initiating device wins
 % when it advertises the capability; the desktop alias gate is the fallback.
