@@ -1,0 +1,119 @@
+* Wake daemon voice client migration — design (issue #244)
+
+** Problem boundary
+Replace =WakeWordListener='s private assistant stack (utterance STT, AgentManager,
+Prolog engine, memory sessions, response TTS synthesis, clarification
+coordination) with the daemon =ZARA/1= voice client, keeping only physically
+client-owned pieces. Out of scope (inherited from #244): account management UI,
+registration flows, new identity APIs, new ZARA/1 message types, TTS provider
+changes, Android clients, full #29 streaming-TTS machinery.
+
+** Selected architecture
+
+*** Client (zara/wake.py)
+- Keep: mic capture (InputStream, bounded drop-oldest queue, epochs), Silero VAD
+  endpointing, wake-word spotter (local wake-mode ASR — see research F5),
+  speaker-echo guard, barge-in capture, AcknowledgementPlayer (cached clips),
+  notifications/pets bridge, PASSIVE/ACTIVE state machine, local stop-phrase
+  watch on transcripts, conversation-timeout transition.
+- New thin client path: =ZmqZaraClient(endpoint, voice_output=PcmStreamSpeaker,
+  audio_output_formats=[negotiable formats])=; =open_conversation()= once after
+  handshake; per utterance =start_audio_input(stream_id, trace_id)= → VAD-gated
+  =send_audio_input(seq, pcm)= (16 kHz s16le 1024-byte frames) →
+  =commit_audio_input=; =cancel_audio_input= on barge-in/teardown.
+- Renders events: =voice.transcript.partial/final= (stop-phrase watch, logs,
+  pets), =AssistantDelta/AssistantComplete/ResponseText= (pets, notifications,
+  latency), =audio.output.*= via the injected sink (persistent
+  =sd.OutputStream= at the =hello.ok= negotiated format; cancel drops queues).
+- Fails closed: startup handshake failure or exhausted bounded
+  =reconnect_with_backoff= → explicit user-facing error and nonzero exit; never
+  =InProcessZaraClient=; no private runtime of any kind.
+- Endpoint from config =[daemon].endpoint= (default =default_zmq_endpoint=);
+  optional CURVE client keys from the same section; no new required flags;
+  =zara-wake= entry point and =scripts/zara_wake.py= delegate unchanged.
+
+*** Daemon: deterministic Prolog-first router (new =zara/runtime/intent_router.py=)
+- Applied inside =AgentRuntimeBackend.submit_turn= before the agent manager:
+  strip leading wake span (=resolve_wake_words= from shared config), empty
+  remainder → conversation-greeting response; =command_gate.looks_like_command=
+  false → agent; else =PrologEngine.resolve_intent(text, state)=:
+  =end_conversation= → exit conversation + confirmation text; =ask= → agent;
+  =pending= → =ClarificationCoordinator= session keyed by conversation (dialogue
+  turns resolve before routing); resolved → =execute_intent= with response text;
+  failure → agent fallback exactly once.
+- Per-principal =PrologEngine= built in the supervisor host factory (dictation
+  state is per-principal; engines are never shared across principals).
+- Latency: router records =route_selected=/=prolog_result= on a per-turn
+  =LatencyTrace= keyed by the voice =trace_id= (=SubmitTurn.request_id=) and
+  passes the trace into =AgentManager.process_async(latency_trace=...)= so LLM
+  stage events join the same trace.
+
+*** Daemon: TTS output bridge (new =zara/runtime/tts_output.py=)
+- Per-principal bus subscriber: on assistant output for an active turn
+  (phrase-cut from =AssistantDelta= when streaming, else final response text),
+  synthesize with the existing =TTSEngine= configured from the shared =[tts]=
+  section, publish =AudioOutputStart/AudioOutputChunk/AudioOutputDone= runtime
+  events (turn_id, stream_id, s16le mono PCM at the server-configured rate).
+- Cancel-safe: =TurnCancelled= stops synthesis and clears the queue; events are
+  published only while the turn is active (stale gate mirrors =RuntimeHost=).
+- Gateway: map the new events in =runtime_event_to_message= to wire
+  =audio.output.*=; stamp the route's negotiated format on =start=; suppress
+  output for routes that never negotiated an audio format.
+
+** Rejected alternatives
+See research "Alternatives considered" (client-side TTS rendering; daemon-side
+KWS; LLM-mediated-Prolog-only; full #29 implementation).
+
+** Invariants and ownership rules
+- The client owns devices only: microphone, speaker playback, wake word, VAD,
+  barge-in capture. The daemon owns brains: STT synthesis, routing, agent turns,
+  tools, memory, conversation persistence, TTS synthesis.
+- One =ZaraClient= per wake process; no second runtime stack anywhere in wake.
+- Principal isolation: a wake client can never read/write another principal's
+  conversation, memory, or events; unauthenticated IPC = local-owner only.
+- Stale output can never play: client drops =audio.output= frames for cancelled
+  turns; daemon bridge refuses to publish for inactive turns.
+- Latency metrics never carry transcript text, prompts, credentials, or audio.
+
+** Lifecycle
+- Client: NEW → STARTING (handshake) → READY (conversation opened) → streaming
+  turns ↔ reconnect-with-backoff → FAILED (fail closed, nonzero exit).
+- Utterance: wake spotted → ack (client) → stream open → chunks → commit →
+  daemon transcript events → turn → assistant/audio output → playback.
+- Barge-in: speech during playback/turn → client stops playback + sends
+  canonical cancel via =start_audio_input= auto-barge-in / =turn.cancel= →
+  daemon cancels turn + TTS bridge → late frames/events filtered both sides.
+
+** Failure/threat analysis
+- Daemon down at start → explicit error, exit 2-style nonzero (AC2).
+- Daemon lost mid-session → bounded backoff reconnect, re-open conversation;
+  failure → fail closed (no silent private runtime).
+- Malicious/other principal on shared daemon → CURVE/ZAP identity is the only
+  principal source; route payloads cannot override it (existing gateway tests).
+- Oversized/late audio, backpressure → existing =audio_backpressure= retryable
+  path; client respects contiguous =seq=.
+- TTS provider failure daemon-side → turn still completes with text; bridge
+  logs and drops audio for that turn without blocking the bus.
+
+** Compatibility/migration constraints
+- =zara-wake= binary, =python -m zara --wake= flags, =scripts/zara_wake.py=
+  delegate, and the dotfiles systemd unit (same binary, no new required flags)
+  keep working (AC6).
+- Desktop/CLI daemon turns gain deterministic Prolog-first routing (recorded
+  side effect; conversational turns unchanged).
+- Existing wake tests are re-expressed against the client path; 11
+  =__new__=-fixture files updated deliberately slice by slice.
+
+** Acceptance criteria → tests
+| AC | Test plan |
+|---|---|
+| 1 thin client, daemon transcript, Prolog-first commands, agent turns, playback from events | =t/test_wake_daemon_client.py= (streaming/commit/transcript rendering, pinning test: no AgentManager/utterance-STT/TTS attrs), =t/test_daemon_intent_router.py= (command vs conversation vs greeting), =t/test_daemon_tts_output.py= (bridge → gateway → sink) |
+| 2 fail closed, no silent runtime | =t/test_wake_fail_closed.py= (handshake failure exit, reconnect exhaustion, no InProcess fallback) |
+| 3 two principals isolated | =t/test_wake_principal_isolation.py= (two CURVE wake clients: cross-principal event/memory/conversation assertions) + store-level principal-scoping assertions |
+| 4 barge-in → canonical cancellation, stale filtering | =t/test_wake_barge_in_daemon.py= (auto-cancel ordering, turn.cancel, stale chunk/event suppression) |
+| 5 latency budgets + trace_id continuity | =t/test_wake_latency_continuity.py= (trace_id ingress→events→request_id→route/LLM/TTS records; harness budgets untouched) |
+| 6 packaging + unit compatibility | =t/test_packaging.py=, =t/test_canonical_paths.py= stay green; new daemon endpoint config defaults test |
+
+** Gate (exact head)
+=nix develop -c bash scripts/test-all.sh=; =nix flake check=; =nix build=; GitHub
+Actions green on the exact PR head SHA before merge.

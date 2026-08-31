@@ -1,0 +1,16 @@
+* Run identity
+- Consumed issue :: #244
+- Branch :: =rage/244-wake-daemon-voice=
+- RAGE start commit :: =18659368cd00d57f3ea8c6da5534cb141e05f8c0=
+
+* Queue exception (user-directed)
+- #244 depends on #134 (open; blocked by open #29/#30/#31). Operator explicitly
+  selected #244 with full knowledge of the open dependency chain; recorded as a
+  directed override rather than silent queue skipping.
+
+* Iteration 1 — research/design
+- Research artifact :: =rage/244-wake-daemon-voice-research.org=
+- Design artifact :: =rage/244-wake-daemon-voice-design.org=
+- Key findings :: daemon audio.input path complete; missing daemon audio.output
+  producer + deterministic Prolog-first router are the two gaps #244 fills;
+  wake spotter keeps local wake-mode ASR (open-vocabulary wake words).
