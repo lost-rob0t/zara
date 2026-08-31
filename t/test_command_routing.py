@@ -2,6 +2,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from zara.prolog_engine import IntentResult, PrologEngine
+from zara.runtime.clarification import ClarificationCoordinator
 from zara.wake import WakeWordListener
 
 
@@ -27,6 +28,7 @@ def build_listener(intent_result):
     listener.agent_manager.process_async = AsyncMock(return_value={"response": "fallback"})
     listener.agent_manager.conversation_manager.conversation_history = []
     listener.in_conversation_mode = MagicMock(return_value=False)
+    listener.clarifications = ClarificationCoordinator()
     return listener
 
 
@@ -63,7 +65,10 @@ def test_pending_result_returns_clarification_without_execution():
 
     used_agent, response = asyncio.run(listener.query_with_fallback_async("open"))
 
-    assert (used_agent, response) == (False, "Please provide: app.")
+    assert (used_agent, response) == (False, "Which app?")
+    session = listener.clarifications.session_for("local", "voice")
+    assert session is not None
+    assert session.state == "eliciting"
     listener.prolog.execute_intent.assert_not_called()
     listener.agent_manager.process_async.assert_not_awaited()
 
