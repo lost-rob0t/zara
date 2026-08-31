@@ -204,3 +204,91 @@
 3. Full local gate: NIX_CONFIG='experimental-features = nix-command flakes'
    nix develop -c bash scripts/test-all.sh
 4. Exact-head CI: gh pr checks --watch on candidate SHA; update-branch if master moved.
+
+** Adversarial review (recorded before implementation)
+
+*** Attack 1: "The plan layer is dead code - nothing calls it"
+Risk: D9 ships reasoning + executor seam with no production call site.
+Response: the issue's acceptance is explicitly "becomes an authorized typed
+plan or an explicit ambiguity/unavailable/denied result, WITHOUT performing
+the action" - the deliverable is the deterministic decision layer. The
+executor seam exists so the "typed adapters" migration row has a proven,
+at-most-once entry point rather than a promise. Wake cutover without this
+layer would execute intents exactly as today (raw execute_intent), i.e. no
+progress on the row. Verdict: scope holds; call sites land in #160/#173/#196.
+
+*** Attack 2: environment-as-term is a stringly escape hatch
+Risk: encode_environment_term builds a Prolog string; callers could pass
+garbage and the parser would accept unknown compounds, silently failing open.
+Response: the environment is a closed dataclass; the encoder emits only the
+six known fields with escaped atoms; bounds are validated at construction.
+Malformed terms are impossible from the typed API; Prolog-side, unknown
+environment shapes simply fail to qualify (fail-closed - no candidates ->
+unavailable). Residual: a caller bypassing the dataclass with a raw term
+string - same trust level as today's goal strings into query_once; the
+wake/daemon wiring slices will go through the dataclass. Verdict: acceptable,
+documented.
+
+*** Attack 3: ambiguous alternatives encoding ('provider@device' atoms)
+Risk: overloading atoms with provider@device is a mini-format that Android
+must re-parse; contract prefers structured lists.
+Response: alternatives are presentation for evidence/clarification; the
+authoritative tie information is the candidate set re-derivable from
+plan_explanation. Flat atoms survive pyswip (the #156 constraint); nested
+compound lists do not. A structured wire form is #172's serializer concern,
+where the same constraint applies. Verdict: keep flat atoms; document the
+separator contract in the module header and wiki.
+
+*** Attack 4: policy preference vs priority ordering interaction is ambiguous
+Risk: "prefer(location(L))" reordering on top of priority could produce
+non-obvious winners (low-priority preferred-location beats high-priority
+non-preferred?). Response: defined semantics - preference is a FILTER
+reordering: candidates of the preferred location/class are considered first;
+only if none survive do others compete. Priority then ranks within the
+effective set; ties -> ambiguous. Tested for: prefer(server) with device also
+available; prefer(device) with only device available; prefer(device(D2)) with
+two devices (targeting policy); preferred location unavailable -> fallback.
+Verdict: pinned by tests.
+
+*** Attack 5: at-most-once replay set in-process only
+Risk: executor replay protection is per-process; a restart loses the window
+and a redelivered request_id re-executes.
+Response: true and accepted for this slice - persistence is the daemon
+envelope store's job (#173+). The invariant enforced here is "at most once
+per request_id per executor lifetime", bounded. Documented in the executor
+docstring and wiki. Verdict: scoped.
+
+*** Attack 6: requires_auth vocabulary drift with zara/security.Capability
+Risk: two auth vocabularies (plan atoms vs Capability enum) drift apart.
+Response: requires_auth atoms use the Capability VALUES ('session.basic',
+'daemon.admin'); the pytest layer validates plan auth atoms against the
+Capability enum where known, and admin providers in the KB use 'daemon.admin'.
+Verdict: aligned by test.
+
+*** Attack 7: pure-Prolog tests duplicate pytest boundary tests
+Risk: plunit + pytest cover the same assertions twice, doubling maintenance.
+Response: they test different boundaries: plunit proves the pure selection
+logic under plain SWI (portable-subset discipline, #172 needs it), pytest
+proves the pyswip decode + Python mirror + executor. Distinct failure modes
+(term shape vs marshalling vs validation). Verdict: keep both, no overlap in
+assertions.
+
+*** Attack 8: bounded_atom duplication in capability_plans
+Risk: copying bounded_atom/2 from intent_frames duplicates logic.
+Response: 3-line helper; cross-module import would couple plan selection to
+the resolver module's export surface (#160 will retire legacy exports).
+Precedent: intent_frames already carries local copies of number_token/unit
+helpers. Verdict: accepted, documented.
+
+*** Attack 9: capability KB keys on (NS, Name) but ns values are open sets
+Risk: unknown ns/name yields no_provider - is that distinguishable from a KB
+typo? Response: no_provider is exactly the typed signal for "nothing
+declared"; KB omissions surface as unavailable in tests. Corpus-style
+fixtures pin the declared set. Verdict: acceptable; the KB is the authority.
+
+*** Attack 10: tests need real SWI + pyswip (flake-only)
+Risk: contributors without nix see failures. Response: repo convention
+already (all Prolog tests are flake-gated). Verdict: no change.
+
+Review outcome: design stands with Attack 2/3/5 caveats documented. Proceed
+to TDD.
