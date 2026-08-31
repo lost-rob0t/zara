@@ -65,5 +65,14 @@
 - Focused: pytest t/test_semantic_corpus.py + t/test_intent_frames_prolog.py + Prolog load gate.
 - Full: scripts/test-all.sh, nix flake check, nix build, exact-head CI, android job where packaging changes.
 
+* TDD / gate evidence
+- RED (corpus) :: =t/test_semantic_corpus.py= + =kb/semantic_corpus.pl= written before the resolver; =ModuleNotFoundError: decode_frame_list= then engine decode failures (expected red).
+- GREEN (resolver) :: =modules/intent_frames.pl= + engine adapter; 86/86 corpus tests (40 case + 40 determinism + 6 structural/mirror).
+- Debugging evidence (Prolog MCP + swipl probes, preserved in iteration narrative) :: (a) SWI parses =timer.set= as dict-access syntax -> all dotted intent names must be quoted atoms; (b) swapped head/body variables in =label_rest= produced phantom 'for' labels -> fixed; (c) =frame_head_/2-4= lacked recursion past the first token -> fixed via =frame_head_/3= wrapper; (d) =verb_intent(set, python(schedule_todo), rest)= exists in the KB, so legacy timer precedence (memberchk(timer) before head selection) is mirrored to keep "set a timer" a timer frame; (e) =missing_required= failed instead of returning [] on complete frames -> findall form; (f) pyswip stringifies nested compounds, so decoding goes through flat =frame_head_row/9= / =frame_slot_row/8= projections (atoms, integers, lists of atoms only); (g) =python(Skill)= intents need an unwrap clause in =frame_from_args=.
+- RED (adapter) :: =t/test_prolog_frame_adapter.py= round-trip/context/injection tests before adapter completion.
+- GREEN (adapter) :: 10/10; corpus + legacy adapter + routing = 118 passed. Fixes: bounded slot text (512 chars) on fresh frames (=bounded_atom/2= for rest/text/ref/label paths); intent_resolver consulted in the adapter fixture; the injection utterance resolves to an inert ref slot (no throw) - the security property is non-execution, asserted directly.
+- Full local gate :: =scripts/test-all.sh= 10/10 phases; =nix flake check= green; =nix build= green.
+- Migration notes :: =text_quoted_command_words= expectation adjusted ('now' is a normalizer filler; deterministic current behavior); =timer_negative= pinned as =known_behavior_sign_stripped= (normalizer removes '-'; negative rejection is host-side via frames.py validators); bare "set a timer" now yields a typed missing-duration frame (previously None -> LLM fallback) - documented intentional migration; "search todos milk" now yields skill/search_todos with the todo word omitted (legacy kept it) - documented intentional migration.
+
 * Outcome
 - (pending)
