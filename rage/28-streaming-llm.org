@@ -40,3 +40,107 @@
 ** Analyze / Research
 - This file opened at =dc51f12=; research recorded above.
 - Next :: finish design artifact, map acceptance criteria to tests, then RED 1.
+
+* Iteration 2 - 2026-08-31 (implementation)
+** Run identity
+- Consumed issue :: #28, [P2] ZARA-027 - Stream LLM and agent output with cancellation-safe text events.
+- Branch :: =perf/zara-027-streaming-llm-impl= (orchestrator-specified implementation branch).
+- RAGE start commit :: =ec89bd448e9812fbf6cfc722cdc8616e0eaab8ec= (current master; PR #235 merged; includes #233 OpenRouter/RLM-direct work).
+- Design consumed :: =rage/28-streaming-llm-design.org= (merged via PR #227); no new architecture exploration.
+- Scope guard :: this iteration owns model/agent text streaming only. No daemon protocol semantics change, no tool-approval redesign, no #29 TTS work, no Prolog-RLM changes, no second streaming event bus.
+** Current-master reconciliation (design vs. code at =ec89bd4=)
+- Runtime event vocabulary already contains =AssistantDelta= / =AssistantComplete= / =AssistantFailed= and the daemon codec maps them to =assistant.delta= / =assistant.completed=; desktop =ConversationService= already reduces =AssistantDelta= into streaming messages with prefix-dedupe on =AssistantComplete.text=. The design's "existing runtime event publisher boundary" is therefore satisfied by publishing =AssistantDelta= through the canonical =zara.runtime.bridge= from the agent node; no new runtime event type is added (adding one would be a daemon wire change, out of scope).
+- =sentence_ready= stays in the typed =LLMStreamEvent= contract (=stream_publisher= callback), not the runtime wire protocol. #29 consumes =sentence_ready= via that contract; consumer-side reconciliation is explicitly #29 work per the design.
+- The preserved =wip/latency-trace-ctor= concern is moot at master: =latency_trace= rides in =AgentState= and tests construct =create_agent_node(llm, registry)= directly. Constructor injection is used only for the new =stream_publisher=; =latency_trace= stays state-passed to avoid breaking every existing node test.
+- OpenRouter (#233) :: agent path still binds LangChain models (no provider config change). =zara/llm.py= already treats openrouter as OpenAI-compatible; streaming follows the same family switch, so OpenRouter streams through the OpenAI-compatible SSE path with no configuration redesign.
+- =create_agent_node= signature is extended with an optional =stream_publisher=; all existing direct constructions (test_latency_metrics, test_runtime_events) keep buffered behavior unchanged.
+** RED evidence (TDD, before production changes)
+- =t/test_sentence_chunker.py= :: 34 tests covering punctuation, abbreviations
+  (Dr./e.g./i.e./vs./St./single initials), decimals, URLs (scheme + www.),
+  code fences/inline spans, ellipsis, CJK punctuation without whitespace,
+  emoji grapheme integrity, streaming hold-back across feeds, max_chars word
+  flush, no-whitespace hard cap, fake-clock max_wait flush, =wait_budget()=,
+  =take_due()=, empty input, 50-seed streamed-reconstruction property, and
+  constructor validation. RED =ModuleNotFoundError: No module named
+  'zara.agent.sentence_chunker'=.
+- =t/test_llm_streaming.py= :: acceptance-matrix tests A1, A3-A9 (fake
+  =astream= LLMs, local fake SSE/NDJSON HTTP servers). RED =ImportError:
+  cannot import name 'stream_events' from 'zara.agent'=.
+** GREEN evidence (focused)
+- Chunker suite: 35 passed.
+- Streaming suite: 26 passed (A1 first-delta-before-stream-close proven inside
+  the fake stream before it returns; A3 tool fragments never in text;
+  A4 cancel = [TextDelta, Cancelled] with stream closed and no stale runtime
+  events; A5 failed terminals propagate without completion; A6 single honest
+  buffered =Completed=; A7 aggregated content == delta concatenation;
+  A8 openai/openrouter/anthropic/ollama fake servers + failure modes
+  (http 500, malformed SSE, provider error, empty, connection refused, read
+  timeout, cancellation); A9 genuine =llm_request -> llm_first_token
+  (buffered_proxy=False) -> llm_first_sentence -> llm_final_token= with fake
+  clock durations 120ms/80ms).
+- =scripts/test-streaming-llm.sh= created (chunker + streaming suites; local
+  fake servers only) and wired into =scripts/test-all.sh= phase 6.
+- Full pytest suite at candidate: 1190 passed, 5 skipped; no regressions in
+  tool approvals, runtime host, MCP preparation, conversation persistence,
+  Quick Copilot/Full Chat reductions, OpenRouter config, or Prolog handling.
+** Implementation decisions
+- =stream_publisher= (typed =LLMStreamEvent= callback) is constructor-injected
+  into =create_agent_node= / =create_tools_node= and threaded through
+  =create_agent_graph=, =run_conversation_loop=, and
+  =AgentManager.process_async=. Runtime/UI streaming uses the canonical bus:
+  the node publishes =AssistantDelta= via =runtime_bridge.model_streaming= and
+  populates =AssistantComplete.text= with the exact final text; no new
+  runtime event types, no daemon codec change (codec already maps
+  =assistant.delta= / =assistant.completed=).
+- Streaming gate: =stream_publisher is not None and callable(astream)=. LLM
+  fakes/implementations without =astream= keep the exact buffered path with
+  =buffered_proxy=True= (honest fallback, A6); direct node constructions in
+  existing tests are untouched.
+- Provider stream consumption: =astream= is pumped by a dedicated task into an
+  =asyncio.Queue=; the consumer awaits =queue.get()= with
+  =chunker.wait_budget()= as timeout so the chunker's max-wait flush is
+  genuinely time-driven. (A =wait_for= around the generator's =__anext__=
+  would cancel the stream on every timeout - recorded as a design-relevant
+  implementation constraint.)
+- Tool-call handling: chunks carrying =tool_call_chunks= never emit text;
+  first fragment per index emits =ToolCallStarted(name, id)=; the aggregated
+  =AIMessageChunk= is rebuilt as an =AIMessage= (content, additional_kwargs,
+  tool_calls, id, response_metadata) so LangGraph approval/tool-loop and
+  history semantics are unchanged. =ToolResult(name, id)= is published by the
+  tools node for executed, rejected, and unavailable tool results.
+- =zara.llm.LLMClient= gains =serialize_stream_request= +
+  =stream_events_async= (single attempt, no retry duplication): OpenAI/
+  OpenRouter SSE =data:= frames, Anthropic SSE deltas (=content_block_delta=,
+  =message_stop=, =error=), Ollama NDJSON. Terminals: Completed (non-empty),
+  Cancelled (re-raised), Failed (http/rate_limit/malformed_response/
+  provider_error/empty_response/timeout/connection). Session lifecycle
+  (ZARA-016) unchanged; no wall-clock cap on streams, sock_read covers stalls.
+- Chunker conservation invariant (concatenation of emissions + flush equals
+  fed text exactly) is property-tested; guarded terminators hold back at
+  buffer end until the next feed disambiguates.
+- Deviation from design text: =sentence_ready= is NOT mirrored onto the
+  runtime event bus (design point 4 ambiguity). Rationale: the daemon codec
+  raises on unmapped event types and wire semantics are frozen for this
+  issue; =sentence_ready= stays in the typed =stream_publisher= contract that
+  #29 consumes. No contradiction with acceptance criteria.
+** Exact-head gate (candidate =aa5c396a75a336fae86fcbd13c35aca2161a7092=)
+- =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash
+  scripts/test-all.sh= :: ALL PHASES PASSED (10/10; phase 6 now includes
+  =scripts/test-streaming-llm.sh=; latency benchmark reports
+  =llm_request_to_first_sentence= p95=199ms warm fixture).
+- =nix flake check= :: all checks passed (x86_64-linux).
+- =nix build= :: zarathushtra-full built successfully.
+- Commits :: =a4ccec2= (events+chunker), =24643d7= (streaming node+client+gates),
+  =aa5c396= (RAGE evidence + wiki).
+** Merge closeout
+- PR :: #237 (perf/zara-027-streaming-llm-impl -> master).
+- Exact-head CI :: run 33415067554 (head =c72a930=) all checks passed; branch was
+  BEHIND master on merge attempt, so master was merged in (=14a6fdf=), the full
+  local gate re-ran (ALL PHASES PASSED), and run 33416715438 for the exact new
+  head =14a6fdfdf0b5a1d165ffdb1986f71e89b4d84d00= passed all checks before merge.
+- Merge SHA :: =1ff26122e32baba1446f6a07461a668412db6afc= (2026-08-31).
+- Consumed issue :: #28 closed automatically by the merge.
+- Outcome :: ZARA-027 shipped. ZARA-016/ZARA-023/ZARA-026 dependency chain
+  intact; =sentence_ready= available for #29 (phrase-sized TTS player); no
+  daemon protocol semantics, tool approval, or Prolog-RLM changes.
+- Next :: re-read the issue queue before consuming another issue.

@@ -49,10 +49,14 @@ python scripts/benchmark-voice.py \
 #+end_src
 
 The benchmark uses fixture providers and separates cold and warm cohorts. It
-reports p50, p95, p99, and the dominant stage for every turn. Current LangChain
-and TTS provider APIs buffer complete responses; production =llm_first_token=
-and =tts_first_chunk= events therefore carry =buffered_proxy=true=. They are
-observable completion proxies, not claims of true streaming latency.
+reports p50, p95, p99, and the dominant stage for every turn, including
+=llm_request_to_first_token= and =llm_request_to_first_sentence=. The agent
+node streams model output (ZARA-027): model text propagates incrementally as
+typed provider-neutral events (text deltas, sentence-ready chunks, tool
+lifecycle events) through the runtime event bus, and first-token/first-sentence
+latency is measured from the real provider stream. Adapters without streaming
+support fall back to one buffered =buffered_proxy=true= record, and
+=tts_first_chunk= remains a proxy until #29 adds phrase-sized playback.
 
 The command-routing gate verifies that unsupported Prolog handlers do not report
 a successful execution. The reply gate verifies that the noncommittal
