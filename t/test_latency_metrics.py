@@ -23,6 +23,7 @@ from zara.latency import (
     percentile,
 )
 from zara.prolog_engine import IntentResult
+from zara.runtime.clarification import ClarificationCoordinator
 from zara.tts import PlaybackResult, SynthesisResult
 from zara.wake import WakeWordListener
 
@@ -200,6 +201,7 @@ def test_prolog_route_records_same_trace_id():
     listener.memory.start_session.return_value = "session"
     listener.agent_manager = None
     listener.in_conversation_mode = MagicMock(return_value=False)
+    listener.clarifications = ClarificationCoordinator()
 
     used_agent, response = asyncio.run(listener.query_with_fallback_async("open browser"))
 

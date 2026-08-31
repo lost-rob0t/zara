@@ -42,6 +42,22 @@ from .prolog_engine import PrologEngine
 from .python_skills import python_skills
 from .memory import build_memory_manager
 from .latency import JSONLMetricsSink, LatencyTrace, metrics_path
+from .runtime.clarification import (
+    ClarificationCoordinator,
+    DialogueTemplate,
+    OPEN_APP_TEMPLATE,
+    SCHEDULE_TODO_TEMPLATE,
+    SessionCloseReason,
+    TEXT_MESSAGE_TEMPLATE,
+)
+from .runtime.frames import (
+    BoolValue,
+    DateTimeValue,
+    DurationValue,
+    NumberValue,
+    RefValue,
+    TextValue,
+)
 
 DEFAULT_SAMPLE_RATE = 16000
 CHANNELS = 1
@@ -51,6 +67,15 @@ DEFAULT_AUDIO_QUEUE_CHUNKS = 32
 WAKE_WORDS = ["zarathushtra", "zarathustra", "hey zara", "zara", "sarah", "sara"]
 WAKE_TOKEN_STRIP = " \t\r\n,.:;!?-\"'`()[]{}<>…"
 TIMEOUT_ACTIVE = 5
+
+CLARIFICATION_PRINCIPAL = "local"
+CLARIFICATION_CONVERSATION = "voice"
+
+PENDING_DIALOGUE_TEMPLATES: dict[str, DialogueTemplate] = {
+    "open": OPEN_APP_TEMPLATE,
+    "text": TEXT_MESSAGE_TEMPLATE,
+    "python(schedule_todo)": SCHEDULE_TODO_TEMPLATE,
+}
 
 
 def edit_distance(left: str, right: str) -> int:
@@ -287,6 +312,7 @@ class WakeWordListener:
         )
         self._pending_wake_command: Optional[str] = None
         self._last_audio_warning = 0.0
+        self.clarifications = ClarificationCoordinator()
 
         self.target_sample_rate = self._parse_float(
             wake_cfg.get("sample_rate", DEFAULT_SAMPLE_RATE),
@@ -904,6 +930,11 @@ class WakeWordListener:
     async def query_with_fallback_async(self, command_text: str) -> Tuple[bool, str]:
         self.log("Attempting Prolog resolution before agent fallback")
         loop = asyncio.get_event_loop()
+
+        clarification_reply = self._clarification_reply(command_text)
+        if clarification_reply is not None:
+            return (False, clarification_reply)
+
         if not command_gate.looks_like_command(command_text):
             target = command_gate.target_only_candidate(command_text)
             if target is not None:
@@ -969,6 +1000,27 @@ class WakeWordListener:
                         return (False, "", True)
 
                     if result.kind == "pending":
+                        template = PENDING_DIALOGUE_TEMPLATES.get(result.name)
+                        if template is not None:
+                            opened = self.clarifications.open(
+                                template,
+                                principal=CLARIFICATION_PRINCIPAL,
+                                conversation_id=CLARIFICATION_CONVERSATION,
+                            )
+                            if trace is not None:
+                                trace.record("prolog_result", status="pending")
+                                trace.record(
+                                    "route_selected",
+                                    route=(
+                                        "clarification"
+                                        if opened.kind == "opened"
+                                        else "clarification_capacity"
+                                    ),
+                                )
+                            if opened.kind == "capacity":
+                                return (True, opened.message, False)
+                            return (True, opened.question, False)
+
                         required = ", ".join(str(slot) for slot in args)
                         if trace is not None:
                             trace.record("prolog_result", status="pending")
@@ -1070,6 +1122,97 @@ class WakeWordListener:
         except Exception:
             pass
         return (True, response_text)
+
+    def _clarification_reply(self, command_text: str) -> Optional[str]:
+        session = self.clarifications.session_for(
+            CLARIFICATION_PRINCIPAL, CLARIFICATION_CONVERSATION
+        )
+        if session is None:
+            return None
+
+        if command_gate.looks_like_command(command_text):
+            self.clarifications.cancel(
+                principal=CLARIFICATION_PRINCIPAL,
+                conversation_id=CLARIFICATION_CONVERSATION,
+                reason=SessionCloseReason.SUPERSEDED_BY_NEW_COMMAND,
+            )
+            return None
+
+        outcome = self.clarifications.submit_follow_up(
+            command_text,
+            principal=CLARIFICATION_PRINCIPAL,
+            conversation_id=CLARIFICATION_CONVERSATION,
+        )
+        trace = getattr(self, "current_latency_trace", None)
+        if trace is not None:
+            route = (
+                "clarification_stale"
+                if outcome.kind == "stale"
+                else "clarification"
+            )
+            trace.record("route_selected", route=route)
+            trace.flush()
+
+        if outcome.kind == "complete":
+            return self._execute_clarification(outcome, command_text)
+        return outcome.message or None
+
+    def _execute_clarification(self, outcome, command_text: str) -> str:
+        session = outcome.session
+        template = session.template
+        frame = outcome.frame
+
+        args: list = []
+        for name in template.arg_order_names():
+            value = frame.slot_value(name)
+            if value is None:
+                continue
+            if isinstance(value, TextValue):
+                args.append(value.text)
+            elif isinstance(value, RefValue):
+                args.append(value.id)
+            elif isinstance(value, DurationValue):
+                args.append(value.seconds)
+            elif isinstance(value, NumberValue):
+                args.append(value.value)
+            elif isinstance(value, BoolValue):
+                args.append(value.value)
+            elif isinstance(value, DateTimeValue):
+                args.append(
+                    (
+                        value.year,
+                        value.month,
+                        value.day,
+                        value.hour,
+                        value.minute,
+                        value.second,
+                    )
+                )
+
+        if self.session_id is None:
+            self.session_id = self.memory.start_session()
+
+        if template.intent_ns == "skill":
+            response = python_skills.execute(template.intent_name, args)
+        elif self.prolog.execute_intent(template.intent_name, args):
+            response = f"Executed: {template.intent_name} {args}"
+        else:
+            self.clarifications.cancel(
+                principal=CLARIFICATION_PRINCIPAL,
+                conversation_id=CLARIFICATION_CONVERSATION,
+            )
+            self.log(
+                f"Clarification execution failed: intent={template.intent_name}"
+            )
+            return "I couldn't complete that."
+
+        self.memory.add_message(self.session_id, "user", command_text)
+        self.memory.add_message(self.session_id, "assistant", response)
+        self.clarifications.finish(
+            principal=CLARIFICATION_PRINCIPAL,
+            conversation_id=CLARIFICATION_CONVERSATION,
+        )
+        return response
 
     async def query_llm_async(self, query_text):
         try:

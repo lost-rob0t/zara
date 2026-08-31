@@ -1,0 +1,101 @@
+#+title: RAGE #155 - typed slots + principal/conversation-scoped clarification dialogue
+
+* Run identity
+- Consumed issue :: #155, P1 - implement typed slots and principal/conversation-scoped clarification dialogue (parent epic #150; depends #154 closed, #131 closed).
+- Branch :: =rage/155-typed-slots=.
+- RAGE start commit :: =7ad29b1= (master after PR #233).
+- Queue state at consumption :: verified with Prolog MCP against =planning/backlog.pl= regenerated at =7ad29b1= (import-backlog.py --date 2026-08-31): =queue=[100-134,300-124,301-216,306-122,400-149,501-155,900-87,...]; strict phase-rank head is #134 (P0 daemon release gate) - owner is deliberately driving the Android chain instead (standing directive); =blockers(155)=none. #155 is the Android-chain slice per handoff.
+- Mode :: repository Auto-RAGE per #194.
+- Contract :: =docs/intentframe-contract.md= (NORMATIVE, frozen by #154). Design pointers :: =rage/154-intentframe-design.org= D2/D3, lifecycle table, threat analysis, test row A2.
+
+* Research
+
+** What exists today (verified at 7ad29b1)
+- =pending/1= is a return shape, not state: =missing_slots/3= (modules/intent_resolver.pl:66-73) recomputes per utterance; nothing asserts/retracts pending state; no slot-fill loop exists (rage/154-intentframe-research.org finding 2).
+- Wake prompt is Python string interpolation: zara/wake.py:971-976 builds "Please provide: {required}." from the pending args; the next utterance is re-resolved from scratch, so a bare slot answer ("firefox") can never complete the intent.
+- =wake._pending_wake_command= (wake.py:288,1554,1610) is pre-LLM command buffering - a distinct concept; NOT dialogue slot state (finding 13). Not touched here.
+- RuntimeHost (zara/runtime/host.py) owns lifecycle/turns; TurnCoordinator serializes turns per conversation (zara/actors.py stale-event rejection is the staleness prior art); ConversationManager/MemoryManager own history; no clarification state anywhere.
+- Resolver pending shapes today: =pending(open)/[app]=, =pending(text)/[contact,message]=, =pending(text)/[message]=, =pending(python(schedule_todo))/[task]= (missing_slots/3). "set a timer" never yields pending today (parse_timer_command requires amount+unit; falls to =verb_intent(timer,timer,rest)= with empty args or the LLM) - bare-timer missing frames are #156 corpus work.
+- IntentResult drops parsed slot values: "text sarah" -> =pending(text)/[message]= loses "sarah" (missing_slots/3 matches =\:[Word,_]= and returns only missing names). Prefilled slots cannot be recovered at the wake boundary today; the machine must accept prefills so #156 can supply them.
+- events.IntentResolved (zara/runtime/events.py:164) is defined but never emitted; emission is A6/#173 codec scope, not this slice.
+- Daemon path has no Prolog (server.py:194) - no frame producer on the daemon path yet; clarification sessions get a producer in #156/#157.
+
+** External prior art (from #154 research, still standing)
+- Alexa Dialog Interface: typed slot maps + dialog directives + ElicitSlot with updatedIntent; the slot map, not positional args, is the durable representation.
+- Dialogflow/Rasa: session-scoped parameter state owned by the session host, not the NLU call.
+
+** Research conclusions
+1. The clarification session is pure host state: conversation+principal-scoped, one per conversation, prompts derived deterministically from the frame's missing list (contract section 4; D2). No Prolog dynamic DB, no LLM prompt management, no global pending variable.
+2. The machine consumes *typed* slot values; raw-utterance parsing for the ACTIVE requested slot is dialogue-layer parsing (deterministic, per-slot-type), distinct from verb/intent authority (D6 unharmed; #156 replaces utterance-level resolution with =resolve_frames/4=).
+3. Frame ids and supersedes live in the session's envelope bookkeeping, never inside the frame (contract section 1).
+4. Wake wire-up is limited to the existing pending shapes; unknown pending shapes keep the legacy string. Bare-timer frames ("set a timer" -> ask duration) are exercised at machine level; resolver-side production is #156.
+
+* Design (decisions)
+
+- D1 :: Two modules. =zara/runtime/frames.py=: IntentFrame v1 Python mirror - closed typed value set (text/number/duration/datetime/ref/boolean), slot origins (utterance/follow_up/context/default/correction), frame statuses (complete/missing/ambiguous/invalid/cancelled/superseded), immutable =IntentFrame= with NO frame id inside. =zara/runtime/clarification.py=: slot specs, per-slot-type deterministic value parsers, the clarification session state machine, and the coordinator registry.
+- D2 :: Session lifecycle: ELICITING (missing/invalid/ambiguous - questions derived from required slots in spec order) -> READY (all required slots filled; frame status complete; short pre-execution window) -> CLOSED (terminal: executed/cancelled/expired/superseded/exhausted). Optional slots are never elicited.
+- D3 :: Follow-up filling: only the ACTIVE requested slot when unambiguous. Invalid answer -> focused retry of the same slot (no state change beyond an attempt counter). Bounded: =max_attempts= (default 5) exhausts to a closed cancelled session.
+- D4 :: Correction: leading deterministic markers ("actually", "make that", "make it", "change that to", "change it to", "no"/"no,") mark the follow-up as a correction. Targeting rule (deterministic, no LLM): if the active slot parses the marker-stripped text -> fill/replace the active slot with origin=correction; else try already-filled typed (non-text) slots in schema order -> replace that slot with origin=correction; else focused retry. A correction rotates the frame id and records =supersedes= (prior frame id) in the session bookkeeping - never inside the frame.
+- D5 :: Cancellation: phrases {"never mind", "nevermind", "forget it", "cancel", "cancel that"} close the session with a cancelled frame; "stop"/"end" cancel the session and fall through to existing conversation-stop handling (no reply of its own).
+- D6 :: Stale gating: follow-ups to a closed, cancelled, expired, capacity-replaced, or nonexistent session all return one byte-identical rejection ("That question isn't active anymore.") regardless of principal/conversation/reason - no cross-principal inference from wording or timing.
+- D7 :: Ambiguity: an ambiguous open frame lists value alternatives for the active question; the follow-up must equal one alternative (case-insensitive) -> fills with origin=follow_up; otherwise focused retry. No default picking (contract section 4).
+- D8 :: Registry: =ClarificationCoordinator= keyed by (principal, conversation_id); at most one open session per conversation (opening a new one supersedes the old with reason =superseded_by_new_dialogue=); =max_sessions= bound (default 8) with a uniform capacity rejection; per-value size bound (default 512 chars, oversized = invalid retry); TTL (default 120s) checked against an injectable clock; =drop_all(reason)= for restart/shutdown (typed degraded drop, never silent resume).
+- D9 :: Concurrency: one lock per coordinator; transitions are atomic; a second concurrent submit cannot double-hold the dialogue - at READY, non-correction text is stale; the first completer owns the frame.
+- D10 :: RuntimeHost integration (D2 of #154 design): host constructs a coordinator, exposes it, and =drop_all(reason)= on restart and shutdown. The wake path instantiates its own coordinator (the wake listener is its own runtime context until #157 unifies execution) using the same classes.
+- D11 :: Wake wire-up: pending result -> open session from a template map (open -> ns(app)/open with target ref slot; text -> ns(message)/text with contact ref + message text slots; python(schedule_todo) -> ns(skill)/schedule_todo with task text slot; timer.set template exists for machine tests) and answer with the deterministic question; every command utterance first checks the session when the text is not command-like; completion executes via the existing =execute_intent=/=python_skills.execute= paths and then closes the session.
+- D12 :: No new latency-trace schema fields; wake records =route="clarification"= / =route="clarification_stale"= using the existing route_selected event shape. No transcript text in traces.
+
+* Threat / failure analysis
+- Slot-text injection :: dialogue-layer values are typed inert values (text/ref); adapters receive plain surface strings; never executed (contract section 6; design invariants).
+- Cross-principal leakage :: sessions keyed by (principal, conversation); uniform rejection strings carry no principal/session/counter data.
+- Oversized/malformed input :: value size bound + per-type validation fail closed into focused retry.
+- Flood :: max_sessions bound + max_attempts bound + TTL bound; capacity rejection is uniform and does not evict other principals' sessions.
+- Restart :: =drop_all= on restart/shutdown; late follow-ups get the uniform stale rejection (never silently resumed - #154 design threat row).
+- Double-hold race :: coordinator lock + READY-state stale rule; two concurrent submits cannot both complete the same frame.
+- Legacy drift :: unknown pending shapes keep the legacy prompt; no behavior fork for intents without templates.
+
+* Adversarial review (counterexamples)
+- "hello there" after "text sarah -> ask message" with markers ("actually hello there") -> marker-stripped text fills the ACTIVE message slot with origin=correction; contact untouched. Deterministic choice of the active question over a filled text slot; resolver-driven explicit =submit_correction(slot, value)= remains available for #156 where re-resolution knows the slot. Accepted residual ambiguity, documented here.
+- "never mind" mid-elicitation then "twenty minutes" -> session closed; "twenty minutes" is not command-like, no session -> uniform stale rejection; not executed, not consumed as slot fill. Matches the mandatory example.
+- Concurrent A/B principals with identical frame ids/phrases -> disjoint registry keys; byte-identical rejection strings asserted in tests.
+- Two conversations, one principal -> per-conversation sessions cannot steal answers.
+- Timeout vs fill race -> clock is injectable; expiry check happens before any fill; an expired session is closed cancelled(timeout) and the fill is stale. Virtual clock in tests; no sleeps.
+- Cancellation racing slot fill -> lock serializes; whichever transition lands first wins; the loser observes CLOSED (stale) - tested.
+- Oversized answer -> size-bounded parser -> focused retry; nothing stored.
+- Missing template for a pending shape -> legacy behavior preserved (bounded migration).
+- READY-window correction after execution already consumed the frame -> wake closes the session before returning; late correction is stale (uniform). Machine-level callers that hold READY can still correct (covered by test).
+
+* Decision record (Auto-RAGE decision gate, 2026-08-31)
+- Implement D1-D12 exactly; tests map to issue mandatory examples + design A2 row (see test matrix below).
+- Reject: LLM-owned clarification prompts (unverifiable state; contract forbids); a Prolog dynamic pending store (resolution must stay pure per contract); a single global pending variable (wake.py's _pending_wake_command stays what it is - pre-LLM buffering, untouched); evicting other principals' sessions on capacity (rejection instead); accepting corrections that target arbitrary slots by heuristic text matching beyond D4's deterministic rule.
+- Test matrix (issue mandatory examples -> tests, all in t/test_clarification_session.py unless noted):
+  1. "set a timer" -> ask duration; "twenty minutes" -> duration 1200 (machine level, timer.set template; resolver-side bare-timer frames are #156)
+  2. "set a timer" -> "bananas" -> focused retry
+  3. "set a timer" -> "never mind" -> cancelled; later "twenty minutes" -> uniform stale, not consumed
+  4. correction 20 -> 5 minutes before execution (READY window; supersedes + origin=correction)
+  5. "open" -> ask app -> "Firefox" (wake wire-up end-to-end with fake prolog)
+  6. "text sarah" -> ask message (machine level with prefilled contact; wake level "text" -> contact -> message)
+  7. two missing slots, deterministic order (contact before message)
+  8. A/B principals isolated (identical intent ids + phrases)
+  9. two conversations, one principal - no stealing
+  10. stale: expired/cancelled/restarted + uniform rejection strings byte-equal
+  11. cancellation racing slot fill (loser stale)
+  12. capacity exhaustion bounded (uniform rejection, others untouched)
+  13. timeout with virtual clock (no real sleeps)
+  14. attempts bound (repeated invalid answers exhaust to closed)
+  15. RuntimeHost restart/shutdown drops sessions (typed degraded, follow-up stale)
+
+* TDD / gate evidence
+- RED (machine) :: =t/test_clarification_session.py= written first at =04734f2=; collection error =ModuleNotFoundError: No module named 'zara.runtime.clarification'= (expected red).
+- GREEN (machine) :: 26/26 after implementing =zara/runtime/frames.py= + =zara/runtime/clarification.py=. Fixes during green: digit tokens in =_parse_number_words= ("90 seconds"); stale outcomes carry the uniform message and session snapshot.
+- RED (wake wire-up) :: =t/test_wake_clarification.py= written before wake changes; =assert (False, 'Which app?') != (False, 'Please provide: app.')= (expected red) plus missing-attribute failures.
+- GREEN (wake) :: 9/9. Test corrections during green: 1-2 token answers are valid =ref(app_alias)= values (alias resolution is capability-layer per contract example 6), so the focused-retry case uses a 3+ token answer; unknown pending shapes require a command-like utterance ("run") to reach the resolver.
+- RED (host) :: =t/test_runtime_host_clarification.py=; =AttributeError: 'RuntimeHost' object has no attribute 'clarifications'= (expected red).
+- GREEN (host) :: 3/3 after coordinator ownership + =drop_all= on restart/shutdown.
+- Migration of existing tests :: =t/test_command_routing.py= fixtures carry the coordinator (production =__init__= guarantees it; =__new__= fixtures must match). =test_pending_result_returns_clarification_without_execution= now asserts the NEW required behavior (deterministic question "Which app?" + open session) - the old "Please provide: app." string is the stateless prompt this issue removes. =t/test_latency_metrics.py= fixture updated; trace assertions unchanged (no session open => no extra route events).
+- Dialogue script :: =t/test_dialogue_script.py= walks all mandatory examples as one deterministic non-interactive conversation (timer ask/fill/correct/cancel/stale/retry, open app, two-slot text flow, principal/conversation isolation, virtual-clock timeout, byte-identical rejection wording).
+- Full local gate at candidate =1911487= :: =NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash scripts/test-all.sh= -> 10/10 phases passed (1166+ tests); =nix flake check= -> all checks passed; =nix build= -> OK.
+- Observation :: =t/test_zmq_transport_route_backpressure.py::test_stalled_route_completion_queue_cannot_evict_healthy_route= failed once under full-suite load and in one burst of repeat runs; 23/23 passes across controlled re-runs with the full change applied (and 11/11 with subsets). No import path connects the changed modules to that test; recorded as a load-sensitive test, not a regression of this slice.
+
+* Outcome
+- (pending)

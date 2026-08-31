@@ -8,7 +8,7 @@
 %   nix develop -c swipl -s planning/backlog.pl  % then: next(I). queue(Q). blockers(122, Bs).
 
 % Closed issues referenced by dependency edges, phases or epics.
-closed(2). closed(3). closed(4). closed(5). closed(6). closed(7). closed(8). closed(9). closed(17). closed(128). closed(129). closed(130). closed(131). closed(132). closed(133). closed(170). closed(171). closed(191). closed(195). closed(209).
+closed(2). closed(3). closed(4). closed(5). closed(6). closed(7). closed(8). closed(9). closed(17). closed(124). closed(128). closed(129). closed(130). closed(131). closed(132). closed(133). closed(139). closed(154). closed(170). closed(171). closed(191). closed(195). closed(209).
 
 % Open issues: issue(Id, Priority, Status, ShortTitle).
 issue(87, p1, open, "P1 — add Linux global shortcut backends for Wayland and X11").
@@ -21,10 +21,8 @@ issue(93, p2, open, "P2 — add an advanced Prolog reasoning inspector").
 issue(94, p2, open, "P2 — unify Zarathushtra Pets with the desktop event stream and tray").
 issue(95, p3, open, "P3 — package Zara Desktop and harden platform lifecycle behavior").
 issue(122, p0, open, "P0 — add a bounded utterance rewriter before Prolog intent resolution").
-issue(124, p0, open, "P0 — replace the minimal Prolog LLM wrapper with a full embedded async-capable client").
 issue(134, p0, open, "P0 release gate — prove Zara daemon can replace the core ChatGPT Voice workflow safely").
 issue(149, p1, open, "P1 — publish Nix-built `zara-server` OCI image to GHCR").
-issue(154, p1, open, "P1 — RAGE research the post-client-split semantic intent architecture and freeze an `IntentFrame` contract").
 issue(155, p1, open, "P1 — implement typed slots and principal/conversation-scoped clarification dialogue").
 issue(156, p1, open, "P1 — adapt Prolog resolution to `IntentFrame` and establish the canonical realistic command corpus").
 issue(157, p1, open, "P1 — add capability/provider reasoning and typed `ExecutionPlan` without reviving draft architecture blindly").
@@ -86,7 +84,6 @@ depends_on(134, 130).
 depends_on(134, 131).
 depends_on(134, 132).
 depends_on(134, 133).
-depends_on(154, 133).
 depends_on(155, 131).
 depends_on(155, 154).
 depends_on(156, 155).
@@ -212,7 +209,7 @@ pr(138, none, open,  none,        parked_rebase_post_daemon_factcheck).
 pr(222, none, open,  none,        parked_design_direction_decision_needed).
 pr(223, 127,  open,  none,        parked_rebase_zara1_contract_reconciliation).
 
-master_last_merge(2026-08-30).
+master_last_merge(2026-08-31).
 
 % ---- Rules ----
 open_issue(I) :- issue(I, _, open, _).
