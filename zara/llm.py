@@ -1,10 +1,11 @@
 """Bounded HTTP clients for supported LLM providers."""
 
 import asyncio
+import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import aiohttp
 
@@ -224,6 +225,135 @@ class LLMClient:
             return self._error("cancelled", "LLM request was cancelled", cancelled=True)
         except TimeoutError:
             return self._error("timeout", "LLM request timed out")
+
+    def serialize_stream_request(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        max_tokens: int = 1024,
+    ) -> Tuple[Dict[str, str], Dict[str, Any]]:
+        headers, payload = self.serialize_request(
+            prompt, system_prompt, chat_history, max_tokens
+        )
+        payload["stream"] = True
+        return headers, payload
+
+    async def stream_events_async(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        max_tokens: int = 1024,
+    ) -> AsyncIterator["stream_events.LLMStreamEvent"]:
+        """Yield provider-neutral typed events for a streamed completion.
+
+        One terminal event (Completed, Cancelled, or Failed) is always the
+        last event; failures never fabricate a completion and streaming
+        never retries (retries would duplicate already-delivered deltas).
+        """
+        from zara.agent import stream_events
+        from zara.agent.sentence_chunker import SentenceChunker
+
+        headers, payload = self.serialize_stream_request(
+            prompt, system_prompt, chat_history, max_tokens
+        )
+        chunker = SentenceChunker()
+        emitted = ""
+
+        async def fail(error_type: str):
+            yield stream_events.Failed(error_type=error_type)
+
+        session = await self._ensure_session()
+        try:
+            async with session.post(
+                self.endpoint, headers=headers, json=payload
+            ) as response:
+                if response.status < 200 or response.status >= 300:
+                    detail = (await response.text()).strip()
+                    error_type = "rate_limit" if response.status == 429 else "http"
+                    logger.warning(
+                        "[LLM] stream failed (%s): %s", error_type, detail[:200]
+                    )
+                    async for event in fail(error_type):
+                        yield event
+                    return
+
+                async for raw_line in response.content:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line:
+                        continue
+                    text = None
+                    done = False
+                    provider_error = False
+                    try:
+                        if self.provider in {"openai", "openrouter"}:
+                            if not line.startswith("data:"):
+                                continue
+                            data = line[len("data:"):].strip()
+                            if data == "[DONE]":
+                                done = True
+                            else:
+                                text = json.loads(data)["choices"][0]["delta"].get("content")
+                        elif self.provider == "anthropic":
+                            if not line.startswith("data:"):
+                                continue
+                            data = json.loads(line[len("data:"):].strip())
+                            if data.get("type") == "message_stop":
+                                done = True
+                            elif data.get("type") == "error":
+                                provider_error = True
+                            elif data.get("type") == "content_block_delta":
+                                delta = data.get("delta", {})
+                                if delta.get("type") == "text_delta":
+                                    text = delta.get("text")
+                        else:
+                            data = json.loads(line)
+                            if data.get("done"):
+                                done = True
+                            else:
+                                text = data.get("message", {}).get("content")
+                    except (json.JSONDecodeError, KeyError, IndexError, TypeError) as error:
+                        logger.warning("[LLM] malformed stream chunk: %s", error)
+                        async for event in fail("malformed_response"):
+                            yield event
+                        return
+
+                    if provider_error:
+                        logger.warning("[LLM] stream reported a provider error")
+                        async for event in fail("provider_error"):
+                            yield event
+                        return
+                    if done:
+                        break
+                    if not text:
+                        continue
+                    emitted += text
+                    yield stream_events.TextDelta(text=text)
+                    for sentence in chunker.feed(text):
+                        yield stream_events.SentenceReady(text=sentence, is_final=False)
+
+            if not emitted.strip():
+                async for event in fail("empty_response"):
+                    yield event
+                return
+            final_sentences = chunker.flush()
+            for index, sentence in enumerate(final_sentences):
+                yield stream_events.SentenceReady(
+                    text=sentence,
+                    is_final=index == len(final_sentences) - 1,
+                )
+            yield stream_events.Completed(full_text=emitted)
+        except asyncio.CancelledError:
+            yield stream_events.Cancelled()
+            raise
+        except TimeoutError:
+            async for event in fail("timeout"):
+                yield event
+        except aiohttp.ClientError as error:
+            logger.warning("[LLM] stream connection failed: %s", error)
+            async for event in fail("connection"):
+                yield event
 
     async def _request_with_retries(
         self,

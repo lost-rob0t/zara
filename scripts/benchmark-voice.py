@@ -38,6 +38,7 @@ FIXTURE_REQUIRED_EVENTS = (
     "route_selected",
     "llm_request",
     "llm_first_token",
+    "llm_first_sentence",
     "llm_final_token",
     "tts_request",
     "tts_first_chunk",
@@ -104,7 +105,9 @@ def build_fixture_trace(
         request_index=0,
         buffered_proxy=False,
     )
-    clock.advance_ms(50)
+    clock.advance_ms(15)
+    trace.record("llm_first_sentence", provider="fixture-llm", request_index=0)
+    clock.advance_ms(35)
     trace.record("llm_final_token", provider="fixture-llm", request_index=0)
 
     clock.advance_ms(10)

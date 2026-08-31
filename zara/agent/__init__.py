@@ -149,6 +149,7 @@ class AgentManager:
         latency_trace: Optional[LatencyTrace] = None,
         turn_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
+        stream_publisher=None,
     ) -> Dict[str, Any]:
         import logging
         logger = logging.getLogger(__name__)
@@ -237,6 +238,7 @@ class AgentManager:
             approval_controller=self.approval_controller,
             publisher=self.approval_controller.publisher,
             principal_id=principal_id,
+            stream_publisher=stream_publisher,
         )
 
         result_messages = result.get("messages", [])
