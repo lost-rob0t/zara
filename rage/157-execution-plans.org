@@ -1,0 +1,39 @@
+* RAGE 157 — capability/provider reasoning + typed ExecutionPlan
+
+** Run identity
+- Consumed issue: #157 (P1, epic #150, depends on #156 — satisfied)
+- Start commit: f58b551 (= master 7ae4b7f + #156 merge-evidence + backlog regen)
+- Branch: rage/157-execution-plans (rebased onto origin/master 7ae4b7f; backlog
+  conflict resolved by regenerating via scripts/import-backlog.py --date 2026-08-31)
+- Queue at consumption (Prolog-verified, backlog.pl @ f58b551):
+  - next(I) = 134 (strict phase-rank head — owner still driving Android chain;
+    divergence noted, as all arc)
+  - queue = [100-134, 301-216, 306-122, 400-149, 503-157, 702-172, 900-87 ...]
+  - blockers(157) = none (predicate fails on empty)
+  - epic_progress(150) = 3/8 (154, 155, 156 merged)
+- Repository mode: Auto-RAGE (#194) — no approval stalls.
+
+** Scope from issue
+- Given a complete semantic IntentFrame, select a viable abstract provider/location
+  under availability/policy/authorization constraints, producing a typed
+  ExecutionPlan (no direct execution, no fabricated semantic status).
+- PR #119 reconciliation: reuse the shape (kb/capabilities.pl single symbolic
+  provider-selection layer, candidate/5, select/4, explain/4, require/exclude
+  constraints), reject obsolete mechanics (pre-IntentFrame args); prove no
+  Prolog-RLM path survives.
+- Ownership boundaries: wake `_pending_wake_command` is pre-LLM buffering (not
+  re-wired here); clarification machine (#155) owns follow-ups at the wake
+  boundary; events.IntentResolved emission stays #173; agent prompt verb list +
+  raw query_prolog removal is #157/#160 (A7) — coordinate.
+
+** Research
+
+*** Sources
+- rage/154-intentframe-design.org (D4 capability reasoning, A5 test row)
+- docs/intentframe-contract.md (NORMATIVE v1) examples 12/13
+- Closed draft PR #119 (capability_resolver prior art)
+- modules/intent_frames.pl, kb/semantic_corpus.pl, kb/intents.pl (current KB)
+- zara/runtime/frames.py, zara/runtime/clarification.py, zara/runtime/host.py,
+  zara/prolog_engine.py, zara/daemon/server.py, zara/wake.py (current runtime)
+- t/test_intent_frames_corpus.py, t/test_frames.py, t/test_clarification.py (test shapes)
+
