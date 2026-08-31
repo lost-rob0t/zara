@@ -2,7 +2,10 @@ import concurrent.futures
 import json
 import os
 import stat
+import subprocess
+import sys
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -409,3 +412,64 @@ def test_supervisor_shutdown_cancels_active_runtime_turn():
     assert backend.cancelled.is_set()
     assert backend.stopped.is_set()
     assert supervisor.state is ServerState.STOPPED
+
+
+def test_packaged_entrypoint_reaches_gateway_and_shuts_down_cleanly(tmp_path):
+    """`python -m zara.server` must not duplicate PrincipalContext classes.
+
+    The packaged zara-server binary runs server.py as __main__. Runtime and
+    transport modules import zara.server again as a module, so principal
+    identity checks only hold when the canonical PrincipalContext lives in a
+    leaf module both copies share. The historical failure exited within
+    seconds with TypeError: principal must be a PrincipalContext.
+    """
+    import time
+
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".config").mkdir()
+
+    env = dict(os.environ)
+    env.update(
+        {
+            "XDG_RUNTIME_DIR": str(runtime_dir),
+            "HOME": str(home),
+            "XDG_CONFIG_HOME": str(home / ".config"),
+        }
+    )
+
+    repo_root = Path(__file__).resolve().parents[1]
+    process = subprocess.Popen(
+        [sys.executable, "-m", "zara.server"],
+        cwd=repo_root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        try:
+            _, stderr = process.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            pass
+        else:
+            pytest.fail(
+                "packaged entrypoint exited before the gateway stage "
+                f"(rc={process.returncode}):\n{stderr[-2000:]}"
+            )
+
+        process.terminate()
+        try:
+            _, stderr = process.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            _, stderr = process.communicate()
+
+        assert process.returncode == 0, stderr[-2000:]
+        assert "TypeError" not in stderr
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate()

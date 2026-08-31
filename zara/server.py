@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
+from zara.principals import PrincipalContext
 from zara.runtime import bridge, events
 from zara.runtime.backend import AgentRuntimeBackend
 from zara.runtime.commands import RuntimeCommand
@@ -107,26 +108,6 @@ class ServerState(str, enum.Enum):
     STOPPING = "stopping"
     STOPPED = "stopped"
     FAILED = "failed"
-
-
-@dataclass(frozen=True)
-class PrincipalContext:
-    principal_id: str
-    kind: str = "synthetic"
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.principal_id, str) or not self.principal_id.strip():
-            raise ValueError("principal_id must be a non-empty string")
-        if self.principal_id != self.principal_id.strip():
-            raise ValueError("principal_id must not contain leading or trailing whitespace")
-        if not isinstance(self.kind, str) or not self.kind.strip():
-            raise ValueError("principal kind must be a non-empty string")
-        if self.kind != self.kind.strip():
-            raise ValueError("principal kind must not contain leading or trailing whitespace")
-
-    @classmethod
-    def local_owner(cls) -> "PrincipalContext":
-        return cls(principal_id=f"uid:{os.getuid()}", kind="local-owner")
 
 
 @dataclass
