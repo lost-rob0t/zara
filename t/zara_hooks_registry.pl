@@ -178,6 +178,10 @@ setup_user_hooks_fixture(Root, HookPath, Enabled, AllowOverride) :-
 
 write_hooks_config(HookPath, Enabled, AllowOverride) :-
     file_directory_name(HookPath, ConfigDir),
+    ( exists_directory(ConfigDir)
+    -> true
+    ; make_directory_path(ConfigDir)
+    ),
     directory_file_path(ConfigDir, 'config.toml', ConfigPath),
     setup_call_cleanup(
         open(ConfigPath, write, Stream),
