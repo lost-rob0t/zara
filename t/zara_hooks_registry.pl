@@ -71,10 +71,52 @@ test(invalid_stage_rejected,
     zara_hooks:register_hook(not_a_stage, test, 10,
                              zara_hooks_registry_tests:record(nope), _).
 
+test(user_hooks_disabled_by_default) :-
+    setup_call_cleanup(
+        setup_user_hooks_fixture(Root, _HookPath),
+        ( hooks_loader:reset_hook_policy,
+          hooks_loader:load_user_hooks,
+          zara_hooks:list_hooks(Hooks),
+          include(is_user_hook, Hooks, UserHooks),
+          assertion(UserHooks == [])
+        ),
+        cleanup_user_hooks_fixture(Root)
+    ).
+
+test(user_hooks_load_only_when_enabled) :-
+    setup_call_cleanup(
+        setup_user_hooks_fixture(Root, _HookPath),
+        ( hooks_loader:set_hook_policy(true, false),
+          hooks_loader:load_user_hooks,
+          zara_hooks:list_hooks(Hooks),
+          include(is_user_hook, Hooks, UserHooks),
+          assertion(UserHooks = [_])
+        ),
+        cleanup_user_hooks_fixture(Root)
+    ).
+
+test(disabling_hooks_clears_loaded_user_hooks) :-
+    setup_call_cleanup(
+        setup_user_hooks_fixture(Root, _HookPath),
+        ( hooks_loader:set_hook_policy(true, false),
+          hooks_loader:load_user_hooks,
+          hooks_loader:set_hook_policy(false, false),
+          zara_hooks:list_hooks(Hooks),
+          include(is_user_hook, Hooks, UserHooks),
+          assertion(UserHooks == [])
+        ),
+        cleanup_user_hooks_fixture(Root)
+    ).
+
+test(override_gate_cannot_enable_hooks,
+     [throws(error(permission_error(enable, hook_override, hooks_disabled), _))]) :-
+    hooks_loader:set_hook_policy(false, true).
+
 test(user_hooks_path_and_reload_is_idempotent) :-
     setup_call_cleanup(
         setup_user_hooks_fixture(Root, HookPath),
-        ( hooks_loader:user_hooks_path(Resolved),
+        ( hooks_loader:set_hook_policy(true, false),
+          hooks_loader:user_hooks_path(Resolved),
           assertion(Resolved == HookPath),
           hooks_loader:reload_user_hooks,
           hooks_loader:reload_user_hooks,
@@ -88,7 +130,8 @@ test(user_hooks_path_and_reload_is_idempotent) :-
 test(missing_user_hooks_file_is_not_created) :-
     setup_call_cleanup(
         setup_empty_xdg(Root, HookPath),
-        ( assertion(\+ exists_file(HookPath)),
+        ( hooks_loader:set_hook_policy(true, false),
+          assertion(\+ exists_file(HookPath)),
           hooks_loader:load_user_hooks,
           assertion(\+ exists_file(HookPath))
         ),
@@ -119,6 +162,7 @@ setup_user_hooks_fixture(Root, HookPath) :-
     ).
 
 cleanup_user_hooks_fixture(Root) :-
+    hooks_loader:reset_hook_policy,
     zara_hooks:clear_hook_owner(user),
     unsetenv('XDG_CONFIG_HOME'),
     delete_directory_and_contents(Root).
