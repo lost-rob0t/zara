@@ -131,12 +131,21 @@ def test_default_server_gateway_injects_daemon_voice_runtime(monkeypatch):
     captured = {}
 
     class RecordingGateway:
-        def __init__(self, endpoint, *, supervisor, principal, voice_ingress):
+        def __init__(
+            self,
+            endpoint,
+            *,
+            supervisor,
+            principal,
+            voice_ingress,
+            audio_output_format=None,
+        ):
             captured.update(
                 endpoint=endpoint,
                 supervisor=supervisor,
                 principal=principal,
                 voice_ingress=voice_ingress,
+                audio_output_format=audio_output_format,
             )
 
     import zara.zmq_transport as zmq_transport
