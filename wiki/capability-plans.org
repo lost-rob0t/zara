@@ -1,0 +1,97 @@
+#+title: Capability plans
+
+Typed ExecutionPlans and the capability/provider selection layer (issue #157,
+epic #150). Contract: =docs/intentframe-contract.md=; design record:
+=rage/157-execution-plans.org=. Reconciles the closed draft PR #119
+(=capability_resolver=): the selection shape survives, the pre-IntentFrame
+mechanics (verb keys, =kb_config= coupling, shell-string evidence, the
+speculative =executable_fallback= provider) are rejected.
+
+## Authority boundary
+
+#+begin_example
+frame (complete) -> capability selection (pure Prolog) -> typed ExecutionPlan -> PlanExecutor -> registered adapter
+#+end_example
+
+- Resolution never executes. Selection never executes. Only adapters execute.
+- A complete intent deterministically becomes an authorized typed plan or an
+  explicit =unavailable= / =ambiguous= / =denied= result. The frame is never
+  rewritten with a fabricated semantic status (contract example 12).
+- The same frame may yield different plans per platform (example 13): plan
+  divergence is provider-level, never parser drift.
+
+## Prolog surface (pure; portable subset)
+
+- =kb/capabilities.pl= — declarative facts only:
+  - =capability_provider(NS, Name, ProviderId, Priority)=
+  - =capability_property(ProviderId, Property)= with =location(server|device)=,
+    =side_effect(none|local|external)=, =requires_auth(none|CapabilityId)=
+    (vocabulary of =zara/security.Capability=), =capability(Atom)=
+  - =capability_binding(ProviderId, ArgName, SlotName)= — declared argument
+    schema binding provider arguments to frame slots
+- =modules/capability_plans.pl= — selection logic, no dynamic state, no I/O,
+  no =kb_config= dependency:
+  - =plan_for_frame(+Frame, +Environment, -Plan)=
+  - =plan_candidates/3=, =plan_explanation/3=, =plan_stale/4=
+  - =plan_head_row/13=, =plan_arg_row/7= — flat pyswip projections
+
+### Environment term
+
+=environment(principal(P), auths(A), devices([device(Id, Owner, Caps)]), providers(S), aliases([alias(Provider, Alias)]), policies([prefer(location(L)) | prefer(device(Id))]))=
+
+Server policy owns =providers= and =aliases= (reachability); device
+advertisements are an availability source for =location(device)= providers
+only. A device advertisement can never create a server/admin provider and
+never grants authorization.
+
+### Outcomes
+
+| Status | Meaning |
+|---+---|
+| =ready= | named provider + location + device + typed arguments |
+| =unavailable(Reason)= | =no_provider= (nothing declared), =provider_unavailable= (declared but unreachable), =alias_unsupported=, =provider_missing= (stale re-check) |
+| =ambiguous= | equal top priorities; sorted alternatives (='provider'= or ='provider@device'=), capped at 8 |
+| =denied(insufficient_authorization)= | requires_auth not held; evidence names the capability |
+
+Qualification pipeline: availability -> alias gate (server providers serving
+a =ref(app_alias)= argument) -> authorization -> policy narrowing (fallback
+when nothing survives) -> descending priority -> ties yield =ambiguous=.
+
+=plan_stale/4= re-derives in a fresh environment; a formerly-ready plan that
+no longer qualifies returns =unavailable(provider_missing)= — no unsafe
+fallback.
+
+## Python mirror (=zara/runtime/plans.py=)
+
+- =ExecutionPlan= (frozen, validated): ready plans name a registered provider,
+  device plans name a device, text arguments are bounded at 512 chars,
+  =frames.validate_value= guards every argument.
+- =PlanEnvironment= / =DeviceAdvertisement= / =PreferLocation= / =PreferDevice=:
+  closed typed environment with bounds (64 devices, 64 providers, 256 aliases,
+  64 caps/device, 8 policies); encoded by
+  =PrologEngine.encode_environment_term=.
+- =PlanExecutor=: adapters registered per provider id; refuses non-ready
+  plans, unregistered providers, and adapter failures as typed
+  =PlanOutcome=s; passes typed =SlotValue= objects only (text is data, never
+  a command); side effects execute at most once per =request_id= with a
+  bounded in-process replay window (persistence belongs to the envelope
+  store, later slice).
+
+## Scope boundaries
+
+- Wake/daemon do not consume plans yet (deliberate; rage/157 D9). The wake
+  cutover rides #160/#173 and the Android slices (#196/#197); the raw
+  =query_prolog= tool retirement (A7) lands in #160 once the plan layer is
+  the only execution surface.
+- =events.IntentResolved= emission stays #173.
+- Server providers are registered and executed by the #158 api_service
+  layer (=wiki/api-service.org=): the environment's =providers= list is
+  built from the versioned registry behind RuntimeHost.
+
+## Tests
+
+- plunit: =t/capability_plans.pl= (34 tests; selection, ties, isolation,
+  stale, projections, KB-wide property loops)
+- pytest: =t/test_capability_plans.py= (boundary), =t/test_plans.py= (mirror),
+  =t/test_plan_executor.py= (executor)
+- gate: =scripts/test-capability-plans.sh=, phase in =scripts/test-all.sh=

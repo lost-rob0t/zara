@@ -157,9 +157,9 @@ def test_no_speech_logs_saturated_laptop_input():
     assert "laptop microphone" in message.lower()
 
 
-@pytest.mark.parametrize("alias", ["rocm", "hip", "amd"])
-def test_stt_gpu_aliases_use_ctranslate_cuda_device(alias):
-    assert cli.normalize_stt_device(alias) == "cuda"
+@pytest.mark.parametrize("alias", ["rocm", "hip", "amd", "vulkan"])
+def test_stt_amd_device_tokens_select_vulkan(alias):
+    assert cli.normalize_stt_device(alias) == "vulkan"
 
 
 def test_stt_native_devices_are_preserved():
@@ -176,6 +176,14 @@ def _fake_wake_modules(resolved_model):
     fake_loader = types.ModuleType("zara.whisper_loader")
     fake_loader.resolve_whisper_model_files = resolve_model
     return wake_main, resolve_model, fake_wake, fake_loader
+
+
+def _fake_whisper_cpp_module(resolved_model):
+    resolve_ggml = MagicMock(return_value=resolved_model)
+    fake_whisper_cpp = types.ModuleType("zara.whisper_cpp")
+    fake_whisper_cpp.resolve_whisper_cpp_model = resolve_ggml
+    fake_whisper_cpp.WhisperCppModel = type("WhisperCppModel", (), {})
+    return resolve_ggml, fake_whisper_cpp
 
 
 def test_wake_cli_defaults_model_and_device_from_stt_config():
@@ -240,10 +248,13 @@ def test_wake_cli_explicit_model_override_wins():
     )
 
 
-def test_wake_cli_rocm_alias_uses_ctranslate_cuda_device():
+def test_wake_cli_rocm_routes_to_whisper_cpp_vulkan(capsys):
     config = _fake_config(model="base.en", device="cpu")
     wake_main, resolve_model, fake_wake, fake_loader = _fake_wake_modules(
         "/cache/faster-whisper-base.en"
+    )
+    resolve_ggml, fake_whisper_cpp = _fake_whisper_cpp_module(
+        "/cache/ggml-base.en.bin"
     )
 
     with (
@@ -254,6 +265,7 @@ def test_wake_cli_rocm_alias_uses_ctranslate_cuda_device():
             {
                 "zara.wake": fake_wake,
                 "zara.whisper_loader": fake_loader,
+                "zara.whisper_cpp": fake_whisper_cpp,
             },
         ),
         pytest.raises(SystemExit) as exited,
@@ -261,27 +273,100 @@ def test_wake_cli_rocm_alias_uses_ctranslate_cuda_device():
         cli.main()
 
     assert exited.value.code == 0
-    resolve_model.assert_called_once_with("base.en")
+    resolve_ggml.assert_called_once_with("base.en")
+    resolve_model.assert_not_called()
     wake_main.assert_called_once_with(
-        model="/cache/faster-whisper-base.en",
-        device="cuda",
+        model="/cache/ggml-base.en.bin",
+        device="vulkan",
         with_pets=False,
     )
+    stderr = capsys.readouterr().err
+    assert "whisper.cpp Vulkan backend" in stderr
+    assert "rocm" in stderr
 
 
-def test_wake_cli_gpu_initialization_failure_falls_back_to_cpu(capsys):
+def test_wake_cli_vulkan_device_is_accepted(capsys):
+    config = _fake_config(model="base.en", device="cpu")
+    wake_main, resolve_model, fake_wake, fake_loader = _fake_wake_modules(
+        "/cache/faster-whisper-base.en"
+    )
+    resolve_ggml, fake_whisper_cpp = _fake_whisper_cpp_module(
+        "/cache/ggml-base.en.bin"
+    )
+
+    with (
+        patch.object(cli, "init_config", return_value=config),
+        patch.object(sys, "argv", ["zara", "--wake", "--device", "vulkan"]),
+        patch.dict(
+            sys.modules,
+            {
+                "zara.wake": fake_wake,
+                "zara.whisper_loader": fake_loader,
+                "zara.whisper_cpp": fake_whisper_cpp,
+            },
+        ),
+        pytest.raises(SystemExit) as exited,
+    ):
+        cli.main()
+
+    assert exited.value.code == 0
+    wake_main.assert_called_once_with(
+        model="/cache/ggml-base.en.bin",
+        device="vulkan",
+        with_pets=False,
+    )
+    assert "whisper.cpp Vulkan backend" in capsys.readouterr().err
+
+
+def test_wake_cli_remote_provider_is_not_rerouted(capsys):
+    config = _fake_config(model="small", device="cpu")
+    wake_main, resolve_model, fake_wake, fake_loader = _fake_wake_modules(
+        "/cache/faster-whisper-base.en"
+    )
+    resolve_ggml, fake_whisper_cpp = _fake_whisper_cpp_module(
+        "/cache/ggml-base.en.bin"
+    )
+
+    with (
+        patch.object(cli, "init_config", return_value=config),
+        patch.object(
+            sys, "argv", ["zara", "--wake", "--stt-provider", "groq", "--device", "rocm"]
+        ),
+        patch.dict(
+            sys.modules,
+            {
+                "zara.wake": fake_wake,
+                "zara.whisper_loader": fake_loader,
+                "zara.whisper_cpp": fake_whisper_cpp,
+            },
+        ),
+        pytest.raises(SystemExit) as exited,
+    ):
+        cli.main()
+
+    assert exited.value.code == 0
+    resolve_ggml.assert_not_called()
+    wake_main.assert_called_once_with(
+        model="whisper-large-v3-turbo",
+        device="vulkan",
+        with_pets=False,
+    )
+    assert "whisper.cpp Vulkan backend" not in capsys.readouterr().err
+
+
+def test_wake_cli_cuda_gpu_failure_falls_back_to_cpu(capsys):
     config = _fake_config(model="base.en", device="cpu")
     wake_main, resolve_model, fake_wake, fake_loader = _fake_wake_modules(
         "/cache/faster-whisper-base.en"
     )
     wake_main.side_effect = [
-        ValueError("HIP error: no binary for GPU gfx1012"),
+        ValueError("CUDA driver version is insufficient"),
         0,
     ]
 
     with (
         patch.object(cli, "init_config", return_value=config),
-        patch.object(sys, "argv", ["zara", "--wake", "--device", "rocm"]),
+        patch.object(sys, "argv", ["zara", "--wake", "--device", "cuda"]),
         patch.dict(
             sys.modules,
             {

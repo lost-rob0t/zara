@@ -12,6 +12,13 @@ The default user installation path is:
 Files beginning with an underscore are ignored. Discovery is deterministic and
 does not download, update, or package plugins.
 
+Zara may also ship first-party service plugins under =zara/plugins/builtin/=.
+These are part of the core package, use the same lifecycle manager, and may set
+=enabled_by_default = False= so they exist without being activated. Their
+=[plugins.<plugin-name>].enabled= setting is evaluated before tools or workers
+are started. Third-party service plugins remain enabled by default unless their
+configuration explicitly sets =enabled = false=.
+
 * Legacy tool plugins
 
 Existing tool-only modules remain supported. They export one of:
@@ -99,14 +106,23 @@ The object passed to =start()= is a per-plugin =PluginRuntime= facade:
 - =start_worker(name, target)= starts a bounded managed worker. =target= receives
   a =threading.Event= which is set during automatic cleanup.
 
-Plugins import provider-neutral event and command types from =zara.runtime=.
-They must not reach into =RuntimeHost= internals, concrete backends, Qt objects,
-speech providers, Prolog objects, Pet widgets, or desktop controllers.
+Externally installed plugins import provider-neutral event and command types from
+=zara.runtime=. They must not reach into =RuntimeHost= internals, concrete
+backends, Qt objects, speech providers, Prolog objects, Pet widgets, or desktop
+controllers.
 
 The facade exposes only commands implemented by Zara's current RuntimeHost and
-backend. A plugin must handle =UnsupportedRuntimeCommand= for optional
+backend. An external plugin must handle =UnsupportedRuntimeCommand= for optional
 capabilities. It must not create a parallel runtime, event bus, speech pipeline,
 timer scheduler, notification system, or UI-control path.
+
+First-party plugins under =zara/plugins/builtin/= are core implementation, not a
+privilege granted to user-installed code. A first-party plugin may own a bounded
+managed-worker scheduler or compose existing core services when the feature is
+part of Zara itself, but it must still route agent work through =RuntimeHost=,
+use the shared event stream, remain restart-safe, and avoid a second
+=AgentManager= or microphone capture loop. =agent-mode= is the initial example;
+see =wiki/agent-mode.org=.
 
 * Events and threading
 
@@ -144,7 +160,9 @@ Plugin-owned settings use a table matching =PluginMetadata.name=:
 enabled = true
 #+end_src
 
-Zara does not interpret or expose a plugin's private settings in diagnostics.
+Zara does not interpret or expose a plugin's private settings in diagnostics,
+except that the service manager consumes the generic =enabled= boolean before a
+service is started.
 
 * Failures, diagnostics, and shutdown
 

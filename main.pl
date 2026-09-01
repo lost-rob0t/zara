@@ -4,10 +4,13 @@
 :- use_module('modules/command_loop').
 :- use_module('modules/commands').
 :- use_module('modules/todo_schedule').
-:- use_module('kb/config').      % This automatically loads user config via initialization
+:- use_module('kb/config').          % shared semantic configuration
+:- use_module('kb/device_providers'). % Linux device provider configuration (desktop only)
 :- use_module('kb/intents').
 :- use_module('modules/config_loader').
 :- discontiguous handle_input/1.
+
+:- initialization(config_loader:load_user_config).
 
 main :-
     writeln('Thus spoke Zarathustra...'),
@@ -64,7 +67,7 @@ show_help :-
 show_config :-
     writeln('Current configuration:'),
     writeln(''),
-    findall(Name-Cmd, app_mapping(Name, Cmd), Apps),
+    findall(Name-Cmd, kb_device_providers:app_mapping(Name, Cmd), Apps),
     ( Apps = []
     -> writeln('  No app mappings defined.')
     ; writeln('  App Mappings:'),
@@ -72,7 +75,7 @@ show_config :-
              format('    ~w -> ~w~n', [N, C]))
     ),
     writeln(''),
-    findall(App, direct_app(App), DirectApps),
+    findall(App, kb_device_providers:direct_app(App), DirectApps),
     ( DirectApps = []
     -> writeln('  No direct apps defined.')
     ; writeln('  Direct Apps:'),

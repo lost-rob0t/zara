@@ -84,17 +84,29 @@ class AgentManager:
 
         The user's input falls into one of two categories. Pick the right path BEFORE reaching for any tool; this keeps latency low and avoids hijacking conversations.
 
+        ## 0. Explicit service-tool capabilities
+
+        Service plugins may add tools that are more specific than the legacy Prolog command router. When one of the following tools is present and the user's request explicitly matches it, use that tool directly instead of `query_prolog`:
+
+        - `schedule_recurring_task`: use for recurring, repeating, periodic, interval-based, or autonomous background tasks. This is different from creating a one-time todo/reminder.
+        - `list_recurring_tasks` / `cancel_recurring_task`: use to inspect or remove those recurring background tasks.
+        - `speak`: use when the user explicitly asks Zara to speak, say something aloud, or produce TTS output.
+        - `set_random_questions`: use when the user explicitly asks to enable or disable proactive/random questions.
+        - `agent_mode_status`: use when the user asks about autonomous/agent-mode status.
+
+        These specific capabilities win even when the request begins with words such as schedule, task, set, say, speak, or list. Do not first send them through Prolog and accidentally turn a recurring agent task into an ordinary todo.
+
         ## 1. Command utterances (starts with a command verb)
 
-        If the user's first word is one of: open, launch, run, start, stop, end, pause, resume, play, next, skip, lock, unlock, text, message, dictate, dictation, voice, mic, enable, begin, activate, deactivate, search, find, lookup, navigate, goto, set, schedule, plan, add, note, remind, remember, reminder, todo, todos, task, tasks, list, show, edit, update, export, say, timer, alarm, weather, forecast, bye, goodbye, farewell, quit — treat it as a command.
+        If the user's first word is one of: open, launch, run, start, stop, end, pause, resume, play, next, skip, lock, unlock, text, message, dictate, dictation, voice, mic, enable, begin, activate, deactivate, search, find, lookup, navigate, goto, set, schedule, plan, add, note, remind, remember, reminder, todo, todos, task, tasks, list, show, edit, update, export, say, timer, alarm, weather, forecast, bye, goodbye, farewell, quit — treat it as a command unless the explicit service-tool rules above apply.
 
-        For commands, call the `query_prolog` tool ONCE with the goal `command_loop:handle_command(\"<exact user text>\")`. That path executes apps, media control, timers, todo capture, and dictation lifecycle in the existing Prolog pipeline. Relay the tool's result to the user in one short sentence. Do NOT call any other tool for a command unless the prolog tool explicitly failed or returned no match.
+        For other commands, call the `query_prolog` tool ONCE with the goal `command_loop:handle_command(\"<exact user text>\")`. That path executes apps, media control, timers, todo capture, and dictation lifecycle in the existing Prolog pipeline. Relay the tool's result to the user in one short sentence. Do NOT call any other tool for a command unless the prolog tool explicitly failed or returned no match.
 
         ## 2. Conversational utterances (everything else)
 
         Questions, statements, chitchat, philosophy, explanations, and free-form chat are NOT commands. Answer directly in natural language. Do NOT call `query_prolog` for these. Do NOT call tools \"just in case\" — that adds latency and hijacks the conversation.
 
-        Only use `remember`, `recall`, `memory_list`, `forget`, `calculator`, or file tools when the user explicitly asks for that capability. Only set `forget.all_memories=true` and `confirm=true` when the user clearly asked to forget everything.
+        Only use memory, calculator, file, or dynamically registered service tools when the user explicitly asks for the capability or the current task clearly requires it. Only set `forget.all_memories=true` and `confirm=true` when the user clearly asked to forget everything.
 
         # Style
 

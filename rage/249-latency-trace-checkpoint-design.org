@@ -1,0 +1,83 @@
+#+title: Design - #249 LatencyTrace must never enter LangGraph checkpoint state
+
+* Problem boundary
+Voice agent turns crash the wake listener because a live =LatencyTrace=
+object is stored in an =AgentState= channel and the #209 memory checkpointer
+serializes every channel after every superstep.
+
+In scope: =zara/agent/graph.py= wiring (=AgentState=, =create_agent_node=,
+=create_agent_graph=, =run_conversation_loop=) and the trace hand-off
+contract. Out of scope: checkpointer choice, approval lifecycle (#209),
+wake listener control flow, latency event vocabulary, =AgentManager= public
+API.
+
+* Selected architecture
+- =latency_trace= stops being a graph channel: the key is removed from
+  =AgentState=, so no checkpoint ever serializes it (input keys not in the
+  schema are ignored by =StateGraph=).
+- =run_conversation_loop= extracts =latency_trace= from a *copy* of the
+  incoming state before =ainvoke= (callers keep passing it in state;
+  the caller's dict is never mutated) and passes it to
+  =create_agent_graph(..., latency_trace=...)=.
+- =create_agent_node(llm_client, tool_registry, stream_publisher=None,
+  latency_trace=None)= binds the trace in its closure. The node resolves
+  =trace = latency_trace if latency_trace is not None else
+  state.get("latency_trace")=, preserving the direct-node unit-test
+  contract (=t/test_llm_streaming.py:520=).
+- =AgentManager.process_async= keeps building =state["latency_trace"]=;
+  no caller-facing signature changes anywhere.
+
+* Invariants and ownership rules
+- Graph channels contain only serde-able values; per-turn runtime objects
+  (traces, publishers, registries) are bound via node factories, never via
+  state.
+- The trace object is owned by the wake/runtime caller for the turn's
+  lifetime; the graph only borrows it.
+- The same trace instance serves pre-interrupt and post-resume supersteps
+  because the resume invoke reuses the same compiled graph and closure.
+- =run_conversation_loop= still deletes the checkpoint thread on every
+  terminal path (unchanged =finally=).
+
+* Failure and threat analysis
+- Crash class eliminated for any non-serializable per-turn context passed
+  through state: it can no longer become a channel.
+- Replay after =Command(resume)= cannot resurrect a stale trace object from
+  a checkpoint (it was never there).
+- Privacy: checkpoints keep persisting messages only during the live turn
+  (pre-existing #209 behavior, bounded and deleted); the trace never
+  reaches serde, so future disk-backed savers cannot leak clock/sink
+  internals either.
+- No new concurrency: the trace keeps its internal locks; closure capture
+  adds no shared mutable graph state.
+
+* Compatibility / migration
+- =run_conversation_loop(state)= accepting =latency_trace= in state: kept.
+- =create_agent_node= node-state contract: kept via fallback.
+- =result= dict no longer carries a =latency_trace= key (channel removed);
+  verified no consumer reads it.
+- =create_agent_graph= gains a keyword-only =latency_trace=None= parameter;
+  it has exactly one production caller.
+
+* Acceptance criteria mapped to tests
+1. Regression: =run_conversation_loop= with a live =LatencyTrace= in state
+   returns a response and records =llm_request= and =llm_final_token=
+   (RED: TypeError at first checkpoint put).
+   → =t/test_llm_streaming.py::test_conversation_loop_completes_with_latency_trace_in_state=
+2. The caller's state dict is not mutated by the extraction.
+   → same test asserts the input dict still carries the key afterwards.
+3. Direct-node state contract preserved.
+   → existing =test_streaming_node_records_genuine_latency_boundaries=
+   must stay green unchanged.
+4. Trace-bound node records identical streaming events (no event-order or
+   metadata drift from closure capture).
+   → new test mirroring the A9 boundaries through
+   =create_agent_node(..., latency_trace=...)=.
+5. Turn without a trace behaves exactly as before (no crash, no events).
+   → existing A3 =run_conversation_loop= tool-flow test stays green.
+6. Full gate: =scripts/test-all.sh=, =nix flake check=, =nix build= at the
+   exact candidate head; GitHub Actions =test= for the pushed SHA.
+
+* Verification gate
+Focused red/green on =t/test_llm_streaming.py= and
+=t/test_runtime_tool_approval.py= (approval suite must stay green to prove
+#209 intact), then the repository aggregate gate and Nix checks.

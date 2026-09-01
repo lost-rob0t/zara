@@ -89,7 +89,7 @@ volume = 1.0
 # Speech-to-Text settings
 provider = "faster-whisper"  # or "whisper"
 model = "small"
-device = "cpu"  # or "cuda"
+device = "cpu"  # or "cuda" (NVIDIA), "vulkan"/"amd"/"rocm"/"hip" (AMD via whisper.cpp)
 threads = 4
 # Streaming VAD (Silero) parameters — 512 samples = 32 ms at 16 kHz
 vad_threshold = 0.5
@@ -219,6 +219,14 @@ autoload = []
 lifecycle_timeout = 5.0
 event_queue_size = 256
 max_managed_workers = 8
+
+[api_service]
+# Server-side plan execution services behind RuntimeHost (issue #158).
+# Providers are declared in kb/server_providers.pl; this section only gates
+# them. Device/desktop execution never runs here.
+enabled = false
+# Declared server providers to keep unreachable on this host.
+disabled_providers = []
 
 [pets]
 # Desktop pet companion (Zarathushtra Pets)
@@ -616,6 +624,24 @@ class ZaraConfig:
             "lifecycle_timeout": float(plugins_config.get("lifecycle_timeout", 5.0)),
             "event_queue_size": int(plugins_config.get("event_queue_size", 256)),
             "max_managed_workers": int(plugins_config.get("max_managed_workers", 8)),
+        }
+
+    def get_api_service_config(self) -> Dict[str, Any]:
+        """Return the server api_service gate configuration (issue #158)."""
+        api_config = self.get_section("api_service")
+        enabled = api_config.get("enabled", False)
+        if not isinstance(enabled, bool):
+            raise ValueError("[api_service].enabled must be a boolean")
+        disabled_providers = api_config.get("disabled_providers", [])
+        if not isinstance(disabled_providers, list) or not all(
+            isinstance(item, str) and item.strip() for item in disabled_providers
+        ):
+            raise ValueError(
+                "[api_service].disabled_providers must be a list of provider ids"
+            )
+        return {
+            "enabled": enabled,
+            "disabled_providers": tuple(disabled_providers),
         }
 
     def get_plugin_config(self, plugin_name: str) -> Dict[str, Any]:

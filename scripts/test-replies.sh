@@ -39,8 +39,8 @@ swipl -q -g run_tests -t halt "$repo_root/t/replies.pl"
 
 swipl -q -g "
     use_module('$repo_root/modules/command_loop.pl'),
-    use_module('$repo_root/kb/config.pl'),
-    asserta(kb_config:app_mapping(reply_test_app, [\"safe-launch\"])),
+    use_module('$repo_root/kb/device_providers.pl'),
+    asserta(kb_device_providers:app_mapping(reply_test_app, [\"safe-launch\"])),
     asserta(kb_config:llm_provider(reply_test_failure), ProviderRef),
     \+ command_loop:handle_command(\"xyzzy quux\"),
     erase(ProviderRef),

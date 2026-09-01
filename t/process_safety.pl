@@ -5,6 +5,7 @@
 :- use_module('../modules/config_loader').
 :- use_module('../modules/dictate').
 :- use_module('../kb/config').
+:- use_module('../kb/device_providers').
 :- use_module(library(http/json)).
 
 payload(Payload) :-
@@ -34,11 +35,11 @@ wait_for_file(Path, Attempts) :-
     wait_for_file(Path, Remaining).
 
 with_app_mapping(Name, Command, Goal) :-
-    asserta(kb_config:app_mapping(Name, Command), Ref),
+    asserta(kb_device_providers:app_mapping(Name, Command), Ref),
     call_cleanup(Goal, erase(Ref)).
 
 with_dictation_command(Command, Goal) :-
-    asserta(kb_config:dictation_command(Command), Ref),
+    asserta(kb_device_providers:dictation_command(Command), Ref),
     call_cleanup(Goal, erase(Ref)).
 
 test(search_preserves_literal_query, [setup(reset_log)]) :-

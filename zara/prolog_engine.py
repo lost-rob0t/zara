@@ -252,7 +252,7 @@ def encode_frame_term(frame: Any) -> str:
         else:
             raise ValueError(f"Unsupported slot value type: {value_type}")
         slots.append(
-            f"slot(name({_prolog_atom(slot.name)}), {value_term}, "
+            f"slot(name({_prolog_atom(slot.name)}), value({value_term}), "
             f"origin({_prolog_atom(slot.origin.value)}))"
         )
     status = frame.status
@@ -447,8 +447,8 @@ class PrologEngine:
         return self.query_once(goal) is not None
 
     def get_app_mapping(self, app_name: str) -> Optional[str]:
-        """Query app_mapping/2 from config."""
-        goal = f"kb_config:app_mapping({_prolog_atom(app_name)}, Cmd)"
+        """Query app_mapping/2 from the device provider configuration."""
+        goal = f"kb_device_providers:app_mapping({_prolog_atom(app_name)}, Cmd)"
         result = self.query_once(goal)
         return result.get("Cmd") if result else None
 
@@ -537,6 +537,50 @@ class PrologEngine:
         )
         return _grouped_frames(head_rows, slot_rows)
 
+    def plan_for_frame(self, frame: Any, environment: Any) -> Any:
+        """Derive the typed ExecutionPlan for a complete frame (issue #157).
+
+        The selection is pure Prolog; environments are encoded from the
+        typed PlanEnvironment mirror. Non-complete frames are refused here:
+        open frames belong to the clarification session, not the plan layer.
+        A ``None`` result means Prolog produced no plan structure (bounds
+        violation); typed unavailability otherwise rides the plan status.
+        """
+        from zara.runtime.frames import FrameStatus
+        from zara.runtime.plans import PlanEnvironment
+
+        if not isinstance(environment, PlanEnvironment):
+            raise TypeError("plan_for_frame requires a PlanEnvironment")
+        if frame.status is not FrameStatus.COMPLETE:
+            raise ValueError(
+                "plan_for_frame requires a complete frame; "
+                "clarification owns open frames"
+            )
+        goal = (
+            f"capability_plans:plan_for_frame({encode_frame_term(frame)}, "
+            f"{encode_environment_term(environment)}, Plan), "
+            "Plans = [Plan], "
+            "capability_plans:plan_head_row(Plans, Idx, NS, Name, StatusKind, "
+            "Reason, ProviderId, Location, DeviceRef, SideEffect, "
+            "RequiresAuth, Evidence, Alternatives)"
+        )
+        self.logger.info("Deriving plan for frame %s/%s", frame.intent_ns, frame.intent_name)
+        head_rows = self.query_all(goal, max_solutions=2)
+        if not head_rows:
+            return None
+        if len(head_rows) > 1:
+            raise ValueError("plan_for_frame produced multiple plans for one frame")
+        arg_rows = self.query_all(
+            "capability_plans:plan_for_frame("
+            f"{encode_frame_term(frame)}, {encode_environment_term(environment)}, Plan), "
+            "Plans = [Plan], "
+            "capability_plans:plan_arg_row(Plans, Idx, ArgIdx, ArgName, "
+            "ValueKind, A1, A2)",
+            max_solutions=64,
+        )
+        plans = _grouped_plans(head_rows, arg_rows)
+        return plans[0]
+
     def execute_intent(self, intent: str, args: List[Any]) -> bool:
         """Execute a resolved intent and report logical success."""
         goal = f"commands:execute({_prolog_atom(intent)}, {_prolog_term(args)})"
@@ -572,6 +616,123 @@ class PrologEngine:
     def reload_config(self) -> bool:
         """Reload user configuration and report logical success."""
         return self.query_once("config_loader:reload_user_config") is not None
+
+
+def encode_environment_term(environment: Any) -> str:
+    """Encode a PlanEnvironment mirror as a portable environment/6 term string."""
+    from zara.runtime.plans import PreferDevice, PreferLocation
+
+    auths = ", ".join(_prolog_atom(str(auth)) for auth in environment.auths)
+    devices = ", ".join(
+        "device({}, {}, [{}])".format(
+            _prolog_atom(str(device.device_id)),
+            _prolog_atom(str(device.owner)),
+            ", ".join(_prolog_atom(str(cap)) for cap in device.capabilities),
+        )
+        for device in environment.devices
+    )
+    providers = ", ".join(
+        _prolog_atom(str(provider)) for provider in environment.providers
+    )
+    aliases = ", ".join(
+        "alias({}, {})".format(
+            _prolog_atom(str(provider)), _prolog_atom(str(alias))
+        )
+        for provider, alias in environment.aliases
+    )
+    policies = ", ".join(
+        (
+            "prefer(location({}))".format(_prolog_atom(policy.location.value))
+            if isinstance(policy, PreferLocation)
+            else "prefer(device({}))".format(_prolog_atom(policy.device_id))
+        )
+        for policy in environment.policies
+    )
+    return (
+        "environment("
+        f"principal({_prolog_atom(str(environment.principal))}), "
+        f"auths([{auths}]), "
+        f"devices([{devices}]), "
+        f"providers([{providers}]), "
+        f"aliases([{aliases}]), "
+        f"policies([{policies}]))"
+    )
+
+
+def _sentinel(value: Any) -> Optional[str]:
+    return None if value in (None, "none") else str(value)
+
+
+def _grouped_plans(
+    head_rows: List[Dict[str, Any]],
+    arg_rows: List[Dict[str, Any]],
+) -> List[Any]:
+    from zara.runtime.plans import (
+        ExecutionPlan,
+        PlanArgument,
+        PlanLocation,
+        PlanSideEffect,
+        PlanStatus,
+    )
+
+    plans: List[Any] = []
+    by_index: Dict[int, Dict[str, Any]] = {}
+    for row in head_rows:
+        index = int(row["Idx"])
+        location = _sentinel(row.get("Location"))
+        by_index[index] = {
+            "intent_ns": str(row["NS"]),
+            "intent_name": str(row["Name"]),
+            "status": PlanStatus(str(row["StatusKind"])),
+            "reason": _sentinel(row.get("Reason")),
+            "provider": _sentinel(row.get("ProviderId")),
+            "location": PlanLocation(location) if location is not None else None,
+            "device": _sentinel(row.get("DeviceRef")),
+            "side_effect": PlanSideEffect(str(row["SideEffect"])),
+            "requires_auth": _sentinel(row.get("RequiresAuth")),
+            "evidence": tuple(str(item) for item in (row.get("Evidence") or [])),
+            "alternatives": tuple(
+                str(item) for item in (row.get("Alternatives") or [])
+            ),
+            "arguments": [],
+        }
+    for row in arg_rows:
+        index = int(row["Idx"])
+        entry = by_index.get(index)
+        if entry is None:
+            raise ValueError(f"Plan argument row references unknown index: {row!r}")
+        entry["arguments"].append(
+            (
+                int(row["ArgIdx"]),
+                PlanArgument(
+                    name=str(row["ArgName"]),
+                    value=_decode_slot_value(row),
+                ),
+            )
+        )
+    for index in sorted(by_index):
+        entry = by_index[index]
+        arguments = tuple(
+            argument
+            for _, argument in sorted(entry["arguments"], key=lambda pair: pair[0])
+        )
+        plans.append(
+            ExecutionPlan(
+                intent_ns=entry["intent_ns"],
+                intent_name=entry["intent_name"],
+                provider=entry["provider"],
+                location=entry["location"],
+                device=entry["device"],
+                side_effect=entry["side_effect"],
+                requires_auth=entry["requires_auth"],
+                status=entry["status"],
+                reason=entry["reason"],
+                alternatives=entry["alternatives"],
+                arguments=arguments,
+                evidence=entry["evidence"],
+            )
+        )
+    return plans
 
 
 def test_engine() -> None:

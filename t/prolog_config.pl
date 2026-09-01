@@ -2,6 +2,8 @@
 
 :- use_module('../kb/intents').
 :- use_module('../kb/config').
+:- use_module('../kb/device_providers').
+:- use_module('../modules/config_loader').
 
 write_config(Path, Text) :-
     setup_call_cleanup(open(Path, write, Stream), write(Stream, Text), close(Stream)).
@@ -22,22 +24,31 @@ test(all_supported_overrides_and_reload) :-
     ], '\n', Config),
     write_config(Path, Config),
     config_loader:reload_user_config,
-    once(kb_config:app_mapping(github, ["custom-browser", "--new-window"])),
-    once(kb_config:direct_app(custom_app)),
+    once(kb_device_providers:app_mapping(github, ["custom-browser", "--new-window"])),
+    once(kb_device_providers:direct_app(custom_app)),
     once(kb_config:search_engine("https://example.test/?q=~w")),
-    once(kb_config:dictation_command("custom-dictate")),
-    once(kb_config:timer_sound(disabled)),
-    once(kb_config:alarm_sound("/tmp/custom-alarm.wav")),
+    once(kb_device_providers:dictation_command("custom-dictate")),
+    once(kb_device_providers:timer_sound(disabled)),
+    once(kb_device_providers:alarm_sound("/tmp/custom-alarm.wav")),
     once(kb_config:llm_provider(openai)),
     once(kb_config:llm_model("custom-model")),
     once(kb_config:llm_endpoint("https://llm.example.test")),
     once(kb_intents:verb_intent(hello, open, 1)),
     write_config(Path, 'app_mapping(github, "new-browser").\n'),
     config_loader:reload_user_config,
-    once(kb_config:app_mapping(github, "new-browser")),
-    \+ kb_config:app_mapping(github, ["custom-browser", "--new-window"]),
-    findall(Command, kb_config:app_mapping(github, Command), Commands),
+    once(kb_device_providers:app_mapping(github, "new-browser")),
+    \+ kb_device_providers:app_mapping(github, ["custom-browser", "--new-window"]),
+    findall(Command, kb_device_providers:app_mapping(github, Command), Commands),
     Commands = ["new-browser", "xdg-open https://github.com"].
+
+test(device_facts_never_land_in_shared_semantic_config) :-
+    config_loader:user_config_path(Path),
+    write_config(Path,
+        'app_mapping(split_app, "split-browser").\ntimer_sound(disabled).\n'),
+    config_loader:reload_user_config,
+    once(kb_device_providers:app_mapping(split_app, "split-browser")),
+    \+ current_predicate(kb_config:app_mapping/2),
+    \+ current_predicate(kb_config:timer_sound/1).
 
 test(unsafe_declaration_is_rejected,
      [throws(error(domain_error(zarathushtra_user_config_fact, _), _))]) :-

@@ -1,0 +1,45 @@
+* Run identity
+- Consumed issue :: #249
+- Branch :: =rage/249-latency-trace-checkpoint=
+- RAGE start commit :: =ec0c74a39a9cd99aabee2795a0f4abfd92966949=
+- Protocol :: repository Auto-RAGE (recorded convention, e.g. =rage/209-runtime-tool-approvals.org=).
+
+* Iteration 1 - 2026-08-31
+** Analyze / Research
+- Completed in =rage/249-latency-trace-checkpoint-research.org=.
+- Independent minimal repro at the installed dependency set reproduced the exact user crash =TypeError: Type is not msgpack serializable: LatencyTrace= from the #209 per-turn =InMemorySaver=.
+- Root cause: =AgentManager.process_async= passes the live =LatencyTrace= into graph state; #209 made every channel checkpoint-serialized after every superstep; ormsgpack cannot serialize the lock-bearing trace object. Text paths pass =None= and survived, which hid the regression since PR #211.
+- Alternatives rejected with reasons in the research artifact: custom serde hook, dropping the checkpointer, dropping trace recording.
+
+** Architecture / Design
+- Completed in =rage/249-latency-trace-checkpoint-design.org=.
+- The trace is per-turn runtime context: it is extracted from a copy of the incoming state inside =run_conversation_loop=, bound to the =agent_node= closure, and =latency_trace= is removed from =AgentState= so no channel and no checkpoint ever contains it.
+- Direct-node callers keep the state-dict contract through a fallback; =AgentManager= keeps building =state["latency_trace"]=; no public signature changes.
+
+** Adversarial review
+- Resume path: =Command(resume)= replays through the same compiled graph instance, so the closure-bound trace serves post-resume supersteps; the checkpoint cannot resurrect a stale trace because the channel no longer exists.
+- Caller state is never mutated (extraction happens on a copy; asserted in the regression test).
+- No consumer reads =result["latency_trace"]= (grep evidence in research artifact).
+
+** Autonomous decision gate
+- ACCEPT. Tests-first realization authorized within the recorded design.
+
+** Realize / TDD
+- RED 1 :: =nix develop -c pytest -q t/test_llm_streaming.py::test_conversation_loop_completes_with_latency_trace_in_state= failed with =TypeError: Type is not msgpack serializable: LatencyTrace= (the exact user crash) at the first checkpoint put.
+- RED 2 :: =test_trace_bound_agent_node_records_boundaries_without_state_key= failed with =create_agent_node() got an unexpected keyword argument 'latency_trace'= (missing closure contract).
+- GREEN :: both new tests plus the untouched direct-node contract test =test_streaming_node_records_genuine_latency_boundaries= and the A3 tool-flow test passed after the minimal =graph.py= change.
+- Independent repro :: the session repro script now completes (=OK: hello there=) against the worktree.
+- Focused suites :: =t/test_llm_streaming.py= + =t/test_runtime_tool_approval.py= + =t/test_mcp_agent_integration.py= passed 54/54, proving the #209 approval checkpoint lifecycle intact.
+- Implementation commit :: =d823a03=.
+
+** Evaluate
+- Coverage inspection :: changed reachable branches: closure-bound trace (new test), state-fallback trace for direct node callers (existing A9 test), no trace (existing A3/A1 tests), absent =latency_trace= key during extraction (all existing =run_conversation_loop= tests). No untested reachable behavior remains.
+- Exact-head aggregate gate at =d823a03= :: =nix develop -c bash scripts/test-all.sh= passed 11/11 phases.
+- Exact-head flake gate at =d823a03= :: =nix flake check --show-trace= passed all checks (aarch64-linux evaluation omitted per environment).
+- Exact-head build at =d823a03= :: =nix build --no-link --print-out-paths= produced =/nix/store/4x1aqc5ihl7dx5mr6nlrna3wfzc03v6z-zarathushtra-full=.
+
+** Outcome
+- Exact-head GitHub Actions at =9b14af1= :: run =33462207113= passed =test= in 10m49s, shared mic Ubuntu 54s, shared mic Arch 32s, android skeleton gate 2m07s.
+- Pull request :: #252, =MERGEABLE= / =CLEAN= immediately before merge.
+- Merge commit :: =5f8e0fd= (master advanced =ec0c74a..5f8e0fd=).
+- Consumed issue outcome :: #249 closed as COMPLETED by PR #252. Voice agent turns survive checkpointing; #250 is next and must be consumed only in a fresh RAGE iteration.

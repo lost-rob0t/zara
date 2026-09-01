@@ -37,9 +37,48 @@ def test_whisper_cpp_rejects_user_facing_cuda_device():
         cli.normalize_stt_device("cuda", provider="whisper-cpp")
 
 
-def test_legacy_amd_alias_stays_cuda_without_whisper_cpp():
-    assert cli.normalize_stt_device("amd") == "cuda"
-    assert cli.normalize_stt_device("rocm", provider="faster-whisper") == "cuda"
+@pytest.mark.parametrize("token", ["vulkan", "amd", "rocm", "hip"])
+@pytest.mark.parametrize("provider", [None, "faster-whisper", "whisper-cpp"])
+def test_amd_device_tokens_select_vulkan_for_any_provider(token, provider):
+    assert cli.normalize_stt_device(token, provider=provider) == "vulkan"
+
+
+def test_cuda_is_preserved_for_nvidia_backends():
+    assert cli.normalize_stt_device("cuda") == "cuda"
+    assert cli.normalize_stt_device("cuda", provider="faster-whisper") == "cuda"
+    assert cli.normalize_stt_device("cpu", provider="faster-whisper") == "cpu"
+
+
+def test_unknown_device_still_lists_choices():
+    with pytest.raises(ValueError, match="cpu, cuda, vulkan, rocm, hip, amd"):
+        cli.normalize_stt_device("tpu")
+
+
+def test_amd_routing_sends_local_providers_to_whisper_cpp_vulkan():
+    for provider in ["faster-whisper", "openai-whisper", "sherpa-onnx"]:
+        routed, notice = cli.route_stt_provider_for_amd_device(provider, "vulkan")
+        assert routed == "whisper-cpp"
+        assert "whisper.cpp Vulkan backend" in notice
+
+
+def test_amd_routing_leaves_whisper_cpp_and_remote_providers_alone():
+    assert cli.route_stt_provider_for_amd_device("whisper-cpp", "vulkan") == (
+        "whisper-cpp",
+        None,
+    )
+    assert cli.route_stt_provider_for_amd_device("groq", "vulkan") == ("groq", None)
+    assert cli.route_stt_provider_for_amd_device("openai", "vulkan") == ("openai", None)
+
+
+def test_amd_routing_ignores_non_vulkan_devices():
+    assert cli.route_stt_provider_for_amd_device("faster-whisper", "cuda") == (
+        "faster-whisper",
+        None,
+    )
+    assert cli.route_stt_provider_for_amd_device("faster-whisper", "cpu") == (
+        "faster-whisper",
+        None,
+    )
 
 
 def test_legacy_dictation_cuda_token_maps_back_to_vulkan():

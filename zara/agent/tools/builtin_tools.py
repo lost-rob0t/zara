@@ -295,8 +295,8 @@ def build_prolog_tool(prolog_engine) -> StructuredTool:
             "- User overrides (config.kb):\n"
             "  kb_user_intents:verb_intent(Verb, Intent, Arity)\n"
             "- Config mappings:\n"
-            "  kb_config:app_mapping(App, Cmd)\n"
-            "  kb_config:direct_app(App)\n"
+            "  kb_device_providers:app_mapping(App, Cmd)\n"
+            "  kb_device_providers:direct_app(App)\n"
             "- TODO context inference:\n"
             "  kb_todo_context:infer_context([tokens...], Tag, Category, Confidence)\n\n"
 
@@ -304,7 +304,7 @@ def build_prolog_tool(prolog_engine) -> StructuredTool:
             "- If the user asks what Zara can do (skills/help/list commands), enumerate and summarize:\n"
             "  findall(V-I-A, kb_intents:verb_intent(V, I, A), Verbs)\n"
             "  findall(V-S-A, kb_intents:python_skill_intent(V, S, A), PySkills)\n"
-            "  findall(App-Cmd, kb_config:app_mapping(App, Cmd), Apps)\n"
+            "  findall(App-Cmd, kb_device_providers:app_mapping(App, Cmd), Apps)\n"
             "Then present categories like greet/media/open/search/dictation/timers/todo/config.\n\n"
 
             "IMPORTANT:\n"

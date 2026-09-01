@@ -1,0 +1,113 @@
+#+title: Research - #250 AMD GPU STT device routing
+
+* Question
+How must =--device amd|rocm|hip|vulkan= behave so an AMD machine actually
+uses its GPU for local STT instead of silently degrading to CPU or crashing
+at argument parsing?
+
+* User evidence
+- =nix run .# -- --wake --device rocm= (default =faster-whisper= provider):
+  =Loading Whisper ... (device=cuda)= → =GPU transcription unavailable (This
+  CTranslate2 package was not compiled with CUDA support); falling back to
+  CPU=. The AMD token was rewritten to NVIDIA CUDA and the run continued on
+  CPU with no AMD attempt.
+- =nix run .# -- --wake --device vulkan= (default provider):
+  =ValueError: Unsupported STT device 'vulkan'= although =STT_DEVICE_CHOICES=
+  advertises it and =--help= says whisper-cpp uses Vulkan for AMD GPUs.
+- Host: AMD Radeon RX 5500 XT (RADV Vulkan driver, =vulkaninfo= verified);
+  no CUDA, no ROCm userspace (=rocminfo= absent).
+
+* Repository evidence (start commit =9554387ad83c8a70008fa7dd4a9b4e6ba1bfba92=)
+- =zara/__main__.py:24-28= maps ={"amd","hip","rocm"} → "cuda"
+  (=STT_DEVICE_ALIASES=). For every non-whisper-cpp provider,
+  =normalize_stt_device= accepts only =cpu=/​=cuda= and raises for =vulkan=
+  (=zara/__main__.py:58-64=). The whisper-cpp branch already maps
+  =vulkan|amd|hip|rocm → vulkan= and rejects =cuda= with actionable guidance
+  (=zara/__main__.py:47-56=).
+- The recorded architecture (flake.nix lines 26-30): =whisper.cpp is the
+  AMD/Radeon STT path. Vulkan avoids tying Zara's local voice acceleration
+  to ROCm GPU support matrices=, packaged as =whisperCppVulkan=. The flake
+  help text (line 603) instructs =--stt-provider whisper-cpp --device amd=.
+- =zara/whisper_cpp.py= =_normalize_backend_device= accepts =cpu= and
+  =vulkan= (and the historical dictate =cuda= token, translated back to
+  Vulkan), so the whisper.cpp backend is fully Vulkan-capable today.
+- =zara/stt_backends.py= =backend_compat(provider)= swaps
+  =faster_whisper.WhisperModel= for the provider's adapter, so wake and
+  dictate run unchanged on whisper-cpp; =model_class_for_provider= resolves
+  =WhisperCppModel=.
+- =zara/dictate.py= and =zara/transcription.py= repeat the
+  =amd|hip|rocm → cuda= alias inside their historical internal API where
+  =cuda= means "the GPU token" and the whisper.cpp adapter translates it
+  back to Vulkan (=zara/__main__.py:313-315= documents this compat story).
+  Packaged =zara-dictate= runs =python -m zara --dictate= through
+  =__main__.main()=, so the CLI routing covers both user-facing paths.
+- Tests encoding the current lie: =t/test_whisper_cpp.py:40-42=, =t/test_wake_model_debug.py:164-166=, =t/test_wake_model_debug.py:247-312=
+  (=rocm → device="cuda"= through the wake CLI, including a CPU-fallback
+  case triggered by a HIP error).
+- Deterministic main() harness exists: =_fake_wake_modules= patches
+  =zara.wake=, =zara.whisper_loader= and =sys.argv= (=test_wake_model_debug.py:174+).
+  Routed runs additionally import =zara.whisper_cpp=, so the harness needs a
+  fake =zara.whisper_cpp= module to stay deterministic.
+
+* Upstream / environment evidence
+- faster-whisper 1.2.1 forwards =device= straight to
+  =ctranslate2.models.Whisper=; the installed CTranslate2 4.8.1 supports
+  =cpu=/=cuda= only (=get_supported_compute_types("vulkan")= raises
+  =unsupported device vulkan=, verified in the Nix shell). The nixpkgs
+  ctranslate2 package builds no Vulkan backend. Making CTranslate2
+  Vulkan-capable would be a custom packaging experiment on an upstream
+  backend marked experimental.
+
+* Failure analysis
+** The alias is a lie
+=amd|hip|rocm= name AMD hardware; =cuda= names NVIDIA's stack. Rewriting AMD
+tokens to =cuda= guarantees a CUDA attempt on machines without NVIDIA,
+produces the misleading "falling back to CPU" path, and never touches the
+Vulkan backend the flake ships for exactly this purpose.
+
+** Silent degradation hides the misconfiguration
+Today the user learns the AMD request failed only from a log line mixed
+into startup output. The routing decision must be visible (stderr notice)
+and deterministic.
+
+** Remote providers
+=openai=/​=groq= ignore the local device entirely (HTTP transcription). They
+must not be rerouted to a local backend; the device token stays inert for
+them.
+
+** Model resolution order
+The wake/dictate branches resolve model files per provider
+(=resolve_local_stt_model=). Routing must happen before that resolution so a
+routed run resolves GGML files, and tests must stub =zara.whisper_cpp= to
+avoid network/cache lookups.
+
+* Alternatives
+** Make CTranslate2/faster-whisper Vulkan- or ROCm-capable in the flake
+Rejected: nixpkgs has no Vulkan build to reuse, upstream marks the Vulkan
+backend experimental, and the repository already recorded whisper.cpp as
+the AMD path; duplicating AMD execution engines widens the surface for no
+user-visible gain.
+
+** Fail fast with "use --stt-provider whisper-cpp" for AMD tokens
+Rejected as the sole behavior: the tokens already exist in
+=STT_DEVICE_CHOICES= and the user expectation recorded in #250 is that the
+AMD GPU gets used, not that the CLI lectures. Guidance remains in the
+=cuda= rejection for whisper-cpp, where choosing NVIDIA semantics on the
+AMD backend is genuinely ambiguous.
+
+** Auto-switch for remote providers too
+Rejected: remote STT does not use the local device; rerouting would change
+billing/privacy characteristics the user explicitly chose.
+
+** Selected: AMD tokens request Vulkan; local non-whisper-cpp providers route to whisper.cpp
+=amd|rocm|hip|vulkan= normalize to =vulkan= for every provider. When the
+resolved device is =vulkan= and the provider is a local provider other than
+whisper-cpp, the CLI reroutes to =whisper-cpp= with a visible stderr notice.
+=cuda= remains NVIDIA-only semantics with the existing GPU-failure CPU
+fallback.
+
+* Research conclusion
+One normalization truth (AMD tokens → Vulkan), one routing rule (local
+provider + Vulkan → whisper.cpp backend, visible notice), no provider
+surprises for remote STT, and =cuda= keeps its current NVIDIA semantics
+including the CPU fallback message.
