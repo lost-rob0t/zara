@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from zara.server import PrincipalContext, RuntimeSupervisor
@@ -43,6 +44,11 @@ class MinimalRuntimeConfig:
         return {}
 
 
+class HookRuntimeConfig(MinimalRuntimeConfig):
+    def get_hooks_config(self):
+        return {"enabled": True, "allow_override": False}
+
+
 class DummyToolRegistry:
     def register_tools(self, _tools):
         return None
@@ -67,6 +73,23 @@ class PrincipalCapturingManager:
 
 def principal(name: str) -> PrincipalContext:
     return PrincipalContext(principal_id=f"user:{name}", kind="authenticated")
+
+
+def test_default_prolog_factory_applies_hook_policy(monkeypatch):
+    from zara import prolog_engine as prolog_module
+
+    engine = MagicMock(name="prolog")
+    monkeypatch.setattr(prolog_module, "locate_main_pl", lambda: Path("/tmp/main.pl"))
+    monkeypatch.setattr(prolog_module, "PrologEngine", lambda _path: engine)
+
+    supervisor = RuntimeSupervisor(config=HookRuntimeConfig())
+    result = supervisor._default_prolog_factory(principal("hooks"))
+
+    assert result is engine
+    engine.configure_hooks.assert_called_once_with(
+        enabled=True,
+        allow_override=False,
+    )
 
 
 def test_default_supervisor_threads_each_principal_into_agent_manager(monkeypatch):
@@ -178,23 +201,28 @@ def test_agent_factory_builds_openrouter_chat_model_with_defaults(monkeypatch):
 
 
 def test_agent_factory_openrouter_resolves_key_from_environment(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "env-key")
+    from langchain_openai import ChatOpenAI
 
+    monkeypatch.setenv("OPENROUTER_API_KEY", "environment-key")
     manager = _openrouter_manager(monkeypatch, {"provider": "openrouter"})
 
-    assert manager.llm_client.openai_api_key.get_secret_value() == "env-key"
+    assert isinstance(manager.llm_client, ChatOpenAI)
+    assert manager.llm_client.openai_api_key.get_secret_value() == "environment-key"
 
 
-def test_agent_factory_openrouter_honors_model_and_endpoint_overrides(monkeypatch):
+def test_agent_factory_openrouter_config_key_overrides_environment(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "environment-key")
     manager = _openrouter_manager(
         monkeypatch,
-        {
-            "provider": "openrouter",
-            "openrouter_api_key": "config-key",
-            "model": "z-ai/glm-4.5-air",
-            "endpoint": "http://127.0.0.1:8787/openrouter/api/v1",
-        },
+        {"provider": "openrouter", "openrouter_api_key": "config-key"},
     )
 
-    assert manager.llm_client.model_name == "z-ai/glm-4.5-air"
-    assert manager.llm_client.openai_api_base == "http://127.0.0.1:8787/openrouter/api/v1"
+    assert manager.llm_client.openai_api_key.get_secret_value() == "config-key"
+
+
+def test_agent_factory_openrouter_rejects_missing_key(monkeypatch):
+    import pytest
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
+        _openrouter_manager(monkeypatch, {"provider": "openrouter"})
