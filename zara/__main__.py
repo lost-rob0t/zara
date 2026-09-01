@@ -85,7 +85,7 @@ def _parser(config) -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="zara",
-        description="Zara - unified assistant runtime",
+        description="Zarathustra Voice Assistant - unified Zara runtime",
         epilog=(
             "Examples:\n"
             "  zara                              # Interactive TUI\n"
@@ -218,6 +218,10 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         return int(mcp_main(args_list[1:], config=config))
 
     parser = _parser(config)
+    if argv is None and not args_list and not (sys.stdin.isatty() and sys.stdout.isatty()):
+        parser.print_help()
+        return 1
+
     args = parser.parse_args(args_list)
     stt_provider = normalize_provider(args.stt_provider)
     stt_device = normalize_stt_device(args.device, provider=stt_provider)
