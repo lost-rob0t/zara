@@ -172,6 +172,10 @@ class TaskRunner:
         task = self._store.get_task(task_id, principal_id=self._principal_id)
         if task is None:
             raise TaskRunnerError(f"task not found: {task_id!r}")
+        if task.status not in {TaskStatus.PENDING, TaskStatus.INTERRUPTED}:
+            raise TaskRunnerError(
+                f"task {task_id!r} is not resumable (status={task.status.value})"
+            )
         active = self._store.list_tasks(
             principal_id=self._principal_id,
             statuses=[TaskStatus.RUNNING, TaskStatus.WAITING_APPROVAL],
@@ -412,14 +416,6 @@ class TaskRunner:
                 system_context=self._task_context(task),
                 latency_trace=trace,
             )
-        except asyncio.CancelledError:
-            self._record_incomplete_step(task.task_id, step_index, "cancelled")
-            raise
-        except Exception as error:
-            self._record_incomplete_step(
-                task.task_id, step_index, "failed", type(error).__name__
-            )
-            raise
         finally:
             with self._lock:
                 self._active_steps.pop(turn_id, None)
@@ -428,20 +424,6 @@ class TaskRunner:
         response = str(getattr(result, "response", "") or "")
         completed = response.strip().upper().startswith(COMPLETION_SENTINEL)
         return turn_id, completed, self._bounded_summary(response)
-
-    def _record_incomplete_step(
-        self, task_id: str, step_index: int, status: str, summary: str = ""
-    ) -> None:
-        try:
-            self._store.record_step(
-                task_id,
-                principal_id=self._principal_id,
-                step_index=step_index,
-                status=status,
-                summary=summary[: self._step_log_chars],
-            )
-        except TaskStoreError:
-            return
 
     # ------------------------------------------------------------------
     # State helpers

@@ -335,3 +335,182 @@ class TestConcurrency:
         asyncio.run(scenario())
         rows = store.list_tasks(principal_id="principal-1")
         assert {row.status for row in rows} == {TaskStatus.COMPLETED}
+
+
+class CancellationProbe:
+    """Submit stub that records whether cancellation reached the tool."""
+
+    def __init__(self, gate: asyncio.Event) -> None:
+        self.gate = gate
+        self.calls: list[dict] = []
+        self.cancelled_observed = False
+
+    async def __call__(
+        self, text, *, turn_id, conversation_id, system_context, latency_trace
+    ):
+        self.calls.append({"turn_id": turn_id, "text": text})
+        try:
+            await self.gate.wait()
+        except asyncio.CancelledError:
+            self.cancelled_observed = True
+            raise
+        return type("TurnResult", (), {"response": "TASK_COMPLETE: done", "tool_results": []})()
+
+
+class TestCancellationAndShutdown:
+    def test_cancel_mid_step_propagates_cancellation(self, tmp_path):
+        store = make_store(tmp_path)
+        harness = build_harness([], store=store)
+        gate = asyncio.Event()
+        probe = CancellationProbe(gate)
+        harness.runner._submit_turn = probe
+
+        async def scenario():
+            await harness.runner.start()
+            try:
+                task = await harness.runner.create_task(goal=GOAL)
+                probe_task = harness.runner._runs[task.task_id]
+                while len(probe.calls) == 0 and not probe_task.done():
+                    await asyncio.sleep(0.005)
+                cancelled = await harness.runner.cancel_task(task_id=task.task_id)
+                await harness.runner.wait_for_task(task.task_id, timeout=5)
+                return (
+                    cancelled,
+                    store.get_task(task.task_id, principal_id="principal-1"),
+                )
+            finally:
+                await harness.runner.stop()
+
+        cancelled, final = asyncio.run(scenario())
+        assert cancelled.status is TaskStatus.CANCELLED
+        assert final.status is TaskStatus.CANCELLED
+        assert final.reason == "cancelled"
+        assert probe.cancelled_observed
+        assert harness.runner.test_cancelled_turns == [probe.calls[0]["turn_id"]]
+        cancelled_events = [
+            event
+            for event in harness.recorder.events
+            if isinstance(event, events.TaskCancelled)
+        ]
+        assert [event.task_id for event in cancelled_events] == [cancelled.task_id]
+        assert store.list_steps(cancelled.task_id, principal_id="principal-1") == []
+
+    def test_cancel_while_waiting_approval(self, tmp_path):
+        store = make_store(tmp_path)
+        harness = build_harness([], store=store)
+        gate = asyncio.Event()
+        probe = CancellationProbe(gate)
+        harness.runner._submit_turn = probe
+        effective = harness.runner.observing_publisher(harness.recorder)
+
+        async def scenario():
+            await harness.runner.start()
+            try:
+                task = await harness.runner.create_task(goal=GOAL)
+                run = harness.runner._runs[task.task_id]
+                while len(probe.calls) == 0 and not run.done():
+                    await asyncio.sleep(0.005)
+                effective(
+                    events.ToolWaitingForUser(
+                        turn_id=probe.calls[0]["turn_id"],
+                        tool_run_id="approval-call-1",
+                    )
+                )
+                while (
+                    store.get_task(task.task_id, principal_id="principal-1").status
+                    is not TaskStatus.WAITING_APPROVAL
+                ):
+                    await asyncio.sleep(0.005)
+                await harness.runner.cancel_task(task_id=task.task_id)
+                await harness.runner.wait_for_task(task.task_id, timeout=5)
+                return store.get_task(task.task_id, principal_id="principal-1")
+            finally:
+                await harness.runner.stop()
+
+        final = asyncio.run(scenario())
+        assert final.status is TaskStatus.CANCELLED
+
+    def test_cancelled_task_never_resumes(self, tmp_path):
+        store = make_store(tmp_path)
+        harness = build_harness(["TASK_COMPLETE: done"], store=store)
+
+        async def scenario():
+            await harness.runner.start()
+            try:
+                task = await harness.runner.create_task(goal=GOAL)
+                await harness.runner.wait_for_task(task.task_id)
+                with pytest.raises(Exception, match="not resumable"):
+                    await harness.runner.resume_task(task_id=task.task_id)
+            finally:
+                await harness.runner.stop()
+
+        asyncio.run(scenario())
+
+    def test_cancel_unknown_task_raises(self, tmp_path):
+        store = make_store(tmp_path)
+        harness = build_harness([], store=store)
+
+        async def scenario():
+            await harness.runner.start()
+            try:
+                with pytest.raises(Exception, match="not found"):
+                    await harness.runner.cancel_task(task_id="task-missing")
+            finally:
+                await harness.runner.stop()
+
+        asyncio.run(scenario())
+
+    def test_stop_interrupts_running_task_and_persists(self, tmp_path):
+        store = make_store(tmp_path)
+        harness = build_harness([], store=store)
+        gate = asyncio.Event()
+        probe = CancellationProbe(gate)
+        harness.runner._submit_turn = probe
+
+        async def scenario():
+            await harness.runner.start()
+            task = await harness.runner.create_task(goal=GOAL)
+            run = harness.runner._runs[task.task_id]
+            while len(probe.calls) == 0 and not run.done():
+                await asyncio.sleep(0.005)
+            await harness.runner.stop()
+            return store.get_task(task.task_id, principal_id="principal-1")
+
+        final = asyncio.run(scenario())
+        assert final.status is TaskStatus.INTERRUPTED
+        assert final.reason == "runtime_shutdown"
+        assert store.list_steps(final.task_id, principal_id="principal-1") == []
+
+    def test_resume_continues_same_task_identity(self, tmp_path):
+        store = make_store(tmp_path)
+        first = build_harness([], store=store)
+        gate = asyncio.Event()
+        probe = CancellationProbe(gate)
+        first.runner._submit_turn = probe
+
+        async def scenario():
+            await first.runner.start()
+            try:
+                task = await first.runner.create_task(goal=GOAL)
+                run = first.runner._runs[task.task_id]
+                while len(probe.calls) == 0 and not run.done():
+                    await asyncio.sleep(0.005)
+                await first.runner.stop()
+            finally:
+                gate.set()
+
+            second = build_harness(["TASK_COMPLETE: finished"], store=store)
+            try:
+                await second.runner.start()
+                resumed = await second.runner.resume_task(task_id=task.task_id)
+                assert resumed.task_id == task.task_id
+                await second.runner.wait_for_task(task.task_id, timeout=5)
+                return store.get_task(task.task_id, principal_id="principal-1")
+            finally:
+                await second.runner.stop()
+
+        final = asyncio.run(scenario())
+        assert final.status is TaskStatus.COMPLETED
+        assert final.steps_completed == 1
+        steps = store.list_steps(final.task_id, principal_id="principal-1")
+        assert [step.summary for step in steps] == ["finished"]
