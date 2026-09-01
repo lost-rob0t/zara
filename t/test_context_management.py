@@ -18,11 +18,28 @@ def _message_counter(messages):
     return len(messages)
 
 
+def _config(
+    *,
+    strategy="truncate",
+    max_tokens=100,
+    preserve_recent_turns=8,
+    summary_max_tokens=None,
+):
+    summary_budget = summary_max_tokens or min(2, max_tokens)
+    return ContextConfig(
+        strategy=strategy,
+        max_tokens=max_tokens,
+        preserve_recent_turns=preserve_recent_turns,
+        summary_max_tokens=summary_budget,
+        skill_max_tokens=min(2, max_tokens),
+    )
+
+
 @pytest.mark.asyncio
 async def test_one_base_prompt_and_transient_context_never_persists():
     manager = ContextManager(
         system_prompt="canonical base",
-        config=ContextConfig(max_tokens=100, preserve_recent_turns=2),
+        config=_config(max_tokens=100, preserve_recent_turns=2),
         token_counter=_message_counter,
     )
     lease = manager.begin_turn("turn-1")
@@ -57,7 +74,7 @@ async def test_one_base_prompt_and_transient_context_never_persists():
 async def test_newer_turn_invalidates_older_commit():
     manager = ContextManager(
         system_prompt="base",
-        config=ContextConfig(max_tokens=100),
+        config=_config(max_tokens=100),
         token_counter=_message_counter,
     )
     old_lease = manager.begin_turn("old")
@@ -74,7 +91,7 @@ async def test_newer_turn_invalidates_older_commit():
 async def test_cancelled_turn_cannot_commit():
     manager = ContextManager(
         system_prompt="base",
-        config=ContextConfig(max_tokens=100),
+        config=_config(max_tokens=100),
         token_counter=_message_counter,
     )
     lease = manager.begin_turn("cancel-me")
@@ -89,7 +106,7 @@ async def test_cancelled_turn_cannot_commit():
 async def test_truncation_drops_whole_old_tool_turn_group():
     manager = ContextManager(
         system_prompt="base",
-        config=ContextConfig(strategy="truncate", max_tokens=7, preserve_recent_turns=1),
+        config=_config(strategy="truncate", max_tokens=7, preserve_recent_turns=1),
         token_counter=_message_counter,
     )
 
@@ -133,7 +150,7 @@ async def test_truncation_drops_whole_old_tool_turn_group():
 async def test_truncate_raises_if_protected_context_cannot_fit():
     manager = ContextManager(
         system_prompt="base",
-        config=ContextConfig(strategy="truncate", max_tokens=2, preserve_recent_turns=1),
+        config=_config(strategy="truncate", max_tokens=2, preserve_recent_turns=1),
         token_counter=_message_counter,
     )
     lease = manager.begin_turn("turn")
@@ -153,7 +170,7 @@ async def test_compression_is_atomic_when_summarizer_fails():
 
     manager = ContextManager(
         system_prompt="base",
-        config=ContextConfig(strategy="compress", max_tokens=5, preserve_recent_turns=1),
+        config=_config(strategy="compress", max_tokens=5, preserve_recent_turns=1),
         token_counter=_message_counter,
         summarizer=fail_summary,
     )
@@ -180,7 +197,7 @@ async def test_repeated_compression_replaces_summary_instead_of_stacking():
 
     manager = ContextManager(
         system_prompt="base",
-        config=ContextConfig(
+        config=_config(
             strategy="compress",
             max_tokens=6,
             preserve_recent_turns=1,
@@ -209,7 +226,7 @@ async def test_repeated_compression_replaces_summary_instead_of_stacking():
 async def test_clear_removes_active_history_and_invalidates_lease():
     manager = ContextManager(
         system_prompt="base",
-        config=ContextConfig(max_tokens=100),
+        config=_config(max_tokens=100),
         token_counter=_message_counter,
     )
     lease = manager.begin_turn("turn")
