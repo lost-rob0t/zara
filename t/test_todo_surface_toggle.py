@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from zara.agent.tools.registry import TODO_TOOL_NAMES, ToolRegistry
+from zara.agent.tools.registry import ToolRegistry
 from zara.python_skills import TODO_SKILLS, PythonSkillRegistry, python_skills
 from zara.prolog_engine import PrologEngine
 
@@ -15,10 +15,12 @@ class FakeConfig:
     def get_section(self, name):
         if name == "tool_approval":
             return {}
+        if name == "todo":
+            return {"enabled": self.todos}
         return {}
 
     def get_tool_config(self):
-        return {"todos": self.todos}
+        return {}
 
 
 class FakeProlog:
@@ -61,8 +63,6 @@ def test_tool_registry_disables_todo_tools_and_prolog_intents():
         assert prolog.goals == ["kb_intents:set_todo_intents_enabled(false)"]
         assert TODO_SKILLS.isdisjoint(python_skills.list_skills())
 
-        # Once the built-in surface is gone, a plugin/provider is free to own
-        # an otherwise conflicting todo tool name.
         registry.register_tool(SimpleNamespace(name="add_todo"))
         assert registry.get_tool("add_todo") is not None
     finally:
@@ -85,19 +85,19 @@ def test_tool_registry_keeps_default_todo_behavior_enabled():
         python_skills.set_todo_enabled(True)
 
 
-def test_invalid_todos_tool_setting_is_rejected():
+def test_invalid_todo_enabled_setting_is_rejected():
     registry = ToolRegistry(config=FakeConfig(todos="false"))
     with patch(
         "zara.agent.tools.builtin_tools.get_builtin_tools",
         side_effect=fake_builtin_tools,
-    ), pytest.raises(ValueError, match="tools.todos"):
+    ), pytest.raises(ValueError, match="todo.enabled"):
         registry.load_builtin_tools()
 
 
 def test_prolog_resolver_hides_todo_intents_but_not_timers():
-    engine = PrologEngine()
     from pathlib import Path
 
+    engine = PrologEngine()
     engine.consult(Path("main.pl"))
     try:
         assert engine.query_once(
