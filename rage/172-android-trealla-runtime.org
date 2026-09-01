@@ -1,0 +1,29 @@
+#+title: RAGE #172 - Android Trealla semantic runtime lifecycle
+
+* Run identity
+- Consumed issue :: #172, P2 - extract and prove a portable shared Prolog semantic core on Linux and Android.
+- RAGE start commit :: =82eddb0a1c81dd1ae92c5e575e90e7d485a17bc8=.
+- Branch :: =rage/android-172-trealla-runtime=.
+- Scope :: Android-only Trealla runtime lifecycle boundary under =android/**=; no Zara daemon/core/runtime ownership changes.
+
+* Research / current state
+- #170 selected Trealla NDK with a thin owned Android boundary and explicitly assigned #172 the portable semantic fixture proof.
+- #280 landed =SemanticRuntime= plus fail-closed cross-runtime fixture comparison on master.
+- The next missing boundary is deterministic Android runtime lifecycle before JNI/native binding: initialization must load the canonical portable core explicitly, evaluation must be impossible before readiness, shutdown must be idempotent, and native failures must remain failures rather than fabricated semantic output.
+
+* Design / adversarial review
+- Introduce a narrow =TreallaBridge= interface that represents the future JNI implementation without pretending a native runtime already exists.
+- =TreallaSemanticRuntime= owns lifecycle state and implements the existing =SemanticRuntime= contract.
+- Initialization takes an explicit portable core asset path; no implicit discovery or fallback.
+- Failed initialization leaves the runtime unready so callers may surface failure/retry explicitly.
+- Evaluation is legal only while ready and wraps bridge solutions in the frozen =ZARA-SEMANTIC/1= contract.
+- Close is idempotent and never invokes native shutdown more than once.
+- No raw arbitrary goal surface is added beyond the already-bounded fixture query contract.
+
+* TDD plan
+1. RED: tests reference the missing Trealla runtime/bridge and assert pre-init rejection, explicit core loading, result wrapping, failed-init behavior, and idempotent shutdown.
+2. GREEN: implement the smallest lifecycle wrapper satisfying those tests.
+3. Evaluate with Android unit gate, =scripts/test-android.sh=, repository gate, Nix gate, and exact-head Actions before merge.
+
+* Status
+- Iteration 1 started from exact master =82eddb0a1c81dd1ae92c5e575e90e7d485a17bc8=.
