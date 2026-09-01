@@ -539,6 +539,101 @@ async def test_streaming_node_records_genuine_latency_boundaries():
 
 
 # ---------------------------------------------------------------------------
+# A10: per-turn latency traces never enter checkpointed graph state (#249)
+
+
+class _FakeClock:
+    def __init__(self):
+        self.value = 0
+
+    def __call__(self):
+        return self.value
+
+    def advance_ms(self, milliseconds):
+        self.value += int(milliseconds * 1_000_000)
+
+
+@pytest.mark.asyncio
+async def test_conversation_loop_completes_with_latency_trace_in_state():
+    recorder = RecordingPublisher()
+    clock = _FakeClock()
+    trace = LatencyTrace(trace_id="trace-checkpoint", clock_ns=clock)
+
+    class TimedLLM(FakeStreamingLLM):
+        async def astream(self, messages):
+            pieces = [chunk("Hello "), chunk("there.")]
+            for index, piece in enumerate(pieces):
+                clock.advance_ms(10)
+                yield piece
+                await asyncio.sleep(0)
+
+    state = {
+        "turn_id": "turn-a10",
+        "conversation_id": "conv-a10",
+        "user_input": "hi",
+        "messages": [HumanMessage(content="hi")],
+        "tool_calls": [],
+        "tool_results": [],
+        "step_count": 0,
+        "max_steps": 10,
+        "response": None,
+        "latency_trace": trace,
+    }
+    result = await run_conversation_loop(
+        TimedLLM([]),
+        FakeRegistry(),
+        state,
+        stream_publisher=recorder,
+    )
+
+    assert result["response"] == "Hello there."
+    assert [event.event for event in trace.events] == [
+        "llm_request",
+        "llm_first_token",
+        "llm_first_sentence",
+        "llm_final_token",
+    ]
+    assert "latency_trace" in state, "caller state must not be mutated"
+    assert "latency_trace" not in result, "trace must not become a graph channel"
+
+
+@pytest.mark.asyncio
+async def test_trace_bound_agent_node_records_boundaries_without_state_key():
+    recorder = RecordingPublisher()
+    clock = _FakeClock()
+    trace = LatencyTrace(trace_id="trace-bound", clock_ns=clock)
+
+    class TimedLLM(FakeStreamingLLM):
+        async def astream(self, messages):
+            clock.advance_ms(30)
+            yield chunk("Hi there. ")
+            await asyncio.sleep(0)
+
+    node = create_agent_node(
+        TimedLLM([]),
+        FakeRegistry(),
+        stream_publisher=recorder,
+        latency_trace=trace,
+    )
+    await node(
+        {
+            "messages": [HumanMessage(content="hi")],
+            "step_count": 0,
+            "turn_id": "turn-a10b",
+            "conversation_id": "conv-a10b",
+        }
+    )
+
+    assert [event.event for event in trace.events] == [
+        "llm_request",
+        "llm_first_token",
+        "llm_first_sentence",
+        "llm_final_token",
+    ]
+    assert trace.duration_ms("llm_request", "llm_first_token") == 30.0
+
+
+# ---------------------------------------------------------------------------
 # A8: LLMClient.stream_events_async against local fake servers
 
 

@@ -83,7 +83,6 @@ class AgentState(TypedDict, total=False):
     tool_calls: List[Dict[str, Any]]
     tool_results: List[Dict[str, Any]]
     tool_decisions: Dict[str, Dict[str, str]]
-    latency_trace: Any
 
 
 # ----------------------------------------------------------------------
@@ -331,7 +330,7 @@ def _streamed_response(
     return run()
 
 
-def create_agent_node(llm_client, tool_registry, stream_publisher=None):
+def create_agent_node(llm_client, tool_registry, stream_publisher=None, latency_trace=None):
     tools = tool_registry.to_langchain_tools()
     llm_with_tools = llm_client.bind_tools(tools) if tools else llm_client
     can_stream = callable(getattr(llm_with_tools, "astream", None))
@@ -361,7 +360,7 @@ def create_agent_node(llm_client, tool_registry, stream_publisher=None):
             getattr(msgs[-1], "content", None),
         )
 
-        trace = state.get("latency_trace")
+        trace = latency_trace if latency_trace is not None else state.get("latency_trace")
         request_index = int(state.get("step_count", 0))
         if trace is not None:
             trace.record(
@@ -658,8 +657,16 @@ def should_continue(state: Dict[str, Any]) -> Literal["approval", "end"]:
 # ----------------------------------------------------------------------
 # Graph + runner
 
-def create_agent_graph(llm_client, tool_registry, *, checkpointer=None, publisher=None, stream_publisher=None):
-    agent_node = create_agent_node(llm_client, tool_registry, stream_publisher)
+def create_agent_graph(
+    llm_client,
+    tool_registry,
+    *,
+    checkpointer=None,
+    publisher=None,
+    stream_publisher=None,
+    latency_trace=None,
+):
+    agent_node = create_agent_node(llm_client, tool_registry, stream_publisher, latency_trace)
     approval_node = create_approval_node(tool_registry)
     tools_node = create_tools_node(tool_registry, publisher, stream_publisher)
 
@@ -723,6 +730,12 @@ async def run_conversation_loop(
         state = dict(state)
         state["messages"] = messages
 
+    # The latency trace is per-turn runtime context: it must never become a
+    # graph channel, or the checkpointer serializes a lock-bearing object
+    # after every superstep (#249).
+    state = dict(state)
+    latency_trace = state.pop("latency_trace", None)
+
     saver = InMemorySaver()
     graph = create_agent_graph(
         llm_client,
@@ -730,6 +743,7 @@ async def run_conversation_loop(
         checkpointer=saver,
         publisher=publisher,
         stream_publisher=stream_publisher,
+        latency_trace=latency_trace,
     )
     turn_id = str(state.get("turn_id") or f"agent-{uuid.uuid4().hex}")
     conversation_id = state.get("conversation_id")

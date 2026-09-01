@@ -1,0 +1,4 @@
+* Run identity
+- Consumed issue :: #249
+- Branch :: =rage/249-latency-trace-checkpoint=
+- RAGE start commit :: =ec0c74a39a9cd99aabee2795a0f4abfd92966949=
