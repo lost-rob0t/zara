@@ -89,24 +89,41 @@ def test_agent_manager_skips_default_prolog_when_tool_disabled(monkeypatch):
     assert manager.prolog_engine is None
 
 
-def test_runtime_host_default_backend_receives_same_config(monkeypatch):
-    import zara.runtime.host as host_module
+def test_inprocess_client_default_backend_receives_same_config_and_plugins(monkeypatch):
+    import zara.client as client_module
+    import zara.runtime.backend as backend_module
 
     config = object()
-    seen = []
+    plugin_paths = ("/plugins/one", "/plugins/two")
+    seen = {}
+
+    class Config:
+        def get_module_search_paths(self):
+            return plugin_paths
+
+    config = Config()
 
     class Backend:
         pass
 
-    def backend_factory(*, config=None):
-        seen.append(config)
+    def agent_backend(*, config=None):
+        seen["backend_config"] = config
         return Backend()
 
-    monkeypatch.setattr(host_module, "AgentRuntimeBackend", backend_factory)
-    host = host_module.RuntimeHost(config=config)
+    class Host:
+        def __init__(self, **kwargs):
+            seen["host_kwargs"] = kwargs
 
-    assert isinstance(host._backend_factory(), Backend)
-    assert seen == [config]
+    monkeypatch.setattr(backend_module, "AgentRuntimeBackend", agent_backend)
+    monkeypatch.setattr(client_module, "RuntimeHost", Host)
+
+    client_module.InProcessZaraClient(config=config)
+
+    host_kwargs = seen["host_kwargs"]
+    assert host_kwargs["config"] is config
+    assert host_kwargs["plugin_paths"] == plugin_paths
+    assert isinstance(host_kwargs["backend_factory"](), Backend)
+    assert seen["backend_config"] is config
 
 
 @pytest.mark.asyncio
