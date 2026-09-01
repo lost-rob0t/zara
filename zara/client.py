@@ -159,12 +159,28 @@ class InProcessZaraClient(ZaraClient):
     ) -> None:
         self._bus = bridge.RuntimeEventBus()
         self._shutdown_timeout = max(0.1, float(shutdown_timeout))
+
+        resolved_config = config
+        resolved_backend_factory = backend_factory
+        plugin_paths = None
+        if resolved_backend_factory is None:
+            if resolved_config is None:
+                from zara.config import get_config
+
+                resolved_config = get_config()
+
+            from zara.runtime.backend import AgentRuntimeBackend
+
+            resolved_backend_factory = lambda: AgentRuntimeBackend(config=resolved_config)
+            plugin_paths = tuple(resolved_config.get_module_search_paths())
+
         self._host = RuntimeHost(
-            backend_factory=backend_factory,
+            backend_factory=resolved_backend_factory,
             publisher=self._bus.publish,
             subscriber=self._bus.subscribe,
             shutdown_timeout=self._shutdown_timeout,
-            config=config,
+            plugin_paths=plugin_paths,
+            config=resolved_config,
         )
         self._closed = False
 
