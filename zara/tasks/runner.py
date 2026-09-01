@@ -234,6 +234,93 @@ class TaskRunner:
             raise TimeoutError(f"task {task_id!r} did not finish in time")
 
     # ------------------------------------------------------------------
+    # Approval observation
+
+    def observing_publisher(
+        self, base: Callable[[events.RuntimeEvent], object]
+    ) -> Callable[[events.RuntimeEvent], object]:
+        """Wrap ``base`` so controller events update task waiting state.
+
+        The host binds the backend's event publisher to this wrapper. Events
+        for a task step's turn drive the persisted task state machine; the
+        step coroutine itself stays parked inside the existing approval
+        future, so there is no polling anywhere.
+        """
+
+        def publish(event: events.RuntimeEvent):
+            try:
+                self._observe(event)
+            except Exception:
+                logger.warning("[TaskRunner] event observation failed", exc_info=True)
+            return base(event)
+
+        return publish
+
+    def _observe(self, event: events.RuntimeEvent) -> None:
+        turn_id = getattr(event, "turn_id", None)
+        if not turn_id:
+            return
+        with self._lock:
+            active = self._active_steps.get(turn_id)
+        if active is None:
+            return
+        task_id = active.task_id
+        if isinstance(event, events.ToolWaitingForUser):
+            self._on_waiting_for_approval(task_id, turn_id)
+        elif isinstance(event, events.UserResponded):
+            self._on_approval_resolved(task_id)
+        elif isinstance(event, events.ToolCancelled):
+            self._on_tool_cancelled(task_id, turn_id, str(event.reason))
+
+    def _on_waiting_for_approval(self, task_id: str, turn_id: str) -> None:
+        task = self._store.get_task(task_id, principal_id=self._principal_id)
+        if task is None or task.status is not TaskStatus.RUNNING:
+            return
+        try:
+            self._store.transition(
+                task_id,
+                principal_id=self._principal_id,
+                status=TaskStatus.WAITING_APPROVAL,
+            )
+        except TaskStoreError:
+            return
+        self._publish(
+            events.TaskWaitingApproval(
+                task_id=task_id, turn_id=turn_id, label="tasks"
+            )
+        )
+
+    def _on_approval_resolved(self, task_id: str) -> None:
+        task = self._store.get_task(task_id, principal_id=self._principal_id)
+        if task is None or task.status is not TaskStatus.WAITING_APPROVAL:
+            return
+        try:
+            self._store.transition(
+                task_id, principal_id=self._principal_id, status=TaskStatus.RUNNING
+            )
+        except TaskStoreError:
+            return
+
+    def _on_tool_cancelled(self, task_id: str, turn_id: str, reason: str) -> None:
+        if reason == "approval timeout":
+            failure_reason = "approval_timeout"
+        elif reason == "tool rejected":
+            failure_reason = "approval_rejected"
+        else:
+            return
+        self._finish(task_id, TaskStatus.FAILED, failure_reason)
+        self._cancel_step(task_id, turn_id)
+
+    def _cancel_step(self, task_id: str, turn_id: str) -> None:
+        try:
+            asyncio.get_running_loop().create_task(self._cancel_turn(turn_id))
+        except RuntimeError:
+            return
+        run = self._runs.get(task_id)
+        if run is not None and not run.done():
+            run.cancel()
+
+    # ------------------------------------------------------------------
     # Step loop
 
     def _spawn_run(self, task_id: str) -> None:
@@ -275,8 +362,20 @@ class TaskRunner:
             step_index = task.steps_completed
             turn_id, completed, summary = await self._run_step(task, step_index)
             current = self._store.get_task(task_id, principal_id=self._principal_id)
-            if current is None or current.status is not TaskStatus.RUNNING:
+            if current is None or current.status not in {
+                TaskStatus.RUNNING,
+                TaskStatus.WAITING_APPROVAL,
+            }:
                 return
+            if current.status is TaskStatus.WAITING_APPROVAL:
+                try:
+                    self._store.transition(
+                        task_id,
+                        principal_id=self._principal_id,
+                        status=TaskStatus.RUNNING,
+                    )
+                except TaskStoreError:
+                    return
             self._store.record_step(
                 task_id,
                 principal_id=self._principal_id,
