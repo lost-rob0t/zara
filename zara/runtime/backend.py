@@ -94,6 +94,11 @@ class LangGraphRuntimeBackend(RuntimeBackend):
 
             self._manager_factory = AgentManager
         self._manager = self._manager_factory()
+
+        ensure_prolog = getattr(self._manager, "ensure_prolog_engine", None)
+        if ensure_prolog is not None:
+            ensure_prolog()
+
         if self._publisher is not None:
             bind = getattr(self._manager, "bind_event_publisher", None)
             if bind is not None:
