@@ -32,6 +32,8 @@ def test_default_config_is_valid_toml():
     assert parsed["plugins"]["lifecycle_timeout"] == 5.0
     assert parsed["plugins"]["event_queue_size"] == 256
     assert parsed["plugins"]["max_managed_workers"] == 8
+    assert parsed["api_service"]["enabled"] is False
+    assert parsed["api_service"]["disabled_providers"] == []
 
 
 def test_plugin_config_is_isolated_by_plugin_name(tmp_path):
@@ -261,3 +263,43 @@ def test_tool_approval_policy_is_bounded_and_validated(tmp_path, setting):
 
     with pytest.raises(ConfigError, match="tool_approval"):
         ZaraConfig(str(config_path))
+
+
+def test_api_service_defaults_are_gated_off(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[api_service]\n")
+    config = ZaraConfig(str(config_path))
+    assert config.get_api_service_config() == {
+        "enabled": False,
+        "disabled_providers": (),
+    }
+
+
+@pytest.mark.parametrize(
+    "override",
+    ["enabled = 1", 'enabled = "yes"'],
+)
+def test_api_service_enabled_must_be_boolean(tmp_path, override):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f"[api_service]\n{override}\n")
+    with pytest.raises(ValueError, match="enabled"):
+        ZaraConfig(str(config_path)).get_api_service_config()
+
+
+def test_api_service_disabled_providers_must_be_string_list(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[api_service]\ndisabled_providers = [1, 2]\n")
+    with pytest.raises(ValueError, match="disabled_providers"):
+        ZaraConfig(str(config_path)).get_api_service_config()
+
+
+def test_api_service_disabled_providers_are_preserved(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[api_service]\nenabled = true\ndisabled_providers = [\"timer_server\"]\n"
+    )
+    config = ZaraConfig(str(config_path))
+    assert config.get_api_service_config() == {
+        "enabled": True,
+        "disabled_providers": ("timer_server",),
+    }
