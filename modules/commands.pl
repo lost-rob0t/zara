@@ -4,7 +4,7 @@
 
 :- module(commands, [execute/2]).
 
-:- use_module('../kb/config').
+:- use_module('../kb/device_providers').
 :- use_module('config_loader', [command_argv/3, search_url/2]).
 :- use_module(library(process)).
 :- use_module('dictate').
@@ -89,11 +89,11 @@ execute(say, Rest) :-
 % ============================================
 
 open_app(AppName) :-
-    (   once(kb_config:app_mapping(AppName, Command))
+    (   once(kb_device_providers:app_mapping(AppName, Command))
     ->  format('Opening ~w via: ~w~n', [AppName, Command]),
         command_argv(Command, Executable, Args),
         launch_process(Executable, Args)
-    ;   once(kb_config:direct_app(AppName))
+    ;   once(kb_device_providers:direct_app(AppName))
     ->  format('Launching ~w directly~n', [AppName]),
         launch_process(AppName, [])
     ;   format('Attempting to launch ~w (not in config)~n', [AppName]),

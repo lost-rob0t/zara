@@ -121,6 +121,7 @@ class RuntimeHost:
         self._clarifications = ClarificationCoordinator()
         self._plugin_manager: Optional[PluginManager] = None
         self._last_plugin_diagnostics: tuple[PluginDiagnostic, ...] = ()
+        self._api_service = None
 
     @property
     def state(self) -> RuntimeHostState:
@@ -145,6 +146,11 @@ class RuntimeHost:
         if manager is not None:
             return manager.diagnostics()
         return self._last_plugin_diagnostics
+
+    @property
+    def plan_service(self):
+        """The api_service plan execution service, or None when disabled."""
+        return self._api_service
 
     def start(self) -> concurrent.futures.Future:
         """Start the runtime worker without blocking the caller."""
@@ -302,6 +308,7 @@ class RuntimeHost:
                     self._state = RuntimeHostState.RUNNING
 
             if not shutdown_requests:
+                await self._start_api_service()
                 await self._start_plugins()
 
         if shutdown_requests:
@@ -332,6 +339,49 @@ class RuntimeHost:
                 logger.debug("Runtime backend cleanup after failed start failed", exc_info=True)
             raise
         self._backend = candidate
+
+    async def _start_api_service(self) -> None:
+        try:
+            config = self._config
+            if config is None:
+                from zara.config import get_config
+
+                config = get_config()
+            service_config = config.get_api_service_config()
+            if not service_config["enabled"]:
+                return
+            from zara.runtime.api_service import build_api_service
+
+            self._api_service = await asyncio.to_thread(
+                build_api_service,
+                service_config,
+                admin_restart_hook=self._submit_admin_restart,
+            )
+            logger.info("[ApiService] plan service started: %s",
+                        self._api_service.registry.provider_ids())
+        except Exception as error:
+            self._api_service = None
+            logger.warning("API service startup failed", exc_info=True)
+            self._publisher(
+                events.RuntimeError(
+                    reason=f"api service startup failed: {error}",
+                    fatal=False,
+                    label="api-service",
+                )
+            )
+
+    def _submit_admin_restart(self, reason: str) -> None:
+        future = self.submit(RestartRuntime(reason=f"api_service: {reason}"))
+        logger.info("[ApiService] admin restart requested (%s)", reason)
+        future.add_done_callback(
+            lambda done: done.exception()
+            and logger.warning("Admin restart failed: %s", done.exception())
+        )
+
+    def _stop_api_service(self) -> None:
+        if self._api_service is not None:
+            logger.info("[ApiService] plan service stopped")
+        self._api_service = None
 
     async def _start_plugins(self) -> None:
         if not self._manage_plugins:
@@ -614,6 +664,7 @@ class RuntimeHost:
             await self._coordinator_ask(Drain())
         self._clarifications.drop_all(reason=SessionCloseReason.RESTART)
         self._publisher(events.RuntimeStopped(reason=command.reason, label="runtime-host"))
+        self._stop_api_service()
         await self._stop_plugins()
 
         try:
@@ -638,6 +689,7 @@ class RuntimeHost:
                 detail="runtime restart interrupted by shutdown",
             )
 
+        await self._start_api_service()
         await self._start_plugins()
         self._publisher(events.RuntimeStarted(label="runtime-host"))
         return CommandReceipt(request_id=command.request_id, detail="runtime restarted")
@@ -650,6 +702,7 @@ class RuntimeHost:
         await self._stop_backend()
         self._clarifications.drop_all(reason=SessionCloseReason.SHUTDOWN)
         self._publisher(events.RuntimeStopped(reason=command.reason, label="runtime-host"))
+        self._stop_api_service()
         await self._stop_plugins()
         await self._stop_coordinator()
 

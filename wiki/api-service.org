@@ -1,0 +1,103 @@
+#+title: API service providers
+
+Versioned server =api_service= provider registry and the server-side plan
+execution boundary (issue #158, epic #150). Builds on #157's capability
+layer (=wiki/capability-plans.org=). Design record:
+=rage/158-api-service-providers.org=.
+
+## Configuration split (Prolog)
+
+Three-way separation so a container/server can never become the execution
+target for desktop commands:
+
+| File | Scope | Content |
+|---+---+---|
+| =kb/config.pl= | shared semantic, server-safe | todo settings, =search_engine= URL template (data), =wake_word=, =llm_*=, =prolog_rlm_*= |
+| =kb/device_providers.pl= | Linux device only (=main.pl= boot) | =app_mapping=, =direct_app= (shell strings), =dictation_command=, =timer_sound=, =alarm_sound= |
+| =kb/server_providers.pl= | server registry (versioned) | =api_service_registry_version(1)=, =api_service_provider(Id, Kind, TimeoutSeconds)= flat facts |
+
+- =main.pl= (desktop boot) consults both config files and loads user
+  overrides with =config_loader:load_user_config= (the old
+  =initialization= hook moved out of =kb/config.pl=).
+- =server_main.pl= (server boot) consults =kb/config.pl=, =kb/intents.pl=,
+  =kb/server_providers.pl=, =modules/capability_plans.pl= and
+  =modules/config_loader.pl= — never =kb/device_providers.pl=.
+- User config compatibility: old =~/.config/zarathushtra/config.pl= files
+  keep working unchanged on desktop; device facts are routed to
+  =kb_device_providers=. The server scope (=config_loader:load_server_config=)
+  accepts semantic + intent facts only and fails the boot with
+  =domain_error(zarathushtra_server_config_fact, Term)= on
+  server-inappropriate mappings (app mappings, dictation, sounds) — loud,
+  never silent.
+
+## Provider registry (Python)
+
+=zara/runtime/api_service.py=:
+
+- =API_SERVICE_REGISTRY_VERSION = 1= must match the KB fact or startup
+  fails closed.
+- =ServiceProviderRegistry=: thread-safe =register(spec, adapter)= /
+  =unregister(id)=; duplicate ids and unknown unregistrations are rejected;
+  adapter resolution is live so unregistration affects in-flight plans.
+- =ProviderSpec=: bounded =timeout_seconds= in =[-0.1..60]= window
+  (=[0.1, 60]=), =kind= restricted to =builtin=.
+- =TimerService=: injectable clock (virtual clock in tests), 64-timer
+  bound, durations in =(0, 86400]=, due tracking and cancellation. Firing
+  delivery is a later slice (events design is #173's).
+- =build_api_service(config, engine=...)=: reads the registry facts from
+  the =server_main.pl= engine, validates (version, kinds, timeout bounds,
+  duplicates), applies =[api_service].disabled_providers=, and registers
+  builtin adapters: =search_server= (resolves =config_loader:search_url/2=
+  and returns the URL as data — no shell, no browser), =timer_server=
+  (records service work), =admin_restart= (invokes the host restart hook;
+  refuses when none).
+
+## Plan execution behind RuntimeHost
+
+=PlanExecutionService.execute(frame, principal=, auths=, request_id)=:
+
+1. builds =PlanEnvironment(principal, auths, devices=(), providers=registry
+   ids, aliases=(), policies=())= — server policy owns reachability; no
+   device advertisements and no aliases on the server this slice;
+2. selects through =PrologEngine.plan_for_frame= (pure Prolog; open frames
+   raise — clarification owns them);
+3. not-ready selections become typed =REFUSED plan_not_ready= outcomes
+   (status:reason in =response=); a =None= selection becomes
+   =selection_failed=;
+4. ready plans dispatch through =PlanExecutor= under
+   =asyncio.wait_for(spec.timeout_seconds)=: on timeout the request id is
+   tracked (the adapter thread keeps running) so a retry =REPLAYED= instead
+   of double-executing; cancellation tracks and re-raises.
+
+=PlanExecutor= additionally gained a dynamic =adapter_resolver= (live
+registry lookups) and a public =track(request_id)=. The #157 refusal
+contract is unchanged (only success and timeout track; =adapter_failed=
+does not).
+
+RuntimeHost wiring: =[api_service]= config (=enabled=, default =false=;
+=disabled_providers=) gates the service. Startup failure is non-fatal —
+the host publishes a =RuntimeError= event, =plan_service= stays =None=,
+and the host remains =RUNNING= (headless health invariant). Restart
+rebuilds the service; shutdown clears it. There is no new runtime command
+and no protocol surface: the ZMQ gateway never invokes services directly,
+and the routing cutover belongs to #160.
+
+## Scope boundaries
+
+- Desktop-hardware server providers (=open_desktop=, =screen_server=,
+  =pause_server=) stay declared in =kb/capabilities.pl= but are not
+  registered: a headless server never offers them, and =open_app= plans
+  are =unavailable= there.
+- Memory adapters wait for memory intent frames; tools/plugins/MCP remain
+  available through the existing ToolRegistry/MCPManager where they are
+  the chosen provider (LLM path). No dynamic capability facts this slice.
+
+## Tests
+
+- plunit =t/api_service.pl= (14): server boot isolation (device facts
+  absent), registry facts, server-scope overrides and refusals.
+- pytest =t/test_api_service.py= (36): spec/registry/timer bounds, races,
+  build validation, adapters, plan execution, timeout/replay.
+- pytest =t/test_host_api_service.py= (6): host wiring, disabled gate,
+  degraded startup, headless open-app refusal.
+- gate: =scripts/test-api-service.sh=, phase 2c in =scripts/test-all.sh=.

@@ -241,19 +241,33 @@ class PlanExecutor:
 
     def __init__(
         self,
-        adapters: Mapping[str, PlanAdapter],
+        adapters: Optional[Mapping[str, PlanAdapter]] = None,
         *,
+        adapter_resolver: Optional[Callable[[str], Optional[PlanAdapter]]] = None,
         max_tracked: int = 4096,
     ) -> None:
+        if (adapters is None) == (adapter_resolver is None):
+            raise ValueError("provide either adapters or adapter_resolver, not both")
         if max_tracked < 1:
             raise ValueError("max_tracked must be at least 1")
-        self._adapters = dict(adapters)
-        for provider, adapter in self._adapters.items():
-            if not callable(adapter):
-                raise TypeError(f"adapter for {provider!r} must be callable")
+        self._adapters = dict(adapters) if adapters is not None else None
+        if self._adapters is not None:
+            for provider, adapter in self._adapters.items():
+                if not callable(adapter):
+                    raise TypeError(f"adapter for {provider!r} must be callable")
+        self._adapter_resolver = adapter_resolver
         self._max_tracked = max_tracked
         self._recent: deque[str] = deque()
         self._seen: set[str] = set()
+
+    def _resolve_adapter(self, provider: str) -> Optional[PlanAdapter]:
+        if self._adapter_resolver is not None:
+            return self._adapter_resolver(provider)
+        return self._adapters.get(provider)  # type: ignore[union-attr]
+
+    def track(self, request_id: str) -> None:
+        """Record a request id as possibly side-effected (timeout path)."""
+        self._track(request_id)
 
     def execute(self, plan: ExecutionPlan, request_id: str) -> PlanOutcome:
         if not isinstance(plan, ExecutionPlan):
@@ -264,7 +278,7 @@ class PlanExecutor:
             return PlanOutcome(
                 status=PlanOutcomeStatus.REFUSED, detail="plan_not_ready"
             )
-        adapter = self._adapters.get(plan.provider)
+        adapter = self._resolve_adapter(plan.provider)
         if adapter is None:
             return PlanOutcome(
                 status=PlanOutcomeStatus.REFUSED, detail="unknown_provider"

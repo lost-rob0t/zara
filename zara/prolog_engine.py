@@ -421,8 +421,8 @@ class PrologEngine:
         return self.query_once(goal) is not None
 
     def get_app_mapping(self, app_name: str) -> Optional[str]:
-        """Query app_mapping/2 from config."""
-        goal = f"kb_config:app_mapping({_prolog_atom(app_name)}, Cmd)"
+        """Query app_mapping/2 from the device provider configuration."""
+        goal = f"kb_device_providers:app_mapping({_prolog_atom(app_name)}, Cmd)"
         result = self.query_once(goal)
         return result.get("Cmd") if result else None
 

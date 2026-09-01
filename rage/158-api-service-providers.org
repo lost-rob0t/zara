@@ -1,0 +1,278 @@
+* Run identity
+- Consumed issue :: #158
+- Branch :: =rage/158-api-service-providers=
+- RAGE start commit :: =cc5ade3023cee40b702cb4e05ad716b7094e22fa=
+
+* Research (2026-08-31)
+
+** Verified facts
+- Queue (Prolog, backlog regen 2026-08-31, 120 issues): =queue=[100-134,
+  301-216, 306-122, 400-149, 504-158, 702-172, ...]; blockers(158) = none;
+  epic #150 at 4/8. Strict phase-rank head remains #134 (P0 daemon release
+  gate) — owner deliberately drives the Android chain (#158 is its next
+  slice); divergence noted, not silently skipped.
+- master moved post-#157: 2054ac1 -> ec0c74a (PR #241, Discord plugin
+  guidance docs). Branch will rebase before merge.
+- #157 left =kb/capabilities.pl= with declared server providers
+  (=search_server=, =timer_server=, =admin_restart=, =open_desktop=,
+  =screen_server=, =pause_server=) and a pure selector
+  (=modules/capability_plans.pl=) whose environment =providers(...)= list is
+  the server reachability authority. Nothing builds that environment in
+  production: =PrologEngine.plan_for_frame= / =encode_environment_term= have
+  no production callers; =PlanExecutor= is constructed only by tests.
+- =kb/config.pl= (module =kb_config=) mixes three concerns: shell-string
+  device mappings (=app_mapping/2=, =direct_app/1= — =xdg-open=,
+  =systemctl poweroff=, terminals), device hardware settings
+  (=dictation_command=, =timer_sound=, =alarm_sound=), and shared semantic
+  settings (=todo_*=, =search_engine= URL template, =wake_word=, =llm_*=,
+  =prolog_rlm_*=). =modules/config_loader.pl= validates user facts against
+  an allowlist and asserts them into =kb_config=/=kb_intents=; the load is
+  triggered by an =initialization/1= hook inside =kb/config.pl= (main.pl:7
+  relies on it).
+- Device-fact consumers: =modules/commands.pl:92-96= (open_app shell launch),
+  =modules/sound.pl:18,20=, =modules/dictate.pl:44=,
+  =PrologEngine.get_app_mapping= (zara/prolog_engine.py:423-427, used by
+  zara/wake.py:944), =main.pl:show_config=, plus tests
+  (t/prolog_config.pl, t/sounds.pl, t/dictation_lifecycle.pl,
+  t/process_safety.pl, scripts/test-replies.sh) and the =query_prolog= tool
+  description text (builtin_tools.py:298-307).
+- Semantic-fact consumers: =config_loader:search_url/2= (search_engine),
+  =modules/llm_client.pl=, =command_loop.pl=, =voice.pl=, =rlm_rewrite.pl=,
+  =todo_capture.pl=, =PrologEngine.get_wake_words=.
+- RuntimeHost (zara/runtime/host.py) owns backend, TurnCoordinator,
+  ClarificationCoordinator, PluginManager lifecycle on a dedicated asyncio
+  thread; no provider registry, no PrologEngine field. Server mode wires
+  =AgentManager(config, principal)= with =prolog_engine=None=
+  (zara/server.py:_build_default_host); =ZaraZmqGateway._receive= only
+  translates protocol messages to =RuntimeCommand=s via
+  =RuntimeSupervisor.submit= — it never invokes services directly
+  (zmq_transport.py:492-503).
+- =zara/security.py= =Capability= enum is the authorization vocabulary
+  (=daemon.admin= at :56); per-principal =EnrolledKey.capabilities= already
+  exist.
+- PrologEngine takes any =main_file= (consult target); plan selection needs
+  only =kb/capabilities.pl= + =modules/capability_plans.pl= consulted
+  (t/test_capability_plans.py:33-41). main.pl locate pattern: cwd, package
+  parent, sys.prefix/share/zarathushtra, /usr/share (console.py:23-41,
+  wake.py:334-337, prolog_engine.py:714).
+- test-all.sh phase order: 2b = scripts/test-capability-plans.sh (:119-124);
+  a #158 focused gate slots as 2c.
+
+** Inference
+- The server danger is structural, not current-runtime: the server does not
+  run Prolog command execution today (prolog_engine=None), but shared
+  config makes Linux shell mappings look like valid server behavior the
+  moment any Prolog boot lands server-side (#160 routing). The split must
+  make device mappings un-consultable by a server boot and make server
+  reachability explicit (environment =providers= list from a host-owned
+  registry).
+- Desktop behavior must be preserved exactly: user config.pl overrides
+  (module-less facts) keep working via the loader, now routed to a device
+  module.
+
+** Unknowns resolved by design below
+- Where the environment/providers builder lives (RuntimeHost-owned
+  registry), what server providers do concretely (adapters), and the
+  compatibility story for old user config.pl (server scope refuses device
+  facts loudly; desktop routes them to the device module).
+
+* Design (Auto-RAGE; recorded decision below)
+
+** D1. Three-way Prolog configuration split
+- =kb/config.pl= (shared semantic, server-safe; module =kb_config= keeps
+  name) retains =todo_*=, =search_engine= (URL template — data, not a
+  command), =wake_word=, =llm_*=, =prolog_rlm_*=. The
+  =initialization(load_user_config)= hook MOVES to =main.pl= (desktop boot)
+  so consulting =kb/config.pl= alone never loads user config.
+- =kb/device_providers.pl= (NEW, module =kb_device_providers=): =app_mapping=,
+  =direct_app=, =dictation_command=, =timer_sound=, =alarm_sound= with
+  =:- dynamic= declarations. Consulted only by =main.pl=. Consumer
+  re-pointing: commands.pl, sound.pl, dictate.pl, main.pl show_config,
+  PrologEngine.get_app_mapping, builtin_tools query_prolog description,
+  tests + scripts/test-replies.sh.
+- =kb/server_providers.pl= (NEW, module =kb_server_providers=): the versioned
+  =api_service= registry facts, flat portable subset (no lists — pyswip
+  nesting gotcha):
+  =api_service_registry_version(1).= and
+  =api_service_provider(Id, Kind, TimeoutSeconds)= for =search_server=,
+  =timer_server=, =admin_restart= (builtin). This file is server provider
+  CONFIGURATION (what the host registers), distinct from =kb/capabilities.pl=
+  (the capability authority: provider properties/bindings stay there).
+- =server_main.pl= (NEW, repo root, beside =main.pl=): server-safe Prolog
+  boot consulting kb/config, kb/server_providers, kb/capabilities,
+  modules/capability_plans, modules/config_loader, then
+  =initialization(config_loader:load_server_config)=. It NEVER consults
+  =kb/device_providers.pl=.
+- =main.pl= gains explicit =config_loader:load_user_config= initialization.
+
+** D2. Loader scopes (compatibility + fail-safe)
+- =modules/config_loader.pl=: device-fact =validate_user_fact= clauses
+  re-target =kb_device_providers= (desktop behavior preserved; old user
+  config.pl files keep working unchanged). New =load_server_config/0 +
+  validate_server_user_fact=: server allowlist = semantic + intent facts
+  only; any device fact (app_mapping/direct_app/dictation_command/
+  timer_sound/alarm_sound) or unsupported fact throws
+  =domain_error(zarathushtra_server_config_fact, Term)= — failing the
+  server boot loudly (PrologStartupError) instead of silently accepting
+  shell mappings. Documented compatibility behavior: a shared desktop+server
+  machine keeps device overrides in user config only if the server is not
+  enabled there.
+
+** D3. Versioned api_service registry + adapters (Python)
+- =zara/runtime/api_service.py= (NEW):
+  - =API_SERVICE_REGISTRY_VERSION = 1=; =ProviderSpec= (frozen:
+    provider_id, kind, timeout_seconds bounded [0.1, 60]).
+  - =ServiceProviderRegistry=: thread-safe =register(spec, adapter)= /
+    =unregister(provider_id)= / =provider_ids()= / =resolve_adapter(id)= /
+    =timeout_for(id)=; duplicate id or unknown unregister raise; adapter
+    resolution is live so unregistration takes effect for in-flight plans;
+    race-safe (tested with threads).
+  - =TimerService=: injectable monotonic clock (virtual clock in tests, no
+    sleeps), bounded table (64), =set(duration_s, label, request_id)=,
+    =cancel(id)=, =due(now)=; duration validated in (0, 86400]. Policy
+    pinned: server timers are recorded service work with due tracking;
+    firing delivery (callbacks/events) is a later slice (events design is
+    #173's).
+  - Builtin adapters: =search_server= resolves =config_loader:search_url/2=
+    on the server engine and returns the URL as data (no shell, no browser);
+    =timer_server= records into TimerService; =admin_restart= invokes an
+    injected restart hook (host =RestartRuntime= submission; typed refusal
+    when no hook). Memory adapters wait for memory intent frames (none
+    shipped); tool/MCP stay available through the existing ToolRegistry /
+    MCPManager where they are the chosen provider (LLM path) — no parallel
+    registry, no dynamic capability facts this slice.
+  - =build_api_service(config, restart_hook)=: creates =PrologEngine=
+    (server_main.pl, located like main.pl), reads + validates registry
+    facts (version match, known kinds, timeout bounds, duplicate ids ->
+    typed errors), applies =disabled_providers=, registers builtin
+    adapters.
+  - =PlanExecutionService.execute(frame, *, principal, auths, request_id)=:
+    builds =PlanEnvironment(principal, auths=auths, devices=(),
+    providers=registry ids, aliases=(), policies=())= — server policy owns
+    reachability; device advertisements are a client-advertisement concern
+    (later slice); aliases ride future server alias config (no builtin
+    provider carries ref(app_alias) arguments). Selection via
+    =engine.plan_for_frame= in a worker thread; not-ready/None selections
+    become typed REFUSED outcomes (=plan_not_ready= with status:reason in
+    response; =selection_failed= when Prolog returns nothing); ready plans
+    execute through =PlanExecutor= under =asyncio.wait_for(spec timeout)=:
+    timeout -> =executor.track(request_id)= + REFUSED =adapter_timeout=
+    (side effect may have landed; retry returns replayed — at-most-once
+    preserved), cancellation -> track + re-raise =CancelledError=.
+
+** D4. PlanExecutor dynamic resolution
+- =PlanExecutor= gains optional =adapter_resolver= callable (used instead of
+  the static mapping) and a public =track(request_id)=. Existing static-map
+  semantics and #157 refusals unchanged (adapter_failed still does not
+  track: the adapter contract is validate-before-act; only timeout — where
+  the adapter provably kept running — tracks).
+
+** D5. RuntimeHost wiring
+- =zara/config.py=: =DEFAULT_CONFIG_TOML= gains =[api_service]=
+  (=enabled = false=, =disabled_providers = []=) + accessor
+  =get_api_service_config()= with validation (malformed -> typed error).
+- RuntimeHost: after backend start (initial and restart), if enabled, build
+  the service off-thread; failure is non-fatal (RuntimeError event,
+  =plan_service = None=, host stays RUNNING — headless health invariant).
+  =host.plan_service= property (None when disabled/failed). Stop/restart
+  clears it (engine is process-global pyswip; no destruction). No new
+  RuntimeCommand, no protocol change, no gateway surface: the service is
+  reachable only behind the host (the #160 cutover owns routing; #173 owns
+  events).
+
+** D6. Tests and gate
+- =t/test_api_service.py= (pytest): registry (register/unregister/duplicate/
+  unknown/races under threads), timer service (virtual clock, bounds,
+  cancel, due), service (search URL adapter, timer adapter, admin hook,
+  not-ready/selection refusals, timeout tracking via patched clock/
+  timeouts=0, retry replay = no duplicate side effect, unknown/disabled
+  provider), host wiring (enabled host exposes service; disabled host
+  doesn't; failed startup keeps host RUNNING).
+- Prolog (plunit, into t/prolog_config.pl + t/api_service.pl): server boot
+  consults and =kb_device_providers= predicates are ABSENT in server boot;
+  =load_server_config= accepts semantic overrides and throws on device
+  facts; desktop =load_user_config= routes device facts to
+  =kb_device_providers= and semantic to =kb_config=; registry facts
+  validate.
+- Headless/server integration: enabled host in no-DISPLAY env; frame
+  (app, open, target=ref(app_alias,'firefox')) -> =plan_for_frame=
+  unavailable (open_app has no device ads; open_desktop not registered);
+  hand-built ready open_app plan -> executor =unknown_provider=; no
+  subprocess/shell use anywhere in the path.
+- =scripts/test-api-service.sh= (NEW; swipl server-boot + registry checks +
+  pytest) as test-all phase 2c.
+
+** Adversarial review
+- Attack 1 (device leak via user config): server scope asserts semantic
+  facts only; device facts throw. Residual: server Prolog state holds
+  =kb_config= semantic facts — all data, none executable; acceptable.
+- Attack 2 (open_desktop registered on headless server): registry contains
+  ONLY kb/server_providers.pl facts (search/timer/admin). open_desktop/
+  screen_server/pause_server stay declared-but-unregistered: selection
+  marks them unavailable; no adapter exists; double refusal layer.
+- Attack 3 (timeout duplicates side effect): adapter keeps running after
+  wait_for timeout; we track the request id on timeout so a retry replays
+  instead of re-executing. adapter_failed still re-executes on retry —
+  documented contract (adapters validate before acting); pinned by test.
+- Attack 4 (registry race between snapshot and execute): executor resolves
+  adapters live; an unregistered provider mid-flight yields typed
+  =unknown_provider=, never a crash or stale adapter call.
+- Attack 5 (restart during execution): admin hook submits RestartRuntime
+  through host.submit (thread-safe); restart clears the service; in-flight
+  executor work completes in its worker thread; replay window dies with
+  the executor — accepted (bounded, documented; persistence is the envelope
+  store's concern per #157).
+- Attack 6 (kb/config.pl hook move breaks hermetic tests): tests that
+  consulted kb/config.pl for user-config behavior already drive
+  reload_user_config explicitly (t/prolog_config.pl); main.pl consults
+  keep the desktop flow. Grep-verified consumers during implementation.
+- Attack 7 (pyswip nested compounds): registry facts are flat arity-3 with
+  scalars only; no lists, no dicts (Trealla-compatible for #172).
+- Attack 8 (user config with ONLY device facts enables server):
+  load_server_config throws on first device fact — loud, typed, and the
+  host degrades plan service but stays healthy.
+
+** Decision (recorded — Auto-RAGE)
+Proceed as designed: three-way config split with loader scopes; versioned
+host-owned api_service registry with builtin search/timer/admin adapters;
+typed timeout/track semantics on the executor; config-gated RuntimeHost
+wiring; server_main.pl boot; phase-2c gate. Rejected alternatives: dynamic
+capability facts for tool providers (no consumer capability yet — YAGNI,
+revisit when a capability warrants a tool-backed provider), server timer
+firing events (#173 owns event design), gateway-facing plan command (#160
+owns routing cutover).
+
+* Implementation findings (appended during realization)
+
+** F1. pyswip/SWI module collision (adversarial evidence -> design amendment)
+Full-suite pytest segfaulted in =t/test_wake_words.py= (consult inside
+=PrologEngine.__init__=) after the #158 tests ran. Root cause, isolated by
+bisection + direct SWI probes: pytest never consulted =kb/config.pl=
+(module =kb_config=) before this slice; the server boot introduced a second
+=:- module(kb_config, ...)= declaration, and SWI 10 raises "No permission
+to redefine module 'kb_config'" when two files declare it — the pyswip
+error path then corrupts process state and later consults segfault. SWI 10
+has no redefine_module/abolish_module escape. Baseline verified: full
+suite on =origin/master= (ec0c74a, throwaway worktree) passes 1373.
+Amendment (D1): =server_main.pl= does NOT consult =kb/config.pl=; user
+semantic overrides ride =load_server_config= asserting into an
+auto-created =kb_config= (verified: SWI auto-creates modules on assert);
+=config_loader:search_url/2= gained a =current_predicate= guard so the
+fallback template applies when =kb_config= was never consulted. Full
+suite: 1420 passed, 0 failed, no segfault. The reverse direction (temp
+module first, boot second) also errors — documented gotcha for future
+boots: never re-declare a module name another file may own.
+
+** F2. Engine singleton
+=build_api_service= now defaults to a process-wide =get_server_engine()=
+singleton: repeated PrologEngine construction leaks SWI threads ("Failed
+to stop Prolog threads" warnings) and was part of the crash surface. The
+host builds reuse it across start/restart.
+
+** F3. Test-harness notes
+- Module-scoped engine fixture requires module-scoped XDG isolation
+  (fixture instantiation order: module scope runs before function scope);
+  =MonkeyPatch.context()= used for the wider scope.
+- The developer's real =~/.config/zarathushtra/config.pl= leaked into
+  engine consults until XDG isolation was in place (observed a stale
+  =search_engine= override); owner may want to review that file locally.
