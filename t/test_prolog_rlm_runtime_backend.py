@@ -36,6 +36,9 @@ class FakeConfig:
     def get_module_search_paths(self):
         return []
 
+    def get_agent_system_prompt(self):
+        return "Test Zara system prompt"
+
 
 @dataclass
 class FakeTool:
