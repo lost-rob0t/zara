@@ -1,0 +1,30 @@
+#+title: RAGE Research - Issue #260 hooks and Prolog user runtime
+#+startup: overview
+
+* Current code audit
+- =modules/zara_hooks.pl= has no registry. =run_hook/2= constructs =Hook(Event)= dynamically, catches every exception, cuts after first success, and fallback-succeeds. =before_reply/1= and =after_reply/1= are unconditional catch-all clauses, so the existing surface cannot list owners, order handlers, unregister handlers, or distinguish hook failure.
+- =modules/config_loader.pl= already owns XDG user Prolog configuration at =$XDG_CONFIG_HOME/zarathushtra/config.pl= (fallback =~/.config/zarathushtra/config.pl=). It validates facts before asserting them and tracks clause references for reload. This is the canonical mutable/private Prolog config boundary.
+- =main.pl= initializes =config_loader:load_user_config/0=. A second config directory or persistent hook database would violate current ownership.
+- =zara/config.py= separately owns TOML at the same XDG Zara config directory. It currently has no =[hooks]= gate.
+- Agent-mode has a narrow Python lifecycle registry, intentionally scoped to its first-party plugin. It is prior art for deterministic ordering but cannot be promoted as the general #260 authority without coupling core customization to agent mode.
+
+* Upstream SWI-Prolog findings
+- SWI dynamic predicates are the appropriate runtime registration mechanism; =assertz/1= preserves append order, =retractall/1=/clause references permit removal, and predicates that are mutated should be explicitly declared =dynamic=.
+- SWI transactions make multi-clause dynamic updates atomically visible, but the first bounded slice only needs one registry predicate per registration/removal and does not need a parallel state store.
+- SWI's module system supports module-qualified goals; hook registrations can therefore retain explicit owner/module identity rather than constructing arbitrary predicate names from event data.
+
+* Threat/failure analysis
+- Hook dispatch must never accept arbitrary predicate names from untrusted utterance text. Stage names are closed atoms and registration happens from trusted local code/config only.
+- A bad hook must not corrupt the registry or prevent later handlers from running. Failure and exceptions are isolated per handler; diagnostics remain bounded and content-free.
+- Reload must be idempotent. User hook registrations from the prior =hooks.pl= load must be removed before the new file is loaded, without deleting core/plugin-owned registrations.
+- User hook source is trusted local code by #260 definition, but remains outside Git/Nix-store ownership. Core must never create/overwrite =hooks.pl= merely because Zara starts.
+- Server/client surfaces must share the same Prolog module semantics; no second PySWIP FFI is needed.
+
+* Decision
+Implement the first coherent #260 seam as:
+1. a real ordered Prolog hook registry in =modules/zara_hooks.pl= with explicit stage, owner, priority, goal, registration id, unregister/list/clear-owner operations;
+2. closed hook stages for the already-existing reply lifecycle initially; adding command-loop advice stages follows the same registry instead of another mechanism;
+3. =config_loader= helpers for =$XDG_CONFIG_HOME/zarathushtra/hooks.pl= that load trusted user hook code without creating/overwriting it, and on reload clear only owner =user= registrations;
+4. focused SWI test proving ordering, exception isolation, unregister, idempotent user reload, and XDG path behavior.
+
+This intentionally does not yet add Python =hooks.py=, agent backend replacement, or command-loop override. Those remain #260 work after the general Prolog seam is proven green; implementing them before this registry is stable would multiply runtime ownership surfaces.

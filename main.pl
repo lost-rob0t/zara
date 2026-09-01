@@ -8,9 +8,11 @@
 :- use_module('kb/device_providers'). % Linux device provider configuration (desktop only)
 :- use_module('kb/intents').
 :- use_module('modules/config_loader').
+:- use_module('modules/hooks_loader').
 :- discontiguous handle_input/1.
 
 :- initialization(config_loader:load_user_config).
+:- initialization(hooks_loader:load_user_hooks).
 
 main :-
     writeln('Thus spoke Zarathustra...'),
@@ -45,6 +47,7 @@ handle_input(Input) :-
 % Special commands for config management
 handle_input("reload_config") :-
     config_loader:reload_user_config,
+    hooks_loader:reload_user_hooks,
     writeln('Configuration reloaded.'), !.
 
 handle_input("show_config") :-

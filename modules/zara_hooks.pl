@@ -3,14 +3,26 @@
     reply_result/1,
     reply_text/2,
     reply_phrases/3,
+    register_hook/5,
+    unregister_hook/1,
+    clear_hook_owner/1,
+    list_hooks/1,
+    run_hook/2,
     before_reply/1,
     after_reply/1
 ]).
 
+:- use_module(library(error)).
 :- use_module(library(process)).
 :- use_module(library(random)).
 :- use_module(library(time)).
 :- use_module('alert.pl').
+
+:- dynamic hook_registration/6.
+:- dynamic hook_sequence/1.
+
+hook_stage(before_reply).
+hook_stage(after_reply).
 
 concise_phrase(success, greet, "Hello.").
 concise_phrase(success, open, "Opened ~w.").
@@ -119,11 +131,99 @@ render_phrase(Template, Subject, Text) :-
     ;  Text = Template
     ).
 
+register_hook(Stage, Owner, Priority, Goal, RegistrationId) :-
+    validate_hook_registration(Stage, Owner, Priority, Goal),
+    with_mutex(zara_hook_registry,
+        ( next_hook_sequence(Sequence),
+          format(atom(RegistrationId), 'hook-~d', [Sequence]),
+          assertz(hook_registration(RegistrationId, Stage, Owner,
+                                    Priority, Sequence, Goal))
+        )).
+
+unregister_hook(RegistrationId) :-
+    must_be(atom, RegistrationId),
+    with_mutex(zara_hook_registry,
+        retract(hook_registration(RegistrationId, _, _, _, _, _))).
+
+clear_hook_owner(Owner) :-
+    must_be(atom, Owner),
+    with_mutex(zara_hook_registry,
+        retractall(hook_registration(_, _, Owner, _, _, _))).
+
+list_hooks(Hooks) :-
+    with_mutex(zara_hook_registry,
+        findall((Priority-Sequence)-hook(Id, Stage, Owner, Priority, Goal),
+                hook_registration(Id, Stage, Owner, Priority, Sequence, Goal),
+                Rows)),
+    keysort(Rows, Sorted),
+    pairs_values(Sorted, Hooks).
+
+run_hook(Stage, Event) :-
+    validate_hook_stage(Stage),
+    stage_hooks(Stage, Hooks),
+    forall(member(hook(_, _, _, _, Goal), Hooks),
+           run_hook_goal(Goal, Event)).
+
+before_reply(Event) :-
+    run_hook(before_reply, Event).
+
+after_reply(Event) :-
+    run_hook(after_reply, Event).
+
+validate_hook_registration(Stage, Owner, Priority, Goal) :-
+    validate_hook_stage(Stage),
+    must_be(atom, Owner),
+    atom_length(Owner, OwnerLength),
+    ( OwnerLength >= 1, OwnerLength =< 128
+    -> true
+    ; throw(error(domain_error(zara_hook_owner, Owner), _))
+    ),
+    must_be(integer, Priority),
+    ( between(-100000, 100000, Priority)
+    -> true
+    ; throw(error(domain_error(zara_hook_priority, Priority), _))
+    ),
+    ( callable(Goal), nonvar(Goal)
+    -> true
+    ; throw(error(type_error(callable, Goal), _))
+    ).
+
+validate_hook_stage(Stage) :-
+    ( hook_stage(Stage)
+    -> true
+    ; throw(error(domain_error(zara_hook_stage, Stage), _))
+    ).
+
+next_hook_sequence(Sequence) :-
+    ( retract(hook_sequence(Current))
+    -> true
+    ; Current = 0
+    ),
+    Sequence is Current + 1,
+    assertz(hook_sequence(Sequence)).
+
+stage_hooks(Stage, Hooks) :-
+    with_mutex(zara_hook_registry,
+        findall((Priority-Sequence)-hook(Id, Stage, Owner, Priority, Goal),
+                hook_registration(Id, Stage, Owner, Priority, Sequence, Goal),
+                Rows)),
+    keysort(Rows, Sorted),
+    pairs_values(Sorted, Hooks).
+
+pairs_values([], []).
+pairs_values([_-Value|Rows], [Value|Values]) :-
+    pairs_values(Rows, Values).
+
+run_hook_goal(Goal, Event) :-
+    catch((once(call(Goal, Event)) -> true ; true),
+          Error,
+          print_message(warning, Error)).
+
 emit_reply(Event, Text) :-
-    run_hook(before_reply, Event),
+    before_reply(Event),
     deliver_safely(alert:alert("Zara", normal, "~w", [Text])),
     deliver_safely(speak_reply(Text)),
-    run_hook(after_reply, Event).
+    after_reply(Event).
 
 deliver_safely(Goal) :-
     catch((call(Goal) -> true ; true), Error, print_message(warning, Error)).
@@ -149,12 +249,3 @@ bounded_speech_wait(Process, Status) :-
 terminate_speech_process(Process) :-
     catch(process_kill(Process, kill), _, true),
     catch(process_wait(Process, _), _, true).
-
-run_hook(Hook, Event) :-
-    Goal =.. [Hook, Event],
-    catch(call(Goal), _, true),
-    !.
-run_hook(_, _).
-
-before_reply(_).
-after_reply(_).
