@@ -1,0 +1,37 @@
+#+title: RAGE #172 - cross-runtime semantic fixture runner
+
+* Run identity
+- Consumed issue :: #172, portable shared Prolog semantic core parity.
+- Parent epic :: #152.
+- Immutable start :: =54c0e96fa75a6f2c5ba44b55d1f7a5f6e088fcf3=.
+- Branch :: =rage/android-172-fixture-runner=.
+- Ownership :: Android-only production/tests. No sibling core/runtime/protocol files touched.
+
+* Recovery
+- PR #278 is already merged at the immutable start and no open Android implementation PR remains.
+- Current open sibling core PR #274 states Android is untouched, so this slice has no file overlap.
+- #172 remains open; #173 remains dependency-blocked by #172/#159/#133.
+
+* Research
+- #170 selected Trealla for the Android portable runtime and requires #172 to prove the same portable fixtures across Linux and Android.
+- #172 already landed the packaged =ZARA-SEMANTIC/1= assets plus a representation-only =SemanticResultComparator=.
+- The next missing boundary is the runner that executes one fixture against two runtime adapters and turns drift/runtime failure into explicit evidence.
+- Do not parse Prolog terms into a second Kotlin AST and do not treat runtime failure as parity success.
+
+* Design
+- =SemanticRuntime= is a tiny evaluation boundary; concrete SWI/Trealla adapters remain later runtime-binding work.
+- =SemanticFixtureRunner= evaluates each fixture independently against Linux and Android runtimes.
+- Successful results are normalized by the already-landed comparator before evidence is returned.
+- Runtime exceptions fail closed with bounded runtime-class failure labels and no exception text, transcript, paths, or secrets.
+- Semantic mismatches preserve both normalized results for deterministic parity evidence.
+
+* TDD
+- RED commit :: =1a48be8515637f14494f34ed768e319f70d26081= adds JVM tests requiring the runner/runtime contract before production types exist.
+- Expected RED :: Kotlin test compilation fails on unresolved =SemanticFixture=, =SemanticRuntime= and =SemanticFixtureRunner=.
+- GREEN commit :: =93dcd05ab5ce903a43f4d5b70fea8cff57a8eb9e= adds the minimum Android-only runner implementation.
+- Covered cases :: representation-only normalization passes; semantic drift fails with both normalized results; Android runtime failure is explicit and cannot false-green parity.
+
+* Gate
+- Focused/local Android execution is unavailable in this connector-only runner, so exact-head GitHub Actions is the executable gate.
+- Required before merge :: Android skeleton gate, full repository/Nix test, both shared-mic jobs, mergeability, and no unresolved blocking review/discussion on the exact candidate SHA.
+- This slice does not claim Trealla/SWI runtime parity yet; it creates the fail-closed runner boundary needed for the concrete adapters.
