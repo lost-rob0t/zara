@@ -71,3 +71,14 @@ Threats for the first slice:
 - RED CI :: run 33478293453. Repository =test=, Arch shared-mic, and Ubuntu shared-mic jobs passed; =android skeleton gate= failed at =Run Android gate (unit tests + debug APK + secret inspection)=, matching the intentionally missing =PortableSemanticCore= production class.
 - GREEN implementation commit :: =b9aeb5cd7412c1dcffe3de4f38402e3399ec2e7a=. Adds only =android/app/src/main/java/ai/zara/app/prolog/PortableSemanticCore.kt= with the frozen version and closed resource list.
 - GREEN exact-head CI :: pending.
+
+* Iteration 2 - packaged semantic assets and Android gate recovery
+- Recovery master :: =a77e4e866d38019f24af7ec3518f419e86f91e35= after sibling core #272; no Android overlap.
+- Prior candidate :: =7abbb1ce26a602eefe7101ff6c7f8118ce90ac61= on PR #271.
+- Prior CI run 33498300824 attempt 2 :: repository =test= green, Arch mic green, Ubuntu mic green, Android gate failed again.
+- Failure analysis :: =PortableSemanticAssetsTest= used =Path.of("app", "src", ...)= even though Gradle executes the =:app:testDebugUnitTest= task with the app project directory as the test working directory. The test therefore looked under =android/app/app/src/...= and could not see correctly packaged assets. This is a deterministic test-harness path bug, not a reason to weaken the asset assertions or mutate Gradle dependencies.
+- Recovery decision :: replay the same Android-only production assets on current master and correct only the test's project-relative asset root to =src/main/assets=.
+- Recovery branch :: =rage/android-172-assets-v2=.
+- Production asset commits :: =800fc1126410b865d8e8f0483dee3f2421ea737e= and =143f91cf5d318720325fef8957b58068e1a9c4de=.
+- Test-harness fix commit :: =cccbe71531aa8f227ea0c98a76cb6da6b4008393=.
+- Exact-head Android/full CI :: pending on replacement PR.
