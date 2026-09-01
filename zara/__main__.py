@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""
-Zara - Unified CLI Interface
-Wraps console (text), voice, and dictate modes
-"""
+"""Zara unified command-line entry point."""
+
+from __future__ import annotations
 
 import argparse
-import queue
 import sys
-import time
-from pathlib import Path
+from typing import Optional, Sequence
 
 from .config import init_config
 from .stt_backends import (
@@ -37,7 +34,6 @@ GPU_ERROR_MARKERS = (
     "vk_",
     "gfx",
 )
-CLI_TURN_TIMEOUT_SECONDS = 30.0
 
 
 def normalize_stt_device(device: str, provider: str | None = None) -> str:
@@ -81,181 +77,109 @@ def resolve_local_stt_model(provider: str, model: str) -> str:
     return model
 
 
-def _wait_for_daemon_turn(subscription, turn_id: str) -> str:
-    from .runtime import events
-
-    if not turn_id:
-        raise RuntimeError("daemon did not assign a turn id")
-
-    deadline = time.monotonic() + CLI_TURN_TIMEOUT_SECONDS
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError("daemon turn timed out")
-        try:
-            envelope = subscription.get(timeout=remaining)
-        except queue.Empty as error:
-            raise TimeoutError("daemon turn timed out") from error
-
-        event = envelope.event
-        if event.turn_id != turn_id:
-            continue
-        if isinstance(event, events.AssistantComplete):
-            if not event.success:
-                raise RuntimeError(event.text or "assistant generation failed")
-            return event.text
-        if isinstance(event, events.ResponseText):
-            return event.text
-        if isinstance(event, (events.AssistantFailed, events.AgentFailed)):
-            raise RuntimeError(event.reason or "daemon turn failed")
-        if isinstance(event, events.TurnCancelled):
-            raise RuntimeError(event.reason or "daemon turn cancelled")
-
-
-def _run_connected_text(endpoint: str, command_text: str) -> int:
-    from .runtime.commands import SubmitTurn
-    from .zmq_transport import ZmqZaraClient
-
-    client = None
-    subscription = None
-    exit_code = 0
-    try:
-        client = ZmqZaraClient(endpoint)
-        client.start().result()
-        # Subscribe before submit so an immediately-completing daemon turn
-        # cannot publish its terminal event before this CLI is listening.
-        subscription = client.subscribe()
-        receipt = client.submit(SubmitTurn(text=command_text)).result()
-        response = _wait_for_daemon_turn(subscription, receipt.turn_id)
-        if response:
-            print(response)
-    except Exception as error:
-        print(f"Error: {error}", file=sys.stderr)
-        exit_code = 2
-    finally:
-        if subscription is not None:
-            try:
-                subscription.close()
-            except Exception as error:
-                if exit_code == 0:
-                    print(f"Error: {error}", file=sys.stderr)
-                    exit_code = 2
-        if client is not None:
-            try:
-                client.close()
-            except Exception as error:
-                if exit_code == 0:
-                    print(f"Error: {error}", file=sys.stderr)
-                    exit_code = 2
-    return exit_code
-
-
-def main():
-    config = init_config()
+def _parser(config) -> argparse.ArgumentParser:
     stt_config = config.get_section("stt") if config is not None else {}
     default_stt_provider = normalize_provider(stt_config.get("provider", "faster-whisper"))
     default_stt_model = stt_config.get("model", "small")
     default_stt_device = stt_config.get("device", "cpu")
 
-    if len(sys.argv) > 1 and sys.argv[1] == "mcp":
-        from .mcp.cli import main as mcp_main
-        sys.exit(mcp_main(sys.argv[2:], config=config))
-
     parser = argparse.ArgumentParser(
         prog="zara",
-        description="Zarathustra Voice Assistant - Unified Interface",
-        epilog="Examples:\n"
-               "  zara 'open firefox'           # Execute text command\n"
-               "  zara --standalone 'hello'     # Explicit private local runtime\n"
-               "  zara --connect ipc:///run/user/1000/zara.sock 'hello'\n"
-               "  zara --desktop                # Native desktop / Quick Copilot\n"
-               "  zara --console                # Interactive REPL\n"
-               "  zara --voice                  # One-shot voice command\n"
-               "  zara --dictate                # Continuous dictation mode\n"
-               "  zara --wake                   # Wake word listener\n"
-               "  zara mcp status               # Inspect MCP connections\n",
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        description="Zara - unified assistant runtime",
+        epilog=(
+            "Examples:\n"
+            "  zara                              # Interactive TUI\n"
+            "  zara 'open firefox'               # One-shot agent/runtime task\n"
+            "  zara --agent 'open firefox'       # Same task path; compatibility alias\n"
+            "  zara --connect ipc:///run/user/1000/zara-server.sock\n"
+            "  zara --desktop                    # Native desktop / Quick Copilot\n"
+            "  zara --dictate                    # Continuous dictation mode\n"
+            "  zara --wake                       # Wake word listener\n"
+            "  zara mcp status                   # Inspect MCP connections\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument(
         "--desktop",
         action="store_true",
-        help="Start the native desktop Copilot"
+        help="Start the native desktop Copilot",
     )
     mode_group.add_argument(
         "--console",
         action="store_true",
-        help="Start interactive console (REPL)"
+        help="Compatibility alias for the interactive TUI",
     )
     mode_group.add_argument(
         "--voice",
         action="store_true",
-        help="Single voice command mode"
+        help="Single voice command mode",
     )
     mode_group.add_argument(
         "--dictate",
         action="store_true",
-        help="Continuous dictation mode"
+        help="Continuous dictation mode",
     )
     mode_group.add_argument(
         "--wake",
         action="store_true",
-        help="Wake word listener mode"
+        help="Wake word listener mode",
     )
     mode_group.add_argument(
         "--agent",
         action="store_true",
-        help="Direct conversation mode with agent"
+        help="Compatibility alias for Zara's normal terminal agent path",
     )
 
     client_group = parser.add_mutually_exclusive_group()
     client_group.add_argument(
         "--connect",
         metavar="ENDPOINT",
-        help="Send a text command through an existing Zara daemon endpoint"
+        help="Use an existing Zara daemon through the ZaraClient boundary",
     )
     client_group.add_argument(
         "--standalone",
         action="store_true",
-        help="Use the private in-process compatibility path for a text command"
+        help="Use a private in-process Zara runtime",
     )
 
     parser.add_argument(
         "--pets",
         action="store_true",
-        help="Launch the desktop pet overlay (companion flag; use with --wake)"
+        help="Launch the desktop pet overlay (companion flag; use with --wake)",
     )
     parser.add_argument(
         "--pets-settings",
         action="store_true",
-        help="Open the Pets settings dialog"
+        help="Open the Pets settings dialog",
     )
-
     parser.add_argument(
         "command",
         nargs="*",
-        help="Text command to execute"
+        help="Task to submit to Zara's canonical runtime",
     )
-
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
-        help="Enable verbose logging"
+        help="Enable verbose logging",
     )
-
     parser.add_argument(
         "--stt-provider",
         default=default_stt_provider,
         choices=STT_PROVIDERS,
-        help=f"Speech-to-text provider (default: {default_stt_provider})"
+        help=f"Speech-to-text provider (default: {default_stt_provider})",
     )
     parser.add_argument(
         "--model",
         "--mode",
         dest="model",
         default=default_stt_model,
-        help=f"STT model name, local model directory, or GGML model file (default: {default_stt_model})"
+        help=(
+            "STT model name, local model directory, or GGML model file "
+            f"(default: {default_stt_model})"
+        ),
     )
     parser.add_argument(
         "--device",
@@ -264,44 +188,54 @@ def main():
         help=(
             f"Device for local transcription (default: {default_stt_device}); "
             "whisper-cpp uses Vulkan for AMD GPU acceleration"
-        )
+        ),
     )
     parser.add_argument(
         "--threads",
         type=int,
-        help="Number of local STT inference threads"
+        help="Number of local STT inference threads",
     )
     parser.add_argument(
         "--workers",
         type=int,
         default=2,
-        help="Number of parallel transcription workers (default: 2)"
+        help="Number of parallel transcription workers (default: 2)",
     )
     parser.add_argument(
         "--stop-phrases",
-        help='Stop phrases for dictation (comma-separated, e.g. "end voice,stop voice")'
+        help='Stop phrases for dictation (comma-separated, e.g. "end voice,stop voice")',
     )
+    return parser
 
-    args = parser.parse_args()
+
+def run(argv: Optional[Sequence[str]] = None) -> int:
+    config = init_config()
+    args_list = list(sys.argv[1:] if argv is None else argv)
+
+    if args_list and args_list[0] == "mcp":
+        from .mcp.cli import main as mcp_main
+
+        return int(mcp_main(args_list[1:], config=config))
+
+    parser = _parser(config)
+    args = parser.parse_args(args_list)
     stt_provider = normalize_provider(args.stt_provider)
     stt_device = normalize_stt_device(args.device, provider=stt_provider)
     stt_model = resolve_model_for_provider(stt_provider, args.model)
 
     if args.desktop:
         from .desktop.app import main as desktop_main
-        sys.exit(desktop_main([sys.argv[0]]))
 
-    elif args.console:
-        from .console import main as console_main
-        sys.exit(console_main())
+        return int(desktop_main(["zara-desktop"]))
 
-    elif args.voice:
+    if args.voice:
         print("Error: Voice mode is not currently implemented.", file=sys.stderr)
         print("Use --dictate for continuous voice input instead.", file=sys.stderr)
-        sys.exit(1)
+        return 1
 
-    elif args.dictate:
+    if args.dictate:
         from .config import get_config
+
         if args.stop_phrases:
             stop_phrases = args.stop_phrases.split(",")
         else:
@@ -310,9 +244,6 @@ def main():
         if needs_whisper_cpp_files(stt_provider):
             stt_model = resolve_local_stt_model(stt_provider, stt_model)
 
-        # dictate.py still exposes the historical faster-whisper device API,
-        # where every GPU is represented as `cuda`. The whisper.cpp adapter
-        # translates that compatibility token back to Vulkan internally.
         dictate_device = (
             "cuda"
             if stt_provider == "whisper-cpp" and stt_device == "vulkan"
@@ -321,24 +252,30 @@ def main():
 
         with backend_compat(stt_provider):
             from .dictate import main as dictate_main
-            sys.exit(dictate_main(
-                model_name=stt_model,
-                device=dictate_device,
-                threads=args.threads,
-                workers=args.workers,
-                stop_phrases=stop_phrases
-            ))
 
-    elif args.wake:
+            return int(
+                dictate_main(
+                    model_name=stt_model,
+                    device=dictate_device,
+                    threads=args.threads,
+                    workers=args.workers,
+                    stop_phrases=stop_phrases,
+                )
+            )
+
+    if args.wake:
         stt_model = resolve_local_stt_model(stt_provider, stt_model)
 
         with backend_compat(stt_provider):
             from .wake import main as wake_main
+
             try:
-                exit_code = wake_main(
-                    model=stt_model,
-                    device=stt_device,
-                    with_pets=args.pets,
+                return int(
+                    wake_main(
+                        model=stt_model,
+                        device=stt_device,
+                        with_pets=args.pets,
+                    )
                 )
             except (RuntimeError, ValueError) as error:
                 if stt_device not in {"cuda", "vulkan"} or not is_gpu_initialization_error(error):
@@ -347,44 +284,35 @@ def main():
                     f"GPU transcription unavailable ({error}); falling back to CPU.",
                     file=sys.stderr,
                 )
-                exit_code = wake_main(
-                    model=stt_model,
-                    device="cpu",
-                    with_pets=args.pets,
+                return int(
+                    wake_main(
+                        model=stt_model,
+                        device="cpu",
+                        with_pets=args.pets,
+                    )
                 )
-        sys.exit(exit_code)
 
-    elif args.agent:
-        from .agent_cli import main as agent_main
-        sys.exit(agent_main())
-
-    elif args.pets_settings:
+    if args.pets_settings:
         from .pets.cli import main_settings
-        sys.exit(main_settings())
 
-    elif args.pets:
+        return int(main_settings())
+
+    if args.pets:
         from .pets.cli import main_overlay
-        sys.exit(main_overlay())
 
-    elif args.command:
-        command_text = " ".join(args.command)
+        return int(main_overlay())
 
-        if args.connect:
-            sys.exit(_run_connected_text(args.connect, command_text))
+    from .terminal import run_task, run_tui
 
-        from .console import ZaraConsole
+    endpoint = args.connect
+    if args.command:
+        return run_task(" ".join(args.command), endpoint=endpoint, config=config)
 
-        try:
-            console = ZaraConsole()
-            success = console.execute_command(command_text)
-            sys.exit(0 if success else 1)
-        except Exception as e:
-            print(f"Error: {e}", file=sys.stderr)
-            sys.exit(1)
+    return run_tui(endpoint=endpoint, config=config)
 
-    else:
-        parser.print_help()
-        sys.exit(1)
+
+def main() -> None:
+    raise SystemExit(run())
 
 
 if __name__ == "__main__":
