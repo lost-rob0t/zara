@@ -11,5 +11,26 @@
 - PR #283 merged at =89e6fbc6f17df0a86083b5e66dd1496c89555daf=, landing the Trealla semantic runtime lifecycle boundary.
 - No open Android PR required recovery before starting this iteration.
 
-* Research / design / TDD evidence
-- Pending.
+* Research
+- #170 selected Trealla as the Android embedded runtime because upstream provides a small C99 embeddable runtime and Android support; Zara owns only a thin JNI boundary.
+- The selected architecture explicitly rejects an Android-side second assistant/runtime authority. The JNI layer therefore exposes only init/evaluate/shutdown for the portable semantic core.
+- Native library availability is a packaging fact, not something Kotlin may silently recover from. Missing/failed native loading must be surfaced as a typed failure to the existing runtime lifecycle.
+
+* Design / adversarial review
+- Introduce =NativeTreallaBridge= as the concrete implementation of the already-landed =TreallaBridge= contract.
+- Isolate =System.loadLibrary= behind =NativeLibraryLoader= so JVM tests deterministically cover load ordering and failure without requiring an Android device.
+- Isolate JNI externals behind =TreallaNativeApi=; production =JniTreallaNativeApi= owns the native symbols while tests use a fake API.
+- Pin the library name to =zara_trealla= by default; reject blank overrides.
+- Do not allow evaluation before successful native initialization; do not mark initialized when library loading or native init fails.
+- Preserve native returned semantic terms byte-for-byte for the existing normalized comparator; the bridge must not introduce a second parser/normalizer.
+- Shutdown is idempotent and clears readiness even when native shutdown throws.
+
+* TDD
+- RED commit :: =44427e416ce1613e8774ee42a059389f3191511d= adds JVM tests referencing missing =NativeTreallaBridge=, =NativeLibraryLoader= and =TreallaNativeApi=.
+- GREEN implementation :: =b26fc07dc3b06c50c08fb14efce988092e938c48= adds the smallest concrete Kotlin/JNI boundary satisfying the contract.
+- Tests cover load-before-init ordering, missing library fail-closed behavior, native-init refusal, pre-init evaluation rejection, term preservation and idempotent shutdown.
+
+* Gate
+- Focused/local Android gate is delegated to repository CI from this connector environment.
+- Required before merge :: =scripts/test-android.sh=, full repository-native test/Nix gates, exact-head GitHub Actions, mergeability and clear review/discussion state.
+- Native C/Trealla implementation and fixture parity are not claimed by this slice; this bridge is the bounded prerequisite for the next #172 NDK/native slice.
