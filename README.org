@@ -18,6 +18,7 @@ This is a learning project first. It works, it is useful to me, and it is also a
 
 Zara currently combines several assistant surfaces behind the same runtime:
 
+- Interactive curses TUI and one-shot terminal tasks through the canonical ZaraClient boundary.
 - Native PySide6 desktop application.
 - Quick Copilot summon window and persistent Full Chat.
 - Shared SQLite-backed desktop conversations and message history.
@@ -38,56 +39,61 @@ Zara is Linux-first. The desktop architecture tries to keep the runtime sufficie
 
 ** Current architecture
 
-The desktop UI is not supposed to be a second assistant implementation. Quick Copilot, Full Chat, voice, tools, Prolog, and Pets are increasingly routed through a common application/runtime boundary.
+The TUI and desktop UI are not supposed to be second assistant implementations. Terminal tasks, Quick Copilot, Full Chat, voice, tools, Prolog, memory, MCP, plugins, and Pets are increasingly routed through a common application/runtime boundary.
 
 #+begin_example
-                       Zara Desktop
-                 PySide6 / Qt application
-                          |
-              +-----------+-----------+
-              |                       |
-        Quick Copilot              Full Chat
-              |                       |
-              +-----------+-----------+
-                          |
-                  Desktop Controller
-                          |
-                    QtRuntimeBridge
-                          |
-                     RuntimeHost
-                          |
-              provider-neutral events
-                          |
-       +----------+-------+--------+----------+
-       |          |                |          |
-     Voice      Prolog          LLM agent    Tools
-       |          |                |          |
-       +----------+-------+--------+----------+
-                          |
-                    shared runtime
-                          |
-               +----------+----------+
-               |                     |
-            Desktop                 Pets
+                 zara / zara-agent / zara-console
+                              |
+                          terminal.py
+                              |
+                           ZaraClient
+                         /            \
+             InProcessZaraClient    ZmqZaraClient
+                         \            /
+                           RuntimeHost
+                              |
+                       AgentRuntimeBackend
+                              |
+                          AgentManager
+                   /       /    |      \
+               Prolog   memory  MCP   tools/plugins
+                              |
+                    provider-neutral events
+                              |
+             +----------------+----------------+
+             |                                 |
+          Terminal                         Zara Desktop
+                                             |
+                                      QtRuntimeBridge
+                                             |
+                                      Quick / Full Chat
+                                             |
+                                            Pets
 #+end_example
 
-The important design rule is simple: UI code should issue runtime commands and consume runtime events instead of reaching directly into low-level assistant objects.
+The important design rule is simple: UI and terminal code should issue runtime commands and consume runtime events instead of reaching directly into low-level assistant objects.
 
 ** Main commands
 
 | Command        | Purpose |
 |----------------+---------|
-| =zara=         | Main CLI entry point. |
+| =zara=         | Interactive TUI with no task; =zara <task>= submits a one-shot canonical runtime turn. |
 | =zara-desktop= | Native PySide6 desktop copilot. |
 | =zara-wake=    | Long-running wake-word / voice mode. |
 | =zara-dictate= | Speech-to-text dictation utility. |
-| =zara-console= | Interactive console assistant. |
-| =zara-agent=   | Conversational LLM/tool agent entry point. |
+| =zara-console= | Compatibility alias for the same terminal/TUI path. |
+| =zara-agent=   | Compatibility alias for the same Zara agent/runtime path. |
 | =zara-pets=    | Optional Zarathushtra desktop pet UI. |
 
 The main CLI also exposes modes such as:
 
 #+begin_src sh
+zara                              # interactive TUI
+zara "remember this"              # one-shot task
+zara --agent "remember this"      # exact same task path
+zara --agent                      # same TUI
+zara --console                    # same TUI
+zara --connect ipc:///run/user/1000/zara-server.sock
 zara --desktop
 zara --wake
 zara --dictate
@@ -105,7 +111,19 @@ cd zara
 nix develop
 #+end_src
 
-Then launch the desktop application:
+Launch the terminal assistant:
+
+#+begin_src sh
+zara
+#+end_src
+
+Or submit one task without entering the TUI:
+
+#+begin_src sh
+zara "show my todos"
+#+end_src
+
+Then launch the desktop application when you want the native UI:
 
 #+begin_src sh
 zara-desktop
@@ -117,12 +135,11 @@ Or run the packaged desktop application directly:
 nix run .#zara-desktop
 #+end_src
 
-For the older/headless interaction styles:
+Voice/headless utility modes remain available:
 
 #+begin_src sh
 zara --wake
 zara --dictate
-zara-console
 #+end_src
 
 ** Voice and dictation
@@ -161,7 +178,7 @@ Current integration packages include:
 - Anthropic
 - Ollama
 
-The agent layer is separate from the Prolog engine but shares the broader Zara runtime, event model, tools, conversation state, and desktop surfaces.
+The agent runtime owns conversation state and memory, refreshes MCP capabilities through the tool registry, receives service-plugin tools from =RuntimeHost=, and exposes Prolog through the same tool boundary when =query_prolog= is enabled. Terminal surfaces do not construct any of those services directly.
 
 Remote providers obviously require their own credentials and may send conversation content to those providers. Ollama can be used for a local model path.
 
@@ -258,6 +275,7 @@ Some useful places to start:
 | Path | What it contains |
 |------+------------------|
 | =zara/runtime/= | Provider-neutral events, commands, runtime host, and application boundary. |
+| =zara/terminal.py= / =zara/tui.py= | Unified one-shot terminal surface and curses TUI. |
 | =zara/desktop/= | Native PySide6 desktop shell, controller, windows, and Qt bridge. |
 | =zara/agent/= | LangGraph/LLM agent and tool runtime. |
 | =zara/pets/= | Zarathushtra desktop-pet subsystem. |
@@ -267,6 +285,7 @@ Some useful places to start:
 | =flake.nix= | Nix development environment, packages, apps, and checks. |
 | =docs/desktop-copilot-design.md= | Desktop research and architecture document. |
 | =wiki/plugins.org= | Legacy tools and the external service-plugin API. |
+| =wiki/terminal.org= | Terminal/TUI command and runtime-boundary contract. |
 
 ** Why keep going?
 
