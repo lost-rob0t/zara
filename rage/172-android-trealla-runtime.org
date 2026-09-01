@@ -27,3 +27,6 @@
 
 * Status
 - Iteration 1 started from exact master =82eddb0a1c81dd1ae92c5e575e90e7d485a17bc8=.
+- Exact-head CI run =33550125260= on =e3d5c4d8ed75aa580dadb3d97befc0901464dce1= exposed a real Android compile regression while full repository/Nix and both mic jobs remained green: =SemanticResult= uses the canonical field =terms=, but the lifecycle wrapper incorrectly passed a named =solutions= argument.
+- Fixed the contract mismatch only, replacing =solutions = bridge.evaluate(...)= with =terms = bridge.evaluate(...)= at commit =2c708f71f1fbe4cd1e1ad4c65233b2bcc233d3b2=. No protocol/core/runtime ownership changed.
+- Fresh exact-head CI run =33555887203= is queued for the corrected head; do not merge until the Android gate and all repository-native gates are genuinely green.
