@@ -1,33 +1,44 @@
 """
 Conversational agent with pure LangChain + LangGraph tool calling.
 
-This file mainly orchestrates:
-- conversation history
-- tool registry
-- running the LangGraph loop
-
-Important behavior:
-- We validate history to drop truly orphaned ToolMessages.
-- We keep valid tool traces; Anthropic requires tool_result blocks to match a
-  tool_use block in the immediately previous message.
+Context assembly is owned by ContextManager. Tool execution and dynamic MCP
+capability lifecycle remain owned by ToolRegistry/MCPManager.
 """
 
 from __future__ import annotations
 
 import os
+import sys
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Optional
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from .approval import ToolApprovalController
+from .context import ContextConfig, ContextManager, TransientContext
 from .conversation import ConversationManager
-from .graph import run_conversation_loop, validate_and_clean_messages
+from .graph import run_conversation_loop
+from .skills import SkillRegistry
 from .tools.registry import ToolRegistry
 from ..config import ZaraConfig, get_config
 from ..memory import build_memory_manager, MemoryManager
 from ..latency import LatencyTrace
+
+
+class _PreparedToolRegistry:
+    def __init__(self, registry: ToolRegistry):
+        self._registry = registry
+
+    async def prepare_async(self) -> None:
+        return None
+
+    def dynamic_system_context(self):
+        return None
+
+    def __getattr__(self, name: str):
+        return getattr(self._registry, name)
 
 
 class AgentManager:
@@ -61,11 +72,33 @@ class AgentManager:
         for plugin_dir in self.config.get_module_search_paths():
             self.tool_registry.load_user_tools(str(plugin_dir))
 
+        context_values = self.config.get_section("context")
+        context_config = ContextConfig(
+            strategy=context_values.get("strategy", "truncate"),
+            max_tokens=int(context_values.get("max_tokens", 32000)),
+            preserve_recent_turns=int(context_values.get("preserve_recent_turns", 8)),
+            summary_max_tokens=int(context_values.get("summary_max_tokens", 2000)),
+            skill_max_tokens=int(context_values.get("skill_max_tokens", 6000)),
+        )
+        self.context_manager = ContextManager(
+            system_prompt=self._build_system_prompt,
+            config=context_config,
+            summarizer=self._summarize_context,
+        )
+
+        skills_config = self.config.get_section("skills")
+        self.skill_registry: SkillRegistry | None = None
+        if skills_config.get("enabled", True):
+            self.skill_registry = SkillRegistry(self._skill_roots(skills_config))
+            self.skill_registry.discover()
+
         agent_config = self.config.get_section("agent")
         timeout = agent_config.get("conversation_timeout", 60)
         self.conversation_manager = ConversationManager(
             timeout_seconds=timeout,
             principal=principal,
+            history_provider=lambda: self.context_manager.history,
+            history_clear=self.context_manager.clear,
         )
         approval_config = self.config.get_section("tool_approval")
         self.approval_controller = ToolApprovalController(
@@ -181,9 +214,6 @@ class AgentManager:
         self.conversation_manager.update_activity()
         max_steps = int(agent_config.get("max_steps", 10))
 
-        # Existing voice turns already have a latency trace id. RuntimeHost
-        # (#83) can pass the TurnCoordinator id explicitly. Headless agent
-        # callers still receive a stable per-turn correlation id.
         if turn_id is None:
             if latency_trace is not None:
                 turn_id = latency_trace.trace_id
@@ -195,83 +225,65 @@ class AgentManager:
         logger.info("[AgentManager] user_input=%r", user_input)
         logger.info("[AgentManager] user_input_length=%d", len(user_input))
 
-        history = self.conversation_manager.conversation_history or []
-        if history:
-            cleaned_history = validate_and_clean_messages(history.copy())
+        lease = self.context_manager.begin_turn(turn_id)
+        try:
+            await self.tool_registry.prepare_async()
+            transients = []
+            dynamic_context = self.tool_registry.dynamic_system_context()
+            if dynamic_context:
+                transients.append(TransientContext("mcp", dynamic_context))
+            memory_context = self._build_memory_context(user_input)
+            if memory_context:
+                transients.append(TransientContext("memory", memory_context))
+
+            skill_context = None
+            if self.skill_registry is not None:
+                selection = self.skill_registry.select(
+                    user_input,
+                    max_tokens=self.context_manager.config.skill_max_tokens,
+                )
+                skill_context = self.skill_registry.render(selection)
+
+            build = await self.context_manager.build_messages(
+                lease,
+                user_input,
+                transients=transients,
+                skill_context=skill_context,
+            )
+            state: Dict[str, Any] = {
+                "turn_id": turn_id,
+                "conversation_id": conversation_id,
+                "user_input": user_input,
+                "messages": list(build.messages),
+                "tool_calls": [],
+                "tool_results": [],
+                "step_count": 0,
+                "max_steps": max_steps,
+                "response": None,
+                "latency_trace": latency_trace,
+            }
             logger.info(
-                "[AgentManager] Cleaned history %d -> %d messages",
-                len(history),
-                len(cleaned_history),
+                "[AgentManager] Context tokens=%d messages=%d skills=%s transients=%s",
+                build.token_count,
+                len(build.messages),
+                build.audit.skill_context_included,
+                build.audit.transient_kinds,
             )
-            logger.info(
-                "[AgentManager] History preview=%s",
-                [type(m).__name__ for m in cleaned_history[-5:]],
+
+            principal_id = getattr(self.principal, "principal_id", "local")
+            result = await run_conversation_loop(
+                self.llm_client,
+                _PreparedToolRegistry(self.tool_registry),
+                state,
+                approval_controller=self.approval_controller,
+                publisher=self.approval_controller.publisher,
+                principal_id=principal_id,
+                stream_publisher=stream_publisher,
             )
-        else:
-            cleaned_history = []
-            logger.info("[AgentManager] History empty; starting fresh")
-
-        state: Dict[str, Any] = {
-            "turn_id": turn_id,
-            "conversation_id": conversation_id,
-            "user_input": user_input,
-            "messages": cleaned_history,
-            "tool_calls": [],
-            "tool_results": [],
-            "step_count": 0,
-            "max_steps": max_steps,
-            "response": None,
-            "latency_trace": latency_trace,
-        }
-
-        system_prompt = self._build_system_prompt()
-
-        if system_prompt:
-            if not state["messages"] or not isinstance(state["messages"][0], SystemMessage):
-                state["messages"].insert(0, SystemMessage(content=system_prompt))
-                logger.info("[AgentManager] System prompt injected")
-            else:
-                logger.info("[AgentManager] System prompt already present")
-
-        memory_context_message = None
-        memory_context = self._build_memory_context(user_input)
-        if memory_context:
-            memory_context_message = SystemMessage(
-                content=memory_context,
-                id=f"memory-context-{uuid.uuid4()}",
-            )
-            state["messages"].insert(1, memory_context_message)
-
-        # Always append the new user message last.
-        state["messages"].append(HumanMessage(content=user_input))
-        logger.info(
-            "[AgentManager] Message types=%s",
-            [type(m).__name__ for m in state["messages"][-6:]],
-        )
-        logger.info(
-            "[AgentManager] Last user message=%r",
-            user_input,
-        )
-
-        principal_id = getattr(self.principal, "principal_id", "local")
-        result = await run_conversation_loop(
-            self.llm_client,
-            self.tool_registry,
-            state,
-            approval_controller=self.approval_controller,
-            publisher=self.approval_controller.publisher,
-            principal_id=principal_id,
-            stream_publisher=stream_publisher,
-        )
-
-        result_messages = result.get("messages", [])
-        if memory_context_message is not None:
-            result_messages = [
-                message
-                for message in result_messages
-                if getattr(message, "id", None) != memory_context_message.id
-            ]
-        self.conversation_manager.conversation_history = result_messages
+            self.context_manager.commit_result(lease, result.get("messages", []))
+        except BaseException:
+            self.context_manager.cancel_turn(turn_id)
+            raise
 
         return {
             "response": result.get("response", "I'm not sure how to respond to that."),
@@ -307,6 +319,59 @@ class AgentManager:
             rendered = rendered[: self.memory_context_limit].rstrip()
         return rendered
 
+    async def _summarize_context(
+        self,
+        messages: tuple[BaseMessage, ...],
+        max_tokens: int,
+    ) -> str:
+        rendered = []
+        for message in messages:
+            content = getattr(message, "content", "")
+            rendered.append(f"{type(message).__name__}: {content}")
+        response = await self.llm_client.ainvoke(
+            [
+                SystemMessage(
+                    content=(
+                        "Compress the conversation prefix for continued context. Preserve decisions, "
+                        "user constraints, unresolved tasks, named entities, and facts needed to continue. "
+                        "Omit raw tool traces, repeated chatter, and superseded intermediate work. "
+                        f"Keep the result within about {max_tokens} tokens."
+                    )
+                ),
+                HumanMessage(content="\n".join(rendered)),
+            ]
+        )
+        content = getattr(response, "content", "")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "".join(
+                str(block.get("text", ""))
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+        return str(content)
+
+    def _skill_roots(self, skills_config: Dict[str, Any]) -> tuple[Path, ...]:
+        repo_root = Path(__file__).resolve().parents[2]
+        xdg = os.getenv("XDG_CONFIG_HOME")
+        config_root = Path(xdg) if xdg else Path.home() / ".config"
+        roots = [
+            repo_root / "skills",
+            Path(sys.prefix) / "share" / "zarathushtra" / "skills",
+            config_root / "zarathushtra" / "skills",
+        ]
+        roots.extend(Path(path).expanduser() for path in skills_config.get("search_paths", []))
+        result = []
+        seen = set()
+        for root in roots:
+            key = str(root)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(root)
+        return tuple(result)
+
     def should_exit_conversation(self) -> bool:
         return self.conversation_manager.should_exit_conversation()
 
@@ -320,10 +385,10 @@ class AgentManager:
         await self.approval_controller.reject(tool_run_id, reason)
 
     async def cancel_turn(self, turn_id: str) -> None:
+        self.context_manager.cancel_turn(turn_id)
         await self.approval_controller.cancel_turn(turn_id)
 
     async def shutdown_async(self) -> None:
-        """Close dynamic providers and end the conversation cleanly."""
         try:
             await self.approval_controller.shutdown()
             self.exit_conversation()
