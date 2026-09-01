@@ -28,7 +28,9 @@ from ..latency import LatencyTrace
 
 
 class _PreparedToolRegistry:
-    def __init__(self, registry: ToolRegistry):
+    """Proxy proving dynamic providers were prepared before context assembly."""
+
+    def __init__(self, registry):
         self._registry = registry
 
     async def prepare_async(self) -> None:
@@ -72,19 +74,7 @@ class AgentManager:
         for plugin_dir in self.config.get_module_search_paths():
             self.tool_registry.load_user_tools(str(plugin_dir))
 
-        context_values = self.config.get_section("context")
-        context_config = ContextConfig(
-            strategy=context_values.get("strategy", "truncate"),
-            max_tokens=int(context_values.get("max_tokens", 32000)),
-            preserve_recent_turns=int(context_values.get("preserve_recent_turns", 8)),
-            summary_max_tokens=int(context_values.get("summary_max_tokens", 2000)),
-            skill_max_tokens=int(context_values.get("skill_max_tokens", 6000)),
-        )
-        self.context_manager = ContextManager(
-            system_prompt=self._build_system_prompt,
-            config=context_config,
-            summarizer=self._summarize_context,
-        )
+        self.context_manager = self._new_context_manager()
 
         skills_config = self.config.get_section("skills")
         self.skill_registry: SkillRegistry | None = None
@@ -97,7 +87,7 @@ class AgentManager:
         self.conversation_manager = ConversationManager(
             timeout_seconds=timeout,
             principal=principal,
-            history_provider=lambda: self.context_manager.history,
+            history_provider=self._conversation_history_snapshot,
             history_clear=self.context_manager.clear,
         )
         approval_config = self.config.get_section("tool_approval")
@@ -108,6 +98,41 @@ class AgentManager:
 
     def bind_event_publisher(self, publisher) -> None:
         self.approval_controller.bind_event_publisher(publisher)
+
+    def _new_context_manager(self) -> ContextManager:
+        context_values = self.config.get_section("context")
+        context_config = ContextConfig(
+            strategy=context_values.get("strategy", "truncate"),
+            max_tokens=int(context_values.get("max_tokens", 32000)),
+            preserve_recent_turns=int(context_values.get("preserve_recent_turns", 8)),
+            summary_max_tokens=int(context_values.get("summary_max_tokens", 2000)),
+            skill_max_tokens=int(context_values.get("skill_max_tokens", 6000)),
+        )
+        return ContextManager(
+            system_prompt=self._build_system_prompt,
+            config=context_config,
+            summarizer=self._summarize_context,
+        )
+
+    def _ensure_context_runtime(self) -> None:
+        """Migrate old lightweight AgentManager test/caller construction safely."""
+        if not hasattr(self, "context_manager"):
+            self.context_manager = self._new_context_manager()
+        if not hasattr(self, "skill_registry"):
+            self.skill_registry = None
+        conversation = getattr(self, "conversation_manager", None)
+        if conversation is not None and hasattr(conversation, "bind_history"):
+            conversation.bind_history(
+                self._conversation_history_snapshot,
+                self.context_manager.clear,
+            )
+
+    def _conversation_history_snapshot(self):
+        """Compatibility projection; not the mutable/persisted ContextManager store."""
+        return (
+            SystemMessage(content=self._build_system_prompt(), id="context:base-compat"),
+            *self.context_manager.history,
+        )
 
     def _build_system_prompt(self):
         date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -210,6 +235,7 @@ class AgentManager:
         import logging
         logger = logging.getLogger(__name__)
 
+        self._ensure_context_runtime()
         agent_config = self.config.get_section("agent")
         self.conversation_manager.update_activity()
         max_steps = int(agent_config.get("max_steps", 10))
@@ -227,9 +253,13 @@ class AgentManager:
 
         lease = self.context_manager.begin_turn(turn_id)
         try:
-            await self.tool_registry.prepare_async()
+            prepare = getattr(self.tool_registry, "prepare_async", None)
+            if callable(prepare):
+                await prepare()
+
             transients = []
-            dynamic_context = self.tool_registry.dynamic_system_context()
+            dynamic = getattr(self.tool_registry, "dynamic_system_context", None)
+            dynamic_context = dynamic() if callable(dynamic) else None
             if dynamic_context:
                 transients.append(TransientContext("mcp", dynamic_context))
             memory_context = self._build_memory_context(user_input)
@@ -353,6 +383,15 @@ class AgentManager:
         return str(content)
 
     def _skill_roots(self, skills_config: Dict[str, Any]) -> tuple[Path, ...]:
+        enabled = skills_config.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ValueError("skills.enabled must be boolean")
+        search_paths = skills_config.get("search_paths", [])
+        if not isinstance(search_paths, list) or any(
+            not isinstance(path, str) or not path.strip() for path in search_paths
+        ):
+            raise ValueError("skills.search_paths must be a list of non-empty strings")
+
         repo_root = Path(__file__).resolve().parents[2]
         xdg = os.getenv("XDG_CONFIG_HOME")
         config_root = Path(xdg) if xdg else Path.home() / ".config"
@@ -361,7 +400,7 @@ class AgentManager:
             Path(sys.prefix) / "share" / "zarathushtra" / "skills",
             config_root / "zarathushtra" / "skills",
         ]
-        roots.extend(Path(path).expanduser() for path in skills_config.get("search_paths", []))
+        roots.extend(Path(path).expanduser() for path in search_paths)
         result = []
         seen = set()
         for root in roots:
@@ -385,10 +424,12 @@ class AgentManager:
         await self.approval_controller.reject(tool_run_id, reason)
 
     async def cancel_turn(self, turn_id: str) -> None:
-        self.context_manager.cancel_turn(turn_id)
+        if hasattr(self, "context_manager"):
+            self.context_manager.cancel_turn(turn_id)
         await self.approval_controller.cancel_turn(turn_id)
 
     async def shutdown_async(self) -> None:
+        """Close dynamic providers and end the conversation cleanly."""
         try:
             await self.approval_controller.shutdown()
             self.exit_conversation()
