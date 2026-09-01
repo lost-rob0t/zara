@@ -1,4 +1,4 @@
-"""Discovery and lifecycle ownership for externally installed plugins."""
+"""Discovery and lifecycle ownership for first-party and installed plugins."""
 
 from __future__ import annotations
 
@@ -77,7 +77,10 @@ class PluginManager:
         event_queue_size: int = 256,
         max_workers: int = 8,
     ) -> None:
-        self._paths = tuple(Path(path).expanduser() for path in paths)
+        builtin_path = Path(__file__).resolve().parent / "builtin"
+        discovered_paths = [builtin_path]
+        discovered_paths.extend(Path(path).expanduser() for path in paths)
+        self._paths = tuple(dict.fromkeys(discovered_paths))
         self._configuration_provider = configuration_provider
         self._status_provider = status_provider
         self._dispatcher = dispatcher
@@ -149,6 +152,17 @@ class PluginManager:
                 metadata = getattr(instance, "metadata", None)
                 if not isinstance(metadata, PluginMetadata):
                     raise TypeError("service plugin metadata must be a PluginMetadata instance")
+
+                default_enabled = getattr(instance, "enabled_by_default", True)
+                if not isinstance(default_enabled, bool):
+                    raise TypeError("enabled_by_default must be a boolean")
+                configuration = self._configuration_provider(metadata.name)
+                enabled = configuration.get("enabled", default_enabled)
+                if not isinstance(enabled, bool):
+                    raise TypeError("plugin enabled setting must be a boolean")
+                if not enabled:
+                    continue
+
                 if metadata.name in names:
                     raise ValueError(f"duplicate service plugin name {metadata.name!r}")
                 names.add(metadata.name)
