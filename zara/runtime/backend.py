@@ -25,6 +25,11 @@ class RuntimeTurnResult:
 class RuntimeBackend:
     """Async application-service contract used by RuntimeHost."""
 
+    @property
+    def principal_id(self) -> str:
+        """Principal owning turns executed by this backend."""
+        return "local"
+
     def bind_event_publisher(self, publisher) -> None:
         pass
 
@@ -81,6 +86,12 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         self._manager_factory = manager_factory
         self._manager = None
         self._publisher = None
+
+    @property
+    def principal_id(self) -> str:
+        manager = self._manager
+        principal = getattr(manager, "principal", None)
+        return str(getattr(principal, "principal_id", "local"))
 
     def bind_event_publisher(self, publisher) -> None:
         self._publisher = publisher
@@ -221,6 +232,10 @@ class AgentRuntimeBackend(RuntimeBackend):
             self._delegate: RuntimeBackend = LangGraphRuntimeBackend(manager_factory)
         else:
             self._delegate = create_runtime_backend(config)
+
+    @property
+    def principal_id(self) -> str:
+        return self._delegate.principal_id
 
     def bind_event_publisher(self, publisher) -> None:
         self._delegate.bind_event_publisher(publisher)

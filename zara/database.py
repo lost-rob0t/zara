@@ -79,12 +79,17 @@ class DatabaseManager:
                 conn.commit()
 
     def fetch_all(self, statement: str, params: Sequence[object] | None = None) -> list[sqlite3.Row]:
-        cursor = self.execute(statement, params)
-        return cursor.fetchall()
+        # Cursor reads must happen under the same lock as execute(): a
+        # concurrent writer's commit on the shared connection resets pending
+        # cursors and yields missing or partial rows.
+        with self._lock:
+            cursor = self.execute(statement, params)
+            return cursor.fetchall()
 
     def fetch_one(self, statement: str, params: Sequence[object] | None = None) -> Optional[sqlite3.Row]:
-        cursor = self.execute(statement, params)
-        return cursor.fetchone()
+        with self._lock:
+            cursor = self.execute(statement, params)
+            return cursor.fetchone()
 
     def _initialize_schema(self) -> None:
         conn = self._connection

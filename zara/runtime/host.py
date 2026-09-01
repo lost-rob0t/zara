@@ -94,6 +94,7 @@ class RuntimeHost:
         shutdown_timeout: float = 5.0,
         plugin_paths: Optional[Iterable[Path | str]] = None,
         config=None,
+        task_store=None,
     ) -> None:
         self._backend_factory = backend_factory or (lambda: AgentRuntimeBackend())
         self._publisher = publisher
@@ -102,6 +103,7 @@ class RuntimeHost:
         self._manage_plugins = backend_factory is None or plugin_paths is not None
         self._plugin_paths = None if plugin_paths is None else tuple(plugin_paths)
         self._config = config
+        self._task_store = task_store
 
         self._state_lock = threading.RLock()
         self._state = RuntimeHostState.NEW
@@ -122,6 +124,7 @@ class RuntimeHost:
         self._plugin_manager: Optional[PluginManager] = None
         self._last_plugin_diagnostics: tuple[PluginDiagnostic, ...] = ()
         self._api_service = None
+        self._task_runner = None
 
     @property
     def state(self) -> RuntimeHostState:
@@ -151,6 +154,28 @@ class RuntimeHost:
     def plan_service(self):
         """The api_service plan execution service, or None when disabled."""
         return self._api_service
+
+    @property
+    def task_runner(self):
+        """The long-horizon task runner, or None when disabled."""
+        return self._task_runner
+
+    def run_coroutine(self, coroutine) -> concurrent.futures.Future:
+        """Schedule one coroutine on the runtime loop from any thread."""
+        future: concurrent.futures.Future = concurrent.futures.Future()
+        with self._state_lock:
+            state = self._state
+            loop = self._loop
+        if state is not RuntimeHostState.RUNNING or loop is None or loop.is_closed():
+            future.set_exception(
+                RuntimeNotReady(f"runtime is not ready: {state.value}")
+            )
+            return future
+        try:
+            return asyncio.run_coroutine_threadsafe(coroutine, loop)
+        except RuntimeError as error:
+            future.set_exception(RuntimeNotReady(str(error)))
+            return future
 
     def start(self) -> concurrent.futures.Future:
         """Start the runtime worker without blocking the caller."""
@@ -310,6 +335,7 @@ class RuntimeHost:
             if not shutdown_requests:
                 await self._start_api_service()
                 await self._start_plugins()
+                await self._start_task_runner()
 
         if shutdown_requests:
             if startup_error is None and not self._startup_future.done():
@@ -382,6 +408,120 @@ class RuntimeHost:
         if self._api_service is not None:
             logger.info("[ApiService] plan service stopped")
         self._api_service = None
+
+    async def _start_task_runner(self) -> None:
+        try:
+            config = self._config
+            if config is None:
+                from zara.config import get_config
+
+                config = get_config()
+            get_tasks_config = getattr(config, "get_tasks_config", None)
+            tasks_config = (
+                get_tasks_config() if callable(get_tasks_config) else {"enabled": False}
+            )
+            if not tasks_config.get("enabled", False):
+                return
+            from zara.agent.tools.builtin_tools import build_task_tools
+            from zara.tasks.runner import TaskRunner
+            from zara.tasks.store import TaskStore
+
+            store = self._task_store
+            if store is None:
+                from zara.database import get_database
+
+                store = TaskStore(
+                    get_database(),
+                    step_log_chars=tasks_config["step_log_chars"],
+                )
+            runner = TaskRunner(
+                store=store,
+                submit_turn=self._task_submit_turn,
+                allocate_turn_id=self._allocate_task_turn_id,
+                cancel_turn=self._cancel_task_turn,
+                publisher=self._publisher,
+                principal_id=self._require_backend().principal_id,
+                max_concurrent=tasks_config["max_concurrent"],
+                default_max_task_steps=tasks_config["max_task_steps"],
+                wall_clock_seconds=tasks_config["wall_clock_minutes"] * 60.0,
+                step_log_chars=tasks_config["step_log_chars"],
+            )
+            await runner.start()
+            self._backend.register_tools(build_task_tools(runner))
+            self._backend.bind_event_publisher(
+                runner.observing_publisher(self._publisher)
+            )
+            self._task_runner = runner
+            logger.info(
+                "[TaskRunner] started (max_concurrent=%d)",
+                tasks_config["max_concurrent"],
+            )
+        except Exception as error:
+            self._task_runner = None
+            logger.warning("Task runner startup failed", exc_info=True)
+            self._publisher(
+                events.RuntimeError(
+                    reason=f"task runner startup failed: {error}",
+                    fatal=False,
+                    label="task-runner",
+                )
+            )
+
+    async def _stop_task_runner(self) -> None:
+        runner = self._task_runner
+        self._task_runner = None
+        if runner is None:
+            return
+        try:
+            from zara.agent.tools.builtin_tools import TASK_TOOL_NAMES
+
+            backend = self._backend
+            if backend is not None:
+                backend.unregister_tools(list(TASK_TOOL_NAMES))
+        except Exception:
+            logger.debug("Task tool unregistration failed", exc_info=True)
+        try:
+            await runner.stop()
+        except Exception:
+            logger.warning("Task runner stop failed", exc_info=True)
+
+    async def _task_submit_turn(
+        self, text, *, turn_id, conversation_id, system_context, latency_trace
+    ):
+        return await self._require_backend().submit_turn(
+            text,
+            turn_id=turn_id,
+            conversation_id=conversation_id,
+            system_context=system_context,
+            conversation_history=[],
+            latency_trace=latency_trace,
+        )
+
+    async def _allocate_task_turn_id(self) -> str:
+        reply = await self._coordinator_ask(StartTurn())
+        if not isinstance(reply, TurnStartedReply):
+            raise RuntimeHostError(f"unexpected turn coordinator reply: {reply!r}")
+        return reply.turn_id
+
+    async def _cancel_task_turn(self, turn_id: str) -> None:
+        try:
+            await self._coordinator_ask(ActorCancelTurn(turn_id=turn_id))
+        except Exception:
+            logger.debug(
+                "Coordinator cancellation failed for task turn %s",
+                turn_id,
+                exc_info=True,
+            )
+        backend = self._backend
+        if backend is not None:
+            try:
+                await backend.cancel_turn(turn_id)
+            except Exception:
+                logger.debug(
+                    "Backend cancellation hook failed for task turn %s",
+                    turn_id,
+                    exc_info=True,
+                )
 
     async def _start_plugins(self) -> None:
         if not self._manage_plugins:
@@ -659,6 +799,7 @@ class RuntimeHost:
             self._state = RuntimeHostState.STARTING
 
         await self._cancel_all_turns(reason="runtime restart")
+        await self._stop_task_runner()
         await self._stop_backend()
         if self._coordinator is not None:
             await self._coordinator_ask(Drain())
@@ -691,6 +832,7 @@ class RuntimeHost:
 
         await self._start_api_service()
         await self._start_plugins()
+        await self._start_task_runner()
         self._publisher(events.RuntimeStarted(label="runtime-host"))
         return CommandReceipt(request_id=command.request_id, detail="runtime restarted")
 
@@ -699,6 +841,7 @@ class RuntimeHost:
             self._state = RuntimeHostState.STOPPING
 
         await self._cancel_all_turns(reason="runtime shutdown")
+        await self._stop_task_runner()
         await self._stop_backend()
         self._clarifications.drop_all(reason=SessionCloseReason.SHUTDOWN)
         self._publisher(events.RuntimeStopped(reason=command.reason, label="runtime-host"))
