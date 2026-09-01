@@ -1,7 +1,7 @@
 """Unified terminal surface for Zara.
 
 Both one-shot tasks and the interactive TUI use the same ZaraClient command/event
-boundary.  The terminal never constructs AgentManager, PrologEngine, or plugin
+boundary. The terminal never constructs AgentManager, PrologEngine, or plugin
 objects directly.
 """
 
@@ -32,7 +32,12 @@ def make_client(*, endpoint: Optional[str], config=None) -> ZaraClient:
     return InProcessZaraClient(config=config)
 
 
-def wait_for_turn(subscription, turn_id: str, *, timeout: float = TURN_TIMEOUT_SECONDS) -> str:
+def wait_for_turn(
+    subscription,
+    turn_id: str,
+    *,
+    timeout: float = TURN_TIMEOUT_SECONDS,
+) -> str:
     if not turn_id:
         raise TerminalTurnError("runtime did not assign a turn id")
 
@@ -103,10 +108,20 @@ def run_task(
 def run_tui(*, endpoint: Optional[str] = None, config=None) -> int:
     from zara.tui import ZaraTui
 
-    client = make_client(endpoint=endpoint, config=config)
-    app = ZaraTui(client=client, endpoint=endpoint)
-    app.run()
-    return int(app.return_code)
+    client = None
+    try:
+        client = make_client(endpoint=endpoint, config=config)
+        app = ZaraTui(client=client, endpoint=endpoint)
+        app.run()
+        return int(app.return_code)
+    except Exception as error:
+        print(f"Error: {error}", file=sys.stderr)
+        if client is not None:
+            try:
+                client.close(timeout=5.0)
+            except Exception:
+                pass
+        return 2
 
 
 def tui_main() -> int:
@@ -115,8 +130,16 @@ def tui_main() -> int:
     return run_tui(config=init_config())
 
 
+def console_main() -> int:
+    """Compatibility entry point that delegates to the canonical CLI parser."""
+    from zara import __main__ as cli
+
+    return cli.run(["--console", *sys.argv[1:]])
+
+
 __all__ = [
     "TerminalTurnError",
+    "console_main",
     "make_client",
     "run_task",
     "run_tui",
