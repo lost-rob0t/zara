@@ -39,4 +39,8 @@
 - Exact-head build at =cbf2aad= :: =nix build --no-link --print-out-paths= produced =/nix/store/4p2sjhj3dvw857scanv93gwngkwx0qcq-zarathushtra-full=.
 
 ** Outcome
-- In progress. Remaining: push, exact-head GitHub Actions, PR mergeability, merge, issue close.
+- Branch refresh :: master advanced (PR #257, =ddac73a=) after the first push; the branch was merged with master and the complete aggregate gate rerun green at the merge head.
+- Exact-head GitHub Actions :: implementation head =cbf2aad= run =33466051675= passed =test= in 10m36s plus shared mic Ubuntu/Arch and android skeleton gate; refreshed merge head =5ce9f3a= run =33467325479= passed =test= in 11m09s plus all auxiliary checks.
+- Pull request :: #258. GitHub reported mergeability as unknown during the poll window; the merge completed server-side and was recorded as a squash commit.
+- Merge commit :: =7a9c25c= (content verified on master: routing implementation, rewritten tests, and all three =rage/250-*.org= artifacts).
+- Consumed issue outcome :: #250 closed as COMPLETED by PR #258. AMD device tokens now select the recorded whisper.cpp Vulkan path; the queue must be re-read before consuming another issue.
