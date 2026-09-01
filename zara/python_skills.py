@@ -19,6 +19,20 @@ from .todo_skills import (
 )
 
 
+TODO_SKILLS = frozenset(
+    {
+        "capture_todo",
+        "complete_todo",
+        "list_todos",
+        "reopen_todo",
+        "edit_todo",
+        "search_todos",
+        "schedule_todo",
+        "export_todos",
+    }
+)
+
+
 def say_hello(args: List[Any]) -> str:
     name = args[0] if args else "there"
     return f"Hello, {name}!"
@@ -42,18 +56,30 @@ class PythonSkillRegistry:
             "schedule_todo": schedule_todo,
             "export_todos": export_todos,
         }
+        self._todo_enabled = True
 
     def register(self, name: str, func: Callable[[List[Any]], str]) -> None:
         self._skills[name] = func
 
+    def set_todo_enabled(self, enabled: bool) -> None:
+        self._todo_enabled = bool(enabled)
+
     def execute(self, skill_name: str, args: List[Any]) -> str:
+        if not self._todo_enabled and skill_name in TODO_SKILLS:
+            raise NotImplementedError(
+                f"Python skill '{skill_name}' is disabled by tools.todos=false"
+            )
         func = self._skills.get(skill_name)
         if func is None:
             raise NotImplementedError(f"Python skill '{skill_name}' is not implemented")
         return func(args)
 
     def list_skills(self) -> List[str]:
-        return sorted(self._skills.keys())
+        return sorted(
+            name
+            for name in self._skills
+            if self._todo_enabled or name not in TODO_SKILLS
+        )
 
 
 python_skills = PythonSkillRegistry()
