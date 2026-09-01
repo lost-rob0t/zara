@@ -6,6 +6,7 @@ LangChain tool definitions used by the agent system.
 
 import ast
 import operator
+import subprocess
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
@@ -16,6 +17,10 @@ from pydantic import BaseModel, Field
 from .file_tools import build_file_tools
 from .todo_tools import build_todo_tools
 from ...noaa import build_noaa_weather_tool
+
+
+MAX_BASH_OUTPUT_CHARS = 32_000
+
 
 class RememberArgs(BaseModel):
     text: str = Field(
@@ -73,6 +78,24 @@ class CalculatorArgs(BaseModel):
     )
 
 
+class BashArgs(BaseModel):
+    command: str = Field(
+        ...,
+        min_length=1,
+        description="Bash command to execute on the Zara host.",
+    )
+    cwd: Optional[str] = Field(
+        default=None,
+        description="Optional working directory for the command.",
+    )
+    timeout_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=120,
+        description="Command timeout in seconds (1-120).",
+    )
+
+
 @tool("calculator")
 def calculator(expression: str) -> str:
     """
@@ -113,6 +136,63 @@ def calculator(expression: str) -> str:
         return f"Result: {result}"
     except Exception as e:
         return f"Error: {str(e)}"
+
+
+@tool("bash", args_schema=BashArgs)
+def bash_tool(
+    command: str,
+    cwd: Optional[str] = None,
+    timeout_seconds: int = 30,
+) -> str:
+    """Execute an explicit Bash command on the Zara host and return its output."""
+    try:
+        completed = subprocess.run(
+            ["bash", "-lc", command],
+            cwd=cwd or None,
+            capture_output=True,
+            text=True,
+            timeout=int(timeout_seconds),
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        stdout = error.stdout or ""
+        stderr = error.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode(errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode(errors="replace")
+        output = _format_bash_output(
+            exit_code=None,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        return f"Timed out after {timeout_seconds}s.\n{output}"
+    except (OSError, ValueError) as error:
+        return f"Bash execution failed: {error}"
+
+    return _format_bash_output(
+        exit_code=completed.returncode,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+    )
+
+
+def _format_bash_output(
+    *,
+    exit_code: Optional[int],
+    stdout: str,
+    stderr: str,
+) -> str:
+    chunks = [f"Exit code: {exit_code}" if exit_code is not None else "Exit code: timeout"]
+    if stdout:
+        chunks.append(f"stdout:\n{stdout.rstrip()}")
+    if stderr:
+        chunks.append(f"stderr:\n{stderr.rstrip()}")
+    result = "\n".join(chunks)
+    if len(result) <= MAX_BASH_OUTPUT_CHARS:
+        return result
+    omitted = len(result) - MAX_BASH_OUTPUT_CHARS
+    return f"{result[:MAX_BASH_OUTPUT_CHARS]}\n...[truncated {omitted} chars]"
 
 
 @tool("get_current_time")
@@ -323,7 +403,7 @@ def get_builtin_tools(
     memory_manager=None,
     file_tool_config: Optional[Dict[str, Any]] = None,
 ) -> List[StructuredTool]:
-    tools: List[StructuredTool] = [calculator, get_current_time]
+    tools: List[StructuredTool] = [calculator, bash_tool, get_current_time]
 
     if file_tool_config is not None:
         tools.extend(build_file_tools(**file_tool_config))
