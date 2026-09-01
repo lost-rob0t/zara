@@ -1,0 +1,20 @@
+#+title: RAGE #51 — Context management and declarative skills
+
+* Iteration 1
+** Control plane
+- Consumed issue :: #51 — ZARA-031 Build extensible context management and Python/Prolog skill files
+- Immutable RAGE start commit :: 7a9c25cf31c4088568e2b50e49f47ce05a0a0172
+- Branch :: feat/zara-031-context-management
+- Operator priority :: The user explicitly requested a Zara RAGE loop for first-class skills and MCP-server composition. Issue #51 is the existing roadmap owner for declarative skill-file context and all declared dependencies are closed. Existing MCP support is treated as shipped prior art and must be reused rather than duplicated.
+- Auto-RAGE :: research, design, adversarial review, decision gate, TDD realization, exact-head verification enabled by .rage.toml
+
+** Current scope
+- Build the #51 ContextManager ownership boundary.
+- Add a versioned declarative SKILL.md protocol and registry/selector with bounded context injection.
+- Keep skill context transient and out of persisted transcript history.
+- Preserve one canonical base system prompt and provider-valid tool-call/result grouping.
+- Compose with existing MCP dynamic capability context rather than creating a second MCP subsystem.
+- Do not add or revive Prolog-RLM.
+
+** Evidence ledger
+- Start commit recorded before research/design/tests/implementation.
