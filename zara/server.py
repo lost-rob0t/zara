@@ -24,11 +24,11 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from zara.principals import PrincipalContext
 from zara.runtime import bridge, events
-from zara.runtime.backend import AgentRuntimeBackend
+from zara.runtime.backend import create_runtime_backend
 from zara.runtime.commands import RuntimeCommand
 from zara.runtime.host import RuntimeHost
 
@@ -183,17 +183,13 @@ class RuntimeSupervisor:
                 principal_id=principal.principal_id,
             )
 
-        def manager_factory():
-            from zara.agent import AgentManager
-
-            return AgentManager(
-                config=config,
+        return RuntimeHost(
+            backend_factory=lambda: create_runtime_backend(
+                config,
                 principal=principal,
                 prolog_engine=prolog_engine,
-            )
-
-        return RuntimeHost(
-            backend_factory=lambda: AgentRuntimeBackend(manager_factory, router=router),
+                router=router,
+            ),
             publisher=bus.publish,
             subscriber=bus.subscribe,
             shutdown_timeout=self._shutdown_timeout,
