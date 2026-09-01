@@ -21,12 +21,10 @@ from .stt_backends import (
 )
 
 
-STT_DEVICE_ALIASES = {
-    "amd": "cuda",
-    "hip": "cuda",
-    "rocm": "cuda",
-}
+STT_AMD_DEVICE_TOKENS = {"amd", "rocm", "hip", "vulkan"}
 STT_DEVICE_CHOICES = ["cpu", "cuda", "vulkan", "rocm", "hip", "amd"]
+_REMOTE_STT_PROVIDERS = {"openai", "groq"}
+AMD_ROUTING_NOTICE = "AMD GPU STT requested; using the whisper.cpp Vulkan backend"
 GPU_ERROR_MARKERS = (
     "cuda",
     "cudnn",
@@ -44,24 +42,34 @@ def normalize_stt_device(device: str, provider: str | None = None) -> str:
     normalized = str(device).strip().lower()
     normalized_provider = normalize_provider(provider) if provider is not None else None
 
-    if normalized_provider == "whisper-cpp":
-        if normalized == "cpu":
-            return "cpu"
-        if normalized in {"vulkan", "amd", "hip", "rocm"}:
-            return "vulkan"
-        if normalized == "cuda":
-            raise ValueError(
-                "Zara's whisper.cpp backend uses Vulkan for GPU STT; "
-                "choose --device vulkan (or amd/rocm/hip)"
-            )
+    if normalized_provider == "whisper-cpp" and normalized == "cuda":
+        raise ValueError(
+            "Zara's whisper.cpp backend uses Vulkan for GPU STT; "
+            "choose --device vulkan (or amd/rocm/hip)"
+        )
 
     if normalized in {"cpu", "cuda"}:
         return normalized
-    if normalized in STT_DEVICE_ALIASES:
-        return STT_DEVICE_ALIASES[normalized]
+    if normalized in STT_AMD_DEVICE_TOKENS:
+        return "vulkan"
 
     choices = ", ".join(STT_DEVICE_CHOICES)
     raise ValueError(f"Unsupported STT device {device!r}; choose one of: {choices}")
+
+
+def route_stt_provider_for_amd_device(provider: str, device: str) -> tuple[str, str | None]:
+    """Route local providers to the whisper.cpp Vulkan backend for AMD GPUs.
+
+    Returns the (possibly rerouted) provider and an optional stderr notice.
+    Remote providers ignore the local device and are never rerouted.
+    """
+    if device != "vulkan":
+        return provider, None
+
+    normalized = normalize_provider(provider)
+    if normalized == "whisper-cpp" or normalized in _REMOTE_STT_PROVIDERS:
+        return provider, None
+    return "whisper-cpp", AMD_ROUTING_NOTICE
 
 
 def is_gpu_initialization_error(error: Exception) -> bool:
@@ -263,7 +271,8 @@ def main():
         choices=STT_DEVICE_CHOICES,
         help=(
             f"Device for local transcription (default: {default_stt_device}); "
-            "whisper-cpp uses Vulkan for AMD GPU acceleration"
+            "cuda targets NVIDIA GPUs; vulkan/amd/rocm/hip use the "
+            "whisper.cpp Vulkan backend for AMD GPUs"
         )
     )
     parser.add_argument(
@@ -285,6 +294,9 @@ def main():
     args = parser.parse_args()
     stt_provider = normalize_provider(args.stt_provider)
     stt_device = normalize_stt_device(args.device, provider=stt_provider)
+    stt_provider, amd_notice = route_stt_provider_for_amd_device(stt_provider, stt_device)
+    if amd_notice is not None:
+        print(f"Notice: {amd_notice} (--device {args.device}).", file=sys.stderr)
     stt_model = resolve_model_for_provider(stt_provider, args.model)
 
     if args.desktop:

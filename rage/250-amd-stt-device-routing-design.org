@@ -1,0 +1,92 @@
+#+title: Design - #250 AMD STT device tokens select the whisper.cpp Vulkan backend
+
+* Problem boundary
+AMD device tokens are rewritten to CUDA and silently degraded to CPU, and
+=vulkan= crashes argument parsing under the default provider. In scope:
+=zara/__main__.py= device normalization and provider routing plus the
+deterministic CLI tests that encode the old mapping. Out of scope: CTranslate2
+packaging experiments, daemon/voice-runtime device selection (#244), remote
+provider semantics beyond "device stays inert", =zara/dictate.py= and
+=zara/transcription.py= internal historical =cuda=="GPU" API (their adapters
+translate it to Vulkan; their callers are CLI-covered or internal).
+
+* Selected architecture
+- =normalize_stt_device(device, provider)=:
+  - =cpu= → =cpu=; =cuda= → =cuda= (NVIDIA semantics, unchanged).
+  - ={amd, rocm, hip, vulkan}= → =vulkan= for every provider (AMD request).
+  - =cuda= + =whisper-cpp= still raises the actionable ValueError (the AMD
+    backend has no NVIDIA path).
+  - unknown tokens raise with the full choice list.
+- New pure helper =route_stt_provider_for_amd_device(provider, device)=
+  returning =(provider, notice)=:
+  - device ≠ =vulkan= → unchanged, no notice.
+  - device = =vulkan= and provider = whisper-cpp → unchanged, no notice.
+  - device = =vulkan= and provider ∈ {openai, groq} → unchanged, no notice
+    (remote STT ignores the local device).
+  - device = =vulkan=, any other (local) provider → =("whisper-cpp", notice)=;
+    =main()= prints the notice to stderr before any STT work.
+- =main()= applies the routing immediately after normalizing the device and
+  before =resolve_model_for_provider=, so routed runs resolve GGML model
+  files through the whisper.cpp path.
+- =--device= help text states: =cpu=, =cuda= (NVIDIA), and
+  =vulkan|amd|rocm|hip= (AMD via the whisper.cpp Vulkan backend).
+- =config.py= [stt] comment updated to name the AMD options.
+
+* Invariants and ownership rules
+- Device tokens describe hardware intent; providers own their execution
+  backends. The CLI owns the mapping from intent to provider.
+- The routing decision is visible on stderr whenever it fires.
+- =cuda= keeps NVIDIA-only meaning; the AMD path never emits =cuda= to a
+  backend except through the documented dictate compat token, which the
+  whisper.cpp adapter translates to Vulkan.
+- Remote providers are never rerouted by device tokens.
+
+* Failure and threat analysis
+- A user without Vulkan-capable drivers on the routed backend gets the
+  existing GPU-initialization CPU fallback (whisper.cpp failure messages
+  carry the =vulkan= marker), so behavior degrades honestly.
+- Routed runs keep the user's =--model=; =resolve_whisper_cpp_model= accepts
+  size names and GGML paths, so =base.en= style models still resolve.
+- No new failure surface for remote providers: their device argument stays
+  inert exactly as today.
+- The notice goes to stderr and never contains user transcript data.
+
+* Compatibility / migration
+- =normalize_stt_device= signature unchanged; return values for =cpu=/​=cuda=
+  and whisper-cpp inputs unchanged; only the AMD token mapping changes.
+- =route_stt_provider_for_amd_device= is additive.
+- Tests that asserted =amd|rocm|hip → cuda= are rewritten to the new
+  contract (they codified the bug); the CPU-fallback semantics test moves
+  to an explicit =cuda= scenario so the fallback path stays covered.
+- =zara-dictate= (packaged) flows through =__main__.main()= and therefore
+  inherits the routing; its internal =cuda= compat token continues to
+  translate to Vulkan inside the whisper.cpp adapter.
+
+* Acceptance criteria mapped to tests
+1. =amd|rocm|hip|vulkan= normalize to =vulkan= for provider =None=,
+   =faster-whisper=, and =whisper-cpp=.
+   → =t/test_whisper_cpp.py::test_amd_device_tokens_select_vulkan_for_any_provider=
+2. =cuda= stays =cuda= for NVIDIA backends; whisper-cpp + =cuda= raises.
+   → existing =test_whisper_cpp_rejects_user_facing_cuda_device= plus new
+   =test_cuda_is_preserved_for_nvidia_backends=.
+3. Wake CLI with =--device rocm= (default provider) calls =wake_main= with
+   device =vulkan=, resolves the model through the whisper.cpp path, and
+   prints the routing notice.
+   → rewritten =test_wake_cli_rocm_routes_to_whisper_cpp_vulkan=.
+4. Wake CLI with =--device vulkan= (default provider) parses and routes
+   without ValueError.
+   → new =test_wake_cli_vulkan_device_is_accepted=.
+5. Remote providers are not rerouted: =--stt-provider groq --device rocm=
+   keeps provider =groq=, no notice; device token stays inert.
+   → new =test_wake_cli_remote_provider_is_not_rerouted=.
+6. =cuda= GPU failure still falls back to CPU with the existing message.
+   → rewritten =test_wake_cli_gpu_initialization_failure_falls_back_to_cpu=.
+7. Routing helper unit matrix (local/remote/already-correct/other-device).
+   → new tests in =t/test_whisper_cpp.py=.
+8. Full gate: =scripts/test-all.sh=, =nix flake check=, =nix build= at the
+   exact candidate head; GitHub Actions =test= for the pushed SHA.
+
+* Verification gate
+Focused red/green on =t/test_whisper_cpp.py=, =t/test_wake_model_debug.py=,
+=t/test_dictation.py= (must stay green: internal dictate API unchanged),
+then the aggregate repository gate and Nix checks.

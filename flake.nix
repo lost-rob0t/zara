@@ -600,7 +600,7 @@
               echo "  zara --desktop                 # Same canonical desktop entry point"
               echo "  zara-server                    # Long-lived Zara service"
               echo "  zara --wake                    # Wake listener"
-              echo "  zara --wake --stt-provider whisper-cpp --device amd  # AMD/Vulkan STT"
+              echo "  zara --wake --device amd  # AMD/Vulkan STT (auto-routed to whisper.cpp)"
               echo "  zara --console                 # Console mode"
               echo "  zara --dictate                 # Dictation mode"
               echo "  zara --agent                   # Direct agent conversation"
