@@ -2,3 +2,41 @@
 - Consumed issue :: #250
 - Branch :: =rage/250-amd-stt-device-routing=
 - RAGE start commit :: =9554387ad83c8a70008fa7dd4a9b4e6ba1bfba92=
+- Protocol :: repository Auto-RAGE (recorded convention).
+- Predecessor :: #249 was consumed and merged in the prior iteration (PR #252, merge =5f8e0fd=); this run started fresh from the updated queue.
+
+* Iteration 1 - 2026-08-31
+** Analyze / Research
+- Completed in =rage/250-amd-stt-device-routing-research.org=.
+- User evidence: =--device rocm= with the default provider was rewritten to =cuda= and silently fell back to CPU; =--device vulkan= raised =ValueError= at argument parsing despite being an advertised choice.
+- Host audit: AMD Radeon RX 5500 XT on RADV Vulkan; no ROCm userspace; installed CTranslate2 4.8.1 rejects =vulkan= (verified in the Nix shell), so the recorded whisper.cpp+Vulkan path (flake comment) is the only AMD execution engine.
+- Environment note :: the aggregate gate initially hit a tmpfs disk-quota error from unrelated =/tmp/opencode= scratch; gate temp was redirected to =/var/tmp/zara-rage= without touching foreign session data.
+
+** Architecture / Design
+- Completed in =rage/250-amd-stt-device-routing-design.org=.
+- AMD tokens ={amd, rocm, hip, vulkan}= normalize to =vulkan= for every provider; =cuda= stays NVIDIA-only; whisper-cpp still rejects =cuda= with actionable guidance.
+- New pure =route_stt_provider_for_amd_device= reroutes local non-whisper-cpp providers to =whisper-cpp= on =vulkan= with a visible stderr notice; remote providers (=openai=, =groq=) are never rerouted.
+- =main()= applies routing before model resolution so routed runs resolve GGML files; =--device= help and =config.py= comments updated; flake dev-shell hint simplified.
+
+** Adversarial review
+- Degradation honesty: a routed run without a Vulkan-capable driver falls into the existing GPU-initialization CPU fallback (whisper.cpp failure messages carry the =vulkan= marker); covered by the rewritten fallback test at the CLI level.
+- Model resolution order: routing precedes =resolve_model_for_provider= and =resolve_local_stt_model=; the routed CLI test asserts GGML resolution and that the faster-whisper resolver is never called.
+- Remote providers keep inert device semantics; the groq CLI test asserts no reroute notice and unchanged provider.
+- The internal dictate =cuda= compat token is unchanged; =t/test_dictation.py= stays green, and the whisper.cpp adapter still translates it to Vulkan.
+
+** Autonomous decision gate
+- ACCEPT. Tests-first realization authorized within the recorded design.
+
+** Realize / TDD
+- RED :: 18 deterministic failures across =t/test_whisper_cpp.py= and =t/test_wake_model_debug.py=: AMD tokens returned =cuda=, =route_stt_provider_for_amd_device= missing, =--device vulkan= raised the user's exact =ValueError=, groq received =cuda=.
+- GREEN :: the =__main__.py= normalization/routing change turned all 18 green; =t/test_dictation.py= unchanged and green (64/64 across the three focused files).
+- Implementation commit :: =cbf2aad=.
+
+** Evaluate
+- Coverage inspection :: every reachable changed branch has a deterministic test: token normalization matrix (4 tokens x 3 providers), =cuda= preservation, unknown-token error, routing matrix (local/whisper-cpp/remote/non-vulkan), routed CLI end-to-end with GGML resolution + notice, vulkan acceptance, remote non-routing, =cuda= CPU fallback. No untested reachable behavior remains.
+- Exact-head aggregate gate at =cbf2aad= :: =TMPDIR=/var/tmp/zara-rage nix develop -c bash scripts/test-all.sh= passed 11/11 phases.
+- Exact-head flake gate at =cbf2aad= :: =nix flake check --show-trace= passed all checks (aarch64-linux evaluation omitted per environment).
+- Exact-head build at =cbf2aad= :: =nix build --no-link --print-out-paths= produced =/nix/store/4p2sjhj3dvw857scanv93gwngkwx0qcq-zarathushtra-full=.
+
+** Outcome
+- In progress. Remaining: push, exact-head GitHub Actions, PR mergeability, merge, issue close.
