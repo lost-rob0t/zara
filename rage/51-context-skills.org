@@ -18,3 +18,10 @@
 
 ** Evidence ledger
 - Start commit recorded before research/design/tests/implementation.
+- Research commit :: deef1560cb454871b431204d9831a58b95044675
+- Design commit :: fcaf01fac44ce0fc1aca061be87f24ce00a187e4
+- Tests-only head :: 9b7b8490c7a2598b3e3c8e76e3523705b2c1a46a
+- Draft PR :: #262
+- TDD red workflow :: CI run 615 / workflow run 33471220878
+- TDD red result :: test job failed in full =scripts/test-all.sh= pytest phase exactly because the new production modules do not yet exist. JUnit reports two collection errors and zero test failures: =ModuleNotFoundError: zara.agent.context= and =ModuleNotFoundError: zara.agent.skills=. Shared-mic jobs were independently green. This is the expected contract-first red.
+- Local-execution limitation :: connector environment cannot clone/run the Nix repository locally; executable evidence is therefore captured from GitHub Actions at exact commit heads. This does not relax the repository gate.
