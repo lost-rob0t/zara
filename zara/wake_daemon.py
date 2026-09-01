@@ -21,6 +21,7 @@ import numpy as np
 
 from zara.runtime import events
 from zara.runtime.bridge import RuntimeEventSubscription
+from zara.runtime.commands import CancelTurn
 from zara.zmq_transport import ZmqZaraClient
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,146 @@ CONNECT_TIMEOUT = 10.0
 
 class WakeDaemonUnavailable(RuntimeError):
     """The Zara daemon is unreachable; wake must fail closed."""
+
+
+class PcmStreamSpeaker:
+    """Client-owned playback sink for daemon audio.output streams.
+
+    One persistent ``sd.OutputStream`` renders raw s16le mono PCM delivered
+    by ``audio.output.*`` events. ``cancel`` drops queued audio immediately
+    so barge-in stops playback within the interruption budget.
+    """
+
+    def __init__(self) -> None:
+        self._stream = None
+        self._queue: "queue.Queue[Optional[np.ndarray]]" = queue.Queue()
+        self._writer: Optional[threading.Thread] = None
+        self._stop = threading.Event()
+        self._drain = threading.Event()
+        self._drained = threading.Event()
+        self._lock = threading.Lock()
+        self._sample_rate: Optional[int] = None
+        self._active_turns: set[str] = set()
+        self.on_playback_started: Optional[Callable] = None
+        self.on_playback_finished: Optional[Callable] = None
+        self.cancelled_turns: list[str] = []
+        self.started_turns: list[str] = []
+        self.finished_turns: list[str] = []
+        self.chunks_played: int = 0
+
+    @property
+    def is_active(self) -> bool:
+        return bool(self._active_turns)
+
+    def _ensure_writer(self) -> None:
+        if self._writer is None or not self._writer.is_alive():
+            self._stop.clear()
+            self._writer = threading.Thread(
+                target=self._write_loop, name="wake-speaker", daemon=True
+            )
+            self._writer.start()
+
+    def _ensure_stream(self, sample_rate: int) -> None:
+        with self._lock:
+            if self._stream is not None and self._sample_rate == sample_rate:
+                return
+            if self._stream is not None:
+                try:
+                    self._stream.close()
+                except Exception:
+                    logger.warning("Speaker stream replace failed", exc_info=True)
+                self._stream = None
+            import sounddevice as sd
+
+            self._stream = sd.OutputStream(
+                samplerate=int(sample_rate),
+                channels=1,
+                dtype="int16",
+            )
+            self._stream.start()
+            self._sample_rate = int(sample_rate)
+
+    def _write_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                block = self._queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if block is None:
+                self._drained.set()
+                continue
+            self._drained.clear()
+            stream = self._stream
+            if stream is None or self._stop.is_set():
+                continue
+            try:
+                stream.write(block)
+            except Exception:
+                logger.warning("Speaker write failed", exc_info=True)
+
+    def start(self, **kwargs) -> None:
+        turn_id = str(kwargs.get("turn_id") or "")
+        self._active_turns.add(turn_id)
+        self.started_turns.append(turn_id)
+        callback = self.on_playback_started
+        if callback is not None:
+            try:
+                callback()
+            except Exception:
+                logger.warning("Playback start callback failed", exc_info=True)
+        fmt = kwargs.get("format") or {}
+        sample_rate = int(fmt.get("sample_rate", 24000))
+        self._ensure_stream(sample_rate)
+        self._ensure_writer()
+
+    def chunk(self, payload=b"", *, turn_id=None, **kwargs) -> None:
+        if turn_id is not None and str(turn_id) not in self._active_turns:
+            return
+        block = np.frombuffer(bytes(payload), dtype="<i2").reshape(-1, 1)
+        self._queue.put(block)
+        self.chunks_played += 1
+
+    def finish(self, *, turn_id=None, **kwargs) -> None:
+        if turn_id is not None:
+            self._active_turns.discard(str(turn_id))
+            self.finished_turns.append(str(turn_id))
+        self._queue.put(None)
+        self._drained.wait(timeout=5.0)
+        callback = self.on_playback_finished
+        if callback is not None:
+            try:
+                callback()
+            except Exception:
+                logger.warning("Playback finish callback failed", exc_info=True)
+
+    def cancel(self, *, turn_id=None, **kwargs) -> None:
+        if turn_id is not None:
+            self.cancelled_turns.append(str(turn_id))
+            self._active_turns.discard(str(turn_id))
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                return
+
+    def cancel_active(self) -> None:
+        for turn_id in list(self._active_turns):
+            self.cancel(turn_id=turn_id)
+
+    def close(self) -> None:
+        self._stop.set()
+        self._queue.put(None)
+        writer = self._writer
+        if writer is not None:
+            writer.join(timeout=2.0)
+            self._writer = None
+        with self._lock:
+            if self._stream is not None:
+                try:
+                    self._stream.close()
+                except Exception:
+                    pass
+                self._stream = None
 
 
 def utterance_frames(audio: np.ndarray) -> list[bytes]:
@@ -81,6 +222,7 @@ class WakeDaemonClient:
         self.on_transcript_final: list[Callable] = []
         self.on_assistant_delta: list[Callable] = []
         self.on_assistant_complete: list[Callable] = []
+        self.on_turn_started: list[Callable] = []
         self.on_turn_completed: list[Callable] = []
         self.on_turn_cancelled: list[Callable] = []
 
@@ -192,6 +334,9 @@ class WakeDaemonClient:
             elif type(event) is events.AssistantComplete:
                 for handler in self.on_assistant_complete:
                     handler(event)
+            elif type(event) is events.TurnStarted:
+                for handler in self.on_turn_started:
+                    handler(event)
             elif type(event) is events.AgentCompleted:
                 for handler in self.on_turn_completed:
                     handler(event)
@@ -202,6 +347,15 @@ class WakeDaemonClient:
             logger.warning(
                 "Wake event handler failed for %s", type(event).__name__, exc_info=True
             )
+
+    def submit_cancel(self, turn_id: str) -> None:
+        """Send canonical turn cancellation for a daemon-side turn."""
+        if not turn_id:
+            return
+        try:
+            self.client.submit(CancelTurn(turn_id=turn_id))
+        except Exception:
+            logger.warning("Failed to submit turn cancellation", exc_info=True)
 
     async def stream_utterance(self, audio: np.ndarray, *, trace_id: str) -> str:
         """Stream one collected utterance to the daemon and commit it."""

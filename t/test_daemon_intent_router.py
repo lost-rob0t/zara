@@ -257,3 +257,96 @@ async def test_clarification_sessions_are_scoped_per_conversation():
 
     assert router.clarifications.session_for("local", "conv-1") is not None
     assert router.clarifications.session_for("local", "conv-2") is None
+
+
+@pytest.mark.asyncio
+async def test_second_concurrent_pending_reports_capacity():
+    class DoublePendingProlog(FakeProlog):
+        def resolve_intent(self, text: str, state: str = "passive"):
+            self.resolve_calls.append(text)
+            return IntentResult("pending", "open", ["app"])
+
+    router = build_router(prolog=DoublePendingProlog())
+
+    first = await router.route("open")
+    assert first.response == "Which app?"
+
+    second = await router.route("open")
+    assert second.action == "respond"
+    assert second.response  # capacity message, never empty
+
+
+@pytest.mark.asyncio
+async def test_invalid_answer_retries_same_question():
+    router = build_router()
+
+    await router.route("open")
+    decision = await router.route("the purple spotted bananas")
+
+    assert decision.action == "respond"
+    assert decision.response == "Which app?"
+
+
+@pytest.mark.asyncio
+async def test_clarification_execution_failure_reports_and_closes():
+    class FailingExecuteProlog(FakeProlog):
+        def execute_intent(self, name: str, args) -> bool:
+            return False
+
+    prolog = FailingExecuteProlog()
+    prolog.results["open"] = IntentResult("pending", "open", ["app"])
+    router = build_router(prolog=prolog)
+
+    await router.route("open")
+    await router.route("open firefox")
+
+    session = router.clarifications.session_for("local", "conv-1")
+    assert session is None or session.state == "closed"
+
+
+@pytest.mark.asyncio
+async def test_invalid_answer_retries_same_question():
+    router = build_router()
+
+    await router.route("open")
+    retry = await router.route("the purple spotted bananas")
+
+    assert retry.action == "respond"
+    assert retry.response == "Which app?"
+    session = router.clarifications.session_for("local", "conv-1")
+    assert session is not None and session.state == "eliciting"
+
+    completed = await router.route("firefox")
+
+    assert completed.response == "Executed: open ['firefox']"
+
+
+@pytest.mark.asyncio
+async def test_execution_failure_reports_clarification_failure():
+    prolog = FakeProlog()
+    prolog.execute_ok = False
+    router = build_router(prolog=prolog)
+
+    await router.route("open")
+    decision = await router.route("firefox")
+
+    assert decision.action == "respond"
+    assert decision.response == "I couldn't complete that."
+    session = router.clarifications.session_for("local", "conv-1")
+    assert session is None or session.state == "closed"
+
+
+@pytest.mark.asyncio
+async def test_clarification_capacity_reports_message():
+    from zara.runtime.clarification import ClarificationCoordinator
+
+    router = build_router(
+        clarifications=ClarificationCoordinator(max_sessions=1)
+    )
+
+    await router.route("open")
+    capacity = await router.route("open", conversation_id="conv-2")
+
+    assert capacity.action == "respond"
+    assert capacity.response
+    assert capacity.response != "Which app?"

@@ -38,6 +38,23 @@ class FakeVADDetector:
         return probability
 
 
+class FakeDaemon:
+    def __init__(self) -> None:
+        self.stream_utterance = AsyncMock(return_value="stream-1")
+        self.submit_cancel = MagicMock()
+
+    def ensure_connected(self) -> None:
+        return None
+
+
+class FakeSpeaker:
+    def __init__(self) -> None:
+        self._active_turns = set()
+        self.cancel_active = MagicMock()
+        self.cancel = MagicMock()
+        self.finished = MagicMock()
+
+
 def build_listener(queue_size=8, sample_rate=16000):
     listener = WakeWordListener.__new__(WakeWordListener)
     listener.state = "PASSIVE"
@@ -74,6 +91,16 @@ def build_listener(queue_size=8, sample_rate=16000):
     listener.tts_playback_active = False
     listener.tts_lock = asyncio.Lock()
     listener.stop_on_interrupt = False
+    listener.speaker = FakeSpeaker()
+    listener.daemon = FakeDaemon()
+    listener._pending_wake_audio = None
+    listener._conversation_last_activity = 0.0
+    listener._stop_phrase_seen = threading.Event()
+    listener._turn_finished = threading.Event()
+    listener._active_daemon_turn_id = None
+    listener._active_stream_id = None
+    listener.response_timeout = 30.0
+    listener.conversation_timeout = 60.0
     return listener
 
 
@@ -112,9 +139,6 @@ def test_no_speech_after_wake_returns_to_passive():
         listener = build_listener()
         listener.state = "ACTIVE"
         listener._clock = FakeClock(0.0, 6.0)
-        listener.prolog = MagicMock()
-        listener.prolog.dictation_active.return_value = False
-        listener.agent_manager = None
         listener.in_conversation_mode = MagicMock(return_value=False)
 
         await listener.active_mode_async()
@@ -129,20 +153,17 @@ def test_conversation_timeout_is_checked_after_collection_wait():
     async def run():
         listener = build_listener()
         listener.state = "ACTIVE"
-        listener.prolog = MagicMock()
-        listener.prolog.dictation_active.return_value = False
-        listener.agent_manager = MagicMock()
-        listener.agent_manager.should_exit_conversation.side_effect = [False, True]
-        listener.in_conversation_mode = MagicMock(return_value=True)
-        listener._conversation_timeout_remaining = MagicMock(return_value=12.0)
+        listener._conversation_last_activity = 1.0
+        listener.conversation_timeout = 12.0
+        listener._clock = FakeClock(0.0, 2.0, 14.0)
         listener.collect_audio_until_silence = AsyncMock(return_value=None)
         listener.collection_status = "first_speech_timeout"
-        listener._end_timed_out_conversation = AsyncMock()
 
         await listener.active_mode_async()
 
-        listener.collect_audio_until_silence.assert_awaited_once_with(12.0)
-        listener._end_timed_out_conversation.assert_awaited_once_with()
+        listener.collect_audio_until_silence.assert_awaited_once()
+        assert listener.collect_audio_until_silence.await_args.args[0] == 11.0
+        assert listener.state == "PASSIVE"
 
     asyncio.run(run())
 
@@ -291,9 +312,8 @@ def test_wake_command_preserves_same_utterance_request():
 def test_passive_wake_queues_same_utterance_command():
     async def run():
         listener = build_listener()
-        listener.prolog = MagicMock()
-        listener.prolog.dictation_active.return_value = False
-        listener.collect_audio_until_silence = AsyncMock(return_value=frame(1.0))
+        utterance = frame(1.0)
+        listener.collect_audio_until_silence = AsyncMock(return_value=utterance)
         listener.transcribe_async = AsyncMock(
             return_value="Hey Zara, what time is it?"
         )
@@ -305,7 +325,7 @@ def test_passive_wake_queues_same_utterance_command():
             await listener.passive_mode_async()
 
         assert listener.state == "ACTIVE"
-        assert listener._pending_wake_command == "what time is it"
+        assert listener._pending_wake_audio is utterance
         listener.transcribe_async.assert_awaited_once()
 
     asyncio.run(run())
@@ -315,28 +335,21 @@ def test_active_mode_routes_pending_wake_command_without_listening_again():
     async def run():
         listener = build_listener()
         listener.state = "ACTIVE"
-        listener._pending_wake_command = "what time is it"
-        listener.prolog = MagicMock()
-        listener.prolog.dictation_active.return_value = False
-        listener.prolog.is_conversation_stop.return_value = False
-        listener.agent_manager = None
-        listener.in_conversation_mode = MagicMock(return_value=False)
+        pending_audio = frame(1.0)
+        listener._pending_wake_audio = pending_audio
         listener.collect_audio_until_silence = AsyncMock()
-        listener.query_with_fallback_async = AsyncMock(
-            return_value=(False, "It is noon")
-        )
         listener._monitor_speech_during_llm = AsyncMock(return_value=False)
+        listener._wait_for_turn_completion = AsyncMock(return_value=True)
         listener._play_acknowledgement = MagicMock()
         listener._stop_tts = AsyncMock()
-        listener.send_response_async = AsyncMock()
 
         await listener.active_mode_async()
 
         listener.collect_audio_until_silence.assert_not_awaited()
-        listener.query_with_fallback_async.assert_awaited_once_with(
-            "what time is it"
-        )
-        listener.send_response_async.assert_awaited_once()
+        stream_call = listener.daemon.stream_utterance.await_args
+        assert stream_call.args[0] is pending_audio
+        assert stream_call.kwargs["trace_id"]
+        assert listener.state == "ACTIVE"
 
     asyncio.run(run())
 
