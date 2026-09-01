@@ -234,6 +234,7 @@ async def test_prolog_rlm_backend_uses_existing_tool_approval_controller() -> No
         approval_controller=controller,
         memory_manager=FakeMemory(),
     )
+    backend.bind_event_publisher(published.append)
 
     await backend.start()
     task = asyncio.create_task(backend.submit_turn("do it", turn_id="turn-4"))
