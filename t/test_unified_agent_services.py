@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from zara.agent import AgentManager
@@ -58,7 +56,11 @@ def test_agent_manager_ensures_default_prolog_engine(monkeypatch, tmp_path):
     import zara.prolog_engine as prolog_module
 
     monkeypatch.setattr(console_module, "find_main_pl", lambda: main_file)
-    monkeypatch.setattr(prolog_module, "PrologEngine", lambda path: engine if path == main_file else None)
+    monkeypatch.setattr(
+        prolog_module,
+        "PrologEngine",
+        lambda path: engine if path == main_file else None,
+    )
 
     assert manager.ensure_prolog_engine() is engine
     assert manager.prolog_engine is engine
@@ -85,6 +87,26 @@ def test_agent_manager_skips_default_prolog_when_tool_disabled(monkeypatch):
 
     assert manager.ensure_prolog_engine() is None
     assert manager.prolog_engine is None
+
+
+def test_runtime_host_default_backend_receives_same_config(monkeypatch):
+    import zara.runtime.host as host_module
+
+    config = object()
+    seen = []
+
+    class Backend:
+        pass
+
+    def backend_factory(*, config=None):
+        seen.append(config)
+        return Backend()
+
+    monkeypatch.setattr(host_module, "AgentRuntimeBackend", backend_factory)
+    host = host_module.RuntimeHost(config=config)
+
+    assert isinstance(host._backend_factory(), Backend)
+    assert seen == [config]
 
 
 @pytest.mark.asyncio
