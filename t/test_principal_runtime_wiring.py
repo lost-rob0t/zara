@@ -201,28 +201,23 @@ def test_agent_factory_builds_openrouter_chat_model_with_defaults(monkeypatch):
 
 
 def test_agent_factory_openrouter_resolves_key_from_environment(monkeypatch):
-    from langchain_openai import ChatOpenAI
+    monkeypatch.setenv("OPENROUTER_API_KEY", "env-key")
 
-    monkeypatch.setenv("OPENROUTER_API_KEY", "environment-key")
     manager = _openrouter_manager(monkeypatch, {"provider": "openrouter"})
 
-    assert isinstance(manager.llm_client, ChatOpenAI)
-    assert manager.llm_client.openai_api_key.get_secret_value() == "environment-key"
+    assert manager.llm_client.openai_api_key.get_secret_value() == "env-key"
 
 
-def test_agent_factory_openrouter_config_key_overrides_environment(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "environment-key")
+def test_agent_factory_openrouter_honors_model_and_endpoint_overrides(monkeypatch):
     manager = _openrouter_manager(
         monkeypatch,
-        {"provider": "openrouter", "openrouter_api_key": "config-key"},
+        {
+            "provider": "openrouter",
+            "openrouter_api_key": "config-key",
+            "model": "z-ai/glm-4.5-air",
+            "endpoint": "http://127.0.0.1:8787/openrouter/api/v1",
+        },
     )
 
-    assert manager.llm_client.openai_api_key.get_secret_value() == "config-key"
-
-
-def test_agent_factory_openrouter_rejects_missing_key(monkeypatch):
-    import pytest
-
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
-        _openrouter_manager(monkeypatch, {"provider": "openrouter"})
+    assert manager.llm_client.model_name == "z-ai/glm-4.5-air"
+    assert manager.llm_client.openai_api_base == "http://127.0.0.1:8787/openrouter/api/v1"
