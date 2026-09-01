@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master
+      - fork/prolog-rlm-agentic-runtime
   pull_request:
 
 permissions:
