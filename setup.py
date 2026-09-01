@@ -122,7 +122,7 @@ setup(
             "zara=zara.__main__:main",
             "zara-server=zara.server:main",
             "zara-wake=zara.wake:main",
-            "zara-console=zara.terminal:tui_main",
+            "zara-console=zara.terminal:console_main",
             "zara-dictate=zara.dictate:main",
             "zara-agent=zara.agent_cli:main",
             "zara-pets=zara.pets.cli:main",
