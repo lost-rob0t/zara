@@ -64,3 +64,13 @@
 - Incident: one transient pytest segfault traced to a leaked TTS bridge
   thread; fixed by closing the bridge in =ZaraServer.stop()= (main path) and
   verified by two consecutive clean full-suite runs.
+
+* Iteration 1 — outcome
+- PR :: #263
+- CI :: GitHub Actions "test" pass at exact head =ddfad5f= (run 33475904517),
+  plus android-gate and shared-mic Arch/Ubuntu jobs green.
+- Merge SHA :: =ce3271b= (merge of #263 into master)
+- Consumed issue :: #244 -> close with merge reference; parent epic #127 and
+  release gate #134 unchanged (#134 still gated on #29/#30/#31).
+- Post-merge: dotfiles flake input bump to the merged master rev and zara
+  service restarts follow this entry.

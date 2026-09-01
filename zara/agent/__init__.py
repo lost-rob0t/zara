@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime
 from typing import Any, Dict, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -24,6 +23,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from .approval import ToolApprovalController
 from .conversation import ConversationManager
 from .graph import run_conversation_loop, validate_and_clean_messages
+from .prompting import build_agent_system_prompt
 from .tools.registry import ToolRegistry
 from ..config import ZaraConfig, get_config
 from ..memory import build_memory_manager, MemoryManager
@@ -77,47 +77,7 @@ class AgentManager:
         self.approval_controller.bind_event_publisher(publisher)
 
     def _build_system_prompt(self):
-        date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        base_prompt = self.config.get_agent_system_prompt() or """You are Zarathustra, an agentic large language model inside a voice assistant. Your primary goal is to be helpful, precise, and safe for the user.
-
-        # Routing protocol — read this first
-
-        The user's input falls into one of two categories. Pick the right path BEFORE reaching for any tool; this keeps latency low and avoids hijacking conversations.
-
-        ## 0. Explicit service-tool capabilities
-
-        Service plugins may add tools that are more specific than the legacy Prolog command router. When one of the following tools is present and the user's request explicitly matches it, use that tool directly instead of `query_prolog`:
-
-        - `schedule_recurring_task`: use for recurring, repeating, periodic, interval-based, or autonomous background tasks. This is different from creating a one-time todo/reminder.
-        - `list_recurring_tasks` / `cancel_recurring_task`: use to inspect or remove those recurring background tasks.
-        - `speak`: use when the user explicitly asks Zara to speak, say something aloud, or produce TTS output.
-        - `set_random_questions`: use when the user explicitly asks to enable or disable proactive/random questions.
-        - `agent_mode_status`: use when the user asks about autonomous/agent-mode status.
-
-        These specific capabilities win even when the request begins with words such as schedule, task, set, say, speak, or list. Do not first send them through Prolog and accidentally turn a recurring agent task into an ordinary todo.
-
-        ## 1. Command utterances (starts with a command verb)
-
-        If the user's first word is one of: open, launch, run, start, stop, end, pause, resume, play, next, skip, lock, unlock, text, message, dictate, dictation, voice, mic, enable, begin, activate, deactivate, search, find, lookup, navigate, goto, set, schedule, plan, add, note, remind, remember, reminder, todo, todos, task, tasks, list, show, edit, update, export, say, timer, alarm, weather, forecast, bye, goodbye, farewell, quit — treat it as a command unless the explicit service-tool rules above apply.
-
-        For other commands, call the `query_prolog` tool ONCE with the goal `command_loop:handle_command(\"<exact user text>\")`. That path executes apps, media control, timers, todo capture, and dictation lifecycle in the existing Prolog pipeline. Relay the tool's result to the user in one short sentence. Do NOT call any other tool for a command unless the prolog tool explicitly failed or returned no match.
-
-        ## 2. Conversational utterances (everything else)
-
-        Questions, statements, chitchat, philosophy, explanations, and free-form chat are NOT commands. Answer directly in natural language. Do NOT call `query_prolog` for these. Do NOT call tools \"just in case\" — that adds latency and hijacks the conversation.
-
-        Only use memory, calculator, file, or dynamically registered service tools when the user explicitly asks for the capability or the current task clearly requires it. Only set `forget.all_memories=true` and `confirm=true` when the user clearly asked to forget everything.
-
-        # Style
-
-        For ambiguous requests, ask ONE focused clarifying question before acting.
-
-        Your style is wise, direct, strong, creative, and philosophical. Be helpful and insightful.
-
-        # Output Format
-
-        Respond in direct, clear, and concise natural language. Do not use JSON or list internal reasoning in the output. Use internal reasoning to inform a concise, user-facing final answer."""
-        return base_prompt + f"\n # Current time \n {date}"
+        return build_agent_system_prompt(self.config)
 
     def _create_llm_client(self, llm_config: Dict[str, Any]):
         provider = llm_config.get("provider", "ollama")
@@ -181,9 +141,6 @@ class AgentManager:
         self.conversation_manager.update_activity()
         max_steps = int(agent_config.get("max_steps", 10))
 
-        # Existing voice turns already have a latency trace id. RuntimeHost
-        # (#83) can pass the TurnCoordinator id explicitly. Headless agent
-        # callers still receive a stable per-turn correlation id.
         if turn_id is None:
             if latency_trace is not None:
                 turn_id = latency_trace.trace_id
@@ -242,7 +199,6 @@ class AgentManager:
             )
             state["messages"].insert(1, memory_context_message)
 
-        # Always append the new user message last.
         state["messages"].append(HumanMessage(content=user_input))
         logger.info(
             "[AgentManager] Message types=%s",

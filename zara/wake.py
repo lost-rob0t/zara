@@ -25,6 +25,7 @@ import faster_whisper
 from concurrent.futures import ThreadPoolExecutor
 
 from .acknowledgement import AcknowledgementConfig, AcknowledgementPlayer
+from .tts import TTSEngine
 from .streaming_stt import (
     SpeechEnded,
     SpeechStarted,
@@ -274,10 +275,10 @@ class WakeWordListener:
 
         phrases_raw = ack_cfg.get("phrases", []) or []
         phrases = tuple(dict.fromkeys(str(p) for p in phrases_raw if p))
-        provider = ack_cfg.get("provider", self.tts_config.get("provider", "edge"))
+        tts_section = self.config.get_section("tts") or {}
+        provider = ack_cfg.get("provider", tts_section.get("provider", "edge"))
         voice = ack_cfg.get("voice", "")
         if not voice:
-            tts_section = self.config.get_section("tts")
             voice = (
                 tts_section.get("elevenlabs_voice_id")
                 if provider == "11labs"
@@ -298,7 +299,7 @@ class WakeWordListener:
         if provider not in ("edge",):
             try:
                 config_dict = (
-                    self.config._config if hasattr(self.config, "_config") else {}
+                    self.config._config if hasattr(self.config, "_config") else {"tts": tts_section}
                 )
                 tts_engine_for_ack = TTSEngine(provider=provider, config=config_dict)
             except Exception as error:
