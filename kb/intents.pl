@@ -60,6 +60,7 @@ verb_intent(start, open, 1).
 verb_intent(run, open, 1).
 verb_intent(lock, lock, 0).
 verb_intent(unlock, unlock, 0).
+verb_intent(screenshot, screenshot, 0).
 verb_intent(command, open, 0).
 
 % Dictation

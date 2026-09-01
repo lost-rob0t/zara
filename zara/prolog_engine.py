@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
+from zara.runtime.frames import FrameStatus, IntentFrame
+
 try:
     from pyswip import Prolog
 except ImportError as error:
@@ -74,6 +76,179 @@ def adapt_intent_result(result: Dict[str, Any]) -> IntentResult:
     if functor == "pending":
         return IntentResult("pending", str(inner), args)
     return IntentResult("prolog", str(value), args)
+
+
+def _functor_name(value: Any) -> Optional[str]:
+    name = getattr(value, "name", None)
+    if isinstance(name, str):
+        return name
+    return None
+
+
+def _functor_args(value: Any) -> List[Any]:
+    args = getattr(value, "args", None)
+    if args is None:
+        return []
+    return list(args)
+
+
+def _decode_status(row: Dict[str, Any]) -> tuple[Any, tuple[str, ...], tuple[str, ...], Optional[str], Optional[str]]:
+    from zara.runtime.frames import FrameStatus
+
+    kind = str(row["StatusKind"])
+    missing = tuple(str(item) for item in (row.get("Missing") or []))
+    alternatives = tuple(str(item) for item in (row.get("Alternatives") or []))
+    invalid_slot = row.get("InvalidSlot")
+    invalid_reason = row.get("InvalidReason")
+    invalid_slot = None if invalid_slot in (None, "none") else str(invalid_slot)
+    invalid_reason = None if invalid_reason in (None, "none") else str(invalid_reason)
+    return (
+        FrameStatus(kind),
+        missing,
+        alternatives,
+        invalid_slot,
+        invalid_reason,
+    )
+
+
+def _decode_slot_value(row: Dict[str, Any]) -> Any:
+    from zara.runtime.frames import (
+        BoolValue,
+        DateTimeValue,
+        DurationValue,
+        NumberValue,
+        RefValue,
+        TextValue,
+    )
+
+    kind = str(row["ValueKind"])
+    first = row["A1"]
+    second = row["A2"]
+    if kind == "text":
+        return TextValue(text=str(first))
+    if kind == "duration":
+        return DurationValue(seconds=int(first))
+    if kind == "number":
+        return NumberValue(value=first)
+    if kind == "boolean":
+        return BoolValue(value=bool(first))
+    if kind == "ref":
+        return RefValue(kind=str(first), id=str(second))
+    if kind == "datetime":
+        year, month, day, hour, minute, second = (int(item) for item in first)
+        return DateTimeValue(year, month, day, hour, minute, second)
+    raise ValueError(f"Unsupported slot value kind: {kind!r}")
+
+
+def _grouped_frames(
+    head_rows: List[Dict[str, Any]],
+    slot_rows: List[Dict[str, Any]],
+) -> List[IntentFrame]:
+    from zara.runtime.frames import FilledSlot, SlotOrigin
+
+    frames: List[IntentFrame] = []
+    by_index: Dict[int, Dict[str, Any]] = {}
+    for row in head_rows:
+        index = int(row["Idx"])
+        status, missing, alternatives, invalid_slot, invalid_reason = _decode_status(
+            row
+        )
+        by_index[index] = {
+            "intent_ns": str(row["NS"]),
+            "intent_name": str(row["Name"]),
+            "status": status,
+            "missing": missing,
+            "alternatives": alternatives,
+            "invalid_slot": invalid_slot,
+            "invalid_reason": invalid_reason,
+            "slots": [],
+        }
+    for row in slot_rows:
+        index = int(row["Idx"])
+        entry = by_index.get(index)
+        if entry is None:
+            raise ValueError(f"Slot row references unknown frame index: {row!r}")
+        entry["slots"].append(
+            (
+                int(row["SlotIdx"]),
+                FilledSlot(
+                    name=str(row["SlotName"]),
+                    value=_decode_slot_value(row),
+                    origin=SlotOrigin(str(row["Origin"])),
+                ),
+            )
+        )
+    for index in sorted(by_index):
+        entry = by_index[index]
+        slots = tuple(
+            slot for _, slot in sorted(entry["slots"], key=lambda pair: pair[0])
+        )
+        frames.append(
+            IntentFrame(
+                intent_ns=entry["intent_ns"],
+                intent_name=entry["intent_name"],
+                slots=slots,
+                status=entry["status"],
+                missing=entry["missing"],
+                alternatives=entry["alternatives"],
+                invalid_slot=entry["invalid_slot"],
+                invalid_reason=entry["invalid_reason"],
+            )
+        )
+    return frames
+
+
+def encode_frame_term(frame: Any) -> str:
+    """Encode a Python IntentFrame mirror as a portable frame/3 term string."""
+    slots = []
+    for slot in frame.slots:
+        value = slot.value
+        value_type = type(value).__name__
+        if value_type == "TextValue":
+            value_term = f"text({_prolog_atom(value.text)})"
+        elif value_type == "DurationValue":
+            value_term = f"duration({int(value.seconds)})"
+        elif value_type == "NumberValue":
+            value_term = f"number({_prolog_term(value.value)})"
+        elif value_type == "BoolValue":
+            value_term = f"boolean({'true' if value.value else 'false'})"
+        elif value_type == "RefValue":
+            value_term = (
+                f"ref(kind({_prolog_atom(value.kind)}), "
+                f"id({_prolog_atom(value.id)}))"
+            )
+        elif value_type == "DateTimeValue":
+            value_term = (
+                f"datetime({int(value.year)}, {int(value.month)}, "
+                f"{int(value.day)}, {int(value.hour)}, "
+                f"{int(value.minute)}, {int(value.second)})"
+            )
+        else:
+            raise ValueError(f"Unsupported slot value type: {value_type}")
+        slots.append(
+            f"slot(name({_prolog_atom(slot.name)}), value({value_term}), "
+            f"origin({_prolog_atom(slot.origin.value)}))"
+        )
+    status = frame.status
+    status_term = _prolog_atom(status.value)
+    if status is FrameStatus.MISSING:
+        status_term = "missing([{}])".format(
+            ", ".join(_prolog_atom(name) for name in frame.missing)
+        )
+    elif status is FrameStatus.AMBIGUOUS:
+        status_term = "ambiguous([{}])".format(
+            ", ".join(_prolog_atom(alt) for alt in frame.alternatives)
+        )
+    elif status is FrameStatus.INVALID:
+        status_term = (
+            f"invalid(value({_prolog_atom(frame.invalid_slot)}), "
+            f"{_prolog_atom(frame.invalid_reason)})"
+        )
+    return (
+        f"frame(intent(ns({_prolog_atom(frame.intent_ns)}), "
+        f"name({_prolog_atom(frame.intent_name)})), "
+        f"[{', '.join(slots)}], {status_term})"
+    )
 
 
 def _prolog_string(value: str) -> str:
@@ -282,6 +457,104 @@ class PrologEngine:
         self.logger.info("Intent result: %r", result)
         return adapt_intent_result(result) if result else None
 
+    def resolve_frames(
+        self,
+        text: str,
+        state: str = "passive",
+        context_frame: Optional[Any] = None,
+        missing: tuple[str, ...] = (),
+    ) -> List[IntentFrame]:
+        """Resolve an utterance to IntentFrame values (contract v1).
+
+        ``context_frame`` plus ``missing`` encode an open clarification
+        session frame as ``partial_frame(Frame, Missing)`` for follow-up
+        resolution. The resolver is pure; frames carry no envelope metadata.
+        """
+        if state not in {"passive", "conversation", "dictation"}:
+            raise ValueError(f"Unsupported intent state: {state}")
+        if context_frame is not None:
+            context_term = (
+                "partial_frame("
+                f"{encode_frame_term(context_frame)}, "
+                f"[{', '.join(_prolog_atom(str(name)) for name in missing)}]"
+                ")"
+            )
+        else:
+            context_term = "[]"
+        goal = (
+            f"intent_frames:resolve_frames({_prolog_string(text)}, {state}, "
+            f"{context_term}, Frames)"
+        )
+        self.logger.info("Resolving frames in state %s for input %r", state, text)
+        return self.frames_from_goal(goal)
+
+    def frames_from_goal(self, goal: str) -> List[IntentFrame]:
+        """Project the ``Frames`` binding of ``goal`` into IntentFrame values.
+
+        Nested compounds stringify under pyswip marshalling, so frames are
+        decoded through the flat ``frame_head_row``/``frame_slot_row``
+        projections (atoms, integers and lists of atoms only).
+        """
+        head_rows = self.query_all(
+            f"{goal}, "
+            "intent_frames:frame_head_row(Frames, Idx, NS, Name, StatusKind, "
+            "Missing, Alternatives, InvalidSlot, InvalidReason)",
+            max_solutions=64,
+        )
+        if not head_rows:
+            return []
+        slot_rows = self.query_all(
+            f"{goal}, "
+            "intent_frames:frame_slot_row(Frames, Idx, SlotIdx, SlotName, "
+            "Origin, ValueKind, A1, A2)",
+            max_solutions=256,
+        )
+        return _grouped_frames(head_rows, slot_rows)
+
+    def plan_for_frame(self, frame: Any, environment: Any) -> Any:
+        """Derive the typed ExecutionPlan for a complete frame (issue #157).
+
+        The selection is pure Prolog; environments are encoded from the
+        typed PlanEnvironment mirror. Non-complete frames are refused here:
+        open frames belong to the clarification session, not the plan layer.
+        A ``None`` result means Prolog produced no plan structure (bounds
+        violation); typed unavailability otherwise rides the plan status.
+        """
+        from zara.runtime.frames import FrameStatus
+        from zara.runtime.plans import PlanEnvironment
+
+        if not isinstance(environment, PlanEnvironment):
+            raise TypeError("plan_for_frame requires a PlanEnvironment")
+        if frame.status is not FrameStatus.COMPLETE:
+            raise ValueError(
+                "plan_for_frame requires a complete frame; "
+                "clarification owns open frames"
+            )
+        goal = (
+            f"capability_plans:plan_for_frame({encode_frame_term(frame)}, "
+            f"{encode_environment_term(environment)}, Plan), "
+            "Plans = [Plan], "
+            "capability_plans:plan_head_row(Plans, Idx, NS, Name, StatusKind, "
+            "Reason, ProviderId, Location, DeviceRef, SideEffect, "
+            "RequiresAuth, Evidence, Alternatives)"
+        )
+        self.logger.info("Deriving plan for frame %s/%s", frame.intent_ns, frame.intent_name)
+        head_rows = self.query_all(goal, max_solutions=2)
+        if not head_rows:
+            return None
+        if len(head_rows) > 1:
+            raise ValueError("plan_for_frame produced multiple plans for one frame")
+        arg_rows = self.query_all(
+            "capability_plans:plan_for_frame("
+            f"{encode_frame_term(frame)}, {encode_environment_term(environment)}, Plan), "
+            "Plans = [Plan], "
+            "capability_plans:plan_arg_row(Plans, Idx, ArgIdx, ArgName, "
+            "ValueKind, A1, A2)",
+            max_solutions=64,
+        )
+        plans = _grouped_plans(head_rows, arg_rows)
+        return plans[0]
+
     def execute_intent(self, intent: str, args: List[Any]) -> bool:
         """Execute a resolved intent and report logical success."""
         goal = f"commands:execute({_prolog_atom(intent)}, {_prolog_term(args)})"
@@ -317,6 +590,123 @@ class PrologEngine:
     def reload_config(self) -> bool:
         """Reload user configuration and report logical success."""
         return self.query_once("config_loader:reload_user_config") is not None
+
+
+def encode_environment_term(environment: Any) -> str:
+    """Encode a PlanEnvironment mirror as a portable environment/6 term string."""
+    from zara.runtime.plans import PreferDevice, PreferLocation
+
+    auths = ", ".join(_prolog_atom(str(auth)) for auth in environment.auths)
+    devices = ", ".join(
+        "device({}, {}, [{}])".format(
+            _prolog_atom(str(device.device_id)),
+            _prolog_atom(str(device.owner)),
+            ", ".join(_prolog_atom(str(cap)) for cap in device.capabilities),
+        )
+        for device in environment.devices
+    )
+    providers = ", ".join(
+        _prolog_atom(str(provider)) for provider in environment.providers
+    )
+    aliases = ", ".join(
+        "alias({}, {})".format(
+            _prolog_atom(str(provider)), _prolog_atom(str(alias))
+        )
+        for provider, alias in environment.aliases
+    )
+    policies = ", ".join(
+        (
+            "prefer(location({}))".format(_prolog_atom(policy.location.value))
+            if isinstance(policy, PreferLocation)
+            else "prefer(device({}))".format(_prolog_atom(policy.device_id))
+        )
+        for policy in environment.policies
+    )
+    return (
+        "environment("
+        f"principal({_prolog_atom(str(environment.principal))}), "
+        f"auths([{auths}]), "
+        f"devices([{devices}]), "
+        f"providers([{providers}]), "
+        f"aliases([{aliases}]), "
+        f"policies([{policies}]))"
+    )
+
+
+def _sentinel(value: Any) -> Optional[str]:
+    return None if value in (None, "none") else str(value)
+
+
+def _grouped_plans(
+    head_rows: List[Dict[str, Any]],
+    arg_rows: List[Dict[str, Any]],
+) -> List[Any]:
+    from zara.runtime.plans import (
+        ExecutionPlan,
+        PlanArgument,
+        PlanLocation,
+        PlanSideEffect,
+        PlanStatus,
+    )
+
+    plans: List[Any] = []
+    by_index: Dict[int, Dict[str, Any]] = {}
+    for row in head_rows:
+        index = int(row["Idx"])
+        location = _sentinel(row.get("Location"))
+        by_index[index] = {
+            "intent_ns": str(row["NS"]),
+            "intent_name": str(row["Name"]),
+            "status": PlanStatus(str(row["StatusKind"])),
+            "reason": _sentinel(row.get("Reason")),
+            "provider": _sentinel(row.get("ProviderId")),
+            "location": PlanLocation(location) if location is not None else None,
+            "device": _sentinel(row.get("DeviceRef")),
+            "side_effect": PlanSideEffect(str(row["SideEffect"])),
+            "requires_auth": _sentinel(row.get("RequiresAuth")),
+            "evidence": tuple(str(item) for item in (row.get("Evidence") or [])),
+            "alternatives": tuple(
+                str(item) for item in (row.get("Alternatives") or [])
+            ),
+            "arguments": [],
+        }
+    for row in arg_rows:
+        index = int(row["Idx"])
+        entry = by_index.get(index)
+        if entry is None:
+            raise ValueError(f"Plan argument row references unknown index: {row!r}")
+        entry["arguments"].append(
+            (
+                int(row["ArgIdx"]),
+                PlanArgument(
+                    name=str(row["ArgName"]),
+                    value=_decode_slot_value(row),
+                ),
+            )
+        )
+    for index in sorted(by_index):
+        entry = by_index[index]
+        arguments = tuple(
+            argument
+            for _, argument in sorted(entry["arguments"], key=lambda pair: pair[0])
+        )
+        plans.append(
+            ExecutionPlan(
+                intent_ns=entry["intent_ns"],
+                intent_name=entry["intent_name"],
+                provider=entry["provider"],
+                location=entry["location"],
+                device=entry["device"],
+                side_effect=entry["side_effect"],
+                requires_auth=entry["requires_auth"],
+                status=entry["status"],
+                reason=entry["reason"],
+                alternatives=entry["alternatives"],
+                arguments=arguments,
+                evidence=entry["evidence"],
+            )
+        )
+    return plans
 
 
 def test_engine() -> None:

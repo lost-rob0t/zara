@@ -139,3 +139,58 @@ def test_agent_manager_binds_live_conversation_context_to_explicit_principal(mon
     assert alice_manager.conversation_manager.principal is alice
     assert bob_manager.conversation_manager.principal is bob
     assert alice_manager.conversation_manager is not bob_manager.conversation_manager
+
+
+class OpenRouterRuntimeConfig(MinimalRuntimeConfig):
+    def __init__(self, llm_config):
+        self._llm_config = llm_config
+
+    def get_llm_config(self):
+        return dict(self._llm_config)
+
+
+def _openrouter_manager(monkeypatch, llm_config):
+    from zara.agent import AgentManager
+    from zara.agent.tools.registry import ToolRegistry
+
+    monkeypatch.setattr(ToolRegistry, "load_builtin_tools", lambda self, memory_manager=None: None)
+    monkeypatch.setattr(ToolRegistry, "load_user_tools", lambda self, plugin_dir: None)
+
+    return AgentManager(config=OpenRouterRuntimeConfig(llm_config))
+
+
+def test_agent_factory_builds_openrouter_chat_model_with_defaults(monkeypatch):
+    from langchain_openai import ChatOpenAI
+
+    manager = _openrouter_manager(
+        monkeypatch,
+        {"provider": "openrouter", "openrouter_api_key": "config-key"},
+    )
+
+    assert isinstance(manager.llm_client, ChatOpenAI)
+    assert manager.llm_client.model_name == "openrouter/free"
+    assert manager.llm_client.openai_api_base == "https://openrouter.ai/api/v1"
+    assert manager.llm_client.openai_api_key.get_secret_value() == "config-key"
+
+
+def test_agent_factory_openrouter_resolves_key_from_environment(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "env-key")
+
+    manager = _openrouter_manager(monkeypatch, {"provider": "openrouter"})
+
+    assert manager.llm_client.openai_api_key.get_secret_value() == "env-key"
+
+
+def test_agent_factory_openrouter_honors_model_and_endpoint_overrides(monkeypatch):
+    manager = _openrouter_manager(
+        monkeypatch,
+        {
+            "provider": "openrouter",
+            "openrouter_api_key": "config-key",
+            "model": "z-ai/glm-4.5-air",
+            "endpoint": "http://127.0.0.1:8787/openrouter/api/v1",
+        },
+    )
+
+    assert manager.llm_client.model_name == "z-ai/glm-4.5-air"
+    assert manager.llm_client.openai_api_base == "http://127.0.0.1:8787/openrouter/api/v1"

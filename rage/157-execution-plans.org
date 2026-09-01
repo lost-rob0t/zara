@@ -1,0 +1,357 @@
+* RAGE 157 — capability/provider reasoning + typed ExecutionPlan
+
+** Run identity
+- Consumed issue: #157 (P1, epic #150, depends on #156 — satisfied)
+- Start commit: f58b551 (= master 7ae4b7f + #156 merge-evidence + backlog regen)
+- Branch: rage/157-execution-plans (rebased onto origin/master 7ae4b7f; backlog
+  conflict resolved by regenerating via scripts/import-backlog.py --date 2026-08-31)
+- Queue at consumption (Prolog-verified, backlog.pl @ f58b551):
+  - next(I) = 134 (strict phase-rank head — owner still driving Android chain;
+    divergence noted, as all arc)
+  - queue = [100-134, 301-216, 306-122, 400-149, 503-157, 702-172, 900-87 ...]
+  - blockers(157) = none (predicate fails on empty)
+  - epic_progress(150) = 3/8 (154, 155, 156 merged)
+- Repository mode: Auto-RAGE (#194) — no approval stalls.
+
+** Scope from issue
+- Given a complete semantic IntentFrame, select a viable abstract provider/location
+  under availability/policy/authorization constraints, producing a typed
+  ExecutionPlan (no direct execution, no fabricated semantic status).
+- PR #119 reconciliation: reuse the shape (kb/capabilities.pl single symbolic
+  provider-selection layer, candidate/5, select/4, explain/4, require/exclude
+  constraints), reject obsolete mechanics (pre-IntentFrame args); prove no
+  Prolog-RLM path survives.
+- Ownership boundaries: wake `_pending_wake_command` is pre-LLM buffering (not
+  re-wired here); clarification machine (#155) owns follow-ups at the wake
+  boundary; events.IntentResolved emission stays #173; agent prompt verb list +
+  raw query_prolog removal is #157/#160 (A7) — coordinate.
+
+** Research
+
+*** Sources
+- rage/154-intentframe-design.org (D4 capability reasoning, A5 test row)
+- docs/intentframe-contract.md (NORMATIVE v1) examples 12/13
+- Closed draft PR #119 (capability_resolver prior art)
+- modules/intent_frames.pl, kb/semantic_corpus.pl, kb/intents.pl (current KB)
+- zara/runtime/frames.py, zara/runtime/clarification.py, zara/runtime/host.py,
+  zara/prolog_engine.py, zara/daemon/server.py, zara/wake.py (current runtime)
+- t/test_intent_frames_corpus.py, t/test_frames.py, t/test_clarification.py (test shapes)
+
+
+*** Findings
+1. Contract (docs/intentframe-contract.md) is NORMATIVE v1: plan-level
+   unavailability (example 12), same-frame/different-plan per platform (example
+   13), "execution consumes frames only via typed ExecutionPlans naming
+   registered capabilities" (section 6). Frame/plan split is already frozen.
+2. PR #119 prior art (retrieved from agent/prolog-capability-reasoner ref):
+   kb/capabilities.pl facts (capability_provider/3, capability_property/2) +
+   modules/capability_resolver.pl (candidate/5, candidates/4, select/4,
+   explain/4, require/exclude constraints, keysort+reverse priority ordering).
+   Reusable SHAPE. Obsolete mechanics: verb-keyed intents (pre-IntentFrame),
+   kb_config:app_mapping dependency inside selection (impure + shell strings in
+   evidence), executable_fallback speculative shell provider (now forbidden by
+   the issue invariant "no fallback from unknown capability to shell/eval").
+   Files are not in tree; nothing to delete.
+3. Current runtime: wake.py:977 still resolves legacy IntentResult
+   (resolve_intent) and executes via commands:execute/python_skills; frames
+   resolve only in tests + the #155 clarification session at the wake pending
+   boundary. server.py daemon path has no Prolog resolution. events.IntentResolved
+   is defined but never emitted (stays #173).
+4. Test conventions: Prolog logic tested two ways - plunit files in t/*.pl run
+   by scripts/test-*.sh (registered as phases in scripts/test-all.sh), and
+   pytest-with-pyswip boundary tests (t/test_semantic_corpus.py,
+   t/test_prolog_frame_adapter.py). pyswip stringifies nested compounds; only
+   flat projections (frame_head_row/9, frame_slot_row/8) decode reliably.
+5. zara/security.py already defines Capability enum (daemon.admin etc.) used by
+   the ZARA/1 security gateway; plan-level requires_auth atoms should use the
+   same vocabulary.
+6. No hypothesis in flake pythonLibs - property-style tests must be
+   deterministic loops, no new deps.
+
+** Design
+
+*** Decisions
+- D1 :: Frame-keyed capability KB. kb/capabilities.pl facts key on
+  (IntentNS, IntentName), not surface verbs (#119 mechanic rejected - verbs
+  are frame-input concerns, resolved by #156; plans consume frames).
+  Facts: capability_provider(NS, Name, ProviderId, Priority),
+  capability_property(ProviderId, Property), capability_binding(ProviderId,
+  ArgName, SlotName) (declared argument schema). No shell strings, no
+  executable names, no package ids anywhere in the KB.
+- D2 :: Availability is environment-explicit. Selection takes a closed
+  environment term: environment(principal(P), auths(A), devices(D),
+  providers(S), aliases(AL), policies(POL)). Server-side provider
+  availability (S) and launchable aliases (AL) are server-policy authority;
+  device advertisements (device(Id, Owner, Caps)) are only an availability
+  source for location(device) providers. kb/config.pl (side-effectful
+  initialization, user config) is NOT consulted by plan selection - purity.
+- D3 :: Qualification pipeline per declared provider: availability (server:
+  ProviderId in env.providers; device: an env device owned by the requesting
+  principal advertises the provider's capability cap(Atom)) -> alias gate
+  (ref(app_alias) argument on a server provider requires
+  alias(Provider, Alias) in env) -> authorization (requires_auth(Auth \= none)
+  requires Auth in principal auths, else auth-denied) -> policy preference
+  (prefer(location(L)) / prefer(device(Id)) reorder) -> deterministic priority
+  (desc) -> ties yield ambiguous (capped alternatives).
+- D4 :: Typed outcomes only: ready / unavailable(Reason) / ambiguous /
+  denied(insufficient_authorization). Reason atoms: no_provider (nothing
+  declared for the intent), provider_unavailable (declared but not available),
+  alias_unsupported (all eliminations alias-gated), provider_missing (stale
+  re-check after a ready plan), insufficient_authorization (denied).
+  Unavailable is plan-level; the frame is never rewritten with a fabricated
+  semantic status (contract example 12).
+- D5 :: Structural defenses, not filters: device advertisements can only
+  qualify providers whose location is device AND whose declared capability
+  matches; admin/server providers are location(server) so no advertisement can
+  create them ("malicious device advertisement cannot acquire admin/server
+  capability"); advertisements from other principals are invisible
+  (cross-principal isolation); auth requirements are evaluated against
+  server-granted auths only, never against advertised claims.
+- D6 :: Portable plan term (compounds + lists only):
+  execution_plan(intent(ns(NS), name(Name)),
+    provider(id(Id), location(L), device(D), side_effect(C), requires_auth(A)),
+    status(S), arguments([argument(name(N), value(V))]),
+    evidence([atom]), alternatives([atom])). Decoded through flat
+  plan_head_row/12 + plan_arg_row/8 projections (pyswip nested-compound
+  constraint; 'none' sentinels as in #156).
+- D7 :: Python mirror zara/runtime/plans.py: PlanStatus, PlanLocation,
+  PlanSideEffect enums; PlanArgument(name, value: SlotValue) reusing
+  frames.py typed values and validate_value; frozen ExecutionPlan dataclass
+  with validator (ready requires provider+location; device plans name a
+  device; text arguments bounded at 512 chars; unknown plan states rejected).
+  PlanEnvironment + DeviceAdvertisement dataclasses encode the environment
+  term (encode_environment_term) - no raw strings at call sites.
+- D8 :: PlanExecutor seam (zara/runtime/plans.py): adapters registered per
+  provider id; refuses non-ready plans, unregistered providers, oversized
+  arguments; passes typed values only (never shells text); side-effecting
+  plans execute at most once per envelope request_id (bounded replay set;
+  replay returns typed replayed outcome). Cancellation/stale semantics:
+  non-ready plans never execute; plan_stale/4 (Prolog, pure) re-derives the
+  plan in a fresh environment and marks a formerly-ready now-unavailable
+  selection as unavailable(provider_missing) - no unsafe fallback.
+- D9 :: Scope boundary (deliberate): wake/daemon do NOT consume plans yet.
+  The reasoning layer, typed mirror, boundary, and executor seam are proven by
+  tests; wake cutover rides the migration rows in #160/#173 (events) and the
+  Android slices (#196/#197). A7 work (agent prompt verb list + raw
+  query_prolog retirement) stays in #160: retiring the raw tool before the
+  plan layer is the only execution surface would leave the agent without a
+  typed path. Coordinated, not half-done.
+- D10 :: Ties and ambiguity: equal top priority after policy -> ambiguous with
+  deterministic alternatives (provider ids, or provider@device atoms for
+  device-level ties), capped at 8. Plan-level ambiguity surfaces typed
+  evidence; consuming it (clarification) is a host concern (#155 machine /
+  #173 emission), not this slice.
+
+*** Rejected alternatives
+- Reusing #119's capability_resolver verbatim: verb-keyed, kb_config-coupled,
+  shell-command evidence, speculative executable fallback - all violate the
+  frozen contract or explicit issue invariants.
+- Putting availability inside Prolog (asserting dynamic provider facts):
+  resolution must stay pure; dynamic DB state would make plans
+  non-deterministic across calls and untestable.
+- Letting the KB store alias->package/shell maps: provider-neutral plans;
+  concrete launch strings are adapter/platform state (Android RUN_COMMAND,
+  desktop xdg-open) and must never ride the plan.
+- Silently picking a device on ties: violates "may not silently pick one";
+  ambiguous is the typed contract answer.
+- plan_for_frame accepting non-complete frames: clarification owns open
+  frames; the plan layer fails them closed (Python raises ValueError before
+  Prolog is consulted; Prolog clause also fails).
+
+*** Threat / failure analysis
+- Slot-text injection into adapters: executor passes typed SlotValue objects;
+  adapters validate; text is data, never a command (tested with a recording
+  adapter asserting the typed value object arrives).
+- Malicious device advertisement: structural location(device) gating + owner
+  filter + server-side auth evaluation (D5) - tested.
+- Cross-principal targeting: owner filter - tested both directions.
+- Stale provider between plan and execute: plan_stale/4 typed
+  unavailable(provider_missing); executor refuses non-ready - tested.
+- Replay/duplicate side effects: at-most-once per request_id with a bounded
+  replay window - tested (bounded set eviction, replay rejection).
+- Unbounded plans: 512-char text arguments, <= 8 alternatives, bounded
+  environment sizes (devices <= 64, providers <= 64, aliases <= 256, caps
+  per device <= 64) - tested.
+- Non-finite/typed-value violations in plan arguments: frames.validate_value
+  reused - tested.
+- Prolog string injection via crafted aliases/principals: _prolog_atom
+  escaping (quote/backslash) - tested with quote-bearing inputs.
+
+*** Acceptance criteria -> tests
+| AC (issue #157) | Test |
+|---+---|
+| open firefox -> initiating-device provider when advertised | plunit capability_plans + pytest boundary (open_app_device_ready) |
+| no capable device -> typed unavailable | plunit + pytest (open_no_provider_unavailable) |
+| search -> server search provider | plunit + pytest |
+| timer policy selects server/device per policy + availability | plunit (prefer server/device, availability fallback) |
+| admin provider requires admin auth independent of authentication | plunit + pytest (denied without auths, ready with) |
+| malicious device ad cannot acquire admin/server capability | plunit + pytest (structural) |
+| deterministic tie/ambiguity | plunit (tie -> ambiguous, cap) |
+| provider disappears between plan and execute | plunit plan_stale + pytest executor refusal |
+| two devices one principal + targeting policy | plunit (prefer(device)) + pytest |
+| two principals cannot target each other | plunit (owner filter) |
+| candidate ordering/filtering/unknown facts properties | plunit property-style deterministic loops |
+| plans bounded/serializable | pytest mirror validation (512 text, bounds) |
+| at-most-once side effects per request_id | pytest executor replay tests |
+| adapters validate typed values | pytest executor + mirror validator tests |
+| explain evidence structured | plunit evidence rows |
+| PR #119 reconciliation documented | this file (D1-D4, rejected alternatives) + wiki |
+
+*** Gate
+1. plunit: nix develop -c swipl -q -s t/capability_plans.pl -g run_tests -t halt
+   (new scripts/test-capability-plans.sh, registered in test-all.sh)
+2. pytest focused: t/test_capability_plans.py t/test_plans.py t/test_plan_executor.py
+3. Full local gate: NIX_CONFIG='experimental-features = nix-command flakes'
+   nix develop -c bash scripts/test-all.sh
+4. Exact-head CI: gh pr checks --watch on candidate SHA; update-branch if master moved.
+
+** Adversarial review (recorded before implementation)
+
+*** Attack 1: "The plan layer is dead code - nothing calls it"
+Risk: D9 ships reasoning + executor seam with no production call site.
+Response: the issue's acceptance is explicitly "becomes an authorized typed
+plan or an explicit ambiguity/unavailable/denied result, WITHOUT performing
+the action" - the deliverable is the deterministic decision layer. The
+executor seam exists so the "typed adapters" migration row has a proven,
+at-most-once entry point rather than a promise. Wake cutover without this
+layer would execute intents exactly as today (raw execute_intent), i.e. no
+progress on the row. Verdict: scope holds; call sites land in #160/#173/#196.
+
+*** Attack 2: environment-as-term is a stringly escape hatch
+Risk: encode_environment_term builds a Prolog string; callers could pass
+garbage and the parser would accept unknown compounds, silently failing open.
+Response: the environment is a closed dataclass; the encoder emits only the
+six known fields with escaped atoms; bounds are validated at construction.
+Malformed terms are impossible from the typed API; Prolog-side, unknown
+environment shapes simply fail to qualify (fail-closed - no candidates ->
+unavailable). Residual: a caller bypassing the dataclass with a raw term
+string - same trust level as today's goal strings into query_once; the
+wake/daemon wiring slices will go through the dataclass. Verdict: acceptable,
+documented.
+
+*** Attack 3: ambiguous alternatives encoding ('provider@device' atoms)
+Risk: overloading atoms with provider@device is a mini-format that Android
+must re-parse; contract prefers structured lists.
+Response: alternatives are presentation for evidence/clarification; the
+authoritative tie information is the candidate set re-derivable from
+plan_explanation. Flat atoms survive pyswip (the #156 constraint); nested
+compound lists do not. A structured wire form is #172's serializer concern,
+where the same constraint applies. Verdict: keep flat atoms; document the
+separator contract in the module header and wiki.
+
+*** Attack 4: policy preference vs priority ordering interaction is ambiguous
+Risk: "prefer(location(L))" reordering on top of priority could produce
+non-obvious winners (low-priority preferred-location beats high-priority
+non-preferred?). Response: defined semantics - preference is a FILTER
+reordering: candidates of the preferred location/class are considered first;
+only if none survive do others compete. Priority then ranks within the
+effective set; ties -> ambiguous. Tested for: prefer(server) with device also
+available; prefer(device) with only device available; prefer(device(D2)) with
+two devices (targeting policy); preferred location unavailable -> fallback.
+Verdict: pinned by tests.
+
+*** Attack 5: at-most-once replay set in-process only
+Risk: executor replay protection is per-process; a restart loses the window
+and a redelivered request_id re-executes.
+Response: true and accepted for this slice - persistence is the daemon
+envelope store's job (#173+). The invariant enforced here is "at most once
+per request_id per executor lifetime", bounded. Documented in the executor
+docstring and wiki. Verdict: scoped.
+
+*** Attack 6: requires_auth vocabulary drift with zara/security.Capability
+Risk: two auth vocabularies (plan atoms vs Capability enum) drift apart.
+Response: requires_auth atoms use the Capability VALUES ('session.basic',
+'daemon.admin'); the pytest layer validates plan auth atoms against the
+Capability enum where known, and admin providers in the KB use 'daemon.admin'.
+Verdict: aligned by test.
+
+*** Attack 7: pure-Prolog tests duplicate pytest boundary tests
+Risk: plunit + pytest cover the same assertions twice, doubling maintenance.
+Response: they test different boundaries: plunit proves the pure selection
+logic under plain SWI (portable-subset discipline, #172 needs it), pytest
+proves the pyswip decode + Python mirror + executor. Distinct failure modes
+(term shape vs marshalling vs validation). Verdict: keep both, no overlap in
+assertions.
+
+*** Attack 8: bounded_atom duplication in capability_plans
+Risk: copying bounded_atom/2 from intent_frames duplicates logic.
+Response: 3-line helper; cross-module import would couple plan selection to
+the resolver module's export surface (#160 will retire legacy exports).
+Precedent: intent_frames already carries local copies of number_token/unit
+helpers. Verdict: accepted, documented.
+
+*** Attack 9: capability KB keys on (NS, Name) but ns values are open sets
+Risk: unknown ns/name yields no_provider - is that distinguishable from a KB
+typo? Response: no_provider is exactly the typed signal for "nothing
+declared"; KB omissions surface as unavailable in tests. Corpus-style
+fixtures pin the declared set. Verdict: acceptable; the KB is the authority.
+
+*** Attack 10: tests need real SWI + pyswip (flake-only)
+Risk: contributors without nix see failures. Response: repo convention
+already (all Prolog tests are flake-gated). Verdict: no change.
+
+Review outcome: design stands with Attack 2/3/5 caveats documented. Proceed
+to TDD.
+
+** TDD / implementation evidence
+
+*** RED 1 (plunit) — t/capability_plans.pl written first
+31 tests, all failing with "Unknown procedure:
+capability_plans:plan_for_frame/3" (modules absent), zero singleton warnings.
+Commit of tests-first state rode the implementation commit (single feat
+commit; red output captured here).
+
+*** GREEN 1 — kb/capabilities.pl + modules/capability_plans.pl
+Commit 3da07e5. 34 plunit tests green. Defects caught and fixed by the red
+suite before it could ship:
+- if-then-else COMMIT silently picked the first device candidate instead of
+  producing typed ambiguity (two-devices case) — exactly the silent pick the
+  design forbids; fixed with has_device_candidate guard + enumeration.
+- decide/8 clause 2 bound _Intent in the head but called
+  denied_plan(Intent, ...) — denied plans would have carried FREE intent
+  variables; the singleton-variable warning exposed it (assertion patterns
+  had masked the defect).
+- stale_adjust emitted a bare [] instead of evidence([]).
+- plan_text_bound was used as an arithmetic function (must call as predicate).
+- unavailable reasons redefined during red: declared-but-unreachable is
+  provider_unavailable; no_provider reserved for nothing-declared (KB is the
+  authority on what could serve).
+
+*** RED 2 (pytest) — boundary/mirror/executor tests first
+All three files failed collection: ModuleNotFoundError: zara.runtime.plans.
+
+*** GREEN 2 — zara/runtime/plans.py + PrologEngine plan boundary
+Commit 205da6e. Defect found while wiring:
+- encode_frame_term emitted slot(name(X), V, origin(O)) WITHOUT the
+  value(...) wrapper - inconsistent with the contract's slot/3 and with
+  intent_frames' own terms. Existing consumers never read input slot values
+  so it went unnoticed; the plan layer reads them and failed closed.
+  Fixed to the contract shape; all pre-existing frame/clarification suites
+  still green (173 tests with the new files).
+- plan_head_row extended 12 -> 13 columns to project Evidence (the mirror
+  must carry structured evidence); export list and plunit updated together.
+
+*** Vocabulary alignment (attack 6)
+t/test_capability_plans.py::test_requires_auth_vocabulary_matches_security_capability
+pins provider requires_auth atoms to zara/security.Capability values
+(admin_restart uses 'daemon.admin').
+
+*** Property-style coverage (issue gate)
+plunit loops: every declared KB intent yields a typed plan under an empty
+environment (never a crash, never an untyped result); candidates are always
+ordered by descending priority across every intent in the fully-available
+environment; unknown facts (unknown intent, ghost provider ids) yield empty
+candidate sets and typed unavailable.
+
+*** Harness notes
+- scripts/test-capability-plans.sh registered as "Capability plan selection"
+  phase (2b) in scripts/test-all.sh; 34 plunit + 40 pytest locally.
+- t/capability_plans.pl property tests were initially appended after
+  :- end_tests/0 and silently never ran; moved inside the block.
+- wiki/capability-plans.org documents the architecture and PR #119
+  reconciliation.
+
+*** Full local gate
+NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash
+scripts/test-all.sh -> 11/11 phases passed (candidate head at commit with
+wiki/gate registration).

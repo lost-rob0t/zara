@@ -116,6 +116,13 @@ phase_resolver_corpus() {
 
 run_phase "Prolog resolver corpus" phase_resolver_corpus
 
+# --- Phase 2b: Capability plan selection gate (issue #157) -----------------
+phase_capability_plans() {
+  bash "$repo_root/scripts/test-capability-plans.sh"
+}
+
+run_phase "Capability plan selection" phase_capability_plans
+
 # --- Phase 3: Focused ZARA/1 protocol/transport gate ----------------------
 phase_zara1_protocol() {
   bash "$repo_root/scripts/test-zara1-protocol.sh"
