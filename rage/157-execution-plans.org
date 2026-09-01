@@ -355,3 +355,44 @@ candidate sets and typed unavailable.
 NIX_CONFIG='experimental-features = nix-command flakes' nix develop -c bash
 scripts/test-all.sh -> 11/11 phases passed (candidate head at commit with
 wiki/gate registration).
+** Outcome
+
+- PR: https://github.com/lost-rob0t/zara/pull/247 (auto-opened on push; body
+  verified to include Closes #157 and the reconciliation/scope notes)
+- Candidate head: ccb2807723888e01560f9526d7b971acc5dbe56d
+- Exact-head CI: all checks green (test 10m55s, android skeleton gate,
+  shared mic Arch/Ubuntu) via `gh pr checks 247 --watch`
+- Base check before merge: origin/master still 7ae4b7f (no update-branch
+  needed)
+- Merged: 2026-09-01T00:05:09Z, merge SHA
+  2054ac1d368b175a85518c258f6a9cf6647f69a4
+- Post-merge master CI: completed success on 2054ac1 (exact merge SHA)
+- Epic #150 progress after merge: 4/8 (154, 155, 156, 157)
+- Deliberate scope left for later slices (D9): wake/daemon plan cutover
+  (#160/#173/#196+), A7 verb-list/query_prolog retirement (#160),
+  IntentResolved emission (#173).
+
+** Queue after #157 (Prolog-verified, backlog.pl @ regen 2026-09-01)
+
+- next(I) = 134 (strict phase-rank head - divergence noted, as all arc)
+- queue = [100-134, 301-216, 306-122, 400-149, 504-158, 702-172, 900-87 ...]
+- DELTA: 503-157 consumed; 504-158 surfaced as the Android-chain head,
+  superseding the handoff's #172 projection. #158 = "P1 - add server
+  api_service providers and split semantic/server/device Prolog
+  configuration", depends on #157 (satisfied), blockers(158) = none.
+- epic_progress(150) = 4/8.
+
+** Session end state
+
+- Branch rage/158-api-service-providers (origin/master 7ae4b7f + the #157
+  merge-evidence commit + backlog regen) prepared as the start point for the
+  NEXT consumption (#158). A stale local rage/172-portable-prolog-core branch
+  (leftover at 90b0c82/pre-#156, no remote, no PR) was deleted; a first
+  recreated copy (named for the stale #172 projection) was deleted before any
+  commit and recreated as rage/158-api-service-providers.
+- HANDOFF CORRECTION: the first evidence commit (acc578e) was accidentally
+  based on a stale local origin/master ref (7ae4b7f, pre-merge) because the
+  worktree cannot checkout/pull master and no fetch happened after the merge.
+  It was rebased onto the real origin/master (2054ac1) and force-pushed;
+  the conflict vs master's copy of this file was resolved by taking master's
+  version and re-appending this Outcome/session-end tail.
