@@ -276,3 +276,20 @@ host builds reuse it across start/restart.
 - The developer's real =~/.config/zarathushtra/config.pl= leaked into
   engine consults until XDG isolation was in place (observed a stale
   =search_engine= override); owner may want to review that file locally.
+
+* Outcome (2026-08-31)
+
+- PR :: lost-rob0t/zara#253 (opened explicitly; auto-open did not fire)
+- Exact-head CI :: green on 10f1258 (first head), then on 64eff4e and
+  8eead19 after two master moves (#252 latency-trace fix, #254 merge
+  evidence) required gh pr update-branch + full re-watch each time.
+  All four required checks success at every head (test, android skeleton
+  gate, shared mic Arch/Ubuntu).
+- Merge SHA :: =58887a7dfd6bbd969bd07e9f3a3af71e78beca40= (merge of #253)
+- Post-merge master CI :: run 33464826140 completed=success on
+  =58887a7=.
+- Consumed issue :: #158 -> closed via "Closes #158"; epic #150 moves to
+  5/8 (pending backlog regen).
+- Gate evidence :: full local gate 12/12 phases at 10f1258; focused
+  red/green per increment; full pytest baseline on origin/master
+  worktree 1373 green vs 1420 green after F1 fix.
