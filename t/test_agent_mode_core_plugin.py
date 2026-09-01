@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import os
 import stat
+import subprocess
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
+import zara.plugins.builtin.agent_mode as agent_mode_module
 from zara.plugins import PluginState
-from zara.plugins.builtin.agent_mode import AgentModeStore
+from zara.plugins.builtin.agent_mode import AgentModePlugin, AgentModeStore
 from zara.runtime.backend import RuntimeBackend, RuntimeTurnResult
 from zara.runtime.host import RuntimeHost, RuntimeHostState
 
@@ -148,9 +150,55 @@ def test_agent_mode_registers_tools_when_enabled_and_runs_scheduled_turn(tmp_pat
     assert backend.tools == []
 
 
+def test_speak_tool_uses_output_only_tts_and_mpv(tmp_path, monkeypatch):
+    calls = {}
+
+    class FakeConfig:
+        def get_section(self, name):
+            assert name == "tts"
+            return {"provider": "qwen3", "voice": "zara"}
+
+    class FakeEngine:
+        def __init__(self, provider, config):
+            calls["provider"] = provider
+            calls["config"] = config
+
+        async def synthesize_async(self, text):
+            calls["text"] = text
+            return SimpleNamespace(
+                success=True,
+                audio=b"RIFF\x00\x00\x00\x00WAVEaudio",
+                audio_format="wav",
+                error=None,
+            )
+
+        async def close(self):
+            calls["closed"] = True
+
+    def fake_run(command, **kwargs):
+        calls["command"] = command
+        calls["run_kwargs"] = kwargs
+        assert Path(command[-1]).is_file()
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(agent_mode_module, "get_config", lambda: FakeConfig())
+    monkeypatch.setattr(agent_mode_module, "TTSEngine", FakeEngine)
+    monkeypatch.setattr(agent_mode_module.shutil, "which", lambda name: "/nix/store/mpv/bin/mpv")
+    monkeypatch.setattr(agent_mode_module.subprocess, "run", fake_run)
+
+    plugin = AgentModePlugin()
+    result = plugin._speak_text("hello from Zara")
+
+    assert result == "Spoken."
+    assert calls["provider"] == "qwen3"
+    assert calls["text"] == "hello from Zara"
+    assert calls["closed"] is True
+    assert calls["command"][0] == "mpv"
+    assert "sounddevice" not in agent_mode_module.__dict__
+
+
 def test_agent_mode_state_path_honors_xdg_state_home(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
-    from zara.plugins.builtin.agent_mode import AgentModePlugin
 
     assert AgentModePlugin._state_path({}) == (
         Path(tmp_path) / "zarathushtra" / "agent-mode" / "state.json"
