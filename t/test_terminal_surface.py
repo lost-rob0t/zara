@@ -21,7 +21,8 @@ def resolved(value):
 
 def test_bare_zara_launches_tui(monkeypatch):
     calls = []
-    monkeypatch.setattr(cli, "init_config", lambda: FakeConfig())
+    config = FakeConfig()
+    monkeypatch.setattr(cli, "init_config", lambda: config)
 
     import zara.terminal as terminal
 
@@ -32,7 +33,7 @@ def test_bare_zara_launches_tui(monkeypatch):
     )
 
     assert cli.run([]) == 0
-    assert calls == [{"endpoint": None, "config": cli.init_config()}]
+    assert calls == [{"endpoint": None, "config": config}]
 
 
 def test_agent_without_task_launches_same_tui(monkeypatch):
@@ -88,6 +89,27 @@ def test_console_alias_launches_tui(monkeypatch):
 
     assert cli.run(["--console"]) == 0
     assert calls == [{"endpoint": None, "config": config}]
+
+
+def test_agent_entrypoint_delegates_to_main_cli(monkeypatch):
+    import zara.agent_cli as agent_cli
+
+    calls = []
+    monkeypatch.setattr(cli, "run", lambda argv: calls.append(argv) or 7)
+
+    assert agent_cli.run(["remember", "this"]) == 7
+    assert calls == [["--agent", "remember", "this"]]
+
+
+def test_main_without_args_in_noninteractive_process_prints_help(monkeypatch, capsys):
+    config = FakeConfig()
+    monkeypatch.setattr(cli, "init_config", lambda: config)
+    monkeypatch.setattr(cli.sys, "argv", ["zara"])
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False)
+
+    assert cli.run() == 1
+    assert "Zarathustra Voice Assistant" in capsys.readouterr().out
 
 
 class FakeSubscription:
