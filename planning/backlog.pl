@@ -8,7 +8,7 @@
 %   nix develop -c swipl -s planning/backlog.pl  % then: next(I). queue(Q). blockers(122, Bs).
 
 % Closed issues referenced by dependency edges, phases or epics.
-closed(2). closed(3). closed(4). closed(5). closed(6). closed(7). closed(8). closed(9). closed(17). closed(28). closed(124). closed(128). closed(129). closed(130). closed(131). closed(132). closed(133). closed(139). closed(154). closed(155). closed(156). closed(157). closed(170). closed(171). closed(191). closed(195). closed(209).
+closed(2). closed(3). closed(4). closed(5). closed(6). closed(7). closed(8). closed(9). closed(17). closed(28). closed(124). closed(128). closed(129). closed(130). closed(131). closed(132). closed(133). closed(139). closed(154). closed(155). closed(156). closed(157). closed(158). closed(170). closed(171). closed(191). closed(195). closed(209).
 
 % Open issues: issue(Id, Priority, Status, ShortTitle).
 issue(87, p1, open, "P1 — add Linux global shortcut backends for Wayland and X11").
@@ -23,7 +23,6 @@ issue(95, p3, open, "P3 — package Zara Desktop and harden platform lifecycle b
 issue(122, p0, open, "P0 — add a bounded utterance rewriter before Prolog intent resolution").
 issue(134, p0, open, "P0 release gate — prove Zara daemon can replace the core ChatGPT Voice workflow safely").
 issue(149, p1, open, "P1 — publish Nix-built `zara-server` OCI image to GHCR").
-issue(158, p1, open, "P1 — add server `api_service` providers and split semantic/server/device Prolog configuration").
 issue(159, p1, open, "P1 — extend `ZARA/1` with bounded client capability advertisement and typed device action lifecycle").
 issue(160, p1, open, "P1 — make RuntimeHost own semantic command routing and remove duplicated LLM prompt authority").
 issue(161, p1, open, "P1 release gate — adversarially prove semantic dialogue/provider/device routing across reconnect and concurrency").
@@ -84,7 +83,6 @@ depends_on(134, 130).
 depends_on(134, 131).
 depends_on(134, 132).
 depends_on(134, 133).
-depends_on(158, 157).
 depends_on(159, 129).
 depends_on(159, 130).
 depends_on(159, 158).
