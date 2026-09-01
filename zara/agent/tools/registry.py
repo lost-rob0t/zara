@@ -32,21 +32,9 @@ TODO_TOOL_NAMES = frozenset(
 
 
 class ToolRegistry:
-    """
-    Central registry for all agent tools.
-
-    Manages tool registration, lookup, and execution.
-    Converts tools to LangChain format for LLM function calling.
-    """
+    """Central registry for all agent tools."""
 
     def __init__(self, prolog_engine=None, config: Optional["ZaraConfig"] = None):
-        """
-        Initialize tool registry.
-
-        Args:
-            prolog_engine: Optional PrologEngine instance for Prolog-backed tools
-            config: Optional ZaraConfig instance for tool configuration
-        """
         self.prolog_engine = prolog_engine
         self.config = config
         self._tools: Dict[str, LangChainTool] = {}
@@ -57,33 +45,16 @@ class ToolRegistry:
         )
 
     def register_tool(self, tool: LangChainTool):
-        """
-        Register a single tool.
-
-        Args:
-            tool: Tool instance to register
-
-        Raises:
-            ValueError: If tool with same name already registered
-        """
         if not valid_tool_name(tool.name):
             raise ValueError("tool name is invalid")
         if tool.name in self._tools:
             raise ValueError(f"Tool '{tool.name}' already registered")
-
         self._tools[tool.name] = tool
 
     def unregister_tool(self, name: str) -> Optional[LangChainTool]:
-        """Remove one tool if present and return the previous binding."""
         return self._tools.pop(name, None)
 
     def register_tools(self, tools: List[LangChainTool]):
-        """
-        Register multiple tools.
-
-        Args:
-            tools: List of tool instances to register
-        """
         pending = list(tools)
         names = [tool.name for tool in pending]
         if any(not valid_tool_name(name) for name in names):
@@ -96,41 +67,22 @@ class ToolRegistry:
         self._tools.update((tool.name, tool) for tool in pending)
 
     def unregister_tools(self, names: List[str]) -> None:
-        """Remove tools owned by a stopped service plugin."""
         for name in names:
             self._tools.pop(name, None)
 
     def get_tool(self, name: str) -> Optional[LangChainTool]:
-        """
-        Get tool by name.
-
-        Args:
-            name: Tool name
-
-        Returns:
-            Tool instance or None if not found
-        """
         return self._tools.get(name)
 
     def list_tools(self) -> List[str]:
-        """
-        List all registered tool names.
-
-        Returns:
-            List of tool names
-        """
         return list(self._tools.keys())
 
     def to_langchain_tools(self) -> List[LangChainTool]:
-        """Return the tools already registered in LangChain format."""
         return list(self._tools.values())
 
     def requires_approval(self, name: str) -> bool:
-        """Return the immutable server policy for one registered tool name."""
         return name in self._approval_required
 
     async def prepare_async(self) -> None:
-        """Start/refresh optional dynamic capability providers before a turn."""
         if self.config is None:
             return
         if self._mcp_manager is None:
@@ -140,32 +92,16 @@ class ToolRegistry:
         await self._mcp_manager.ensure_started()
 
     def dynamic_system_context(self) -> Optional[str]:
-        """Return dynamic provider routing context for the current turn."""
         if self._mcp_manager is None:
             return None
         return self._mcp_manager.system_context()
 
     async def shutdown_async(self) -> None:
-        """Shut down dynamic capability providers and their child processes."""
         if self._mcp_manager is not None:
             await self._mcp_manager.shutdown()
             self._mcp_manager = None
 
     def execute_tool(self, name: str, **kwargs) -> str:
-        """
-        Execute tool by name with given parameters.
-
-        Args:
-            name: Tool name
-            **kwargs: Tool parameters
-
-        Returns:
-            Tool execution result as string
-
-        Raises:
-            ValueError: If tool not found
-            Exception: On tool execution failure
-        """
         tool = self.get_tool(name)
         if tool is None:
             raise ValueError(f"Tool '{name}' not found")
@@ -177,7 +113,7 @@ class ToolRegistry:
             raise Exception(f"Tool '{name}' execution failed: {str(e)}") from e
 
     def load_builtin_tools(self, memory_manager=None):
-        """Load built-in tools while honoring configured capability surfaces."""
+        """Load built-ins and apply subsystem-level capability toggles."""
         from pathlib import Path
 
         from .builtin_tools import get_builtin_tools
@@ -185,19 +121,25 @@ class ToolRegistry:
 
         repo_root = Path(__file__).resolve().parents[3]
         tool_config = self.config.get_tool_config() if self.config else {}
+        todo_config = self.config.get_section("todo") if self.config else {}
         file_tool_config = None
         if self.config and tool_config.get("file_tools", False):
             file_tool_config = self.config.get_file_tool_config(repo_root)
 
-        todos_enabled = tool_config.get("todos", True)
+        todos_enabled = todo_config.get("enabled", True)
         if not isinstance(todos_enabled, bool):
-            raise ValueError("tools.todos must be true or false")
+            raise ValueError("todo.enabled must be true or false")
 
         python_skills.set_todo_enabled(todos_enabled)
         if self.prolog_engine is not None:
             enabled_atom = "true" if todos_enabled else "false"
             self.prolog_engine.query_once(
                 f"kb_intents:set_todo_intents_enabled({enabled_atom})"
+            )
+
+        if not todos_enabled:
+            logger.info(
+                "Built-in todo tools, Python skills, and intents disabled by todo.enabled=false"
             )
 
         all_tools = get_builtin_tools(
@@ -219,13 +161,8 @@ class ToolRegistry:
         self.register_tools(tools_to_register)
 
     def load_user_tools(self, plugin_dir: str):
-        """
-        Load user-defined tools from plugin directory.
-
-        Args:
-            plugin_dir: Path to directory containing plugin files
-        """
         from .loader import load_plugins
+
         tools = load_plugins(plugin_dir, self.prolog_engine)
         try:
             self.register_tools(tools)
