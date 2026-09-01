@@ -1,6 +1,7 @@
 :- module(config_loader,
     [
         load_user_config/0,
+        load_server_config/0,
         reload_user_config/0,
         ensure_user_config/0,
         user_config_path/1,
@@ -11,6 +12,7 @@
 :- use_module(library(filesex)).
 
 :- dynamic loaded_clause/1.
+:- dynamic loaded_server_clause/1.
 
 %% user_config_path(-Path) is det.
 %
@@ -151,6 +153,45 @@ reload_user_config :-
     ; format('No user config to reload~n')
     ).
 
+%% load_server_config is det.
+%
+%  Server-scope user config load (issue #158): semantic and intent facts
+%  only. Device facts (app mappings, dictation, sounds) are
+%  server-inappropriate and fail the load with a typed domain error
+%  instead of being silently accepted. Never creates the user config file.
+load_server_config :-
+    user_config_path(Path),
+    ( exists_file(Path)
+    -> read_server_user_config(Path, Facts),
+       replace_server_user_config(Facts)
+    ; true
+    ).
+
+read_server_user_config(Path, Facts) :-
+    setup_call_cleanup(
+        open(Path, read, Stream),
+        read_server_user_terms(Stream, Path, Facts),
+        close(Stream)
+    ).
+
+read_server_user_terms(Stream, Path, Facts) :-
+    read_term(Stream, Term, [syntax_errors(error)]),
+    ( Term == end_of_file
+    -> Facts = []
+    ; validate_server_user_fact(Term, Module, Fact)
+    -> Facts = [Module-Fact | Rest],
+       read_server_user_terms(Stream, Path, Rest)
+    ; throw(error(domain_error(zarathushtra_server_config_fact, Term),
+                  context(Path, 'server-inappropriate or invalid user configuration fact')))
+    ).
+
+replace_server_user_config(Facts) :-
+    forall(retract(loaded_server_clause(Ref)), erase(Ref)),
+    forall(member(Module-Fact, Facts),
+           ( asserta(Module:Fact, Ref),
+             assertz(loaded_server_clause(Ref))
+           )).
+
 read_user_config(Path, Facts) :-
     setup_call_cleanup(
         open(Path, read, Stream),
@@ -177,21 +218,21 @@ replace_user_config(Facts) :-
            )).
 
 validate_user_fact(Module:Term, Module, Fact) :-
-    memberchk(Module, [kb_config, kb_intents]),
+    memberchk(Module, [kb_config, kb_intents, kb_device_providers]),
     validate_user_fact(Term, Module, Fact).
-validate_user_fact(app_mapping(Name, Command), kb_config, app_mapping(Name, Command)) :-
+validate_user_fact(app_mapping(Name, Command), kb_device_providers, app_mapping(Name, Command)) :-
     atom(Name),
     command_argv(Command, _, _).
-validate_user_fact(direct_app(Name), kb_config, direct_app(Name)) :-
+validate_user_fact(direct_app(Name), kb_device_providers, direct_app(Name)) :-
     atom(Name).
+validate_user_fact(dictation_command(Command), kb_device_providers, dictation_command(Command)) :-
+    command_argv(Command, _, _).
+validate_user_fact(timer_sound(Setting), kb_device_providers, timer_sound(Setting)) :-
+    sound_setting(Setting).
+validate_user_fact(alarm_sound(Setting), kb_device_providers, alarm_sound(Setting)) :-
+    sound_setting(Setting).
 validate_user_fact(search_engine(Template), kb_config, search_engine(Template)) :-
     text_value(Template).
-validate_user_fact(dictation_command(Command), kb_config, dictation_command(Command)) :-
-    command_argv(Command, _, _).
-validate_user_fact(timer_sound(Setting), kb_config, timer_sound(Setting)) :-
-    sound_setting(Setting).
-validate_user_fact(alarm_sound(Setting), kb_config, alarm_sound(Setting)) :-
-    sound_setting(Setting).
 validate_user_fact(wake_word(Word), kb_config, wake_word(Word)) :-
     text_value(Word),
     text_string(Word, Text),
@@ -282,6 +323,39 @@ valid_intent(Intent) :-
     atom(Intent), !.
 valid_intent(python(Skill)) :-
     atom(Skill).
+
+%% Server scope (issue #158): semantic + intent facts only. Device facts
+%% (app_mapping, direct_app, dictation_command, timer_sound, alarm_sound)
+%% intentionally have no clause here, so a server boot fails loudly on
+%% server-inappropriate mappings instead of accepting shell commands.
+validate_server_user_fact(Module:Term, Module, Fact) :-
+    memberchk(Module, [kb_config, kb_intents]),
+    validate_server_user_fact(Term, Module, Fact).
+validate_server_user_fact(search_engine(Template), kb_config, search_engine(Template)) :-
+    text_value(Template).
+validate_server_user_fact(wake_word(Word), kb_config, wake_word(Word)) :-
+    text_value(Word),
+    text_string(Word, Text),
+    Text \= "".
+validate_server_user_fact(llm_provider(Provider), kb_config, llm_provider(Provider)) :-
+    memberchk(Provider, [ollama, openai, openrouter, anthropic]).
+validate_server_user_fact(llm_model(Model), kb_config, llm_model(Model)) :-
+    text_value(Model).
+validate_server_user_fact(llm_endpoint(Endpoint), kb_config, llm_endpoint(Endpoint)) :-
+    text_value(Endpoint).
+validate_server_user_fact(prolog_rlm_enabled(Enabled), kb_config, prolog_rlm_enabled(Enabled)) :-
+    memberchk(Enabled, [true, false]).
+validate_server_user_fact(prolog_rlm_model(Model), kb_config, prolog_rlm_model(Model)) :-
+    text_value(Model).
+validate_server_user_fact(todo_destination(Path), kb_config, todo_destination(Path)) :-
+    text_value(Path).
+validate_server_user_fact(todo_context_mode(Mode), kb_config, todo_context_mode(Mode)) :-
+    memberchk(Mode, [infer, infer_with_llm, llm_only]).
+validate_server_user_fact(verb_intent(Surface, Intent, Arity), kb_intents,
+                          verb_intent(Surface, Intent, Arity)) :-
+    atom(Surface),
+    valid_intent(Intent),
+    ( Arity == rest ; integer(Arity), Arity >= 0 ).
 
 search_url(Query, URL) :-
     % 1. Get search template from user config (with default fallback)
