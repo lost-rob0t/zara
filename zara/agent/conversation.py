@@ -1,33 +1,52 @@
-"""
-Conversation mode state management.
+"""Conversation-mode lifecycle state.
 
-Tracks when to enter/exit conversation mode and manages conversation history.
+Model-context assembly and retention belong to ContextManager. This class owns
+only whether conversational mode is active, its inactivity timeout, and a small
+read-only compatibility view for callers that still inspect or clear history.
 """
+
+from __future__ import annotations
 
 import time
-from typing import List, Optional
-from langchain_core.messages import BaseMessage
+from collections.abc import Callable, Iterator, Sequence
+from typing import Any, Optional
+
+
+class _ConversationHistoryView(Sequence[Any]):
+    """Read-only snapshot-style view with an explicit compatibility clear()."""
+
+    def __init__(self, provider: Callable[[], Sequence[Any]], clear: Callable[[], None]):
+        self._provider = provider
+        self._clear = clear
+
+    def _snapshot(self) -> tuple[Any, ...]:
+        return tuple(self._provider())
+
+    def __len__(self) -> int:
+        return len(self._snapshot())
+
+    def __getitem__(self, index):
+        return self._snapshot()[index]
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter(self._snapshot())
+
+    def clear(self) -> None:
+        """Compatibility shim: route destructive clear through ContextManager."""
+        self._clear()
 
 
 class ConversationManager:
-    """
-    Manages conversation mode state and transitions.
+    """Manage conversational-mode activity and timeout state."""
 
-    Handles:
-    - Entering/exiting conversation mode
-    - Timeout detection for auto-exit
-    - Conversation history management
-    - Activity tracking
-    """
-
-    def __init__(self, timeout_seconds: int = 60, *, principal=None):
-        """
-        Initialize conversation manager.
-
-        Args:
-            timeout_seconds: Seconds of inactivity before auto-exiting conversation mode
-            principal: Optional canonical server-side owner for daemon conversation state
-        """
+    def __init__(
+        self,
+        timeout_seconds: int = 60,
+        *,
+        principal=None,
+        history_provider: Callable[[], Sequence[Any]] | None = None,
+        history_clear: Callable[[], None] | None = None,
+    ):
         if principal is not None:
             # Import lazily to avoid a module cycle while still rejecting
             # request-shaped owner objects on the daemon path.
@@ -40,68 +59,57 @@ class ConversationManager:
         self.in_conversation: bool = False
         self.last_activity: Optional[float] = None
         self.timeout_seconds: int = timeout_seconds
-        self.conversation_history: List[BaseMessage] = []
+        self._history_provider = history_provider or (lambda: ())
+        self._history_clear = history_clear or (lambda: None)
+        self._history_view = _ConversationHistoryView(
+            self._history_provider,
+            self._history_clear,
+        )
+
+    @property
+    def conversation_history(self) -> Sequence[Any]:
+        """Compatibility view; callers cannot replace the owned history list."""
+        return self._history_view
 
     def should_enter_conversation(self, prolog_failed: bool, user_input: str) -> bool:
-        """
-        Decide if we should enter conversation mode.
-
-        Enter conversation mode if:
-        1. Already in conversation (stay in it)
-        2. Prolog resolution failed
-        3. User input looks conversational (starts with question words)
-
-        Args:
-            prolog_failed: Whether Prolog command resolution failed
-            user_input: User's input text
-
-        Returns:
-            True if should enter/continue conversation mode
-        """
-        # Already in conversation
+        """Return whether the assistant should enter or remain in conversation mode."""
         if self.in_conversation:
             return True
 
-        # Prolog failed
         if prolog_failed:
             return True
 
-        # User asks conversational question (heuristic)
-        question_words = ["what", "why", "how", "when", "who", "explain", "tell me", "can you"]
+        question_words = [
+            "what",
+            "why",
+            "how",
+            "when",
+            "who",
+            "explain",
+            "tell me",
+            "can you",
+        ]
         user_lower = user_input.lower().strip()
-        if any(user_lower.startswith(q) for q in question_words):
-            return True
-
-        return False
+        return any(user_lower.startswith(question) for question in question_words)
 
     def should_exit_conversation(self) -> bool:
-        """
-        Check if conversation should exit due to timeout.
-
-        Returns:
-            True if conversation has been inactive too long
-        """
-        if not self.in_conversation:
+        """Return whether inactivity has exceeded the configured timeout."""
+        if not self.in_conversation or self.last_activity is None:
             return False
+        return time.time() - self.last_activity > self.timeout_seconds
 
-        if self.last_activity is None:
-            return False
-
-        elapsed = time.time() - self.last_activity
-        return elapsed > self.timeout_seconds
-
-    def enter_conversation(self):
-        """Enter conversation mode and reset activity timer."""
+    def enter_conversation(self) -> None:
+        """Enter conversation mode and reset activity timing."""
         self.in_conversation = True
         self.last_activity = time.time()
 
-    def exit_conversation(self):
-        """Exit conversation mode and clear history."""
+    def exit_conversation(self) -> None:
+        """Exit conversation mode and clear model context through its owner."""
         self.in_conversation = False
         self.last_activity = None
-        self.conversation_history.clear()
+        self._history_clear()
 
-    def update_activity(self, grace_seconds: float = 0.0):
-        """Update last activity timestamp (call on each user interaction)."""
+    def update_activity(self, grace_seconds: float = 0.0) -> None:
+        """Update the inactivity deadline for the current user interaction."""
         grace = max(0.0, grace_seconds)
         self.last_activity = time.time() + grace
