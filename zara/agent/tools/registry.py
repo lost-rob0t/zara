@@ -17,6 +17,20 @@ if TYPE_CHECKING:
     from ...config import ZaraConfig
 
 
+TODO_TOOL_NAMES = frozenset(
+    {
+        "list_todos",
+        "add_todo",
+        "edit_todo",
+        "complete_todo",
+        "reopen_todo",
+        "search_todos",
+        "schedule_todo",
+        "export_todos",
+    }
+)
+
+
 class ToolRegistry:
     """
     Central registry for all agent tools.
@@ -163,26 +177,36 @@ class ToolRegistry:
             raise Exception(f"Tool '{name}' execution failed: {str(e)}") from e
 
     def load_builtin_tools(self, memory_manager=None):
-        """
-        Load built-in example tools.
-
-        Imports and registers standard tools like calculator, time, etc.
-        Respects tool enable/disable configuration.
-        """
+        """Load built-in tools while honoring configured capability surfaces."""
         from pathlib import Path
 
         from .builtin_tools import get_builtin_tools
+        from ...python_skills import python_skills
 
         repo_root = Path(__file__).resolve().parents[3]
         tool_config = self.config.get_tool_config() if self.config else {}
         file_tool_config = None
         if self.config and tool_config.get("file_tools", False):
             file_tool_config = self.config.get_file_tool_config(repo_root)
+
+        todos_enabled = tool_config.get("todos", True)
+        if not isinstance(todos_enabled, bool):
+            raise ValueError("tools.todos must be true or false")
+
+        python_skills.set_todo_enabled(todos_enabled)
+        if self.prolog_engine is not None:
+            enabled_atom = "true" if todos_enabled else "false"
+            self.prolog_engine.query_once(
+                f"kb_intents:set_todo_intents_enabled({enabled_atom})"
+            )
+
         all_tools = get_builtin_tools(
             self.prolog_engine,
             memory_manager=memory_manager,
             file_tool_config=file_tool_config,
         )
+        if not todos_enabled:
+            all_tools = [tool for tool in all_tools if tool.name not in TODO_TOOL_NAMES]
 
         if self.config:
             tools_to_register = [
