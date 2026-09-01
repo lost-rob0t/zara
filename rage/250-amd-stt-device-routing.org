@@ -1,0 +1,4 @@
+* Run identity
+- Consumed issue :: #250
+- Branch :: =rage/250-amd-stt-device-routing=
+- RAGE start commit :: =9554387ad83c8a70008fa7dd4a9b4e6ba1bfba92=

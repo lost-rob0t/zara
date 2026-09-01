@@ -75,7 +75,7 @@ volume = 1.0
 # Speech-to-Text settings
 provider = "faster-whisper"  # or "whisper"
 model = "small"
-device = "cpu"  # or "cuda"
+device = "cpu"  # or "cuda" (NVIDIA), "vulkan"/"amd"/"rocm"/"hip" (AMD via whisper.cpp)
 threads = 4
 # Streaming VAD (Silero) parameters — 512 samples = 32 ms at 16 kHz
 vad_threshold = 0.5
