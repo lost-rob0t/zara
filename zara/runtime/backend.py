@@ -1,8 +1,9 @@
 """Application-service backends owned by :class:`zara.runtime.host.RuntimeHost`.
 
 RuntimeHost owns lifecycle, threading, turn correlation, and cancellation.
-Backends own the application services used to execute a turn. LangGraph is the
-canonical conversational backend.
+Backends own the application services used to execute a turn. LangGraph remains
+the default conversational backend; the experimental fork may opt into
+Prolog-RLM explicitly.
 """
 
 from __future__ import annotations
@@ -299,8 +300,18 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             manager.exit_conversation()
 
 
-def create_runtime_backend(config=None) -> RuntimeBackend:
-    """Create Zara's canonical conversational backend."""
+def create_runtime_backend(
+    config=None,
+    *,
+    principal=None,
+    prolog_engine=None,
+    router=None,
+) -> RuntimeBackend:
+    """Create the configured conversational backend.
+
+    ``langgraph`` remains the default. ``prolog_rlm`` exists only on the
+    experimental fork and still executes effects through Zara-owned services.
+    """
 
     if config is None:
         from zara.config import get_config
@@ -308,26 +319,39 @@ def create_runtime_backend(config=None) -> RuntimeBackend:
         config = get_config()
 
     backend_name = str(config.get("agent", "backend", "langgraph")).strip().lower()
-    if backend_name != "langgraph":
-        raise ValueError(
-            f"Unsupported agent backend {backend_name!r}; choose 'langgraph'"
+    if backend_name == "langgraph":
+        def manager_factory():
+            from zara.agent import AgentManager
+
+            return AgentManager(
+                config=config,
+                principal=principal,
+                prolog_engine=prolog_engine,
+            )
+
+        return LangGraphRuntimeBackend(manager_factory, router=router)
+
+    if backend_name == "prolog_rlm":
+        from .prolog_rlm_backend import PrologRLMRuntimeBackend
+
+        return PrologRLMRuntimeBackend(
+            config,
+            principal=principal,
+            prolog_engine=prolog_engine,
+            router=router,
         )
 
-    def manager_factory():
-        from zara.agent import AgentManager
-
-        return AgentManager(config=config)
-
-    return LangGraphRuntimeBackend(manager_factory)
+    raise ValueError(
+        f"Unsupported agent backend {backend_name!r}; choose 'langgraph' or 'prolog_rlm'"
+    )
 
 
 class AgentRuntimeBackend(RuntimeBackend):
-    """Backward-compatible facade over Zara's canonical LangGraph backend.
+    """Backward-compatible facade over Zara's configured backend.
 
-    RuntimeHost historically constructed ``AgentRuntimeBackend`` directly. The
-    facade preserves that API while keeping backend construction in one place.
-    Supplying ``manager_factory`` explicitly remains supported for tests and
-    embedders.
+    Supplying ``manager_factory`` explicitly preserves the historical LangGraph
+    test/embedding seam. Without one, backend selection is delegated to
+    :func:`create_runtime_backend`.
     """
 
     def __init__(
@@ -343,7 +367,7 @@ class AgentRuntimeBackend(RuntimeBackend):
                 router=router,
             )
         else:
-            self._delegate = create_runtime_backend(config)
+            self._delegate = create_runtime_backend(config, router=router)
 
     def bind_event_publisher(self, publisher) -> None:
         self._delegate.bind_event_publisher(publisher)
