@@ -1,0 +1,61 @@
+{
+  "contract": "ZARA-SEMANTIC/1",
+  "source": "kb/semantic_corpus.pl#156",
+  "scope": "portable-packaging-seed",
+  "cases": [
+    {
+      "id": "timer_complete",
+      "utterance": "set a timer for 2 minutes called tea",
+      "state": "passive",
+      "expected_terms": [
+        "frame(intent(ns(device),name('timer.set')),[slot(name(duration),value(duration(120)),origin(utterance)),slot(name(label),value(text(tea)),origin(utterance))],complete)"
+      ]
+    },
+    {
+      "id": "timer_bare_phrase",
+      "utterance": "set a timer",
+      "state": "passive",
+      "expected_terms": [
+        "frame(intent(ns(device),name('timer.set')),[],missing([duration]))"
+      ]
+    },
+    {
+      "id": "open_complete",
+      "utterance": "open firefox",
+      "state": "passive",
+      "expected_terms": [
+        "frame(intent(ns(app),name(open)),[slot(name(target),value(ref(kind(app_alias),id(firefox))),origin(utterance))],complete)"
+      ]
+    },
+    {
+      "id": "text_complete",
+      "utterance": "text alice hello world",
+      "state": "passive",
+      "expected_terms": [
+        "frame(intent(ns(message),name(send)),[slot(name(contact),value(ref(kind(contact),id(alice))),origin(utterance)),slot(name(message),value(text('hello world')),origin(utterance))],complete)"
+      ]
+    },
+    {
+      "id": "search_complete",
+      "utterance": "search prolog dictionaries",
+      "state": "passive",
+      "expected_terms": [
+        "frame(intent(ns(web),name(search)),[slot(name(query),value(text('prolog dictionaries')),origin(utterance))],complete)"
+      ]
+    },
+    {
+      "id": "screenshot",
+      "utterance": "take a screenshot",
+      "state": "passive",
+      "expected_terms": [
+        "frame(intent(ns(device),name('screen.capture')),[],complete)"
+      ]
+    },
+    {
+      "id": "empty_input",
+      "utterance": "",
+      "state": "passive",
+      "expected_terms": []
+    }
+  ]
+}
