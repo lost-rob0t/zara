@@ -43,11 +43,20 @@ class ToolRegistry:
         )
 
     def register_tool(self, tool: LangChainTool):
-        """Register one LangChain tool."""
+        """
+        Register a single tool.
+
+        Args:
+            tool: Tool instance to register
+
+        Raises:
+            ValueError: If tool with same name already registered
+        """
         if not valid_tool_name(tool.name):
             raise ValueError("tool name is invalid")
         if tool.name in self._tools:
             raise ValueError(f"Tool '{tool.name}' already registered")
+
         self._tools[tool.name] = tool
 
     def unregister_tool(self, name: str) -> Optional[LangChainTool]:
@@ -55,7 +64,12 @@ class ToolRegistry:
         return self._tools.pop(name, None)
 
     def register_tools(self, tools: List[LangChainTool]):
-        """Register multiple tools atomically with conflict checks."""
+        """
+        Register multiple tools.
+
+        Args:
+            tools: List of tool instances to register
+        """
         pending = list(tools)
         names = [tool.name for tool in pending]
         if any(not valid_tool_name(name) for name in names):
@@ -91,11 +105,24 @@ class ToolRegistry:
         self.register_tool(build_prolog_tool(prolog_engine))
 
     def get_tool(self, name: str) -> Optional[LangChainTool]:
-        """Return one tool by name."""
+        """
+        Get tool by name.
+
+        Args:
+            name: Tool name
+
+        Returns:
+            Tool instance or None if not found
+        """
         return self._tools.get(name)
 
     def list_tools(self) -> List[str]:
-        """List all registered tool names."""
+        """
+        List all registered tool names.
+
+        Returns:
+            List of tool names
+        """
         return list(self._tools.keys())
 
     def to_langchain_tools(self) -> List[LangChainTool]:
@@ -129,7 +156,20 @@ class ToolRegistry:
             self._mcp_manager = None
 
     def execute_tool(self, name: str, **kwargs) -> str:
-        """Execute a registered tool and return its result as text."""
+        """
+        Execute tool by name with given parameters.
+
+        Args:
+            name: Tool name
+            **kwargs: Tool parameters
+
+        Returns:
+            Tool execution result as string
+
+        Raises:
+            ValueError: If tool not found
+            Exception: On tool execution failure
+        """
         tool = self.get_tool(name)
         if tool is None:
             raise ValueError(f"Tool '{name}' not found")
@@ -137,11 +177,16 @@ class ToolRegistry:
         try:
             result = tool.invoke(kwargs)
             return str(result)
-        except Exception as error:
-            raise Exception(f"Tool '{name}' execution failed: {str(error)}") from error
+        except Exception as e:
+            raise Exception(f"Tool '{name}' execution failed: {str(e)}") from e
 
     def load_builtin_tools(self, memory_manager=None):
-        """Load built-in tools while respecting tool configuration."""
+        """
+        Load built-in example tools.
+
+        Imports and registers standard tools like calculator, time, etc.
+        Respects tool enable/disable configuration.
+        """
         from pathlib import Path
 
         from .builtin_tools import get_builtin_tools
@@ -168,9 +213,13 @@ class ToolRegistry:
         self.register_tools(tools_to_register)
 
     def load_user_tools(self, plugin_dir: str):
-        """Load user-defined LangChain tools from one plugin directory."""
-        from .loader import load_plugins
+        """
+        Load user-defined tools from plugin directory.
 
+        Args:
+            plugin_dir: Path to directory containing plugin files
+        """
+        from .loader import load_plugins
         tools = load_plugins(plugin_dir, self.prolog_engine)
         try:
             self.register_tools(tools)
