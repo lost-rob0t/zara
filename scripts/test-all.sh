@@ -123,6 +123,13 @@ phase_capability_plans() {
 
 run_phase "Capability plan selection" phase_capability_plans
 
+# --- Phase 2c: Server api_service provider gate (issue #158) ---------------
+phase_api_service() {
+  bash "$repo_root/scripts/test-api-service.sh"
+}
+
+run_phase "Server api_service providers" phase_api_service
+
 # --- Phase 3: Focused ZARA/1 protocol/transport gate ----------------------
 phase_zara1_protocol() {
   bash "$repo_root/scripts/test-zara1-protocol.sh"

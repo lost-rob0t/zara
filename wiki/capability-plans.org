@@ -84,6 +84,9 @@ fallback.
   =query_prolog= tool retirement (A7) lands in #160 once the plan layer is
   the only execution surface.
 - =events.IntentResolved= emission stays #173.
+- Server providers are registered and executed by the #158 api_service
+  layer (=wiki/api-service.org=): the environment's =providers= list is
+  built from the versioned registry behind RuntimeHost.
 
 ## Tests
 

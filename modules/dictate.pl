@@ -4,7 +4,7 @@
 :- use_module(library(process)).
 :- use_module(library(filesex)).
 :- use_module(library(system)).
-:- use_module('../kb/config').
+:- use_module('../kb/device_providers').
 :- use_module('config_loader', [command_argv/3]).
 
 dictation_pidfile(Path) :-
@@ -41,7 +41,7 @@ start_dictation :-
     ).
 
 launch_dictation(Pid) :-
-    ( once(kb_config:dictation_command(Configured))
+    ( once(kb_device_providers:dictation_command(Configured))
     -> command_argv(Configured, ConfiguredExecutable, ConfiguredArgs)
     ; ConfiguredExecutable = 'zara-dictate',
       ConfiguredArgs = []

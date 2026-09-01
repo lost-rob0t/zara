@@ -1,11 +1,11 @@
 :- begin_tests(dictation_lifecycle).
 
 :- use_module('../modules/dictate').
-:- use_module('../kb/config').
+:- use_module('../kb/device_providers').
 :- use_module(library(process)).
 
 with_command(Command, Goal) :-
-    asserta(kb_config:dictation_command(Command), Ref),
+    asserta(kb_device_providers:dictation_command(Command), Ref),
     call_cleanup(Goal, erase(Ref)).
 
 reset_dictation :-

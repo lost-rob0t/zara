@@ -2,14 +2,14 @@
 
 :- use_module('../modules/sound').
 :- use_module('../modules/alarm').
-:- use_module('../kb/config').
+:- use_module('../kb/device_providers').
 
 :- dynamic played/2.
 :- dynamic notified/0.
 
 test(distinct_default_sounds) :-
-    once(kb_config:timer_sound(TimerPath)),
-    once(kb_config:alarm_sound(AlarmPath)),
+    once(kb_device_providers:timer_sound(TimerPath)),
+    once(kb_device_providers:alarm_sound(AlarmPath)),
     TimerPath \= AlarmPath.
 
 test(timer_and_alarm_sounds_are_playable) :-
@@ -86,10 +86,10 @@ record_notification :-
     assertz(notified).
 
 with_sound_setting(timer, Setting, Goal) :-
-    asserta(kb_config:timer_sound(Setting), Ref),
+    asserta(kb_device_providers:timer_sound(Setting), Ref),
     call_cleanup(Goal, erase(Ref)).
 with_sound_setting(alarm, Setting, Goal) :-
-    asserta(kb_config:alarm_sound(Setting), Ref),
+    asserta(kb_device_providers:alarm_sound(Setting), Ref),
     call_cleanup(Goal, erase(Ref)).
 
 :- end_tests(sounds).
