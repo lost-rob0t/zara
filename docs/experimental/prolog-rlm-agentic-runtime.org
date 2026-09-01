@@ -1,0 +1,96 @@
+#+title: Experimental Prolog-RLM Agentic Runtime Fork
+
+* Operator gate
+
+This document belongs to the experimental branch =fork/prolog-rlm-agentic-runtime=.
+
+HARD RULE: this branch must never be merged into =master= without a new, explicit
+operator approval that specifically authorizes merging this Prolog-RLM runtime
+fork. Green tests, reviews, CI, rebases, or later automation are not merge
+authority.
+
+No pull request is required for ordinary work on this fork.
+
+* Purpose
+
+The fork replaces the conversational/agentic backend with Prolog-RLM when the
+operator explicitly selects it. Zara still owns the daemon, principal/runtime
+isolation, Prolog-first deterministic command router, tool registry, approval
+policy, memory, runtime event stream, voice runtime, and cancellation.
+
+Prolog-RLM is a reasoning/planning runtime, not direct effect authority. It may
+request a Zara tool by name and arguments, but only the canonical Zara
+=ToolRegistry= executes that request. Tools marked as approval-required still
+wait on Zara's existing =ToolApprovalController= before execution.
+
+The Prolog-RLM completion runs in a separate =swipl= subprocess. It does not use
+or hold Zara's process-wide PySWIP engine while recursively reasoning.
+
+* Select the backend
+
+LangGraph remains the default. To opt into this fork's backend in mutable user
+configuration:
+
+#+begin_src toml
+[agent]
+backend = "prolog_rlm"
+max_steps = 10
+
+[prolog_rlm]
+# Leave root unset when the packaged Zara wrapper exports ZARA_PROLOG_RLM_ROOT.
+# root = "/path/to/prolog-rlm"
+model = "openrouter/free"
+max_tokens = 512
+max_cost_usd = 0.25
+time_limit = 120.0
+context_bytes = 8192
+max_tools = 64
+# reasoning_effort = "high"
+#+end_src
+
+Credentials remain environment-owned. Do not put API keys in this file. With
+the default OpenRouter provider, use =OPENROUTER_API_KEY=. For an explicit
+OpenAI-compatible endpoint, configure =endpoint=, =model=, and optionally
+=credential_env=; =no_credential = true= is available only for endpoints which
+do not require a credential.
+
+* Agent protocol
+
+Each bounded reasoning step receives compact JSON external context containing:
+
+- Zara's normal system/personality prompt;
+- the current user request;
+- a bounded catalog of canonical Zara tools and argument schemas;
+- prior tool observations from the current turn;
+- bounded conversation history and recalled Zara memory;
+- current step and hard maximum step count.
+
+Prolog-RLM must return exactly one action as model text:
+
+#+begin_src json
+{"type":"tool","name":"calculator","arguments":{"expression":"6*7"}}
+#+end_src
+
+or:
+
+#+begin_src json
+{"type":"final","text":"42"}
+#+end_src
+
+Unknown or malformed tool actions fail closed. A tool result is fed back to the
+next Prolog-RLM step; a final action becomes the normal =RuntimeTurnResult=.
+The backend cannot exceed Zara's =[agent].max_steps= ceiling.
+
+* Cancellation and shutdown
+
+=RuntimeHost= remains the turn owner. Cancelling a turn first cancels pending
+Zara tool approval and then terminates the live Prolog-RLM subprocess for that
+turn. Backend shutdown drains approvals, shuts down the canonical tool/MCP
+registry, terminates remaining Prolog-RLM subprocesses, and clears only its
+in-memory conversation projection.
+
+* Current intentionally unsupported surface
+
+Context attachment IDs are rejected rather than silently ignored. Voice
+start/stop/mute remain owned by Zara's existing daemon/voice runtime and are not
+reimplemented by this backend.
