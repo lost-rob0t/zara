@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from zara.runtime.backend import LangGraphRuntimeBackend, create_runtime_backend
+from zara.runtime.prolog_rlm_backend import PrologRLMRuntimeBackend
 
 
 class FakeConfig:
@@ -14,12 +15,22 @@ class FakeConfig:
             return self.backend
         return default
 
+    def get_section(self, section: str):
+        if section == "prolog_rlm":
+            return {}
+        return {}
+
 
 def test_runtime_backend_defaults_to_langgraph() -> None:
     backend = create_runtime_backend(FakeConfig())
     assert isinstance(backend, LangGraphRuntimeBackend)
 
 
-def test_removed_prolog_rlm_backend_fails_closed() -> None:
+def test_prolog_rlm_backend_is_explicit_opt_in() -> None:
+    backend = create_runtime_backend(FakeConfig("prolog_rlm"))
+    assert isinstance(backend, PrologRLMRuntimeBackend)
+
+
+def test_unknown_runtime_backend_fails_closed() -> None:
     with pytest.raises(ValueError, match="Unsupported agent backend"):
-        create_runtime_backend(FakeConfig("prolog_rlm"))
+        create_runtime_backend(FakeConfig("unknown"))
