@@ -100,7 +100,7 @@ def test_wheel_declares_all_console_scripts(wheel_entry_points):
         "zara = zara.__main__:main",
         "zara-server = zara.server:main",
         "zara-wake = zara.wake:main",
-        "zara-console = zara.terminal:tui_main",
+        "zara-console = zara.terminal:console_main",
         "zara-dictate = zara.dictate:main",
         "zara-agent = zara.agent_cli:main",
         "zara-pets = zara.pets.cli:main",
@@ -159,7 +159,10 @@ def test_wheel_declares_runtime_dependencies(wheel_metadata):
         "missing dependencies in wheel METADATA:\n  "
         + "\n  ".join(missing)
         + "\n--- METADATA Requires-Dist ---\n"
-        + wheel_metadata
+        + "\n".join(
+            line for line in wheel_metadata.splitlines()
+            if line.startswith("Requires-Dist")
+        )
     )
 
 
@@ -173,7 +176,7 @@ def test_entrypoint_functions_exist():
     assert callable(zara_main.main)
     assert callable(server.main)
     assert callable(wake.main)
-    assert callable(terminal.tui_main)
+    assert callable(terminal.console_main)
     assert callable(dictate.main)
     assert callable(agent_cli.main)
     assert callable(pets_cli.main_overlay)
