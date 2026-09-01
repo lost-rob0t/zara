@@ -32,3 +32,25 @@
 2. Verify refreshed diff contains only those six paths plus this RAGE log.
 3. Open replacement PR, close stale PR only after replacement exists, and require fresh exact-head CI.
 4. Merge only if exact head is green, mergeable, non-draft, and discussion-free.
+
+* Iteration 2 — full-suite PySWIP crash
+:PROPERTIES:
+:red_head: a50bf75c250a30c6748091e1bf845e41bea75bd9
+:red_run: 33495910194
+:END:
+
+** RED
+- Exact-head CI passed whitespace, Arch shared-mic, Ubuntu shared-mic, and Android skeleton gates.
+- scripts/test-all.sh reached phase 9 and later segfaulted while t/test_wake_words.py constructed another PrologEngine and PySWIP consulted a fixture.
+- The same process had already emitted a faulthandler timeout in the packaged-server shutdown test and retained a pycares shutdown thread.
+- Flake/package stages were skipped; the failed head was not treated as mergeable evidence.
+
+** Analysis / adversarial check
+- PrologEngine documents PySWIP as one process-wide SWI-Prolog runtime shared by all engine instances.
+- The new #246 regression test added an unnecessary in-process PrologEngine/main.pl consult before later existing Prolog tests.
+- Changing production lifecycle code would expand the #246 slice without proof. The smallest safe correction is to isolate this semantic assertion in its own swipl process.
+
+** GREEN candidate
+- Replace the #246 Prolog regression's in-process PySWIP engine with a bounded `swipl -q -s main.pl -g ... -t halt` subprocess.
+- This still proves default todo routing, disable semantics, search-todo removal, and timer preservation while leaving the shared PySWIP runtime untouched.
+- Fresh exact-head CI remains mandatory; the candidate is not green until all repository-native gates pass.
