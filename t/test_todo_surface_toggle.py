@@ -1,3 +1,4 @@
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -5,7 +6,6 @@ import pytest
 
 from zara.agent.tools.registry import ToolRegistry
 from zara.python_skills import TODO_SKILLS, PythonSkillRegistry, python_skills
-from zara.prolog_engine import PrologEngine
 
 
 class FakeConfig:
@@ -95,23 +95,18 @@ def test_invalid_todo_enabled_setting_is_rejected():
 
 
 def test_prolog_resolver_hides_todo_intents_but_not_timers():
-    from pathlib import Path
-
-    engine = PrologEngine()
-    engine.consult(Path("main.pl"))
-    try:
-        assert engine.query_once(
-            "kb_intents:verb_intent(todo, python(capture_todo), rest)"
-        ) is not None
-        engine.query_once("kb_intents:set_todo_intents_enabled(false)")
-        assert engine.query_once(
-            "kb_intents:verb_intent(todo, python(capture_todo), rest)"
-        ) is None
-        assert engine.query_once(
-            'intent_resolver:resolve("search todos bug", python(search_todos), _)'
-        ) is None
-        assert engine.query_once(
-            'intent_resolver:resolve("timer 5 minutes", timer, _)'
-        ) is not None
-    finally:
-        engine.query_once("kb_intents:set_todo_intents_enabled(true)")
+    goal = (
+        "kb_intents:verb_intent(todo, python(capture_todo), rest),"
+        "kb_intents:set_todo_intents_enabled(false),"
+        "\\+ kb_intents:verb_intent(todo, python(capture_todo), rest),"
+        "\\+ intent_resolver:resolve(\"search todos bug\", python(search_todos), _),"
+        "intent_resolver:resolve(\"timer 5 minutes\", timer, _)"
+    )
+    result = subprocess.run(
+        ["swipl", "-q", "-s", "main.pl", "-g", goal, "-t", "halt"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
