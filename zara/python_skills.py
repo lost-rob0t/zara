@@ -67,7 +67,7 @@ class PythonSkillRegistry:
     def execute(self, skill_name: str, args: List[Any]) -> str:
         if not self._todo_enabled and skill_name in TODO_SKILLS:
             raise NotImplementedError(
-                f"Python skill '{skill_name}' is disabled by tools.todos=false"
+                f"Python skill '{skill_name}' is disabled by todo.enabled=false"
             )
         func = self._skills.get(skill_name)
         if func is None:
