@@ -1,0 +1,14 @@
+#+title: PR 259 recovery
+
+* Iteration 10 — recover green hook/barge-in slice onto current master
+
+- Recovery start: =4e539b5a74d95ccecf67976c132ccf68ed10485a=
+- Existing PR: #259
+- Prior exact green head: =0ba1dc16b6db1fe39227ad3e4c80ac58f493fd01=
+- Prior exact-head CI: run 649, success.
+- Reason for recovery: master advanced through #267 and the old PR topology became non-mergeable.
+- Sibling check: #267 changed only =t/test_wake_import.py= and =zara/wake.py=; #259 changes nine different files. Android PR #266 remains sibling-owned and untouched.
+- Recovery method: overlay the exact nine blobs from the previously green #259 head onto current master, preserving all unrelated current-master changes.
+- Recovered commit: =204ffe5f149df984af8ef04433133f11ac762bdd=
+- Compare result: one commit ahead, zero behind, exactly the intended nine #259 files before adding this append-only recovery log.
+- Gate rule: fresh exact-head GitHub CI is required after this recovery; do not merge from prior run 649 alone.
