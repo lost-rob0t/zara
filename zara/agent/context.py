@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Sequence
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
@@ -161,6 +161,7 @@ class ContextManager:
                 compressed,
             )
 
+        self._require_active(lease)
         messages = self._assemble(lease, user_input, transient_items, skill_context)
         token_count = self._count(messages)
         if token_count > self.config.max_tokens:
@@ -298,6 +299,7 @@ class ContextManager:
             candidate = self._summarizer(tuple(source), self.config.summary_max_tokens)
             if inspect.isawaitable(candidate):
                 candidate = await candidate
+            self._require_active(lease)
             if not isinstance(candidate, str) or not candidate.strip():
                 raise ContextBudgetError("summarizer returned an empty context summary")
             summary_message = SystemMessage(
