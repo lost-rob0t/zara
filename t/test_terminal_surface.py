@@ -101,6 +101,17 @@ def test_agent_entrypoint_delegates_to_main_cli(monkeypatch):
     assert calls == [["--agent", "remember", "this"]]
 
 
+def test_console_entrypoint_delegates_to_main_cli(monkeypatch):
+    import zara.terminal as terminal
+
+    calls = []
+    monkeypatch.setattr(cli, "run", lambda argv: calls.append(argv) or 9)
+    monkeypatch.setattr(terminal.sys, "argv", ["zara-console", "remember", "this"])
+
+    assert terminal.console_main() == 9
+    assert calls == [["--console", "remember", "this"]]
+
+
 def test_main_without_args_in_noninteractive_process_prints_help(monkeypatch, capsys):
     config = FakeConfig()
     monkeypatch.setattr(cli, "init_config", lambda: config)
@@ -180,3 +191,31 @@ def test_run_task_reports_runtime_failure(monkeypatch, capsys):
     assert "provider exploded" in capsys.readouterr().err
     assert client.closed is True
     assert client.subscription.closed is True
+
+
+def test_run_tui_bounds_startup_failure_and_closes_client(monkeypatch, capsys):
+    import zara.terminal as terminal
+    import zara.tui as tui_module
+
+    class Client:
+        def __init__(self):
+            self.closed = False
+
+        def close(self, timeout=None):
+            self.closed = True
+
+    client = Client()
+    monkeypatch.setattr(terminal, "make_client", lambda **_kwargs: client)
+
+    class FailingTui:
+        def __init__(self, **_kwargs):
+            pass
+
+        def run(self):
+            raise RuntimeError("terminal unavailable")
+
+    monkeypatch.setattr(tui_module, "ZaraTui", FailingTui)
+
+    assert terminal.run_tui(endpoint=None, config=FakeConfig()) == 2
+    assert client.closed is True
+    assert "terminal unavailable" in capsys.readouterr().err
