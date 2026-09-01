@@ -82,3 +82,13 @@ Threats for the first slice:
 - Production asset commits :: =800fc1126410b865d8e8f0483dee3f2421ea737e= and =143f91cf5d318720325fef8957b58068e1a9c4de=.
 - Test-harness fix commit :: =cccbe71531aa8f227ea0c98a76cb6da6b4008393=.
 - Exact-head Android/full CI :: pending on replacement PR.
+
+* Iteration 3 - normalized parity result contract
+- Recovery master :: =2833e8b2d4bd50a14b0674c34f688749b3b01f54=, the exact #275 merge head. Open sibling core PR #274 explicitly leaves Android untouched; no open Android implementation PR existed at iteration start.
+- Branch :: =rage/android-172-normalized-results=.
+- Research decision :: normalize only representation noise before Trealla/SWI comparison. Solution order and insignificant Prolog whitespace are not semantic differences; duplicate solutions, quoted-value whitespace, and semantic contract versions remain significant.
+- Rejected :: parsing Prolog terms into a second Kotlin semantic AST. That would create another parser/semantic authority before the embedded runtime exists and could hide the exact parser drift #172 is meant to detect.
+- RED commit :: =806616751baf98665236bb0fae2b4d6876c99c78=. JVM tests require =SemanticResult= and =SemanticResultComparator= before either production type exists. The expected failure is Kotlin unresolved-reference/test compilation failure. Local execution is unavailable in this runner because outbound GitHub DNS is unavailable; draft PR #276 is the exact-head CI witness.
+- GREEN implementation :: =55b992c8df7762003ba19eb78feab65599d782e9=. Adds Android-only result normalization: whitespace outside quoted Prolog values is removed, normalized solutions are sorted, quoted whitespace/escapes are preserved, duplicates remain significant, and contract-version mismatch fails closed.
+- Security/authority check :: comparator is representation-only. It executes no Prolog, dispatches no action, holds no credential, and adds no runtime authority.
+- Exact-head Android/full CI :: pending on PR #276.
