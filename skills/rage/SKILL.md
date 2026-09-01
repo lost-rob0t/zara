@@ -1,3 +1,15 @@
+---
+name: rage
+description: Run Zara's issue-driven RAGE research, design, TDD, verification, and merge workflow when the user explicitly asks for a RAGE run.
+metadata:
+  zara-schema: "1"
+  zara-domain: "development"
+  zara-selectors: "rage auto-rage research design tdd issue-driven"
+  zara-priority: "100"
+  zara-max-tokens: "5000"
+  zara-paths: "rage/ AGENTS.md .rage.toml"
+  zara-always-on: "false"
+---
 # Zara RAGE
 
 Use this skill when the user explicitly asks for a RAGE run in Zara.
