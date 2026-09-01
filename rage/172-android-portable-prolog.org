@@ -1,0 +1,70 @@
+#+title: RAGE #172 - portable shared Prolog semantic core on Linux and Android
+
+* Run identity
+- Consumed issue :: #172, P2 - extract and prove a portable shared Prolog semantic core on Linux and Android.
+- Parent epic :: #152.
+- Branch :: =rage/android-172-portable-prolog=.
+- RAGE start commit :: =ce3271bde9df5215754c91f97ea1d8986af00022=.
+- Ownership :: Zara Android Auto-RAGE worker. Android production work plus only the shared semantic compatibility explicitly owned by #172.
+- Sibling core overlap check :: open core PRs #248, #255, #256, #259, #262, #264 and docs #265 do not own Android portable-Prolog packaging/parity files. Avoid their Python/task/voice/context surfaces.
+
+* Research
+** Current repository state
+- Android skeleton #171 is complete and current master Android CI is green.
+- Semantic corpus owner #156 is complete, satisfying #172's second dependency.
+- #170 selected Trealla Prolog for the Android embedded runtime and a portable ISO/SWI-compatible semantic subset. Linux full Zara remains SWI-Prolog; parity is defined only for the extracted portable core.
+- Current Android assets contain only =android/app/src/main/assets/prolog/.gitkeep=, so no portable semantic bundle exists yet.
+- Current Android JVM tests cover reducer/runtime state only; there is no portable-Prolog resource contract or normalized parity result contract.
+
+** Inherited decision re-evaluation
+Keep #170's Trealla decision. Nothing in current master invalidates it. The first implementation boundary should not attempt the entire JNI/runtime integration at once: first freeze the Android-visible portable semantic bundle identity and resource paths, then package the extracted core/fixtures, then bind Trealla and run the same fixtures.
+
+Rejected first-step alternatives:
+- Copy all existing =kb/= and =modules/= into the APK: rejected because they include Linux/server/provider-specific authority and violate #172's portability boundary.
+- Let Kotlin discover arbitrary Prolog files dynamically: rejected because resource identity would be implicit and could drift across platforms.
+- Start with JNI before freezing the semantic bundle: rejected because it couples runtime plumbing to an undefined portable contract and makes parity failures ambiguous.
+
+* Architecture / design
+** First vertical slice
+Introduce a tiny Android-owned =PortableSemanticCore= contract that declares:
+- semantic contract version =ZARA-SEMANTIC/1=;
+- exact packaged resource names for the portable Prolog entry module and canonical fixture corpus;
+- closed deterministic ordering;
+- no absolute paths or traversal-capable resource names.
+
+This contract is metadata only. It does not execute Prolog, create a second assistant runtime, or move server authority onto Android.
+
+The later #172 slices will:
+1. extract the portable Prolog module from the #156 semantic corpus contract;
+2. package the same fixture corpus in Android assets;
+3. add a normalized result representation/comparator;
+4. run fixtures through Linux SWI and Trealla;
+5. add NDK/JNI lifecycle only after the resource/semantic contract is stable.
+
+** Invariants
+- One semantic vocabulary; Android packaging cannot invent a parallel command corpus.
+- Android local Prolog is bounded deterministic semantics/capability reasoning only.
+- No PySWIP, shell/process, desktop, networking or provider foreign dependency enters the portable bundle.
+- Resource names are fixed, relative and auditable.
+- Provider/platform divergence is explicit above the normalized semantic result, not hidden parser drift.
+
+* Adversarial review
+Threats for the first slice:
+- path traversal or absolute resource loading -> reject by closed resource constants and tests;
+- resource drift between Kotlin and packaged assets -> later gate verifies every declared resource exists and no undeclared semantic entrypoint is used;
+- version drift -> explicit semantic contract version;
+- accidental server-only Prolog import -> later extraction/static gate rejects forbidden dependencies;
+- JNI/runtime failure being mistaken for semantic mismatch -> stage resource/semantic contract before runtime binding.
+
+* TDD plan
+1. RED: add JVM test requiring =PortableSemanticCore= with exact version/resource bundle and safe relative paths. Untouched master has no class; Android unit-test compilation must fail for the missing contract.
+2. GREEN: add the smallest Kotlin metadata contract under =android/**=.
+3. RED/GREEN: package extracted portable module + canonical fixture asset and test existence/digest/manifest.
+4. RED/GREEN: normalized result serializer/comparator.
+5. RED/GREEN: Trealla binding and cross-runtime fixture runner.
+6. Full =scripts/test-android.sh=, repository-native gate/Nix where applicable, then exact-head GitHub CI.
+
+* Evidence
+- Start master :: =ce3271bde9df5215754c91f97ea1d8986af00022=.
+- Master CI run 33477302268 :: full CI green; Android skeleton gate green on exact start SHA.
+- RED candidate :: pending first test-only commit/CI.
