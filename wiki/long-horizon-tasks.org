@@ -1,0 +1,116 @@
+#+title: Long-Horizon Agent Tasks
+
+Zara can execute multi-step goals that outlive a single conversational turn:
+"research X and write a report", "refactor these files and run the tests". Tasks
+persist across daemon restarts, pause for tool approvals through the one shared
+approval lifecycle, are cancellable at every layer, and are observable through
+additive runtime events. There is exactly one conversational loop; task steps
+ride it — nothing forks LangGraph.
+
+* Configuration
+
+#+begin_src toml
+[tasks]
+enabled = false          # gate for the whole subsystem (runner + tools)
+max_concurrent = 2       # running tasks; overflow is rejected, never queued
+max_task_steps = 20      # per-task step budget
+wall_clock_minutes = 30.0
+step_log_chars = 2000    # bound per step-log row and the task-context message
+#+end_src
+
+Validation follows the central config contract (boolean fields reject integers,
+numbers must be finite and positive, integers are bounded).
+
+* Architecture
+
+#+begin_example
+RuntimeHost (execution owner)
+  └── TaskRunner (zara/tasks/runner.py)
+        ├── TaskStore (zara/tasks/store.py; DatabaseManager, principal-scoped)
+        └── per-step: AgentManager.process_async via the EXISTING backend
+            submit path (LangGraphRuntimeBackend.submit_turn)
+Agent surface: task_create/task_list/task_status/task_cancel/task_resume
+(StructuredTools registered through the existing backend tool path; subject to
+[tool_approval].required_tools like any other tool).
+#+end_example
+
+=TaskRunner= is created by =RuntimeHost= after backend and plugin startup when
+=[tasks].enabled= is true. It receives injected seams: the backend submit
+path, turn-id allocation through the =TurnCoordinator=, coordinator/backend
+turn cancellation, and the host publisher wrapped by
+=TaskRunner.observing_publisher= so controller events update task state. On
+shutdown and restart the runner stops before backend teardown.
+
+* Task state machine
+
+#+begin_example
+pending -> running -> waiting_approval | waiting_input | blocked
+                    -> completed | failed | cancelled | interrupted
+#+end_example
+
+- All transitions go through =TaskStore.transition= and a legal-transition
+  table; terminal states cannot be resurrected.
+- =waiting_input= and =blocked= are reserved for later slices; phase 1 never
+  enters them.
+- =interrupted= means the daemon died or shut down mid-step. It is recorded,
+  never auto-resumed, and only =task_resume= (or =resume_task=) continues the
+  same task identity and step counter. =cancelled= is terminal forever.
+- Startup recovery (=TaskStore.recover_interrupted=) moves tasks left in
+  =running= / =waiting_approval= / =waiting_input= / =blocked= by a dead
+  runtime into =interrupted=.
+
+* Steps
+
+One step is ONE bounded conversation turn through the existing
+=process_async= path with:
+
+- a coordinator-allocated turn id and a per-step =LatencyTrace= whose
+  =trace_id= is that turn id;
+- a fresh per-step history (=process_async(conversation_history=[])=) so task
+  steps never read or write the user's shared conversation history;
+- a task-context system message (=process_async(extra_system_context=...)=)
+  carrying the goal plus the last step summaries, hard-bounded to
+  =step_log_chars=.
+
+The goal never rides in the turn text, so existing input logging stays free of
+goal content. A step whose final answer starts with =TASK_COMPLETE:= completes
+the task; the remainder is the bounded final summary. Completed steps are
+persisted as bounded step-log rows (no raw transcripts); incomplete steps
+leave no rows, so resume never collides with a step index.
+
+* Budgets and failure policy
+
+- Per-task step budget: exceeding =max_task_steps= fails the task with
+  =step_budget_exhausted=.
+- Wall clock: =wall_clock_minutes= fails the task with =wall_clock_exceeded=
+  and cancels the in-flight turn.
+- Crash isolation: any step exception fails the task (=step_error=) and never
+  escapes the runtime loop.
+- Approval timeout: the existing controller timeout fails the task with
+  =approval_timeout= (policy choice; =waiting_input= is unused in phase 1).
+- Approval rejection: fails the task with =approval_rejected=.
+- Concurrency: =max_concurrent= counts =running= and =waiting_approval= tasks;
+  overflow rejects creation with a typed error instead of queueing silently.
+
+* Observability
+
+Additive events: =TaskStarted=, =TaskStepCompleted=, =TaskWaitingApproval=,
+=TaskCompleted=, =TaskFailed=, =TaskCancelled= (label =tasks=). Step boundary
+logs carry task id, turn id, step index, status, and response lengths only —
+never goal text, transcripts, or tool payloads. Failure reasons are bounded
+strings from =zara.tasks.runner.REASONS=.
+
+* Tools
+
+The agent-facing tools are built by =build_task_tools= in
+=zara/agent/tools/builtin_tools.py= (also reachable through
+=get_builtin_tools(task_service=...)=) and registered by =TaskRunner= startup
+through =backend.register_tools=. They are absent entirely when
+=[tasks].enabled= is false.
+
+* Explicit non-goals (phase 1)
+
+No second agent loop or LangGraph fork, no subagent swarms, no distributed
+execution, no cron scheduler (TodoStore repeaters still schedule human
+reminders), no autonomous goal rewriting, no auto-resume after a crash, and no
+new wire protocol.

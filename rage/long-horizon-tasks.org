@@ -179,7 +179,74 @@
 
 ** TDD / implementation evidence
 
-(appended per behavior below)
+*** B1 Task model + store (commit d8b5fc4)
+- RED: t/test_task_store.py — ModuleNotFoundError zara.tasks (61 tests now).
+- GREEN: zara/tasks/store.py (migration 2, transition table, bounded step
+  log, recover_interrupted). Harness fixes during red: pending->pending
+  setup transitions and direct pending->terminal setups were themselves
+  illegal; SETUP_PATHS helper walks legal paths. Foreign list_steps raises
+  TaskStoreError (no existence leak) rather than returning [].
+
+*** B2 Step execution (commit ed1e08d)
+- RED: t/test_task_runner.py + t/test_task_turn_context.py (TypeError on new
+  kwargs; ModuleNotFoundError zara.tasks.runner).
+- GREEN: TaskRunner with injected submit/allocate/cancel seams;
+  process_async(conversation_history=None, extra_system_context=None);
+  backend.submit_turn(system_context=, conversation_history=, latency_trace=);
+  Task* events added to runtime/events.py. Defects caught by red: test
+  asserted a mid-text sentinel (implementation correctly requires prefix);
+  completion while still waiting_approval would drop the step result (fixed
+  with a waiting_approval->running self-heal before recording).
+
+*** B3 Approval pause/resume (commit 6fa03ba)
+- RED: t/test_task_approval_flow.py — AttributeError observing_publisher.
+- GREEN: observing_publisher wrapper (no threads, no polling);
+  ToolWaitingForUser -> waiting_approval; UserResponded -> running;
+  ToolCancelled("approval timeout") -> failed(approval_timeout);
+  ToolCancelled("tool rejected") -> failed(approval_rejected); both cancel
+  the in-flight turn. The no-poll test caught the dropped-result edge above.
+
+*** B4 Cancellation + shutdown (commit c9221f9)
+- RED: cancellation/shutdown/resume tests appended to t/test_task_runner.py.
+- GREEN: cancel_task transitions cancelled first (single writer) then cancels
+  coordinator turn + backend turn + step task; cancelled never resumes;
+  runner.stop() interrupts as runtime_shutdown; resume validates
+  pending/interrupted only. Design fix: incomplete steps leave NO step rows —
+  cancelled rows previously collided with resume step indexes.
+
+*** B5/B6 Tools, events, config gate, E2E (commit 3cc8b90)
+- RED: t/test_task_tools.py (ImportError TASK_TOOL_NAMES),
+  t/test_tasks_config.py (20 validation failures),
+  t/test_task_host_wiring.py (RuntimeHost missing task_store/task_runner/
+  run_coroutine).
+- GREEN: build_task_tools + get_builtin_tools(task_service=None);
+  [tasks] template + validation + get_tasks_config; RuntimeHost wiring
+  (_start_task_runner/_stop_task_runner in _run/_restart/_shutdown,
+  run_coroutine, task_store injection, backend principal_id). E2E acceptance
+  drives a 3-step task through the real host + real ToolRegistry + scripted
+  tool on a temp DatabaseManager; approval pause/approve E2E; shutdown ->
+  interrupted -> resume-completes E2E.
+- Latent pre-existing defect exposed and fixed: DatabaseManager.fetch_one/
+  fetch_all read cursors outside the RLock; a concurrent writer commit reset
+  pending cursors (missing rows / None status) — nondeterministic step
+  failures. Regression tests in t/test_database_fetch_locking.py reproduce
+  the interleaving deterministically (red via git stash, green with fix).
+
+*** B7 Observability (commit f70de58)
+- RED: t/test_task_observability.py — ImportError REASONS.
+- GREEN: REASONS frozenset; boundary logs with task/turn/step/status/
+  response_len only; captured-log tests prove the goal never reaches logs at
+  DEBUG level across zara.tasks/zara.agent/zara.agent.graph. The error log
+  intentionally records the exception class name (operationally useful, no
+  goal content); reason classes stay bounded.
+
+*** B8 Config + wiki
+- [tasks] validation + defaults (t/test_tasks_config.py, 20 cases).
+- wiki/long-horizon-tasks.org; AGENTS.md long-horizon pointer.
+
+** Full local gate
+
+(appended below)
 
 ** Outcome
 
