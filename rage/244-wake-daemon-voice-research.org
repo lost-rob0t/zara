@@ -31,7 +31,7 @@
 and auto-submits =SubmitTurn(request_id=trace_id)= (=zara/voice_runtime.py:306-340=).
 No new message types are needed for input.
 
-*** F2 — Gap: no daemon producer emits audio.output.* 
+*** F2 — Gap: no daemon producer emits audio.output.*
 The #132 contract validates and negotiates =audio.output.start/chunk/done=
 (=zara/protocol.py:378-445=), the gateway negotiates a format in =hello=, and
 =ZmqZaraClient= implements the full playback sink boundary incl. stale-frame
