@@ -101,6 +101,32 @@ class ResponseText(RuntimeEvent):
     truncated: bool = False
 
 
+# Audio output ---------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True)
+class AudioOutputStarted(RuntimeEvent):
+    """A daemon-synthesized audio stream began for a turn."""
+
+    stream_id: str = ""
+    sample_rate: int = 24000
+    channels: int = 1
+
+
+@dataclass(frozen=True, kw_only=True)
+class AudioOutputChunk(RuntimeEvent):
+    """One block of raw s16le mono PCM for a turn's audio stream."""
+
+    stream_id: str = ""
+    pcm: bytes = b""
+
+
+@dataclass(frozen=True, kw_only=True)
+class AudioOutputFinished(RuntimeEvent):
+    """A turn's audio stream completed normally."""
+
+    stream_id: str = ""
+
+
 @dataclass(frozen=True, kw_only=True)
 class OutputReady(RuntimeEvent):
     pass

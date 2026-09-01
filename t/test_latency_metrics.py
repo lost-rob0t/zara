@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+
+import numpy as np
 import pathlib
 import subprocess
+import time
 import sys
 
 import pytest
@@ -187,26 +191,53 @@ def test_metrics_path_prefers_xdg_state_home(monkeypatch, tmp_path):
     assert metrics_path({}) == tmp_path / "zarathushtra" / "latency.jsonl"
 
 
-def test_prolog_route_records_same_trace_id():
+def test_daemon_route_records_same_trace_id():
     trace, _ = build_trace(trace_id="voice-turn")
     listener = WakeWordListener.__new__(WakeWordListener)
     listener.current_latency_trace = trace
-    listener.prolog = MagicMock()
-    listener.prolog.resolve_intent.return_value = IntentResult("prolog", "open", ["browser"])
-    listener.prolog.execute_intent.return_value = True
-    listener.executor = None
+    listener.state = "ACTIVE"
     listener.log = MagicMock()
-    listener.session_id = None
-    listener.memory = MagicMock()
-    listener.memory.start_session.return_value = "session"
-    listener.agent_manager = None
-    listener.in_conversation_mode = MagicMock(return_value=False)
-    listener.clarifications = ClarificationCoordinator()
+    listener.stop_on_interrupt = False
+    listener.ack_player = None
+    listener.speaker = MagicMock()
+    listener.speaker.is_active = False
+    listener.speaker._active_turns = set()
+    listener.speaker.cancel_active = MagicMock()
+    listener.daemon = MagicMock()
 
-    used_agent, response = asyncio.run(listener.query_with_fallback_async("open browser"))
+    async def stream(audio, *, trace_id):
+        assert trace_id == "voice-turn"
+        return "stream-1"
 
-    assert (used_agent, response) == (False, "Executed: open ['browser']")
-    assert [event.event for event in trace.events] == ["prolog_result", "route_selected"]
+    listener.daemon.stream_utterance = AsyncMock(side_effect=stream)
+    listener.daemon.submit_cancel = MagicMock()
+    listener._monitor_speech_during_llm = AsyncMock(return_value=False)
+    listener._wait_for_turn_completion = AsyncMock(return_value=True)
+    listener._pending_wake_audio = None
+    listener._stop_phrase_seen = threading.Event()
+    listener._turn_finished = threading.Event()
+    listener._active_daemon_turn_id = None
+    listener._active_stream_id = None
+    listener._conversation_last_activity = 0.0
+    listener.response_timeout = 30.0
+    listener.conversation_timeout = 60.0
+    listener.first_speech_timeout = 5.0
+    listener.silence_duration = 1.0
+    listener._clock = time.monotonic
+    listener.collection_status = "idle"
+    listener.stop_phrases = []
+    listener.collect_audio_until_silence = AsyncMock(
+        return_value=np.zeros((512, 1), dtype=np.float32)
+    )
+
+    asyncio.run(listener.active_mode_async())
+
+    recorded = [event.event for event in trace.events]
+    assert "route_selected" in recorded
+    route_event = next(
+        event for event in trace.events if event.event == "route_selected"
+    )
+    assert route_event.metadata["route"] == "daemon"
     assert {event.trace_id for event in trace.events} == {"voice-turn"}
 
 
@@ -240,60 +271,48 @@ def test_agent_node_records_buffered_llm_boundaries():
     assert first_token.metadata["buffered_proxy"] is True
 
 
-def test_tts_records_request_chunk_and_final_boundaries():
+def test_speaker_playback_records_tts_boundaries():
     trace, _ = build_trace(trace_id="tts-turn")
     listener = WakeWordListener.__new__(WakeWordListener)
     listener.current_latency_trace = trace
-    listener.tts_config = {"provider": "fixture"}
-    listener.tts_client = MagicMock()
-    listener.tts_client.synthesize_async = AsyncMock(
-        return_value=SynthesisResult(
-            provider="fixture",
-            success=True,
-            audio=b"RIFF",
-            audio_format="wav",
+    listener.ack_player = None
+
+    from zara.wake_daemon import PcmStreamSpeaker
+    from unittest.mock import patch as mock_patch
+
+    with (
+        mock_patch.object(PcmStreamSpeaker, "_ensure_stream"),
+        mock_patch.object(PcmStreamSpeaker, "_ensure_writer"),
+    ):
+        speaker = PcmStreamSpeaker()
+        speaker.on_playback_started = listener._on_playback_started
+        speaker.on_playback_finished = listener._on_playback_finished
+
+        speaker.start(
+            format={"codec": "pcm_s16le", "sample_rate": 24000, "channels": 1},
+            conversation_id="conv-1",
+            turn_id="turn-1",
+            stream_id="tts-1",
         )
-    )
-    listener._play_audio_task = AsyncMock(
-        return_value=PlaybackResult(provider="fixture", success=True)
-    )
-    listener.last_tts_status = None
-    listener.log = MagicMock()
-    stop_event = asyncio.Event()
-    stop_event.latency_trace = trace
+        speaker.finish(turn_id="turn-1", stream_id="tts-1")
 
-    status = asyncio.run(listener._synthesize_and_play_task("hello", stop_event))
-
-    assert status.success is True
     assert [event.event for event in trace.events] == [
-        "tts_request",
-        "tts_first_chunk",
+        "tts_first_playback",
         "tts_final_playback",
     ]
-    assert trace.events[1].metadata["buffered_proxy"] is True
+    assert {event.trace_id for event in trace.events} == {"tts-turn"}
 
 
-def test_interruption_completion_waits_for_player_task():
+def test_interruption_cancels_speaker_and_records_completion():
     trace, _ = build_trace(trace_id="interrupt-turn")
     listener = WakeWordListener.__new__(WakeWordListener)
-    listener.tts_stop_event = asyncio.Event()
-    listener.tts_player_proc = None
-    listener.tts_playback_active = True
-    completed = []
+    listener.speaker = MagicMock()
+    listener.speaker._active_turns = {"turn-1"}
+    listener.ack_player = None
 
-    async def player():
-        await listener.tts_stop_event.wait()
-        await asyncio.sleep(0)
-        listener.tts_playback_active = False
-        completed.append(True)
+    asyncio.run(listener._interrupt_tts(trace))
 
-    async def run():
-        listener.tts_task = asyncio.create_task(player())
-        await listener._interrupt_tts(trace)
-
-    asyncio.run(run())
-
-    assert completed == [True]
+    listener.speaker.cancel_active.assert_called_once_with()
     assert [event.event for event in trace.events] == [
         "interruption_detected",
         "cancellation_completed",

@@ -15,40 +15,62 @@ def test_wake_module_imports_without_opening_audio_hardware():
     assert zara.wake.WakeWordListener is not None
 
 
-def test_active_mode_captures_one_command():
+def test_real_construction_owns_no_private_brain():
+    import zara.wake
+    import zara.wake_daemon
+
+    with (
+        patch("zara.wake.resolve_input_sample_rate", return_value=(16000.0, None)),
+        patch("zara.wake.faster_whisper.WhisperModel") as whisper_model,
+        patch.object(zara.wake.WakeWordListener, "log"),
+        patch.object(zara.wake.WakeWordListener, "_init_ack_player"),
+        patch("zara.wake.AcknowledgementPlayer"),
+    ):
+        listener = zara.wake.WakeWordListener(enable_tts=False)
+
+    whisper_model.assert_called_once()
+    assert not hasattr(listener, "prolog")
+    assert not hasattr(listener, "agent_manager")
+    assert not hasattr(listener, "memory")
+    assert not hasattr(listener, "tts_client")
+    assert not hasattr(type(listener), "query_with_fallback_async")
+    assert not hasattr(type(listener), "synthesize_and_play_async")
+    assert isinstance(listener.daemon, zara.wake_daemon.WakeDaemonClient)
+    assert isinstance(listener.speaker, zara.wake_daemon.PcmStreamSpeaker)
+
+
+def test_active_mode_streams_utterance_to_daemon():
     import zara.wake
 
     with (
         patch("zara.wake.resolve_input_sample_rate", return_value=(16000.0, None)),
-        patch("zara.wake.build_memory_manager") as build_memory_manager,
-        patch("zara.wake.PrologEngine") as prolog_engine,
         patch("zara.wake.faster_whisper.WhisperModel") as whisper_model,
-        patch("zara.wake.TTSEngine") as tts_engine,
-        patch("zara.wake.send_notification_async", new_callable=AsyncMock) as notification,
         patch.object(zara.wake.WakeWordListener, "log"),
+        patch("zara.wake.AcknowledgementPlayer"),
+        patch("zara.wake.WakeDaemonClient") as daemon_client,
     ):
-        memory = MagicMock()
-        memory.start_session.return_value = "test-session"
-        build_memory_manager.return_value = memory
-        prolog = MagicMock()
-        prolog.dictation_active.return_value = False
-        prolog.is_conversation_stop.return_value = False
-        prolog_engine.return_value = prolog
-        listener = zara.wake.WakeWordListener(enable_tts=False)
+        daemon = MagicMock()
+        daemon.stream_utterance = AsyncMock(return_value="stream-1")
+        daemon.ensure_connected = MagicMock()
+        daemon.connect = MagicMock()
+        daemon.start_pump = MagicMock()
+        daemon.audio_output_format = {
+            "codec": "pcm_s16le",
+            "sample_rate": 24000,
+            "channels": 1,
+        }
+        daemon_client.return_value = daemon
 
-        listener.collect_audio_until_silence = AsyncMock(return_value=MagicMock())
-        listener.transcribe_async = AsyncMock(return_value="open firefox")
-        listener.query_with_fallback_async = AsyncMock(return_value=(False, "Opened Firefox"))
-        listener.send_response_async = AsyncMock()
+        listener = zara.wake.WakeWordListener(enable_tts=False)
+        listener.collect_audio_until_silence = AsyncMock(
+            return_value=MagicMock()
+        )
+        listener._monitor_speech_during_llm = AsyncMock(return_value=False)
+        listener._wait_for_turn_completion = AsyncMock(return_value=True)
+        listener._play_acknowledgement = MagicMock()
         listener.stop_event = asyncio.Event()
 
         asyncio.run(listener.active_mode_async())
 
-    listener.collect_audio_until_silence.assert_awaited_once_with(5.0)
-    listener.transcribe_async.assert_awaited_once()
-    listener.query_with_fallback_async.assert_awaited_once_with("open firefox")
-    listener.send_response_async.assert_awaited_once_with("Zara", "Opened Firefox")
+    daemon.stream_utterance.assert_awaited_once()
     whisper_model.assert_called_once()
-    tts_engine.assert_not_called()
-    notification.assert_not_awaited()
-    memory.summarise_session.assert_not_called()

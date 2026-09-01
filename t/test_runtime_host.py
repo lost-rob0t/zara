@@ -32,6 +32,7 @@ class ImmediateBackend(RuntimeBackend):
         turn_id: str,
         conversation_id=None,
         context_ids=(),
+    latency_trace=None,
     ) -> RuntimeTurnResult:
         self.turn_thread_id = threading.get_ident()
         return RuntimeTurnResult(response=f"{self.response}:{text}")
@@ -57,6 +58,7 @@ class SwallowCancellationBackend(RuntimeBackend):
         turn_id: str,
         conversation_id=None,
         context_ids=(),
+    latency_trace=None,
     ) -> RuntimeTurnResult:
         self.entered.set()
         try:

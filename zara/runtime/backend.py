@@ -7,8 +7,15 @@ canonical conversational backend.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
+
+from ..latency import LatencyTrace
+from . import events
+
+logger = logging.getLogger(__name__)
 
 
 class UnsupportedRuntimeCommand(RuntimeError):
@@ -38,6 +45,7 @@ class RuntimeBackend:
         turn_id: str,
         conversation_id: Optional[str] = None,
         context_ids: tuple[str, ...] = (),
+        latency_trace: Optional[LatencyTrace] = None,
     ) -> RuntimeTurnResult:
         raise NotImplementedError
 
@@ -74,10 +82,17 @@ class RuntimeBackend:
 class LangGraphRuntimeBackend(RuntimeBackend):
     """Thin adapter over Zara's existing :class:`AgentManager`."""
 
-    def __init__(self, manager_factory: Optional[Callable[[], Any]] = None) -> None:
+    def __init__(
+        self,
+        manager_factory: Optional[Callable[[], Any]] = None,
+        *,
+        router=None,
+    ) -> None:
         self._manager_factory = manager_factory
         self._manager = None
         self._publisher = None
+        self._router = router
+        self._memory_session: Optional[str] = None
 
     def bind_event_publisher(self, publisher) -> None:
         self._publisher = publisher
@@ -106,6 +121,7 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         turn_id: str,
         conversation_id: Optional[str] = None,
         context_ids: tuple[str, ...] = (),
+        latency_trace: Optional[LatencyTrace] = None,
     ) -> RuntimeTurnResult:
         if self._manager is None:
             raise RuntimeError("runtime backend is not started")
@@ -114,14 +130,43 @@ class LangGraphRuntimeBackend(RuntimeBackend):
                 "context attachments are not wired into the runtime backend yet"
             )
 
+        if self._router is not None:
+            conversation_manager = self._manager.conversation_manager
+            in_conversation = bool(getattr(conversation_manager, "in_conversation", False))
+            state = "conversation" if in_conversation else "passive"
+            decision = await self._router.route(
+                text,
+                state=state,
+                latency_trace=latency_trace,
+                conversation_id=conversation_id,
+            )
+            if decision.action == "greeting":
+                conversation_manager.enter_conversation()
+                conversation_manager.conversation_history.clear()
+                return RuntimeTurnResult(response=decision.response)
+            if decision.action == "end_conversation":
+                conversation_manager.exit_conversation()
+                await self._rotate_memory_session()
+                return RuntimeTurnResult(response=decision.response)
+            if decision.action == "respond":
+                await self._persist_turn(text, decision.response)
+                return RuntimeTurnResult(response=decision.response)
+            if not in_conversation:
+                conversation_manager.enter_conversation()
+                conversation_manager.conversation_history.clear()
+
         result = await self._manager.process_async(
             text,
             turn_id=turn_id,
             conversation_id=conversation_id,
+            latency_trace=latency_trace,
+            stream_publisher=self._stream_publisher(turn_id, conversation_id),
         )
         raw_tool_results = result.get("tool_results", [])
+        response = str(result.get("response", ""))
+        await self._persist_turn(text, response)
         return RuntimeTurnResult(
-            response=str(result.get("response", "")),
+            response=response,
             tool_results=tuple(
                 item if isinstance(item, dict) else {"result": item}
                 for item in raw_tool_results
@@ -133,6 +178,89 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             cancel = getattr(self._manager, "cancel_turn", None)
             if cancel is not None:
                 await cancel(turn_id)
+
+    def _memory_manager(self):
+        if self._manager is None:
+            return None
+        return getattr(self._manager, "memory_manager", None)
+
+    async def _persist_turn(self, text: str, response: str) -> None:
+        memory = self._memory_manager()
+        if memory is None:
+            return
+        try:
+            if self._memory_session is None:
+                self._memory_session = await asyncio.to_thread(memory.start_session)
+            await asyncio.to_thread(
+                memory.add_message, self._memory_session, "user", text
+            )
+            if response:
+                await asyncio.to_thread(
+                    memory.add_message, self._memory_session, "assistant", response
+                )
+        except Exception:
+            logger.warning("Memory persistence failed for daemon turn", exc_info=True)
+
+    async def _rotate_memory_session(self) -> None:
+        memory = self._memory_manager()
+        if memory is None:
+            return
+        try:
+            session = self._memory_session
+            if session is not None:
+                await asyncio.to_thread(memory.summarise_session, session)
+            self._memory_session = await asyncio.to_thread(memory.start_session)
+        except Exception:
+            logger.warning(
+                "Memory session rotation failed on conversation end", exc_info=True
+            )
+
+    def _stream_publisher(self, turn_id: str, conversation_id: Optional[str]):
+        publisher = self._publisher
+        if publisher is None:
+            return None
+        from ..agent import stream_events
+
+        started = False
+
+        def publish(event) -> None:
+            nonlocal started
+            try:
+                if type(event) is stream_events.SentenceReady:
+                    if not started:
+                        started = True
+                        publisher(
+                            events.AssistantStarted(
+                                turn_id=turn_id,
+                                conversation_id=conversation_id,
+                                label="agent",
+                            )
+                        )
+                    publisher(
+                        events.AssistantDelta(
+                            turn_id=turn_id,
+                            conversation_id=conversation_id,
+                            label="agent",
+                            text=event.text,
+                        )
+                    )
+                elif type(event) is stream_events.Completed:
+                    publisher(
+                        events.AssistantComplete(
+                            turn_id=turn_id,
+                            conversation_id=conversation_id,
+                            label="agent",
+                            text=event.full_text,
+                        )
+                    )
+            except Exception:
+                logger.debug(
+                    "Assistant stream event publication failed for turn %s",
+                    turn_id,
+                    exc_info=True,
+                )
+
+        return publish
 
     async def approve_tool(self, tool_run_id: str) -> None:
         if self._manager is None:
@@ -207,9 +335,13 @@ class AgentRuntimeBackend(RuntimeBackend):
         manager_factory: Optional[Callable[[], Any]] = None,
         *,
         config=None,
+        router=None,
     ) -> None:
         if manager_factory is not None:
-            self._delegate: RuntimeBackend = LangGraphRuntimeBackend(manager_factory)
+            self._delegate: RuntimeBackend = LangGraphRuntimeBackend(
+                manager_factory,
+                router=router,
+            )
         else:
             self._delegate = create_runtime_backend(config)
 
@@ -226,12 +358,14 @@ class AgentRuntimeBackend(RuntimeBackend):
         turn_id: str,
         conversation_id: Optional[str] = None,
         context_ids: tuple[str, ...] = (),
+        latency_trace: Optional[LatencyTrace] = None,
     ) -> RuntimeTurnResult:
         return await self._delegate.submit_turn(
             text,
             turn_id=turn_id,
             conversation_id=conversation_id,
             context_ids=context_ids,
+            latency_trace=latency_trace,
         )
 
     async def cancel_turn(self, turn_id: str) -> None:

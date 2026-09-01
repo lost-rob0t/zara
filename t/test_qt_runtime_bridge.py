@@ -27,6 +27,7 @@ class FakeBackend(RuntimeBackend):
         turn_id: str,
         conversation_id=None,
         context_ids=(),
+    latency_trace=None,
     ) -> RuntimeTurnResult:
         return RuntimeTurnResult(response=f"reply:{text}")
 

@@ -12,7 +12,6 @@ import zara.tts.engine as engine_module
 import zara.tts.qwen as qwen_module
 from zara.tts import SynthesisResult, TTSEngine
 from zara.tts.qwen import Qwen3TTSClient
-from zara.wake import WakeWordListener
 
 
 def wav_bytes():
@@ -287,93 +286,3 @@ async def test_qwen_upload_and_change_close_files(monkeypatch, tmp_path):
 
     assert all(audio_file.closed for audio_file in files)
     assert session.closed and client.session is None
-
-
-@pytest.mark.asyncio
-async def test_replacement_utterances_never_overlap():
-    listener = WakeWordListener.__new__(WakeWordListener)
-    listener.tts_lock = asyncio.Lock()
-    listener.tts_task = None
-    listener.tts_stop_event = None
-    listener.tts_player_proc = None
-    listener.log = lambda message: None
-    active = 0
-    maximum_active = 0
-    started = asyncio.Event()
-
-    async def play(text, stop_event):
-        nonlocal active, maximum_active
-        active += 1
-        maximum_active = max(maximum_active, active)
-        started.set()
-        try:
-            await stop_event.wait()
-        finally:
-            active -= 1
-
-    listener._synthesize_and_play_task = play
-
-    first = await listener.synthesize_and_play_async("first")
-    await started.wait()
-    second = await listener.synthesize_and_play_async("second")
-    await asyncio.sleep(0)
-
-    assert first.done()
-    assert not second.done()
-    assert maximum_active == 1
-    await listener._stop_tts()
-
-
-@pytest.mark.asyncio
-async def test_synthesis_failure_reaches_wake_status():
-    listener = WakeWordListener.__new__(WakeWordListener)
-    listener.tts_client = SimpleNamespace(
-        synthesize_async=AsyncMock(
-            return_value=SynthesisResult(
-                provider="qwen3",
-                success=False,
-                error="invalid audio",
-            )
-        )
-    )
-    listener.tts_config = {"provider": "qwen3"}
-    listener.last_tts_status = None
-    listener.log = lambda message: None
-
-    status = await listener._synthesize_and_play_task("hello", asyncio.Event())
-
-    assert not status.success
-    assert status.error == "invalid audio"
-    assert listener.last_tts_status == status
-
-
-@pytest.mark.asyncio
-async def test_mp3_playback_returns_structured_status(monkeypatch):
-    class Player(FakeProcess):
-        def __init__(self):
-            super().__init__()
-            self.returncode = None
-
-        async def communicate(self, input_data=None):
-            self.returncode = 0
-            return b"", b""
-
-    player = Player()
-    monkeypatch.setattr(
-        asyncio,
-        "create_subprocess_exec",
-        AsyncMock(return_value=player),
-    )
-    listener = WakeWordListener.__new__(WakeWordListener)
-    listener.tts_config = {"provider": "edge"}
-    listener.tts_player_proc = None
-    listener._apply_conversation_grace = lambda: None
-
-    status = await listener._play_audio_task(
-        b"ID3audio",
-        "mp3",
-        asyncio.Event(),
-    )
-
-    assert status.success
-    assert listener.tts_player_proc is None

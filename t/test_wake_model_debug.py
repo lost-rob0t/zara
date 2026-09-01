@@ -32,22 +32,18 @@ def _fake_config(*, model="small", device="cpu", threads=4):
 
 def test_wake_constructs_whisper_with_cpu_threads_and_one_worker():
     config = _fake_config(threads=3)
-    memory = MagicMock()
-    memory.start_session.return_value = "test-session"
-    main_pl = pathlib.Path(__file__).resolve().parent.parent / "main.pl"
 
     with (
         patch("zara.wake.get_config", return_value=config),
         patch("zara.wake.resolve_input_sample_rate", return_value=(16000.0, None)),
-        patch("zara.wake.build_memory_manager", return_value=memory),
-        patch("zara.wake.PrologEngine"),
         patch("zara.wake.faster_whisper.WhisperModel") as whisper_model,
         patch.object(zara.wake.WakeWordListener, "log") as log,
+        patch.object(zara.wake.WakeWordListener, "_init_ack_player"),
+        patch("zara.wake.AcknowledgementPlayer"),
     ):
         zara.wake.WakeWordListener(
             model="small",
             device="cpu",
-            prolog_main_path=main_pl,
             enable_tts=False,
         )
 
@@ -62,7 +58,7 @@ def test_wake_constructs_whisper_with_cpu_threads_and_one_worker():
     assert any("Loading Whisper small" in message for message in messages)
     assert any("Whisper model ready: small on cpu" in message for message in messages)
     assert any("Silero VAD configured" in message for message in messages)
-    assert any("Whisper decoding configured" in message for message in messages)
+    assert any("Wake spotting configured" in message for message in messages)
 
 
 def test_wake_accepts_common_zara_transcription_variant():

@@ -43,6 +43,7 @@ class RecordingBackend(RuntimeBackend):
         turn_id,
         conversation_id=None,
         context_ids=(),
+        latency_trace=None,
     ):
         self.turns.append((text, conversation_id))
         return RuntimeTurnResult(response="background result")

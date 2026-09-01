@@ -18,7 +18,7 @@ import uuid
 import weakref
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Sequence
 
 import zmq
 
@@ -197,6 +197,7 @@ class _RouteState:
     principal_id: str
     ready: bool = False
     conversation_id: Optional[str] = None
+    audio_output: bool = False
     audio_inputs: dict[str, _AudioInputState] = field(default_factory=dict)
 
 
@@ -723,6 +724,7 @@ class ZaraZmqGateway:
                 session_id=session_id,
                 principal_id=self._principal.principal_id,
                 ready=True,
+                audio_output=selected_audio_output is not None,
             )
             self._routes[route] = state
         self._cancel_audio_inputs(previous_state)
@@ -1042,6 +1044,21 @@ class ZaraZmqGateway:
             state = self._routes.get(route)
             if state is None or not state.ready:
                 continue
+            audio_output_event = isinstance(
+                event,
+                (
+                    events.AudioOutputStarted,
+                    events.AudioOutputChunk,
+                    events.AudioOutputFinished,
+                ),
+            )
+            if audio_output_event and not state.audio_output:
+                continue
+            payloads: tuple[bytes, ...] = ()
+            if audio_output_event:
+                payloads = (
+                    (event.pcm,) if type(event) is events.AudioOutputChunk else ()
+                )
             tool_run_id = getattr(event, "tool_run_id", None)
             if isinstance(event, events.ToolWaitingForUser) and tool_run_id:
                 owner_key = (principal_id, tool_run_id)
@@ -1054,7 +1071,16 @@ class ZaraZmqGateway:
                     route=route,
                     session_id=state.session_id,
                 )
-            self._send(socket, route, self._response_for_route(message, route))
+            try:
+                self._send(socket, route, self._response_for_route(message, route), payloads)
+            except ProtocolValidationError:
+                logger.warning(
+                    "Dropping undeliverable %s event for route turn %s",
+                    message.type,
+                    event.turn_id,
+                    exc_info=True,
+                )
+                continue
             if isinstance(
                 event,
                 (events.ToolStarted, events.ToolCompleted, events.ToolFailed, events.ToolCancelled),
@@ -1080,9 +1106,18 @@ class ZaraZmqGateway:
             self._send(socket, route, message)
             sent += 1
 
-    def _send(self, socket: zmq.Socket, route: bytes, message: ProtocolMessage) -> None:
+    def _send(
+        self,
+        socket: zmq.Socket,
+        route: bytes,
+        message: ProtocolMessage,
+        payloads: Sequence[bytes] = (),
+    ) -> None:
         try:
-            socket.send_multipart([route, *encode_message(message, limits=self._limits)], flags=zmq.NOBLOCK)
+            socket.send_multipart(
+                [route, *encode_message(message, payloads=payloads, limits=self._limits)],
+                flags=zmq.NOBLOCK,
+            )
         except (zmq.Again, zmq.ZMQError):
             self._drop_route(route)
 

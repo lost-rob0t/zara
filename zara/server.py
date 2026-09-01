@@ -136,10 +136,12 @@ class RuntimeSupervisor:
         max_active_principals: int = 1,
         shutdown_timeout: float = 5.0,
         config=None,
+        prolog_factory: Optional[Callable[[PrincipalContext], Any]] = None,
     ) -> None:
         if max_active_principals < 1:
             raise ValueError("max_active_principals must be at least 1")
         self._host_factory = host_factory or self._build_default_host
+        self._prolog_factory = prolog_factory or self._default_prolog_factory
         self._max_active_principals = int(max_active_principals)
         self._shutdown_timeout = max(0.1, float(shutdown_timeout))
         self._config = config
@@ -169,19 +171,56 @@ class RuntimeSupervisor:
 
             config = get_config()
 
+        prolog_engine = self._prolog_factory(principal)
+        router = None
+        if prolog_engine is not None:
+            from zara.runtime.intent_router import PrologFirstRouter
+            from zara.wake_words import resolve_wake_words
+
+            router = PrologFirstRouter(
+                prolog_engine,
+                wake_words=resolve_wake_words(config, prolog_engine),
+                principal_id=principal.principal_id,
+            )
+
         def manager_factory():
             from zara.agent import AgentManager
 
-            return AgentManager(config=config, principal=principal)
+            return AgentManager(
+                config=config,
+                principal=principal,
+                prolog_engine=prolog_engine,
+            )
 
         return RuntimeHost(
-            backend_factory=lambda: AgentRuntimeBackend(manager_factory),
+            backend_factory=lambda: AgentRuntimeBackend(manager_factory, router=router),
             publisher=bus.publish,
             subscriber=bus.subscribe,
             shutdown_timeout=self._shutdown_timeout,
             plugin_paths=tuple(config.get_module_search_paths()),
             config=config,
         )
+
+    @staticmethod
+    def _default_prolog_factory(principal: PrincipalContext):
+        from zara.prolog_engine import PrologEngine, locate_main_pl
+
+        try:
+            prolog_path = locate_main_pl()
+            logger.info(
+                "Loading principal Prolog engine for %s from %s",
+                principal.principal_id,
+                prolog_path,
+            )
+            return PrologEngine(prolog_path)
+        except Exception as error:
+            logger.warning(
+                "Prolog engine unavailable for principal %s; "
+                "deterministic intent routing is disabled: %s",
+                principal.principal_id,
+                error,
+            )
+            return None
 
     @staticmethod
     def _require_principal(principal: PrincipalContext) -> PrincipalContext:
@@ -458,6 +497,8 @@ class ZaraServer:
         self._gateway_factory = gateway_factory or self._build_default_gateway
         self._gateway = None
         self._voice_ingress = None
+        self._tts_bridge = None
+        self._config = config
         self._principal = principal or PrincipalContext.local_owner()
         self._state = ServerState.NEW
         self._lock = threading.RLock()
@@ -465,15 +506,59 @@ class ZaraServer:
     def _build_default_gateway(self, endpoint: str, *, supervisor, principal):
         from zara.voice_runtime import RuntimeVoiceIngress
         from zara.zmq_transport import ZaraZmqGateway
+        from zara.runtime.tts_output import TtsOutputBridge
 
         voice_ingress = RuntimeVoiceIngress(supervisor, principal=principal)
         self._voice_ingress = voice_ingress
+
+        sample_rate = self._audio_output_sample_rate()
+        try:
+            self._tts_bridge = TtsOutputBridge(
+                subscription=supervisor.subscribe(principal, maxsize=256),
+                publish=lambda event: supervisor.publish(principal, event),
+                engine_factory=self._build_tts_engine,
+                sample_rate=sample_rate,
+            )
+        except AttributeError:
+            self._tts_bridge = None
         return ZaraZmqGateway(
             endpoint,
             supervisor=supervisor,
             principal=principal,
             voice_ingress=voice_ingress,
+            audio_output_format={
+                "codec": "pcm_s16le",
+                "sample_rate": sample_rate,
+                "channels": 1,
+            },
         )
+
+    def _audio_output_sample_rate(self) -> int:
+        try:
+            config = self._config
+            if config is None:
+                from zara.config import get_config
+
+                config = get_config()
+            section = config.get_section("daemon") or {}
+            rate = int(section.get("audio_output_sample_rate", 24000))
+            if rate <= 0:
+                raise ValueError
+            return rate
+        except Exception:
+            return 24000
+
+    def _build_tts_engine(self):
+        from zara.tts.engine import TTSEngine
+
+        config = self._config
+        if config is None:
+            from zara.config import get_config
+
+            config = get_config()
+        tts_section = config.get_section("tts") or {}
+        provider = str(tts_section.get("provider", "qwen3"))
+        return TTSEngine(provider=provider, config={"tts": tts_section})
 
     @property
     def state(self) -> ServerState:
@@ -506,6 +591,18 @@ class ZaraServer:
             logger.exception("Failed to stop daemon voice ingress cleanly")
             return False
 
+    def _close_tts_bridge(self) -> bool:
+        bridge = self._tts_bridge
+        self._tts_bridge = None
+        if bridge is None:
+            return True
+        try:
+            bridge.stop(timeout=self._shutdown_timeout)
+            return True
+        except BaseException:
+            logger.exception("Failed to stop daemon TTS output bridge cleanly")
+            return False
+
     def start(self) -> ServerState:
         with self._lock:
             if self._state in {ServerState.READY, ServerState.DEGRADED}:
@@ -528,6 +625,8 @@ class ZaraServer:
             )
             self._gateway = gateway
             gateway.start().result(timeout=self._shutdown_timeout)
+            if self._tts_bridge is not None:
+                self._tts_bridge.start()
             supervisor_state = self._supervisor.state
             with self._lock:
                 self._state = (
@@ -543,6 +642,7 @@ class ZaraServer:
                 except BaseException:
                     logger.exception("Failed to close ZARA/1 gateway after startup failure")
             self._gateway = None
+            self._close_tts_bridge()
             self._close_voice_ingress()
             if supervisor_started:
                 try:
@@ -560,6 +660,7 @@ class ZaraServer:
                 return True
             if self._state is ServerState.NEW:
                 self._state = ServerState.STOPPED
+                self._close_tts_bridge()
                 self._close_voice_ingress()
                 self._lease.release()
                 return True
@@ -575,6 +676,7 @@ class ZaraServer:
                 except BaseException:
                     logger.exception("Failed to stop ZARA/1 gateway cleanly")
                     clean = False
+            clean = self._close_tts_bridge() and clean
             clean = self._close_voice_ingress() and clean
             try:
                 clean = self._supervisor.shutdown() and clean

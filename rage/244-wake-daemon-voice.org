@@ -1,0 +1,66 @@
+* Run identity
+- Consumed issue :: #244
+- Branch :: =rage/244-wake-daemon-voice=
+- RAGE start commit :: =18659368cd00d57f3ea8c6da5534cb141e05f8c0=
+
+* Queue exception (user-directed)
+- #244 depends on #134 (open; blocked by open #29/#30/#31). Operator explicitly
+  selected #244 with full knowledge of the open dependency chain; recorded as a
+  directed override rather than silent queue skipping.
+
+* Iteration 1 — research/design
+- Research artifact :: =rage/244-wake-daemon-voice-research.org=
+- Design artifact :: =rage/244-wake-daemon-voice-design.org=
+- Key findings :: daemon audio.input path complete; missing daemon audio.output
+  producer + deterministic Prolog-first router are the two gaps #244 fills;
+  wake spotter keeps local wake-mode ASR (open-vocabulary wake words).
+
+* Iteration 1 — implementation evidence
+- Design decisions realized:
+  - =zara/runtime/intent_router.py=: deterministic Prolog-first router
+    (command gate -> resolve_intent -> execute / clarification / python /
+    end_conversation / ask->agent) applied inside =LangGraphRuntimeBackend=
+    before agent fallback; per-principal engines via injectable
+    =RuntimeSupervisor(prolog_factory=...)=.
+  - =zara/runtime/tts_output.py=: daemon TTS output bridge (phrase-cut from
+    =AssistantDelta=, wav/mp3 -> s16le mono decode at the configured rate,
+    cancel-safe) publishing =AudioOutputStarted/Chunk/Finished=; gateway maps
+    them to the existing =audio.output.*= wire contract and only delivers to
+    routes that negotiated a format. Issue #244's "any gap justified against
+    the #132 contract" clause covers the missing producer; #29's remaining
+    scope (jitter buffer, provider pipeline hardening, p95 benchmark) is
+    untouched. MP3-on-the-wire for future Android clients deferred: Opus is
+    the right codec there, negotiated via the hello extension point.
+  - =zara/wake.py=: thin client (spotter keeps local wake-mode ASR per
+    research F5); utterances stream over =audio.input.*= with client
+    trace_id; stop phrases via daemon transcript events +
+    =[wake].stop_phrases=; barge-in monitors cancel playback and the daemon
+    turn (=turn.cancel=) then restart listening; =run_wake_listener= fails
+    closed with exit code 2 and never constructs a private runtime.
+  - =zara/wake_daemon.py=: =WakeDaemonClient= (connect/open/subscribe/pump,
+    reconnect-with-backoff fail-closed, =stream_utterance=) and
+    =PcmStreamSpeaker= (persistent output stream, immediate cancel).
+  - Latency trace rides langgraph =config= (checkpointer-safe), keyed by the
+    voice trace_id end to end.
+- Removed behavior (recorded): wake's in-process dictation relay branch and
+  the =synthesize_and_play= family; dictation voice-control now flows through
+  daemon intents. Legacy tests =t/test_command_routing.py= and
+  =t/test_wake_clarification.py= deleted; their behaviors are covered by
+  =t/test_daemon_intent_router.py=, =t/test_runtime_intent_routing.py=, and
+  =t/test_backend_turn_services.py=. Wake TTS sections of =t/test_tts.py=
+  replaced by =t/test_wake_speaker.py=.
+- New/rewritten tests: t/test_daemon_intent_router.py (22),
+  t/test_runtime_intent_routing.py (7), t/test_backend_turn_services.py (5),
+  t/test_daemon_tts_output.py (10), t/test_wake_daemon_client.py (10),
+  t/test_wake_fail_closed.py (4), t/test_conversation_flow.py (rewritten, 12),
+  t/test_wake_speaker.py (6), t/test_wake_principal_isolation.py (4),
+  t/test_wake_latency_continuity.py (2), plus updated lifecycle/import/
+  model-debug/latency/config suites.
+- Local gate at candidate head 76b4f8a:
+  - =nix develop -c bash scripts/test-all.sh= -> ALL PHASES PASSED (10/10)
+  - =nix flake check= -> all checks passed
+  - =nix build= -> success (zara-wake + zarathushtra-full)
+  - Full pytest: 1380 passed, 5 skipped, 0 failed (master baseline 1333/5)
+- Incident: one transient pytest segfault traced to a leaked TTS bridge
+  thread; fixed by closing the bridge in =ZaraServer.stop()= (main path) and
+  verified by two consecutive clean full-suite runs.

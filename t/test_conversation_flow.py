@@ -1,21 +1,12 @@
-"""Conversation flow tests with mocked STT and TTS.
+"""Wake conversation flow tests against the daemon voice client.
 
-These tests verify the end-to-end wake → STT → route → LLM → TTS flow
-without requiring a microphone, audio hardware, or network access.
+These tests verify the client-owned flow end to end without a microphone,
+audio hardware, or a running daemon: wake spotting, utterance streaming,
+daemon transcript events, stop phrases, acknowledgement playback, and
+barge-in during daemon-side turns.
 
-STT is mocked by replacing ``transcribe_async`` to return predetermined
-text. TTS is mocked by replacing ``synthesize_and_play_async`` so no
-audio is synthesized or played.
-
-Coverage:
-- Wake word transitions to ACTIVE mode
-- Stop phrase exits conversation mode
-- Wake word alone exits conversation mode
-- Wake word embedded in longer utterance does NOT exit conversation
-- Barge-in during LLM cancels the request and restarts the turn
-- Acknowledgement plays after speech ends, before STT/Prolog/LLM
-- Acknowledgement stops when TTS response begins
-- Conversation stop words ("disable", "end", "goodbye") end conversation
+STT is only used for wake spotting locally; routing, agent turns, and
+response audio come back as daemon events (issue #244).
 """
 
 from __future__ import annotations
@@ -28,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pytest
 
+from zara.runtime import events
 from zara.wake import WakeWordListener
 
 
@@ -43,6 +35,48 @@ class FakeClock:
 
 def frame(value, size=5):
     return np.full((size, 1), value, dtype=np.float32)
+
+
+class FakeDaemon:
+    def __init__(self) -> None:
+        self.stream_utterance = AsyncMock(return_value="stream-1")
+        self.submit_cancel = MagicMock()
+        self.ensure_connected = MagicMock()
+        self.on_transcript_partial = []
+        self.on_transcript_final = []
+        self.on_assistant_delta = []
+        self.on_assistant_complete = []
+        self.on_turn_started = []
+        self.on_turn_completed = []
+        self.on_turn_cancelled = []
+
+    def dispatch_final(self, text: str, *, stream_id="stream-1", trace_id="trace-1"):
+        for handler in self.on_transcript_final:
+            handler(
+                events.VoiceTranscriptFinal(
+                    turn_id="turn-1",
+                    conversation_id="conv-1",
+                    stream_id=stream_id,
+                    trace_id=trace_id,
+                    text=text,
+                )
+            )
+
+    def dispatch_cancelled(self, turn_id="turn-1"):
+        for handler in self.on_turn_cancelled:
+            handler(events.TurnCancelled(turn_id=turn_id, reason="cancel command"))
+
+
+class FakeSpeaker:
+    def __init__(self) -> None:
+        self._active_turns = set()
+        self.cancel_active = MagicMock()
+        self.cancel = MagicMock()
+        self.on_playback_started = None
+
+    @property
+    def is_active(self) -> bool:
+        return bool(self._active_turns)
 
 
 def build_listener(queue_size=32, sample_rate=10):
@@ -73,283 +107,63 @@ def build_listener(queue_size=32, sample_rate=10):
     listener.tts_lock = asyncio.Lock()
     listener.stop_on_interrupt = False
     listener.enable_tts = True
-    listener.tts_config = {"provider": "qwen3"}
-    listener.tts_client = None
-    listener.agent_manager = None
-    listener.session_id = None
-    listener.memory = MagicMock()
+    listener.wake_words = ["zara"]
+    listener.stop_phrases = ["end conversation", "stop session"]
     listener.config = MagicMock()
     listener.config.get_section = MagicMock(return_value={})
+    listener.speaker = FakeSpeaker()
+    listener.daemon = FakeDaemon()
+    listener._pending_wake_audio = None
+    listener._conversation_last_activity = 0.0
+    listener._stop_phrase_seen = threading.Event()
+    listener._turn_finished = threading.Event()
+    listener._active_daemon_turn_id = None
+    listener._active_stream_id = None
+    listener.response_timeout = 30.0
+    listener.conversation_timeout = 60.0
     listener.collect_audio_until_silence = AsyncMock(return_value=frame(1.0, 10))
     return listener
 
 
-def enqueue(listener, data, epoch=None):
-    listener.audio_queue.put_nowait(
-        (listener._audio_epoch if epoch is None else epoch, data)
-    )
-
-
 @pytest.mark.asyncio
-async def test_stop_phrase_exits_conversation_mode():
+async def test_daemon_stop_phrase_transcript_exits_conversation_mode():
     listener = build_listener()
     listener.state = "ACTIVE"
-    listener.prolog = MagicMock()
-    listener.prolog.dictation_active.return_value = False
-    listener.prolog.is_conversation_stop.return_value = True
-    listener.in_conversation_mode = MagicMock(return_value=True)
-    listener.agent_manager = MagicMock()
-    listener.agent_manager.should_exit_conversation.return_value = False
-    listener._conversation_timeout_remaining = MagicMock(return_value=None)
-    listener._apply_conversation_grace = MagicMock()
-    listener.speak_async = AsyncMock()
-    listener._stop_tts = AsyncMock()
-    listener._stop_acknowledgement = MagicMock()
-
-    chunk = frame(1.0, 10)
-    enqueue(listener, chunk)
-    listener._clock = FakeClock(0.0, 0.0, 2.0)
-
-    listener.transcribe_async = AsyncMock(return_value="goodbye")
-    listener._play_acknowledgement = MagicMock()
-
-    await listener.active_mode_async()
-
-    listener.agent_manager.exit_conversation.assert_called_once()
-    assert listener.state == "PASSIVE"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("transcript", ["zara", "Zara.", "hey Zara!", "Sarah?"])
-async def test_wake_word_alone_rearms_without_llm(transcript):
-    listener = build_listener()
-    listener.state = "ACTIVE"
-    listener.prolog = MagicMock()
-    listener.prolog.dictation_active.return_value = False
-    listener.prolog.is_conversation_stop.return_value = False
-    listener.in_conversation_mode = MagicMock(return_value=True)
-    listener.agent_manager = MagicMock()
-    listener.agent_manager.should_exit_conversation.return_value = False
-    listener._conversation_timeout_remaining = MagicMock(return_value=None)
-    listener._apply_conversation_grace = MagicMock()
-    listener.speak_async = AsyncMock()
-    listener._stop_tts = AsyncMock()
-    listener._stop_acknowledgement = MagicMock()
-
-    chunk = frame(1.0, 10)
-    enqueue(listener, chunk)
-    listener._clock = FakeClock(0.0, 0.0, 2.0)
-
-    listener.transcribe_async = AsyncMock(return_value=transcript)
-    listener._play_acknowledgement = MagicMock()
-    listener.query_with_fallback_async = AsyncMock()
-
-    await listener.active_mode_async()
-
-    listener.agent_manager.exit_conversation.assert_called_once()
-    listener.query_with_fallback_async.assert_not_awaited()
-    listener._play_acknowledgement.assert_not_called()
-    listener.speak_async.assert_not_awaited()
-    assert listener.state == "ACTIVE"
-
-
-@pytest.mark.asyncio
-async def test_wake_word_in_longer_utterance_does_not_exit():
-    listener = build_listener()
-    listener.state = "ACTIVE"
-    listener.prolog = MagicMock()
-    listener.prolog.dictation_active.return_value = False
-    listener.prolog.is_conversation_stop.return_value = False
-    listener.in_conversation_mode = MagicMock(return_value=True)
-    listener.agent_manager = MagicMock()
-    listener.agent_manager.should_exit_conversation.return_value = False
-    listener._conversation_timeout_remaining = MagicMock(return_value=None)
-    listener._apply_conversation_grace = MagicMock()
-    listener._stop_tts = AsyncMock()
-    listener._stop_acknowledgement = MagicMock()
-
-    chunk = frame(1.0, 10)
-    enqueue(listener, chunk)
-    listener._clock = FakeClock(0.0, 0.0, 2.0)
-
-    listener.transcribe_async = AsyncMock(
-        return_value="hey zara what is the weather"
-    )
-    listener._play_acknowledgement = MagicMock()
-    listener.query_with_fallback_async = AsyncMock(
-        return_value=(True, "It is sunny.")
-    )
-    listener.send_response_async = AsyncMock()
-
-    await listener.active_mode_async()
-
-    listener.agent_manager.exit_conversation.assert_not_called()
-    listener.query_with_fallback_async.assert_awaited_once_with(
-        "what is the weather"
-    )
-
-
-@pytest.mark.asyncio
-async def test_disable_ends_conversation():
-    listener = build_listener()
-    listener.state = "ACTIVE"
-    listener.prolog = MagicMock()
-    listener.prolog.dictation_active.return_value = False
-    listener.prolog.is_conversation_stop.return_value = False
-    listener.in_conversation_mode = MagicMock(return_value=True)
-    listener.agent_manager = MagicMock()
-    listener.agent_manager.should_exit_conversation.return_value = False
-    listener._conversation_timeout_remaining = MagicMock(return_value=None)
-    listener._apply_conversation_grace = MagicMock()
-    listener.speak_async = AsyncMock()
-    listener._stop_tts = AsyncMock()
-    listener._stop_acknowledgement = MagicMock()
-
-    chunk = frame(1.0, 10)
-    enqueue(listener, chunk)
-    listener._clock = FakeClock(0.0, 0.0, 2.0)
-
-    listener.transcribe_async = AsyncMock(return_value="disable")
-    listener._play_acknowledgement = MagicMock()
-
-    await listener.active_mode_async()
-
-    listener.agent_manager.exit_conversation.assert_called_once()
-    assert listener.state == "PASSIVE"
-
-
-@pytest.mark.asyncio
-async def test_end_ends_conversation():
-    listener = build_listener()
-    listener.state = "ACTIVE"
-    listener.prolog = MagicMock()
-    listener.prolog.dictation_active.return_value = False
-    listener.prolog.is_conversation_stop.return_value = False
-    listener.in_conversation_mode = MagicMock(return_value=True)
-    listener.agent_manager = MagicMock()
-    listener.agent_manager.should_exit_conversation.return_value = False
-    listener._conversation_timeout_remaining = MagicMock(return_value=None)
-    listener._apply_conversation_grace = MagicMock()
-    listener.speak_async = AsyncMock()
-    listener._stop_tts = AsyncMock()
-    listener._stop_acknowledgement = MagicMock()
-
-    chunk = frame(1.0, 10)
-    enqueue(listener, chunk)
-    listener._clock = FakeClock(0.0, 0.0, 2.0)
-
-    listener.transcribe_async = AsyncMock(return_value="end")
-    listener._play_acknowledgement = MagicMock()
-
-    await listener.active_mode_async()
-
-    listener.agent_manager.exit_conversation.assert_called_once()
-    assert listener.state == "PASSIVE"
-
-
-@pytest.mark.asyncio
-async def test_goodbye_ends_conversation():
-    listener = build_listener()
-    listener.state = "ACTIVE"
-    listener.prolog = MagicMock()
-    listener.prolog.dictation_active.return_value = False
-    listener.prolog.is_conversation_stop.return_value = False
-    listener.in_conversation_mode = MagicMock(return_value=True)
-    listener.agent_manager = MagicMock()
-    listener.agent_manager.should_exit_conversation.return_value = False
-    listener._conversation_timeout_remaining = MagicMock(return_value=None)
-    listener._apply_conversation_grace = MagicMock()
-    listener.speak_async = AsyncMock()
-    listener._stop_tts = AsyncMock()
-    listener._stop_acknowledgement = MagicMock()
-
-    chunk = frame(1.0, 10)
-    enqueue(listener, chunk)
-    listener._clock = FakeClock(0.0, 0.0, 2.0)
-
-    listener.transcribe_async = AsyncMock(return_value="goodbye")
-    listener._play_acknowledgement = MagicMock()
-
-    await listener.active_mode_async()
-
-    listener.agent_manager.exit_conversation.assert_called_once()
-    assert listener.state == "PASSIVE"
-
-
-@pytest.mark.asyncio
-async def test_normal_utterance_does_not_exit_conversation():
-    listener = build_listener()
-    listener.state = "ACTIVE"
-    listener.prolog = MagicMock()
-    listener.prolog.dictation_active.return_value = False
-    listener.prolog.is_conversation_stop.return_value = False
-    listener.in_conversation_mode = MagicMock(return_value=True)
-    listener.agent_manager = MagicMock()
-    listener.agent_manager.should_exit_conversation.return_value = False
-    listener._conversation_timeout_remaining = MagicMock(return_value=None)
-    listener._apply_conversation_grace = MagicMock()
-    listener._stop_tts = AsyncMock()
-    listener._stop_acknowledgement = MagicMock()
-
-    chunk = frame(1.0, 10)
-    enqueue(listener, chunk)
-    listener._clock = FakeClock(0.0, 0.0, 2.0)
-
-    listener.transcribe_async = AsyncMock(
-        return_value="what is the meaning of life"
-    )
-    listener._play_acknowledgement = MagicMock()
-    listener.query_with_fallback_async = AsyncMock(
-        return_value=(True, "42, obviously.")
-    )
-    listener.send_response_async = AsyncMock()
+    listener.collect_audio_until_silence = AsyncMock(return_value=frame(1.0, 10))
     listener._monitor_speech_during_llm = AsyncMock(return_value=False)
+    listener._wait_for_turn_completion = AsyncMock(return_value=True)
+
+    listener.daemon.on_transcript_final.append(
+        lambda event: listener._on_transcript_final(event)
+    )
+
+    def stream_sets_stop(audio, *, trace_id):
+        listener.daemon.dispatch_final("end conversation", trace_id=trace_id)
+        return "stream-1"
+
+    listener.daemon.stream_utterance = AsyncMock(side_effect=stream_sets_stop)
 
     await listener.active_mode_async()
 
-    listener.agent_manager.exit_conversation.assert_not_called()
-    listener.query_with_fallback_async.assert_awaited_once()
-    listener.send_response_async.assert_awaited_once()
+    assert listener.state == "PASSIVE"
+    listener.daemon.submit_cancel.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_barge_in_cancels_llm_and_restarts():
+async def test_normal_daemon_transcript_keeps_conversation_active():
     listener = build_listener()
     listener.state = "ACTIVE"
-    listener.prolog = MagicMock()
-    listener.prolog.dictation_active.return_value = False
-    listener.prolog.is_conversation_stop.return_value = False
-    listener.in_conversation_mode = MagicMock(return_value=True)
-    listener.agent_manager = MagicMock()
-    listener.agent_manager.should_exit_conversation.return_value = False
-    listener._conversation_timeout_remaining = MagicMock(return_value=None)
-    listener._apply_conversation_grace = MagicMock()
-    listener._stop_tts = AsyncMock()
-    listener._stop_acknowledgement = MagicMock()
+    listener._monitor_speech_during_llm = AsyncMock(return_value=False)
+    listener._wait_for_turn_completion = AsyncMock(return_value=True)
+    listener.daemon.on_transcript_final.append(
+        lambda event: listener._on_transcript_final(event)
+    )
 
-    chunk = frame(1.0, 10)
-    enqueue(listener, chunk)
-    listener._clock = FakeClock(0.0, 0.0, 2.0)
+    def stream_sets_transcript(audio, *, trace_id):
+        listener.daemon.dispatch_final("what time is it", trace_id=trace_id)
+        return "stream-1"
 
-    listener.transcribe_async = AsyncMock(return_value="tell me a story")
-    listener._play_acknowledgement = MagicMock()
-
-    llm_started = asyncio.Event()
-
-    async def slow_llm(command):
-        llm_started.set()
-        await asyncio.Event().wait()
-        return (True, "Once upon a time...")
-
-    listener.query_with_fallback_async = slow_llm
-
-    async def fast_barge_in():
-        await llm_started.wait()
-        await asyncio.sleep(0.01)
-        return True
-
-    listener._monitor_speech_during_llm = fast_barge_in
-    listener.send_response_async = AsyncMock()
+    listener.daemon.stream_utterance = AsyncMock(side_effect=stream_sets_transcript)
 
     await listener.active_mode_async()
 
@@ -357,139 +171,166 @@ async def test_barge_in_cancels_llm_and_restarts():
 
 
 @pytest.mark.asyncio
-async def test_llm_completes_before_barge_in():
+async def test_wake_word_alone_streams_pending_utterance_and_stays_active():
     listener = build_listener()
-    listener.state = "ACTIVE"
-    listener.prolog = MagicMock()
-    listener.prolog.dictation_active.return_value = False
-    listener.prolog.is_conversation_stop.return_value = False
-    listener.in_conversation_mode = MagicMock(return_value=True)
-    listener.agent_manager = MagicMock()
-    listener.agent_manager.should_exit_conversation.return_value = False
-    listener._conversation_timeout_remaining = MagicMock(return_value=None)
-    listener._apply_conversation_grace = MagicMock()
-    listener._stop_tts = AsyncMock()
-    listener._stop_acknowledgement = MagicMock()
+    wake_audio = frame(1.0, 10)
+    listener.collect_audio_until_silence = AsyncMock(return_value=wake_audio)
+    listener.transcribe_async = AsyncMock(return_value="Zara")
 
-    chunk = frame(1.0, 10)
-    enqueue(listener, chunk)
-    listener._clock = FakeClock(0.0, 0.0, 2.0)
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(
+            "zara.wake.send_notification_async", AsyncMock(return_value=True)
+        )
+        await listener.passive_mode_async()
 
-    listener.transcribe_async = AsyncMock(return_value="hello there")
-    listener._play_acknowledgement = MagicMock()
-    listener.query_with_fallback_async = AsyncMock(
-        return_value=(True, "Hi! How can I help?")
-    )
-    listener.send_response_async = AsyncMock()
+    assert listener.state == "ACTIVE"
+    assert listener._pending_wake_audio is wake_audio
+
+    listener.collect_audio_until_silence = AsyncMock()
     listener._monitor_speech_during_llm = AsyncMock(return_value=False)
+    listener._wait_for_turn_completion = AsyncMock(return_value=True)
 
     await listener.active_mode_async()
 
-    listener.query_with_fallback_async.assert_awaited_once()
-    listener.send_response_async.assert_awaited_once()
+    listener.collect_audio_until_silence.assert_not_awaited()
+    assert listener.daemon.stream_utterance.await_args.args[0] is wake_audio
 
 
 @pytest.mark.asyncio
-async def test_acknowledgement_plays_after_speech_ends():
+async def test_wake_in_longer_utterance_streams_whole_utterance():
+    listener = build_listener()
+    utterance = frame(1.0, 10)
+    listener.collect_audio_until_silence = AsyncMock(return_value=utterance)
+    listener.transcribe_async = AsyncMock(return_value="Zara what time is it")
+
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(
+            "zara.wake.send_notification_async", AsyncMock(return_value=True)
+        )
+        await listener.passive_mode_async()
+
+    assert listener.state == "ACTIVE"
+    assert listener._pending_wake_audio is utterance
+
+
+@pytest.mark.parametrize("stop_word", ["disable", "end", "goodbye"])
+@pytest.mark.asyncio
+async def test_conversation_stop_words_exit_via_daemon_transcript(stop_word):
     listener = build_listener()
     listener.state = "ACTIVE"
-    listener.prolog = MagicMock()
-    listener.prolog.dictation_active.return_value = False
-    listener.prolog.is_conversation_stop.return_value = False
-    listener.in_conversation_mode = MagicMock(return_value=True)
-    listener.agent_manager = MagicMock()
-    listener.agent_manager.should_exit_conversation.return_value = False
-    listener._conversation_timeout_remaining = MagicMock(return_value=None)
-    listener._apply_conversation_grace = MagicMock()
-    listener._stop_tts = AsyncMock()
-    listener._stop_acknowledgement = MagicMock()
-
-    chunk = frame(1.0, 10)
-    enqueue(listener, chunk)
-    listener._clock = FakeClock(0.0, 0.0, 2.0)
-
-    transcribe_called = asyncio.Event()
-
-    async def mock_transcribe(audio_data):
-        transcribe_called.set()
-        return "what time is it"
-
-    listener.transcribe_async = mock_transcribe
-    listener._play_acknowledgement = MagicMock()
-    listener.query_with_fallback_async = AsyncMock(
-        return_value=(True, "It is noon.")
-    )
-    listener.send_response_async = AsyncMock()
     listener._monitor_speech_during_llm = AsyncMock(return_value=False)
+    listener._wait_for_turn_completion = AsyncMock(return_value=True)
+    listener.daemon.on_transcript_final.append(
+        lambda event: listener._on_transcript_final(event)
+    )
+    listener.daemon.stream_utterance = AsyncMock(
+        side_effect=lambda audio, *, trace_id: (
+            listener.daemon.dispatch_final(stop_word, trace_id=trace_id),
+            "stream-1",
+        )[1]
+    )
 
     await listener.active_mode_async()
 
-    listener._play_acknowledgement.assert_called_once()
-    assert listener._play_acknowledgement.call_args is not None
-    ack_call_time = listener._play_acknowledgement.call_args
-    assert transcribe_called.is_set()
+    assert listener.state == "PASSIVE"
 
 
 @pytest.mark.asyncio
-async def test_acknowledgement_stops_when_tts_starts():
+async def test_barge_in_cancels_daemon_turn_and_restarts():
     listener = build_listener()
     listener.state = "ACTIVE"
-    listener.prolog = MagicMock()
-    listener.prolog.dictation_active.return_value = False
-    listener.prolog.is_conversation_stop.return_value = False
-    listener.in_conversation_mode = MagicMock(return_value=True)
-    listener.agent_manager = MagicMock()
-    listener.agent_manager.should_exit_conversation.return_value = False
-    listener._conversation_timeout_remaining = MagicMock(return_value=None)
-    listener._apply_conversation_grace = MagicMock()
-    listener._stop_acknowledgement = MagicMock()
-
-    chunk = frame(1.0, 10)
-    enqueue(listener, chunk)
-    listener._clock = FakeClock(0.0, 0.0, 2.0)
-
-    listener.transcribe_async = AsyncMock(return_value="hello")
-    listener._play_acknowledgement = MagicMock()
-
-    stop_ack_calls = []
-
-    async def mock_send_response(title, message):
-        listener._stop_acknowledgement()
-
-    listener.send_response_async = mock_send_response
-    listener.query_with_fallback_async = AsyncMock(
-        return_value=(True, "Hello!")
+    listener._monitor_speech_during_llm = AsyncMock(return_value=True)
+    listener._stop_tts = AsyncMock()
+    listener.ack_player = MagicMock()
+    listener.daemon.on_turn_started.append(
+        lambda event: listener._on_turn_started(event)
     )
-    listener._monitor_speech_during_llm = AsyncMock(return_value=False)
+
+    async def stream(audio, *, trace_id):
+        listener._on_turn_started(
+            events.TurnStarted(turn_id="turn-9", conversation_id="conv-1")
+        )
+        return "stream-1"
+
+    listener.daemon.stream_utterance = AsyncMock(side_effect=stream)
 
     await listener.active_mode_async()
 
-    listener._stop_acknowledgement.assert_called()
+    listener.daemon.submit_cancel.assert_called_once_with("turn-9")
+    listener.speaker.cancel_active.assert_called()
+    assert listener.state == "ACTIVE"
 
 
 @pytest.mark.asyncio
-async def test_short_text_is_ignored():
+async def test_turn_completion_before_barge_in_completes_normally():
     listener = build_listener()
     listener.state = "ACTIVE"
-    listener.prolog = MagicMock()
-    listener.prolog.dictation_active.return_value = False
-    listener.prolog.is_conversation_stop.return_value = False
-    listener.in_conversation_mode = MagicMock(return_value=True)
-    listener.agent_manager = MagicMock()
-    listener.agent_manager.should_exit_conversation.return_value = False
-    listener._conversation_timeout_remaining = MagicMock(return_value=None)
-    listener._apply_conversation_grace = MagicMock()
-    listener._stop_tts = AsyncMock()
-    listener._stop_acknowledgement = MagicMock()
-
-    chunk = frame(1.0, 10)
-    enqueue(listener, chunk)
-    listener._clock = FakeClock(0.0, 0.0, 2.0)
-
-    listener.transcribe_async = AsyncMock(return_value="hi")
-    listener._play_acknowledgement = MagicMock()
-    listener.query_with_fallback_async = AsyncMock()
+    listener._monitor_speech_during_llm = AsyncMock(return_value=False)
+    listener._wait_for_turn_completion = AsyncMock(return_value=True)
 
     await listener.active_mode_async()
 
-    listener.query_with_fallback_async.assert_not_awaited()
+    listener.daemon.submit_cancel.assert_not_called()
+    assert listener.state == "ACTIVE"
+
+
+@pytest.mark.asyncio
+async def test_acknowledgement_plays_after_speech_ends_before_streaming():
+    listener = build_listener()
+    listener.state = "ACTIVE"
+    order: list[str] = []
+    listener._play_acknowledgement = MagicMock(
+        side_effect=lambda turn_id: order.append("ack")
+    )
+    listener._monitor_speech_during_llm = AsyncMock(return_value=False)
+    listener._wait_for_turn_completion = AsyncMock(return_value=True)
+
+    async def stream(audio, *, trace_id):
+        order.append("stream")
+        return "stream-1"
+
+    listener.daemon.stream_utterance = AsyncMock(side_effect=stream)
+
+    await listener.active_mode_async()
+
+    assert order == ["ack", "stream"]
+
+
+@pytest.mark.asyncio
+async def test_daemon_audio_playback_stops_acknowledgement():
+    from unittest.mock import patch
+
+    from zara.wake_daemon import PcmStreamSpeaker
+
+    stopped = []
+    with (
+        patch.object(PcmStreamSpeaker, "_ensure_stream"),
+        patch.object(PcmStreamSpeaker, "_ensure_writer"),
+    ):
+        speaker = PcmStreamSpeaker()
+        speaker.on_playback_started = lambda: stopped.append("ack-stopped")
+        speaker.start(
+            format={"codec": "pcm_s16le", "sample_rate": 24000, "channels": 1},
+            conversation_id="conv-1",
+            turn_id="turn-5",
+            stream_id="tts-5",
+        )
+
+    assert stopped == ["ack-stopped"]
+    speaker.cancel(turn_id="turn-5")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_daemon_turn_unblocks_wait():
+    listener = build_listener()
+    listener.state = "ACTIVE"
+    listener.daemon.on_turn_cancelled.append(
+        lambda event: listener._on_turn_cancelled(event)
+    )
+    listener._active_daemon_turn_id = "turn-7"
+
+    listener.daemon.dispatch_cancelled("turn-7")
+
+    completed = await listener._wait_for_turn_completion(listener._clock() + 1.0)
+
+    assert completed is True

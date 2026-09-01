@@ -42,6 +42,32 @@ class PrologSerializationError(PrologEngineError):
     """Raised when a Python value cannot be represented as a Prolog term."""
 
 
+def locate_main_pl(explicit: Optional[str] = None) -> Path:
+    """Locate the canonical ``main.pl`` knowledge base.
+
+    Search order: explicit path, current working directory, repository
+    root, the Nix store share path, and the system share path.
+    """
+    import pathlib
+    import sys
+
+    if explicit:
+        return pathlib.Path(explicit)
+    candidates = [
+        pathlib.Path.cwd() / "main.pl",
+        pathlib.Path(__file__).parent.parent / "main.pl",
+        pathlib.Path(sys.prefix) / "share" / "zarathushtra" / "main.pl",
+        pathlib.Path("/usr/share/zarathushtra/main.pl"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(
+        "Could not find main.pl. Tried: "
+        + ", ".join(str(candidate) for candidate in candidates)
+    )
+
+
 @dataclass(frozen=True)
 class IntentResult:
     kind: str

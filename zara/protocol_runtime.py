@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from zara.protocol import ProtocolMessage
+from zara.protocol import AUDIO_OUTPUT_CONTENT_TYPE, ProtocolMessage
 from zara.runtime import events
 from zara.runtime.bridge import EventEnvelope
 from zara.runtime.commands import (
@@ -177,6 +177,19 @@ def runtime_event_to_message(
             "text": event.text,
             "success": event.success,
         }
+    elif type(event) is events.AudioOutputStarted:
+        message_type, body = "audio.output.start", {
+            "codec": "pcm_s16le",
+            "sample_rate": int(event.sample_rate),
+            "channels": int(event.channels),
+        }
+        stream_id = event.stream_id
+    elif type(event) is events.AudioOutputChunk:
+        message_type, body = "audio.output.chunk", None
+        stream_id = event.stream_id
+    elif type(event) is events.AudioOutputFinished:
+        message_type, body = "audio.output.done", None
+        stream_id = event.stream_id
     elif type(event) is events.ResponseText:
         message_type, body = "assistant.response", {
             "text": event.text,
@@ -244,16 +257,26 @@ def runtime_event_to_message(
     else:
         raise RuntimeCodecError("unsupported runtime event")
 
+    payload_count = 0
+    content_type = None
+    seq = envelope.sequence
+    if type(event) in (events.AudioOutputStarted, events.AudioOutputFinished):
+        seq = None
+    elif type(event) is events.AudioOutputChunk:
+        payload_count = 1
+        content_type = AUDIO_OUTPUT_CONTENT_TYPE
+
     return ProtocolMessage(
         type=message_type,
         id=message_id,
         timestamp_ns=timestamp_ns,
-        payload_count=0,
+        payload_count=payload_count,
+        content_type=content_type,
         conversation_id=event.conversation_id,
         turn_id=event.turn_id,
         stream_id=stream_id,
         trace_id=trace_id,
-        seq=envelope.sequence,
+        seq=seq,
         body=body,
     )
 

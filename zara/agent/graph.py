@@ -335,7 +335,7 @@ def create_agent_node(llm_client, tool_registry, stream_publisher=None, latency_
     llm_with_tools = llm_client.bind_tools(tools) if tools else llm_client
     can_stream = callable(getattr(llm_with_tools, "astream", None))
 
-    async def agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    async def agent_node(state: Dict[str, Any], config: Any = None) -> Dict[str, Any]:
         import time
 
         turn_id = state.get("turn_id")
@@ -360,7 +360,12 @@ def create_agent_node(llm_client, tool_registry, stream_publisher=None, latency_
             getattr(msgs[-1], "content", None),
         )
 
-        trace = latency_trace if latency_trace is not None else state.get("latency_trace")
+        configurable = (config or {}).get("configurable") or {}
+        trace = (
+            latency_trace
+            if latency_trace is not None
+            else configurable.get("latency_trace") or state.get("latency_trace")
+        )
         request_index = int(state.get("step_count", 0))
         if trace is not None:
             trace.record(

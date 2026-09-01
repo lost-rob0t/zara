@@ -1,0 +1,128 @@
+* Wake daemon voice client migration — research (issue #244)
+
+** Start evidence
+- Consumed issue :: #244
+- Branch :: =rage/244-wake-daemon-voice=
+- RAGE start commit :: =18659368cd00d57f3ea8c6da5534cb141e05f8c0=
+- Queue exception :: user-directed override recorded before research. #244 declares
+  =depends_on(244, 134)=; #134 is open and blocked by open #29/#30/#31. The operator
+  explicitly selected #244; this exception is recorded here and in the run log.
+
+** Sources inspected
+- Issue #244 text plus parents #127, #134 and siblings #132/#133.
+- =rage/132-live-voice-design.org=, =rage/133-client-migration-design.org= (inherited design).
+- Code at start commit: =zara/wake.py= (1948 lines), =zara/zmq_transport.py=,
+  =zara/protocol.py=, =zara/protocol_runtime.py=, =zara/voice_runtime.py=,
+  =zara/server.py=, =zara/runtime/host.py=, =zara/runtime/backend.py=,
+  =zara/runtime/clarification.py=, =zara/agent/__init__.py=,
+  =zara/agent/tools/builtin_tools.py=, =zara/security_gateway.py=,
+  =zara/latency.py=, =zara/acknowledgement.py=, =zara/tts/engine.py=,
+  =kb/intents.pl=, flake packaging, and the voice/daemon test suite in =t/=.
+- Voice-provider chain issues #17/#28/#29/#30/#31 states (only #29/#30/#31 open).
+
+** Findings
+
+*** F1 — The daemon voice input path is complete and production-shaped
+=ZmqZaraClient= exposes =start_audio_input/send_audio_input/commit_audio_input/cancel_audio_input=
+(=zara/zmq_transport.py:1626-1712=) over =audio.input.*= (pcm_s16le, 16 kHz, mono, exact
+512-sample/1024-byte frames, contiguous =seq= per stream). The gateway feeds
+=RuntimeVoiceIngress= which runs daemon-side Silero VAD + faster-whisper, publishes
+=voice.speech.started/voice.transcript.partial/voice.speech.ended/voice.transcript.final=
+and auto-submits =SubmitTurn(request_id=trace_id)= (=zara/voice_runtime.py:306-340=).
+No new message types are needed for input.
+
+*** F2 — Gap: no daemon producer emits audio.output.*
+The #132 contract validates and negotiates =audio.output.start/chunk/done=
+(=zara/protocol.py:378-445=), the gateway negotiates a format in =hello=, and
+=ZmqZaraClient= implements the full playback sink boundary incl. stale-frame
+suppression (=zmq_transport.py:1333-1368=) — but no server component emits those
+frames; only scripted tests do. Issue #244 non-goals allow reusing the #132
+contract and explicitly demand justification for gaps: the producer is the gap.
+#132's design assigns TTS work to the daemon ("Daemon owns canonical streaming
+VAD/STT, turn coordination, model/tool/TTS work") and defers phrase streaming
+"from #29 when available" (#29 remains open). Resolution: implement a minimal
+daemon-side TTS output bridge (per-turn synthesis from assistant output with
+cancel-safety) as part of #244; phrase-streaming upgrades, jitter buffering and
+the p95 benchmark remain #29's scope. This is the only reading that satisfies
+AC1 ("wake owns no TTS synthesis pipeline", "playback driven by assistant
+text/audio events") and AC4 ("barge-in during daemon-side TTS").
+
+*** F3 — Gap: Prolog-first deterministic routing exists only in wake
+The daemon turn path (=RuntimeHost._run_turn= → =AgentRuntimeBackend.submit_turn=
+→ =AgentManager.process_async=) goes straight to the LLM agent loop; Prolog is
+available to the agent only as the =query_prolog= tool with a prompt nudge
+(=builtin_tools.py:269-316=). Wake's deterministic stack
+(=query_with_fallback_async=, =zara/wake.py:930=) does =command_gate= →
+=PrologEngine.resolve_intent= → =execute_intent= → agent fallback, plus
+clarification dialogues for =pending= intents. AGENTS.md requires "The wake flow
+should attempt Prolog resolution first. Only fall back to LLM conversation mode
+when Prolog fails or returns ask." After migration the wake flow is the daemon
+path, so the deterministic router must move daemon-side (shared by desktop/CLI —
+a recorded side effect that aligns them with Zara's Prolog-first identity).
+
+*** F4 — Clarification dialogue infrastructure is already runtime-level
+=ClarificationCoordinator= lives in =zara/runtime/clarification.py:588=; wake only
+imports it. Pending-intent dialogue templates (=PENDING_DIALOGUE_TEMPLATES=,
+=zara/wake.py:74=) move with the router. Daemon-side pending state must be
+keyed per conversation/principal.
+
+*** F5 — Wake-word detection currently uses local ASR
+Wake spotting runs =faster_whisper.WhisperModel= with wake beam/prompt
+(=zara/wake.py:370-376=, =724-739=) and fuzzy span matching over the transcript.
+Zara wake words are open-vocabulary (config =[wake].words= plus Prolog
+=wake_word/1= facts); closed-vocabulary KWS models would add a new dependency and
+enrollment flow the issue excludes. Decision: the client-owned wake-word
+spotter retains its local wake-mode ASR; AC1's "no STT engine" is interpreted as
+the utterance-transcription engine (daemon owns final transcripts via
+=RuntimeVoiceIngress=). A pinning test asserts wake owns no utterance-STT path.
+
+*** F6 — Principal scoping is daemon-complete for the wake path
+CURVE/ZAP identity → per-route principal (=security_gateway.py:278-300,414-419=);
+=RuntimeSupervisor= keeps one =RuntimeHost=+bus per principal; =AgentManager=
+builds principal-scoped memory itself (=zara/agent/__init__.py:52-55= via
+=build_memory_manager(..., principal=principal)=); voice ingress rejects
+principal/context drift (=voice_runtime.py:85-89,214-221=). Wake over local IPC
+pins =PrincipalContext.local_owner()=; two CURVE wake clients get isolated
+runtimes. Regression tests must prove it through the wake path.
+
+*** F7 — Fail-closed policy precedent exists
+CLI =--connect= exits 2 with a user-facing error and never silently starts the
+standalone runtime (=zara/__main__.py:132-134=, pinned by =t/test_cli_client_migration.py=).
+Desktop fallback is explicit injection, not silent. Wake must follow: no
+=InProcessZaraClient= fallback, bounded =reconnect_with_backoff=, then fail closed.
+
+*** F8 — trace_id continuity is mostly mechanical
+Client passes =trace_id= on audio commands; the gateway/ingress thread it into
+every =voice.*= event and use it as the =SubmitTurn= request_id
+(=voice_runtime.py:327=). Missing piece: daemon-side stage recording (route/LLM/TTS)
+is currently wake-private; =AgentManager.process_async= already accepts
+=latency_trace= (=zara/agent/__init__.py:160=) but the runtime backend never passes
+one. The router/backend must record route events under the voice trace_id so the
+deterministic harness can assert continuity end to end.
+
+*** F9 — Wake keep-set is cleanly separable
+Client-owned (keep): mic capture + queue/epochs, Silero VAD endpointing, wake
+spotter, speaker-echo guard, barge-in capture, ack player (pre-generated cached
+clips — a player, not a response-synthesis pipeline), notifications/pets bridge,
+PASSIVE/ACTIVE state machine, local stop-phrase watch. Daemon-owned (delete from
+wake): utterance STT, =AgentManager=, =PrologEngine=, memory sessions/summaries,
+response TTS synthesis pipeline, =ChatHistory=, clarification coordination.
+
+*** F10 — Test blast radius
+11 test files build =WakeWordListener= via =__new__= with hand-wired attributes;
+=scripts/zara_wake.py= must stay a thin delegate (=t/test_canonical_paths.py=);
+=t/test_packaging.py= pins the =zara-wake= entry point. Migration slices must move
+these fixtures deliberately, not break them silently.
+
+** Alternatives considered
+- *Client renders text via local TTS (keep TTSEngine in wake)*: rejected —
+  contradicts AC1/AC4 literally and #132's daemon-owns-TTS design; would leave
+  the daemon with no audio producer and #134's gate permanently unprovable.
+- *Daemon-side KWS/wake spotting*: rejected — new dependency + enrollment flow
+  out of scope; open-vocabulary wake words unsupported.
+- *LLM-mediated Prolog only (desktop model unchanged)*: rejected — violates
+  AGENTS.md wake-flow rule and AC1's command/conversational split; commands
+  would pay LLM latency and lose determinism.
+- *Full #29 implementation (jitter buffer, persistent daemon player, p95 gate)*:
+  rejected — front-running a queued P2 issue; #244 takes only the minimal
+  producer slice it needs.
