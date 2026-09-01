@@ -1,0 +1,34 @@
+#+title: RAGE #246 — built-in todo surface recovery
+
+* Iteration 1 — recover stale PR #248 on current master
+:PROPERTIES:
+:issue: 246
+:rage_start: ed683b454bc15d14ca4fdec329640a1bf1d431d1
+:source_pr: 248
+:source_head: 6ceb97ac7018eabc43ae1d70110d71c9be518bb3
+:END:
+
+** Research / reconciliation
+- Operator priority requires Zara's built-in todo replacement to remain cleanly disable-able while daemon timers remain separate.
+- Existing PR #248 implements that bounded contract but is non-mergeable and was based on 2054ac1d368b175a85518c258f6a9cf6647f69a4.
+- Current master at recovery start is ed683b454bc15d14ca4fdec329640a1bf1d431d1.
+- PR #248 changes exactly: kb/intents.pl, modules/intent_resolver.pl, t/test_todo_surface_toggle.py, zara/agent/tools/registry.py, zara/console.py, zara/python_skills.py.
+- Comparing the stale base to current master shows none of those six paths changed upstream, so replaying the exact bounded implementation does not overwrite intervening Zara work.
+- Android PR #269 is the active sibling transaction and is excluded from this recovery.
+
+** Design / adversarial check
+- Preserve one built-in todo authority when enabled and remove its complete public surface when disabled: Prolog intent routing, Python skills, and LangChain built-ins.
+- Keep timer/alarm routing independent and available.
+- Reject non-boolean todo.enabled instead of coercing strings or integers.
+- Allow an external provider to claim otherwise-colliding todo tool names only after the built-in surface is disabled.
+- Do not add a second todo store, timer store, command router, or plugin implementation.
+
+** TDD evidence
+- Existing PR #248 carries deterministic regression coverage in t/test_todo_surface_toggle.py for enabled/disabled behavior, Prolog routing, timer preservation, invalid config, and replacement-tool registration.
+- Recovery does not treat stale CI as a merge gate. A fresh exact-head full repository/Nix CI run is mandatory after replay.
+
+** Implementation plan
+1. Replay the exact six-file #248 implementation onto the immutable recovery start.
+2. Verify refreshed diff contains only those six paths plus this RAGE log.
+3. Open replacement PR, close stale PR only after replacement exists, and require fresh exact-head CI.
+4. Merge only if exact head is green, mergeable, non-draft, and discussion-free.
