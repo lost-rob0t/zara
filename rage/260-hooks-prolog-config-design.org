@@ -1,0 +1,62 @@
+#+title: RAGE Design - Issue #260 Prolog hook/user-config seam
+#+startup: overview
+
+* Boundary
+This slice replaces the fake Prolog reply hook mechanism with one inspectable ordered registry and wires trusted local =hooks.pl= through the existing XDG config owner. It does not create another agent loop, Prolog engine, config store, or plugin manager.
+
+* Public Prolog interface
+=modules/zara_hooks.pl= exports:
+- =register_hook(+Stage,+Owner,+Priority,+Goal,-RegistrationId)=
+- =unregister_hook(+RegistrationId)=
+- =clear_hook_owner(+Owner)=
+- =list_hooks(-Hooks)=
+- =run_hook(+Stage,+Event)=
+
+Registry rows are =hook_registration(Id, Stage, Owner, Priority, Sequence, Goal)=. Stages are allow-listed. Registration ids are generated locally and are not bearer authority.
+
+* Ordering
+Handlers run by ascending =Priority= then registration =Sequence=. Re-registering is additive; explicit unregister/clear owns lifecycle. User reload clears owner =user= then loads the file, making repeated reload idempotent when user source registers the same handlers.
+
+* Failure semantics
+Each handler is called once. Failure is treated as no-op. Exceptions are caught per handler and emitted as bounded Prolog warnings without event/transcript serialization. Later handlers still run. Hook execution cannot alter Stage.
+
+* User file ownership
+=hooks_loader:user_hooks_path/1= derives the hook path from =config_loader:user_config_path/1= and therefore resolves =hooks.pl= beside canonical =config.pl= without duplicating XDG ownership logic. =load_user_hooks/0= and =reload_user_hooks/0= never create the file. If absent they succeed with no registrations. Before loading, only owner =user= registrations are cleared. Arbitrary config facts remain governed by the existing validated =config.pl= loader.
+
+* Hook policy projection
+Issue #260's =[hooks].enabled= and =[hooks].allow_override= values live in Zara's canonical =config.toml=. The Prolog startup path must honor those values before consulting mutable =hooks.pl=.
+
+The selected bounded projection is deliberately narrow:
+- derive =config.toml= beside =config.pl= through the same XDG directory authority;
+- read only the =[hooks]= table and only the two boolean policy keys;
+- default both gates to =false= when the file/table/key is absent;
+- malformed or duplicate boolean policy values fail closed to disabled policy rather than enabling code;
+- =allow_override=true= while =enabled=false= remains inert: future advice/override dispatch must require both gates;
+- never parse, copy, log, or expose unrelated TOML values or secrets.
+
+This avoids creating a second mutable config store and avoids coupling SWI startup to a second Python runtime merely to answer two boot-time booleans. It is not a general TOML parser and must not grow into one; any broader cross-runtime configuration projection belongs at the existing runtime/config boundary.
+
+* Compatibility
+=before_reply/1= and =after_reply/1= remain exported compatibility predicates but dispatch through the registry instead of acting as catch-all extension points. =emit_reply/2= continues invoking the same lifecycle locations.
+
+* Acceptance tests
+1. Register two hooks out of registration order with priorities 20/10; dispatch observes priority order.
+2. A throwing hook does not prevent the following hook.
+3. =unregister_hook/1= removes only the target registration.
+4. =clear_hook_owner/1= removes one owner's registrations while preserving another owner's.
+5. XDG hook path resolves beside =config.pl= and missing file is not created.
+6. Repeated =reload_user_hooks/0= does not accumulate owner=user registrations.
+7. =[hooks].enabled=false= prevents =hooks.pl= execution and clears prior owner=user registrations.
+8. =[hooks].enabled=true= loads the mutable user hook file; =allow_override= is represented independently but cannot enable hooks by itself.
+9. Full Prolog load, repository gate, Nix checks and build remain green.
+
+* Adversarial constraints
+- Invalid stage, owner, priority or non-callable goal is rejected before assertion.
+- Registry metadata is bounded: owner and stage are atoms; priority is bounded integer; goal callable.
+- No speech/user text can choose a Goal.
+- No hook bypasses tool approval because this slice only surrounds existing reply emission.
+- Mutable =hooks.pl= is never created or overwritten by core/Home Manager and is never Nix-store-owned.
+- The hook policy reader is fail-closed and scoped to two booleans; it never becomes a secret/config reflection surface.
+
+* Follow-on #260 work
+After this seam is green: general Python hooks/advice, =hooks.py= loader, command-loop advice/override, agent backend registry, service-plugin ownership cleanup, diagnostics and config gates. These must reuse the same owner/lifecycle concepts rather than fork another customization model. Every override-capable path must require both =hooks.enabled=true= and =hooks.allow_override=true= and preserve tool approval, cancellation, persistence, latency and max-step contracts.

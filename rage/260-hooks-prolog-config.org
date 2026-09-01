@@ -1,0 +1,95 @@
+#+title: RAGE #260 - hooks, advice, and user runtime customization
+#+startup: overview
+
+* Immutable start
+- Consumed issue :: #260 - Emacs-grade hooks, advice and pluggable agent-loop / Prolog-runtime override system
+- RAGE start commit :: =a77e4e866d38019f24af7ec3518f419e86f91e35=
+- Branch :: =rage/260-hooks-prolog-config=
+- Scope :: Zara core only. Android production remains sibling-owned. This iteration begins with the canonical Prolog hook/user-config seam; no second agent, microphone, scheduler, or config store.
+
+* Queue and sibling reconciliation
+- No mergeable core PR existed at consumption time.
+- Open PR #273 is draft, Android-only, and sibling-owned; this transaction does not touch =android/**=.
+- Current operator priority explicitly places durable user Prolog configuration and the general hooks/advice seam before command-specific desktop additions.
+
+* Iteration 1
+** Research
+Complete. See =rage/260-hooks-prolog-config-research.org=.
+
+The existing =modules/zara_hooks.pl= surface had no registry: =run_hook/2= dynamically constructed one predicate name, swallowed errors/failure, and the catch-all =before_reply/1= / =after_reply/1= clauses made ownership, ordering, removal, and inspection impossible. The existing =config_loader= already owns mutable XDG Prolog configuration, so this slice reuses that path instead of adding another config authority.
+
+** Design
+Complete for the bounded Prolog seam. See =rage/260-hooks-prolog-config-design.org=.
+
+The typed interface is an owner-aware ordered registry:
+- =register_hook(+Stage,+Owner,+Priority,+Goal,-RegistrationId)=
+- =unregister_hook(+RegistrationId)=
+- =clear_hook_owner(+Owner)=
+- =list_hooks(-Hooks)=
+- =run_hook(+Stage,+Event)=
+
+Registration rejects unknown stages, malformed owners/priorities, and non-callable goals. Dispatch is priority-then-sequence ordered, snapshots registry state before invoking handlers, and isolates failure/exception per handler so later hooks still execute.
+
+** TDD / RED
+Tests were committed before production implementation. Exact RED head:
+- =5cef55448a544f3bee156dd69c0e7f8c9f6e6bb7=
+- GitHub Actions CI run :: #670 / =33511164178=
+- Main =test= job failed in =Run all tests= as expected because the required registry/loader API did not exist.
+- Unrelated Arch shared-mic, Ubuntu shared-mic, and Android skeleton gates remained green.
+
+The RED contract covers priority ordering, exception isolation, targeted unregister, owner cleanup, invalid-stage rejection, XDG hook-path ownership, idempotent user reload, and the invariant that a missing =hooks.pl= is not created.
+
+** Implementation candidate
+Production implementation was added only after RED:
+- =modules/zara_hooks.pl= now owns the dynamic ordered hook registry.
+- =modules/hooks_loader.pl= derives =hooks.pl= from =config_loader:user_config_path/1=, clears only owner =user= on reload, and never creates the mutable hook file.
+- =main.pl= wires user hook loading/reload into the existing Prolog lifecycle; no second Prolog runtime exists.
+
+Candidate =c1b3ad08309d1b8feb1b0b05b98cd5d80c4b1cbf= triggered CI #674. That evidence became stale after subsequent design/evidence commits and is not merge authorization.
+
+** Adversarial review finding
+The first implementation shape auto-loads local =hooks.pl= during Prolog startup. Issue #260 also requires explicit =[hooks].enabled= and =[hooks].allow_override= policy gates. Even trusted mutable local code should not gain an un-gated startup execution path merely because the registry itself is correct.
+
+Therefore the branch remained non-mergeable until canonical Zara config gated this loader (and later override/advice surfaces) without introducing a second config owner. This is a design/safety completion requirement, not a test waiver.
+
+* Iteration 2 - canonical hook policy gate
+** Reconciliation
+At the start of this continuation, canonical =master= was =82eddb0a1c81dd1ae92c5e575e90e7d485a17bc8= after sibling Android PR #280. The active Android sibling transaction is draft PR #282 and remains confined to =android/**= / its own RAGE artifact. PR #281 had no comments, reviews, or unresolved review threads. No Android production file overlaps this transaction.
+
+The Python =ZaraConfig= already defines and validates:
+- =[hooks].enabled=false=
+- =[hooks].allow_override=false=
+
+but the Prolog loader still consulted mutable =hooks.pl= without consuming those gates. The defect was therefore policy projection, not schema absence.
+
+** TDD / RED
+Policy tests were written before policy projection. Exact RED head:
+- =49c658bbde0c109826bf2f93d3073dca50e7740b=
+- GitHub Actions CI run :: #698 / =33553849411=
+- Main =test= job failed specifically in =Run all tests=.
+- Artifact =regression-artifacts= recorded 1516 pytest tests with exactly one pytest failure wrapping the Prolog hook contract; the nested Prolog suite reported five expected policy failures.
+- =user_hooks_load_only_when_enabled= observed =Enabled=false= and no user registration even though canonical TOML requested =enabled=true=.
+- reload/idempotence and override-policy cases likewise stayed disabled because no TOML projection existed.
+- Arch shared-mic, Ubuntu shared-mic, and Android skeleton jobs were green at the same RED head.
+
+One RED fixture also exposed that the missing-hook test attempted to write =config.toml= before creating its XDG config directory. That was a test-fixture defect, fixed without weakening the behavior assertion.
+
+** Design update
+The design now makes =config.toml= the sole policy source while keeping mutable =hooks.pl= / =config.pl= in the existing XDG user directory. The Prolog projection is intentionally limited to the =[hooks]= table's two booleans. Missing, malformed, or duplicate policy fails closed; unrelated TOML and secrets are never reflected into Prolog or logs. =allow_override=true= cannot by itself enable hook execution.
+
+** Implementation
+- =modules/hooks_loader.pl= now holds explicit fail-closed policy state and clears owner=user registrations when disabled.
+- startup/reload derives =config.toml= beside canonical =config.pl=, reads only =[hooks].enabled= and =[hooks].allow_override=, and applies policy before any =hooks.pl= consult.
+- =hooks.pl= remains mutable user-owned state: core does not create or overwrite it.
+- no Python agent loop, second Prolog engine, Android code, shell privilege path, or plugin repository was added.
+
+Implementation commit :: =6fa447ba2ae5672fa2dcb35cbd2eb6c7f4a76c8b=
+Design update :: =78c2b2bc69be6802837785e80dd672d02536befa=
+Fixture correction :: =632c7ec9edc935a2ca98a711e69fc9cc6490e615=
+
+** Exact-head gate
+This log append advances the branch again. No prior run is merge authorization. Required before merge:
+- exact-current-head CI green, including repository test, flake check, package build, Android skeleton and both shared-mic jobs;
+- PR remains non-draft and mergeable;
+- zero blocking comments/reviews/unresolved threads;
+- expected-head protected merge only.

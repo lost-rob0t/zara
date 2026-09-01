@@ -152,6 +152,12 @@ barge_in_to_playback_stop_p95_ms = 200
 main_file = "main.pl"
 load_on_startup = true
 
+[hooks]
+# User/plugin lifecycle hooks are opt-in. Override-capable advice requires
+# a second explicit gate because it may replace canonical runtime behavior.
+enabled = false
+allow_override = false
+
 [tools]
 # Enable/disable LangChain tools
 calculator = true
@@ -360,6 +366,13 @@ class ZaraConfig:
             value = llm_config.get(key, minimum)
             if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
                 raise ConfigError(f"llm.{key} must be an integer of at least {minimum}")
+
+        hooks_config = config.get("hooks", {})
+        if not isinstance(hooks_config, dict):
+            raise ConfigError("Invalid [hooks] configuration: expected a TOML table")
+        for key in ("enabled", "allow_override"):
+            if not isinstance(hooks_config.get(key, False), bool):
+                raise ConfigError(f"hooks.{key} must be true or false")
 
         tools_config = config.get("tools", {})
         if not isinstance(tools_config, dict):
@@ -658,6 +671,14 @@ class ZaraConfig:
         """
         modules_config = self.get_section("modules")
         return modules_config.get("autoload", [])
+
+    def get_hooks_config(self) -> Dict[str, bool]:
+        """Return validated lifecycle-hook policy gates."""
+        hooks_config = self.get_section("hooks")
+        return {
+            "enabled": hooks_config.get("enabled", False),
+            "allow_override": hooks_config.get("allow_override", False),
+        }
 
     def get_tool_config(self) -> Dict[str, bool]:
         """
