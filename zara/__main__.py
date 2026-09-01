@@ -230,7 +230,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     if args.desktop:
         from .desktop.app import main as desktop_main
 
-        return int(desktop_main(["zara-desktop"]))
+        return int(desktop_main([sys.argv[0]]))
 
     if args.voice:
         print("Error: Voice mode is not currently implemented.", file=sys.stderr)
