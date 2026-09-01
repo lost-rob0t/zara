@@ -1,66 +1,27 @@
-"""Textual terminal UI backed only by the ZaraClient boundary."""
+"""Curses terminal UI backed only by the ZaraClient boundary."""
 
 from __future__ import annotations
 
-import asyncio
+import curses
+import textwrap
+from dataclasses import dataclass
 from typing import Optional
-
-from rich.markup import escape
-from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Footer, Header, Input, RichLog, Static
 
 from zara.client import ZaraClient
 from zara.runtime import events
 from zara.runtime.commands import ApproveTool, CancelTurn, RejectTool, SubmitTurn
 
 
-class ZaraTui(App):
-    """Interactive terminal surface for the canonical Zara runtime."""
+@dataclass(frozen=True)
+class _Line:
+    speaker: str
+    text: str
 
-    TITLE = "Zara"
-    SUB_TITLE = "agent runtime"
 
-    CSS = """
-    Screen {
-        layout: vertical;
-    }
-
-    #body {
-        height: 1fr;
-    }
-
-    #chat {
-        width: 1fr;
-        border: round $accent;
-        padding: 0 1;
-    }
-
-    #activity {
-        width: 34;
-        border: round $surface-lighten-2;
-        padding: 0 1;
-    }
-
-    #status {
-        height: 1;
-        padding: 0 1;
-    }
-
-    #prompt {
-        dock: bottom;
-        margin: 0 1 1 1;
-    }
-    """
-
-    BINDINGS = [
-        ("ctrl+c", "cancel_turn", "Cancel"),
-        ("ctrl+l", "clear_chat", "Clear"),
-        ("ctrl+d", "quit_app", "Quit"),
-    ]
+class ZaraTui:
+    """Interactive terminal surface for Zara's canonical runtime."""
 
     def __init__(self, *, client: ZaraClient, endpoint: Optional[str] = None) -> None:
-        super().__init__()
         self.client = client
         self.endpoint = endpoint
         self.subscription = None
@@ -68,96 +29,116 @@ class ZaraTui(App):
         self.pending_tool_run_id: Optional[str] = None
         self.rendered_turns: set[str] = set()
         self.return_code = 0
+        self.chat: list[_Line] = []
+        self.activity: list[str] = []
+        self.status = "starting runtime"
+        self.input_buffer = ""
+        self._running = True
         self._closed = False
 
-    def compose(self) -> ComposeResult:
-        yield Header()
-        with Horizontal(id="body"):
-            yield RichLog(id="chat", wrap=True, markup=True, highlight=True)
-            yield RichLog(id="activity", wrap=True, markup=True, highlight=True)
-        yield Static("starting runtime…", id="status")
-        yield Input(
-            placeholder="Ask Zara anything — /help for terminal commands",
-            id="prompt",
-        )
-        yield Footer()
-
-    async def on_mount(self) -> None:
+    def run(self) -> None:
         try:
-            await asyncio.wrap_future(self.client.start())
+            self.client.start().result(timeout=30.0)
             self.subscription = self.client.subscribe()
         except Exception as error:
             self.return_code = 2
-            self._chat_error(str(error))
-            self._set_status("runtime unavailable")
-            return
+            raise RuntimeError(f"failed to start Zara runtime: {error}") from error
 
         mode = f"daemon {self.endpoint}" if self.endpoint else "standalone runtime"
-        self.query_one("#activity", RichLog).write(f"[bold]connected[/] · {escape(mode)}")
-        self._set_status(f"ready · {self.client.state.value}")
-        self.set_interval(0.05, self._drain_events)
-        self.query_one("#prompt", Input).focus()
+        self.activity.append(f"connected · {mode}")
+        self.status = f"ready · {self.client.state.value}"
 
-    async def on_unmount(self) -> None:
-        await self._close_client()
-
-    async def on_input_submitted(self, message: Input.Submitted) -> None:
-        text = message.value.strip()
-        message.input.value = ""
-        if not text:
-            return
-        if text.startswith("/"):
-            await self._handle_terminal_command(text)
-            return
-        await self._submit_turn(text)
-
-    async def _submit_turn(self, text: str) -> None:
-        chat = self.query_one("#chat", RichLog)
-        chat.write(f"[bold]You[/]\n{escape(text)}")
         try:
-            receipt = await asyncio.wrap_future(self.client.submit(SubmitTurn(text=text)))
+            curses.wrapper(self._main)
+        finally:
+            self._close_client()
+
+    def _main(self, screen) -> None:
+        curses.curs_set(1)
+        screen.keypad(True)
+        screen.timeout(50)
+
+        while self._running:
+            self._drain_events()
+            self._draw(screen)
+            key = screen.getch()
+            if key == -1:
+                continue
+            self._handle_key(key)
+
+    def _handle_key(self, key: int) -> None:
+        if key in (4,):
+            self._running = False
+            return
+        if key in (3,):
+            self._cancel_active_turn()
+            return
+        if key in (12,):
+            self.chat.clear()
+            return
+        if key in (curses.KEY_BACKSPACE, 127, 8):
+            self.input_buffer = self.input_buffer[:-1]
+            return
+        if key in (curses.KEY_ENTER, 10, 13):
+            text = self.input_buffer.strip()
+            self.input_buffer = ""
+            if text:
+                self._submit_input(text)
+            return
+        if key == curses.KEY_RESIZE:
+            return
+        if 32 <= key <= 126:
+            self.input_buffer += chr(key)
+
+    def _submit_input(self, text: str) -> None:
+        if text.startswith("/"):
+            self._handle_terminal_command(text)
+            return
+
+        self.chat.append(_Line("You", text))
+        try:
+            receipt = self.client.submit(SubmitTurn(text=text)).result(timeout=5.0)
         except Exception as error:
-            self._chat_error(str(error))
-            self._set_status("submit failed")
+            self.chat.append(_Line("Error", str(error)))
+            self.status = "submit failed"
             return
 
         self.active_turn_id = receipt.turn_id
-        self._set_status(f"thinking · {receipt.turn_id or 'pending'}")
+        self.status = f"thinking · {receipt.turn_id or 'pending'}"
 
-    async def _handle_terminal_command(self, raw: str) -> None:
+    def _handle_terminal_command(self, raw: str) -> None:
         command, _, rest = raw.partition(" ")
         command = command.lower()
         rest = rest.strip()
 
         if command in {"/quit", "/exit"}:
-            await self.action_quit_app()
+            self._running = False
             return
         if command == "/help":
-            self.query_one("#activity", RichLog).write(
-                "[bold]terminal[/]\n"
+            self.activity.append(
                 "/status · /cancel · /approve [tool-id] · "
                 "/reject [tool-id] [reason] · /clear · /quit"
             )
             return
         if command == "/status":
-            self.query_one("#activity", RichLog).write(
-                f"runtime={escape(self.client.state.value)} "
-                f"turn={escape(self.active_turn_id or '-')} "
-                f"approval={escape(self.pending_tool_run_id or '-')}"
+            self.activity.append(
+                f"runtime={self.client.state.value} "
+                f"turn={self.active_turn_id or '-'} "
+                f"approval={self.pending_tool_run_id or '-'}"
             )
             return
         if command == "/clear":
-            self.action_clear_chat()
+            self.chat.clear()
             return
         if command == "/cancel":
-            await self._cancel_active_turn()
+            self._cancel_active_turn()
             return
         if command == "/approve":
             tool_run_id = rest or self.pending_tool_run_id
             if not tool_run_id:
-                self._activity_error("no pending tool approval")
+                self.activity.append("error · no pending tool approval")
                 return
-            await self._submit_runtime_command(ApproveTool(tool_run_id=tool_run_id))
+            self._submit_runtime_command(ApproveTool(tool_run_id=tool_run_id))
             return
         if command == "/reject":
             tool_run_id = self.pending_tool_run_id
@@ -170,28 +151,28 @@ class ZaraTui(App):
                 else:
                     reason = rest
             if not tool_run_id:
-                self._activity_error("no pending tool approval")
+                self.activity.append("error · no pending tool approval")
                 return
-            await self._submit_runtime_command(
+            self._submit_runtime_command(
                 RejectTool(tool_run_id=tool_run_id, reason=reason)
             )
             return
 
-        self._activity_error(f"unknown terminal command: {command}")
+        self.activity.append(f"error · unknown terminal command: {command}")
 
-    async def _submit_runtime_command(self, command) -> None:
+    def _submit_runtime_command(self, command) -> None:
         try:
-            receipt = await asyncio.wrap_future(self.client.submit(command))
+            receipt = self.client.submit(command).result(timeout=5.0)
         except Exception as error:
-            self._activity_error(str(error))
+            self.activity.append(f"error · {error}")
             return
-        self.query_one("#activity", RichLog).write(escape(receipt.detail or "accepted"))
+        self.activity.append(receipt.detail or "accepted")
 
-    async def _cancel_active_turn(self) -> None:
+    def _cancel_active_turn(self) -> None:
         if not self.active_turn_id:
-            self._activity_error("no active turn")
+            self.activity.append("error · no active turn")
             return
-        await self._submit_runtime_command(CancelTurn(turn_id=self.active_turn_id))
+        self._submit_runtime_command(CancelTurn(turn_id=self.active_turn_id))
 
     def _drain_events(self) -> None:
         if self.subscription is None:
@@ -200,8 +181,6 @@ class ZaraTui(App):
             self._handle_event(envelope.event)
 
     def _handle_event(self, event: events.RuntimeEvent) -> None:
-        activity = self.query_one("#activity", RichLog)
-
         if isinstance(event, events.ResponseText):
             self._render_response(event.turn_id, event.text)
             return
@@ -209,126 +188,200 @@ class ZaraTui(App):
             if event.success and event.text:
                 self._render_response(event.turn_id, event.text)
             elif not event.success:
-                self._chat_error(event.text or "assistant generation failed")
+                self.chat.append(_Line("Error", event.text or "assistant generation failed"))
             return
         if isinstance(event, (events.AssistantFailed, events.AgentFailed)):
-            self._chat_error(event.reason or "assistant turn failed")
+            self.chat.append(_Line("Error", event.reason or "assistant turn failed"))
             if event.turn_id == self.active_turn_id:
                 self.active_turn_id = None
-            self._set_status("ready")
+            self.status = "ready"
             return
         if isinstance(event, events.AgentStarted):
-            self._set_status(f"thinking · {event.turn_id or 'turn'}")
+            self.status = f"thinking · {event.turn_id or 'turn'}"
             return
         if isinstance(event, events.AgentCompleted):
             if event.turn_id == self.active_turn_id:
                 self.active_turn_id = None
-            self._set_status("ready")
+            self.status = "ready"
             return
         if isinstance(event, events.TurnCancelled):
-            activity.write(f"[yellow]cancelled[/] {escape(event.turn_id or '')}")
+            self.activity.append(f"cancelled · {event.turn_id or ''}")
             if event.turn_id == self.active_turn_id:
                 self.active_turn_id = None
-            self._set_status("ready")
+            self.status = "ready"
             return
         if isinstance(event, events.ToolWaitingForUser):
             self.pending_tool_run_id = event.tool_run_id
             tool_name = event.tool_name or "tool"
             prompt = event.prompt or "approval required"
-            activity.write(
-                f"[bold yellow]{escape(tool_name)} awaiting approval[/]\n"
-                f"{escape(prompt)}\n"
-                f"/approve {escape(event.tool_run_id or '')} · "
-                f"/reject {escape(event.tool_run_id or '')} [reason]"
+            self.activity.extend(
+                [
+                    f"{tool_name} awaiting approval",
+                    prompt,
+                    f"/approve {event.tool_run_id or ''}",
+                    f"/reject {event.tool_run_id or ''} [reason]",
+                ]
             )
-            self._set_status(f"approval · {tool_name}")
+            self.status = f"approval · {tool_name}"
             return
         if isinstance(event, events.ToolStarted):
-            activity.write(f"[bold]tool[/] {escape(event.tool_name or 'unknown')} started")
+            self.activity.append(f"tool · {event.tool_name or 'unknown'} started")
             return
         if isinstance(event, events.ToolProgress):
             detail = event.message or "working"
             if event.progress is not None:
                 detail = f"{int(event.progress * 100)}% · {detail}"
-            activity.write(f"[bold]tool[/] {escape(event.tool_name or 'unknown')} · {escape(detail)}")
+            self.activity.append(f"tool · {event.tool_name or 'unknown'} · {detail}")
             return
         if isinstance(event, events.ToolCompleted):
-            activity.write(
-                f"[bold]tool[/] {escape(event.tool_name or 'unknown')} "
-                f"{'completed' if event.success else 'failed'}"
-            )
+            result = "completed" if event.success else "failed"
+            self.activity.append(f"tool · {event.tool_name or 'unknown'} · {result}")
             if event.tool_run_id == self.pending_tool_run_id:
                 self.pending_tool_run_id = None
             return
         if isinstance(event, (events.ToolFailed, events.ToolCancelled)):
-            reason = event.reason or type(event).__name__
-            activity.write(
-                f"[red]tool {escape(event.tool_name or 'unknown')}[/] · {escape(reason)}"
+            self.activity.append(
+                f"tool · {event.tool_name or 'unknown'} · "
+                f"{event.reason or type(event).__name__}"
             )
             if event.tool_run_id == self.pending_tool_run_id:
                 self.pending_tool_run_id = None
             return
         if isinstance(event, events.IntentResolved):
-            activity.write(
-                f"[bold]intent[/] {escape(event.intent)} · {escape(event.resolver)}"
-            )
+            self.activity.append(f"intent · {event.intent} · {event.resolver}")
             return
         if isinstance(event, events.PrologQueryCompleted):
-            activity.write(
-                f"[bold]prolog[/] {'ok' if event.success else 'failed'} · "
-                f"{escape(event.summary)}"
-            )
+            result = "ok" if event.success else "failed"
+            self.activity.append(f"prolog · {result} · {event.summary}")
             return
         if isinstance(event, events.ProviderChanged):
-            activity.write(
-                f"[bold]provider[/] {escape(event.provider)} · {escape(event.model)}"
-            )
+            self.activity.append(f"provider · {event.provider} · {event.model}")
             return
         if isinstance(event, events.RuntimeError):
-            self._activity_error(event.reason or "runtime error")
+            self.activity.append(f"runtime error · {event.reason or 'unknown error'}")
             if event.fatal:
                 self.return_code = 2
-                self._set_status("runtime failed")
+                self.status = "runtime failed"
             return
         if isinstance(event, events.RuntimeStarted):
-            self._set_status("ready")
+            self.status = "ready"
             return
         if isinstance(event, events.RuntimeStopped):
-            self._set_status("stopped")
+            self.status = "stopped"
             return
         if isinstance(event, events.VoiceStateChanged):
-            activity.write(f"[bold]voice[/] {escape(event.state)} · {escape(event.detail)}")
+            self.activity.append(f"voice · {event.state} · {event.detail}")
 
     def _render_response(self, turn_id: Optional[str], text: str) -> None:
         key = turn_id or f"uncorrelated:{text}"
         if key in self.rendered_turns:
             return
         self.rendered_turns.add(key)
-        self.query_one("#chat", RichLog).write(f"[bold]Zara[/]\n{escape(text)}")
+        self.chat.append(_Line("Zara", text))
         if turn_id == self.active_turn_id:
             self.active_turn_id = None
-        self._set_status("ready")
+        self.status = "ready"
 
-    def _set_status(self, text: str) -> None:
-        self.query_one("#status", Static).update(text)
+    def _draw(self, screen) -> None:
+        screen.erase()
+        height, width = screen.getmaxyx()
+        if height < 8 or width < 50:
+            self._safe_addstr(screen, 0, 0, "Zara TUI needs at least 50x8")
+            screen.refresh()
+            return
 
-    def _chat_error(self, text: str) -> None:
-        self.query_one("#chat", RichLog).write(f"[bold red]Zara error[/]\n{escape(text)}")
+        header_height = 1
+        footer_height = 3
+        body_top = header_height
+        body_height = height - header_height - footer_height
+        activity_width = max(24, min(38, width // 3))
+        chat_width = width - activity_width - 1
 
-    def _activity_error(self, text: str) -> None:
-        self.query_one("#activity", RichLog).write(f"[red]error[/] · {escape(text)}")
+        self._safe_addstr(screen, 0, 0, " Zara ", curses.A_REVERSE)
+        mode = "daemon" if self.endpoint else "local"
+        right_header = f" {mode} · {self.client.state.value} "
+        self._safe_addstr(
+            screen,
+            0,
+            max(0, width - len(right_header)),
+            right_header,
+            curses.A_REVERSE,
+        )
 
-    async def action_cancel_turn(self) -> None:
-        await self._cancel_active_turn()
+        self._draw_chat(screen, body_top, body_height, chat_width)
+        self._draw_separator(screen, body_top, body_height, chat_width)
+        self._draw_activity(
+            screen,
+            body_top,
+            body_height,
+            chat_width + 1,
+            activity_width - 1,
+        )
 
-    def action_clear_chat(self) -> None:
-        self.query_one("#chat", RichLog).clear()
+        status_row = height - 3
+        prompt_row = height - 2
+        help_row = height - 1
+        self._safe_addstr(screen, status_row, 0, self.status[: width - 1], curses.A_DIM)
+        prompt = f"> {self.input_buffer}"
+        self._safe_addstr(screen, prompt_row, 0, prompt[: width - 1])
+        help_text = "Ctrl-C cancel · Ctrl-L clear · Ctrl-D quit · /help"
+        self._safe_addstr(screen, help_row, 0, help_text[: width - 1], curses.A_DIM)
 
-    async def action_quit_app(self) -> None:
-        await self._close_client()
-        self.exit()
+        cursor_x = min(width - 1, 2 + len(self.input_buffer))
+        try:
+            screen.move(prompt_row, cursor_x)
+        except curses.error:
+            pass
+        screen.refresh()
 
-    async def _close_client(self) -> None:
+    def _draw_chat(self, screen, top: int, height: int, width: int) -> None:
+        lines: list[str] = []
+        content_width = max(1, width - 2)
+        for item in self.chat:
+            lines.append(f"{item.speaker}:")
+            wrapped = textwrap.wrap(
+                item.text,
+                width=content_width,
+                replace_whitespace=False,
+                drop_whitespace=True,
+            ) or [""]
+            lines.extend(wrapped)
+            lines.append("")
+        visible = lines[-height:]
+        for index, line in enumerate(visible):
+            self._safe_addstr(screen, top + index, 1, line[:content_width])
+
+    def _draw_separator(self, screen, top: int, height: int, column: int) -> None:
+        for row in range(top, top + height):
+            self._safe_addstr(screen, row, column, "│", curses.A_DIM)
+
+    def _draw_activity(
+        self,
+        screen,
+        top: int,
+        height: int,
+        left: int,
+        width: int,
+    ) -> None:
+        content_width = max(1, width - 2)
+        lines = ["Activity", ""]
+        for item in self.activity:
+            lines.extend(textwrap.wrap(item, width=content_width) or [""])
+        visible = lines[-height:]
+        for index, line in enumerate(visible):
+            attr = curses.A_BOLD if line == "Activity" else curses.A_NORMAL
+            self._safe_addstr(screen, top + index, left + 1, line[:content_width], attr)
+
+    @staticmethod
+    def _safe_addstr(screen, row: int, column: int, text: str, attr: int = 0) -> None:
+        if not text:
+            return
+        try:
+            screen.addstr(row, column, text, attr)
+        except curses.error:
+            pass
+
+    def _close_client(self) -> None:
         if self._closed:
             return
         self._closed = True
@@ -340,10 +393,9 @@ class ZaraTui(App):
             except Exception:
                 self.return_code = 2
         try:
-            await asyncio.to_thread(self.client.close)
-        except Exception as error:
+            self.client.close(timeout=5.0)
+        except Exception:
             self.return_code = 2
-            self._activity_error(str(error))
 
 
 __all__ = ["ZaraTui"]
