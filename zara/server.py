@@ -495,6 +495,8 @@ class ZaraServer:
         self._gateway_factory = gateway_factory or self._build_default_gateway
         self._gateway = None
         self._voice_ingress = None
+        self._tts_bridge = None
+        self._config = config
         self._principal = principal or PrincipalContext.local_owner()
         self._state = ServerState.NEW
         self._lock = threading.RLock()
@@ -502,15 +504,59 @@ class ZaraServer:
     def _build_default_gateway(self, endpoint: str, *, supervisor, principal):
         from zara.voice_runtime import RuntimeVoiceIngress
         from zara.zmq_transport import ZaraZmqGateway
+        from zara.runtime.tts_output import TtsOutputBridge
 
         voice_ingress = RuntimeVoiceIngress(supervisor, principal=principal)
         self._voice_ingress = voice_ingress
+
+        sample_rate = self._audio_output_sample_rate()
+        try:
+            self._tts_bridge = TtsOutputBridge(
+                subscription=supervisor.subscribe(principal, maxsize=256),
+                publish=lambda event: supervisor.publish(principal, event),
+                engine_factory=self._build_tts_engine,
+                sample_rate=sample_rate,
+            )
+        except AttributeError:
+            self._tts_bridge = None
         return ZaraZmqGateway(
             endpoint,
             supervisor=supervisor,
             principal=principal,
             voice_ingress=voice_ingress,
+            audio_output_format={
+                "codec": "pcm_s16le",
+                "sample_rate": sample_rate,
+                "channels": 1,
+            },
         )
+
+    def _audio_output_sample_rate(self) -> int:
+        try:
+            config = self._config
+            if config is None:
+                from zara.config import get_config
+
+                config = get_config()
+            section = config.get_section("daemon") or {}
+            rate = int(section.get("audio_output_sample_rate", 24000))
+            if rate <= 0:
+                raise ValueError
+            return rate
+        except Exception:
+            return 24000
+
+    def _build_tts_engine(self):
+        from zara.tts.engine import TTSEngine
+
+        config = self._config
+        if config is None:
+            from zara.config import get_config
+
+            config = get_config()
+        tts_section = config.get_section("tts") or {}
+        provider = str(tts_section.get("provider", "qwen3"))
+        return TTSEngine(provider=provider, config={"tts": tts_section})
 
     @property
     def state(self) -> ServerState:
@@ -543,6 +589,18 @@ class ZaraServer:
             logger.exception("Failed to stop daemon voice ingress cleanly")
             return False
 
+    def _close_tts_bridge(self) -> bool:
+        bridge = self._tts_bridge
+        self._tts_bridge = None
+        if bridge is None:
+            return True
+        try:
+            bridge.stop(timeout=self._shutdown_timeout)
+            return True
+        except BaseException:
+            logger.exception("Failed to stop daemon TTS output bridge cleanly")
+            return False
+
     def start(self) -> ServerState:
         with self._lock:
             if self._state in {ServerState.READY, ServerState.DEGRADED}:
@@ -565,6 +623,8 @@ class ZaraServer:
             )
             self._gateway = gateway
             gateway.start().result(timeout=self._shutdown_timeout)
+            if self._tts_bridge is not None:
+                self._tts_bridge.start()
             supervisor_state = self._supervisor.state
             with self._lock:
                 self._state = (
@@ -580,6 +640,7 @@ class ZaraServer:
                 except BaseException:
                     logger.exception("Failed to close ZARA/1 gateway after startup failure")
             self._gateway = None
+            self._close_tts_bridge()
             self._close_voice_ingress()
             if supervisor_started:
                 try:
@@ -597,6 +658,7 @@ class ZaraServer:
                 return True
             if self._state is ServerState.NEW:
                 self._state = ServerState.STOPPED
+                self._close_tts_bridge()
                 self._close_voice_ingress()
                 self._lease.release()
                 return True
