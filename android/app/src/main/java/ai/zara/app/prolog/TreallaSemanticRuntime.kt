@@ -35,7 +35,7 @@ class TreallaSemanticRuntime(
         check(state == State.READY) { "Trealla runtime is not ready" }
         return SemanticResult(
             contractVersion = PortableSemanticCore.contractVersion,
-            solutions = bridge.evaluate(fixture.query)
+            terms = bridge.evaluate(fixture.query)
         )
     }
 
