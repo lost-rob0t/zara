@@ -32,7 +32,8 @@ resolve(Raw, State, Intent, Args) :-
     ; Core0 = [hello|Rest]
     -> Intent = python(say_hello),
        Args = Rest
-    ; todo_search(Core0, SearchArgs)
+    ; kb_intents:todo_intents_enabled,
+      todo_search(Core0, SearchArgs)
     -> Intent = python(search_todos),
        Args = SearchArgs
     ; canonicalize_tokens(Toks0, Toks),
@@ -70,6 +71,7 @@ missing_slots([Word], text, [contact, message]) :-
 missing_slots([Word, _], text, [message]) :-
     memberchk(Word, [text, message, sms]).
 missing_slots([Word], python(schedule_todo), [task]) :-
+    kb_intents:todo_intents_enabled,
     memberchk(Word, [schedule, sched, plan, set]).
 
 parse_timer_command(Tokens, [Seconds, Name]) :-
