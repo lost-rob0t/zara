@@ -173,6 +173,8 @@ class AgentManager:
         turn_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
         stream_publisher=None,
+        conversation_history: Optional[list] = None,
+        extra_system_context: Optional[str] = None,
     ) -> Dict[str, Any]:
         import logging
         logger = logging.getLogger(__name__)
@@ -195,21 +197,25 @@ class AgentManager:
         logger.info("[AgentManager] user_input=%r", user_input)
         logger.info("[AgentManager] user_input_length=%d", len(user_input))
 
-        history = self.conversation_manager.conversation_history or []
-        if history:
-            cleaned_history = validate_and_clean_messages(history.copy())
-            logger.info(
-                "[AgentManager] Cleaned history %d -> %d messages",
-                len(history),
-                len(cleaned_history),
-            )
-            logger.info(
-                "[AgentManager] History preview=%s",
-                [type(m).__name__ for m in cleaned_history[-5:]],
-            )
+        provided_history = conversation_history is not None
+        if provided_history:
+            cleaned_history = list(conversation_history)
         else:
-            cleaned_history = []
-            logger.info("[AgentManager] History empty; starting fresh")
+            history = self.conversation_manager.conversation_history or []
+            if history:
+                cleaned_history = validate_and_clean_messages(history.copy())
+                logger.info(
+                    "[AgentManager] Cleaned history %d -> %d messages",
+                    len(history),
+                    len(cleaned_history),
+                )
+                logger.info(
+                    "[AgentManager] History preview=%s",
+                    [type(m).__name__ for m in cleaned_history[-5:]],
+                )
+            else:
+                cleaned_history = []
+                logger.info("[AgentManager] History empty; starting fresh")
 
         state: Dict[str, Any] = {
             "turn_id": turn_id,
@@ -242,6 +248,15 @@ class AgentManager:
             )
             state["messages"].insert(1, memory_context_message)
 
+        if extra_system_context:
+            state["messages"].insert(
+                1,
+                SystemMessage(
+                    content=extra_system_context,
+                    id=f"task-context-{uuid.uuid4()}",
+                ),
+            )
+
         # Always append the new user message last.
         state["messages"].append(HumanMessage(content=user_input))
         logger.info(
@@ -271,7 +286,8 @@ class AgentManager:
                 for message in result_messages
                 if getattr(message, "id", None) != memory_context_message.id
             ]
-        self.conversation_manager.conversation_history = result_messages
+        if not provided_history:
+            self.conversation_manager.conversation_history = result_messages
 
         return {
             "response": result.get("response", "I'm not sure how to respond to that."),

@@ -38,6 +38,9 @@ class RuntimeBackend:
         turn_id: str,
         conversation_id: Optional[str] = None,
         context_ids: tuple[str, ...] = (),
+        system_context: Optional[str] = None,
+        conversation_history: Optional[list] = None,
+        latency_trace=None,
     ) -> RuntimeTurnResult:
         raise NotImplementedError
 
@@ -106,6 +109,9 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         turn_id: str,
         conversation_id: Optional[str] = None,
         context_ids: tuple[str, ...] = (),
+        system_context: Optional[str] = None,
+        conversation_history: Optional[list] = None,
+        latency_trace=None,
     ) -> RuntimeTurnResult:
         if self._manager is None:
             raise RuntimeError("runtime backend is not started")
@@ -118,6 +124,9 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             text,
             turn_id=turn_id,
             conversation_id=conversation_id,
+            latency_trace=latency_trace,
+            conversation_history=conversation_history,
+            extra_system_context=system_context,
         )
         raw_tool_results = result.get("tool_results", [])
         return RuntimeTurnResult(
@@ -226,12 +235,18 @@ class AgentRuntimeBackend(RuntimeBackend):
         turn_id: str,
         conversation_id: Optional[str] = None,
         context_ids: tuple[str, ...] = (),
+        system_context: Optional[str] = None,
+        conversation_history: Optional[list] = None,
+        latency_trace=None,
     ) -> RuntimeTurnResult:
         return await self._delegate.submit_turn(
             text,
             turn_id=turn_id,
             conversation_id=conversation_id,
             context_ids=context_ids,
+            system_context=system_context,
+            conversation_history=conversation_history,
+            latency_trace=latency_trace,
         )
 
     async def cancel_turn(self, turn_id: str) -> None:
