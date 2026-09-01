@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import zara.plugins.builtin.agent_mode as agent_mode_module
+from zara.agent import AgentManager
 from zara.plugins import PluginState
 from zara.plugins.builtin.agent_mode import AgentModePlugin, AgentModeStore
 from zara.runtime.backend import RuntimeBackend, RuntimeTurnResult
@@ -148,6 +149,19 @@ def test_agent_mode_registers_tools_when_enabled_and_runs_scheduled_turn(tmp_pat
         stop_host(host)
 
     assert backend.tools == []
+
+
+def test_default_prompt_routes_agent_mode_tools_before_prolog():
+    manager = AgentManager.__new__(AgentManager)
+    manager.config = SimpleNamespace(get_agent_system_prompt=lambda: None)
+
+    prompt = manager._build_system_prompt()
+
+    assert "Explicit service-tool capabilities" in prompt
+    assert "schedule_recurring_task" in prompt
+    assert "use that tool directly instead of `query_prolog`" in prompt
+    assert "`speak`" in prompt
+    assert "Do not first send them through Prolog" in prompt
 
 
 def test_speak_tool_uses_output_only_tts_and_mpv(tmp_path, monkeypatch):
