@@ -1,0 +1,102 @@
+#+title: Research - #249 LatencyTrace crashes the LangGraph checkpoint on voice agent turns
+
+* Question
+Why does every wake voice turn that reaches the agent fallback path kill the
+whole listener with =TypeError: Type is not msgpack serializable:
+LatencyTrace=, and what is the smallest change that keeps latency recording,
+#209 tool-approval checkpointing, and every existing caller contract intact?
+
+* Repository evidence (start commit =ec0c74a39a9cd99aabee2795a0f4abfd92966949=)
+- User session evidence: =--wake --device rocm=; wake detected; Prolog skipped;
+  agent fallback answered; then =TypeError: Type is not msgpack serializable:
+  LatencyTrace= from =langgraph/checkpoint/memory= via =zara/wake.py=
+  =query_with_fallback_async= → =AgentManager.process_async= →
+  =run_conversation_loop= (=zara/agent/graph.py:741=).
+- #209 added a per-turn =InMemorySaver= inside =run_conversation_loop=
+  (=zara/agent/graph.py:726=) for approval interrupts. It is always created,
+  and =_checkpointer_put_after_previous= serializes every =AgentState= channel
+  after every superstep.
+- =AgentManager.process_async= puts the live =LatencyTrace= object (threading
+  locks, clock callables, sink reference) into graph state under
+  =latency_trace= (=zara/agent/__init__.py:212=).
+- =AgentState= declares =latency_trace: Any= (=zara/agent/graph.py:86=), so it
+  is a checkpointed channel.
+- The only graph-side consumer is =agent_node= (=zara/agent/graph.py:364=,
+  =state.get("latency_trace")=); =_streamed_response= receives the trace as a
+  parameter from =agent_node=. No tools/approval node touches it.
+- Text/console paths pass =latency_trace=None= and therefore survived; the
+  voice path always passes a live trace and always crashed. Regression window
+  opens with #209 (merged 2026-08-24, PR #211).
+- Independent repro at the installed dependency set (langgraph memory
+  checkpointer, ormsgpack): a minimal =run_conversation_loop= call with a
+  =LatencyTrace= in state reproduces the identical TypeError at the first
+  checkpoint put. Preserved as the regression test seed.
+- =AgentState= is referenced only by =graph.py= itself (=t/test_canonical_paths.py=
+  enforces that); removing a key cannot break imports.
+- Result-dict consumers: =AgentManager= reads only =response=, =tool_results=,
+  =messages=; wake reads =response=. No consumer reads
+  =result["latency_trace"]= (grep over =zara/= and =t/=).
+- Direct-node test contract: =t/test_llm_streaming.py:520= calls
+  =create_agent_node(...)= and passes =latency_trace= through the node state
+  dict; it must keep working.
+
+* Upstream evidence
+- LangGraph persistence serializes every channel value on each checkpoint
+  put; the memory saver uses JSON/msgpack serde that supports a fixed set of
+  Python types and cannot serialize objects with locks or callables:
+  https://docs.langchain.com/oss/python/langgraph/persistence
+- Input keys that do not match schema channels are ignored by
+  =StateGraph=, but run-time values stored in channels must be serde-able.
+- ormsgpack =default= hooks cannot encode objects holding
+  =threading.Lock=/callables generically without pickle; the checkpoint
+  serde intentionally avoids pickle.
+
+* Failure analysis
+** Why the crash fires at turn end, not at start
+The first checkpoint put happens after the first superstep completes (the
+agent node streamed for ~8s). The put runs inside the astream cleanup
+(=_checkpointer_put_after_previous=), so the user sees the answer die with
+"Stopped" and a traceback from the listener's top level.
+
+** Approval resume path
+On =Command(resume=...)= the graph replays from the checkpoint. If the trace
+stayed a channel it would both crash and, after any future disk-backed
+saver, silently persist a lock-bearing runtime object. Removing the channel
+makes resume replay safe: the same trace object is re-bound through the node
+closure because the same compiled graph instance (and therefore closure) is
+reused for the resume invoke (=graph.py:758=).
+
+** Mutation of caller state
+=run_conversation_loop= already copies state for dynamic-capability editing
+(=graph.py:723=). The extraction must not mutate the caller's dict:
+=AgentManager= does not reuse it, but mutation-freedom is the safer
+invariant and is asserted in the regression test.
+
+* Alternatives
+** Teach the checkpointer serde to serialize LatencyTrace (custom default hook)
+Rejected. It trains durable-state serde around a per-turn runtime object
+holding locks and callables; checkpoints are process-local and deleted at
+turn end, so serializing the object adds surface and privacy risk for zero
+benefit.
+
+** Drop the #209 checkpointer
+Rejected. It would regress the canonical resumable tool-approval lifecycle
+(#209) and its acceptance criteria.
+
+** Stop passing the trace to the agent
+Rejected. It would blind the voice latency pipeline (llm_request →
+llm_first_token → llm_final_token) for every agent fallback turn, regressing
+the latency contract (AGENTS.md wake/latency requirements).
+
+** Selected: keep the trace out of checkpointed state
+The trace is per-turn runtime context. =run_conversation_loop= extracts it
+from the incoming state before invoking the graph and binds it to the agent
+node through a closure parameter; =AgentState= loses the =latency_trace=
+channel so no checkpoint ever sees it. Direct-node callers keep the
+state-dict contract via a fallback.
+
+* Research conclusion
+Remove =latency_trace= from the checkpointed graph schema and pass the trace
+out-of-band to the node closure. This preserves #209 checkpointing, keeps
+all existing callers and tests working, and eliminates the crash class for
+any non-serializable per-turn context object passed through =process_async=.
