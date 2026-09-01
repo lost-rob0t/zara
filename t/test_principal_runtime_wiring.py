@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 from zara.server import PrincipalContext, RuntimeSupervisor
 
 
@@ -52,9 +54,10 @@ class DummyToolRegistry:
 class PrincipalCapturingManager:
     instances = []
 
-    def __init__(self, *, config, principal):
+    def __init__(self, *, config, principal, prolog_engine=None):
         self.config = config
         self.principal = principal
+        self.prolog_engine = prolog_engine
         self.tool_registry = DummyToolRegistry()
         type(self).instances.append(self)
 
@@ -78,6 +81,7 @@ def test_default_supervisor_threads_each_principal_into_agent_manager(monkeypatc
         config=config,
         max_active_principals=2,
         shutdown_timeout=0.5,
+        prolog_factory=lambda _principal: MagicMock(name="prolog"),
     )
     alice = principal("alice")
     bob = principal("bob")

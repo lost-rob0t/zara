@@ -54,6 +54,10 @@ class FakeSpeaker:
         self.cancel = MagicMock()
         self.finished = MagicMock()
 
+    @property
+    def is_active(self) -> bool:
+        return bool(self._active_turns)
+
 
 def build_listener(queue_size=8, sample_rate=16000):
     listener = WakeWordListener.__new__(WakeWordListener)

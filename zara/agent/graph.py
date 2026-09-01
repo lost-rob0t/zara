@@ -336,7 +336,7 @@ def create_agent_node(llm_client, tool_registry, stream_publisher=None):
     llm_with_tools = llm_client.bind_tools(tools) if tools else llm_client
     can_stream = callable(getattr(llm_with_tools, "astream", None))
 
-    async def agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    async def agent_node(state: Dict[str, Any], config: Any = None) -> Dict[str, Any]:
         import time
 
         turn_id = state.get("turn_id")
@@ -361,7 +361,8 @@ def create_agent_node(llm_client, tool_registry, stream_publisher=None):
             getattr(msgs[-1], "content", None),
         )
 
-        trace = state.get("latency_trace")
+        configurable = (config or {}).get("configurable") or {}
+        trace = configurable.get("latency_trace") or state.get("latency_trace")
         request_index = int(state.get("step_count", 0))
         if trace is not None:
             trace.record(
@@ -735,10 +736,20 @@ async def run_conversation_loop(
     conversation_id = state.get("conversation_id")
     scope = hashlib.blake2s(principal_id.encode("utf-8"), digest_size=10).hexdigest()
     checkpoint_thread_id = f"zara:{scope}:{turn_id}"
-    config = {"configurable": {"thread_id": checkpoint_thread_id}}
+    # The latency trace rides in the runnable config, not graph state: the
+    # checkpointer serializes state and the trace is not serializable.
+    config = {
+        "configurable": {
+            "thread_id": checkpoint_thread_id,
+            "latency_trace": state.get("latency_trace"),
+        }
+    }
+    graph_state = {
+        key: value for key, value in state.items() if key != "latency_trace"
+    }
 
     try:
-        result: Dict[str, Any] = await graph.ainvoke(state, config)
+        result: Dict[str, Any] = await graph.ainvoke(graph_state, config)
         while result.get("__interrupt__"):
             if approval_controller is None:
                 raise RuntimeError("tool approval controller is unavailable")

@@ -136,10 +136,12 @@ class RuntimeSupervisor:
         max_active_principals: int = 1,
         shutdown_timeout: float = 5.0,
         config=None,
+        prolog_factory: Optional[Callable[[PrincipalContext], Any]] = None,
     ) -> None:
         if max_active_principals < 1:
             raise ValueError("max_active_principals must be at least 1")
         self._host_factory = host_factory or self._build_default_host
+        self._prolog_factory = prolog_factory or self._default_prolog_factory
         self._max_active_principals = int(max_active_principals)
         self._shutdown_timeout = max(0.1, float(shutdown_timeout))
         self._config = config
@@ -169,7 +171,7 @@ class RuntimeSupervisor:
 
             config = get_config()
 
-        prolog_engine = self._build_principal_prolog(config, principal)
+        prolog_engine = self._prolog_factory(principal)
         router = None
         if prolog_engine is not None:
             from zara.runtime.intent_router import PrologFirstRouter
@@ -200,7 +202,7 @@ class RuntimeSupervisor:
         )
 
     @staticmethod
-    def _build_principal_prolog(config, principal: PrincipalContext):
+    def _default_prolog_factory(principal: PrincipalContext):
         from zara.prolog_engine import PrologEngine, locate_main_pl
 
         try:
@@ -674,6 +676,7 @@ class ZaraServer:
                 except BaseException:
                     logger.exception("Failed to stop ZARA/1 gateway cleanly")
                     clean = False
+            clean = self._close_tts_bridge() and clean
             clean = self._close_voice_ingress() and clean
             try:
                 clean = self._supervisor.shutdown() and clean
