@@ -18,15 +18,8 @@ except ImportError:
 
 
 def find_main_pl() -> Optional[Path]:
-    """Locate ``main.pl`` across the supported install surfaces.
-
-    The Nix packages ship Prolog under ``$out/share/zarathushtra/``; pip
-    wheels install the same layout under ``<sys.prefix>/share/zarathushtra/``;
-    editable checkouts keep ``main.pl`` at the project root. We probe each
-    surface in order and return the first match.
-    """
+    """Locate ``main.pl`` across the supported install surfaces."""
     module_path = Path(__file__).resolve()
-
     candidates = []
 
     if "/nix/store" in str(module_path):
@@ -62,16 +55,16 @@ class ZaraConsole:
         self._apply_todo_surface_config()
 
     def _apply_todo_surface_config(self) -> None:
-        tool_config = get_config().get_tool_config()
-        todos_enabled = tool_config.get("todos", True)
+        todo_config = get_config().get_section("todo")
+        todos_enabled = todo_config.get("enabled", True)
         if not isinstance(todos_enabled, bool):
-            raise ValueError("tools.todos must be true or false")
+            raise ValueError("todo.enabled must be true or false")
         enabled_atom = "true" if todos_enabled else "false"
         self.engine.query_once(
             f"kb_intents:set_todo_intents_enabled({enabled_atom})"
         )
         if not todos_enabled:
-            self.logger.info("Built-in todo intents are disabled by tools.todos=false")
+            self.logger.info("Built-in todo intents are disabled by todo.enabled=false")
 
     def execute_command(self, text: str) -> bool:
         """Execute a single command and return success status"""
