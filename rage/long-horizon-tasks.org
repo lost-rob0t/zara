@@ -246,7 +246,19 @@
 
 ** Full local gate
 
-(appended below)
+- NIX_CONFIG='experimental-features = nix-command flakes'
+  nix develop -c bash scripts/test-all.sh -> 12/12 phases passed at 1370a8c.
+- nix flake check -> all 11 checks passed at 1370a8c.
+
+** Outcome
+
+- PR: https://github.com/lost-rob0t/zara/pull/264
+- Candidate head: 1370a8c1d5563564544ad33806a147f478e5e0d1
+- Exact-head CI (gh api check-runs on 1370a8c): test success,
+  android skeleton gate success, shared mic Arch Linux success,
+  shared mic Ubuntu 24.04 success.
+- Merge pending review/merge decision; this log records the verified
+  candidate state.
 
 ** Outcome
 
