@@ -4,7 +4,7 @@ Zarathustra Voice Assistant — Python packaging metadata.
 
 Nix is the authoritative install surface (see flake.nix and wiki/install.org).
 The wheel/sdist produced by this file is a best-effort companion that installs
-the Python modules and console scripts plus the Prolog resources under
+the Python modules, Prolog resources, and declarative Agent Skills under
 ``<sys.prefix>/share/zarathushtra/``. The runtime looks for ``main.pl`` in the
 project root, the Nix store, ``<sys.prefix>/share/zarathushtra/``, and
 ``/usr/share/zarathushtra`` so the same code path works for ``pip install`` and
@@ -22,15 +22,13 @@ long_description = readme.read_text() if readme.exists() else ""
 
 
 def _prolog_data_files():
-    """Yield ``(target, [relpaths])`` pairs that preserve directory structure.
+    """Yield ``(target, [relpaths])`` pairs preserving runtime resource layout.
 
-    Included as ``data_files`` so wheels ship the Prolog resources next to the
-    Python install in the same layout the Nix packages use. Files are grouped
-    by their parent directory so ``kb/intents.pl`` lands at
-    ``share/zarathushtra/kb/intents.pl`` (preserving the ``kb/`` directory)
-    rather than being flattened into ``share/zarathushtra/intents.pl``. The
-    Prolog ``:- use_module('kb/config').`` directives in ``main.pl`` rely on
-    this directory being preserved.
+    Included as ``data_files`` so wheels ship Prolog resources and Agent Skills
+    next to the Python install in the same layout the Nix packages use. Files
+    are grouped by their parent directory so ``kb/intents.pl`` lands at
+    ``share/zarathushtra/kb/intents.pl`` and ``skills/rage/SKILL.md`` lands at
+    ``share/zarathushtra/skills/rage/SKILL.md``.
     """
     import collections
     import pathlib
@@ -42,7 +40,7 @@ def _prolog_data_files():
     if main_pl.exists():
         sources.append("main.pl")
 
-    for sub in ("kb", "modules", "assets"):
+    for sub in ("kb", "modules", "assets", "skills"):
         sub_root = ROOT / sub
         if not sub_root.is_dir():
             continue
