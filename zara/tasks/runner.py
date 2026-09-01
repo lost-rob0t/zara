@@ -25,8 +25,20 @@ logger = logging.getLogger(__name__)
 REASON_STEP_BUDGET = "step_budget_exhausted"
 REASON_WALL_CLOCK = "wall_clock_exceeded"
 REASON_STEP_ERROR = "step_error"
+REASON_APPROVAL_TIMEOUT = "approval_timeout"
+REASON_APPROVAL_REJECTED = "approval_rejected"
 REASON_INTERRUPTED = "runtime_shutdown"
-REASON_TIMEOUT_KW = "wall_clock_exceeded"
+
+REASONS = frozenset(
+    {
+        REASON_STEP_BUDGET,
+        REASON_WALL_CLOCK,
+        REASON_STEP_ERROR,
+        REASON_APPROVAL_TIMEOUT,
+        REASON_APPROVAL_REJECTED,
+        REASON_INTERRUPTED,
+    }
+)
 
 COMPLETION_SENTINEL = "TASK_COMPLETE"
 _CONTEXT_STEP_WINDOW = 5
@@ -164,6 +176,7 @@ class TaskRunner:
         task = self._store.transition(
             task.task_id, principal_id=self._principal_id, status=TaskStatus.RUNNING
         )
+        logger.info("[TaskRunner] task=%s started", task.task_id)
         self._publish(events.TaskStarted(task_id=task.task_id, label="tasks"))
         self._spawn_run(task.task_id)
         return task
@@ -187,6 +200,7 @@ class TaskRunner:
         task = self._store.transition(
             task_id, principal_id=self._principal_id, status=TaskStatus.RUNNING
         )
+        logger.info("[TaskRunner] task=%s resumed", task_id)
         self._publish(events.TaskStarted(task_id=task_id, label="tasks"))
         self._spawn_run(task_id)
         return task
@@ -207,6 +221,7 @@ class TaskRunner:
         self._publish(
             events.TaskCancelled(task_id=task_id, label="tasks", reason=reason)
         )
+        logger.info("[TaskRunner] task=%s cancelled", task_id)
         if turn_id is not None:
             try:
                 await self._cancel_turn(turn_id)
@@ -407,6 +422,12 @@ class TaskRunner:
         with self._lock:
             self._active_steps[turn_id] = active
             self._task_turn[task.task_id] = turn_id
+        logger.info(
+            "[TaskRunner] task=%s turn=%s step=%d starting",
+            task.task_id,
+            turn_id,
+            step_index,
+        )
         trace = LatencyTrace(trace_id=turn_id)
         try:
             result = await self._submit_turn(
@@ -423,6 +444,13 @@ class TaskRunner:
                     self._task_turn.pop(task.task_id, None)
         response = str(getattr(result, "response", "") or "")
         completed = response.strip().upper().startswith(COMPLETION_SENTINEL)
+        logger.info(
+            "[TaskRunner] task=%s turn=%s step=%d status=completed response_len=%d",
+            task.task_id,
+            turn_id,
+            step_index,
+            len(response),
+        )
         return turn_id, completed, self._bounded_summary(response)
 
     # ------------------------------------------------------------------
@@ -441,8 +469,12 @@ class TaskRunner:
         except TaskStoreError:
             return
         if status is TaskStatus.COMPLETED:
+            logger.info("[TaskRunner] task=%s completed", task_id)
             self._publish(events.TaskCompleted(task_id=task_id, label="tasks"))
         elif status is TaskStatus.FAILED:
+            logger.info(
+                "[TaskRunner] task=%s failed reason=%s", task_id, reason or ""
+            )
             self._publish(
                 events.TaskFailed(task_id=task_id, label="tasks", reason=reason or "")
             )
@@ -457,6 +489,7 @@ class TaskRunner:
             )
         except TaskStoreError:
             return
+        logger.info("[TaskRunner] task=%s interrupted", task_id)
 
     def _publish(self, event: events.RuntimeEvent) -> None:
         try:
