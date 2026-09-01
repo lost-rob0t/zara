@@ -32,7 +32,8 @@ resolve(Raw, State, Intent, Args) :-
     ; Core0 = [hello|Rest]
     -> Intent = python(say_hello),
        Args = Rest
-    ; todo_search(Core0, SearchArgs)
+    ; kb_intents:todo_intents_enabled,
+      todo_search(Core0, SearchArgs)
     -> Intent = python(search_todos),
        Args = SearchArgs
     ; canonicalize_tokens(Toks0, Toks),
@@ -70,6 +71,7 @@ missing_slots([Word], text, [contact, message]) :-
 missing_slots([Word, _], text, [message]) :-
     memberchk(Word, [text, message, sms]).
 missing_slots([Word], python(schedule_todo), [task]) :-
+    kb_intents:todo_intents_enabled,
     memberchk(Word, [schedule, sched, plan, set]).
 
 parse_timer_command(Tokens, [Seconds, Name]) :-
@@ -108,13 +110,11 @@ canonicalize_tokens(Toks0, Toks) :-
     strip_fillers(Toks0, Core0),
     ( select_verb_head(Core0, Verb, Rest)
     -> ( member(Verb, [why, what, how, when, where, who]) ->
-        % For question words, keep them in args too
         Toks = [Verb|Rest]
     ; Toks = [Verb|Rest]
     )
     ; Toks = Core0
     ).
-
 
 %% ============================================================
 %% VERB MATCHING
@@ -123,13 +123,10 @@ canonicalize_tokens(Toks0, Toks) :-
 try_exact([Word|Rest], Intent, Args) :-
     ( kb_intents:verb_intent(Word, Intent, Arity) ->
         ( Arity = rest, member(Word, [why, what, how, when, where, who]) ->
-            % For question words, include them in the args
             Args = [Word|Rest]
         ; extract_args(Arity, Rest, Intent, Args)
         )
     ; fail ).
-
-
 
 %% ============================================================
 %% VERB SELECTION
@@ -139,7 +136,6 @@ select_verb_head([W|Rs], W, Rs) :-
     kb_intents:verb_intent(W, _, _), !.
 select_verb_head([_|Rs], Verb, Tail) :-
     select_verb_head(Rs, Verb, Tail).
-
 
 %%============================================================
 %%integer Extraction
@@ -153,7 +149,6 @@ convert_number_atoms([Tok|Rest], [Num|ParsedRest]) :-
 
 convert_number_atoms([Tok|Rest], [Tok|ParsedRest]) :-
     convert_number_atoms(Rest, ParsedRest).
-
 
 %=============================================================
 % Units

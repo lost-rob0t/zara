@@ -10,34 +10,24 @@ from typing import Optional
 import logging
 
 try:
+    from .config import get_config
     from .prolog_engine import PrologEngine
 except ImportError:
+    from config import get_config
     from prolog_engine import PrologEngine
 
 
 def find_main_pl() -> Optional[Path]:
-    """Locate ``main.pl`` across the supported install surfaces.
-
-    The Nix packages ship Prolog under ``$out/share/zarathushtra/``; pip
-    wheels install the same layout under ``<sys.prefix>/share/zarathushtra/``;
-    editable checkouts keep ``main.pl`` at the project root. We probe each
-    surface in order and return the first match.
-    """
+    """Locate ``main.pl`` across the supported install surfaces."""
     module_path = Path(__file__).resolve()
-
     candidates = []
 
     if "/nix/store" in str(module_path):
         nix_package_root = module_path.parents[3]
         candidates.append(nix_package_root / "share" / "zarathushtra" / "main.pl")
 
-    # pip-installed wheel: data_files land under <sys.prefix>/share/zarathushtra/
     candidates.append(Path(sys.prefix) / "share" / "zarathushtra" / "main.pl")
-
-    # System install location used by the historical Linux layout.
     candidates.append(Path("/usr/share/zarathushtra/main.pl"))
-
-    # Editable / project checkout: main.pl sits next to the zara package.
     candidates.append(module_path.parent.parent / "main.pl")
 
     for candidate in candidates:
@@ -62,6 +52,19 @@ class ZaraConsole:
 
         self.logger.info(f"Loading Prolog from: {main_file}")
         self.engine = PrologEngine(main_file)
+        self._apply_todo_surface_config()
+
+    def _apply_todo_surface_config(self) -> None:
+        todo_config = get_config().get_section("todo")
+        todos_enabled = todo_config.get("enabled", True)
+        if not isinstance(todos_enabled, bool):
+            raise ValueError("todo.enabled must be true or false")
+        enabled_atom = "true" if todos_enabled else "false"
+        self.engine.query_once(
+            f"kb_intents:set_todo_intents_enabled({enabled_atom})"
+        )
+        if not todos_enabled:
+            self.logger.info("Built-in todo intents are disabled by todo.enabled=false")
 
     def execute_command(self, text: str) -> bool:
         """Execute a single command and return success status"""
@@ -118,7 +121,6 @@ def main():
 
     args = parser.parse_args()
 
-    # Setup logging
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,
         format="[%(levelname)s] %(message)s"
@@ -128,12 +130,10 @@ def main():
         console = ZaraConsole(main_file=args.main_file)
 
         if args.command:
-            # Execute single command from args
             command_text = " ".join(args.command)
             success = console.execute_command(command_text)
             sys.exit(0 if success else 1)
         else:
-            # Start interactive REPL
             console.repl()
 
     except FileNotFoundError as e:
