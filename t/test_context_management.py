@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 
 import pytest
@@ -183,6 +184,42 @@ async def test_compression_is_atomic_when_summarizer_fails():
     lease = manager.begin_turn("trigger")
     with pytest.raises(RuntimeError, match="summary backend failed"):
         await manager.build_messages(lease, "trigger compression")
+
+    assert manager.history == tuple(before)
+
+
+@pytest.mark.asyncio
+async def test_stale_compression_cannot_mutate_after_summarizer_await():
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def summarize(messages, max_tokens):
+        started.set()
+        await release.wait()
+        return "old summary"
+
+    manager = ContextManager(
+        system_prompt="base",
+        config=_config(strategy="compress", max_tokens=5, preserve_recent_turns=1),
+        token_counter=_message_counter,
+        summarizer=summarize,
+    )
+    for index in range(2):
+        lease = manager.begin_turn(f"seed-{index}")
+        build = await manager.build_messages(lease, f"question {index}")
+        manager.commit_result(lease, [*build.messages, AIMessage(content=f"answer {index}")])
+
+    before = deepcopy(manager.history)
+    stale_lease = manager.begin_turn("stale")
+    stale_build = asyncio.create_task(
+        manager.build_messages(stale_lease, "trigger compression")
+    )
+    await started.wait()
+    manager.begin_turn("newer")
+    release.set()
+
+    with pytest.raises(StaleContextTurn, match="stale"):
+        await stale_build
 
     assert manager.history == tuple(before)
 
