@@ -39,4 +39,7 @@
 - Exact-head build at =d823a03= :: =nix build --no-link --print-out-paths= produced =/nix/store/4x1aqc5ihl7dx5mr6nlrna3wfzc03v6z-zarathushtra-full=.
 
 ** Outcome
-- In progress. Remaining: push, exact-head GitHub Actions, PR mergeability, merge, issue close.
+- Exact-head GitHub Actions at =9b14af1= :: run =33462207113= passed =test= in 10m49s, shared mic Ubuntu 54s, shared mic Arch 32s, android skeleton gate 2m07s.
+- Pull request :: #252, =MERGEABLE= / =CLEAN= immediately before merge.
+- Merge commit :: =5f8e0fd= (master advanced =ec0c74a..5f8e0fd=).
+- Consumed issue outcome :: #249 closed as COMPLETED by PR #252. Voice agent turns survive checkpointing; #250 is next and must be consumed only in a fresh RAGE iteration.
