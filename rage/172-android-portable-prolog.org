@@ -67,4 +67,7 @@ Threats for the first slice:
 * Evidence
 - Start master :: =ce3271bde9df5215754c91f97ea1d8986af00022=.
 - Master CI run 33477302268 :: full CI green; Android skeleton gate green on exact start SHA.
-- RED candidate :: pending first test-only commit/CI.
+- RED candidate :: =f60d84531b8e3f5e2cb651f23fbc3d8275066324=.
+- RED CI :: run 33478293453. Repository =test=, Arch shared-mic, and Ubuntu shared-mic jobs passed; =android skeleton gate= failed at =Run Android gate (unit tests + debug APK + secret inspection)=, matching the intentionally missing =PortableSemanticCore= production class.
+- GREEN implementation commit :: =b9aeb5cd7412c1dcffe3de4f38402e3399ec2e7a=. Adds only =android/app/src/main/java/ai/zara/app/prolog/PortableSemanticCore.kt= with the frozen version and closed resource list.
+- GREEN exact-head CI :: pending.
