@@ -1,7 +1,21 @@
-:- module(kb_intents, [verb_intent/3, python_skill_intent/3]).
+:- module(kb_intents, [
+    verb_intent/3,
+    python_skill_intent/3,
+    todo_intents_enabled/0,
+    set_todo_intents_enabled/1
+]).
 
 :- dynamic verb_intent/3.
 :- discontiguous verb_intent/3.
+:- dynamic todo_intents_enabled/0.
+
+todo_intents_enabled.
+
+set_todo_intents_enabled(true) :-
+    retractall(todo_intents_enabled),
+    assertz(todo_intents_enabled).
+set_todo_intents_enabled(false) :-
+    retractall(todo_intents_enabled).
 
 % Core system intents and synonyms
 % verb_intent(Surface, Intent, Arity)
@@ -107,24 +121,30 @@ verb_intent(say, speak, rest).
 python_skill_intent(greet, say_hello, rest).
 python_skill_intent(weather, noaa_weather, rest).
 python_skill_intent(forecast, noaa_weather, rest).
-python_skill_intent(todo, capture_todo, rest).
-python_skill_intent(add, capture_todo, rest).
-python_skill_intent(note, capture_todo, rest).
-python_skill_intent(remind, capture_todo, rest).
-python_skill_intent(remember, capture_todo, rest).
-python_skill_intent(reminder, capture_todo, rest).
-python_skill_intent(schedule, schedule_todo, rest).
-python_skill_intent(sched, schedule_todo, rest).
-python_skill_intent(plan, schedule_todo, rest).
-python_skill_intent(set, schedule_todo, rest).
-python_skill_intent(task, capture_todo, rest).
-python_skill_intent(list, list_todos, rest).
-python_skill_intent(todos, list_todos, rest).
-python_skill_intent(tasks, list_todos, rest).
-python_skill_intent(show, list_todos, rest).
-python_skill_intent(edit, edit_todo, rest).
-python_skill_intent(update, edit_todo, rest).
-python_skill_intent(export, export_todos, rest).
+
+% Built-in TODO Python skills are optional as one coherent surface.
+todo_python_skill_intent(todo, capture_todo, rest).
+todo_python_skill_intent(add, capture_todo, rest).
+todo_python_skill_intent(note, capture_todo, rest).
+todo_python_skill_intent(remind, capture_todo, rest).
+todo_python_skill_intent(remember, capture_todo, rest).
+todo_python_skill_intent(reminder, capture_todo, rest).
+todo_python_skill_intent(schedule, schedule_todo, rest).
+todo_python_skill_intent(sched, schedule_todo, rest).
+todo_python_skill_intent(plan, schedule_todo, rest).
+todo_python_skill_intent(set, schedule_todo, rest).
+todo_python_skill_intent(task, capture_todo, rest).
+todo_python_skill_intent(list, list_todos, rest).
+todo_python_skill_intent(todos, list_todos, rest).
+todo_python_skill_intent(tasks, list_todos, rest).
+todo_python_skill_intent(show, list_todos, rest).
+todo_python_skill_intent(edit, edit_todo, rest).
+todo_python_skill_intent(update, edit_todo, rest).
+todo_python_skill_intent(export, export_todos, rest).
+
+python_skill_intent(Word, Skill, Arity) :-
+    todo_intents_enabled,
+    todo_python_skill_intent(Word, Skill, Arity).
 
 % Materialize python skill intents as verb_intent entries
 verb_intent(Word, python(Skill), Arity) :-
@@ -153,7 +173,7 @@ verb_intent(who, ask, rest).
 % ----------------------------------------------------------------------
 % TODO / Reminder / Scheduling
 % ----------------------------------------------------------------------
-% Deprecated in Prolog. Routed to Python skills above.
+% Deprecated in Prolog. Routed to Python skills above when enabled.
 
 % Timers
 verb_intent(timer, timer, rest).
