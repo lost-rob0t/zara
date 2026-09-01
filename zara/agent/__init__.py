@@ -76,6 +76,29 @@ class AgentManager:
     def bind_event_publisher(self, publisher) -> None:
         self.approval_controller.bind_event_publisher(publisher)
 
+    def ensure_prolog_engine(self):
+        """Attach Zara's canonical Prolog program before runtime turns begin."""
+        if self.prolog_engine is not None:
+            return self.prolog_engine
+
+        tool_config = self.config.get_tool_config()
+        if not tool_config.get("query_prolog", True):
+            return None
+
+        from ..console import find_main_pl
+        from ..prolog_engine import PrologEngine
+
+        main_file = find_main_pl()
+        if main_file is None:
+            raise FileNotFoundError(
+                "main.pl not found; canonical Zara runtime requires Prolog when query_prolog is enabled"
+            )
+
+        engine = PrologEngine(main_file)
+        self.prolog_engine = engine
+        self.tool_registry.attach_prolog_engine(engine)
+        return engine
+
     def _build_system_prompt(self):
         date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         base_prompt = self.config.get_agent_system_prompt() or """You are Zarathustra, an agentic large language model inside a voice assistant. Your primary goal is to be helpful, precise, and safe for the user.
@@ -169,9 +192,6 @@ class AgentManager:
         self.conversation_manager.update_activity()
         max_steps = int(agent_config.get("max_steps", 10))
 
-        # Existing voice turns already have a latency trace id. RuntimeHost
-        # (#83) can pass the TurnCoordinator id explicitly. Headless agent
-        # callers still receive a stable per-turn correlation id.
         if turn_id is None:
             if latency_trace is not None:
                 turn_id = latency_trace.trace_id
@@ -230,7 +250,6 @@ class AgentManager:
             )
             state["messages"].insert(1, memory_context_message)
 
-        # Always append the new user message last.
         state["messages"].append(HumanMessage(content=user_input))
         logger.info(
             "[AgentManager] Message types=%s",
