@@ -59,12 +59,20 @@ class ConversationManager:
         self.in_conversation: bool = False
         self.last_activity: Optional[float] = None
         self.timeout_seconds: int = timeout_seconds
-        self._history_provider = history_provider or (lambda: ())
-        self._history_clear = history_clear or (lambda: None)
-        self._history_view = _ConversationHistoryView(
-            self._history_provider,
-            self._history_clear,
+        self.bind_history(
+            history_provider or (lambda: ()),
+            history_clear or (lambda: None),
         )
+
+    def bind_history(
+        self,
+        provider: Callable[[], Sequence[Any]],
+        clear: Callable[[], None],
+    ) -> None:
+        """Bind the read-only compatibility projection to the context owner."""
+        self._history_provider = provider
+        self._history_clear = clear
+        self._history_view = _ConversationHistoryView(provider, clear)
 
     @property
     def conversation_history(self) -> Sequence[Any]:
