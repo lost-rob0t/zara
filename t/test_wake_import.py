@@ -74,3 +74,30 @@ def test_active_mode_streams_utterance_to_daemon():
 
     daemon.stream_utterance.assert_awaited_once()
     whisper_model.assert_called_once()
+
+
+def test_real_construction_with_ack_player_needs_no_tts_config():
+    import zara.wake
+
+    class StubAckPlayer:
+        def __init__(self, config=None, tts_engine=None):
+            self.config = config
+            self.has_audio = False
+            self.source = "fixture"
+
+        def initialize(self):
+            return None
+
+    with (
+        patch("zara.wake.resolve_input_sample_rate", return_value=(16000.0, None)),
+        patch("zara.wake.faster_whisper.WhisperModel"),
+        patch.object(zara.wake.WakeWordListener, "log"),
+        patch("zara.wake.AcknowledgementPlayer", StubAckPlayer),
+        patch("zara.wake.TTSEngine"),
+        patch("zara.wake.WakeDaemonClient"),
+        patch("zara.wake.PcmStreamSpeaker"),
+    ):
+        listener = zara.wake.WakeWordListener(enable_tts=True)
+
+    assert listener.ack_player.config.enabled is True
+    assert listener.ack_player.config.provider
