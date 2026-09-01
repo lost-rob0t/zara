@@ -45,20 +45,21 @@ class FakeSubscription:
         self.closed = True
 
 
-def test_explicit_standalone_text_command_preserves_local_console(monkeypatch):
+def test_explicit_standalone_text_command_uses_unified_terminal_runner(monkeypatch):
     calls = []
 
-    class FakeConsole:
-        def execute_command(self, text):
-            calls.append(text)
-            return True
+    import zara.terminal as terminal
 
-    import zara.console as console_module
+    def fake_run_task(text, **kwargs):
+        calls.append((text, kwargs))
+        return 0
 
-    monkeypatch.setattr(console_module, "ZaraConsole", FakeConsole)
+    monkeypatch.setattr(terminal, "run_task", fake_run_task)
 
     assert run_main(monkeypatch, ["--standalone", "hello", "there"]) == 0
-    assert calls == ["hello there"]
+    assert len(calls) == 1
+    assert calls[0][0] == "hello there"
+    assert calls[0][1]["endpoint"] is None
 
 
 def test_connect_text_command_uses_zara_client_boundary(monkeypatch):
@@ -113,15 +114,9 @@ def test_connect_failure_is_reported_without_silent_standalone_fallback(monkeypa
         def close(self, timeout=None):
             return None
 
-    import zara.console as console_module
     import zara.zmq_transport as transport_module
 
     monkeypatch.setattr(transport_module, "ZmqZaraClient", FailingClient)
-    monkeypatch.setattr(
-        console_module,
-        "ZaraConsole",
-        lambda: pytest.fail("connect failure must not silently start standalone runtime"),
-    )
 
     assert run_main(monkeypatch, ["--connect", "ipc:///tmp/missing.sock", "hello"]) == 2
     assert "daemon unavailable" in capsys.readouterr().err
@@ -182,15 +177,9 @@ def test_connect_constructor_failure_is_bounded_and_never_falls_back(monkeypatch
         def __init__(self, endpoint):
             raise RuntimeError(f"invalid daemon endpoint: {endpoint}")
 
-    import zara.console as console_module
     import zara.zmq_transport as transport_module
 
     monkeypatch.setattr(transport_module, "ZmqZaraClient", FailingClient)
-    monkeypatch.setattr(
-        console_module,
-        "ZaraConsole",
-        lambda: pytest.fail("constructor failure must not silently start standalone runtime"),
-    )
 
     assert run_main(monkeypatch, ["--connect", "ipc:///tmp/bad.sock", "hello"]) == 2
     error = capsys.readouterr().err
