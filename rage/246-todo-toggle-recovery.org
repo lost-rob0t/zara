@@ -54,3 +54,21 @@
 - Replace the #246 Prolog regression's in-process PySWIP engine with a bounded `swipl -q -s main.pl -g ... -t halt` subprocess.
 - This still proves default todo routing, disable semantics, search-todo removal, and timer preservation while leaving the shared PySWIP runtime untouched.
 - Fresh exact-head CI remains mandatory; the candidate is not green until all repository-native gates pass.
+
+* Iteration 3 — recover after Android master advance
+:PROPERTIES:
+:issue: 246
+:rage_start: 928aee7105842cc50b9eff73c7b56980c414ef3b
+:source_pr: 270
+:source_head: 4769db37fb2491dec69fab2f2034d682bf1cc352
+:END:
+
+** Reconciliation
+- PR #270 exact head passed CI run #660, but master advanced afterward through Android-owned PR #269, so that green result is stale merge evidence.
+- #269 does not own any of the #246 production/test paths. The bounded #246 blobs were replayed onto exact current master without modifying android/** or Android worker state.
+- Stale PR #270 was closed only after replacement PR #272 existed.
+
+** Candidate
+- Initial replay commit: 2a55fc2105a5a07b9fecd761774a49dad8e6020f.
+- Production/test behavior is unchanged from the previously green #270 candidate; this iteration only reconciles it forward and records the new immutable start.
+- Fresh exact-head CI on PR #272 is mandatory before merge; neither #270 run #660 nor any older head authorizes merge.
