@@ -75,4 +75,6 @@
 - Migration notes :: =text_quoted_command_words= expectation adjusted ('now' is a normalizer filler; deterministic current behavior); =timer_negative= pinned as =known_behavior_sign_stripped= (normalizer removes '-'; negative rejection is host-side via frames.py validators); bare "set a timer" now yields a typed missing-duration frame (previously None -> LLM fallback) - documented intentional migration; "search todos milk" now yields skill/search_todos with the todo word omitted (legacy kept it) - documented intentional migration.
 
 * Outcome
-- (pending)
+- PR :: #243 (=Closes #156= in body). CI green on exact pre-update head =8f2581c= (run 33434907317); master had moved so =gh pr update-branch= rebased the PR to =7d5e176= and the full check suite re-watched green on run 33436039493 (exact updated head).
+- Merge :: merged on green as master commit =4f77de3c7dec0cebf711a5ffdad04fd136354693=. Post-merge master CI all green on =4f77de3= (test, android skeleton gate, shared mic Arch/Ubuntu).
+- Post-merge :: issue #156 CLOSED. Backlog regenerated; queue re-verified in Prolog (see below).
