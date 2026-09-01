@@ -73,11 +73,12 @@ test(invalid_stage_rejected,
 
 test(user_hooks_disabled_by_default) :-
     setup_call_cleanup(
-        setup_user_hooks_fixture(Root, _HookPath),
-        ( hooks_loader:reset_hook_policy,
-          hooks_loader:load_user_hooks,
-          zara_hooks:list_hooks(Hooks),
-          include(is_user_hook, Hooks, UserHooks),
+        setup_user_hooks_fixture(Root, _HookPath, false, false),
+        ( hooks_loader:load_user_hooks,
+          hooks_loader:hook_policy(Enabled, AllowOverride),
+          assertion(Enabled == false),
+          assertion(AllowOverride == false),
+          user_hooks(UserHooks),
           assertion(UserHooks == [])
         ),
         cleanup_user_hooks_fixture(Root)
@@ -85,11 +86,12 @@ test(user_hooks_disabled_by_default) :-
 
 test(user_hooks_load_only_when_enabled) :-
     setup_call_cleanup(
-        setup_user_hooks_fixture(Root, _HookPath),
-        ( hooks_loader:set_hook_policy(true, false),
-          hooks_loader:load_user_hooks,
-          zara_hooks:list_hooks(Hooks),
-          include(is_user_hook, Hooks, UserHooks),
+        setup_user_hooks_fixture(Root, _HookPath, true, false),
+        ( hooks_loader:load_user_hooks,
+          hooks_loader:hook_policy(Enabled, AllowOverride),
+          assertion(Enabled == true),
+          assertion(AllowOverride == false),
+          user_hooks(UserHooks),
           assertion(UserHooks = [_])
         ),
         cleanup_user_hooks_fixture(Root)
@@ -97,31 +99,39 @@ test(user_hooks_load_only_when_enabled) :-
 
 test(disabling_hooks_clears_loaded_user_hooks) :-
     setup_call_cleanup(
-        setup_user_hooks_fixture(Root, _HookPath),
-        ( hooks_loader:set_hook_policy(true, false),
-          hooks_loader:load_user_hooks,
-          hooks_loader:set_hook_policy(false, false),
-          zara_hooks:list_hooks(Hooks),
-          include(is_user_hook, Hooks, UserHooks),
+        setup_user_hooks_fixture(Root, HookPath, true, false),
+        ( hooks_loader:load_user_hooks,
+          user_hooks(Loaded),
+          assertion(Loaded = [_]),
+          write_hooks_config(HookPath, false, false),
+          hooks_loader:reload_user_hooks,
+          user_hooks(AfterDisable),
+          assertion(AfterDisable == [])
+        ),
+        cleanup_user_hooks_fixture(Root)
+    ).
+
+test(override_gate_does_not_enable_disabled_hooks) :-
+    setup_call_cleanup(
+        setup_user_hooks_fixture(Root, _HookPath, false, true),
+        ( hooks_loader:load_user_hooks,
+          hooks_loader:hook_policy(Enabled, AllowOverride),
+          assertion(Enabled == false),
+          assertion(AllowOverride == true),
+          user_hooks(UserHooks),
           assertion(UserHooks == [])
         ),
         cleanup_user_hooks_fixture(Root)
     ).
 
-test(override_gate_cannot_enable_hooks,
-     [throws(error(permission_error(enable, hook_override, hooks_disabled), _))]) :-
-    hooks_loader:set_hook_policy(false, true).
-
 test(user_hooks_path_and_reload_is_idempotent) :-
     setup_call_cleanup(
-        setup_user_hooks_fixture(Root, HookPath),
-        ( hooks_loader:set_hook_policy(true, false),
-          hooks_loader:user_hooks_path(Resolved),
+        setup_user_hooks_fixture(Root, HookPath, true, false),
+        ( hooks_loader:user_hooks_path(Resolved),
           assertion(Resolved == HookPath),
           hooks_loader:reload_user_hooks,
           hooks_loader:reload_user_hooks,
-          zara_hooks:list_hooks(Hooks),
-          include(is_user_hook, Hooks, UserHooks),
+          user_hooks(UserHooks),
           assertion(UserHooks = [_])
         ),
         cleanup_user_hooks_fixture(Root)
@@ -130,7 +140,7 @@ test(user_hooks_path_and_reload_is_idempotent) :-
 test(missing_user_hooks_file_is_not_created) :-
     setup_call_cleanup(
         setup_empty_xdg(Root, HookPath),
-        ( hooks_loader:set_hook_policy(true, false),
+        ( write_hooks_config(HookPath, true, false),
           assertion(\+ exists_file(HookPath)),
           hooks_loader:load_user_hooks,
           assertion(\+ exists_file(HookPath))
@@ -139,6 +149,10 @@ test(missing_user_hooks_file_is_not_created) :-
     ).
 
 :- end_tests(zara_hooks_registry).
+
+user_hooks(UserHooks) :-
+    zara_hooks:list_hooks(Hooks),
+    include(is_user_hook, Hooks, UserHooks).
 
 is_user_hook(hook(_, _, user, _, _)).
 
@@ -149,7 +163,7 @@ setup_empty_xdg(Root, HookPath) :-
     setenv('XDG_CONFIG_HOME', Root),
     hooks_loader:user_hooks_path(HookPath).
 
-setup_user_hooks_fixture(Root, HookPath) :-
+setup_user_hooks_fixture(Root, HookPath, Enabled, AllowOverride) :-
     setup_empty_xdg(Root, HookPath),
     file_directory_name(HookPath, ConfigDir),
     make_directory_path(ConfigDir),
@@ -158,6 +172,18 @@ setup_user_hooks_fixture(Root, HookPath) :-
         format(Stream,
                ':- zara_hooks:register_hook(before_reply, user, 25, writeln, _).~n',
                []),
+        close(Stream)
+    ),
+    write_hooks_config(HookPath, Enabled, AllowOverride).
+
+write_hooks_config(HookPath, Enabled, AllowOverride) :-
+    file_directory_name(HookPath, ConfigDir),
+    directory_file_path(ConfigDir, 'config.toml', ConfigPath),
+    setup_call_cleanup(
+        open(ConfigPath, write, Stream),
+        format(Stream,
+               '[hooks]~nenabled = ~w~nallow_override = ~w~n',
+               [Enabled, AllowOverride]),
         close(Stream)
     ).
 
