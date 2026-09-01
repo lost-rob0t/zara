@@ -261,3 +261,15 @@ def test_tool_approval_policy_is_bounded_and_validated(tmp_path, setting):
 
     with pytest.raises(ConfigError, match="tool_approval"):
         ZaraConfig(str(config_path))
+
+
+def test_daemon_section_defaults_are_wake_client_ready(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config = ZaraConfig(str(config_path))
+
+    section = config.get_section("daemon")
+
+    assert section["endpoint"] == ""
+    assert section["audio_output_sample_rate"] == 24000
+    assert section["curve_public_key"] == ""
+    assert section["response_timeout"] == 30.0

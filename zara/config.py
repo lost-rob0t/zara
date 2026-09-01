@@ -32,6 +32,20 @@ DEFAULT_CONFIG_TOML = """# Zarathushtra Configuration
 # Native desktop appearance. Unknown values fall back to Signal Cabin.
 theme = "signal-cabin"
 
+[daemon]
+# ZARA/1 daemon service. Clients (wake listener, CLI, desktop) connect here.
+# Empty endpoint falls back to the owner-private IPC socket zara-server uses.
+endpoint = ""
+# Daemon-synthesized response audio (ZARA/1 audio.output) sample rate. The
+# wake client offers this rate during hello negotiation.
+audio_output_sample_rate = 24000
+# Optional CURVE client keys for authenticated (non-IPC) wake connections.
+curve_public_key = ""
+curve_secret_key = ""
+curve_server_public_key = ""
+# Bounded seconds to wait for one daemon turn before returning to listening.
+response_timeout = 30.0
+
 [wake]
 # Wake word detection settings
 model_path = "~/.zarathushtra/models/wake.onnx"
