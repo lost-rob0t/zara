@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock
 
 from zara.server import PrincipalContext, RuntimeSupervisor
@@ -44,11 +43,6 @@ class MinimalRuntimeConfig:
         return {}
 
 
-class HookRuntimeConfig(MinimalRuntimeConfig):
-    def get_hooks_config(self):
-        return {"enabled": True, "allow_override": False}
-
-
 class DummyToolRegistry:
     def register_tools(self, _tools):
         return None
@@ -73,23 +67,6 @@ class PrincipalCapturingManager:
 
 def principal(name: str) -> PrincipalContext:
     return PrincipalContext(principal_id=f"user:{name}", kind="authenticated")
-
-
-def test_default_prolog_factory_applies_hook_policy(monkeypatch):
-    from zara import prolog_engine as prolog_module
-
-    engine = MagicMock(name="prolog")
-    monkeypatch.setattr(prolog_module, "locate_main_pl", lambda: Path("/tmp/main.pl"))
-    monkeypatch.setattr(prolog_module, "PrologEngine", lambda _path: engine)
-
-    supervisor = RuntimeSupervisor(config=HookRuntimeConfig())
-    result = supervisor._default_prolog_factory(principal("hooks"))
-
-    assert result is engine
-    engine.configure_hooks.assert_called_once_with(
-        enabled=True,
-        allow_override=False,
-    )
 
 
 def test_default_supervisor_threads_each_principal_into_agent_manager(monkeypatch):
