@@ -1,0 +1,15 @@
+#+title: RAGE #172 - Android Trealla JNI bridge
+
+* Run identity
+- Consumed issue :: #172, P2 - extract and prove a portable shared Prolog semantic core on Linux and Android.
+- Scope :: Android-only Trealla JNI bridge slice; no daemon/core/runtime authority changes.
+- RAGE start commit :: =89e6fbc6f17df0a86083b5e66dd1496c89555daf=.
+- Branch :: =rage/android-172-jni-bridge=.
+- Invariants :: one authoritative Zara daemon; Android embedded Prolog is bounded deterministic local semantics only; native loading/evaluation must fail closed; no credentials or remote command authority in JNI.
+
+* Recovery
+- PR #283 merged at =89e6fbc6f17df0a86083b5e66dd1496c89555daf=, landing the Trealla semantic runtime lifecycle boundary.
+- No open Android PR required recovery before starting this iteration.
+
+* Research / design / TDD evidence
+- Pending.
