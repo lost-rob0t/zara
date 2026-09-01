@@ -1,0 +1,98 @@
+#+title: Zara Terminal Runtime
+
+* Contract
+
+The terminal is a surface over the same Zara runtime used by the daemon/client
+architecture.  It is not a second agent implementation.
+
+#+begin_example
+zara / zara-agent / zara-console
+              |
+          terminal.py
+              |
+          ZaraClient
+         /          \
+InProcessZaraClient  ZmqZaraClient
+         \          /
+          RuntimeHost
+              |
+      AgentRuntimeBackend
+              |
+          AgentManager
+      /    /    |     \
+ Prolog memory  MCP   tools/plugins
+#+end_example
+
+Terminal code must not construct =AgentManager=, =PrologEngine=, MCP managers,
+or plugin instances directly.  It submits typed runtime commands and consumes
+provider-neutral runtime events.
+
+* Commands
+
+- =zara= :: interactive curses TUI when attached to a terminal.
+- =zara <task>= :: submit one task through the canonical runtime and print the
+  response.
+- =zara --agent= :: compatibility alias for the same interactive TUI.
+- =zara --agent <task>= :: compatibility alias for =zara <task>=.
+- =zara --console= :: compatibility alias for the same TUI.
+- =zara-agent= and =zara-console= :: installed compatibility entry points that
+  delegate to the same terminal/runtime path.
+- =zara --connect ENDPOINT [task]= :: use the existing Zara daemon through
+  =ZmqZaraClient= instead of creating an in-process runtime.
+- =zara --standalone [task]= :: explicitly use the private in-process runtime.
+
+A bare =zara= in a non-interactive process prints help and exits instead of
+attempting to initialize curses.  This preserves scripting and package smoke
+checks without changing interactive behavior.
+
+* TUI
+
+The curses TUI has a chat pane, an activity pane, a status line, and one input
+line.  Runtime events drive the display.  The activity pane exposes tool,
+Prolog, provider, voice, cancellation, and approval state without reaching into
+backend implementation objects.
+
+Keyboard controls:
+
+- =Ctrl-C= :: cancel the active turn through =CancelTurn=.
+- =Ctrl-L= :: clear the local chat projection.
+- =Ctrl-D= :: close the client and quit.
+
+Terminal commands:
+
+- =/help=
+- =/status=
+- =/cancel=
+- =/approve [tool-run-id]=
+- =/reject [tool-run-id] [reason]=
+- =/clear=
+- =/quit=
+
+Tool approval commands use =ApproveTool= and =RejectTool=.  They do not call the
+agent or tool registry directly.
+
+* Runtime services
+
+=LangGraphRuntimeBackend.start()= is responsible for ensuring canonical agent
+services are present before accepting turns.  When the =query_prolog= tool is
+enabled, =AgentManager.ensure_prolog_engine()= loads the installed =main.pl=
+and attaches it to the existing =ToolRegistry=.  This prevents a runtime from
+advertising Prolog routing in its prompt while silently omitting the Prolog
+tool.
+
+Memory remains owned by =AgentManager=.  MCP capability refresh remains owned
+by =ToolRegistry=.  Long-running service plugins remain owned by =RuntimeHost=.
+The TUI only observes those systems through runtime commands and events.
+
+* Invariants
+
+1. =zara <task>= and =zara --agent <task>= execute the same function.
+2. =zara=, =zara --agent=, and =zara --console= launch the same TUI.
+3. Terminal surfaces depend on =ZaraClient=, never directly on =RuntimeHost= or
+   =AgentManager=.
+4. Explicit daemon connection never silently falls back to standalone after a
+   connection/auth/protocol failure.
+5. Prolog is attached before runtime turns when =query_prolog= is enabled.
+6. Memory, MCP, tools, service plugins, approvals, and Prolog stay behind the
+   canonical runtime boundary.
+7. Closing the terminal client does not mean shutting down a shared daemon.
