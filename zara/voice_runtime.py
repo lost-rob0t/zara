@@ -1,6 +1,6 @@
 """Daemon-owned live voice ingress for ZARA/1.
 
-The transport owns framing and backpressure.  This adapter owns only the
+The transport owns framing and backpressure. This adapter owns only the
 bounded handoff from validated PCM frames into Zara's existing streaming STT
 pipeline and canonical RuntimeSupervisor command path.
 """
@@ -15,10 +15,12 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from zara.barge_in import BargeInConfig
 from zara.principals import PrincipalContext
 from zara.runtime import events
 from zara.runtime.commands import SubmitTurn
 from zara.server import PrincipalMismatch
+from zara.speech_activity import speech_activity
 from zara.streaming_stt import (
     FinalTranscript,
     PartialTranscript,
@@ -81,6 +83,7 @@ class RuntimeVoiceIngress:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._default_model = None
+        self._barge_in_config = BargeInConfig()
 
     def _check_principal(self, principal: PrincipalContext) -> None:
         if not isinstance(principal, PrincipalContext):
@@ -274,6 +277,34 @@ class RuntimeVoiceIngress:
         if isinstance(event, FinalTranscript):
             self._submit_final(stream, event.text, provider=event.provider)
 
+    def _set_playback_vad(self, transcriber: object, playback_active: bool) -> None:
+        vad = getattr(transcriber, "_vad", None)
+        config = getattr(vad, "config", None)
+        if config is None:
+            return
+
+        idle = getattr(transcriber, "_zara_idle_vad", None)
+        if idle is None:
+            idle = (float(config.vad_threshold), int(config.min_speech_frames))
+            setattr(transcriber, "_zara_idle_vad", idle)
+
+        current = bool(getattr(transcriber, "_zara_playback_active", False))
+        if current == playback_active:
+            return
+
+        if playback_active:
+            config.vad_threshold = max(
+                idle[0],
+                float(self._barge_in_config.playback_vad_threshold),
+            )
+            config.min_speech_frames = max(
+                idle[1],
+                int(self._barge_in_config.playback_min_speech_frames),
+            )
+        else:
+            config.vad_threshold, config.min_speech_frames = idle
+        setattr(transcriber, "_zara_playback_active", playback_active)
+
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
@@ -290,6 +321,7 @@ class RuntimeVoiceIngress:
                 continue
             try:
                 if isinstance(item, _AudioWork):
+                    self._set_playback_vad(stream.transcriber, speech_activity.active)
                     emitted = stream.transcriber.feed(self._pcm_float32(item.pcm))
                 else:
                     emitted = stream.transcriber.commit(stream.stream_id)

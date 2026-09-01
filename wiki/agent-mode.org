@@ -4,14 +4,16 @@
 
 =agent-mode= is a first-party service plugin shipped inside Zara. It is disabled
 by default and turns the normal conversational runtime into a more persistent,
-autonomous assistant without creating a second AgentManager, event bus, or tool
-runtime.
+autonomous assistant without creating a second AgentManager, event bus, tool
+runtime, or microphone capture loop.
 
 When enabled it can:
 
 - persist and execute recurring background tasks;
 - create proactive turns that periodically ask the user a question;
+- expose lifecycle hooks around autonomous actions with live personality context;
 - speak arbitrary text through Zara's configured TTS provider;
+- keep wake/voice capture active during playback and support speech barge-in;
 - optionally speak proactive questions or recurring-task results;
 - keep all work inside RuntimeHost so ordinary tools, approvals, memory, Discord,
   and other surfaces still see the same turn lifecycle.
@@ -28,6 +30,7 @@ question_min_minutes = 60
 question_max_minutes = 240
 speak_questions = true
 speak_task_results = false
+barge_in = true
 poll_seconds = 1.0
 #+end_src
 
@@ -44,6 +47,49 @@ or =~/.local/state/zarathushtra/agent-mode/state.json= when =XDG_STATE_HOME= is
 unset. The directory is mode =0700= and the state file is mode =0600=. Set
 =state_path= in the plugin table to override it.
 
+* Personality and lifecycle hooks
+
+Normal and autonomous turns use the same canonical effective agent prompt. The
+helper in =zara.agent.prompting= owns the default prompt and custom
+=agent.system_prompt= override, so agent mode does not carry a second personality
+implementation.
+
+Before scheduling a task, before executing it, before generating a proactive
+question, and before speaking, agent mode builds an =AgentModeActionContext=.
+That context contains the live personality prompt and a short SHA-256
+fingerprint. Hooks may inspect the personality and may rewrite the task prompt or
+speech text before the action occurs.
+
+The supported stages are:
+
+- =before_task_create=
+- =before_task_run=
+- =after_task_result=
+- =before_proactive_question=
+- =after_proactive_question=
+- =before_speak=
+- =after_speak=
+
+First-party code can register a hook with:
+
+#+begin_src python
+from zara.plugins.builtin.agent_mode_hooks import register_agent_mode_hook
+
+
+def my_hook(context):
+    # context.personality_prompt is live and available here.
+    return context.with_updates(prompt=context.prompt)
+
+
+register_agent_mode_hook("before_task_run", "my-hook", my_hook)
+#+end_src
+
+Raw personality/system-prompt text is not written into recurring-task state.
+Tasks persist only the personality fingerprint captured at creation. At run time
+Zara uses the current personality, so a later personality change takes effect
+without rewriting every task while the creation fingerprint remains useful for
+audit/debugging.
+
 * Tools
 
 When agent mode is enabled, Zara gains:
@@ -57,31 +103,45 @@ When agent mode is enabled, Zara gains:
 
 A recurring task is not a separate agent. When it becomes due the plugin submits
 an ordinary =SubmitTurn= with an =agent-mode:task:<id>= conversation id. The
-existing runtime executes that turn with the normal agent, tools, memory, and
-approval rules.
+existing runtime executes that turn with the normal agent, current personality,
+tools, memory, and approval rules.
 
 * Proactive questions
 
 When random questions are enabled, the scheduler chooses a random delay between
 =question_min_minutes= and =question_max_minutes=. At the deadline it submits a
-normal background turn asking Zara to produce one concise question that can
-learn a preference, clarify active work, discover useful memory, or help with a
-current goal.
+normal background turn asking Zara to produce one concise question that fits her
+current personality and can learn a preference, clarify active work, discover
+useful memory, or help with a current goal.
 
 The default interval is intentionally broad (60--240 minutes) rather than a
 constant ping loop. =set_random_questions(false)= persists the disabled state.
 
 Set =question_prompt= to replace the built-in generation prompt.
 
-* TTS and wake capture
+* TTS, wake capture, and barge-in
 
-The =speak= tool uses the existing =TTSEngine= and =mpv= playback. Playback is
-serialized so two tool calls cannot talk over each other.
+The =speak= tool uses the existing =TTSEngine= and serialized =mpv= playback. It
+deliberately does not open, close, pause, or take ownership of any microphone
+input device. Wake/voice capture therefore remains active while tool-driven TTS
+plays.
 
-The tool deliberately does not open, close, pause, or take ownership of any
-microphone input device. Wake capture therefore remains active while tool-driven
-TTS plays. Zara's existing barge-in path already supports microphone VAD during
-playback; this plugin does not replace that path or create another capture loop.
+While playback is active, =zara.speech_activity= exposes a process-wide playback
+marker. The daemon voice ingress sees that marker before feeding PCM into the
+existing streaming VAD and switches from the normal VAD settings to Zara's
+existing =BargeInConfig= playback thresholds. With the defaults this raises the
+speech threshold from =0.5= to =0.7= and the minimum confirmed speech frames
+from =4= to =6=, reducing self-echo false positives without muting the mic.
+
+Once the voice pipeline confirms real speech it publishes the canonical
+=VoiceSpeechStarted= event. Agent mode listens on its RuntimeHost subscription
+and terminates the active =mpv= process when =barge_in=true=. The microphone
+continues recording, so the same utterance can continue through normal STT and
+become the next turn.
+
+This deliberately reuses the daemon voice path rather than starting a second
+=sounddevice= stream. It therefore preserves the shared-mic/concurrent-capture
+architecture.
 
 The configured =[tts]= provider and voice are reused. Nix Zara wrappers already
 place =mpv= on =PATH=. A non-Nix installation must provide =mpv= separately for
