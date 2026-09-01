@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
+from pytest import MonkeyPatch
 
 from zara.runtime.api_service import (
     API_SERVICE_REGISTRY_VERSION,
@@ -15,6 +16,7 @@ from zara.runtime.api_service import (
     TimerService,
     _specs_from_rows,
     build_api_service,
+    get_server_engine,
 )
 from zara.runtime.frames import (
     DurationValue,
@@ -39,11 +41,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SERVER_MAIN = REPO_ROOT / "server_main.pl"
 
 
-@pytest.fixture(autouse=True)
-def isolated_user_config(tmp_path, monkeypatch):
-    config_home = tmp_path / "config"
+@pytest.fixture(scope="module", autouse=True)
+def isolated_user_config(tmp_path_factory):
+    config_home = tmp_path_factory.mktemp("config")
     (config_home / "zarathushtra").mkdir(parents=True)
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    with MonkeyPatch.context() as mp:
+        mp.setenv("XDG_CONFIG_HOME", str(config_home))
+        yield
 
 
 def complete_frame(intent_ns: str, intent_name: str, *slots) -> IntentFrame:
@@ -59,6 +63,7 @@ def text_slot(name: str, text: str) -> FilledSlot:
     return FilledSlot(name=name, value=TextValue(text=text), origin=SlotOrigin.UTTERANCE)
 
 
+@pytest.fixture(scope="module")
 def engine() -> PrologEngine:
     return PrologEngine(SERVER_MAIN)
 
@@ -184,9 +189,9 @@ class TestTimerService:
 
 
 class TestBuildApiService:
-    def test_registers_builtin_server_providers(self):
+    def test_registers_builtin_server_providers(self, engine):
         service = build_api_service(
-            {"enabled": True, "disabled_providers": []}, engine=engine()
+            {"enabled": True, "disabled_providers": []}, engine=engine
         )
         assert set(service.registry.provider_ids()) == {
             "search_server",
@@ -194,20 +199,20 @@ class TestBuildApiService:
             "admin_restart",
         }
 
-    def test_disabled_providers_are_not_registered(self):
+    def test_disabled_providers_are_not_registered(self, engine):
         service = build_api_service(
-            {"enabled": True, "disabled_providers": ["timer_server"]}, engine=engine()
+            {"enabled": True, "disabled_providers": ["timer_server"]}, engine=engine
         )
         assert "timer_server" not in service.registry.provider_ids()
         assert "search_server" in service.registry.provider_ids()
 
-    def test_version_mismatch_fails_closed(self, monkeypatch):
+    def test_version_mismatch_fails_closed(self, engine, monkeypatch):
         monkeypatch.setattr(
             "zara.runtime.api_service.API_SERVICE_REGISTRY_VERSION",
             API_SERVICE_REGISTRY_VERSION + 1,
         )
         with pytest.raises(ValueError, match="registry version"):
-            build_api_service({"enabled": True, "disabled_providers": []}, engine=engine())
+            build_api_service({"enabled": True, "disabled_providers": []}, engine=engine)
 
     def test_malformed_rows_fail_closed(self):
         with pytest.raises(ValueError, match="duplicate"):
@@ -233,9 +238,13 @@ class TestBuildApiService:
 
 
 class TestPlanExecutionService:
+    @pytest.fixture(autouse=True)
+    def _service_engine(self, engine):
+        self._engine = engine
+
     def service(self, **kwargs) -> PlanExecutionService:
         return build_api_service(
-            {"enabled": True, "disabled_providers": []}, engine=engine(), **kwargs
+            {"enabled": True, "disabled_providers": []}, engine=self._engine, **kwargs
         )
 
     def test_search_plan_executes_and_returns_url(self):

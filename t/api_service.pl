@@ -8,12 +8,16 @@ write_config(Path, Text) :-
 
 server_boot_loaded :-
     current_predicate(kb_server_providers:api_service_provider/3),
-    current_predicate(kb_config:search_engine/1),
     current_predicate(capability_plans:plan_for_frame/3),
     current_predicate(config_loader:load_server_config/0).
 
-test(server_boot_loads_semantic_capability_and_registry_modules) :-
+test(server_boot_loads_registry_and_selector_modules) :-
     server_boot_loaded.
+
+test(server_boot_does_not_consult_semantic_defaults_file) :-
+    \+ (source_file_property(File, module(kb_config)),
+        atom(File),
+        atom_concat(_, 'kb/config.pl', File)).
 
 test(server_boot_never_loads_device_provider_configuration) :-
     \+ current_predicate(kb_device_providers:app_mapping/2),

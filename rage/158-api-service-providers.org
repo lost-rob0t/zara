@@ -241,3 +241,38 @@ capability facts for tool providers (no consumer capability yet — YAGNI,
 revisit when a capability warrants a tool-backed provider), server timer
 firing events (#173 owns event design), gateway-facing plan command (#160
 owns routing cutover).
+
+* Implementation findings (appended during realization)
+
+** F1. pyswip/SWI module collision (adversarial evidence -> design amendment)
+Full-suite pytest segfaulted in =t/test_wake_words.py= (consult inside
+=PrologEngine.__init__=) after the #158 tests ran. Root cause, isolated by
+bisection + direct SWI probes: pytest never consulted =kb/config.pl=
+(module =kb_config=) before this slice; the server boot introduced a second
+=:- module(kb_config, ...)= declaration, and SWI 10 raises "No permission
+to redefine module 'kb_config'" when two files declare it — the pyswip
+error path then corrupts process state and later consults segfault. SWI 10
+has no redefine_module/abolish_module escape. Baseline verified: full
+suite on =origin/master= (ec0c74a, throwaway worktree) passes 1373.
+Amendment (D1): =server_main.pl= does NOT consult =kb/config.pl=; user
+semantic overrides ride =load_server_config= asserting into an
+auto-created =kb_config= (verified: SWI auto-creates modules on assert);
+=config_loader:search_url/2= gained a =current_predicate= guard so the
+fallback template applies when =kb_config= was never consulted. Full
+suite: 1420 passed, 0 failed, no segfault. The reverse direction (temp
+module first, boot second) also errors — documented gotcha for future
+boots: never re-declare a module name another file may own.
+
+** F2. Engine singleton
+=build_api_service= now defaults to a process-wide =get_server_engine()=
+singleton: repeated PrologEngine construction leaks SWI threads ("Failed
+to stop Prolog threads" warnings) and was part of the crash surface. The
+host builds reuse it across start/restart.
+
+** F3. Test-harness notes
+- Module-scoped engine fixture requires module-scoped XDG isolation
+  (fixture instantiation order: module scope runs before function scope);
+  =MonkeyPatch.context()= used for the wider scope.
+- The developer's real =~/.config/zarathushtra/config.pl= leaked into
+  engine consults until XDG isolation was in place (observed a stale
+  =search_engine= override); owner may want to review that file locally.

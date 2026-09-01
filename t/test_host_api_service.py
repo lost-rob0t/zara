@@ -3,6 +3,7 @@
 import asyncio
 
 import pytest
+from pytest import MonkeyPatch
 
 from zara.runtime.api_service import PlanOutcomeStatus
 from zara.runtime.frames import (
@@ -53,11 +54,13 @@ def start_host(config) -> RuntimeHost:
     return host
 
 
-@pytest.fixture(autouse=True)
-def isolated_user_config(tmp_path, monkeypatch):
-    config_home = tmp_path / "config"
+@pytest.fixture(scope="module", autouse=True)
+def isolated_user_config(tmp_path_factory):
+    config_home = tmp_path_factory.mktemp("config")
     (config_home / "zarathushtra").mkdir(parents=True)
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    with MonkeyPatch.context() as mp:
+        mp.setenv("XDG_CONFIG_HOME", str(config_home))
+        yield
 
 
 def test_enabled_host_builds_plan_service_and_executes_search():

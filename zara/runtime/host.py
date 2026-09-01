@@ -350,14 +350,11 @@ class RuntimeHost:
             service_config = config.get_api_service_config()
             if not service_config["enabled"]:
                 return
-            from zara.prolog_engine import PrologEngine
-            from zara.runtime.api_service import build_api_service, locate_server_main
+            from zara.runtime.api_service import build_api_service
 
-            engine = await asyncio.to_thread(PrologEngine, locate_server_main())
             self._api_service = await asyncio.to_thread(
                 build_api_service,
                 service_config,
-                engine=engine,
                 admin_restart_hook=self._submit_admin_restart,
             )
             logger.info("[ApiService] plan service started: %s",

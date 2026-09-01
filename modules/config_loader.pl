@@ -358,8 +358,11 @@ validate_server_user_fact(verb_intent(Surface, Intent, Arity), kb_intents,
     ( Arity == rest ; integer(Arity), Arity >= 0 ).
 
 search_url(Query, URL) :-
-    % 1. Get search template from user config (with default fallback)
-    (   kb_config:search_engine(Template)
+    % 1. Get search template from user config (with default fallback). The
+    % current_predicate guard keeps this robust when kb_config was not
+    % consulted (server boot); the module is auto-created on override.
+    (   current_predicate(kb_config:search_engine/1),
+        kb_config:search_engine(Template)
     ->  true
     ;   Template = "https://duckduckgo.com/?q=~w"  % fallback
     ),

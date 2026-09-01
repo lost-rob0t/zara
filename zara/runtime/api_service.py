@@ -367,10 +367,11 @@ def _builtin_adapter(
 def build_api_service(
     config: Mapping[str, Any],
     *,
-    engine: PrologEngine,
+    engine: Optional[PrologEngine] = None,
     admin_restart_hook: Optional[Callable[[str], Any]] = None,
 ) -> PlanExecutionService:
     """Build the plan execution service from the server Prolog boot."""
+    engine = engine if engine is not None else get_server_engine()
     rows = _registry_rows(engine)
     specs = _specs_from_rows(rows)
     disabled = tuple(config.get("disabled_providers", ()))
@@ -410,3 +411,22 @@ def locate_server_main() -> Path:
         if candidate.is_file():
             return candidate.resolve()
     raise FileNotFoundError(f"Could not find server_main.pl. Tried: {candidates}")
+
+
+_server_engine: Optional[PrologEngine] = None
+_server_engine_lock = threading.Lock()
+
+
+def get_server_engine() -> PrologEngine:
+    """Process-wide engine for the server boot.
+
+    PySWIP exposes one process-wide SWI-Prolog runtime; repeated
+    instantiation of engines per host build leaks SWI threads and poisons
+    the runtime (observed as segfaults in later consults). The server
+    boot is consulted at most once per process.
+    """
+    global _server_engine
+    with _server_engine_lock:
+        if _server_engine is None:
+            _server_engine = PrologEngine(locate_server_main())
+        return _server_engine
