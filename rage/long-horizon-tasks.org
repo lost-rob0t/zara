@@ -1,0 +1,186 @@
+* Long-horizon agent tasks (persistent, resumable, bounded) — spec work order
+
+** Run identity
+- Consumed work order: user-provided spec "Zara — Long-Horizon Agent Tasks"
+  (no GitHub issue defines this work; checked #1/ZARA-000 roadmap and
+  planning/backlog.pl — no long-horizon/task-runner issue exists; queue head
+  remains untouched by this branch)
+- Start commit: ddac73a (origin/master, "Merge pull request #257 from
+  lost-rob0t/feature/agent-mode-core")
+- Branch: feature/long-horizon-tasks (worktree
+  ~/git/worktrees/zarathushtra-feature-long-horizon-tasks)
+- Alignment check: #157 (typed ExecutionPlan) merged at 2054ac1; its runtime
+  lives in zara/runtime/plans.py (PlanStatus/PlanExecutor seam). This slice
+  does NOT touch plans.py: task steps are bounded conversation turns through
+  the existing run_conversation_loop, not ExecutionPlans. The rejected PR #119
+  capability_resolver mechanics stay rejected; nothing from them is revived.
+
+** Research
+
+*** Sources
+- zara/agent/graph.py:638-807 (should_continue state contract, run_conversation_loop,
+  interrupt/approval resume loop)
+- zara/agent/__init__.py:33-334 (AgentManager ctor, process_async state contract,
+  approval controller wiring, history write-back)
+- zara/runtime/host.py (RuntimeHost lifecycle, _submit_turn/_cancel_turn/_shutdown,
+  TurnCoordinator ownership, backend publisher binding)
+- zara/runtime/backend.py (LangGraphRuntimeBackend.submit_turn -> process_async;
+  register_tools path)
+- zara/agent/approval.py (ToolApprovalController: wait_for_decision timeout returns
+  reject resolution + ToolCancelled("approval timeout"); cancel_turn publishes
+  ToolCancelled("turn cancelled"); reject publishes UserResponded + ToolCancelled
+  ("tool rejected"); timeout path publishes NO UserResponded)
+- zara/actors.py:254-341 (TurnCoordinator: sole turn-id owner; cancel of unknown
+  turn id is safe and returns was_already_cancelled=False)
+- zara/database.py + zara/todo_storage.py (DatabaseManager migrations, TodoStore
+  duplicate-migration ValueError idiom)
+- zara/config.py (DEFAULT_CONFIG_TOML template, LLM/tool_approval/pets validation
+  style, get_section accessors)
+- zara/runtime/events.py + bridge.py (RuntimeEvent base, bus subscribe semantics,
+  legacy sinks; Pets consumes additive events safely)
+- zara/latency.py (LatencyTrace ctor, VOICE_EVENTS-restricted record())
+- t/test_runtime_tool_approval.py (stub-LLM harness conventions: monkeypatched
+  _create_llm_client, ApprovalConfig, EventRecorder publisher, host submit flow)
+- zara/agent/graph.py:349-361 (leak audit: graph logs message types and LAST
+  message preview; process_async logs user_input=%r -> goal text must NOT ride
+  in the step user_input)
+
+*** Findings
+1. ConversationManager holds ONE shared history list per AgentManager
+   (conversation.py:43; process_async overwrites it unconditionally). Task
+   steps sharing it would corrupt user conversation state. A history override
+   on the existing process_async path is the minimal, non-forking fix.
+2. Approval waiting is observable only via published events (the controller
+   blocks inside run_conversation_loop's interrupt loop). The host's bound
+   publisher is the single choke point for ToolWaitingForUser/UserResponded/
+   ToolCancelled. A runner-side observing publisher wrapper sees exactly those
+   events without threads, bus subscriptions, or polling.
+3. Step turn ids must come from the TurnCoordinator (canonical owner); cancel
+   of an unknown id is safe. Task step turns are NOT in host._turn_tasks, so
+   shutdown must go through an explicit runner hook.
+4. builtin tool registration respects config via load_builtin_tools
+   (registry.py:165-195); service plugins register post-start via
+   backend.register_tools. Task tools need the runner, which only exists after
+   backend start -> register via the same post-start path.
+5. Migration version 1 is taken by TodoStore on the shared DatabaseManager;
+   agent tasks take version 2 with the same duplicate-registration tolerance.
+6. LatencyTrace.record accepts only VOICE_EVENTS names; llm_request/
+   llm_first_token/llm_final_token are legal per-step records.
+
+** Design
+
+*** Decisions
+- D1 :: RuntimeHost owns a TaskRunner (zara/tasks/runner.py) started after
+  backend+plugins when [tasks].enabled; stopped (interrupting live steps) in
+  _shutdown/_restart before backend stop. The runner gets injected seams from
+  the host: submit_turn adapter over the existing backend, turn-id allocation
+  via the coordinator, coordinator cancel, and the wrapped publisher.
+- D2 :: One step = ONE process_async call through
+  LangGraphRuntimeBackend.submit_turn with a coordinator-allocated turn id and
+  a fresh per-step history. The agent layer gains two additive optional
+  parameters: process_async(conversation_history=None, extra_system_context=None)
+  — None preserves today's behavior byte-for-byte; task steps pass [] and the
+  task context. No loop fork, no new graph, no second approval channel.
+- D3 :: Goal text NEVER enters user_input (process_async and graph.py:358 log
+  the turn text): the step prompt is a short instruction; goal + bounded step
+  summaries ride in the extra system context message. Step prompts are
+  therefore clean under existing logging; the runner adds id/status/length-only
+  boundary logs.
+- D4 :: Waiting detection is event-driven on the observing publisher:
+  ToolWaitingForUser -> running -> waiting_approval (+ TaskWaitingApproval);
+  UserResponded -> waiting_approval -> running; ToolCancelled("approval
+  timeout") -> task failed(approval_timeout) and the step turn is cancelled;
+  ToolCancelled("tool rejected") -> task failed(approval_rejected) and step
+  cancelled. The step coroutine stays suspended inside the existing approval
+  future — zero polling (asserted by a no-tick test).
+- D5 :: Approval-timeout policy: failed(approval_timeout) (chosen over
+  waiting_input). waiting_input/blocked remain in the legal transition table
+  for later slices but are unreachable in phase 1.
+- D6 :: Completion sentinel: a step response whose stripped text starts with
+  TASK_COMPLETE completes the task; the remainder (bounded) is the final
+  summary. Otherwise the runner continues stepping until budgets are
+  exhausted (failed(step_budget_exhausted) / failed(wall_clock_exceeded)).
+- D7 :: Cancel: transition(cancelled) first (single writer), then coordinator
+  cancel + step task cancel + backend.cancel_turn (flushes that turn's
+  pending approvals). Cancelled is terminal forever; interrupted is resumable
+  via explicit resume (new step, same task identity and step counter).
+- D8 :: Crash/shutdown recovery: TaskStore.recover_interrupted() moves
+  running/waiting_approval/waiting_input/blocked -> interrupted at runner
+  start; shutdown interrupts live tasks before backend teardown.
+- D9 :: Concurrency: [tasks].max_concurrent counts {running, waiting_approval};
+  overflow rejects at create with TaskLimitError (nothing persisted).
+- D10 :: Persistence: agent_tasks + agent_task_steps tables (migration 2),
+  principal-scoped access on every store method; recovery is the one
+  principal-agnostic maintenance op. Step log rows are bounded by
+  step_log_chars (store rejects over-bound; runner truncates). MemoryManager
+  is NOT written in phase 1 — the bounded step log is the compaction record.
+- D11 :: Tools: build_task_tools(task_service) + get_builtin_tools(...,
+  task_service=None) in builtin_tools.py; TaskRunner.start registers them via
+  backend.register_tools (the service-plugin path) and stop unregisters.
+  Gate: [tasks].enabled (default false) — runner/tools never exist otherwise.
+- D12 :: Events: TaskStarted/TaskStepCompleted/TaskWaitingApproval/
+  TaskCompleted/TaskFailed/TaskCancelled in runtime/events.py (additive;
+  label="tasks"; Pets unaffected).
+- D13 :: Config [tasks]: enabled=false, max_concurrent=2, max_task_steps=20,
+  wall_clock_minutes=30.0, step_log_chars=2000; validated centrally with the
+  repo's bool-not-int/finite-positive rules; get_tasks_config() accessor.
+
+*** Rejected alternatives
+- Second AgentManager instance for tasks: duplicates the LLM client and would
+  fork the approval controller — violates the spec's reuse constraint.
+- Observing approvals via bridge.subscribe: the bound publisher in the host
+  test harness is a recorder over a private bus, so bus subscriptions miss
+  controller events; the wrapper sees the same stream the controller emits.
+- Persisting raw per-step transcripts: forbidden by spec (bounded summaries
+  only) and would leak goal text into durable storage.
+- Grafting task state onto TodoStore: separate state machine, different
+  principal semantics (spec forbids).
+- Driving steps through RuntimeHost._submit_turn: it publishes user-facing
+  ResponseText/OutputReady and would couple task lifecycle to command receipts.
+
+*** Threat / failure analysis
+- History corruption: task steps never read or write the shared
+  ConversationManager history (fresh conversation_history param).
+- Goal leakage: goal only in the extra system message; asserted absent from
+  captured logs and from persisted step summaries beyond the bound.
+- Unbounded runtime: max_concurrent, max_task_steps, wall clock, step-log
+  count (<= max_task_steps rows) and chars all bounded; goal bounded.
+- Runtime-loop isolation: every step runs in its own asyncio task; any
+  exception maps to failed(step_error) and never escapes the runner.
+- Stale results: a step completing after its task went terminal is dropped
+  (status re-checked before applying results).
+- Double transitions: all mutations flow through the store's transition
+  table; illegal/terminal transitions raise.
+
+*** Acceptance criteria -> tests
+| Spec acceptance | Test |
+|---+---|
+| stub-LLM 3-step task to completion via real runner + ToolRegistry scripted tool | t/test_task_runner.py::test_three_step_task_completes_end_to_end |
+| approval pause/resume round-trip | test_step_pauses_on_approval_and_resumes |
+| reject path | test_rejected_approval_fails_task |
+| timeout path | test_approval_timeout_fails_task |
+| no busy-loop | test_waiting_approval_does_not_poll |
+| cancel mid-step propagates to stub tool | test_cancel_mid_step_propagates_to_tool |
+| daemon restart leaves interrupted persisted | test_restart_marks_running_tasks_interrupted |
+| resume creates new step, same identity | test_resume_continues_same_task |
+| concurrency rejection | test_concurrency_overflow_rejected |
+| crash isolation | test_crashing_step_fails_task_not_runner |
+| bounds (steps, wall clock, goal, step log) | store + runner bound tests |
+| tools registered/invokable, events published, gate off by default | t/test_task_tools.py |
+| no goal text in logs; trace ids preserved | t/test_task_observability.py |
+| config validation | t/test_tasks_config.py |
+| pets unbroken | existing pets suite in full gate |
+
+*** Gate
+1. Focused pytest per behavior (red -> green per behavior).
+2. Full local gate: nix develop -c bash scripts/test-all.sh
+3. nix flake check
+4. Exact-head CI on the PR before merge.
+
+** TDD / implementation evidence
+
+(appended per behavior below)
+
+** Outcome
+
+(pending)
