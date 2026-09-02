@@ -22,7 +22,8 @@ trap 'rm -rf "$tmp"' EXIT
 trealla="$tmp/trealla"
 cp -R "$ZARA_TREALLA_SOURCE_DIR" "$trealla"
 chmod -R u+w "$trealla"
-make -C "$trealla" -f GNUmakefile -j2 NOSSL=1 NOFFI=1 NOTHREADS=1 tpl >/dev/null
+make -C "$trealla" -f GNUmakefile -j2 \
+  NOSSL=1 NOFFI=1 NOTHREADS=1 NOTTY=1 NONETWORK=1 tpl >/dev/null
 
 stage="$tmp/prolog"
 mkdir -p "$stage/portable" "$stage/shared/modules" "$stage/shared/kb"
