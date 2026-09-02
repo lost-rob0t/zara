@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -26,6 +27,7 @@ from .graph import run_conversation_loop, validate_and_clean_messages
 from .hooks import AgentLoopAdviceRegistry
 from .prompting import build_agent_system_prompt
 from .tools.registry import ToolRegistry
+from .user_hooks import UserHookLoader
 from ..config import ZaraConfig, get_config
 from ..memory import build_memory_manager, MemoryManager
 from ..latency import LatencyTrace
@@ -83,6 +85,14 @@ class AgentManager:
             enabled=hooks_config.get("enabled", False),
             allow_override=hooks_config.get("allow_override", False),
         )
+        self.user_hook_loader = None
+        config_dir = getattr(self.config, "config_dir", None)
+        if config_dir is not None:
+            self.user_hook_loader = UserHookLoader(
+                config_dir=Path(config_dir),
+                registry=self.agent_loop_advice,
+            )
+            self.user_hook_loader.load()
 
     def bind_event_publisher(self, publisher) -> None:
         self.approval_controller.bind_event_publisher(publisher)
