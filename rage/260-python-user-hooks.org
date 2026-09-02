@@ -1,0 +1,40 @@
+#+title: RAGE #260 — Python user hooks loader
+
+* Transaction
+- Issue :: #260
+- Immutable start :: =f078a2d3f1bd10b60914153de486130bce787380=
+- Branch :: =rage/260-python-user-hooks=
+- Scope :: Zara core only. Load trusted user =hooks.py= from the canonical mutable XDG Zara config directory into the already-merged per-runtime =AgentLoopAdviceRegistry=. No Android production edits, no second runtime, no tool-policy bypass.
+
+* Operator constraints
+- Mutable/private user configuration remains outside Git and the Nix store.
+- Home Manager may provision the directory or immutable examples, but Zara never replaces an existing user =hooks.py= or =config.pl=.
+- =[hooks].enabled= remains the canonical policy gate; override-capable advice additionally requires =allow_override=true=.
+- Reload is idempotent and removes registrations owned by the previous user-hook generation before installing the new generation.
+
+* Iteration 1 — research/design/TDD RED
+** Research
+See =rage/260-python-user-hooks-research.org=.
+
+** Design
+See =rage/260-python-user-hooks-design.org=.
+
+** Planned tests
+- canonical path is =config.config_dir / "hooks.py"=;
+- missing file is a no-op and is never created;
+- disabled hooks do not execute user Python;
+- enabled file exposes a bounded registration facade whose owner is fixed by core;
+- reload replaces previous user-owned registrations rather than accumulating duplicates;
+- malformed module/registration failure is typed and bounded;
+- narrow config adapters without =config_dir= stay fail-closed and compatible.
+
+** RED
+Exact-head CI run =#771= at =5c1809c501f2a038d9a2f0b86f8ab0881e51de72= completed RED. The main =test= job failed at =Run all tests= while both shared-mic jobs and the Android skeleton gate stayed green. This is the intended missing =zara.agent.user_hooks= contract; flake/package steps were correctly not treated as green after the test failure.
+
+** Implementation
+- =a628b8c093451a739da23ff8117337a6b11432b6= adds =zara.agent.user_hooks= with a fixed =user:hooks.py= registration facade, disabled no-exec behavior, missing-file no-create behavior, isolated staging registry, typed bounded load failure, and idempotent generation replacement.
+- =deda2f310bf5fe71d997d61d7f315dd692462f8b= wires the loader into the existing =AgentManager= only when the config exposes =config_dir=. Narrow adapters remain fail-closed; the existing =AgentLoopAdviceRegistry= remains the sole loop-advice authority.
+- No =android/**= production files changed.
+
+** GREEN gate
+Fresh exact-head CI is required after the implementation and RAGE-log append. Do not mark ready or merge until the final branch head passes the complete =test= job, flake/package gates, shared-mic gates, Android gate, mergeability, and review/thread checks against current =master=.

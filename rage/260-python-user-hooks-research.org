@@ -1,0 +1,25 @@
+#+title: RAGE #260 — Python user hooks research
+
+* Current repository state
+- =zara/agent/hooks.py= already provides the bounded per-runtime =AgentLoopAdviceRegistry= with deterministic ordering, owner cleanup, snapshot dispatch, and explicit override gating.
+- =AgentManager= now owns that registry and invokes only the existing canonical =run_conversation_loop= through it.
+- =ZaraConfig= already owns the canonical XDG config directory and validates =[hooks].enabled= / =allow_override=.
+- Prolog user =hooks.pl= already derives its path from the same XDG user-config ownership and never creates the hook file.
+- No Python user =hooks.py= loader exists on current master.
+
+* Upstream research
+Python's documented importlib APIs support dynamic module execution, and =importlib.util.spec_from_file_location= is the appropriate path-based module-spec primitive. Python also documents caveats around =reload()=: retained module dictionaries and non-thread-safe reload make raw =importlib.reload= a poor fit for deterministic generation replacement. The loader should instead build a fresh uniquely named module object for each generation, execute it, register through a bounded facade, and then retire the prior generation's registrations.
+
+Source: Python 3.14 =importlib= documentation, especially programmatic imports, cache invalidation, and reload caveats.
+
+* Failure/adversarial analysis
+- Letting user code choose arbitrary owner strings defeats deterministic cleanup; core must assign the owner.
+- Clearing old registrations before a new file has successfully imported can turn a syntax error into silent loss of the last working configuration. Stage new registrations first, then swap ownership atomically at the registry level where practical.
+- Registering directly into the live registry during module import makes partial imports observable. Use a staging registry/facade and commit only after module execution + registration succeeds.
+- Disabled hooks must not execute arbitrary local Python merely to discover zero registrations.
+- Missing =hooks.py= must be a no-op and must not create or template mutable code.
+- User Python is trusted local code by explicit issue design, but it still may not bypass Zara's tool approval/capability policy: advice wraps the canonical loop; it does not receive an alternate approval controller or tool registry.
+- Narrow test/runtime config adapters may not expose =config_dir=; preserve the existing fail-closed compatibility behavior rather than inventing a path.
+
+* Selected direction
+Add a small user-hook loader owned by the canonical agent runtime. Its path is derived only from =ZaraConfig.config_dir=. A fixed-owner registration facade exposes before/after/around/override helpers, while the existing registry continues to enforce policy. Loading/reloading is generation-based, bounded, and idempotent. No filesystem watcher is required in this slice; explicit reload seam is sufficient for later settings/plugin integration.

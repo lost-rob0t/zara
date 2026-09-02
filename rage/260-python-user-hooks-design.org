@@ -1,0 +1,54 @@
+#+title: RAGE #260 — Python user hooks design
+
+* Boundary
+One loader attaches trusted local =hooks.py= registrations to the existing =AgentLoopAdviceRegistry=. It does not create a second agent/runtime/tool path.
+
+* API
+Introduce =UserHookLoader= in =zara.agent.user_hooks=.
+
+Constructor inputs:
+- =config_dir: Path=
+- =registry: AgentLoopAdviceRegistry=
+
+Public operations:
+- =path= -> canonical =config_dir / "hooks.py"=
+- =load()= -> initial load; same semantics as reload
+- =reload()= -> deterministic generation replacement
+
+User file contract:
+#+begin_src python
+async def before_turn(*args, **kwargs):
+    ...
+
+def register(hooks):
+    hooks.before(before_turn, priority=0)
+#+end_src
+
+The facade owns the fixed core owner =user:hooks.py=. User code cannot supply/forge an owner. Helpers map to existing registry kinds: =before=, =after=, =around=, =override=.
+
+* Loading semantics
+1. If registry policy is disabled, return without reading/executing =hooks.py=.
+2. If the file is absent, clear any prior =user:hooks.py= registrations and return success; never create the file.
+3. Execute the source as a fresh uniquely named module generation using =importlib.util.spec_from_file_location= / =module_from_spec= / loader =exec_module=.
+4. Require one callable =register= entry point. Registration occurs against an isolated staging registry configured with the same policy.
+5. If import or registration fails, raise a bounded =UserHookLoadError= and leave the currently active generation unchanged.
+6. On success, clear the live registry's fixed user owner and replay the staged registrations into the live registry, preserving kind/priority/callback ordering.
+
+* Integration
+=AgentManager= constructs the loader only when the config object exposes a real =config_dir=. It invokes =load()= after creating =agent_loop_advice=. Narrow adapters without a config directory remain fail-closed with no user Python loading. The registry itself remains the only loop-advice authority.
+
+* Config ownership
+No file is added to the Nix store as mutable user state. =hooks.py= and =config.pl= remain under the user's XDG Zara directory. Repository/Nix assets may document or provide examples only; runtime code never overwrites an existing mutable file.
+
+* Tests / acceptance mapping
+- path/missing-file no-create -> config durability
+- disabled no-exec -> policy gate
+- fixed-owner facade -> deterministic cleanup/security
+- successful before registration/invocation -> functional load
+- reload replacement -> live/idempotent behavior
+- syntax/register error preserves old generation -> failure atomicity
+- AgentManager integration with real config dir -> auto-load on canonical runtime
+- narrow adapter compatibility -> no regression
+
+* Non-goals
+No watcher, remote hook downloads, plugin package loader, Android hook runtime, second approval controller, or arbitrary owner namespaces.
