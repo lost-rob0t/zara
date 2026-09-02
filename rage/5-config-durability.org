@@ -1,0 +1,56 @@
+#+title: RAGE #5 — Mutable Prolog configuration durability
+
+* Transaction
+- Consumed issue :: #5 — ZARA-004
+- Immutable start :: 7e72d98e0cfc262294f01ed177416a3b2c3bf275
+- Branch :: rage/zara-004-config-durability
+- Scope :: Zara Core only; no Android production, dotfiles, Home Manager repository, plugin repository, or Prolog-RLM work.
+
+* Iteration 1
+** Research
+- Current =modules/config_loader.pl= has exactly one user Prolog path, =$XDG_CONFIG_HOME/zarathushtra/config.pl= (fallback =~/.config/zarathushtra/config.pl=).
+- =ensure_user_config/0= correctly avoids rewriting an existing file, but that does not preserve mutable runtime/operator state when an external declarative manager owns =config.pl= as an immutable Nix-store-backed file or symlink.
+- Current reload tracks asserted clauses and removes them before loading a replacement, so the existing clause-reference mechanism can support a multi-layer load without adding a second configuration subsystem.
+- Current server loader intentionally rejects device-only facts; that boundary must remain identical for every layer.
+- =hooks.pl= derives its directory from =config.pl= but is a separate file; this slice changes Prolog configuration layering only.
+- Existing =scripts/test-prolog-config.sh= isolates =$XDG_CONFIG_HOME= and is the intended deterministic regression harness.
+- Repository search found no Zara-owned Home Manager/Nix module that writes =config.pl=; the durability defect is the single-path ownership contract, so it can be fixed entirely in Zara Core.
+
+** Design
+- Preserve =config.pl= as the backwards-compatible provisioned/base user configuration.
+- Add =$XDG_CONFIG_HOME/zarathushtra/config.local.pl= as the mutable/private user-owned overlay.
+- Never create =config.local.pl= automatically. Missing local overlay is valid and must stay absent, preventing Zara or Nix templates from manufacturing private state.
+- Parse and validate base + local layers before mutating active facts. Concatenate base facts before local facts, then =asserta/2= in that order so later local clauses become the first visible overrides while retaining deterministic defaults behind them.
+- Reload remains atomic with respect to validation: if either layer is invalid, active previously-loaded clauses remain unchanged because replacement occurs only after both reads succeed.
+- Server scope reads the same two layers with =validate_server_user_fact/3= and rejects device-only facts in either layer.
+- Export =user_local_config_path/1= so tooling/docs/tests can discover the mutable authority without hard-coding a path.
+- No secrets or private content enter templates, Git, logs, or Nix-store-owned defaults.
+
+** Acceptance-to-test map
+- Provisioned base + mutable override coexist :: test base =search_engine= and local =search_engine=, assert local wins and base file content is unchanged.
+- Mutable layer is not auto-created :: call =load_user_config= with no local file and assert the local path stays absent.
+- Reload replaces old local state without duplicates :: rewrite only =config.local.pl=, reload, assert old local clause is absent and exactly one new local clause precedes base/default.
+- Invalid local layer is atomic :: load valid state, write invalid local term, assert reload throws and prior loaded value remains active.
+- Server boundary applies to local layer :: put device fact in local overlay and assert =load_server_config= rejects it.
+- Existing supported-fact and unsafe-input tests remain green.
+
+** TDD evidence
+- RED candidate commit =9df18df47c5afb0657c8b6662a30c440a3a8d3e6= added only the regression tests. The exact branch production loader had no =user_local_config_path/1= export or predicate, yet CI #828 reported the entire =scripts/test-all.sh= step successful. That is impossible for an effective execution of the new tests and exposed a false-green test launcher/harness defect before production work began.
+- Upstream SWI-Prolog documents =run_tests/0= as semidet and recommends explicit source loading with =-s= plus ordered initialization goals for non-interactive execution.
+- Harness-repair exception: commit =b33dd78fe728d4badd40753e880eac254a305ee7= changes only =scripts/test-prolog-config.sh= to explicitly load =t/prolog_config.pl= via =-s=, run =run_tests=, execute =halt= only on success, and use =halt(1)= as the fallback top-level. No production loader change is present.
+- Exact-head CI #829 is the required repaired-harness RED authority before implementation.
+
+** Implementation
+- Commit =96ca65eb033d4d90f06310cd13696f31c378655f= adds =config.local.pl= as the sole mutable user-owned overlay.
+- =load_user_config/0= validates both provisioned and local layers before replacing tracked clauses; =ensure_user_config/0= still creates only the backwards-compatible base =config.pl= and never creates the local overlay.
+- =reload_user_config/0= accepts either layer being present, validates both present layers first, then replaces the old tracked generation once.
+- =load_server_config/0= applies the same two-layer ordering through the existing server-only validator, so device facts in either layer still fail closed.
+- Base facts are concatenated before local facts and asserted with the existing =asserta/2= path, making local facts deterministically precede base and built-in defaults without changing the established override mechanism.
+- Exact-head CI #835 is the first implementation GREEN candidate and is pending at this log update.
+
+** Gate
+- Focused :: =nix develop -c bash scripts/test-prolog-config.sh=
+- Full :: =nix develop -c bash scripts/test-all.sh=
+- Nix :: =nix flake check=
+- Build :: =nix build=
+- Merge authority :: exact-head GitHub Actions green + mergeable + non-draft + no unresolved review/discussion.
