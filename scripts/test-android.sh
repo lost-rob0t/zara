@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Zara Android gate: JVM unit tests + pinned native build + debug APK + secret inspection.
+# Zara Android gate: semantic parity + JVM tests + pinned native build + debug APK + secret inspection.
 # Run via: nix develop .#android -c bash scripts/test-android.sh
 set -euo pipefail
 
-cd "$(dirname "$0")/../android"
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$repo_root/android"
 
 : "${ANDROID_HOME:?ANDROID_HOME must be set by the nix android dev shell}"
 : "${ANDROID_NDK_ROOT:?ANDROID_NDK_ROOT must be set by the nix android dev shell}"
 : "${ZARA_TREALLA_SOURCE_DIR:?ZARA_TREALLA_SOURCE_DIR must be set by the nix android dev shell}"
+
+bash "$repo_root/scripts/test-android-semantic-parity.sh"
 
 export ZARA_TREALLA_LIBRARY_ROOT="$PWD/app/build/trealla"
 bash ./build-trealla.sh
