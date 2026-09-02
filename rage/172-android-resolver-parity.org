@@ -39,3 +39,21 @@
 - A partial update must not make Trealla consult a mixture of old/new portable modules.
 - Generated assets contain Prolog source only; no config, credentials, user state, or provider secrets.
 - Resolver failures remain explicit; no empty-result false success.
+
+* TDD evidence
+- RED commit :: =63da392b2808658d598ca791f53025f7ccc47f14=.
+- RED contract :: =PortableResolverPackagingContractTest= requires missing =resolverDependencies=, =stageAll=, and a =resolve_frames/4= portable entrypoint. The superseded Actions run =33604130415= was cancelled by later implementation pushes; it is not represented as a completed red gate.
+- GREEN implementation commits :: =fd8827d4ef528a88a0bdc24dbe1a0f0082673de9= declares canonical resolver assets; =afd0e0dffb097e56fddf33e5e5df7233ad1af9ac= stages a complete content-addressed portable resource tree; =b59a205efd6b27ceb34e213f5ed89cdc94d01327= initializes Trealla from that complete set; =5b50aebe2e4ed947370c87801f7363560d679ad8= exposes/delegates =resolve_frames/4=; =93b859b276de374179300dca2f879a0117a902ed= generates Android assets directly from canonical repository Prolog sources; =6a0ce2db3646cd01d69dbe218d62492a57cdc824= extends packaging-source tests; =452814fa450cf5a66899e9bc3ed2dcf9afe8efd2= makes resource-set hashing byte-stable.
+- Atomic-set rule :: all declared resource bytes are read before publishing a new content-addressed directory, so a missing dependency cannot produce a mixed old/new resolver tree.
+
+* Exact-head gate
+- PR :: #294 (draft).
+- Candidate :: =452814fa450cf5a66899e9bc3ed2dcf9afe8efd2=.
+- Canonical =master= at latest check :: =753f79326f1be7dc77030c9950a08e2901827d8d=, unchanged from immutable start.
+- Actions run :: =33604441818=.
+- Current evidence :: Ubuntu shared-mic job PASS; Arch shared-mic job PASS; Android skeleton gate still running; full repository/Nix test job still running.
+- Merge state remains gated: no ready/merge operation while exact-head Android/full-repository jobs are unresolved.
+
+* Remaining #172 work
+- This slice makes the real canonical utterance resolver loadable by the embedded Android Trealla path; it deliberately does not close #172 yet.
+- #172 still needs the final executable cross-runtime corpus gate comparing normalized SWI-Prolog and Trealla results rather than treating packaging or fake runtime adapters as parity proof.
