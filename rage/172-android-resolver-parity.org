@@ -1,0 +1,41 @@
+#+title: RAGE #172 Android resolver parity
+
+* Immutable start
+- Consumed issue :: #172
+- Start commit :: =753f79326f1be7dc77030c9950a08e2901827d8d=
+- Branch :: =rage/android-172-resolver-parity=
+- Ownership :: Android production/tests plus only the canonical shared Prolog sources explicitly required by #172. Sibling core PR #293 touches only =zara/agent/__init__.py=, its tests, and #260 RAGE evidence; there is no overlap.
+
+* Recovery
+- PR #292 merged the Android asset-staging fix into exact =master= before this iteration.
+- No open Android/mobile implementation PR remains.
+- #172 is still open; #173 remains dependency-blocked by #172/#159/#133.
+
+* Research
+- #172 acceptance requires CI evidence that the same semantic corpus produces equivalent normalized intent/slot results under server SWI-Prolog and the selected Android runtime.
+- The currently packaged =prolog/portable/semantic_core.pl= only validates and normalizes already-constructed =frame/3= terms. It does not export or execute =resolve_frames/4=.
+- The authoritative resolver already exists in =modules/intent_frames.pl=. It is pure and depends only on =modules/normalizer.pl= and =kb/intents.pl= for the relevant semantic path; duplicating that logic in Kotlin or a second Android-only Prolog resolver would violate the single semantic-vocabulary invariant.
+- The current Android fixture JSON is a packaging seed with expected terms, but the Android runtime runner accepts an arbitrary query and has not yet been wired to the canonical utterance resolver.
+- Trealla remains pinned by =android/flake.nix= and the native JNI packaging path is already proven separately. This iteration therefore treats canonical Prolog source reuse plus deterministic Android resource staging as the next missing prerequisite before the final host-SWI/Trealla execution gate.
+
+* Architecture / design
+- Keep =modules/intent_frames.pl=, =modules/normalizer.pl=, and =kb/intents.pl= authoritative. Do not fork their behavior into Kotlin.
+- Package exact copies of those canonical repository files into generated Android assets during the Gradle build, preserving a stable =prolog/shared/{modules,kb}= layout.
+- Extend the portable Android entrypoint so =resolve_frames/4= delegates to the packaged canonical =intent_frames= module.
+- Extend app-private staging to stage the complete declared portable Prolog resource set, preserving relative paths, before Trealla consults the entrypoint.
+- Every staged path remains relative, traversal-safe, bounded to the private staging root, and replaced atomically. Missing dependency assets fail initialization; there is no fallback to repository or APK pseudo-paths.
+- This slice does not add a second LLM, memory, agent, transport, or resolver authority.
+
+* Planned TDD
+1. RED: packaging contract requires generated Android assets for the canonical resolver dependencies and requires =PortableSemanticCore.resources= to declare them.
+2. RED: staging tests require all declared Prolog resources to be staged with directory structure preserved and require missing dependency failure to leave the previous complete staged set intact.
+3. RED: portable entrypoint contract requires =resolve_frames/4= and delegation to canonical =intent_frames=.
+4. GREEN: minimum Gradle/generated-assets + resource/stager/entrypoint changes.
+5. Gate: focused Android JVM tests, =scripts/test-android.sh=, full repository/Nix gates, exact-head GitHub Actions, review/thread/mergeability checks.
+
+* Adversarial constraints
+- Canonical source drift must be observable: generated packaging reads the repository files at build time rather than maintaining hand-copied Android duplicates.
+- No absolute path, empty segment, =.=, or =..= asset path may be staged.
+- A partial update must not make Trealla consult a mixture of old/new portable modules.
+- Generated assets contain Prolog source only; no config, credentials, user state, or provider secrets.
+- Resolver failures remain explicit; no empty-result false success.
