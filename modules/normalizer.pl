@@ -5,7 +5,6 @@
     , is_filler/1               % +Token
     ]).
 
-:- use_module(library(dcg/basics)).
 :- use_module(library(lists)).
 
 % ============================================================
@@ -236,12 +235,16 @@ map_all_slang(S, Out) :-
     foldl(repl, Repls, S, Out).
 
 repl([A,B], In, Out) :-
-    atom_string(In_atom, In),
-    atom_string(A_atom, A),
-    atom_string(B_atom, B),
+    string_codes(In, In_codes),
+    atom_codes(In_atom, In_codes),
+    string_codes(A, A_codes),
+    atom_codes(A_atom, A_codes),
+    string_codes(B, B_codes),
+    atom_codes(B_atom, B_codes),
     atomic_list_concat(Parts, A_atom, In_atom),
     atomic_list_concat(Parts, B_atom, Out_atom),
-    atom_string(Out_atom, Out).
+    atom_codes(Out_atom, Out_codes),
+    string_codes(Out, Out_codes).
 
 % Keep letters, digits and spaces; drop other punctuation
 remove_punct(In, Out) :-
