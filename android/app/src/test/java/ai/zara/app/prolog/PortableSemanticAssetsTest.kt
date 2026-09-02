@@ -7,20 +7,36 @@ import org.junit.Test
 
 class PortableSemanticAssetsTest {
 
-    private fun assetPath(resource: String): Path =
-        Path.of("src", "main", "assets", resource)
+    private fun sourcePath(resource: String): Path = when (resource) {
+        PortableSemanticCore.coreAssetPath,
+        PortableSemanticCore.fixtureAssetPath -> Path.of("src", "main", "assets", resource)
+        "prolog/shared/modules/intent_frames.pl" -> Path.of("..", "..", "modules", "intent_frames.pl")
+        "prolog/shared/modules/normalizer.pl" -> Path.of("..", "..", "modules", "normalizer.pl")
+        "prolog/shared/kb/intents.pl" -> Path.of("..", "..", "kb", "intents.pl")
+        else -> throw AssertionError("unmapped portable semantic resource: $resource")
+    }
 
-    @Test fun `declared portable semantic assets are packaged and nonempty`() {
+    @Test fun `declared portable semantic sources are present and nonempty`() {
         PortableSemanticCore.resources.forEach { resource ->
-            val path = assetPath(resource)
-            assertTrue("missing asset: $resource", Files.isRegularFile(path))
-            assertTrue("empty asset: $resource", Files.size(path) > 0L)
+            val path = sourcePath(resource)
+            assertTrue("missing portable source: $resource", Files.isRegularFile(path))
+            assertTrue("empty portable source: $resource", Files.size(path) > 0L)
         }
     }
 
+    @Test fun `generated Android assets come from canonical repository resolver sources`() {
+        val build = Files.readString(Path.of("build.gradle.kts"))
+
+        assertTrue(build.contains("GeneratePortableSemanticAssets"))
+        assertTrue(build.contains("modules/intent_frames.pl"))
+        assertTrue(build.contains("modules/normalizer.pl"))
+        assertTrue(build.contains("kb/intents.pl"))
+        assertTrue(build.contains("addGeneratedSourceDirectory"))
+    }
+
     @Test fun `packaged assets identify the frozen semantic contract and corpus`() {
-        val core = Files.readString(assetPath("prolog/portable/semantic_core.pl"))
-        val fixtures = Files.readString(assetPath("prolog/portable/semantic_fixtures.json"))
+        val core = Files.readString(sourcePath(PortableSemanticCore.coreAssetPath))
+        val fixtures = Files.readString(sourcePath(PortableSemanticCore.fixtureAssetPath))
 
         assertTrue(core.contains("semantic_contract_version('ZARA-SEMANTIC/1')"))
         assertTrue(fixtures.contains("\"contract\": \"ZARA-SEMANTIC/1\""))
