@@ -19,13 +19,21 @@
 %% ============================================================
 
 resolve_frames(Text, State, Context, Frames) :-
-    atom_string(TextAtom, Text),
+    text_atom(Text, TextAtom),
     normalize_string(TextAtom, RawTokens),
     ( Context = partial_frame(Frame0, _) ->
         resolve_follow_up(RawTokens, Frame0, Frames)
     ; resolve_fresh(RawTokens, State, Frames)
     ),
     !.
+
+text_atom(Text, Text) :-
+    atom(Text),
+    !.
+text_atom(Text, Atom) :-
+    string(Text),
+    string_codes(Text, Codes),
+    atom_codes(Atom, Codes).
 
 %% ============================================================
 %% Fresh resolution
@@ -37,7 +45,8 @@ resolve_fresh(RawTokens, _State, [Frame]) :-
     cancel_frame(Frame).
 resolve_fresh(RawTokens, State, [Frame]) :-
     state_control_frame(State, RawTokens, Frame),
-    !.
+    !,
+    cancel_frame(Frame).
 resolve_fresh(RawTokens, _State, Frames) :-
     correction_tokens(RawTokens, Tail),
     !,
