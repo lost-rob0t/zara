@@ -1,0 +1,42 @@
+#+title: RAGE #172 cross-runtime semantic parity
+
+* Immutable start
+- Consumed issue :: #172
+- Start commit :: =9f3b779b876df360001b12d0100698f334beb8b8=
+- Branch :: =rage/android-172-cross-runtime-parity=
+- Ownership :: Android parity gate and its repository-native test wiring only. No sibling-core runtime/config/desktop files.
+
+* Recovery
+- PR #296 merged canonical resolver packaging into =master= at =9f3b779b876df360001b12d0100698f334beb8b8=.
+- #172 remains open because packaging/JNI coverage is not executable cross-runtime parity evidence.
+- #173 remains blocked by #172/#159/#133; #196 remains blocked by #173 and therefore is not dependency-ready.
+
+* Research
+- The Android app now packages the canonical resolver sources and exposes =resolve_frames/4= through the Trealla entrypoint, but =SemanticFixtureRunner= still accepts abstract =SemanticRuntime= implementations and therefore cannot by itself prove SWI-versus-Trealla execution.
+- The fixture seed at =android/app/src/main/assets/prolog/portable/semantic_fixtures.json= already carries utterance/state/expected terms and is the correct single corpus input for this gate; do not create a second Android-only semantic corpus.
+- Android pins Trealla source revision =b25ccfb8e485a697bb47f1947d6fb8e0ad4e6aaf= in =android/flake.nix=. The parity gate must execute that exact engine source, not a host package with unrelated version drift.
+- SWI remains the server reference runtime. Both runtimes must consult the same canonical resolver dependency set and serialize terms canonically before comparison.
+- Host execution of the exact pinned Trealla engine is acceptable as the deterministic CI execution surface for the shared Prolog engine semantics; JNI/ABI/APK packaging is already covered separately by the Android native gate. This gate does not claim hardware/lifecycle parity, which remains #178/#179.
+- Trealla is a compact C Prolog implementation with regular consult/query semantics; no network/provider behavior belongs in this parity path.
+
+* Architecture / design
+- Add a non-interactive Android-owned parity command under =scripts/= and invoke it from =scripts/test-android.sh= after the pinned Trealla source is available.
+- Build a host Trealla executable from the exact =ZARA_TREALLA_SOURCE_DIR= revision inside the Android dev shell, with no network fetch.
+- Execute every fixture through SWI and pinned Trealla using the same staged canonical files: =semantic_core.pl=, =modules/intent_frames.pl=, =modules/normalizer.pl=, and =kb/intents.pl=.
+- Query =resolve_frames(Utterance, State, [], Frames)= and serialize each frame with quoted canonical Prolog syntax. Normalize only representation-level whitespace/ordering already defined by the semantic contract; semantic divergence is a hard failure.
+- Empty result, consult failure, parse failure, missing runtime, malformed fixture, or runtime crash fails closed with fixture id and runtime name but never user/provider secrets.
+- Keep this gate Android-only. Do not modify Python runtime, daemon protocol, desktop, config, or sibling-core files.
+
+* Adversarial review
+- Do not compare against fixture =expected_terms= alone; both runtimes must execute.
+- Do not let one runtime's output become the expected oracle for the other without also checking the corpus expectation, otherwise identical shared regressions could false-green.
+- Pin Trealla by the existing Nix-provided source tree; no curl/git clone/HEAD fetch.
+- Use bounded fixture count/input lengths and deterministic temp directories; clean temporary build/output state.
+- Fail on duplicate fixture ids, invalid state atoms, missing canonical source, runtime stderr/non-zero exit, or output cardinality mismatch.
+- This gate proves shared semantic-engine parity only. Android process lifecycle, JNI resource leaks, concurrency/cancel, and device behavior remain covered by their owning Android gates/issues.
+
+* Planned TDD
+1. RED: Android JVM source-contract test requires =scripts/test-android.sh= to invoke a dedicated executable cross-runtime parity gate and requires that gate to use both =swipl= and the pinned =ZARA_TREALLA_SOURCE_DIR= without network fetches.
+2. GREEN: add the smallest deterministic parity runner/gate and wire it into =scripts/test-android.sh=.
+3. Run focused JVM tests, =scripts/test-android.sh=, full repository/Nix gates, and exact-head Actions.
+4. Merge only exact-current-head green/mergeable with no unresolved review discussion; then close #172 only if the executable corpus gate is actually green.
