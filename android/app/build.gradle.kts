@@ -1,7 +1,10 @@
 import org.gradle.api.DefaultTask
+import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
-import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 
 plugins {
@@ -9,26 +12,30 @@ plugins {
 }
 
 abstract class GeneratePortableSemanticAssets : DefaultTask() {
-    @get:InputDirectory
-    abstract val repositoryRoot: DirectoryProperty
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val sourceFiles: ConfigurableFileCollection
 
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
 
     @TaskAction
     fun generate() {
-        val root = repositoryRoot.get().asFile
+        val sources = sourceFiles.files.associateBy { it.name }
+        val intentFrames = checkNotNull(sources["intent_frames.pl"]) { "intent_frames.pl input is required" }
+        val normalizer = checkNotNull(sources["normalizer.pl"]) { "normalizer.pl input is required" }
+        val intents = checkNotNull(sources["intents.pl"]) { "intents.pl input is required" }
         val output = outputDirectory.get().asFile
         output.deleteRecursively()
         project.copy {
             into(output)
-            from(root.resolve("modules/intent_frames.pl")) {
+            from(intentFrames) {
                 into("prolog/shared/modules")
             }
-            from(root.resolve("modules/normalizer.pl")) {
+            from(normalizer) {
                 into("prolog/shared/modules")
             }
-            from(root.resolve("kb/intents.pl")) {
+            from(intents) {
                 into("prolog/shared/kb")
             }
         }
@@ -89,7 +96,11 @@ androidComponents {
     onVariants(selector().all()) { variant ->
         val taskName = "generate${variant.name.replaceFirstChar(Char::uppercaseChar)}PortableSemanticAssets"
         val generateAssets = tasks.register<GeneratePortableSemanticAssets>(taskName) {
-            repositoryRoot.set(layout.projectDirectory.dir("../.."))
+            sourceFiles.from(
+                layout.projectDirectory.file("../../modules/intent_frames.pl"),
+                layout.projectDirectory.file("../../modules/normalizer.pl"),
+                layout.projectDirectory.file("../../kb/intents.pl")
+            )
         }
         variant.sources.assets?.addGeneratedSourceDirectory(
             generateAssets,
