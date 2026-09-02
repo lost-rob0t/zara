@@ -72,17 +72,48 @@ class PortableSemanticAssetStagerTest {
     }
 
     @Test
-    fun runtimeAssetInitializationPassesRealStagedFilesystemPathToBridge() {
+    fun completeSetBuildsFilesystemIndependentDependencyLoader() {
+        val root = Files.createTempDirectory("zara-semantic-assets").toFile()
+        val payloads = PortableSemanticCore.resources.associateWith { path ->
+            "resource:$path\n".toByteArray()
+        }
+        val staged = PortableSemanticAssetStager(root).stageAll(MapAssetSource(payloads))
+
+        assertTrue(staged.entryFile.isFile)
+        val loader = staged.entryFile.readText()
+        val dependencyPaths = PortableSemanticCore.resolverDependencies.map { path ->
+            staged.resources.getValue(path).canonicalPath
+        }
+        dependencyPaths.forEach { path ->
+            assertTrue("loader must use absolute staged dependency path", loader.contains(path))
+        }
+        assertTrue(loader.contains(staged.coreFile.canonicalPath))
+        assertFalse(
+            "loader must not depend on Trealla process working directory",
+            loader.contains("../shared/")
+        )
+        assertTrue(
+            dependencyPaths.map(loader::indexOf).zipWithNext().all { (first, second) -> first < second }
+        )
+        assertTrue(loader.indexOf(dependencyPaths.last()) < loader.indexOf(staged.coreFile.canonicalPath))
+    }
+
+    @Test
+    fun runtimeAssetInitializationPassesGeneratedLoaderToBridge() {
         val root = Files.createTempDirectory("zara-semantic-assets").toFile()
         val bridge = RecordingBridge()
         val runtime = TreallaSemanticRuntime(bridge)
+        val payloads = PortableSemanticCore.resources.associateWith { path ->
+            "resource:$path\n".toByteArray()
+        }
         val stager = PortableSemanticAssetStager(root)
 
-        runtime.initializeFromAssets(stager, RecordingAssetSource("semantic_core".toByteArray()))
+        runtime.initializeFromAssets(stager, MapAssetSource(payloads))
 
         val initializedPath = bridge.initializedPath ?: throw AssertionError("bridge was not initialized")
         assertTrue(File(initializedPath).isFile)
         assertTrue(File(initializedPath).canonicalPath.startsWith(root.canonicalPath + File.separator))
+        assertTrue(File(initializedPath).name == "portable_loader.pl")
         assertFalse(initializedPath == PortableSemanticCore.coreAssetPath)
     }
 
@@ -92,6 +123,14 @@ class PortableSemanticAssetStagerTest {
         override fun open(path: String) = ByteArrayInputStream(bytes).also {
             openedPath = path
         }
+    }
+
+    private class MapAssetSource(
+        private val payloads: Map<String, ByteArray>
+    ) : PortableSemanticAssetSource {
+        override fun open(path: String) = ByteArrayInputStream(
+            payloads[path] ?: error("missing packaged asset: $path")
+        )
     }
 
     private class ThrowingAssetSource : PortableSemanticAssetSource {
