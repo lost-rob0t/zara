@@ -212,8 +212,14 @@ normalize_string(Raw, Tokens) :-
     map_all_slang(Lwr, SlangFixed),
     remove_punct(SlangFixed, Clean),
     split_string(Clean, " \t\n", " \t\n", Parts),
-    maplist(string_to_atom, Parts, Tokens0),
+    strings_atoms(Parts, Tokens0),
     exclude(==(''), Tokens0, Tokens).
+
+strings_atoms([], []).
+strings_atoms([String|Strings], [Atom|Atoms]) :-
+    string_codes(String, Codes),
+    atom_codes(Atom, Codes),
+    strings_atoms(Strings, Atoms).
 
 % Remove soft fillers using KB
 strip_fillers(Toks, Core) :-
