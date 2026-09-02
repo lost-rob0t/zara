@@ -149,6 +149,14 @@ jobs:
       - name: Run Android gate (unit tests + native Trealla + debug APK + secret inspection)
         run: nix develop ./android -c bash scripts/test-android.sh
 
+      - name: Upload Android parity diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-semantic-parity-diagnostics
+          path: android/app/build/reports/semantic-parity/
+          if-no-files-found: warn
+
       - name: Upload debug APK
         if: always()
         uses: actions/upload-artifact@v4
