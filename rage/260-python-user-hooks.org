@@ -29,4 +29,12 @@ See =rage/260-python-user-hooks-design.org=.
 - narrow config adapters without =config_dir= stay fail-closed and compatible.
 
 ** RED
-Pending exact-head CI after committing tests. Production implementation intentionally absent in the RED commit.
+Exact-head CI run =#771= at =5c1809c501f2a038d9a2f0b86f8ab0881e51de72= completed RED. The main =test= job failed at =Run all tests= while both shared-mic jobs and the Android skeleton gate stayed green. This is the intended missing =zara.agent.user_hooks= contract; flake/package steps were correctly not treated as green after the test failure.
+
+** Implementation
+- =a628b8c093451a739da23ff8117337a6b11432b6= adds =zara.agent.user_hooks= with a fixed =user:hooks.py= registration facade, disabled no-exec behavior, missing-file no-create behavior, isolated staging registry, typed bounded load failure, and idempotent generation replacement.
+- =deda2f310bf5fe71d997d61d7f315dd692462f8b= wires the loader into the existing =AgentManager= only when the config exposes =config_dir=. Narrow adapters remain fail-closed; the existing =AgentLoopAdviceRegistry= remains the sole loop-advice authority.
+- No =android/**= production files changed.
+
+** GREEN gate
+Fresh exact-head CI is required after the implementation and RAGE-log append. Do not mark ready or merge until the final branch head passes the complete =test= job, flake/package gates, shared-mic gates, Android gate, mergeability, and review/thread checks against current =master=.
