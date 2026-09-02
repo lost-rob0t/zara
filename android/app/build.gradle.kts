@@ -2,12 +2,15 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
+val androidNdkVersion = providers.environmentVariable("ZARA_ANDROID_NDK_VERSION").orNull
+    ?: error("ZARA_ANDROID_NDK_VERSION must be supplied by the pinned Android Nix toolchain")
 val treallaSourceDir = providers.environmentVariable("ZARA_TREALLA_SOURCE_DIR").orNull ?: ""
 val treallaLibraryRoot = providers.environmentVariable("ZARA_TREALLA_LIBRARY_ROOT").orNull ?: ""
 
 android {
     namespace = "ai.zara.app"
     compileSdk = 37
+    ndkVersion = androidNdkVersion
 
     defaultConfig {
         applicationId = "ai.zara.app"
