@@ -97,7 +97,7 @@ class AgentManager:
 
         if provider == "anthropic":
             from langchain_anthropic import ChatAnthropic
-        
+
             api_key = llm_config.get("anthropic_api_key") or os.getenv("ANTHROPIC_API_KEY")
             return ChatAnthropic(
                 model=model or "claude-3-5-sonnet-20241022",
@@ -108,7 +108,7 @@ class AgentManager:
 
         if provider == "openai":
             from langchain_openai import ChatOpenAI
-        
+
             api_key = llm_config.get("openai_api_key") or os.getenv("OPENAI_API_KEY")
             return ChatOpenAI(
                 model=model or "gpt-4",
@@ -119,7 +119,7 @@ class AgentManager:
 
         if provider == "openrouter":
             from langchain_openai import ChatOpenAI
-        
+
             api_key = llm_config.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")
             return ChatOpenAI(
                 model=model or "openrouter/free",
@@ -131,7 +131,7 @@ class AgentManager:
 
         if provider == "ollama":
             from langchain_ollama import ChatOllama
-        
+
             base_url = endpoint.replace("/api/chat", "") if endpoint else "http://localhost:11434"
             return ChatOllama(
                 model=model or "llama3",
