@@ -1,0 +1,25 @@
+#+title: RAGE Research - #260 Prolog command advice
+#+startup: overview
+
+* Current repository state
+- Exact baseline :: =9f3b779b876df360001b12d0100698f334beb8b8=
+- =modules/zara_hooks.pl= already owns an ordered, bounded hook registry.
+- =modules/hooks_loader.pl= already loads mutable XDG =hooks.pl= only when =[hooks].enabled=true= and tracks =allow_override= independently. Missing mutable files are not created.
+- =modules/command_loop.pl= still has a hard-coded =resolution -> commands:execute/2 -> reply= path. It exports no =advice_command_loop/3= and has no dynamic =command_handler/2= seam.
+- The prior #260 Prolog-hook design explicitly leaves command-loop advice/override as follow-on work and requires both =hooks.enabled=true= and =hooks.allow_override=true= for every override-capable path.
+
+* Security and lifecycle analysis
+A speech utterance must never select a callable Prolog goal. The only dynamic selection is by canonical resolved =Intent/Args= against trusted-local predicates loaded from the user-owned hook file. Override dispatch therefore remains local configuration authority, not a remote-code-execution API.
+
+The policy is fail-closed: an override can run only when =hook_policy(true,true)=. If disabled or override permission is false, the existing =commands:execute/2= path remains unchanged.
+
+A custom handler that simply fails is treated as not-handled so core execution can continue. A selected handler that throws is different: silently falling through could double-execute side effects, so the exception becomes a bounded =command_result(failure,...,exception(Error))= and core execution is not attempted.
+
+* Alternatives rejected
+- Shell-string command hooks: rejected; conflicts with structured capability ownership and expands injection surface.
+- A second Prolog process/runtime: rejected; violates one-runtime ownership.
+- Dynamically constructing callable goals from user speech: rejected; turns input into code.
+- Treating =allow_override=true= alone as sufficient: rejected; both gates must be true.
+
+* Selected slice
+Add a dynamic/multifile =command_handler/2= extension point and =advice_command_loop/3=. Wire it immediately before the existing core =commands:execute/2= call. Keep result shape and reply ownership unchanged.
