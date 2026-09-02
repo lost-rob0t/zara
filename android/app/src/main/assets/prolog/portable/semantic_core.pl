@@ -1,10 +1,16 @@
 :- module(zara_portable_semantic_core, [
     semantic_contract_version/1,
+    resolve_frames/4,
     valid_frame/1,
     normalize_frames/2
 ]).
 
+:- use_module('../shared/modules/intent_frames', []).
+
 semantic_contract_version('ZARA-SEMANTIC/1').
+
+resolve_frames(Text, State, Context, Frames) :-
+    intent_frames:resolve_frames(Text, State, Context, Frames).
 
 valid_frame(frame(intent(ns(Namespace), name(Name)), Slots, Status)) :-
     atom(Namespace),

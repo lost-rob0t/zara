@@ -1,5 +1,45 @@
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
+
 plugins {
     alias(libs.plugins.android.application)
+}
+
+abstract class GeneratePortableSemanticAssets : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val sourceFiles: ConfigurableFileCollection
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val sources = sourceFiles.files.associateBy { it.name }
+        val intentFrames = checkNotNull(sources["intent_frames.pl"]) { "intent_frames.pl input is required" }
+        val normalizer = checkNotNull(sources["normalizer.pl"]) { "normalizer.pl input is required" }
+        val intents = checkNotNull(sources["intents.pl"]) { "intents.pl input is required" }
+        val output = outputDirectory.get().asFile
+        output.deleteRecursively()
+        project.copy {
+            into(output)
+            from(intentFrames) {
+                into("prolog/shared/modules")
+            }
+            from(normalizer) {
+                into("prolog/shared/modules")
+            }
+            from(intents) {
+                into("prolog/shared/kb")
+            }
+        }
+    }
 }
 
 val androidNdkVersion = providers.environmentVariable("ZARA_ANDROID_NDK_VERSION").orNull
@@ -49,6 +89,26 @@ android {
             path = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
         }
+    }
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        val taskName = "generate${variant.name.replaceFirstChar(Char::uppercaseChar)}PortableSemanticAssets"
+        val generateAssets = tasks.register<GeneratePortableSemanticAssets>(taskName) {
+            sourceFiles.from(
+                layout.projectDirectory.file("../../modules/intent_frames.pl"),
+                layout.projectDirectory.file("../../modules/normalizer.pl"),
+                layout.projectDirectory.file("../../kb/intents.pl")
+            )
+            outputDirectory.convention(
+                layout.buildDirectory.dir("generated/portableSemanticAssets/${variant.name}")
+            )
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(
+            generateAssets,
+            GeneratePortableSemanticAssets::outputDirectory
+        )
     }
 }
 

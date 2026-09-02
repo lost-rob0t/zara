@@ -36,8 +36,8 @@ class TreallaSemanticRuntime(
         source: PortableSemanticAssetSource
     ) {
         check(state == State.NEW) { "Trealla runtime is not initializable" }
-        val stagedCore = stager.stage(source)
-        initialize(stagedCore.absolutePath)
+        val staged = stager.stageAll(source)
+        initialize(staged.coreFile.absolutePath)
     }
 
     override fun evaluate(fixture: SemanticFixture): SemanticResult {
