@@ -175,6 +175,14 @@ required_tools = []
 timeout_seconds = 300.0
 max_pending = 8
 
+[tasks]
+# Long-horizon agent tasks executed as bounded conversation turns.
+enabled = false
+max_concurrent = 2
+max_task_steps = 20
+wall_clock_minutes = 30.0
+step_log_chars = 2000
+
 [file_tools]
 # File tools are disabled above by default. Relative roots use the repository root.
 readable_roots = ["."]
@@ -413,6 +421,41 @@ class ZaraConfig:
             or not 1 <= max_pending <= 64
         ):
             raise ConfigError("tool_approval.max_pending must be an integer from 1 to 64")
+
+        tasks_config = config.get("tasks", {})
+        if not isinstance(tasks_config, dict):
+            raise ConfigError("Invalid [tasks] configuration: expected a TOML table")
+        if not isinstance(tasks_config.get("enabled", False), bool):
+            raise ConfigError("tasks.enabled must be true or false")
+        max_concurrent = tasks_config.get("max_concurrent", 2)
+        if (
+            isinstance(max_concurrent, bool)
+            or not isinstance(max_concurrent, int)
+            or not 1 <= max_concurrent <= 16
+        ):
+            raise ConfigError("tasks.max_concurrent must be an integer from 1 to 16")
+        max_task_steps = tasks_config.get("max_task_steps", 20)
+        if (
+            isinstance(max_task_steps, bool)
+            or not isinstance(max_task_steps, int)
+            or not 1 <= max_task_steps <= 1000
+        ):
+            raise ConfigError("tasks.max_task_steps must be an integer from 1 to 1000")
+        wall_clock_minutes = tasks_config.get("wall_clock_minutes", 30.0)
+        if (
+            isinstance(wall_clock_minutes, bool)
+            or not isinstance(wall_clock_minutes, (int, float))
+            or not math.isfinite(float(wall_clock_minutes))
+            or wall_clock_minutes <= 0
+        ):
+            raise ConfigError("tasks.wall_clock_minutes must be a positive number")
+        step_log_chars = tasks_config.get("step_log_chars", 2000)
+        if (
+            isinstance(step_log_chars, bool)
+            or not isinstance(step_log_chars, int)
+            or not 1 <= step_log_chars <= 65536
+        ):
+            raise ConfigError("tasks.step_log_chars must be an integer from 1 to 65536")
 
         file_config = config.get("file_tools", {})
         if not isinstance(file_config, dict):
@@ -709,6 +752,17 @@ class ZaraConfig:
     def get_tool_approval_config(self) -> Dict[str, Any]:
         """Return validated server-side tool approval policy."""
         return self.get_section("tool_approval")
+
+    def get_tasks_config(self) -> Dict[str, Any]:
+        """Return validated long-horizon task runner settings."""
+        tasks_config = self.get_section("tasks")
+        return {
+            "enabled": bool(tasks_config.get("enabled", False)),
+            "max_concurrent": int(tasks_config.get("max_concurrent", 2)),
+            "max_task_steps": int(tasks_config.get("max_task_steps", 20)),
+            "wall_clock_minutes": float(tasks_config.get("wall_clock_minutes", 30.0)),
+            "step_log_chars": int(tasks_config.get("step_log_chars", 2000)),
+        }
 
     def get_agent_system_prompt(self) -> Optional[str]:
         """

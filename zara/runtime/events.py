@@ -297,6 +297,41 @@ class BackgroundCompleted(RuntimeEvent):
     success: bool = True
 
 
+# Long-horizon agent tasks --------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True)
+class TaskStarted(RuntimeEvent):
+    task_id: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
+class TaskStepCompleted(RuntimeEvent):
+    task_id: str = ""
+    step_index: int = 0
+
+
+@dataclass(frozen=True, kw_only=True)
+class TaskWaitingApproval(RuntimeEvent):
+    task_id: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
+class TaskCompleted(RuntimeEvent):
+    task_id: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
+class TaskFailed(RuntimeEvent):
+    task_id: str = ""
+    reason: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
+class TaskCancelled(RuntimeEvent):
+    task_id: str = ""
+    reason: str = ""
+
+
 # Provider / notification --------------------------------------------------
 
 @dataclass(frozen=True, kw_only=True)

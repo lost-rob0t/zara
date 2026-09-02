@@ -32,6 +32,12 @@ class RuntimeTurnResult:
 class RuntimeBackend:
     """Async application-service contract used by RuntimeHost."""
 
+    @property
+    def principal_id(self) -> str:
+        raise UnsupportedRuntimeCommand(
+            "principal identity is not available in this runtime backend"
+        )
+
     def bind_event_publisher(self, publisher) -> None:
         pass
 
@@ -45,6 +51,8 @@ class RuntimeBackend:
         turn_id: str,
         conversation_id: Optional[str] = None,
         context_ids: tuple[str, ...] = (),
+        system_context: Optional[str] = None,
+        conversation_history: Optional[list] = None,
         latency_trace: Optional[LatencyTrace] = None,
     ) -> RuntimeTurnResult:
         raise NotImplementedError
@@ -94,6 +102,17 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         self._router = router
         self._memory_session: Optional[str] = None
 
+    @property
+    def principal_id(self) -> str:
+        manager = self._manager
+        if manager is None:
+            raise RuntimeError("runtime backend is not started")
+        principal = getattr(manager, "principal", None)
+        principal_id = getattr(principal, "principal_id", None)
+        if not isinstance(principal_id, str) or not principal_id.strip():
+            raise RuntimeError("runtime backend manager has no principal identity")
+        return principal_id
+
     def bind_event_publisher(self, publisher) -> None:
         self._publisher = publisher
         if self._manager is not None:
@@ -121,6 +140,8 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         turn_id: str,
         conversation_id: Optional[str] = None,
         context_ids: tuple[str, ...] = (),
+        system_context: Optional[str] = None,
+        conversation_history: Optional[list] = None,
         latency_trace: Optional[LatencyTrace] = None,
     ) -> RuntimeTurnResult:
         if self._manager is None:
@@ -130,7 +151,9 @@ class LangGraphRuntimeBackend(RuntimeBackend):
                 "context attachments are not wired into the runtime backend yet"
             )
 
-        if self._router is not None:
+        task_turn = conversation_history is not None or system_context is not None
+
+        if self._router is not None and not task_turn:
             conversation_manager = self._manager.conversation_manager
             in_conversation = bool(getattr(conversation_manager, "in_conversation", False))
             state = "conversation" if in_conversation else "passive"
@@ -161,10 +184,13 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             conversation_id=conversation_id,
             latency_trace=latency_trace,
             stream_publisher=self._stream_publisher(turn_id, conversation_id),
+            conversation_history=conversation_history,
+            extra_system_context=system_context,
         )
         raw_tool_results = result.get("tool_results", [])
         response = str(result.get("response", ""))
-        await self._persist_turn(text, response)
+        if not task_turn:
+            await self._persist_turn(text, response)
         return RuntimeTurnResult(
             response=response,
             tool_results=tuple(
@@ -345,6 +371,10 @@ class AgentRuntimeBackend(RuntimeBackend):
         else:
             self._delegate = create_runtime_backend(config)
 
+    @property
+    def principal_id(self) -> str:
+        return self._delegate.principal_id
+
     def bind_event_publisher(self, publisher) -> None:
         self._delegate.bind_event_publisher(publisher)
 
@@ -358,6 +388,8 @@ class AgentRuntimeBackend(RuntimeBackend):
         turn_id: str,
         conversation_id: Optional[str] = None,
         context_ids: tuple[str, ...] = (),
+        system_context: Optional[str] = None,
+        conversation_history: Optional[list] = None,
         latency_trace: Optional[LatencyTrace] = None,
     ) -> RuntimeTurnResult:
         return await self._delegate.submit_turn(
@@ -365,6 +397,8 @@ class AgentRuntimeBackend(RuntimeBackend):
             turn_id=turn_id,
             conversation_id=conversation_id,
             context_ids=context_ids,
+            system_context=system_context,
+            conversation_history=conversation_history,
             latency_trace=latency_trace,
         )
 
