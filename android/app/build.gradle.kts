@@ -1,5 +1,38 @@
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
+
 plugins {
     alias(libs.plugins.android.application)
+}
+
+abstract class GeneratePortableSemanticAssets : DefaultTask() {
+    @get:InputDirectory
+    abstract val repositoryRoot: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val root = repositoryRoot.get().asFile
+        val output = outputDirectory.get().asFile
+        output.deleteRecursively()
+        project.copy {
+            into(output)
+            from(root.resolve("modules/intent_frames.pl")) {
+                into("prolog/shared/modules")
+            }
+            from(root.resolve("modules/normalizer.pl")) {
+                into("prolog/shared/modules")
+            }
+            from(root.resolve("kb/intents.pl")) {
+                into("prolog/shared/kb")
+            }
+        }
+    }
 }
 
 val androidNdkVersion = providers.environmentVariable("ZARA_ANDROID_NDK_VERSION").orNull
@@ -49,6 +82,19 @@ android {
             path = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
         }
+    }
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        val taskName = "generate${variant.name.replaceFirstChar(Char::uppercaseChar)}PortableSemanticAssets"
+        val generateAssets = tasks.register<GeneratePortableSemanticAssets>(taskName) {
+            repositoryRoot.set(layout.projectDirectory.dir("../.."))
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(
+            generateAssets,
+            GeneratePortableSemanticAssets::outputDirectory
+        )
     }
 }
 
