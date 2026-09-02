@@ -23,6 +23,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from .approval import ToolApprovalController
 from .conversation import ConversationManager
 from .graph import run_conversation_loop, validate_and_clean_messages
+from .hooks import AgentLoopAdviceRegistry
 from .prompting import build_agent_system_prompt
 from .tools.registry import ToolRegistry
 from ..config import ZaraConfig, get_config
@@ -71,6 +72,11 @@ class AgentManager:
         self.approval_controller = ToolApprovalController(
             timeout_seconds=float(approval_config.get("timeout_seconds", 300.0)),
             max_pending=int(approval_config.get("max_pending", 8)),
+        )
+        hooks_config = self.config.get_hooks_config()
+        self.agent_loop_advice = AgentLoopAdviceRegistry(
+            enabled=hooks_config["enabled"],
+            allow_override=hooks_config["allow_override"],
         )
 
     def bind_event_publisher(self, publisher) -> None:
@@ -210,7 +216,8 @@ class AgentManager:
         )
 
         principal_id = getattr(self.principal, "principal_id", "local")
-        result = await run_conversation_loop(
+        result = await self.agent_loop_advice.invoke(
+            run_conversation_loop,
             self.llm_client,
             self.tool_registry,
             state,
