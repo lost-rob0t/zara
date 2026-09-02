@@ -9,8 +9,16 @@
 
 semantic_contract_version('ZARA-SEMANTIC/1').
 
+resolve_frames(Text, _State, _Context, []) :-
+    empty_text(Text),
+    !.
 resolve_frames(Text, State, Context, Frames) :-
     intent_frames:resolve_frames(Text, State, Context, Frames).
+
+empty_text(Text) :-
+    ( Text == ""
+    ; Text == ''
+    ).
 
 valid_frame(frame(intent(ns(Namespace), name(Name)), Slots, Status)) :-
     atom(Namespace),
