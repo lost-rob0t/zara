@@ -41,6 +41,29 @@ class CrossRuntimeParityGateContractTest {
         }
     }
 
+    @Test
+    fun hostParityAndAndroidNativeBuildUseSameFailClosedTreallaPatch() {
+        val patcher = projectFile("patch-trealla-module-path.sh")
+        val nativeBuild = projectFile("build-trealla.sh")
+        val parityGate = projectFile("../scripts/test-android-semantic-parity.sh")
+
+        assertTrue("Trealla compatibility patcher is required", patcher.isFile)
+        val patchText = patcher.readText()
+        assertTrue(patchText.contains("count != 1"))
+        assertTrue(patchText.contains("tmp_m->filename = save_m->filename"))
+        assertTrue(patchText.contains("tmp_m->actual_filename"))
+
+        val invocation = "patch-trealla-module-path.sh"
+        assertTrue(
+            "Android native Trealla library must use compatibility patch",
+            nativeBuild.readText().contains(invocation)
+        )
+        assertTrue(
+            "host parity Trealla must use the exact same compatibility patch",
+            parityGate.readText().contains(invocation)
+        )
+    }
+
     private fun projectFile(relativePath: String): File {
         val cwd = File(System.getProperty("user.dir"))
         val candidates = listOf(
