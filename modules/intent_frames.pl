@@ -45,8 +45,7 @@ resolve_fresh(RawTokens, _State, [Frame]) :-
     cancel_frame(Frame).
 resolve_fresh(RawTokens, State, [Frame]) :-
     state_control_frame(State, RawTokens, Frame),
-    !,
-    cancel_frame(Frame).
+    !.
 resolve_fresh(RawTokens, _State, Frames) :-
     correction_tokens(RawTokens, Tail),
     !,
