@@ -12,3 +12,19 @@
 - Open PR #287 is sibling-owned Android work, mergeable but explicitly draft; exact-head CI #735 is green, so it remains unmerged and untouched by this core transaction.
 - Every other open PR inspected is currently non-mergeable or draft; there is no authorized current-head merge candidate.
 - Existing #260 work has landed the Prolog hook/config seam and the bounded Python advice registry, but the Python registry is not yet connected to the canonical conversation loop.
+
+* Deterministic RED
+- First attempted RED was rejected as evidence because CI #736 failed at =git diff --check= before tests; only whitespace in this RAGE artifact was corrected.
+- Corrected RED head :: =1a154ff72a513d06a806bf9ce3aa80b4bd25ade7=
+- Exact-head CI :: #737
+- Repository pytest result :: 3 failed, 1524 passed, 34 warnings.
+- Expected failures :: =AgentManager= lacked =agent_loop_advice=; before/after advice was not invoked around the base loop; override advice could not replace the canonical loop call.
+- Unrelated gates :: both shared-mic jobs and Android skeleton gate passed.
+- Production code remained untouched until this RED was captured.
+
+* Realization
+- Production commit :: =559f761a2ece818572c1f67de6d58fa89ae5a2be=
+- =AgentManager= now owns one =AgentLoopAdviceRegistry= initialized exclusively from validated =get_hooks_config()= policy.
+- Only the existing =run_conversation_loop= invocation is advised. Existing LLM/tool/state/approval/publisher/principal/stream arguments are forwarded unchanged.
+- AgentManager remains outside the advice boundary for state construction, transient memory cleanup, history persistence, and public result shaping.
+- No Android production files, user hook loader, second agent loop, backend registry, or alternate approval path were added.
