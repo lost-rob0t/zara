@@ -23,12 +23,21 @@ class TreallaSemanticRuntime(
     val isClosed: Boolean
         get() = state == State.CLOSED
 
-    fun initialize(coreAssetPath: String) {
+    fun initialize(coreFilePath: String) {
         check(state == State.NEW) { "Trealla runtime is not initializable" }
-        require(coreAssetPath.isNotBlank()) { "Portable semantic core path is required" }
+        require(coreFilePath.isNotBlank()) { "Portable semantic core path is required" }
 
-        bridge.initialize(coreAssetPath)
+        bridge.initialize(coreFilePath)
         state = State.READY
+    }
+
+    fun initializeFromAssets(
+        stager: PortableSemanticAssetStager,
+        source: PortableSemanticAssetSource
+    ) {
+        check(state == State.NEW) { "Trealla runtime is not initializable" }
+        val stagedCore = stager.stage(source)
+        initialize(stagedCore.absolutePath)
     }
 
     override fun evaluate(fixture: SemanticFixture): SemanticResult {
