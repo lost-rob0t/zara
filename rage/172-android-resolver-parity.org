@@ -62,6 +62,14 @@
 - Regression contract commit :: =8824f042a482cb1019d89f70dd9b9db91d90ebe1= requires bounded =@InputFiles= and rejects reintroduction of =@InputDirectory= / repository-root task input wiring.
 - This recovery does not change shared Prolog semantics or core/runtime files.
 
+* Gate failure recovery — iteration 3
+- Exact candidate :: =09a27707d16246cc91e74d62b36efe8a15ab887f=.
+- Actions run :: =33609740843= completed FAILURE only in the =android skeleton gate=; the full repository/Nix/package job PASS and both shared-mic jobs PASS.
+- Source review identified an additional Gradle generated-source contract defect: =GeneratePortableSemanticAssets.outputDirectory= is an =@OutputDirectory DirectoryProperty= consumed by =addGeneratedSourceDirectory= but had no explicit convention/value. That leaves task output realization dependent on AGP wiring and can fail Gradle task validation before the generated assets are produced.
+- Recovery commit :: =39af84ecdc9262cfd761c5b8dbba7e32cee00b99= assigns a deterministic variant-scoped output directory under =build/generated/portableSemanticAssets/<variant>=. No semantic/runtime/shared-core behavior changes.
+- Fresh exact-head Actions run :: =33614744052= is in progress. This patch is not represented as GREEN until that run is conclusively successful.
+- During this recovery sibling core PR #293 merged, advancing canonical =master= to =f078a2d3f1bd10b60914153de486130bce787380=. Its agent-loop files remain disjoint from this Android transaction; #294 must still be recovered onto the new canonical head before merge authorization can be exercised.
+
 * Remaining #172 work
 - This slice makes the real canonical utterance resolver loadable by the embedded Android Trealla path; it deliberately does not close #172 yet.
 - #172 still needs the final executable cross-runtime corpus gate comparing normalized SWI-Prolog and Trealla results rather than treating packaging or fake runtime adapters as parity proof.
