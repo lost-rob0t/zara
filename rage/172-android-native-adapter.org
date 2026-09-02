@@ -1,0 +1,36 @@
+#+title: RAGE #172 - Android native Trealla adapter
+
+* Run identity
+- Consumed issue :: #172, P2 - extract and prove a portable shared Prolog semantic core on Linux and Android.
+- Scope :: Android-only native Trealla adapter slice; no daemon/core/runtime authority changes.
+- RAGE start commit :: =e1c61a38b68fb0601f49152ca4d2205e4a5c41f7=.
+- Branch :: =rage/android-172-native-adapter=.
+- Invariants :: one authoritative Zara daemon; Android embedded Prolog remains bounded deterministic local semantics only; native runtime must fail closed; no credentials, networking, provider access, or remote-command authority in native code.
+
+* Recovery
+- PR #286 is merged on canonical =master= at =e1c61a38b68fb0601f49152ca4d2205e4a5c41f7=, landing the Kotlin/JNI bridge boundary.
+- No open PR touching =android/**= required recovery before this iteration.
+- Sibling core PR #285 is Python hook/advice work and does not own Android files.
+
+* Research
+- Issue #172 remains open and requires deterministic Android packaging plus real cross-runtime fixture execution.
+- Upstream Trealla at commit =b25ccfb8e485a697bb47f1947d6fb8e0ad4e6aaf= exposes a supported embedding API in =src/trealla.h=: =pl_create/pl_destroy=, =pl_consult= / =pl_consult_text=, =pl_query/pl_redo/pl_done=, and canonical =pl_term_text= binding inspection.
+- Upstream documents =pl_term= answer views as query-owned and =pl_term_text= strings as caller-owned via =pl_free=; Zara must copy into JNI strings before advancing/destroying a query.
+- Current Zara Android build intentionally has no NDK enabled yet; =flake.nix= explicitly records that the Trealla/NDK spike belongs to #172. This Android-only iteration therefore defines the native adapter source/build contract first and does not claim packaged native parity until the repository Android toolchain provides the NDK.
+
+* Design / adversarial review
+- Native JNI surface remains exactly the already-landed =JniTreallaNativeApi.initialize/evaluate/shutdown= API; no second parser or semantic serializer is added in Kotlin.
+- One native engine instance is process-local and guarded by a mutex. Initialization creates exactly one Trealla engine and consults the supplied portable core path; failed consult destroys the engine and returns false.
+- Evaluation requires a live engine and a non-empty query. Each answer must expose a =Result= binding; Zara copies its canonical =pl_term_text= representation into the returned Java string array. Missing =Result= or Trealla error fails the JNI call rather than inventing success.
+- Query-owned terms are copied before =pl_redo/pl_done=. Owned Trealla strings are released with =pl_free=.
+- Shutdown destroys the engine and is idempotent.
+- This slice must not vendor an unpinned moving Trealla checkout, download source during Gradle execution, or silently omit the native runtime from a production APK.
+
+* Planned TDD
+- Add deterministic Android source-contract tests first for JNI symbol coverage, Trealla lifecycle calls, canonical Result binding extraction, ownership cleanup, and no network/provider APIs in the adapter.
+- RED must fail because the native adapter source/build files do not exist.
+- GREEN adds only the native adapter/CMake contract required by those tests.
+
+* Gate
+- Focused JVM/source-contract tests, then =scripts/test-android.sh= and repository-native gates when exact-head CI is available.
+- Native APK parity remains blocked until the Android NDK/Trealla source packaging input is wired reproducibly; this iteration will not report it as shipped early.
