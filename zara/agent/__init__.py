@@ -73,10 +73,15 @@ class AgentManager:
             timeout_seconds=float(approval_config.get("timeout_seconds", 300.0)),
             max_pending=int(approval_config.get("max_pending", 8)),
         )
-        hooks_config = self.config.get_hooks_config()
+        get_hooks_config = getattr(self.config, "get_hooks_config", None)
+        hooks_config = (
+            get_hooks_config()
+            if callable(get_hooks_config)
+            else {"enabled": False, "allow_override": False}
+        )
         self.agent_loop_advice = AgentLoopAdviceRegistry(
-            enabled=hooks_config["enabled"],
-            allow_override=hooks_config["allow_override"],
+            enabled=hooks_config.get("enabled", False),
+            allow_override=hooks_config.get("allow_override", False),
         )
 
     def bind_event_publisher(self, publisher) -> None:
@@ -92,6 +97,7 @@ class AgentManager:
 
         if provider == "anthropic":
             from langchain_anthropic import ChatAnthropic
+        
             api_key = llm_config.get("anthropic_api_key") or os.getenv("ANTHROPIC_API_KEY")
             return ChatAnthropic(
                 model=model or "claude-3-5-sonnet-20241022",
@@ -102,6 +108,7 @@ class AgentManager:
 
         if provider == "openai":
             from langchain_openai import ChatOpenAI
+        
             api_key = llm_config.get("openai_api_key") or os.getenv("OPENAI_API_KEY")
             return ChatOpenAI(
                 model=model or "gpt-4",
@@ -112,6 +119,7 @@ class AgentManager:
 
         if provider == "openrouter":
             from langchain_openai import ChatOpenAI
+        
             api_key = llm_config.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")
             return ChatOpenAI(
                 model=model or "openrouter/free",
@@ -123,6 +131,7 @@ class AgentManager:
 
         if provider == "ollama":
             from langchain_ollama import ChatOllama
+        
             base_url = endpoint.replace("/api/chat", "") if endpoint else "http://localhost:11434"
             return ChatOllama(
                 model=model or "llama3",
