@@ -17,6 +17,17 @@ from .file_tools import build_file_tools
 from .todo_tools import build_todo_tools
 from ...noaa import build_noaa_weather_tool
 
+
+TASK_GOAL_MAX_CHARS = 2000
+
+TASK_TOOL_NAMES = (
+    "task_create",
+    "task_list",
+    "task_status",
+    "task_cancel",
+    "task_resume",
+)
+
 class RememberArgs(BaseModel):
     text: str = Field(
         ..., description="Fact to store in long-term memory."
@@ -318,16 +329,137 @@ def build_prolog_tool(prolog_engine) -> StructuredTool:
 
 
 
+class TaskCreateArgs(BaseModel):
+    goal: str = Field(
+        ...,
+        description=(
+            "Complete, self-contained goal for a long-horizon task that may need "
+            "multiple tool-using steps across separate turns."
+        ),
+    )
+    max_steps: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=1000,
+        description="Optional per-task step budget override.",
+    )
+
+
+class TaskListArgs(BaseModel):
+    status: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional filter: pending, running, waiting_approval, completed, "
+            "failed, cancelled, or interrupted."
+        ),
+    )
+
+
+class TaskIdArgs(BaseModel):
+    task_id: str = Field(
+        ..., description="Long-horizon task identifier (e.g. 'task-1a2b3c4d5e6f')."
+    )
+
+
+def _short(text: str, limit: int = 120) -> str:
+    clean = " ".join(str(text).split())
+    if len(clean) <= limit:
+        return clean
+    return clean[: limit - 1] + "…"
+
+
+def build_task_tools(task_service) -> List[StructuredTool]:
+    """Build the long-horizon task tools for one bound task service."""
+
+    @tool("task_create", args_schema=TaskCreateArgs)
+    async def task_create(goal: str, max_steps: Optional[int] = None) -> str:
+        """Start a persistent multi-step task that runs in the background."""
+
+        if len(goal.strip()) > TASK_GOAL_MAX_CHARS:
+            return f"Invalid goal: goals are limited to {TASK_GOAL_MAX_CHARS} characters."
+        try:
+            created = await task_service.create_task(
+                goal=goal, max_task_steps=max_steps
+            )
+        except Exception as error:
+            return f"Could not create task: {error}"
+        return (
+            f"Started task {created.task_id} (status: {created.status.value}, "
+            f"steps allowed: {created.max_task_steps}). "
+            "Use task_status to follow progress."
+        )
+
+    @tool("task_list", args_schema=TaskListArgs)
+    async def task_list(status: Optional[str] = None) -> str:
+        """List long-horizon tasks and their current state."""
+
+        statuses = [status] if status else None
+        try:
+            rows = task_service.list_tasks(statuses=statuses)
+        except Exception as error:
+            return f"Could not list tasks: {error}"
+        if not rows:
+            return "No long-horizon tasks found."
+        lines = [
+            f"- {row.task_id} [{row.status.value}] steps {row.steps_completed}/{row.max_task_steps}: "
+            f"{_short(row.goal, 80)}"
+            for row in rows
+        ]
+        return "Long-horizon tasks:\n" + "\n".join(lines)
+
+    @tool("task_status", args_schema=TaskIdArgs)
+    async def task_status(task_id: str) -> str:
+        """Report the state, progress, and last step summary of one task."""
+
+        row = task_service.get_task(task_id)
+        if row is None:
+            return f"No task found for {task_id}."
+        lines = [
+            f"Task {row.task_id}: {row.status.value}",
+            f"Goal: {_short(row.goal, 160)}",
+            f"Steps completed: {row.steps_completed}/{row.max_task_steps}",
+        ]
+        if row.reason:
+            lines.append(f"Reason: {row.reason}")
+        return "\n".join(lines)
+
+    @tool("task_cancel", args_schema=TaskIdArgs)
+    async def task_cancel(task_id: str) -> str:
+        """Cancel a running long-horizon task. Cancelled tasks never resume."""
+
+        try:
+            cancelled = await task_service.cancel_task(task_id=task_id)
+        except Exception as error:
+            return f"Could not cancel task: {error}"
+        return f"Task {cancelled.task_id} cancelled."
+
+    @tool("task_resume", args_schema=TaskIdArgs)
+    async def task_resume(task_id: str) -> str:
+        """Resume an interrupted or pending long-horizon task."""
+
+        try:
+            resumed = await task_service.resume_task(task_id=task_id)
+        except Exception as error:
+            return f"Could not resume task: {error}"
+        return f"Task {resumed.task_id} resumed (status: {resumed.status.value})."
+
+    return [task_create, task_list, task_status, task_cancel, task_resume]
+
+
 def get_builtin_tools(
     prolog_engine=None,
     memory_manager=None,
     file_tool_config: Optional[Dict[str, Any]] = None,
+    task_service=None,
 ) -> List[StructuredTool]:
     tools: List[StructuredTool] = [calculator, get_current_time]
 
     if file_tool_config is not None:
         tools.extend(build_file_tools(**file_tool_config))
     tools.extend(build_todo_tools())
+
+    if task_service is not None:
+        tools.extend(build_task_tools(task_service))
 
     remember_tool = build_remember_tool(memory_manager)
     if remember_tool is not None:
