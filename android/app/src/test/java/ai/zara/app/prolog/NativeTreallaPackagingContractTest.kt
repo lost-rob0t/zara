@@ -14,15 +14,17 @@ class NativeTreallaPackagingContractTest {
         assertTrue(appGradle.contains("src/main/cpp/CMakeLists.txt"))
         assertTrue(appGradle.contains("arm64-v8a"))
         assertTrue(appGradle.contains("x86_64"))
+        assertTrue(appGradle.contains("ZARA_ANDROID_NDK_VERSION"))
     }
 
     @Test
-    fun nixAndroidToolchainPinsNdkAndDoesNotDownloadTreallaDuringGradleBuild() {
-        val flake = projectFile("../flake.nix").readText()
+    fun androidOwnedNixToolchainPinsNdkAndTreallaOutsideGradle() {
+        val flake = projectFile("flake.nix").readText()
         val androidGate = projectFile("../scripts/test-android.sh").readText()
 
         assertTrue(flake.contains("includeNDK = true"))
         assertTrue(flake.contains("ndkVersions"))
+        assertTrue(flake.contains("b25ccfb8e485a697bb47f1947d6fb8e0ad4e6aaf"))
         assertTrue(androidGate.contains("ZARA_TREALLA_SOURCE_DIR"))
         assertTrue(androidGate.contains("ZARA_TREALLA_LIBRARY_ROOT"))
         assertFalse(androidGate.contains("git clone"))
