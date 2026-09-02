@@ -93,3 +93,31 @@ This log append advances the branch again. No prior run is merge authorization. 
 - PR remains non-draft and mergeable;
 - zero blocking comments/reviews/unresolved threads;
 - expected-head protected merge only.
+
+* Iteration 3 - Python hook/advice seam
+** Immutable re-entry
+- Consumed issue :: #260
+- RAGE start commit :: =89e6fbc6f17df0a86083b5e66dd1496c89555daf=
+- Branch :: =rage/260-python-hooks-advice=
+- Scope :: Python lifecycle hook/advice registry around the existing canonical agent loop. No Android production changes, no second agent loop, no tool-policy bypass, and no user =hooks.py= execution until the policy/lifecycle contract is proven.
+- Sibling transaction :: draft PR #284 at =bb82778cca98de8eb2c4d1220a64900b80bd7f77=, Android-only and exact-head CI #711 green; it remains sibling-owned and unmodified here.
+
+** Reconciliation checkpoint
+- Canonical master is =89e6fbc6f17df0a86083b5e66dd1496c89555daf=.
+- No open core PR is both current-head eligible and merge-authorized; #284 is draft Android work, #262 is intentional RED, and the remaining core PRs are stale or conflict with current structured-capability constraints.
+- Existing #260 Prolog hook/config seam is merged and remains the policy baseline: =[hooks].enabled= defaults false and =allow_override= defaults false.
+
+** TDD / RED
+- Exact RED head :: =f2a9c09da861890e161bc30a7f01e8b3c13c350a=
+- GitHub Actions CI :: #712 / =33573957189=
+- Main =test= job failed during =Run all tests= with the intentionally missing =zara.agent.hooks= production seam; flake/package steps were therefore skipped.
+- Arch shared-mic, Ubuntu shared-mic, and Android skeleton jobs were green at the same exact RED head.
+
+** Implementation
+After RED evidence, =zara/agent/hooks.py= adds the bounded per-runtime =AgentLoopAdviceRegistry= contract only. It implements deterministic priority/sequence ordering, owner cleanup, snapshot dispatch, sync/async callbacks, typed registration/invocation failures, and fail-closed =around=/=override= policy gating. It reads no user files, grants no tool authority, and does not replace =AgentManager= or =run_conversation_loop= yet.
+
+Implementation commit :: =9e7895bd7087b947613093b6bb55ff3b045e5c27=
+
+** Reconciliation after sibling merge
+- Android recovery PR #286 was exact-head green on CI #713, non-draft, mergeable, and had no review/discussion blockers; it was merged with expected-head protection as =e1c61a38b68fb0601f49152ca4d2205e4a5c41f7=.
+- This core branch must now include that canonical master before any GREEN can authorize merge. Android files remain sibling-owned and are not edited by this transaction.

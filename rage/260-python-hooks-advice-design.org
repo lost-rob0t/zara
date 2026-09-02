@@ -1,0 +1,62 @@
+#+title: RAGE Design - #260 Python hooks and advice
+#+startup: overview
+
+* Boundary
+This iteration adds the Python registry contract only. It does not yet load user =hooks.py= or replace =AgentManager='s call site. Production integration follows only after this registry contract has deterministic RED/GREEN evidence.
+
+* Registry contract
+A per-runtime =AgentLoopAdviceRegistry= owns registrations:
+- =register(kind, owner, priority, callback) -> registration_id=
+- =unregister(registration_id)=
+- =clear_owner(owner)=
+- =list_registrations()=
+- =invoke(base_callable, *args, **kwargs)=
+
+Kinds are the closed set =before=, =after=, =around=, =override=.
+
+Registration metadata is bounded and deterministic: owner is a non-empty bounded string; priority is a bounded integer; callback must be callable; registration ids are monotonic within one registry object. Dispatch order is ascending priority then insertion sequence.
+
+* Invocation semantics
+- Disabled policy invokes =base_callable= exactly once and ignores registrations.
+- =before= callbacks execute in order before the base callable.
+- =after= callbacks execute in order after a successful base call and receive the result; they observe but do not replace it in this first contract.
+- =around= composes continuations in deterministic order and may replace/suppress the base call, so it is override-capable.
+- =override= selects one deterministic winner: highest precedence by normal registry ordering. Multiple active overrides are rejected as ambiguous rather than silently picking one.
+- Async and sync callbacks/base callables are accepted through one await-if-needed helper because user/plugin hooks may be either while the canonical loop is async.
+
+* Policy
+- =[hooks].enabled=false= means no callback executes.
+- =around= and =override= registration/invocation require =enabled=true= and =allow_override=true=.
+- =allow_override=true= while hooks are disabled grants nothing.
+- Changing policy to disabled does not destroy registrations; it makes them inert so a runtime reload can safely re-enable the same owner-managed registry. User/plugin reload logic remains responsible for owner cleanup.
+
+* Failure behavior
+- Invalid registration metadata raises explicit =HookRegistrationError=.
+- Ambiguous override state raises =HookInvocationError= before any override executes.
+- Callback exceptions propagate to the caller in this first registry layer. Integration must translate them into bounded runtime diagnostics; swallowing them would create false-success behavior.
+- Registry mutation during dispatch affects only subsequent invocations because dispatch uses a snapshot.
+
+* Security/architecture invariants
+- Registry contains no authorization decisions and cannot approve/reject tools.
+- It does not create another =ToolApprovalController=, conversation store, principal, graph, or agent loop.
+- The eventual base callable remains the existing =run_conversation_loop= by default.
+- Around/override are fail-closed behind the second policy gate.
+- No user file or secret is read by this registry.
+- No =android/**= changes.
+
+* First RED matrix
+1. before callbacks run priority-then-sequence before the base callable.
+2. after callbacks observe result in deterministic order without replacing it.
+3. disabled hooks invoke only the base callable.
+4. around registration is rejected without =allow_override=.
+5. override registration is rejected without =allow_override=.
+6. allow_override while disabled still rejects override-capable advice.
+7. owner cleanup removes only that owner's callbacks.
+8. mutation during dispatch is snapshot-isolated.
+9. ambiguous multiple overrides fail before side effects.
+
+* Gate
+- focused =pytest t/test_agent_hooks.py= must first fail because =zara.agent.hooks= does not exist;
+- implementation then makes the focused suite green;
+- subsequent integration gets a new RED cycle before changing =AgentManager=;
+- full =scripts/test-all.sh=, =nix flake check=, =nix build= and exact-head GitHub Actions remain mandatory before merge.

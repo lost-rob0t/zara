@@ -1,0 +1,36 @@
+#+title: RAGE Research - #260 Python hooks and advice
+#+startup: overview
+
+* Baseline
+- Exact start :: =89e6fbc6f17df0a86083b5e66dd1496c89555daf=
+- Issue :: #260
+- Scope :: Python lifecycle hook/advice seam around the existing canonical conversational agent loop.
+
+* Repository findings
+- =AgentManager.process_async/5= is the stable caller-facing orchestration point: it constructs bounded turn state, injects system/memory context, binds the existing =ToolApprovalController=, then calls exactly one =run_conversation_loop/..= and persists only the returned canonical message history.
+- =run_conversation_loop= already owns the graph/checkpointer lifetime, dynamic tool preparation, principal-scoped checkpoint id, approval interrupt/resume loop, cancellation propagation, latency-trace extraction, max-step behavior, and final response/result shaping. Advice must wrap this function rather than duplicate those responsibilities.
+- =ZaraConfig= already validates =[hooks].enabled= and =[hooks].allow_override= as booleans and exposes =get_hooks_config()=. No new Python config store is needed.
+- The merged Prolog hook slice establishes useful policy precedent: hooks are opt-in; override-capable customization needs the second gate; ownership/order/removal are explicit; mutable user code stays under XDG config and is never Nix-store-owned.
+- Existing tests monkeypatch =run_conversation_loop= at the =zara.agent= import boundary. Integration must preserve that seam or update tests intentionally rather than silently routing around it.
+
+* Threat and failure analysis
+- =around= advice is override-capable even if named differently: an around callback can decline to call its continuation. Therefore both =around= and =override= must require =allow_override=true=.
+- =before= and =after= callbacks must not gain a backdoor to approve tools, replace principal identity, mutate the authoritative approval controller, or bypass cancellation. The registry is orchestration customization, not authorization.
+- User callbacks may raise, return malformed data, hang, or unregister themselves while dispatch is active. Dispatch needs a snapshot, deterministic ordering, bounded metadata, and explicit exception behavior.
+- Silently swallowing Python hook exceptions would make runtime behavior impossible to diagnose. Registration/invocation failures should be typed/explicit; a later integration layer may convert them into bounded diagnostics.
+- Loading =hooks.py= at import time would execute mutable user code before the runtime/config owner is ready and complicate tests. Loading belongs to an explicit XDG loader called by runtime initialization/reload after policy is known.
+- A generic global singleton would create cross-principal/test contamination. The registry should be an owned object injected into the manager/backend lifecycle.
+
+* Alternatives rejected
+- Monkeypatch =run_conversation_loop= from =hooks.py= :: uninspectable, no owner cleanup, impossible policy gate, bypasses lifecycle invariants.
+- Decorator-only static hooks :: cannot support live user/plugin registration/unregistration or diagnostics.
+- Separate user agent loop process/runtime :: violates one-brain invariant and duplicates approval/cancellation/history ownership.
+- Treat =around= as non-override :: false security boundary because around can suppress continuation.
+
+* Selected direction
+1. Add a small =zara.agent.hooks= registry with explicit owner, kind, priority, sequence, registration id and policy.
+2. Support =before= / =after= under =enabled=true=; reject =around= / =override= unless both policy gates are true.
+3. Snapshot ordered registrations before invocation; priority then sequence.
+4. Keep registration lifecycle object-owned, with targeted unregister and owner cleanup for future ServicePlugin stop/failure integration.
+5. First TDD slice proves registry semantics independently. Only after RED/GREEN is established will =AgentManager= wire it around the canonical loop.
+6. User =hooks.py= loading remains a later sub-slice and will reuse canonical XDG config ownership; no file is created or overwritten by core.
