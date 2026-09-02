@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# Zara Android gate (#171): JVM unit tests + debug APK + secret-marker inspection.
+# Zara Android gate: JVM unit tests + pinned native build + debug APK + secret inspection.
 # Run via: nix develop .#android -c bash scripts/test-android.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/../android"
 
 : "${ANDROID_HOME:?ANDROID_HOME must be set by the nix android dev shell}"
+: "${ANDROID_NDK_ROOT:?ANDROID_NDK_ROOT must be set by the nix android dev shell}"
+: "${ZARA_TREALLA_SOURCE_DIR:?ZARA_TREALLA_SOURCE_DIR must be set by the nix android dev shell}"
+
+export ZARA_TREALLA_LIBRARY_ROOT="$PWD/app/build/trealla"
+bash ./build-trealla.sh
 
 gradle --no-daemon testDebugUnitTest assembleDebug
 

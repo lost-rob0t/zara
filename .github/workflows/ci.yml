@@ -146,8 +146,8 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v31
 
-      - name: Run Android gate (unit tests + debug APK + secret inspection)
-        run: nix develop .#android -c bash scripts/test-android.sh
+      - name: Run Android gate (unit tests + native Trealla + debug APK + secret inspection)
+        run: nix develop ./android -c bash scripts/test-android.sh
 
       - name: Upload debug APK
         if: always()
