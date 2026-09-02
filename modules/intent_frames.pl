@@ -312,6 +312,16 @@ bounded_atom(Tokens, Atom) :-
     atom_length(Atom, Length),
     Length =< 512.
 
+ascii_downcase_atom(Atom, Lower) :-
+    atom_codes(Atom, Codes),
+    ascii_downcase_codes(Codes, LowerCodes),
+    atom_codes(Lower, LowerCodes).
+
+ascii_downcase_codes([], []).
+ascii_downcase_codes([Code|Codes], [LowerCode|LowerCodes]) :-
+    ( Code >= 65, Code =< 90 -> LowerCode is Code + 32 ; LowerCode = Code ),
+    ascii_downcase_codes(Codes, LowerCodes).
+
 rest_slot_frame(IntentName, NS, SlotName, text, Rest, Frame) :-
     ( Rest = [] ->
         Frame = frame(intent(ns(NS), name(IntentName)), [], missing([SlotName]))
@@ -351,9 +361,9 @@ follow_up_value(frame(Intent0, Slots0, ambiguous(Alternatives)), Core,
     Alternatives = [_|_],
     !,
     atomic_list_concat(Core, ' ', AnswerAtom),
-    downcase_atom(AnswerAtom, Answer),
+    ascii_downcase_atom(AnswerAtom, Answer),
     ( member(Alt, Alternatives),
-      downcase_atom(Alt, Answer),
+      ascii_downcase_atom(Alt, Answer),
       Intent0 = intent(ns(_NS), name(IntentName)),
       first_unfilled_required(IntentName, Slots0, SlotName),
       slot_value_type(SlotName, SlotType),
