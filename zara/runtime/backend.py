@@ -32,6 +32,12 @@ class RuntimeTurnResult:
 class RuntimeBackend:
     """Async application-service contract used by RuntimeHost."""
 
+    @property
+    def principal_id(self) -> str:
+        raise UnsupportedRuntimeCommand(
+            "principal identity is not available in this runtime backend"
+        )
+
     def bind_event_publisher(self, publisher) -> None:
         pass
 
@@ -95,6 +101,17 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         self._publisher = None
         self._router = router
         self._memory_session: Optional[str] = None
+
+    @property
+    def principal_id(self) -> str:
+        manager = self._manager
+        if manager is None:
+            raise RuntimeError("runtime backend is not started")
+        principal = getattr(manager, "principal", None)
+        principal_id = getattr(principal, "principal_id", None)
+        if not isinstance(principal_id, str) or not principal_id.strip():
+            raise RuntimeError("runtime backend manager has no principal identity")
+        return principal_id
 
     def bind_event_publisher(self, publisher) -> None:
         self._publisher = publisher
@@ -353,6 +370,10 @@ class AgentRuntimeBackend(RuntimeBackend):
             )
         else:
             self._delegate = create_runtime_backend(config)
+
+    @property
+    def principal_id(self) -> str:
+        return self._delegate.principal_id
 
     def bind_event_publisher(self, publisher) -> None:
         self._delegate.bind_event_publisher(publisher)
