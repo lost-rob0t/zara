@@ -13,43 +13,44 @@
 
 * Research
 - The Android app now packages the canonical resolver sources and exposes =resolve_frames/4= through the Trealla entrypoint, but =SemanticFixtureRunner= still accepts abstract =SemanticRuntime= implementations and therefore cannot by itself prove SWI-versus-Trealla execution.
-- The fixture seed at =android/app/src/main/assets/prolog/portable/semantic_fixtures.json= already carries utterance/state/expected terms and is the correct single corpus input for this gate; do not create a second Android-only semantic corpus.
-- Android pins Trealla source revision =b25ccfb8e485a697bb47f1947d6fb8e0ad4e6aaf= in =android/flake.nix=. The parity gate must execute that exact engine source, not a host package with unrelated version drift.
-- SWI remains the server reference runtime. Both runtimes must consult the same canonical resolver dependency set and serialize terms canonically before comparison.
-- Host execution of the exact pinned Trealla engine is acceptable as the deterministic CI execution surface for the shared Prolog engine semantics; JNI/ABI/APK packaging is already covered separately by the Android native gate. This gate does not claim hardware/lifecycle parity, which remains #178/#179.
-- Trealla's pinned CLI supports ordered file consultation and =-g/--goal= evaluation; its GNUmakefile has a deterministic native =tpl= target. The build uses a writable copy of the Nix-pinned source because the Nix store source is immutable.
+- Initial research treated =android/app/src/main/assets/prolog/portable/semantic_fixtures.json= as the executable corpus. Source audit corrected that assumption: the JSON declares =scope: portable-packaging-seed= and contains only seven seed cases. The authoritative realistic corpus is =kb/semantic_corpus.pl= from #156.
+- =kb/semantic_corpus.pl= already covers complete/pending timers, numeric boundaries, dialogue follow-up/correction/ambiguity, open/text/search/device/media intents, cancellation/state precedence, empty/unknown input, injection-like text, and the currently pinned Unicode behavior. Final parity must execute that corpus, not relabel the packaging seed as acceptance coverage.
+- Android pins Trealla source revision =b25ccfb8e485a697bb47f1947d6fb8e0ad4e6aaf= in =android/flake.nix=. The parity gate executes that exact source, not an unrelated host Trealla version.
+- SWI remains the server reference runtime. Both runtimes consult the same canonical resolver dependency set and serialize ground portable frame terms canonically.
+- Host execution of the exact pinned Trealla engine is the deterministic CI semantic-engine surface; JNI/ABI/APK packaging is proven separately by the Android native gate. Hardware/lifecycle claims remain #178/#179.
+- Trealla's pinned CLI supports ordered file consultation and =-g/--goal= evaluation; its GNUmakefile has a deterministic native =tpl= target. The gate builds a writable temporary copy of the immutable Nix-pinned source.
 
 * Architecture / design
-- Add a non-interactive Android-owned parity command under =scripts/= and invoke it from =scripts/test-android.sh= after the pinned Trealla source is available.
-- Build a host Trealla executable from the exact =ZARA_TREALLA_SOURCE_DIR= revision inside the Android dev shell, with no network fetch.
-- Execute every fixture through SWI and pinned Trealla using the same staged canonical files: =semantic_core.pl=, =modules/intent_frames.pl=, =modules/normalizer.pl=, and =kb/intents.pl=.
-- Query =resolve_frames(Utterance, State, [], Frames)=, normalize through =normalize_frames/2=, and serialize the list with =write_canonical/1= on both engines.
-- Compare SWI output against Trealla output and independently against the fixture's expected frame list. Identical shared regressions therefore cannot false-green.
-- Empty result, consult failure, parse failure, missing runtime, malformed fixture, runtime crash, timeout, duplicate id, invalid state, or output cardinality mismatch fails closed.
-- Keep this gate Android-only. Do not modify Python runtime, daemon protocol, desktop, config, or sibling-core files.
+- =scripts/test-android-semantic-parity.sh= is invoked by =scripts/test-android.sh=.
+- Build host =tpl= from exact =ZARA_TREALLA_SOURCE_DIR= with SSL/FFI/thread extras disabled because they are irrelevant to the portable semantic core; no network fetch.
+- Stage =semantic_core.pl= plus canonical =modules/intent_frames.pl=, =modules/normalizer.pl=, =kb/intents.pl=, and =kb/semantic_corpus.pl= in the same relative layout consumed by Android Trealla.
+- A small temporary Prolog driver enumerates every =corpus_case/6=, rejects duplicate/empty case sets, calls =resolve_frames/4= with each case's real State and Context, normalizes actual and expected frames, and hard-fails any corpus mismatch.
+- Run that same driver under SWI and pinned Trealla. Each engine must independently satisfy the expected corpus, then their canonical output files must be byte-equivalent.
+- Missing runtime/source, consult/parse/runtime failure, corpus mismatch, duplicate ids, empty corpus, or cross-engine divergence fails closed.
+- Keep this gate Android-only. No Python daemon/runtime, desktop, config, or protocol files are changed.
 
 * Adversarial review
-- Do not compare against fixture =expected_terms= alone; both runtimes must execute.
-- Do not let one runtime's output become the expected oracle for the other without also checking the corpus expectation.
-- Pin Trealla by the existing Nix-provided source tree; no curl/git clone/HEAD fetch.
-- Bound fixture count to 256, fixture ids to 96 characters, utterances to 4096 characters, and each runtime invocation to 20 seconds.
-- Build Trealla with network/FFI/SSL/thread extras disabled for this semantic gate; those facilities are irrelevant to the portable resolver.
-- Temporary source/build/staging state is isolated beneath =mktemp= and removed on exit.
-- This gate proves shared semantic-engine parity only. Android process lifecycle, JNI resource leaks, concurrency/cancel, and device behavior remain covered by their owning Android gates/issues.
+- Both runtimes must execute; fixture text alone is not evidence.
+- Both runtimes must independently match expected frames so identical shared regressions cannot false-green.
+- Pin Trealla through existing Nix input; no curl/wget/git clone/moving input.
+- Temporary build/stage/output state is removed on exit.
+- Output contains only synthetic checked-in corpus results; secrets/user state/provider data are never involved.
+- This proves shared Prolog semantic-engine parity. Android process/JNI lifecycle, concurrency/resource bounds, protocol security, and device behavior remain with their owning gates.
 
 * TDD evidence
 - RED commit :: =52e16d5d02cb2d8ba2b4a0074a84bcad4bd04133=.
-- RED contract :: =CrossRuntimeParityGateContractTest= requires =scripts/test-android.sh= to invoke =scripts/test-android-semantic-parity.sh= and requires that gate to contain real =swipl=, pinned =ZARA_TREALLA_SOURCE_DIR=, canonical =semantic_fixtures.json=, and =resolve_frames= use while rejecting network fetch commands.
-- RED Actions run :: =33643008013=. Exact RED head failed the =android skeleton gate= as intended; both shared-mic jobs passed. The full repository =test= job was still executing when implementation began, but no completed green evidence from the RED head is used for merge authorization.
+- RED contract :: =CrossRuntimeParityGateContractTest= required ordinary Android gate integration, real =swipl=, pinned =ZARA_TREALLA_SOURCE_DIR=, resolver execution, and no network fetch. It initially named the JSON seed; source audit strengthened the GREEN contract to require authoritative =kb/semantic_corpus.pl= plus independent =ExpectedNormalized= validation.
+- RED Actions run :: =33643008013=. Exact RED head failed the =android skeleton gate= as intended; both shared-mic jobs passed. Later pushes cancelled the still-running repository job; no incomplete result is represented as green.
 
 * GREEN implementation
-- =249e51b4246b6f54523fcf51ecfeb8a48db81e22= adds SWI-Prolog and Python to the Android Nix dev shell so the parity gate uses declared reproducible tooling.
-- =94a66f2f190fd702ff0683d27efbf5679fdcac94= adds =scripts/test-android-semantic-parity.sh=. It copies the exact pinned Trealla source to writable temporary storage, builds =tpl= with unnecessary hosted extras disabled, stages the canonical resolver tree, executes every fixture under SWI and Trealla, and checks both engine equality and corpus expectation.
-- =137842cd801e0904a5da9aff164be40779d14d94= wires executable semantic parity into the ordinary Android gate before native Android/JVM/APK validation.
-- No =zara/**= Python runtime, daemon protocol, desktop, configuration, or sibling-core files changed.
+- =249e51b4246b6f54523fcf51ecfeb8a48db81e22= introduced declared SWI tooling in the Android dev shell; later =3c72bfc97eab77173ba273220c784034247ce4b6= removed no-longer-needed Python after the gate moved to a pure Prolog driver.
+- =94a66f2f190fd702ff0683d27efbf5679fdcac94= created the executable parity gate; =7112e1025af4341f97544b0db23e858d2db18aea= strengthened it from seven JSON seed cases to the entire canonical =semantic_corpus.pl=.
+- =137842cd801e0904a5da9aff164be40779d14d94= wires parity into =scripts/test-android.sh= before native/JVM/APK validation.
+- =ba916142d4d3f87dd9a675f61052c0659649e40f= strengthens the Android source contract to require canonical corpus execution and independent expected-result validation.
+- No =zara/**= core runtime, daemon protocol, desktop, configuration, or sibling-core files changed.
 
 * Pending exact-head gate
 - PR :: #299 (draft).
-- Current candidate before this log append :: =137842cd801e0904a5da9aff164be40779d14d94=.
-- Required next evidence :: focused Android contract/GREEN, executable parity output, complete =scripts/test-android.sh=, full repository/Nix/package gate, exact-head Actions, review/thread state, mergeability.
-- #172 remains open until that evidence is green and merged.
+- Candidate before this evidence append :: =3c72bfc97eab77173ba273220c784034247ce4b6=.
+- Required :: executable full-corpus parity, full Android gate, repository/Nix/package gate, exact-head Actions, no blocking review/thread, mergeable current head.
+- #172 remains open until those are green and merged.
