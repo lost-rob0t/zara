@@ -12,4 +12,3 @@
 - Open PR #287 is sibling-owned Android work, mergeable but explicitly draft; exact-head CI #735 is green, so it remains unmerged and untouched by this core transaction.
 - Every other open PR inspected is currently non-mergeable or draft; there is no authorized current-head merge candidate.
 - Existing #260 work has landed the Prolog hook/config seam and the bounded Python advice registry, but the Python registry is not yet connected to the canonical conversation loop.
-
