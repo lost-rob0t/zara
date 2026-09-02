@@ -25,12 +25,16 @@ class CrossRuntimeParityGateContractTest {
             text.contains("ZARA_TREALLA_SOURCE_DIR")
         )
         assertTrue(
-            "parity gate must consume the canonical Android semantic fixture corpus",
-            text.contains("semantic_fixtures.json")
+            "parity gate must consume the canonical semantic corpus",
+            text.contains("kb/semantic_corpus.pl")
         )
         assertTrue(
             "parity gate must execute the canonical resolver",
             text.contains("resolve_frames")
+        )
+        assertTrue(
+            "parity gate must validate corpus expectations independently",
+            text.contains("ExpectedNormalized")
         )
         listOf("curl ", "wget ", "git clone", "https://", "http://").forEach { forbidden ->
             assertFalse("parity gate must not fetch moving network inputs: $forbidden", text.contains(forbidden))
