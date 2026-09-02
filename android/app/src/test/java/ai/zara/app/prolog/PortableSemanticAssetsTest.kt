@@ -2,6 +2,7 @@ package ai.zara.app.prolog
 
 import java.nio.file.Files
 import java.nio.file.Path
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -32,6 +33,16 @@ class PortableSemanticAssetsTest {
         assertTrue(build.contains("modules/normalizer.pl"))
         assertTrue(build.contains("kb/intents.pl"))
         assertTrue(build.contains("addGeneratedSourceDirectory"))
+    }
+
+    @Test fun `generated asset task fingerprints only canonical resolver inputs`() {
+        val build = Files.readString(Path.of("build.gradle.kts"))
+
+        assertTrue(build.contains("@get:InputFiles"))
+        assertTrue(build.contains("PathSensitivity.RELATIVE"))
+        assertTrue(build.contains("sourceFiles.from("))
+        assertFalse(build.contains("@get:InputDirectory"))
+        assertFalse(build.contains("repositoryRoot.set("))
     }
 
     @Test fun `packaged assets identify the frozen semantic contract and corpus`() {
