@@ -28,3 +28,11 @@
 - Only the existing =run_conversation_loop= invocation is advised. Existing LLM/tool/state/approval/publisher/principal/stream arguments are forwarded unchanged.
 - AgentManager remains outside the advice boundary for state construction, transient memory cleanup, history persistence, and public result shaping.
 - No Android production files, user hook loader, second agent loop, backend registry, or alternate approval path were added.
+
+* GREEN-attempt regression and recovery
+- Exact-head CI #739 at =ed247cfe4c55c6b22f249a2bea0728eab3b1b920= failed in the repository =Run all tests= step; both shared-mic jobs and the Android gate remained green.
+- Source analysis found the new constructor assumed every config adapter implemented =get_hooks_config()=. ZaraConfig does, but existing minimal runtime/test adapters intentionally expose only the older narrow interface.
+- Recovery is fail-closed: when a non-ZaraConfig adapter has no callable =get_hooks_config=, the manager constructs a disabled/non-override registry. Real ZaraConfig remains the validated policy authority when the method exists.
+- Recovery commits :: =858879bb28baa3c7f7a11d137bda28d333ed9fc7= and whitespace cleanup =70efc7a71763cc006a4b2af3ed916e533719607f=.
+- Sibling Android recovery PR #290 was exact-head green and merged as =0b2dc899bba6303f5ae4abeadbc909a44cf24b1e=. The core branch was then reconciled with that exact master through non-forced merge commit =dc90edfbcccfb99d61ea815aa30826bc35b406de=; branch diff remains five core/RAGE files with no =android/**= ownership overlap.
+- Fresh exact-head CI is required after this artifact update before readiness or merge.
