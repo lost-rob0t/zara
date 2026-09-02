@@ -70,6 +70,13 @@
 - Fresh exact-head Actions run :: =33614744052= is in progress. This patch is not represented as GREEN until that run is conclusively successful.
 - During this recovery sibling core PR #293 merged, advancing canonical =master= to =f078a2d3f1bd10b60914153de486130bce787380=. Its agent-loop files remain disjoint from this Android transaction; #294 must still be recovered onto the new canonical head before merge authorization can be exercised.
 
+* Gate failure recovery — iteration 4
+- Exact candidate :: =e66f43e0f5d3f22f79668ccc71a7098a3417883f=.
+- Actions run :: =33614827852= completed FAILURE only in the =android skeleton gate=; full repository/Nix/package PASS and both shared-mic jobs PASS. APK assembly completed and the uploaded APK contains none of the gate's configured secret markers, narrowing the failure to the Android JVM test side rather than native/APK production or secret inspection.
+- Root cause :: legacy =PortableSemanticCoreTest= still asserted the pre-resolver two-resource list and required every declared resource to live below =prolog/portable/=. The new canonical resolver packaging intentionally adds three closed resources below =prolog/shared/=, so the old contract correctly failed after the production resource set expanded.
+- Recovery commit :: =8e4281b6244613bcbcfc8dbafa21a25602cf8f7f= updates the deterministic expected resource list to all five approved resources and constrains paths to the closed =prolog/portable/= or =prolog/shared/= roots while retaining absolute/traversal rejection.
+- This is a test-contract reconciliation only; no production semantic/runtime behavior was weakened or skipped.
+
 * Remaining #172 work
 - This slice makes the real canonical utterance resolver loadable by the embedded Android Trealla path; it deliberately does not close #172 yet.
 - #172 still needs the final executable cross-runtime corpus gate comparing normalized SWI-Prolog and Trealla results rather than treating packaging or fake runtime adapters as parity proof.
