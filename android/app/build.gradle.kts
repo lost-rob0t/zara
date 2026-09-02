@@ -101,6 +101,9 @@ androidComponents {
                 layout.projectDirectory.file("../../modules/normalizer.pl"),
                 layout.projectDirectory.file("../../kb/intents.pl")
             )
+            outputDirectory.convention(
+                layout.buildDirectory.dir("generated/portableSemanticAssets/${variant.name}")
+            )
         }
         variant.sources.assets?.addGeneratedSourceDirectory(
             generateAssets,
