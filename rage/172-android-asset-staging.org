@@ -1,0 +1,45 @@
+#+title: RAGE #172 Android portable semantic asset staging
+
+* Immutable start
+- Consumed issue :: #172
+- Start commit :: =0b2dc899bba6303f5ae4abeadbc909a44cf24b1e=
+- Branch :: =rage/android-172-asset-staging=
+
+* Scope
+Android-only continuation of #172. The packaged portable Prolog core currently lives in APK assets, while the JNI adapter passes the supplied string directly to Trealla =pl_consult=. Android AssetManager paths are not ordinary filesystem paths, so native Trealla cannot reliably consult =prolog/portable/semantic_core.pl= from the APK asset namespace.
+
+This iteration owns the smallest deterministic staging boundary under =android/**=: copy the canonical packaged portable semantic core from Android assets into app-private storage, return an ordinary filesystem path to the existing Trealla runtime, and fail closed on missing/corrupt staging. It does not alter server/core Prolog authority, ZARA/1, or sibling core runtime files.
+
+* Research / source analysis
+- #172 acceptance explicitly requires deterministic Android module/resource loading and real Linux/Android parity.
+- =PortableSemanticCore.resources= names =prolog/portable/semantic_core.pl= as an APK asset.
+- =TreallaSemanticRuntime.initialize= currently forwards that logical asset path to =TreallaBridge.initialize=.
+- =zara_trealla_jni.c= converts the Java string to UTF-8 and calls =pl_consult(runtime, path)= directly. Trealla therefore receives a filesystem path, not an Android AssetManager handle.
+- Existing JVM tests use fake bridges and therefore cannot expose this packaging/runtime mismatch.
+
+* Architecture / design
+- Keep =NativeTreallaBridge= and JNI filesystem-oriented; native code should not gain Android AssetManager ownership.
+- Add a small Android-owned staging abstraction that accepts the canonical logical asset name plus an input-stream source and writes to app-private storage.
+- The staged filename/path is deterministic and confined below the caller-supplied private directory.
+- Writes use a temporary sibling then atomic replace where supported; failure leaves no fake-ready result path.
+- Stage only the Prolog core required by Trealla initialization. Fixture JSON remains test/input data and does not need native consultation.
+- Add an Android =AssetManager= adapter so production initialization has a typed source boundary instead of treating the logical APK name as a native path.
+
+* Threat / failure analysis
+- Reject blank logical asset names and any traversal/absolute path attempt.
+- Do not log or expose asset contents.
+- Missing asset, unreadable destination, or failed write aborts initialization.
+- Never fall back to the logical APK path after staging failure.
+- No credentials or mutable user config are staged by this boundary.
+
+* TDD
+- RED commit :: =f4c2409b860a80ac93b3fe19e0a09703ddb9b0dc= adds =PortableSemanticAssetStagerTest= before =PortableSemanticAssetStager=, =PortableSemanticAssetSource=, =PortableSemanticCore.coreAssetPath=, or =TreallaSemanticRuntime.initializeFromAssets= exist. The test therefore requires missing production symbols and cannot compile green on the pre-implementation tree. The first Actions run =33594988997= was superseded/cancelled by the implementation pushes, so it is preserved as source-level RED evidence rather than falsely reported as a completed red gate.
+- GREEN path-name commit :: =1780e4142ce2f7e4e18a92258336a1284ffd5418= names the canonical core/fixture APK assets without changing their packaged locations.
+- GREEN staging commit :: =7b3b3ed69074ebd2af2a896a3510a319ccdaf41e= adds app-private staging with traversal rejection, temporary-file writes, atomic replace where supported, exact byte preservation, and an Android =AssetManager= source adapter.
+- GREEN runtime commit :: =507962af225c269925df1d53bdfc845036e2d2ce= adds =TreallaSemanticRuntime.initializeFromAssets= so JNI receives the staged real filesystem path.
+
+* Gate
+- Local checkout attempt from the automation execution host could not resolve =github.com=, so no local result is claimed.
+- Exact-head GitHub Actions run :: =33595026911= on =507962af225c269925df1d53bdfc845036e2d2ce=.
+- At last inspection all four jobs were active: Android unit/native Trealla/debug APK/secret gate, full repository tests + flake checks + packaged build, Arch mic, and Ubuntu mic.
+- PR :: #291, draft until exact-head gates and review/thread checks are conclusive.
