@@ -1,0 +1,15 @@
+#+title: RAGE #260 - canonical agent-loop advice integration
+#+startup: overview
+
+* Immutable start
+- Consumed issue :: #260 - Emacs-grade hooks, advice and pluggable agent-loop / Prolog-runtime override system
+- RAGE start commit :: =a96b48d12d6fe0eb7bfb88d0a0e0559775974a9d=
+- Branch :: =rage/260-agent-loop-integration=
+- Scope :: Zara core only. Integrate the already-merged Python =AgentLoopAdviceRegistry= with the existing canonical =AgentManager -> run_conversation_loop= boundary. No Android production changes, no second agent loop, no user =hooks.py= loading in this slice, and no bypass of tool approval/cancellation/history/latency/max-step contracts.
+
+* Reconciliation checkpoint
+- Canonical =master= at consumption is =a96b48d12d6fe0eb7bfb88d0a0e0559775974a9d= after core PR #288.
+- Open PR #287 is sibling-owned Android work, mergeable but explicitly draft; exact-head CI #735 is green, so it remains unmerged and untouched by this core transaction.
+- Every other open PR inspected is currently non-mergeable or draft; there is no authorized current-head merge candidate.
+- Existing #260 work has landed the Prolog hook/config seam and the bounded Python advice registry, but the Python registry is not yet connected to the canonical conversation loop.
+
