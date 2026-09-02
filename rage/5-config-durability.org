@@ -13,7 +13,8 @@
 - Current reload tracks asserted clauses and removes them before loading a replacement, so the existing clause-reference mechanism can support a multi-layer load without adding a second configuration subsystem.
 - Current server loader intentionally rejects device-only facts; that boundary must remain identical for every layer.
 - =hooks.pl= derives its directory from =config.pl= but is a separate file; this slice changes Prolog configuration layering only.
-- Existing =scripts/test-prolog-config.sh= already isolates =$XDG_CONFIG_HOME= and is the correct deterministic regression harness.
+- Existing =scripts/test-prolog-config.sh= isolates =$XDG_CONFIG_HOME= and is the intended deterministic regression harness.
+- Repository search found no Zara-owned Home Manager/Nix module that writes =config.pl=; the durability defect is the single-path ownership contract, so it can be fixed entirely in Zara Core.
 
 ** Design
 - Preserve =config.pl= as the backwards-compatible provisioned/base user configuration.
@@ -32,6 +33,12 @@
 - Invalid local layer is atomic :: load valid state, write invalid local term, assert reload throws and prior loaded value remains active.
 - Server boundary applies to local layer :: put device fact in local overlay and assert =load_server_config= rejects it.
 - Existing supported-fact and unsafe-input tests remain green.
+
+** TDD evidence
+- RED candidate commit =9df18df47c5afb0657c8b6662a30c440a3a8d3e6= added only the regression tests. The exact branch production loader had no =user_local_config_path/1= export or predicate, yet CI #828 reported the entire =scripts/test-all.sh= step successful. That is impossible for an effective execution of the new tests and exposed a false-green test launcher/harness defect before production work began.
+- Upstream SWI-Prolog documents =run_tests/0= as semidet and recommends explicit source loading with =-s= plus ordered initialization goals for non-interactive execution.
+- Harness-repair exception: commit =b33dd78fe728d4badd40753e880eac254a305ee7= changes only =scripts/test-prolog-config.sh= to explicitly load =t/prolog_config.pl= via =-s=, run =run_tests=, execute =halt= only on success, and use =halt(1)= as the fallback top-level. No production loader change is present.
+- Exact-head CI #829 is the required repaired-harness RED authority before implementation.
 
 ** Gate
 - Focused :: =nix develop -c bash scripts/test-prolog-config.sh=
