@@ -38,3 +38,15 @@
 - Focused JVM/source-contract tests and full =scripts/test-android.sh= are delegated to exact-head GitHub Actions from this connector environment.
 - Native C compilation is intentionally not claimed by this branch until the canonical Android environment supplies an NDK and pinned Trealla library/source artifact.
 - Native APK parity remains blocked on that reproducible packaging input; this iteration will not report it as shipped early.
+
+* Packaging recovery - 2026-09-02
+- Recovery state :: PR #287 exact head =abeb9c39583ea11331662d5c62b80d59dc78b110= was green and discussion-clean but remained correctly draft because native packaging was not reproducible. It was not merged.
+- Sibling coordination :: current core PR #288 owns hook/advice Python and RAGE/test files only; it has no =android/**= overlap with this transaction.
+- Packaging RED :: commit =e7a40b552c2ba1ae4a6235480336078fc3d18e25= added =NativeTreallaPackagingContractTest= before production packaging existed. Exact-head CI run =33583661391= failed the Android gate while the microphone jobs remained green, isolating the missing Android packaging contract.
+- Ownership decision :: the NDK/Trealla toolchain lives in =android/flake.nix= + =android/flake.lock= instead of expanding the sibling-owned root runtime flake. The sub-flake is locked to the repository's same nixpkgs revision and exposes only the Android build environment.
+- Toolchain :: Android NDK =29.0.14206865= is selected from the pinned nixpkgs Android repository metadata; API floor remains 29, packaged ABIs remain =arm64-v8a= and =x86_64=, and CMake remains 3.22.1.
+- Trealla pin :: source remains exact revision =b25ccfb8e485a697bb47f1947d6fb8e0ad4e6aaf=. The intentional fixed-output RED using a fake Nix hash produced and then pinned =sha256-YgyPP7TTAssdoGINUZCmDs2azHTbxgKA0ZZ9G3df2Cw==; Gradle performs no source download.
+- Build path :: =android/build-trealla.sh= cross-compiles =libtrealla.a= with the pinned NDK for both supported ABIs, disables TTY/SSL/FFI/network/threads, then CMake links each per-ABI archive into =libzara_trealla.so= through the existing JNI surface.
+- CI integration :: the Android job now enters =nix develop ./android= and =scripts/test-android.sh= builds Trealla before JVM tests/APK assembly/secret inspection.
+- First packaging GREEN attempt :: exact head =3f33f44625cc4a11a91e0b2bcb76a480d4dfb09e= successfully realized the pinned Trealla source, NDK, CMake, SDK, and Android dev shell. Run =33584142129= then failed before C compilation because =ANDROID_NDK_ROOT= pointed at the version-container directory rather than the versioned NDK root.
+- NDK-layout fix :: commit =7b5ef168956234506ad33730d33cf30e29cc5f3f= links the versioned NDK into the Android SDK and exports =$ANDROID_HOME/ndk/29.0.14206865= as =ANDROID_NDK_ROOT=. Exact-head CI run =33584400321= was queued after this fix; no native packaging success is claimed until that run reaches and passes the C/Gradle/APK gates.
