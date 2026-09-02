@@ -1,0 +1,39 @@
+#+title: RAGE #172 Android portable semantic asset staging
+
+* Immutable start
+- Consumed issue :: #172
+- Start commit :: =0b2dc899bba6303f5ae4abeadbc909a44cf24b1e=
+- Branch :: =rage/android-172-asset-staging=
+
+* Scope
+Android-only continuation of #172. The packaged portable Prolog core currently lives in APK assets, while the JNI adapter passes the supplied string directly to Trealla =pl_consult=. Android AssetManager paths are not ordinary filesystem paths, so native Trealla cannot reliably consult =prolog/portable/semantic_core.pl= from the APK asset namespace.
+
+This iteration owns the smallest deterministic staging boundary under =android/**=: copy the canonical packaged portable semantic core from Android assets into app-private storage, return an ordinary filesystem path to the existing Trealla runtime, and fail closed on missing/corrupt staging. It does not alter server/core Prolog authority, ZARA/1, or sibling core runtime files.
+
+* Research / source analysis
+- #172 acceptance explicitly requires deterministic Android module/resource loading and real Linux/Android parity.
+- =PortableSemanticCore.resources= names =prolog/portable/semantic_core.pl= as an APK asset.
+- =TreallaSemanticRuntime.initialize= currently forwards that logical asset path to =TreallaBridge.initialize=.
+- =zara_trealla_jni.c= converts the Java string to UTF-8 and calls =pl_consult(runtime, path)= directly. Trealla therefore receives a filesystem path, not an Android AssetManager handle.
+- Existing JVM tests use fake bridges and therefore cannot expose this packaging/runtime mismatch.
+
+* Architecture / design
+- Keep =NativeTreallaBridge= and JNI filesystem-oriented; native code should not gain Android AssetManager ownership.
+- Add a small Android-owned staging abstraction that accepts the canonical logical asset name plus an input-stream source and writes to app-private storage.
+- The staged filename/path is deterministic and confined below the caller-supplied private directory.
+- Writes use a temporary sibling then atomic replace where supported; failure leaves no fake-ready result path.
+- Stage only the Prolog core required by Trealla initialization. Fixture JSON remains test/input data and does not need native consultation.
+- Add an Android =AssetManager= adapter/factory so production initialization cannot accidentally pass the logical APK asset name to JNI.
+
+* Threat / failure analysis
+- Reject blank logical asset names and any traversal/absolute path attempt.
+- Do not log or expose asset contents.
+- Missing asset, unreadable destination, or failed write aborts initialization.
+- Never fall back to the logical APK path after staging failure.
+- No credentials or mutable user config are staged by this boundary.
+
+* Planned TDD
+1. RED: deterministic JVM tests require a portable semantic asset stager that copies the canonical asset to an app-private filesystem path, preserves exact bytes, rejects traversal, and replaces an existing stale file.
+2. RED: production-facing factory must initialize =TreallaSemanticRuntime= with the staged filesystem path rather than =PortableSemanticCore.resources[0]=.
+3. GREEN: implement the smallest staging/factory boundary under =android/**=.
+4. Focused Android JVM tests, then =scripts/test-android.sh=, full repository gate, Nix checks/build, and exact-head Actions.
