@@ -95,7 +95,6 @@
               pkgs.gradle_9
               pkgs.gnumake
               pkgs.gcc
-              pkgs.python3
               pkgs.swi-prolog
               androidSdk
             ];
