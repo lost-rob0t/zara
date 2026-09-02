@@ -113,11 +113,13 @@ class PortableSemanticAssetStager(
         val digest = MessageDigest.getInstance("SHA-256")
         resources.forEach { (path, content) ->
             digest.update(path.encodeToByteArray())
-            digest.update(0)
+            digest.update(0.toByte())
             digest.update(content)
-            digest.update(0)
+            digest.update(0.toByte())
         }
-        return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+        return digest.digest().joinToString("") { byte ->
+            "%02x".format(byte.toInt() and 0xff)
+        }
     }
 
     private fun writeAtomically(
