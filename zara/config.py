@@ -158,15 +158,6 @@ load_on_startup = true
 enabled = false
 allow_override = false
 
-[tasks]
-# Persistent long-horizon tasks are explicitly opt-in and execute each step
-# through the canonical RuntimeHost/AgentManager turn path.
-enabled = false
-max_concurrent = 2
-max_task_steps = 20
-wall_clock_minutes = 30.0
-step_log_chars = 2000
-
 [tools]
 # Enable/disable LangChain tools
 calculator = true
@@ -288,32 +279,47 @@ class ZaraConfig:
             self.config_dir = Path(config_path).parent
             self.config_file = Path(config_path)
         else:
+            # Use XDG_CONFIG_HOME or default to ~/.config
             xdg_config = os.getenv("XDG_CONFIG_HOME")
             if xdg_config:
                 self.config_dir = Path(xdg_config) / "zarathushtra"
             else:
                 self.config_dir = Path.home() / ".config" / "zarathushtra"
+
             self.config_file = self.config_dir / "config.toml"
 
+        # Initialize config if needed
         self._ensure_config_exists()
+
+        # Load configuration
         self._config = self._load_config()
 
     def _ensure_config_exists(self):
         """Create default config file if it doesn't exist."""
         if not self.config_file.exists():
+            # Create config directory
             self.config_dir.mkdir(parents=True, exist_ok=True)
+
+            # Write default config
             self.config_file.write_text(DEFAULT_CONFIG_TOML)
             print(f"Initialized default config at: {self.config_file}")
 
     def _load_config(self) -> Dict[str, Any]:
-        """Load configuration from TOML and validate it."""
+        """
+        Load configuration from TOML file.
+
+        Returns:
+            Parsed configuration dict
+        """
         if tomllib is None:
             raise ConfigError("TOML support is unavailable; install tomli or use Python 3.11+")
+
         try:
             with open(self.config_file, "rb") as f:
                 config = tomllib.load(f)
         except (OSError, tomllib.TOMLDecodeError) as error:
             raise ConfigError(f"Failed to load config {self.config_file}: {error}") from error
+
         self._validate_config(config)
         return config
 
@@ -328,14 +334,17 @@ class ZaraConfig:
         tts_config = config.get("tts", {})
         if not isinstance(tts_config, dict):
             raise ConfigError("Invalid [tts] configuration: expected a TOML table")
+
         provider = tts_config.get("provider", "qwen3")
         if provider == "qwen":
             provider = "qwen3"
             tts_config["provider"] = provider
+
         supported_providers = {"local", "11labs", "edge", "qwen3"}
         if provider not in supported_providers:
             choices = ", ".join(sorted(supported_providers))
             raise ConfigError(f"Unsupported TTS provider {provider!r}; choose one of: {choices}")
+
         if provider == "11labs":
             required = ("elevenlabs_api_key", "elevenlabs_voice_id")
             missing = [key for key in required if not tts_config.get(key)]
@@ -365,29 +374,6 @@ class ZaraConfig:
             if not isinstance(hooks_config.get(key, False), bool):
                 raise ConfigError(f"hooks.{key} must be true or false")
 
-        tasks_config = config.get("tasks", {})
-        if not isinstance(tasks_config, dict):
-            raise ConfigError("Invalid [tasks] configuration: expected a TOML table")
-        if not isinstance(tasks_config.get("enabled", False), bool):
-            raise ConfigError("tasks.enabled must be true or false")
-
-        def validate_task_int(key: str, default: int, minimum: int, maximum: int) -> None:
-            value = tasks_config.get(key, default)
-            if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
-                raise ConfigError(f"tasks.{key} must be an integer from {minimum} to {maximum}")
-
-        validate_task_int("max_concurrent", 2, 1, 16)
-        validate_task_int("max_task_steps", 20, 1, 1000)
-        validate_task_int("step_log_chars", 2000, 1, 1_000_000)
-        wall_clock_minutes = tasks_config.get("wall_clock_minutes", 30.0)
-        if (
-            isinstance(wall_clock_minutes, bool)
-            or not isinstance(wall_clock_minutes, (int, float))
-            or not math.isfinite(float(wall_clock_minutes))
-            or wall_clock_minutes <= 0
-        ):
-            raise ConfigError("tasks.wall_clock_minutes must be a positive finite number")
-
         tools_config = config.get("tools", {})
         if not isinstance(tools_config, dict):
             raise ConfigError("Invalid [tools] configuration: expected a TOML table")
@@ -409,7 +395,9 @@ class ZaraConfig:
             )
             or len(set(required_tools)) != len(required_tools)
         ):
-            raise ConfigError("tool_approval.required_tools must be a unique list of bounded names")
+            raise ConfigError(
+                "tool_approval.required_tools must be a unique list of bounded names"
+            )
         approval_timeout = approval_config.get("timeout_seconds", 300.0)
         if (
             isinstance(approval_timeout, bool)
@@ -419,7 +407,11 @@ class ZaraConfig:
         ):
             raise ConfigError("tool_approval.timeout_seconds must be a positive number")
         max_pending = approval_config.get("max_pending", 8)
-        if isinstance(max_pending, bool) or not isinstance(max_pending, int) or not 1 <= max_pending <= 64:
+        if (
+            isinstance(max_pending, bool)
+            or not isinstance(max_pending, int)
+            or not 1 <= max_pending <= 64
+        ):
             raise ConfigError("tool_approval.max_pending must be an integer from 1 to 64")
 
         file_config = config.get("file_tools", {})
@@ -427,7 +419,11 @@ class ZaraConfig:
             raise ConfigError("Invalid [file_tools] configuration: expected a TOML table")
         for key in ("readable_roots", "writable_roots"):
             roots = file_config.get(key, ["."])
-            if not isinstance(roots, list) or not roots or any(not isinstance(root, str) or not root for root in roots):
+            if (
+                not isinstance(roots, list)
+                or not roots
+                or any(not isinstance(root, str) or not root for root in roots)
+            ):
                 raise ConfigError(f"file_tools.{key} must be a non-empty string list")
         max_bytes = file_config.get("max_bytes", DEFAULT_FILE_TOOL_MAX_BYTES)
         if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 1:
@@ -437,16 +433,33 @@ class ZaraConfig:
         if not isinstance(plugins_config, dict):
             raise ConfigError("Invalid [plugins] configuration: expected a TOML table")
         lifecycle_timeout = plugins_config.get("lifecycle_timeout", 5.0)
-        if isinstance(lifecycle_timeout, bool) or not isinstance(lifecycle_timeout, (int, float)) or not math.isfinite(float(lifecycle_timeout)) or lifecycle_timeout <= 0:
+        if (
+            isinstance(lifecycle_timeout, bool)
+            or not isinstance(lifecycle_timeout, (int, float))
+            or not math.isfinite(float(lifecycle_timeout))
+            or lifecycle_timeout <= 0
+        ):
             raise ConfigError("plugins.lifecycle_timeout must be a positive number")
         event_queue_size = plugins_config.get("event_queue_size", 256)
-        if isinstance(event_queue_size, bool) or not isinstance(event_queue_size, int) or not 1 <= event_queue_size <= 4096:
+        if (
+            isinstance(event_queue_size, bool)
+            or not isinstance(event_queue_size, int)
+            or not 1 <= event_queue_size <= 4096
+        ):
             raise ConfigError("plugins.event_queue_size must be an integer from 1 to 4096")
         max_workers = plugins_config.get("max_managed_workers", 8)
-        if isinstance(max_workers, bool) or not isinstance(max_workers, int) or not 1 <= max_workers <= 64:
+        if (
+            isinstance(max_workers, bool)
+            or not isinstance(max_workers, int)
+            or not 1 <= max_workers <= 64
+        ):
             raise ConfigError("plugins.max_managed_workers must be an integer from 1 to 64")
         for plugin_name, plugin_config in plugins_config.items():
-            if plugin_name in {"lifecycle_timeout", "event_queue_size", "max_managed_workers"}:
+            if plugin_name in {
+                "lifecycle_timeout",
+                "event_queue_size",
+                "max_managed_workers",
+            }:
                 continue
             if not isinstance(plugin_config, dict):
                 raise ConfigError(f"plugins.{plugin_name} must be a TOML table")
@@ -459,7 +472,12 @@ class ZaraConfig:
         if not isinstance(pets_config.get("selected_pet", "zara-default"), str):
             raise ConfigError("pets.selected_pet must be a string")
         scale = pets_config.get("scale", 1.0)
-        if isinstance(scale, bool) or not isinstance(scale, (int, float)) or not math.isfinite(float(scale)) or float(scale) <= 0:
+        if (
+            isinstance(scale, bool)
+            or not isinstance(scale, (int, float))
+            or not math.isfinite(float(scale))
+            or float(scale) <= 0
+        ):
             raise ConfigError("pets.scale must be a positive number")
         reduced = pets_config.get("reduced_motion", "system")
         if reduced not in {"system", "on", "off"}:
@@ -488,28 +506,74 @@ class ZaraConfig:
         }
         unknown_budgets = sorted(set(budgets) - allowed_budgets)
         if unknown_budgets:
-            raise ConfigError("Unknown latency budget(s): " + ", ".join(unknown_budgets))
+            raise ConfigError(
+                "Unknown latency budget(s): " + ", ".join(unknown_budgets)
+            )
         for key, value in budgets.items():
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+            ):
                 raise ConfigError(f"latency.budgets.{key} must be a positive number")
 
     def get(self, section: str, key: str, default: Any = None) -> Any:
+        """
+        Get configuration value.
+
+        Args:
+            section: Config section (e.g., "llm", "agent")
+            key: Key within section
+            default: Default value if not found
+
+        Returns:
+            Configuration value or default
+        """
         return self._config.get(section, {}).get(key, default)
 
     def get_section(self, section: str) -> Dict[str, Any]:
+        """
+        Get entire configuration section.
+
+        Args:
+            section: Section name
+
+        Returns:
+            Section dict or empty dict if not found
+        """
         return self._config.get(section, {})
 
     def get_llm_config(self) -> Dict[str, Any]:
+        """
+        Get LLM configuration with environment variable override.
+
+        Environment variables take precedence over config file.
+
+        Returns:
+            LLM configuration dict
+        """
         llm_config = self.get_section("llm")
+
+        # Override with environment variables if set
         provider = os.getenv("ZARA_LLM_PROVIDER", llm_config.get("provider", "ollama"))
         model = os.getenv("ZARA_LLM_MODEL", llm_config.get("model", ""))
         endpoint_override = os.getenv("ZARA_LLM_ENDPOINT")
         endpoint = endpoint_override or llm_config.get("endpoint", "")
-        if not endpoint_override and provider != "ollama" and endpoint == DEFAULT_OLLAMA_ENDPOINT:
+        if (
+            not endpoint_override
+            and provider != "ollama"
+            and endpoint == DEFAULT_OLLAMA_ENDPOINT
+        ):
             endpoint = ""
+
+        # Get API keys from config or environment
         anthropic_key = os.getenv("ANTHROPIC_API_KEY", llm_config.get("anthropic_api_key", ""))
         openai_key = os.getenv("OPENAI_API_KEY", llm_config.get("openai_api_key", ""))
-        openrouter_key = os.getenv("OPENROUTER_API_KEY", llm_config.get("openrouter_api_key", ""))
+        openrouter_key = os.getenv(
+            "OPENROUTER_API_KEY", llm_config.get("openrouter_api_key", "")
+        )
+
         return {
             "provider": provider,
             "model": model if model else None,
@@ -525,6 +589,7 @@ class ZaraConfig:
         }
 
     def get_latency_config(self) -> Dict[str, Any]:
+        """Return structured latency metric settings and deterministic budgets."""
         latency_config = self.get_section("latency")
         return {
             "enabled": bool(latency_config.get("enabled", True)),
@@ -533,23 +598,40 @@ class ZaraConfig:
         }
 
     def get_module_search_paths(self) -> List[Path]:
+        """
+        Get module search paths with expansion.
+
+        Expands ~ and environment variables in paths.
+        Only returns existing directories.
+
+        Returns:
+            List of expanded Path objects
+        """
         modules_config = self.get_section("modules")
         search_paths = modules_config.get("search_paths", ["~/.zarathushtra/plugins"])
+
         expanded_paths = []
         for path_str in search_paths:
+            # Expand ~ and environment variables
             expanded = os.path.expanduser(os.path.expandvars(path_str))
             path = Path(expanded)
+
+            # Only include existing directories
             if path.exists() and path.is_dir():
                 expanded_paths.append(path)
             elif not path.exists():
+                # Create directory if it doesn't exist
                 try:
                     path.mkdir(parents=True, exist_ok=True)
                     expanded_paths.append(path)
                 except Exception:
+                    # Skip if we can't create it
                     pass
+
         return expanded_paths
 
     def get_plugin_runtime_config(self) -> Dict[str, Any]:
+        """Return generic service-plugin lifecycle bounds."""
         plugins_config = self.get_section("plugins")
         return {
             "lifecycle_timeout": float(plugins_config.get("lifecycle_timeout", 5.0)),
@@ -558,42 +640,53 @@ class ZaraConfig:
         }
 
     def get_api_service_config(self) -> Dict[str, Any]:
+        """Return the server api_service gate configuration (issue #158)."""
         api_config = self.get_section("api_service")
         enabled = api_config.get("enabled", False)
         if not isinstance(enabled, bool):
             raise ValueError("[api_service].enabled must be a boolean")
         disabled_providers = api_config.get("disabled_providers", [])
-        if not isinstance(disabled_providers, list) or not all(isinstance(item, str) and item.strip() for item in disabled_providers):
-            raise ValueError("[api_service].disabled_providers must be a list of provider ids")
-        return {"enabled": enabled, "disabled_providers": tuple(disabled_providers)}
+        if not isinstance(disabled_providers, list) or not all(
+            isinstance(item, str) and item.strip() for item in disabled_providers
+        ):
+            raise ValueError(
+                "[api_service].disabled_providers must be a list of provider ids"
+            )
+        return {
+            "enabled": enabled,
+            "disabled_providers": tuple(disabled_providers),
+        }
 
     def get_plugin_config(self, plugin_name: str) -> Dict[str, Any]:
+        """Return one external plugin's isolated configuration namespace."""
         plugin_config = self.get_section("plugins").get(plugin_name, {})
         return dict(plugin_config) if isinstance(plugin_config, dict) else {}
 
     def get_autoload_modules(self) -> List[str]:
+        """
+        Get list of modules to auto-load.
+
+        Returns:
+            List of module file names
+        """
         modules_config = self.get_section("modules")
         return modules_config.get("autoload", [])
 
     def get_hooks_config(self) -> Dict[str, bool]:
+        """Return validated lifecycle-hook policy gates."""
         hooks_config = self.get_section("hooks")
         return {
             "enabled": hooks_config.get("enabled", False),
             "allow_override": hooks_config.get("allow_override", False),
         }
 
-    def get_tasks_config(self) -> Dict[str, Any]:
-        """Return validated long-horizon task runtime bounds."""
-        tasks = self.get_section("tasks")
-        return {
-            "enabled": tasks.get("enabled", False),
-            "max_concurrent": tasks.get("max_concurrent", 2),
-            "max_task_steps": tasks.get("max_task_steps", 20),
-            "wall_clock_minutes": tasks.get("wall_clock_minutes", 30.0),
-            "step_log_chars": tasks.get("step_log_chars", 2000),
-        }
-
     def get_tool_config(self) -> Dict[str, bool]:
+        """
+        Get tool enable/disable configuration.
+
+        Returns:
+            Dict mapping tool names to enabled status
+        """
         return self.get_section("tools")
 
     def get_file_tool_config(self, repo_root: Path) -> Dict[str, Any]:
@@ -614,57 +707,104 @@ class ZaraConfig:
         }
 
     def get_tool_approval_config(self) -> Dict[str, Any]:
+        """Return validated server-side tool approval policy."""
         return self.get_section("tool_approval")
 
     def get_agent_system_prompt(self) -> Optional[str]:
+        """
+        Get the agent system prompt.
+
+        If the value points to a file, read the prompt from disk.
+        """
         agent_config = self.get_section("agent")
         prompt_value = agent_config.get("system_prompt", "")
         if not prompt_value:
             return None
+
         expanded = os.path.expanduser(os.path.expandvars(str(prompt_value)))
         prompt_path = Path(expanded)
         if not prompt_path.is_absolute():
             candidate = self.config_dir / expanded
             if candidate.exists():
                 prompt_path = candidate
+
         if prompt_path.exists() and prompt_path.is_file():
             try:
                 return prompt_path.read_text(encoding="utf-8")
             except Exception:
                 return str(prompt_value)
+
         return str(prompt_value)
 
     def reload(self):
+        """Reload configuration from file."""
         self._config = self._load_config()
 
 
+# Global config instance
 _global_config: Optional[ZaraConfig] = None
 
 
 def get_config(config_path: Optional[str] = None) -> ZaraConfig:
+    """
+    Get global configuration instance.
+
+    Args:
+        config_path: Optional custom config path (only used on first call)
+
+    Returns:
+        ZaraConfig instance
+    """
     global _global_config
+
     if _global_config is None:
         _global_config = ZaraConfig(config_path)
+
     return _global_config
 
 
 def init_config(config_path: Optional[str] = None) -> ZaraConfig:
+    """
+    Initialize configuration system.
+
+    This should be called once at application startup.
+
+    Args:
+        config_path: Optional custom config path
+
+    Returns:
+        ZaraConfig instance
+    """
     global _global_config
     _global_config = ZaraConfig(config_path)
     return _global_config
 
 
 def load_user_modules(config: Optional[ZaraConfig] = None):
+    """
+    Load user modules from configured paths.
+
+    Args:
+        config: Optional config instance (uses global if None)
+    """
     if config is None:
         config = get_config()
+
+    # Get module search paths
     search_paths = config.get_module_search_paths()
+
     if not search_paths:
         return
+
+    # Import the agent tool loader
     try:
         from .agent.tools.loader import load_plugins
         from .agent.tools.registry import ToolRegistry
     except ImportError:
+        # Agent system not available
         return
+
+    # Load plugins from each search path
     for path in search_paths:
         try:
             load_plugins(str(path))
