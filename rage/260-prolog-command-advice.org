@@ -1,0 +1,10 @@
+#+startup: overview
+
+* Immutable start
+- Consumed issue :: #260 - Emacs-grade hooks, advice and pluggable agent-loop / Prolog-runtime override system
+- RAGE start commit :: =9f3b779b876df360001b12d0100698f334beb8b8=
+- Branch :: =rage/260-prolog-command-advice=
+- Scope :: Zara core only. Add the still-missing Prolog command-runtime customization seam on top of the already-landed ordered Prolog hook registry and mutable =hooks.pl= loader. No Android production changes, no second Prolog runtime, no untrusted/remote hooks, and no bypass of command/tool capability policy.
+
+* Baseline finding
+Current master already contains the ordered =zara_hooks= registry and mutable user =hooks.pl= loading from the canonical XDG config directory. =modules/command_loop.pl= still directly resolves and executes commands with no =advice_command_loop/3= or dynamic =command_handler/2= override seam, so that is the remaining issue #260 gap consumed by this iteration.

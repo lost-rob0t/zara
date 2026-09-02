@@ -1,0 +1,40 @@
+#+title: RAGE Design - #260 Prolog command advice
+#+startup: overview
+
+* Boundary
+This iteration adds one trusted-local override seam to the existing canonical Prolog command loop. It does not alter intent resolution, replies, Python agent execution, Android, timers, or tool/plugin authorization.
+
+* API
+=modules/command_loop.pl= exports:
+- =advice_command_loop(+Intent,+Args,-Result)=
+- dynamic/multifile =command_handler(+Intent,+Args)=
+
+=command_handler/2= is source-owned Prolog extension code. Core never derives a callable from speech. User =hooks.pl= may add clauses because it is already loaded as trusted mutable local configuration.
+
+* Dispatch
+1. =execution_result/3= asks =advice_command_loop/3= first.
+2. Advice is eligible only when =hooks_loader:hook_policy(true,true)=.
+3. The first successful matching =command_handler(Intent,Args)= handles the command and yields =command_result(success,Intent,Args,none)=.
+4. If no handler matches/succeeds, advice fails and existing =commands:execute/2= executes unchanged.
+5. If a matching handler throws, advice succeeds with =command_result(failure,Intent,Args,exception(Error))=; core does not retry/fall through, preventing duplicate side effects.
+6. =execute_resolved/3= remains the only reply-emitting owner and therefore preserves existing reply lifecycle hooks.
+
+* Invariants
+- Both =[hooks].enabled= and =[hooks].allow_override= are required.
+- No shell interpolation or speech-to-goal conversion.
+- No second Prolog runtime.
+- Existing core command behavior is byte-for-byte control-flow equivalent when advice is gated off or has no matching handler.
+- Result shape remains =command_result/4=.
+- Handler exceptions are contained and never cause an implicit second execution.
+
+* TDD acceptance map
+1. Public predicates exist: RED on current master.
+2. Disabled hooks reject override dispatch.
+3. Enabled hooks with =allow_override=false= reject override dispatch.
+4. Both gates true allow a matching handler and return success.
+5. A failing handler is treated as unhandled.
+6. A throwing handler returns bounded failure rather than falling through.
+7. Full repository gate/Nix/build remain green.
+
+* Adversarial review
+The largest risk is turning user speech into executable Prolog. The design does not do that: the callable clauses are loaded only from trusted local source, and runtime input supplies ordinary predicate arguments. The second risk is double execution after a handler error; exception-to-result semantics explicitly prevent fallback in that case. The third risk is accidentally enabling overrides when only one policy bit is set; tests cover all gate combinations.
