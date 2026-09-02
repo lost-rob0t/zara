@@ -40,6 +40,14 @@
 - Harness-repair exception: commit =b33dd78fe728d4badd40753e880eac254a305ee7= changes only =scripts/test-prolog-config.sh= to explicitly load =t/prolog_config.pl= via =-s=, run =run_tests=, execute =halt= only on success, and use =halt(1)= as the fallback top-level. No production loader change is present.
 - Exact-head CI #829 is the required repaired-harness RED authority before implementation.
 
+** Implementation
+- Commit =96ca65eb033d4d90f06310cd13696f31c378655f= adds =config.local.pl= as the sole mutable user-owned overlay.
+- =load_user_config/0= validates both provisioned and local layers before replacing tracked clauses; =ensure_user_config/0= still creates only the backwards-compatible base =config.pl= and never creates the local overlay.
+- =reload_user_config/0= accepts either layer being present, validates both present layers first, then replaces the old tracked generation once.
+- =load_server_config/0= applies the same two-layer ordering through the existing server-only validator, so device facts in either layer still fail closed.
+- Base facts are concatenated before local facts and asserted with the existing =asserta/2= path, making local facts deterministically precede base and built-in defaults without changing the established override mechanism.
+- Exact-head CI #835 is the first implementation GREEN candidate and is pending at this log update.
+
 ** Gate
 - Focused :: =nix develop -c bash scripts/test-prolog-config.sh=
 - Full :: =nix develop -c bash scripts/test-all.sh=
