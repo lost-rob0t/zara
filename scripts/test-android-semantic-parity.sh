@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 semantic_core="$repo_root/android/app/src/main/assets/prolog/portable/semantic_core.pl"
 semantic_corpus="$repo_root/kb/semantic_corpus.pl"
+report_dir="$repo_root/android/app/build/reports/semantic-parity"
 
 : "${ZARA_TREALLA_SOURCE_DIR:?ZARA_TREALLA_SOURCE_DIR must point to the pinned Trealla source}"
 command -v swipl >/dev/null
@@ -17,6 +18,9 @@ test -f "$repo_root/modules/intent_frames.pl"
 test -f "$repo_root/modules/normalizer.pl"
 test -f "$repo_root/kb/intents.pl"
 
+rm -rf "$report_dir"
+mkdir -p "$report_dir"
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -24,8 +28,13 @@ trealla="$tmp/trealla"
 cp -R "$ZARA_TREALLA_SOURCE_DIR" "$trealla"
 chmod -R u+w "$trealla"
 bash "$repo_root/android/patch-trealla-module-path.sh" "$trealla"
-make -C "$trealla" -f GNUmakefile -j2 \
-  NOSSL=1 NOFFI=1 NOTHREADS=1 NOTTY=1 NONETWORK=1 tpl >/dev/null
+if ! make -C "$trealla" -f GNUmakefile -j2 \
+  NOSSL=1 NOFFI=1 NOTHREADS=1 NOTTY=1 NONETWORK=1 tpl \
+  >"$report_dir/trealla-build.stdout" 2>"$report_dir/trealla-build.stderr"; then
+  echo "semantic parity FAILED: pinned Trealla host build failed" >&2
+  cat "$report_dir/trealla-build.stderr" >&2
+  exit 1
+fi
 
 stage="$tmp/prolog"
 mkdir -p "$stage/portable" "$stage/shared/modules" "$stage/shared/kb"
@@ -64,15 +73,18 @@ parity_cases([Id|Rest]) :-
     parity_cases(Rest).
 PL
 
-swi_out="$tmp/swi.out"
-trealla_out="$tmp/trealla.out"
+swi_out="$report_dir/swi.stdout"
+swi_err="$report_dir/swi.stderr"
+trealla_out="$report_dir/trealla.stdout"
+trealla_err="$report_dir/trealla.stderr"
 
 if ! swipl -q -f none \
     -s "$stage/portable/semantic_core.pl" \
     -s "$stage/shared/kb/semantic_corpus.pl" \
     -s "$stage/parity_driver.pl" \
-    -g parity_main >"$swi_out"; then
+    -g parity_main >"$swi_out" 2>"$swi_err"; then
   echo "semantic parity FAILED: SWI-Prolog corpus execution failed" >&2
+  cat "$swi_err" >&2
   cat "$swi_out" >&2
   exit 1
 fi
@@ -81,8 +93,9 @@ if ! "$trealla/tpl" -q -f \
     "$stage/portable/semantic_core.pl" \
     "$stage/shared/kb/semantic_corpus.pl" \
     "$stage/parity_driver.pl" \
-    -g parity_main >"$trealla_out"; then
+    -g parity_main >"$trealla_out" 2>"$trealla_err"; then
   echo "semantic parity FAILED: Trealla corpus execution failed" >&2
+  cat "$trealla_err" >&2
   cat "$trealla_out" >&2
   exit 1
 fi
@@ -94,8 +107,9 @@ if [[ "$case_count" -le 0 ]]; then
 fi
 
 if ! cmp -s "$swi_out" "$trealla_out"; then
+  diff -u "$swi_out" "$trealla_out" >"$report_dir/cross-runtime.diff" || true
   echo "semantic parity FAILED: SWI-Prolog and Trealla diverged" >&2
-  diff -u "$swi_out" "$trealla_out" >&2 || true
+  cat "$report_dir/cross-runtime.diff" >&2
   exit 1
 fi
 
