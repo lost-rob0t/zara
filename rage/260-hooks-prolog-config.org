@@ -93,3 +93,16 @@ This log append advances the branch again. No prior run is merge authorization. 
 - PR remains non-draft and mergeable;
 - zero blocking comments/reviews/unresolved threads;
 - expected-head protected merge only.
+
+* Iteration 3 - Python hook/advice seam
+** Immutable re-entry
+- Consumed issue :: #260
+- RAGE start commit :: =89e6fbc6f17df0a86083b5e66dd1496c89555daf=
+- Branch :: =rage/260-python-hooks-advice=
+- Scope :: Python lifecycle hook/advice registry around the existing canonical agent loop. No Android production changes, no second agent loop, no tool-policy bypass, and no user =hooks.py= execution until the policy/lifecycle contract is proven.
+- Sibling transaction :: draft PR #284 at =bb82778cca98de8eb2c4d1220a64900b80bd7f77=, Android-only and exact-head CI #711 green; it remains sibling-owned and unmodified here.
+
+** Reconciliation checkpoint
+- Canonical master is =89e6fbc6f17df0a86083b5e66dd1496c89555daf=.
+- No open core PR is both current-head eligible and merge-authorized; #284 is draft Android work, #262 is intentional RED, and the remaining core PRs are stale or conflict with current structured-capability constraints.
+- Existing #260 Prolog hook/config seam is merged and remains the policy baseline: =[hooks].enabled= defaults false and =allow_override= defaults false.
