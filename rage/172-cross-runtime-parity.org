@@ -70,3 +70,12 @@
 - =783a5d1a3c7ad1a23989aa00fa03c804be64e270= preserves fail-only diagnostics under =android/app/build/reports/semantic-parity/= for the pinned Trealla host build plus SWI/Trealla stdout/stderr and any cross-runtime diff. All existing failure conditions remain hard failures.
 - =cfa53c3358fd1cdd83145024d8f417db4832b48d= uploads that directory from the Android Actions job with =if: always()= as =android-semantic-parity-diagnostics= so the next exact-head failure is actionable instead of speculative.
 - Validation strength is unchanged: both engines must still execute the authoritative corpus independently, match expected normalized frames, and produce byte-equivalent canonical output before Android can pass.
+
+* Recovery iteration — Trealla portable normalizer
+- Exact failed head :: =7d363fe7a3f6c532a9fb9cf41d87c0175246e311=.
+- Actions run :: =33662165755=.
+- Evidence :: repository =test=/Nix/package and both shared-mic jobs passed; only =android skeleton gate= failed. The uploaded =android-semantic-parity-diagnostics= artifact made the failure concrete.
+- SWI executed all 40 authoritative corpus cases successfully. Trealla loaded the staged shared core but failed immediately with =existence_error(procedure,atom_string/2)=. It also warned that =library(dcg/basics)= was unavailable.
+- Source audit localized both portability violations to =modules/normalizer.pl=: =repl/3= used SWI's =atom_string/2= four times, and the module imported =library(dcg/basics)= without using any predicate from it.
+- #172 explicitly owns the portable shared Prolog subset, so this is the minimal permitted shared compatibility edit; sibling-core PRs #264/#298 do not own this file or Android parity.
+- =5bcba65649accc0b7757fb1b59a85c330e624084= replaces =atom_string/2= conversions with portable =string_codes/2= + =atom_codes/2= conversions and removes the unused =library(dcg/basics)= import. Canonical resolver behavior and corpus expectations are unchanged; the existing executable parity gate is the RED regression test and remains authoritative.
