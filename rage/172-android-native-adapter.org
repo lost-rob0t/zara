@@ -16,6 +16,7 @@
 - Issue #172 remains open and requires deterministic Android packaging plus real cross-runtime fixture execution.
 - Upstream Trealla at commit =b25ccfb8e485a697bb47f1947d6fb8e0ad4e6aaf= exposes a supported embedding API in =src/trealla.h=: =pl_create/pl_destroy=, =pl_consult= / =pl_consult_text=, =pl_query/pl_redo/pl_done=, and canonical =pl_term_text= binding inspection.
 - Upstream documents =pl_term= answer views as query-owned and =pl_term_text= strings as caller-owned via =pl_free=; Zara must copy into JNI strings before advancing/destroying a query.
+- Upstream sample =samples/embed.c= documents the non-obvious query contract: =pl_query= reports error state rather than success, =get_status= identifies the first solution, =pl_redo= destroys an exhausted query, and =pl_done= is only for a still-active query.
 - Current Zara Android build intentionally has no NDK enabled yet; =flake.nix= explicitly records that the Trealla/NDK spike belongs to #172. This Android-only iteration therefore defines the native adapter source/build contract first and does not claim packaged native parity until the repository Android toolchain provides the NDK.
 
 * Design / adversarial review
@@ -23,14 +24,17 @@
 - One native engine instance is process-local and guarded by a mutex. Initialization creates exactly one Trealla engine and consults the supplied portable core path; failed consult destroys the engine and returns false.
 - Evaluation requires a live engine and a non-empty query. Each answer must expose a =Result= binding; Zara copies its canonical =pl_term_text= representation into the returned Java string array. Missing =Result= or Trealla error fails the JNI call rather than inventing success.
 - Query-owned terms are copied before =pl_redo/pl_done=. Owned Trealla strings are released with =pl_free=.
+- Results are bounded to 256 answers to prevent an unbounded JNI allocation loop. Hitting the bound closes the still-active query deterministically.
 - Shutdown destroys the engine and is idempotent.
-- This slice must not vendor an unpinned moving Trealla checkout, download source during Gradle execution, or silently omit the native runtime from a production APK.
+- CMake accepts only explicit local =ZARA_TREALLA_SOURCE_DIR= and =ZARA_TREALLA_LIBRARY= inputs; it performs no network fetch and therefore cannot silently move to an unreviewed upstream revision.
+- This slice does not wire Gradle/native packaging yet because the NDK and pinned Trealla artifact are not present in the current Android toolchain; enabling an externalNativeBuild that cannot pass the canonical Nix Android gate would be a false-green/false-shipped architecture.
 
-* Planned TDD
-- Add deterministic Android source-contract tests first for JNI symbol coverage, Trealla lifecycle calls, canonical Result binding extraction, ownership cleanup, and no network/provider APIs in the adapter.
-- RED must fail because the native adapter source/build files do not exist.
-- GREEN adds only the native adapter/CMake contract required by those tests.
+* TDD
+- RED commit :: =5e313630513b8df92bbe5615225d79526736d7fe= adds =NativeTreallaSourceContractTest= before native production files exist. It requires the frozen JNI symbols, Trealla lifecycle calls, canonical =Result= binding extraction, ownership cleanup, and a network-free CMake contract.
+- GREEN source commit :: =80a072a3277209a77de86a39fca5d6ea4147fb5b= adds =zara_trealla_jni.c= with fail-closed init/evaluate/shutdown, mutex serialization, bounded result extraction, and Trealla-owned string cleanup.
+- GREEN build-contract commit :: =b65c54c4ce0aada001ffff96af7744050fb908e6= adds Android-local CMake requiring explicit pinned Trealla source/library inputs without network fetching.
 
 * Gate
-- Focused JVM/source-contract tests, then =scripts/test-android.sh= and repository-native gates when exact-head CI is available.
-- Native APK parity remains blocked until the Android NDK/Trealla source packaging input is wired reproducibly; this iteration will not report it as shipped early.
+- Focused JVM/source-contract tests and full =scripts/test-android.sh= are delegated to exact-head GitHub Actions from this connector environment.
+- Native C compilation is intentionally not claimed by this branch until the canonical Android environment supplies an NDK and pinned Trealla library/source artifact.
+- Native APK parity remains blocked on that reproducible packaging input; this iteration will not report it as shipped early.
