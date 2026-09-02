@@ -9,6 +9,7 @@ semantic_corpus="$repo_root/kb/semantic_corpus.pl"
 command -v swipl >/dev/null
 command -v make >/dev/null
 command -v gcc >/dev/null
+command -v python3 >/dev/null
 
 test -f "$semantic_core"
 test -f "$semantic_corpus"
@@ -22,6 +23,7 @@ trap 'rm -rf "$tmp"' EXIT
 trealla="$tmp/trealla"
 cp -R "$ZARA_TREALLA_SOURCE_DIR" "$trealla"
 chmod -R u+w "$trealla"
+bash "$repo_root/android/patch-trealla-module-path.sh" "$trealla"
 make -C "$trealla" -f GNUmakefile -j2 \
   NOSSL=1 NOFFI=1 NOTHREADS=1 NOTTY=1 NONETWORK=1 tpl >/dev/null
 
