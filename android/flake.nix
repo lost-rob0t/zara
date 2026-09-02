@@ -61,7 +61,7 @@
             '') androidEnv.cmake}
 
             ${pkgs.lib.concatMapStrings (ndk: ''
-              ln -s ${ndk}/libexec/android-sdk/ndk $sdk/ndk/${ndk.version}
+              ln -s ${ndk}/libexec/android-sdk/ndk/${ndk.version} $sdk/ndk/${ndk.version}
             '') androidEnv.ndk-bundles}
 
             ${pkgs.lib.concatMapStrings (name: ''
@@ -101,7 +101,7 @@
             shellHook = ''
               export ANDROID_HOME=${androidSdk}/libexec/android-sdk
               export ANDROID_SDK_ROOT=$ANDROID_HOME
-              export ANDROID_NDK_ROOT=${androidEnv.ndk-bundle}/libexec/android-sdk/ndk
+              export ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/${androidEnv.ndk-bundle.version}
               export JAVA_HOME=${pkgs.jdk21.home}
               export ZARA_ANDROID_NDK_VERSION=${androidEnv.ndk-bundle.version}
               export ZARA_TREALLA_SOURCE_DIR=${treallaSource}
