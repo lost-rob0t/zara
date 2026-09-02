@@ -54,6 +54,14 @@
 - Current evidence :: Ubuntu shared-mic job PASS; Arch shared-mic job PASS; Android skeleton gate still running; full repository/Nix test job still running.
 - Merge state remains gated: no ready/merge operation while exact-head Android/full-repository jobs are unresolved.
 
+* Gate failure recovery — iteration 2
+- Exact candidate :: =1f19fc2946ae2565f5f890089a391be17c61dce0=.
+- Actions run :: =33604630931= completed FAILURE because the =android skeleton gate= failed. The full repository/Nix/package job PASS and both shared-mic jobs PASS, isolating the failure to Android build/test packaging rather than sibling core or audio behavior.
+- Source review after the failed Android gate found the generated-assets task declared the entire repository root as =@InputDirectory= while its generated output lives under that same repository tree. That input model is unnecessarily broad and allows task output/build churn to contaminate Gradle input fingerprinting.
+- Recovery commit :: =2440469422b73ac101879317b26b82b7b5ceb832= replaces the repository-root input with exactly three =@InputFiles= using relative path sensitivity: =modules/intent_frames.pl=, =modules/normalizer.pl=, and =kb/intents.pl=. The task still generates the same stable Android asset layout.
+- Regression contract commit :: =8824f042a482cb1019d89f70dd9b9db91d90ebe1= requires bounded =@InputFiles= and rejects reintroduction of =@InputDirectory= / repository-root task input wiring.
+- This recovery does not change shared Prolog semantics or core/runtime files.
+
 * Remaining #172 work
 - This slice makes the real canonical utterance resolver loadable by the embedded Android Trealla path; it deliberately does not close #172 yet.
 - #172 still needs the final executable cross-runtime corpus gate comparing normalized SWI-Prolog and Trealla results rather than treating packaging or fake runtime adapters as parity proof.
