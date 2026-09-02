@@ -61,3 +61,12 @@
 - Candidate before this evidence append :: =866c22ee932ef3148231ad21ab81c347f05ed061=.
 - Required :: executable full-corpus parity, full Android gate, repository/Nix/package gate, exact-head Actions, no blocking review/thread, mergeable current head.
 - #172 remains open until those are green and merged.
+
+* Recovery iteration — preserved parity diagnostics
+- Exact failed head :: =9b999de0f5aee37fdeccc5ab4516e00debfb79ba=.
+- Actions run :: =33650403166=.
+- Evidence :: repository =test=/Nix/package and both shared-mic jobs passed; only =android skeleton gate= failed inside the combined Android unit/native-Trealla/parity/APK step.
+- The available GitHub connector exposes job/step status but not the raw failed step log. A local checkout was also unavailable in this execution environment because outbound DNS for GitHub was unavailable. No production or semantic patch was guessed from incomplete evidence.
+- =783a5d1a3c7ad1a23989aa00fa03c804be64e270= preserves fail-only diagnostics under =android/app/build/reports/semantic-parity/= for the pinned Trealla host build plus SWI/Trealla stdout/stderr and any cross-runtime diff. All existing failure conditions remain hard failures.
+- =cfa53c3358fd1cdd83145024d8f417db4832b48d= uploads that directory from the Android Actions job with =if: always()= as =android-semantic-parity-diagnostics= so the next exact-head failure is actionable instead of speculative.
+- Validation strength is unchanged: both engines must still execute the authoritative corpus independently, match expected normalized frames, and produce byte-equivalent canonical output before Android can pass.
