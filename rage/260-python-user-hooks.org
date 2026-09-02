@@ -1,0 +1,32 @@
+#+title: RAGE #260 — Python user hooks loader
+
+* Transaction
+- Issue :: #260
+- Immutable start :: =f078a2d3f1bd10b60914153de486130bce787380=
+- Branch :: =rage/260-python-user-hooks=
+- Scope :: Zara core only. Load trusted user =hooks.py= from the canonical mutable XDG Zara config directory into the already-merged per-runtime =AgentLoopAdviceRegistry=. No Android production edits, no second runtime, no tool-policy bypass.
+
+* Operator constraints
+- Mutable/private user configuration remains outside Git and the Nix store.
+- Home Manager may provision the directory or immutable examples, but Zara never replaces an existing user =hooks.py= or =config.pl=.
+- =[hooks].enabled= remains the canonical policy gate; override-capable advice additionally requires =allow_override=true=.
+- Reload is idempotent and removes registrations owned by the previous user-hook generation before installing the new generation.
+
+* Iteration 1 — research/design/TDD RED
+** Research
+See =rage/260-python-user-hooks-research.org=.
+
+** Design
+See =rage/260-python-user-hooks-design.org=.
+
+** Planned tests
+- canonical path is =config.config_dir / "hooks.py"=;
+- missing file is a no-op and is never created;
+- disabled hooks do not execute user Python;
+- enabled file exposes a bounded registration facade whose owner is fixed by core;
+- reload replaces previous user-owned registrations rather than accumulating duplicates;
+- malformed module/registration failure is typed and bounded;
+- narrow config adapters without =config_dir= stay fail-closed and compatible.
+
+** RED
+Pending exact-head CI after committing tests. Production implementation intentionally absent in the RED commit.
