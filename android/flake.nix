@@ -83,7 +83,7 @@
             owner = "trealla-prolog";
             repo = "trealla";
             rev = treallaRevision;
-            hash = pkgs.lib.fakeHash;
+            hash = "sha256-YgyPP7TTAssdoGINUZCmDs2azHTbxgKA0ZZ9G3df2Cw=";
           };
         in
         {
