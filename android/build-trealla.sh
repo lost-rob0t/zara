@@ -4,6 +4,7 @@ set -euo pipefail
 : "${ANDROID_NDK_ROOT:?ANDROID_NDK_ROOT must point at the pinned Android NDK}"
 : "${ZARA_TREALLA_SOURCE_DIR:?ZARA_TREALLA_SOURCE_DIR must point at the pinned Trealla source tree}"
 
+script_dir="$(cd "$(dirname "$0")" && pwd)"
 api=29
 library_root="${ZARA_TREALLA_LIBRARY_ROOT:-$PWD/app/build/trealla}"
 toolchain_root="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt"
@@ -26,6 +27,7 @@ build_abi() {
 
   cp -R "$ZARA_TREALLA_SOURCE_DIR"/. "$work"/
   chmod -R u+w "$work"
+  bash "$script_dir/patch-trealla-module-path.sh" "$work"
 
   make -C "$work" clean >/dev/null
   make -C "$work" -j"${NIX_BUILD_CORES:-2}" libtrealla.a \
