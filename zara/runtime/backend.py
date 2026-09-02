@@ -45,6 +45,8 @@ class RuntimeBackend:
         turn_id: str,
         conversation_id: Optional[str] = None,
         context_ids: tuple[str, ...] = (),
+        system_context: Optional[str] = None,
+        conversation_history: Optional[list] = None,
         latency_trace: Optional[LatencyTrace] = None,
     ) -> RuntimeTurnResult:
         raise NotImplementedError
@@ -121,6 +123,8 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         turn_id: str,
         conversation_id: Optional[str] = None,
         context_ids: tuple[str, ...] = (),
+        system_context: Optional[str] = None,
+        conversation_history: Optional[list] = None,
         latency_trace: Optional[LatencyTrace] = None,
     ) -> RuntimeTurnResult:
         if self._manager is None:
@@ -130,7 +134,9 @@ class LangGraphRuntimeBackend(RuntimeBackend):
                 "context attachments are not wired into the runtime backend yet"
             )
 
-        if self._router is not None:
+        task_turn = conversation_history is not None or system_context is not None
+
+        if self._router is not None and not task_turn:
             conversation_manager = self._manager.conversation_manager
             in_conversation = bool(getattr(conversation_manager, "in_conversation", False))
             state = "conversation" if in_conversation else "passive"
@@ -161,10 +167,13 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             conversation_id=conversation_id,
             latency_trace=latency_trace,
             stream_publisher=self._stream_publisher(turn_id, conversation_id),
+            conversation_history=conversation_history,
+            extra_system_context=system_context,
         )
         raw_tool_results = result.get("tool_results", [])
         response = str(result.get("response", ""))
-        await self._persist_turn(text, response)
+        if not task_turn:
+            await self._persist_turn(text, response)
         return RuntimeTurnResult(
             response=response,
             tool_results=tuple(
@@ -358,6 +367,8 @@ class AgentRuntimeBackend(RuntimeBackend):
         turn_id: str,
         conversation_id: Optional[str] = None,
         context_ids: tuple[str, ...] = (),
+        system_context: Optional[str] = None,
+        conversation_history: Optional[list] = None,
         latency_trace: Optional[LatencyTrace] = None,
     ) -> RuntimeTurnResult:
         return await self._delegate.submit_turn(
@@ -365,6 +376,8 @@ class AgentRuntimeBackend(RuntimeBackend):
             turn_id=turn_id,
             conversation_id=conversation_id,
             context_ids=context_ids,
+            system_context=system_context,
+            conversation_history=conversation_history,
             latency_trace=latency_trace,
         )
 
