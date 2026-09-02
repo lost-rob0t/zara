@@ -23,6 +23,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from .approval import ToolApprovalController
 from .conversation import ConversationManager
 from .graph import run_conversation_loop, validate_and_clean_messages
+from .hooks import AgentLoopAdviceRegistry
 from .prompting import build_agent_system_prompt
 from .tools.registry import ToolRegistry
 from ..config import ZaraConfig, get_config
@@ -72,6 +73,16 @@ class AgentManager:
             timeout_seconds=float(approval_config.get("timeout_seconds", 300.0)),
             max_pending=int(approval_config.get("max_pending", 8)),
         )
+        get_hooks_config = getattr(self.config, "get_hooks_config", None)
+        hooks_config = (
+            get_hooks_config()
+            if callable(get_hooks_config)
+            else {"enabled": False, "allow_override": False}
+        )
+        self.agent_loop_advice = AgentLoopAdviceRegistry(
+            enabled=hooks_config.get("enabled", False),
+            allow_override=hooks_config.get("allow_override", False),
+        )
 
     def bind_event_publisher(self, publisher) -> None:
         self.approval_controller.bind_event_publisher(publisher)
@@ -86,6 +97,7 @@ class AgentManager:
 
         if provider == "anthropic":
             from langchain_anthropic import ChatAnthropic
+
             api_key = llm_config.get("anthropic_api_key") or os.getenv("ANTHROPIC_API_KEY")
             return ChatAnthropic(
                 model=model or "claude-3-5-sonnet-20241022",
@@ -96,6 +108,7 @@ class AgentManager:
 
         if provider == "openai":
             from langchain_openai import ChatOpenAI
+
             api_key = llm_config.get("openai_api_key") or os.getenv("OPENAI_API_KEY")
             return ChatOpenAI(
                 model=model or "gpt-4",
@@ -106,6 +119,7 @@ class AgentManager:
 
         if provider == "openrouter":
             from langchain_openai import ChatOpenAI
+
             api_key = llm_config.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")
             return ChatOpenAI(
                 model=model or "openrouter/free",
@@ -117,6 +131,7 @@ class AgentManager:
 
         if provider == "ollama":
             from langchain_ollama import ChatOllama
+
             base_url = endpoint.replace("/api/chat", "") if endpoint else "http://localhost:11434"
             return ChatOllama(
                 model=model or "llama3",
@@ -125,6 +140,13 @@ class AgentManager:
             )
 
         raise ValueError(f"Unsupported LLM provider: {provider}")
+
+    def _get_agent_loop_advice(self) -> AgentLoopAdviceRegistry:
+        registry = getattr(self, "agent_loop_advice", None)
+        if registry is None:
+            registry = AgentLoopAdviceRegistry(enabled=False, allow_override=False)
+            self.agent_loop_advice = registry
+        return registry
 
     async def process_async(
         self,
@@ -210,7 +232,8 @@ class AgentManager:
         )
 
         principal_id = getattr(self.principal, "principal_id", "local")
-        result = await run_conversation_loop(
+        result = await self._get_agent_loop_advice().invoke(
+            run_conversation_loop,
             self.llm_client,
             self.tool_registry,
             state,

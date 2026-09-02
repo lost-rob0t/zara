@@ -1,0 +1,27 @@
+#+title: RAGE Design - #260 canonical agent-loop advice integration
+#+startup: overview
+
+* Boundary
+Only the canonical =run_conversation_loop= invocation inside =AgentManager.process_async= is advised. =AgentManager= remains owner of state construction, memory-context removal, history persistence, and returned public result shape.
+
+* Production change
+1. Import =AgentLoopAdviceRegistry= beside the existing agent components.
+2. During =AgentManager.__init__=, read =self.config.get_hooks_config()= and construct =self.agent_loop_advice= with exactly =enabled= and =allow_override=.
+3. Replace the direct loop await with =self.agent_loop_advice.invoke(run_conversation_loop, ...)=, forwarding all positional and keyword arguments unchanged.
+
+* Invariants
+- one manager/runtime owns one registry;
+- disabled policy produces the same single canonical base-loop invocation;
+- before/after hooks cannot replace the base call;
+- around/override remain impossible unless the already-merged two-gate registry permits registration;
+- core post-processing/history persistence occurs after any advised result;
+- no Android files, user hook loader, backend registry, new approval path, or new agent loop in this slice.
+
+* TDD map
+- construction test: canonical hook config is projected into the manager-owned registry;
+- integration test: a registered before/after pair surrounds the real call seam while the monkeypatched =run_conversation_loop= receives the exact approval/publisher/principal/stream/state data;
+- disabled test: registered ordinary advice is inert and the base loop executes exactly once;
+- override test: with both gates enabled, override result still flows through AgentManager's canonical history/transient-memory post-processing and public result shaping.
+
+* Gate
+Focused pytest for the new integration contract, then repository-native full gate, flake check, package build, exact-head Actions, review/thread check, expected-head merge only when non-draft and green.

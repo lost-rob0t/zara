@@ -1,0 +1,38 @@
+#+title: RAGE #260 - canonical agent-loop advice integration
+#+startup: overview
+
+* Immutable start
+- Consumed issue :: #260 - Emacs-grade hooks, advice and pluggable agent-loop / Prolog-runtime override system
+- RAGE start commit :: =a96b48d12d6fe0eb7bfb88d0a0e0559775974a9d=
+- Branch :: =rage/260-agent-loop-integration=
+- Scope :: Zara core only. Integrate the already-merged Python =AgentLoopAdviceRegistry= with the existing canonical =AgentManager -> run_conversation_loop= boundary. No Android production changes, no second agent loop, no user =hooks.py= loading in this slice, and no bypass of tool approval/cancellation/history/latency/max-step contracts.
+
+* Reconciliation checkpoint
+- Canonical =master= at consumption is =a96b48d12d6fe0eb7bfb88d0a0e0559775974a9d= after core PR #288.
+- Open PR #287 is sibling-owned Android work, mergeable but explicitly draft; exact-head CI #735 is green, so it remains unmerged and untouched by this core transaction.
+- Every other open PR inspected is currently non-mergeable or draft; there is no authorized current-head merge candidate.
+- Existing #260 work has landed the Prolog hook/config seam and the bounded Python advice registry, but the Python registry is not yet connected to the canonical conversation loop.
+
+* Deterministic RED
+- First attempted RED was rejected as evidence because CI #736 failed at =git diff --check= before tests; only whitespace in this RAGE artifact was corrected.
+- Corrected RED head :: =1a154ff72a513d06a806bf9ce3aa80b4bd25ade7=
+- Exact-head CI :: #737
+- Repository pytest result :: 3 failed, 1524 passed, 34 warnings.
+- Expected failures :: =AgentManager= lacked =agent_loop_advice=; before/after advice was not invoked around the base loop; override advice could not replace the canonical loop call.
+- Unrelated gates :: both shared-mic jobs and Android skeleton gate passed.
+- Production code remained untouched until this RED was captured.
+
+* Realization
+- Production commit :: =559f761a2ece818572c1f67de6d58fa89ae5a2be=
+- =AgentManager= now owns one =AgentLoopAdviceRegistry= initialized exclusively from validated =get_hooks_config()= policy.
+- Only the existing =run_conversation_loop= invocation is advised. Existing LLM/tool/state/approval/publisher/principal/stream arguments are forwarded unchanged.
+- AgentManager remains outside the advice boundary for state construction, transient memory cleanup, history persistence, and public result shaping.
+- No Android production files, user hook loader, second agent loop, backend registry, or alternate approval path were added.
+
+* GREEN-attempt regression and recovery
+- Exact-head CI #739 at =ed247cfe4c55c6b22f249a2bea0728eab3b1b920= failed in the repository =Run all tests= step; both shared-mic jobs and the Android gate remained green.
+- Source analysis found the new constructor assumed every config adapter implemented =get_hooks_config()=. ZaraConfig does, but existing minimal runtime/test adapters intentionally expose only the older narrow interface.
+- Recovery is fail-closed: when a non-ZaraConfig adapter has no callable =get_hooks_config=, the manager constructs a disabled/non-override registry. Real ZaraConfig remains the validated policy authority when the method exists.
+- Recovery commits :: =858879bb28baa3c7f7a11d137bda28d333ed9fc7= and whitespace cleanup =70efc7a71763cc006a4b2af3ed916e533719607f=.
+- Sibling Android recovery PR #290 was exact-head green and merged as =0b2dc899bba6303f5ae4abeadbc909a44cf24b1e=. The core branch was then reconciled with that exact master through non-forced merge commit =dc90edfbcccfb99d61ea815aa30826bc35b406de=; branch diff remains five core/RAGE files with no =android/**= ownership overlap.
+- Fresh exact-head CI is required after this artifact update before readiness or merge.
