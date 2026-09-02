@@ -8,4 +8,7 @@ trap 'rm -rf "$test_root"' EXIT
 export XDG_CONFIG_HOME="$test_root/config"
 mkdir -p "$XDG_CONFIG_HOME/zarathushtra"
 
-swipl -q -s "$repo_root/t/prolog_config.pl" -g run_tests -g halt -t 'halt(1)'
+swipl -q -s "$repo_root/t/prolog_config.pl" \
+  -g "current_test_unit(prolog_config, _)" \
+  -g "run_tests(prolog_config)" \
+  -t halt
