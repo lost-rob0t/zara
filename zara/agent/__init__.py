@@ -141,6 +141,13 @@ class AgentManager:
 
         raise ValueError(f"Unsupported LLM provider: {provider}")
 
+    def _get_agent_loop_advice(self) -> AgentLoopAdviceRegistry:
+        registry = getattr(self, "agent_loop_advice", None)
+        if registry is None:
+            registry = AgentLoopAdviceRegistry(enabled=False, allow_override=False)
+            self.agent_loop_advice = registry
+        return registry
+
     async def process_async(
         self,
         user_input: str,
@@ -225,7 +232,7 @@ class AgentManager:
         )
 
         principal_id = getattr(self.principal, "principal_id", "local")
-        result = await self.agent_loop_advice.invoke(
+        result = await self._get_agent_loop_advice().invoke(
             run_conversation_loop,
             self.llm_client,
             self.tool_registry,
