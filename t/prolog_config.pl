@@ -8,6 +8,9 @@
 write_config(Path, Text) :-
     setup_call_cleanup(open(Path, write, Stream), write(Stream, Text), close(Stream)).
 
+remove_config(Path) :-
+    ( exists_file(Path) -> delete_file(Path) ; true ).
+
 test(all_supported_overrides_and_reload) :-
     config_loader:user_config_path(Path),
     atomics_to_string([
@@ -121,5 +124,60 @@ test(invalid_prolog_rlm_facts_are_rejected,
 invalid_prolog_rlm_config('prolog_rlm_enabled("yes").\n').
 invalid_prolog_rlm_config('prolog_rlm_enabled(1).\n').
 invalid_prolog_rlm_config('prolog_rlm_model(12345).\n').
+
+test(local_overlay_wins_without_modifying_provisioned_config) :-
+    config_loader:user_config_path(BasePath),
+    config_loader:user_local_config_path(LocalPath),
+    Base = 'search_engine("https://base.example/?q=~w").\n',
+    Local = 'search_engine("https://local.example/?q=~w").\n',
+    write_config(BasePath, Base),
+    write_config(LocalPath, Local),
+    config_loader:reload_user_config,
+    once(kb_config:search_engine("https://local.example/?q=~w")),
+    read_file_to_string(BasePath, BaseAfter, []),
+    BaseAfter == Base.
+
+test(local_overlay_is_not_auto_created) :-
+    config_loader:user_config_path(BasePath),
+    config_loader:user_local_config_path(LocalPath),
+    write_config(BasePath, 'search_engine("https://base-only.example/?q=~w").\n'),
+    remove_config(LocalPath),
+    config_loader:load_user_config,
+    \+ exists_file(LocalPath),
+    once(kb_config:search_engine("https://base-only.example/?q=~w")).
+
+test(local_overlay_reload_replaces_old_value_without_duplicates) :-
+    config_loader:user_config_path(BasePath),
+    config_loader:user_local_config_path(LocalPath),
+    write_config(BasePath, 'search_engine("https://base-reload.example/?q=~w").\n'),
+    write_config(LocalPath, 'search_engine("https://local-old.example/?q=~w").\n'),
+    config_loader:reload_user_config,
+    write_config(LocalPath, 'search_engine("https://local-new.example/?q=~w").\n'),
+    config_loader:reload_user_config,
+    \+ kb_config:search_engine("https://local-old.example/?q=~w"),
+    findall(URL, kb_config:search_engine(URL), URLs),
+    URLs = ["https://local-new.example/?q=~w",
+            "https://base-reload.example/?q=~w",
+            "https://www.google.com/search?q=~w"].
+
+test(invalid_local_overlay_leaves_previous_loaded_state) :-
+    config_loader:user_config_path(BasePath),
+    config_loader:user_local_config_path(LocalPath),
+    write_config(BasePath, 'search_engine("https://base-atomic.example/?q=~w").\n'),
+    write_config(LocalPath, 'search_engine("https://local-valid.example/?q=~w").\n'),
+    config_loader:reload_user_config,
+    write_config(LocalPath, ':- initialization(shell("false")).\n'),
+    catch(config_loader:reload_user_config, Error, true),
+    nonvar(Error),
+    Error = error(domain_error(zarathushtra_user_config_fact, _), _),
+    once(kb_config:search_engine("https://local-valid.example/?q=~w")).
+
+test(server_rejects_device_fact_from_local_overlay,
+     [throws(error(domain_error(zarathushtra_server_config_fact, _), _))]) :-
+    config_loader:user_config_path(BasePath),
+    config_loader:user_local_config_path(LocalPath),
+    write_config(BasePath, 'search_engine("https://server-base.example/?q=~w").\n'),
+    write_config(LocalPath, 'app_mapping(browser, ["xdg-open"]).\n'),
+    config_loader:load_server_config.
 
 :- end_tests(prolog_config).
