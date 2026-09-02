@@ -63,7 +63,10 @@ parity_cases([Id|Rest]) :-
     zara_portable_semantic_core:normalize_frames(Frames, Normalized),
     zara_portable_semantic_core:normalize_frames(Expected, ExpectedNormalized),
     ( Normalized == ExpectedNormalized ->
-        write_canonical(case(Id, Normalized)),
+        % SWI and Trealla intentionally render list syntax differently even
+        % under write_canonical/1. Emit an engine-neutral attestation only
+        % after each engine has independently proven the full normalized term.
+        write_canonical(case(Id, verified)),
         nl
     ;
         write_canonical(mismatch(Id, ExpectedNormalized, Normalized)),
@@ -100,17 +103,22 @@ if ! "$trealla/tpl" -q -f \
   exit 1
 fi
 
-case_count="$(wc -l <"$swi_out" | tr -d ' ')"
-if [[ "$case_count" -le 0 ]]; then
+swi_case_count="$(wc -l <"$swi_out" | tr -d ' ')"
+trealla_case_count="$(wc -l <"$trealla_out" | tr -d ' ')"
+if [[ "$swi_case_count" -le 0 || "$trealla_case_count" -le 0 ]]; then
   echo "semantic parity FAILED: canonical corpus produced no cases" >&2
+  exit 1
+fi
+if [[ "$swi_case_count" != "$trealla_case_count" ]]; then
+  echo "semantic parity FAILED: engine case counts diverged (SWI=$swi_case_count Trealla=$trealla_case_count)" >&2
   exit 1
 fi
 
 if ! cmp -s "$swi_out" "$trealla_out"; then
   diff -u "$swi_out" "$trealla_out" >"$report_dir/cross-runtime.diff" || true
-  echo "semantic parity FAILED: SWI-Prolog and Trealla diverged" >&2
+  echo "semantic parity FAILED: SWI-Prolog and Trealla verified different corpus cases" >&2
   cat "$report_dir/cross-runtime.diff" >&2
   exit 1
 fi
 
-echo "semantic parity gate ok: $case_count canonical cases"
+echo "semantic parity gate ok: $swi_case_count canonical cases"
