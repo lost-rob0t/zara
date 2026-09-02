@@ -1,0 +1,27 @@
+#+title: RAGE Research - #260 canonical agent-loop advice integration
+#+startup: overview
+
+* Baseline
+- Exact start :: =a96b48d12d6fe0eb7bfb88d0a0e0559775974a9d=
+- Issue :: #260
+
+* Current ownership
+- =AgentManager.process_async= owns turn-state construction, canonical history cleanup/persistence, system/memory injection, principal identity selection, max-steps projection, and binding the existing =ToolApprovalController=.
+- =run_conversation_loop= owns the actual graph/tool/approval/cancellation execution and consumes the latency trace embedded in state.
+- =AgentLoopAdviceRegistry= is already merged and policy-gated but unused by =AgentManager=.
+- =ZaraConfig.get_hooks_config()= is the existing validated Python policy authority; no new config layer is required.
+
+* Failure analysis
+- Advice must surround exactly the existing =run_conversation_loop= call, not =process_async= wholesale. This keeps history persistence and transient-memory cleanup in core even when an override supplies a result.
+- The advised call must receive the exact canonical arguments already supplied to =run_conversation_loop=: LLM, tool registry, state, approval controller, event publisher, authenticated principal id, and stream publisher. Dropping or rewriting these would weaken approval, cancellation, principal, latency, or max-step contracts.
+- Registry state must be per =AgentManager= instance. A global registry would leak registrations between runtimes/principals/tests.
+- Disabled hooks must remain behavior-compatible: one base-loop call, identical arguments, identical result handling.
+- This slice does not load mutable =hooks.py=. It only establishes the canonical owned integration point that a later loader/plugin lifecycle can register against.
+
+* Alternatives rejected
+- Wrap all of =process_async= :: permits customization to bypass canonical state/history ownership.
+- Monkeypatch the imported loop :: no owner cleanup or policy/diagnostics contract.
+- Add a second backend/agent runtime now :: exceeds this slice and violates one-brain ownership.
+
+* Selected direction
+Create one =AgentLoopAdviceRegistry= during =AgentManager= initialization from =get_hooks_config()=. Route the existing loop invocation through =registry.invoke(run_conversation_loop, ...)= with the existing arguments unchanged. Keep every pre/post step in =process_async= outside the advised boundary.
