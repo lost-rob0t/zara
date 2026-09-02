@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22.1)
 project(zara_trealla LANGUAGES C)
 
 set(ZARA_TREALLA_SOURCE_DIR "" CACHE PATH "Pinned Trealla source tree")
-set(ZARA_TREALLA_LIBRARY "" CACHE FILEPATH "Pinned Trealla static/shared library")
+set(ZARA_TREALLA_LIBRARY_ROOT "" CACHE PATH "Per-ABI pinned Trealla libraries")
 
 if(NOT ZARA_TREALLA_SOURCE_DIR)
     message(FATAL_ERROR "ZARA_TREALLA_SOURCE_DIR is required")
@@ -12,11 +12,16 @@ if(NOT EXISTS "${ZARA_TREALLA_SOURCE_DIR}/src/trealla.h")
     message(FATAL_ERROR "ZARA_TREALLA_SOURCE_DIR must contain src/trealla.h")
 endif()
 
-if(NOT ZARA_TREALLA_LIBRARY OR NOT EXISTS "${ZARA_TREALLA_LIBRARY}")
-    message(FATAL_ERROR "ZARA_TREALLA_LIBRARY must name a pinned Trealla library")
+if(NOT ANDROID_ABI)
+    message(FATAL_ERROR "ANDROID_ABI is required")
 endif()
 
-add_library(trealla UNKNOWN IMPORTED)
+set(ZARA_TREALLA_LIBRARY "${ZARA_TREALLA_LIBRARY_ROOT}/${ANDROID_ABI}/libtrealla.a")
+if(NOT ZARA_TREALLA_LIBRARY_ROOT OR NOT EXISTS "${ZARA_TREALLA_LIBRARY}")
+    message(FATAL_ERROR "missing pinned Trealla library for ${ANDROID_ABI}: ${ZARA_TREALLA_LIBRARY}")
+endif()
+
+add_library(trealla STATIC IMPORTED)
 set_target_properties(trealla PROPERTIES
     IMPORTED_LOCATION "${ZARA_TREALLA_LIBRARY}"
     INTERFACE_INCLUDE_DIRECTORIES "${ZARA_TREALLA_SOURCE_DIR}/src"
