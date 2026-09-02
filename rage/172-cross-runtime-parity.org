@@ -22,7 +22,7 @@
 
 * Architecture / design
 - =scripts/test-android-semantic-parity.sh= is invoked by =scripts/test-android.sh=.
-- Build host =tpl= from exact =ZARA_TREALLA_SOURCE_DIR= with SSL/FFI/thread extras disabled because they are irrelevant to the portable semantic core; no network fetch.
+- Build host =tpl= from exact =ZARA_TREALLA_SOURCE_DIR= with SSL/FFI/thread/network/TTY extras disabled because they are irrelevant to the portable semantic core; no network fetch.
 - Stage =semantic_core.pl= plus canonical =modules/intent_frames.pl=, =modules/normalizer.pl=, =kb/intents.pl=, and =kb/semantic_corpus.pl= in the same relative layout consumed by Android Trealla.
 - A small temporary Prolog driver enumerates every =corpus_case/6=, rejects duplicate/empty case sets, calls =resolve_frames/4= with each case's real State and Context, normalizes actual and expected frames, and hard-fails any corpus mismatch.
 - Run that same driver under SWI and pinned Trealla. Each engine must independently satisfy the expected corpus, then their canonical output files must be byte-equivalent.
@@ -35,6 +35,7 @@
 - Pin Trealla through existing Nix input; no curl/wget/git clone/moving input.
 - Temporary build/stage/output state is removed on exit.
 - Output contains only synthetic checked-in corpus results; secrets/user state/provider data are never involved.
+- Headless semantic execution must not pull in terminal edit/history libraries. =NOTTY= selects Trealla's =history_none.o= path; =NONETWORK= selects no-network objects. These are build-surface reductions only and do not alter resolver semantics under test.
 - This proves shared Prolog semantic-engine parity. Android process/JNI lifecycle, concurrency/resource bounds, protocol security, and device behavior remain with their owning gates.
 
 * TDD evidence
@@ -49,8 +50,14 @@
 - =ba916142d4d3f87dd9a675f61052c0659649e40f= strengthens the Android source contract to require canonical corpus execution and independent expected-result validation.
 - No =zara/**= core runtime, daemon protocol, desktop, configuration, or sibling-core files changed.
 
+* Exact-head recovery evidence
+- Actions run =33644284586= on head =0f10ea918eacbca6edc443c02c7b3b289c79b0a9= failed only the Android skeleton gate while both shared-mic jobs passed.
+- Job log showed failure before semantic execution: pinned Trealla host build selected =src/history.o= and failed on missing =histedit.h=. This is a TTY/history dependency, not semantic divergence.
+- Upstream pinned GNUmakefile explicitly selects =src/history_none.o= when =NOTTY= is set and provides no-network objects when =NONETWORK= is set.
+- =866c22ee932ef3148231ad21ab81c347f05ed061= adds =NOTTY=1 NONETWORK=1= to the exact pinned Trealla parity build, retaining =NOSSL=1 NOFFI=1 NOTHREADS=1=. No validation/corpus assertion was weakened.
+
 * Pending exact-head gate
 - PR :: #299 (draft).
-- Candidate before this evidence append :: =3c72bfc97eab77173ba273220c784034247ce4b6=.
+- Candidate before this evidence append :: =866c22ee932ef3148231ad21ab81c347f05ed061=.
 - Required :: executable full-corpus parity, full Android gate, repository/Nix/package gate, exact-head Actions, no blocking review/thread, mergeable current head.
 - #172 remains open until those are green and merged.
