@@ -1,0 +1,58 @@
+#+title: RAGE #172 - Android native Trealla adapter
+
+* Run identity
+- Consumed issue :: #172, P2 - extract and prove a portable shared Prolog semantic core on Linux and Android.
+- Scope :: Android-only native Trealla adapter slice; no daemon/core/runtime authority changes.
+- RAGE start commit :: =e1c61a38b68fb0601f49152ca4d2205e4a5c41f7=.
+- Branch :: =rage/android-172-native-adapter=.
+- Invariants :: one authoritative Zara daemon; Android embedded Prolog remains bounded deterministic local semantics only; native runtime must fail closed; no credentials, networking, provider access, or remote-command authority in native code.
+
+* Recovery
+- PR #286 is merged on canonical =master= at =e1c61a38b68fb0601f49152ca4d2205e4a5c41f7=, landing the Kotlin/JNI bridge boundary.
+- No open PR touching =android/**= required recovery before this iteration.
+- Sibling core PR #285 is Python hook/advice work and does not own Android files.
+
+* Research
+- Issue #172 remains open and requires deterministic Android packaging plus real cross-runtime fixture execution.
+- Upstream Trealla at commit =b25ccfb8e485a697bb47f1947d6fb8e0ad4e6aaf= exposes a supported embedding API in =src/trealla.h=: =pl_create/pl_destroy=, =pl_consult= / =pl_consult_text=, =pl_query/pl_redo/pl_done=, and canonical =pl_term_text= binding inspection.
+- Upstream documents =pl_term= answer views as query-owned and =pl_term_text= strings as caller-owned via =pl_free=; Zara must copy into JNI strings before advancing/destroying a query.
+- Upstream sample =samples/embed.c= documents the non-obvious query contract: =pl_query= reports error state rather than success, =get_status= identifies the first solution, =pl_redo= destroys an exhausted query, and =pl_done= is only for a still-active query.
+- Current Zara Android build intentionally has no NDK enabled yet; =flake.nix= explicitly records that the Trealla/NDK spike belongs to #172. This Android-only iteration therefore defines the native adapter source/build contract first and does not claim packaged native parity until the repository Android toolchain provides the NDK.
+
+* Design / adversarial review
+- Native JNI surface remains exactly the already-landed =JniTreallaNativeApi.initialize/evaluate/shutdown= API; no second parser or semantic serializer is added in Kotlin.
+- One native engine instance is process-local and guarded by a mutex. Initialization creates exactly one Trealla engine and consults the supplied portable core path; failed consult destroys the engine and returns false.
+- Evaluation requires a live engine and a non-empty query. Each answer must expose a =Result= binding; Zara copies its canonical =pl_term_text= representation into the returned Java string array. Missing =Result= or Trealla error fails the JNI call rather than inventing success.
+- Query-owned terms are copied before =pl_redo/pl_done=. Owned Trealla strings are released with =pl_free=.
+- Results are bounded to 256 answers to prevent an unbounded JNI allocation loop. Hitting the bound closes the still-active query deterministically.
+- Shutdown destroys the engine and is idempotent.
+- CMake accepts only explicit local =ZARA_TREALLA_SOURCE_DIR= and =ZARA_TREALLA_LIBRARY= inputs; it performs no network fetch and therefore cannot silently move to an unreviewed upstream revision.
+- This slice does not wire Gradle/native packaging yet because the NDK and pinned Trealla artifact are not present in the current Android toolchain; enabling an externalNativeBuild that cannot pass the canonical Nix Android gate would be a false-green/false-shipped architecture.
+
+* TDD
+- RED commit :: =5e313630513b8df92bbe5615225d79526736d7fe= adds =NativeTreallaSourceContractTest= before native production files exist. It requires the frozen JNI symbols, Trealla lifecycle calls, canonical =Result= binding extraction, ownership cleanup, and a network-free CMake contract.
+- GREEN source commit :: =80a072a3277209a77de86a39fca5d6ea4147fb5b= adds =zara_trealla_jni.c= with fail-closed init/evaluate/shutdown, mutex serialization, bounded result extraction, and Trealla-owned string cleanup.
+- GREEN build-contract commit :: =b65c54c4ce0aada001ffff96af7744050fb908e6= adds Android-local CMake requiring explicit pinned Trealla source/library inputs without network fetching.
+
+* Gate
+- Focused JVM/source-contract tests and full =scripts/test-android.sh= are delegated to exact-head GitHub Actions from this connector environment.
+- Native C compilation is intentionally not claimed by this branch until the canonical Android environment supplies an NDK and pinned Trealla library/source artifact.
+- Native APK parity remains blocked on that reproducible packaging input; this iteration will not report it as shipped early.
+
+* Packaging recovery - 2026-09-02
+- Recovery state :: PR #287 exact head =abeb9c39583ea11331662d5c62b80d59dc78b110= was green and discussion-clean but remained correctly draft because native packaging was not reproducible. It was not merged.
+- Sibling coordination :: current core PR #288 owns hook/advice Python and RAGE/test files only; it has no =android/**= overlap with this transaction.
+- Packaging RED :: commit =e7a40b552c2ba1ae4a6235480336078fc3d18e25= added =NativeTreallaPackagingContractTest= before production packaging existed. Exact-head CI run =33583661391= failed the Android gate while the microphone jobs remained green, isolating the missing Android packaging contract.
+- Ownership decision :: the NDK/Trealla toolchain lives in =android/flake.nix= + =android/flake.lock= instead of expanding the sibling-owned root runtime flake. The sub-flake is locked to the repository's same nixpkgs revision and exposes only the Android build environment.
+- Toolchain :: Android NDK =29.0.14206865= is selected from the pinned nixpkgs Android repository metadata; API floor remains 29, packaged ABIs remain =arm64-v8a= and =x86_64=, and CMake remains 3.22.1.
+- Trealla pin :: source remains exact revision =b25ccfb8e485a697bb47f1947d6fb8e0ad4e6aaf=. The intentional fixed-output RED using a fake Nix hash produced and then pinned =sha256-YgyPP7TTAssdoGINUZCmDs2azHTbxgKA0ZZ9G3df2Cw==; Gradle performs no source download.
+- Build path :: =android/build-trealla.sh= cross-compiles =libtrealla.a= with the pinned NDK for both supported ABIs, disables TTY/SSL/FFI/network/threads, then CMake links each per-ABI archive into =libzara_trealla.so= through the existing JNI surface.
+- CI integration :: the Android job now enters =nix develop ./android= and =scripts/test-android.sh= builds Trealla before JVM tests/APK assembly/secret inspection.
+- First packaging GREEN attempt :: exact head =3f33f44625cc4a11a91e0b2bcb76a480d4dfb09e= successfully realized the pinned Trealla source, NDK, CMake, SDK, and Android dev shell. Run =33584142129= then failed before C compilation because =ANDROID_NDK_ROOT= pointed at the version-container directory rather than the versioned NDK root.
+- NDK-layout fix :: commit =7b5ef168956234506ad33730d33cf30e29cc5f3f= links the versioned NDK into the Android SDK and exports =$ANDROID_HOME/ndk/29.0.14206865= as =ANDROID_NDK_ROOT=. Exact-head CI run =33584400321= was queued after this fix; no native packaging success is claimed until that run reaches and passes the C/Gradle/APK gates.
+
+* Exact-head packaging GREEN and master recovery - 2026-09-02
+- Packaging GREEN :: exact head =f2715253c4e7f885a1521409486e2a539653d8e2= passed CI run =33584458565=, including the Android native/Gradle/APK gate, full repository/Nix gate, and both microphone jobs. The pinned NDK/Trealla packaging blocker is therefore resolved for that immutable head.
+- Canonical movement :: sibling core PR #288 merged afterward and advanced =master= to =a96b48d12d6fe0eb7bfb88d0a0e0559775974a9d=. Its diff from the prior Android base changes only core hook/advice RAGE, Python test, and =zara/agent/hooks.py= files; it does not overlap this Android transaction.
+- Recovery merge :: commit =e080c59dade0652aad806be679dd0548b8d0d13f= merges current =master= into the Android branch without rewriting the tested Android history. Comparison against =a96b48d12d6fe0eb7bfb88d0a0e0559775974a9d= remains limited to the Android native/toolchain files plus the Android CI/test integration and this append-only RAGE record.
+- Merge rule :: PR #287 remains draft until fresh exact-head Actions pass for the recovered head; no earlier successful SHA authorizes merge of the new candidate.
