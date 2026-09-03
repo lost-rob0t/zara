@@ -54,7 +54,17 @@
 6. LangGraph backend registration delegates to the manager registry and cleanup removes it -> backend-focused unit test or host integration fixture.
 
 ** TDD evidence
-Pending failing tests.
+- Draft PR :: #304
+- Exact RED head :: =ff9e5be1b2d97e2cbae11630d403cf5d2c8c845e=
+- GitHub Actions :: CI #840, run =33702358066=
+- Shared mic Ubuntu :: GREEN
+- Shared mic Arch :: GREEN
+- Android skeleton gate :: GREEN
+- Main repository gate :: RED at phase 9 pytest, exactly 2 failures / 1660 passes.
+- Failure 1 :: =PluginRuntime.__init__() got an unexpected keyword argument 'advice_registrar'=
+- Failure 2 :: =PluginRuntime= has no attribute =register_agent_loop_advice=
+- =nix flake check= and package build were correctly skipped after the test failure.
+- Result :: deterministic RED proves the missing supported ServicePlugin advice boundary without introducing an unrelated regression.
 
 ** Gate
 - Focused service-plugin/advice tests.
