@@ -59,19 +59,22 @@ def test_registry_unknown_backend_fails_closed():
 
 
 class FakeConfig:
-    def __init__(self, backend: str):
+    def __init__(self, backend: str | None):
         self.backend = backend
 
     def get_section(self, name):
         if name == "agent":
-            return {"max_steps": 7, "backend": self.backend}
+            section = {"max_steps": 7}
+            if self.backend is not None:
+                section["backend"] = self.backend
+            return section
         return {}
 
     def get_agent_system_prompt(self):
         return ""
 
 
-def _build_manager(backend: str) -> AgentManager:
+def _build_manager(backend: str | None) -> AgentManager:
     manager = AgentManager.__new__(AgentManager)
     manager.config = FakeConfig(backend)
     manager.llm_client = object()
@@ -120,7 +123,19 @@ async def test_agent_manager_invokes_configured_backend_through_existing_advice(
     assert result["response"] == "custom"
 
 
-def test_default_config_declares_langgraph_backend():
-    from zara.config import DEFAULT_CONFIG_TOML
+@pytest.mark.asyncio
+async def test_agent_manager_defaults_to_langgraph_when_backend_is_omitted():
+    manager = _build_manager(None)
 
-    assert 'backend = "langgraph"' in DEFAULT_CONFIG_TOML
+    async def default_loop(_llm_client, _tool_registry, state, **_kwargs):
+        return {
+            "messages": [*state["messages"], AIMessage(content="default")],
+            "response": "default",
+            "tool_results": [],
+        }
+
+    manager.agent_loop_registry.register("langgraph", "test", default_loop)
+
+    result = await manager.process_async("hello", turn_id="turn-default")
+
+    assert result["response"] == "default"
