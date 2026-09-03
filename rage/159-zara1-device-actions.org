@@ -1,0 +1,39 @@
+#+title: RAGE #159 — ZARA/1 client capabilities and typed device actions
+#+property: issue 159
+#+property: start_sha 6141ac7d28c5eb32f0a8e78b31643792aa2c0fd7
+
+* Consumption
+- Issue :: #159 — extend ZARA/1 with bounded client capability advertisement and typed device action lifecycle.
+- Exact start :: =6141ac7d28c5eb32f0a8e78b31643792aa2c0fd7=.
+- Owner :: Zara Android Auto-RAGE worker, consuming the minimum shared protocol/runtime compatibility dependency explicitly required by Android #173.
+- Scope :: closed ZARA/1 schemas, authenticated route/session capability state, typed device-action request/result lifecycle, deterministic client fixture support, and focused protocol/security tests only.
+- Non-goals :: Android Kotlin implementation (#173/#174), arbitrary remote execution, semantic-provider reasoning outside #159, ordinary core/desktop work, or sibling core PR #306 files.
+
+* Recovery inspection
+- Existing branch =rage/159-zara1-capability-advertisement= is abandoned residue: 217 commits behind current master and only carries #158/backlog bookkeeping; no #159 implementation or PR exists.
+- Current sibling core transaction #306 is AgentManager diagnostics and does not overlap protocol/transport/security files selected here.
+
+* Research checkpoint
+- Current =zara.protocol= is a closed transport-neutral ZARA/1 schema. Unknown message types and identity-looking top-level keys fail closed.
+- Current ROUTER gateway binds route state to a server-resolved principal/session; the secure gateway re-resolves authenticated CURVE/ZAP identity on every message and injects that principal before application dispatch.
+- Current DEALER client already has bounded pending/outbound queues and one request/reply correlation mechanism; #159 should extend these seams rather than introduce another transport/state machine.
+- Existing idempotency handling is runtime-command-specific. Device side effects need their own explicit action id/idempotency class and stale-session binding; they must not be encoded as turn.submit or arbitrary command bodies.
+
+* Design direction
+- Advertisement is availability, never authority.
+- Capability names are closed/bounded and metadata schemas are explicit.
+- Initial snapshot is negotiated during =hello=; later =capability.snapshot= updates replace the session-local advertised set atomically.
+- Server device action requests use a typed lifecycle: =device.action.request= -> client =device.action.accepted= -> terminal =device.action.result= or =device.action.error=; server may send =device.action.cancel=.
+- Action messages bind action id, capability, target session, typed bounded args, deadline, trace correlation, and explicit idempotency class. Payload-supplied principal/device identifiers remain forbidden.
+- Route drop/reconnect invalidates advertisements and outstanding route-local actions; stale-session results fail closed.
+- First concrete capabilities for deterministic fixtures are =open_uri= and =open_app= only; no arbitrary shell/import/eval primitive exists.
+
+* Planned deterministic proof
+- Protocol golden frames and closed-schema/bounds tests.
+- Fake gateway/client round trip for advertised =open_uri= / =open_app=.
+- Unknown/fake-admin capability rejection and bounded capability count/name/metadata.
+- Wrong/stale session action result rejection.
+- Duplicate action/idempotency and cancel/result terminal-race behavior.
+- Disconnect/reconnect clears stale advertisement/action state.
+- Secure gateway authorizes capability/result traffic only as session-basic authenticated device traffic and never promotes advertised names into server capabilities.
+- Focused =pytest= protocol/transport/security tests, then =scripts/test-zara1-protocol.sh=, =scripts/test-all.sh=, =nix flake check=, =nix build=, and exact-head Actions.
