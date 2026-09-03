@@ -9,8 +9,27 @@
 
 semantic_contract_version('ZARA-SEMANTIC/1').
 
+resolve_frames(Text, _State, _Context, []) :-
+    empty_text(Text),
+    !.
 resolve_frames(Text, State, Context, Frames) :-
     intent_frames:resolve_frames(Text, State, Context, Frames).
+
+empty_text(Text) :-
+    ( Text == ""
+    ; Text == ''
+    ; string_codes(Text, Codes), whitespace_codes(Codes)
+    ).
+
+whitespace_codes([]).
+whitespace_codes([Code|Rest]) :-
+    whitespace_code(Code),
+    whitespace_codes(Rest).
+
+whitespace_code(9).
+whitespace_code(10).
+whitespace_code(13).
+whitespace_code(32).
 
 valid_frame(frame(intent(ns(Namespace), name(Name)), Slots, Status)) :-
     atom(Namespace),

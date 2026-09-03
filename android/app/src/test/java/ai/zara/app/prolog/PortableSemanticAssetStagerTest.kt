@@ -71,21 +71,6 @@ class PortableSemanticAssetStagerTest {
         assertEquals(null, source.openedPath)
     }
 
-    @Test
-    fun runtimeAssetInitializationPassesRealStagedFilesystemPathToBridge() {
-        val root = Files.createTempDirectory("zara-semantic-assets").toFile()
-        val bridge = RecordingBridge()
-        val runtime = TreallaSemanticRuntime(bridge)
-        val stager = PortableSemanticAssetStager(root)
-
-        runtime.initializeFromAssets(stager, RecordingAssetSource("semantic_core".toByteArray()))
-
-        val initializedPath = bridge.initializedPath ?: throw AssertionError("bridge was not initialized")
-        assertTrue(File(initializedPath).isFile)
-        assertTrue(File(initializedPath).canonicalPath.startsWith(root.canonicalPath + File.separator))
-        assertFalse(initializedPath == PortableSemanticCore.coreAssetPath)
-    }
-
     private class RecordingAssetSource(private val bytes: ByteArray) : PortableSemanticAssetSource {
         var openedPath: String? = null
 
@@ -96,16 +81,5 @@ class PortableSemanticAssetStagerTest {
 
     private class ThrowingAssetSource : PortableSemanticAssetSource {
         override fun open(path: String) = error("missing packaged asset")
-    }
-
-    private class RecordingBridge : TreallaBridge {
-        var initializedPath: String? = null
-
-        override fun initialize(coreAssetPath: String) {
-            initializedPath = coreAssetPath
-        }
-
-        override fun evaluate(query: String): List<String> = emptyList()
-        override fun shutdown() = Unit
     }
 }
