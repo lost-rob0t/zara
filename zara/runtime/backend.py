@@ -68,6 +68,20 @@ class RuntimeBackend:
     def unregister_tools(self, names) -> None:
         pass
 
+    def register_agent_loop_advice(
+        self,
+        kind: str,
+        owner: str,
+        priority: int,
+        callback: Callable[..., Any],
+    ) -> int:
+        raise UnsupportedRuntimeCommand(
+            "agent-loop advice is not available in this runtime backend"
+        )
+
+    def unregister_agent_loop_advice(self, registration_id: int) -> bool:
+        return False
+
     async def start_voice(self) -> None:
         raise UnsupportedRuntimeCommand("voice start is not available in this runtime backend")
 
@@ -313,6 +327,35 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         if self._manager is not None:
             self._manager.tool_registry.unregister_tools(list(names))
 
+    def register_agent_loop_advice(
+        self,
+        kind: str,
+        owner: str,
+        priority: int,
+        callback: Callable[..., Any],
+    ) -> int:
+        if self._manager is None:
+            raise RuntimeError("runtime backend is not started")
+        registry = getattr(self._manager, "agent_loop_advice", None)
+        if registry is None:
+            raise UnsupportedRuntimeCommand(
+                "agent-loop advice is not available in this runtime backend"
+            )
+        return registry.register(
+            kind,
+            owner=owner,
+            priority=priority,
+            callback=callback,
+        )
+
+    def unregister_agent_loop_advice(self, registration_id: int) -> bool:
+        if self._manager is None:
+            return False
+        registry = getattr(self._manager, "agent_loop_advice", None)
+        if registry is None:
+            return False
+        return bool(registry.unregister(registration_id))
+
     async def stop(self) -> None:
         manager = self._manager
         self._manager = None
@@ -410,6 +453,23 @@ class AgentRuntimeBackend(RuntimeBackend):
 
     def unregister_tools(self, names) -> None:
         self._delegate.unregister_tools(names)
+
+    def register_agent_loop_advice(
+        self,
+        kind: str,
+        owner: str,
+        priority: int,
+        callback: Callable[..., Any],
+    ) -> int:
+        return self._delegate.register_agent_loop_advice(
+            kind,
+            owner,
+            priority,
+            callback,
+        )
+
+    def unregister_agent_loop_advice(self, registration_id: int) -> bool:
+        return self._delegate.unregister_agent_loop_advice(registration_id)
 
     async def start_voice(self) -> None:
         await self._delegate.start_voice()
