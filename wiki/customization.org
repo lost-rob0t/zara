@@ -1,0 +1,97 @@
+#+title: Zara customization — hooks, advice, and agent backends
+
+* Overview
+Zara exposes Emacs-like customization seams without creating a second assistant runtime. User code and service plugins may attach lifecycle behavior, wrap the canonical agent loop, or select a registered loop backend while the existing RuntimeHost, tool approval controller, cancellation chain, history, latency tracing, and step bounds remain authoritative.
+
+Customization is opt-in. Override-capable behavior is separately gated because it can replace canonical loop behavior.
+
+* Configuration
+The main TOML configuration owns policy:
+
+#+begin_src toml
+[hooks]
+enabled = true
+allow_override = false
+
+[agent]
+backend = "langgraph"
+#+end_src
+
+- =hooks.enabled= enables user/plugin hook and advice registration.
+- =hooks.allow_override= is required for =around= and =override= advice and for selecting a non-core agent-loop backend.
+- =[agent].backend= names a backend in the canonical agent-loop registry. =langgraph= remains the built-in default.
+- Unknown backend names fail explicitly; Zara does not silently fall back to another implementation after an explicit invalid selection.
+
+* User-owned customization files
+Mutable user customization belongs in the user's Zara configuration directory, outside Git and the Nix store. Zara/Home Manager may provision directories or immutable defaults, but must not overwrite mutable private user state.
+
+The supported user hook files are:
+
+- =hooks.pl= for Prolog hook/command customization;
+- =hooks.py= for Python agent-loop advice/customization.
+
+Reload is owned by Zara's canonical loaders. A failed reload must leave the previous valid registration set intact rather than exposing a partially loaded registry.
+
+Do not put secrets in hook source, examples, diagnostics, or repository-managed defaults.
+
+* Python agent-loop advice
+The Python advice registry wraps the one canonical conversation-loop invocation. Registrations have an owner, kind, priority/order, and registration identity.
+
+Supported advice kinds are conceptually:
+
+- =before= — run before the canonical loop;
+- =after= — run after the canonical loop;
+- =around= — wrap continuation and therefore requires override authorization;
+- =override= — replace the selected loop behavior and therefore requires override authorization.
+
+Advice does not create a second tool-approval channel or a second agent runtime. Replacement/wrapping behavior must preserve the mandatory runtime contracts: approval pause/approve/reject, cancellation, conversation-history persistence, latency-trace propagation, and the configured step bound.
+
+* Agent-loop backend registry
+Zara owns one named agent-loop registry. Backend selection happens through =[agent].backend=, not by monkeypatching imports or spawning another assistant brain.
+
+The built-in backend is owned by core. Additional backends have explicit registration ownership and may be unregistered only by their owner. Duplicate names fail rather than racing for precedence.
+
+Selecting a non-core backend requires both hook customization and override permission. This keeps backend replacement on the same explicit authority boundary as override-capable advice.
+
+* Service-plugin ownership
+Service plugins may register agent-loop advice through their bounded =PluginRuntime= capability. Zara binds the registration to =plugin:<name>= ownership and tracks registration IDs for cleanup.
+
+When a service plugin stops or fails, its runtime-owned registrations are removed. Plugins are not handed the raw registry as an unrestricted global singleton and cannot use advice registration to bypass normal tool authorization.
+
+* Prolog hooks and command customization
+Prolog remains the canonical deterministic command-reasoning surface where applicable. The hook registry in =modules/zara_hooks.pl= provides ordered, owned registrations and explicit lifecycle operations rather than a catch-all hook predicate.
+
+User =hooks.pl= customization is loaded through the existing Prolog engine/runtime boundary. Speech or untrusted user text does not become an arbitrary Prolog goal. Hook/custom command behavior remains subject to the same command/tool capability policy as core behavior.
+
+* Diagnostics
+Runtime customization diagnostics expose metadata needed to answer questions such as:
+
+- which advice registrations are active;
+- registration kind, owner, and ordering metadata;
+- which agent backend is configured;
+- whether that backend is known and who owns it;
+- whether override policy permits the selected replacement;
+- the unique override winner, or an explicit conflict when multiple override registrations make the state invalid.
+
+Diagnostics are deliberately callback-free. They must not expose callback objects, prompts, transcripts, tool arguments/results, credentials, private plugin configuration, or other secret-bearing runtime payloads.
+
+* Security boundaries
+Customization is trusted local code, but it is not ambient authorization.
+
+- Hooks/advice do not grant a tool capability that the active principal lacks.
+- =around= and =override= are disabled unless explicitly authorized.
+- A backend name is discovery/selection metadata, not permission by itself.
+- User customization is local/private state; remote payloads cannot upload hook source or choose executable Python/Prolog callbacks.
+- Service-plugin registrations are owner-scoped and cleaned up with plugin lifecycle.
+- There is still one RuntimeHost/agent ownership path, one approval controller, and one canonical cancellation/history lifecycle.
+
+* Troubleshooting
+If customization is not active, check the bounded diagnostics first:
+
+1. verify =[hooks].enabled = true=;
+2. for =around=/=override= or a non-core backend, verify =allow_override = true=;
+3. verify the requested backend is registered and diagnostics show the expected owner;
+4. inspect reload/registration error classes without dumping private callback/config data;
+5. return to =backend = "langgraph"= and disable override-capable advice to recover the core path.
+
+Unknown backends, conflicting overrides, failed user-file reloads, and plugin cleanup problems should remain explicit failures rather than silently changing runtime ownership.
