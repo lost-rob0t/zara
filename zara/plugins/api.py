@@ -128,6 +128,8 @@ class PluginRuntime:
         default_event_queue_size: int = DEFAULT_EVENT_QUEUE_SIZE,
         max_workers: int = 8,
         worker_join_timeout: float = 5.0,
+        advice_registrar: Optional[Callable[[str, str, int, Callable[..., Any]], int]] = None,
+        advice_unregistrar: Optional[Callable[[int], bool]] = None,
     ) -> None:
         self._plugin_name = plugin_name
         self._configuration = MappingProxyType(copy.deepcopy(dict(configuration)))
@@ -138,6 +140,9 @@ class PluginRuntime:
         self._default_event_queue_size = default_event_queue_size
         self._max_workers = max_workers
         self._worker_join_timeout = worker_join_timeout
+        self._advice_registrar = advice_registrar
+        self._advice_unregistrar = advice_unregistrar
+        self._advice_registration_ids: list[int] = []
         self._subscriptions: set[bridge.RuntimeEventSubscription] = set()
         self._workers: dict[str, ManagedWorker] = {}
         self._closed = False
@@ -196,6 +201,42 @@ class PluginRuntime:
             self._subscriptions.add(subscription)
             return subscription
 
+    def register_agent_loop_advice(
+        self,
+        kind: str,
+        priority: int,
+        callback: Callable[..., Any],
+    ) -> int:
+        """Register advice owned by this plugin against the canonical agent loop."""
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("plugin runtime is closed")
+            registrar = self._advice_registrar
+            unregistrar = self._advice_unregistrar
+        if registrar is None or unregistrar is None:
+            raise RuntimeError("agent-loop advice is not available")
+
+        registration_id = registrar(
+            kind,
+            f"plugin:{self._plugin_name}",
+            priority,
+            callback,
+        )
+
+        with self._lock:
+            if not self._closed:
+                self._advice_registration_ids.append(registration_id)
+                return registration_id
+
+        try:
+            unregistrar(registration_id)
+        except Exception as error:
+            self._failure_callback(
+                f"failed to unregister agent-loop advice {registration_id}: {error}"
+            )
+        raise RuntimeError("plugin runtime is closed")
+
     def start_worker(
         self,
         name: str,
@@ -228,8 +269,20 @@ class PluginRuntime:
             self._closed = True
             subscriptions = tuple(self._subscriptions)
             workers = tuple(self._workers.values())
+            advice_registration_ids = tuple(self._advice_registration_ids)
+            advice_unregistrar = self._advice_unregistrar
             self._subscriptions.clear()
             self._workers.clear()
+            self._advice_registration_ids.clear()
+
+        if advice_unregistrar is not None:
+            for registration_id in advice_registration_ids:
+                try:
+                    advice_unregistrar(registration_id)
+                except Exception as error:
+                    self._failure_callback(
+                        f"failed to unregister agent-loop advice {registration_id}: {error}"
+                    )
 
         for subscription in subscriptions:
             subscription.close()

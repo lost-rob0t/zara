@@ -516,18 +516,21 @@ class RuntimeHost:
                 else tuple(config.get_module_search_paths())
             )
             plugin_config = config.get_plugin_runtime_config()
+            backend = self._require_backend()
             manager = PluginManager(
                 paths,
                 configuration_provider=config.get_plugin_config,
                 status_provider=self._plugin_runtime_status,
                 dispatcher=self.submit,
                 subscriber=self._subscriber,
-                tool_registrar=self._require_backend().register_tools,
-                tool_unregistrar=self._require_backend().unregister_tools,
+                tool_registrar=backend.register_tools,
+                tool_unregistrar=backend.unregister_tools,
                 publisher=self._publisher,
                 lifecycle_timeout=plugin_config["lifecycle_timeout"],
                 event_queue_size=plugin_config["event_queue_size"],
                 max_workers=plugin_config["max_managed_workers"],
+                advice_registrar=backend.register_agent_loop_advice,
+                advice_unregistrar=backend.unregister_agent_loop_advice,
             )
             self._plugin_manager = manager
             self._last_plugin_diagnostics = ()

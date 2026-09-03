@@ -1,0 +1,74 @@
+#+title: RAGE #260 - service-plugin advice lifecycle
+#+startup: overview
+
+* Immutable start
+- Consumed issue :: #260 - Emacs-grade hooks, advice and pluggable agent-loop / Prolog-runtime override system
+- RAGE start commit :: =c07914416b5995f5b708e51790544151714e82bd=
+- Branch :: =rage/260-service-plugin-advice=
+- Slice :: ServicePlugin-owned Python agent-loop advice registration, deterministic owner binding, and automatic cleanup on plugin stop/start failure/runtime shutdown.
+
+* Iteration 1
+** Queue and pre-consumption audit
+- Current master is =c07914416b5995f5b708e51790544151714e82bd=.
+- No non-draft open PR is currently both mergeable and eligible for exact-head merge.
+- Sibling Android transaction is draft PR #299; this slice owns no =android/**= files.
+- Existing #260 work has already landed the per-AgentManager =AgentLoopAdviceRegistry=, user =hooks.py= loading, Prolog command-loop advice, and hook policy gates. This iteration does not duplicate those seams.
+
+** Research
+- =zara/agent/hooks.py= already owns registration validation, deterministic priority/sequence ordering, fixed owner cleanup, snapshot invocation, and the =enabled + allow_override= gate for around/override advice.
+- =AgentManager= owns exactly one =AgentLoopAdviceRegistry= per canonical conversational runtime and invokes it around the existing agent loop; there is no reason to create a plugin-specific registry.
+- =PluginRuntime= is deliberately a narrow facade. It currently exposes dispatch, bounded event subscriptions, configuration/status, and managed workers. It exposes no hook/advice registration boundary.
+- =PluginManager= already guarantees tool cleanup on startup failure and stop, and always calls =PluginRuntime._shutdown()= when a runtime is torn down. This is the correct ownership point for advice cleanup too.
+- =RuntimeHost= constructs =PluginManager= only after the backend starts and already supplies backend-owned tool registrar/unregistrar callables. Advice should follow the same dependency direction: RuntimeHost -> backend -> AgentManager registry, never plugin -> AgentManager reach-through.
+- A plugin-supplied owner string would make cleanup/diagnostics forgeable. The runtime facade must bind owner to the plugin identity itself.
+- Registration IDs are runtime-local capabilities. They should be retained privately by =PluginRuntime= and unregistered during shutdown even when plugin =stop()= throws or startup fails.
+
+** Architecture / design
+*** Selected boundary
+- Add optional advice registrar/unregistrar callables to =PluginRuntime= construction.
+- Expose =PluginRuntime.register_agent_loop_advice(kind, priority, callback)=. The plugin cannot supply owner; the facade binds =plugin:<plugin-name>=.
+- Store returned registration IDs in the plugin runtime under its existing lock. Reject registration after closure and reject unsupported backends explicitly.
+- During =PluginRuntime._shutdown()=, snapshot/clear registrations while closing subscriptions/workers, then unregister every advice registration. Cleanup failures are isolated through the existing plugin failure callback rather than preventing worker/subscription cleanup.
+- Add =RuntimeBackend.register_agent_loop_advice(...)= / =unregister_agent_loop_advice(...)= optional capability methods. =LangGraphRuntimeBackend= delegates to the manager's existing advice registry.
+- =RuntimeHost= passes those backend methods into =PluginManager=; =PluginManager= passes them into each =PluginRuntime=.
+
+*** Rejected alternatives
+- Directly hand =AgentLoopAdviceRegistry= to plugins: leaks mutable core runtime ownership and makes future backend replacement harder.
+- Let plugins choose owner strings: enables one plugin to collide with or clear another owner's registrations.
+- Register advice through a LangChain tool: advice is runtime customization, not an agent-callable tool and must not become model authority.
+- Add another plugin hook registry: duplicates the canonical AgentManager advice seam and violates #260's one-loop design.
+
+*** Invariants
+- Advice execution still goes through the existing registry, so override-capable kinds remain gated by both hook policy flags.
+- Plugin identity owns every registration; no cross-plugin owner spoofing.
+- Plugin shutdown/startup failure removes all registrations before the runtime object is discarded.
+- Ordinary service plugins that never register advice behave unchanged.
+- No =android/**= files and no second agent loop/tool approval path.
+
+*** Acceptance criteria -> tests
+1. Runtime facade binds owner and forwards kind/priority/callback -> direct =PluginRuntime= unit test.
+2. Closed or unsupported runtime rejects new advice -> unit tests.
+3. =_shutdown()= unregisters every registered ID exactly once -> unit test.
+4. Startup failure after registration cannot leak advice -> service-plugin lifecycle integration test.
+5. Normal host shutdown removes plugin advice -> service-plugin lifecycle integration test.
+6. LangGraph backend registration delegates to the manager registry and cleanup removes it -> backend-focused unit test or host integration fixture.
+
+** TDD evidence
+- Draft PR :: #304
+- Exact RED head :: =ff9e5be1b2d97e2cbae11630d403cf5d2c8c845e=
+- GitHub Actions :: CI #840, run =33702358066=
+- Shared mic Ubuntu :: GREEN
+- Shared mic Arch :: GREEN
+- Android skeleton gate :: GREEN
+- Main repository gate :: RED at phase 9 pytest, exactly 2 failures / 1660 passes.
+- Failure 1 :: =PluginRuntime.__init__() got an unexpected keyword argument 'advice_registrar'=
+- Failure 2 :: =PluginRuntime= has no attribute =register_agent_loop_advice=
+- =nix flake check= and package build were correctly skipped after the test failure.
+- Result :: deterministic RED proves the missing supported ServicePlugin advice boundary without introducing an unrelated regression.
+
+** Gate
+- Focused service-plugin/advice tests.
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- exact-head GitHub Actions.

@@ -76,6 +76,8 @@ class PluginManager:
         lifecycle_timeout: float = 5.0,
         event_queue_size: int = 256,
         max_workers: int = 8,
+        advice_registrar=None,
+        advice_unregistrar=None,
     ) -> None:
         builtin_path = Path(__file__).resolve().parent / "builtin"
         discovered_paths = [builtin_path]
@@ -87,6 +89,8 @@ class PluginManager:
         self._subscriber = subscriber
         self._tool_registrar = tool_registrar
         self._tool_unregistrar = tool_unregistrar
+        self._advice_registrar = advice_registrar
+        self._advice_unregistrar = advice_unregistrar
         self._publisher = publisher
         self._lifecycle_timeout = max(0.1, float(lifecycle_timeout))
         self._event_queue_size = event_queue_size
@@ -222,6 +226,8 @@ class PluginManager:
             default_event_queue_size=self._event_queue_size,
             max_workers=self._max_workers,
             worker_join_timeout=self._lifecycle_timeout,
+            advice_registrar=self._advice_registrar,
+            advice_unregistrar=self._advice_unregistrar,
         )
         record.runtime = runtime
 
