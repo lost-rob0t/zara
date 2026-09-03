@@ -1,0 +1,47 @@
+name: RAGE 159 apply
+
+on:
+  push:
+    branches:
+      - rage/159-zara1-device-actions
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rage-159-apply
+  cancel-in-progress: true
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[rage159-applied]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: rage/159-zara1-device-actions
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Apply asserted source patch
+        run: python scripts/rage-159-apply.py
+
+      - name: Prove focused #159 GREEN before commit
+        run: nix develop -c bash scripts/test-zara1-device-actions.sh
+
+      - name: Commit implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git status --short
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add zara/protocol.py zara/zmq_transport.py zara/security_gateway.py
+          git diff --cached --exit-code && { echo 'expected implementation diff is empty' >&2; exit 1; } || true
+          git commit -m '[rage159-applied] RAGE #159: implement typed device actions'
+          git push origin HEAD:rage/159-zara1-device-actions
