@@ -22,10 +22,7 @@
 
         llm_provider/1,             % anthropic | openai | openrouter | ollama
         llm_model/1,                % model name/ID
-        llm_endpoint/1,             % API endpoint URL
-
-        prolog_rlm_enabled/1,       % route LLM command rewrites through Prolog-RLM direct mode
-        prolog_rlm_model/1          % OpenRouter model id used by direct-mode rewrites
+        llm_endpoint/1              % API endpoint URL
     ]).
 
 :- discontiguous kb_config:todo_destination/1.
@@ -42,15 +39,14 @@
 :- dynamic llm_provider/1.
 :- dynamic llm_model/1.
 :- dynamic llm_endpoint/1.
-:- dynamic prolog_rlm_enabled/1.
-:- dynamic prolog_rlm_model/1.
 
 % ============================================================
 % ZARATHUSTRA DEFAULT CONFIGURATION
 % ============================================================
 % This configuration provides sensible defaults that work across
-% most Linux distributions. Users can override these by creating
-% ~/.zarathushtra/config.pl with their own definitions.
+% most Linux distributions. Provisioned/base overrides may live in
+% ~/.config/zarathushtra/config.pl. Mutable/private operator overrides belong
+% in ~/.config/zarathushtra/config.local.pl, which is loaded after config.pl.
 
 % ---- TODO Settings ----
 % Where to store TODO entries (Org-mode format)
@@ -96,15 +92,15 @@ todo_template(markdown,
 
 % Search engine template for the `search` intent.
 % Data only: the device side opens the browser with it; the server side
-% answers with the resolved URL. Users can override this in
-% ~/.zarathushtra/config.pl
-search_engine("https://duckduckgo.com/?q=~w").
+% answers with the resolved URL. Mutable/private overrides belong in
+% ~/.config/zarathushtra/config.local.pl.
+search_engine("https://search.brave.com/search?q=~w").
 
 % ---- Wake Words ----
 % Phrases that activate the Python wake listener. Matching tolerates small
 % transcription errors (edit distance ~25% of the phrase length), so close
 % variants such as "Zaratustra" still trigger. Override or add in
-% ~/.zarathushtra/config.pl, e.g.: wake_word("jarvis").
+% ~/.config/zarathushtra/config.local.pl, e.g.: wake_word("jarvis").
 wake_word("zarathushtra").
 wake_word("zarathustra").
 wake_word("hey zara").
@@ -130,12 +126,3 @@ llm_model("llama3.2:latest").
 % OpenRouter default: https://openrouter.ai/api/v1/chat/completions
 % Anthropic: handled by SDK (don't override)
 llm_endpoint("http://localhost:11434/api/chat").
-
-% ---- Prolog-RLM Direct-Mode Rewrites ----
-%
-% When enabled, Prolog command fallback rewrites are routed through the
-% pinned Prolog-RLM direct runtime (rlm_direct/4) over OpenRouter instead
-% of the plain llm_client query path. Requires ZARA_PROLOG_RLM_ROOT to
-% point at a Prolog-RLM checkout and OPENROUTER_API_KEY to be set.
-prolog_rlm_enabled(false).
-prolog_rlm_model("openrouter/free").
