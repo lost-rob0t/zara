@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -24,14 +25,28 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from .approval import ToolApprovalController
 from .conversation import ConversationManager
 from .graph import run_conversation_loop, validate_and_clean_messages
-from .hooks import AgentLoopAdviceRegistry
-from .loops import AgentLoopBackendOverrideDisabled, AgentLoopRegistry
+from .hooks import AgentLoopAdviceRegistry, HookDiagnostic
+from .loops import AgentLoopBackendOverrideDisabled, AgentLoopDiagnostic, AgentLoopRegistry
 from .prompting import build_agent_system_prompt
 from .tools.registry import ToolRegistry
 from .user_hooks import UserHookLoader
 from ..config import ZaraConfig, get_config
 from ..memory import build_memory_manager, MemoryManager
 from ..latency import LatencyTrace
+
+
+@dataclass(frozen=True)
+class CustomizationDiagnostic:
+    hooks_enabled: bool
+    allow_override: bool
+    configured_backend: str
+    backend_known: bool
+    backend_owner: Optional[str]
+    advice: tuple[HookDiagnostic, ...]
+    backends: tuple[AgentLoopDiagnostic, ...]
+    override_winner_id: Optional[int]
+    override_winner_owner: Optional[str]
+    override_conflict: bool
 
 
 class AgentManager:
@@ -109,6 +124,42 @@ class AgentManager:
 
     def unregister_agent_loop_backend(self, registration_id: int, *, owner: str) -> bool:
         return self.agent_loop_registry.unregister(registration_id, owner=owner)
+
+    def customization_diagnostics(self) -> CustomizationDiagnostic:
+        advice_registry = self._get_agent_loop_advice()
+        backend_registry = self._get_agent_loop_registry()
+        advice = advice_registry.diagnostics()
+        backends = backend_registry.diagnostics()
+
+        agent_config = self.config.get_section("agent")
+        configured_backend = str(agent_config.get("backend", "langgraph")).strip().lower()
+        backend = next(
+            (item for item in backends if item.name == configured_backend),
+            None,
+        )
+
+        overrides = [item for item in advice if item.kind == "override"]
+        override_conflict = len(overrides) > 1
+        winner = (
+            overrides[0]
+            if len(overrides) == 1
+            and advice_registry.enabled
+            and advice_registry.allow_override
+            else None
+        )
+
+        return CustomizationDiagnostic(
+            hooks_enabled=bool(advice_registry.enabled),
+            allow_override=bool(advice_registry.allow_override),
+            configured_backend=configured_backend,
+            backend_known=backend is not None,
+            backend_owner=backend.owner if backend is not None else None,
+            advice=advice,
+            backends=backends,
+            override_winner_id=winner.registration_id if winner is not None else None,
+            override_winner_owner=winner.owner if winner is not None else None,
+            override_conflict=override_conflict,
+        )
 
     def _build_system_prompt(self):
         return build_agent_system_prompt(self.config)
@@ -368,4 +419,4 @@ class AgentManager:
             await self.tool_registry.shutdown_async()
 
 
-__all__ = ["AgentManager"]
+__all__ = ["AgentManager", "CustomizationDiagnostic"]
