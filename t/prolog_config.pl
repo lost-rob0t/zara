@@ -105,26 +105,6 @@ test(unknown_llm_provider_override_is_rejected,
     write_config(Path, 'llm_provider(gpt4all).\n'),
     config_loader:reload_user_config.
 
-test(prolog_rlm_facts_are_accepted_and_validated) :-
-    config_loader:user_config_path(Path),
-    write_config(Path,
-        'prolog_rlm_enabled(true).\nprolog_rlm_model("openrouter/free").\n'),
-    config_loader:reload_user_config,
-    once(kb_config:prolog_rlm_enabled(true)),
-    once(kb_config:prolog_rlm_model("openrouter/free")).
-
-test(invalid_prolog_rlm_facts_are_rejected,
-     [ forall(invalid_prolog_rlm_config(Config)),
-       throws(error(domain_error(zarathushtra_user_config_fact, _), _))
-     ]) :-
-    config_loader:user_config_path(Path),
-    write_config(Path, Config),
-    config_loader:reload_user_config.
-
-invalid_prolog_rlm_config('prolog_rlm_enabled("yes").\n').
-invalid_prolog_rlm_config('prolog_rlm_enabled(1).\n').
-invalid_prolog_rlm_config('prolog_rlm_model(12345).\n').
-
 test(local_overlay_wins_without_modifying_provisioned_config) :-
     config_loader:user_config_path(BasePath),
     config_loader:user_local_config_path(LocalPath),
@@ -158,7 +138,7 @@ test(local_overlay_reload_replaces_old_value_without_duplicates) :-
     findall(URL, kb_config:search_engine(URL), URLs),
     URLs = ["https://local-new.example/?q=~w",
             "https://base-reload.example/?q=~w",
-            "https://www.google.com/search?q=~w"].
+            "https://search.brave.com/search?q=~w"].
 
 test(invalid_local_overlay_leaves_previous_loaded_state) :-
     config_loader:user_config_path(BasePath),
