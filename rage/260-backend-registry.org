@@ -1,0 +1,7 @@
+#+title: RAGE #260 — pluggable agent backend registry
+
+* Iteration 1
+- Consumed issue :: #260
+- Immutable RAGE start :: =7a89d6d0efeac92ba2ff47203882c2a89b663ede=
+- Branch :: =rage/260-backend-registry=
+- Scope :: Zara core only. Complete the remaining #260 agent-backend selection seam without creating a second agent loop, bypassing tool approval, or touching =android/**=.
