@@ -21,7 +21,7 @@
 ** Design
 - Add a core =zara.user_commands= persistence module, independent of desktop UI and Android.
 - Store one JSON document per command only after structural validation into explicit typed Python dataclasses. JSON is data, not executable authority.
-- Every store instance is permanently bound to a =PrincipalContext=; owner is injected from the store, never accepted from command payloads.
+- Every store instance is permanently bound to one =PrincipalContext=; owner is injected from the store, never accepted from command payloads.
 - Stable command IDs are caller-supplied or generated; lookups, list, update and delete include =principal_id= in SQL predicates.
 - Optimistic concurrency uses an integer =revision=. Updates require the observed revision and atomically advance it, preventing silent concurrent overwrite.
 - Use =BEGIN IMMEDIATE= for create/update/delete mutations so uniqueness/conflict decisions and writes are one SQLite transaction.
@@ -52,3 +52,28 @@
 - Production module =zara.user_commands= did not exist at that head, so the first persistence import/behavior contract was genuinely RED rather than a false-green harness result.
 - Expanded deterministic tests in commit =5c757371475cd823c6f59bc251c03e0c7c9ea1f7= now cover restart persistence, principal isolation, optimistic-concurrency stale writes, trigger/alias collisions, guest durability policy, executable-capability rejection, JSON-only arguments, and command normalization.
 - No production implementation has been committed yet. CI #915 was queued for the expanded RED candidate before this evidence append.
+
+* Iteration 2 — acceptance-gap recovery
+** Exact-head gate result
+- Exact implementation head =4cd886cecb2e71e5e054dc08daa0202f13b17d34= completed CI #918 fully green: repository tests, =nix flake check=, packaged Zara build, Android skeleton gate, and both shared-mic jobs all passed.
+- PR #311 was mergeable and had no comments, reviews, or unresolved review threads.
+- Green CI was not sufficient to authorize merge because an adversarial reread of issue #162 found material unimplemented acceptance requirements.
+
+** Acceptance gaps found
+- The issue requires typed slot schema/default persistence; iteration 1 stored no slot schema.
+- The issue requires location/target policy where allowed; persisted actions stored no typed placement/target policy.
+- The issue requires migration metadata; the definition stored none.
+- Isolation explicitly covers =search= and =export= as well as get/list/update/delete; no search/export boundary existed.
+- Schema upgrade/rollback and hot-load validation require explicit fixtures rather than relying only on a schema-version integer.
+- Partial-write atomicity needed a mutation failure fixture proving both the definition row and trigger index roll back together.
+
+** Contract reconciliation
+- Reuse the frozen #154/#155 slot-value vocabulary: =text=, =number=, =duration=, =datetime=, =ref=, =boolean=. Persistence records slot definitions/defaults only; parsing/dialogue remains #155 and compilation remains #163.
+- Reuse #157's placement vocabulary: =server= versus =device=. Persistence may express a bounded target policy such as =initiating_device= but never a concrete payload-supplied device/principal identity.
+- Search/export remain principal-bound store operations and cannot broaden ownership authority.
+- Unsupported stored schema versions and malformed stored action data fail closed without rewriting the durable row.
+
+** New RED candidate
+- Commit =c189c26dcda56eb363fcfee3586c97a5361da2a3= expands deterministic TDD coverage before production changes.
+- New tests require =CommandSlot= with typed/default validation, action location/target policy, migration metadata round-trip, principal-isolated search/export, rollback on trigger collision, unsupported-schema non-rewrite, and malformed hot-load rejection.
+- Production has not yet been changed for these new requirements; the candidate is intentionally expected RED until exact-head evidence confirms the missing surface.
