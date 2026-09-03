@@ -114,8 +114,8 @@ test(local_overlay_wins_without_modifying_provisioned_config) :-
     write_config(LocalPath, Local),
     config_loader:reload_user_config,
     once(kb_config:search_engine("https://local.example/?q=~w")),
-    read_file_to_string(BasePath, BaseAfter, []),
-    BaseAfter == Base.
+    read_file_to_codes(BasePath, BaseAfter, []),
+    atom_codes(Base, BaseAfter).
 
 test(local_overlay_is_not_auto_created) :-
     config_loader:user_config_path(BasePath),
