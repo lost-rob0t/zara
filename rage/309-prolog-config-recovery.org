@@ -27,7 +27,14 @@
 - CI #882 reached the full repository =Run all tests= step and reported success instead of the expected failure. This is not accepted as RED evidence; it exposed faulty test-unit invocation in the focused shell gate.
 - First harness correction attempted separate PlUnit summaries, but exact-head CI #884 again false-greened: =Run all tests= and =nix flake check= both passed while no production/config/docs implementation existed. The summary-based shell expression was therefore not accepted as a fail-closed test gate.
 - Second harness correction invoked each test unit in its own SWI-Prolog process, but exact-head CI #886 still false-greened at =504b38246f19fcc7eedd506786a1f92e6865d68c= while =kb/config.pl= still contained the DuckDuckGo default and dead RLM predicates. This result is also rejected as RED evidence.
-- Third harness correction :: add a direct semantic precondition to =scripts/test-prolog-config.sh= that requires the Brave default before the recovery PlUnit suite runs. This assertion is independent of PlUnit reporting and must fail on the untouched pre-implementation configuration.
-- Third corrected RED candidate head :: =8c60d925d9e29f177c1d4d09ecd0bdec08d00b49=.
-- Expected failures remain: Brave default missing; =prolog_rlm_*= predicates still exported; stale RLM user facts still accepted; generated config still contains RLM instructions and lacks =config.local.pl= ownership guidance.
-- No production/config/docs implementation change is present on the corrected RED candidate.
+- Third harness correction added a direct semantic precondition to =scripts/test-prolog-config.sh= that requires the Brave default before the recovery PlUnit suite runs.
+- Repository gate hardening fixed =scripts/test-all.sh= so a failing command inside a phase can no longer be overwritten by a later successful command under Bash =errexit= suppression.
+- Genuine RED head :: =329e3db39ff13516b8aceb86e869de363be79229=.
+- Exact-head CI #889 :: failure in =Run all tests=; Arch shared-mic, Ubuntu shared-mic, and Android gates all passed. =nix flake check= and packaged build were correctly skipped after the failed full-test phase.
+- Pytest artifact :: 1675 tests, 0 failures. This isolates the RED to the intended shell/Prolog-config gate rather than a Python or Android regression.
+- RED accepted. Production implementation may proceed.
+
+** Implementation
+- First production commit :: =b6220dea467660ed6cdf9aded0eaeeb1222abf09=.
+- =kb/config.pl= now defaults =search_engine/1= to Brave Search, removes exported/dynamic/default =prolog_rlm_*= predicates, and points mutable/private operator overrides at =config.local.pl= while retaining provisioned =config.pl= compatibility.
+- Remaining GREEN work in this transaction :: remove =prolog_rlm_*= acceptance/generated instructions from =modules/config_loader.pl= and update stale config documentation before full exact-head gates.
