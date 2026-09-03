@@ -48,7 +48,7 @@ test(local_overlay_still_overrides_base_without_rewrite) :-
     write_recovery_config(LocalPath, Local),
     config_loader:reload_user_config,
     once(kb_config:search_engine("https://local.example/search?q=~w")),
-    read_file_to_string(BasePath, BaseAfter, []),
-    BaseAfter == Base.
+    read_file_to_codes(BasePath, BaseAfter, []),
+    atom_codes(Base, BaseAfter).
 
 :- end_tests(prolog_config_recovery).
