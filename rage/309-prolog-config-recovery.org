@@ -23,6 +23,9 @@
 ** TDD
 - Test-only recovery unit :: =t/prolog_config_recovery.pl=
 - Gate inclusion :: =scripts/test-prolog-config.sh=
-- RED candidate head :: =291975c0dc2c3fe611a11c52f7f1957918ca1dee=
-- Expected failures on this head: Brave default missing; =prolog_rlm_*= predicates still exported; stale RLM user facts still accepted; generated config still contains RLM instructions and lacks =config.local.pl= ownership guidance.
-- No production/config/docs implementation change is present on the RED candidate.
+- Initial test-only head :: =28f4c7d7658cd8780a447f20612d7382fe4920ed=.
+- CI #882 reached the full repository =Run all tests= step and reported success instead of the expected failure. This is not accepted as RED evidence; it exposed faulty test-unit invocation in the focused shell gate.
+- Harness correction :: run =prolog_config= and =prolog_config_recovery= as separate PlUnit invocations with independent nonzero/failed/timeout summaries.
+- Corrected RED candidate head :: =e0974ff2b23fc757c2a7b44bdfa02af4a710dee6=.
+- Expected failures remain: Brave default missing; =prolog_rlm_*= predicates still exported; stale RLM user facts still accepted; generated config still contains RLM instructions and lacks =config.local.pl= ownership guidance.
+- No production/config/docs implementation change is present on the corrected RED candidate.
