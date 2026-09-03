@@ -7,3 +7,22 @@
 - Scope :: Zara Core configuration/tests/docs only. No Android production, external Prolog-RLM, dotfiles/Home Manager, plugins, or other repositories.
 
 * Iteration 1
+** Research
+- Evidence :: =rage/309-prolog-config-recovery-research.org=
+- #5's =config.pl= + =config.local.pl= ownership split is correct and stays authoritative.
+- Current master still defaults search to DuckDuckGo and still exposes/configures dead =prolog_rlm_*= predicates despite roadmap/RAGE policy prohibiting that runtime path.
+- =wiki/install.org= additionally documents an RLM module/live-smoke path that is no longer present in default-branch code search.
+- Brave's current public search surface is =search.brave.com=; this slice keeps search configuration as a data URL template rather than adding a provider/runtime layer.
+
+** Design
+- Evidence :: =rage/309-prolog-config-recovery-design.org=
+- Change only the built-in search template, supported Prolog config schema/examples, and stale config documentation.
+- Preserve local-overlay precedence, server/device fact validation, normal SWI-Prolog, and normal LLM provider settings.
+- Old =prolog_rlm_*= facts must fail closed through the existing unsupported-fact domain error.
+
+** TDD
+- Test-only recovery unit :: =t/prolog_config_recovery.pl=
+- Gate inclusion :: =scripts/test-prolog-config.sh=
+- RED candidate head :: =291975c0dc2c3fe611a11c52f7f1957918ca1dee=
+- Expected failures on this head: Brave default missing; =prolog_rlm_*= predicates still exported; stale RLM user facts still accepted; generated config still contains RLM instructions and lacks =config.local.pl= ownership guidance.
+- No production/config/docs implementation change is present on the RED candidate.
