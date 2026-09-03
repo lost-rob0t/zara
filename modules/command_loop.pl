@@ -1,14 +1,20 @@
 :- module(command_loop, [
     handle_command/1,
-    execute_resolved/3
+    execute_resolved/3,
+    advice_command_loop/3,
+    command_handler/2
 ]).
 
 :- use_module(intent_resolver, [convert_number_atoms/2]).
 :- use_module(llm_client, [llm_query_with_history/2]).
 :- use_module(rlm_rewrite, [rewrite_with_rlm/3]).
+:- use_module(hooks_loader, [hook_policy/2]).
 :- use_module('../kb/intents').
 :- use_module('commands').
 :- use_module('zara_hooks').
+
+:- dynamic command_handler/2.
+:- multifile command_handler/2.
 
 handle_command(String) :-
     zara_hooks:acknowledge,
@@ -50,6 +56,23 @@ execute_resolved(Intent, Args, Result) :-
     zara_hooks:reply_result(Result).
 
 execution_result(Intent, Args, Result) :-
+    ( advice_command_loop(Intent, Args, AdviceResult)
+    -> Result = AdviceResult
+    ; core_execution_result(Intent, Args, Result)
+    ).
+
+advice_command_loop(Intent, Args, Result) :-
+    hook_policy(true, true),
+    catch(
+        ( command_handler(Intent, Args)
+        -> Result = command_result(success, Intent, Args, none)
+        ; fail
+        ),
+        Error,
+        Result = command_result(failure, Intent, Args, exception(Error))
+    ).
+
+core_execution_result(Intent, Args, Result) :-
     catch(
         ( commands:execute(Intent, Args)
         -> Result = command_result(success, Intent, Args, none)

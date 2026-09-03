@@ -5,6 +5,7 @@
         reload_user_config/0,
         ensure_user_config/0,
         user_config_path/1,
+        user_local_config_path/1,
         search_url/2,
         command_argv/3
     ]).
@@ -20,6 +21,13 @@
 user_config_path(Path) :-
     user_config_dir(Dir),
     directory_file_path(Dir, 'config.pl', Path).
+
+%% user_local_config_path(-Path) is det.
+%
+%  Resolves the mutable user-owned Prolog overlay beside config.pl.
+user_local_config_path(Path) :-
+    user_config_dir(Dir),
+    directory_file_path(Dir, 'config.local.pl', Path).
 
 %% user_config_dir(-Dir) is det.
 %
@@ -131,27 +139,31 @@ write_default_config(Stream) :-
 
 %% load_user_config is det.
 %
-%  Ensures user config exists, then consults it
+%  Ensures user config exists, then loads base + optional mutable overlay.
 load_user_config :-
     ensure_user_config,
-    user_config_path(Path),
-    ( exists_file(Path)
-    -> read_user_config(Path, Facts),
-       replace_user_config(Facts)
-    ; format('Warning: User config not found at ~w~n', [Path])
-    ).
+    user_config_path(BasePath),
+    user_local_config_path(LocalPath),
+    read_optional_user_config(BasePath, BaseFacts),
+    read_optional_user_config(LocalPath, LocalFacts),
+    append(BaseFacts, LocalFacts, Facts),
+    replace_user_config(Facts).
 
 %% reload_user_config is det.
 %
-%  Utility to reload user config during development
+%  Utility to atomically reload provisioned + mutable user config.
 reload_user_config :-
-    user_config_path(Path),
-    ( exists_file(Path)
-    -> read_user_config(Path, Facts),
-       replace_user_config(Facts),
-       format('User config reloaded: ~w~n', [Path])
-    ; format('No user config to reload~n')
-    ).
+    user_config_path(BasePath),
+    user_local_config_path(LocalPath),
+    ( exists_file(BasePath) ; exists_file(LocalPath) ),
+    !,
+    read_optional_user_config(BasePath, BaseFacts),
+    read_optional_user_config(LocalPath, LocalFacts),
+    append(BaseFacts, LocalFacts, Facts),
+    replace_user_config(Facts),
+    format('User config reloaded: ~w + ~w~n', [BasePath, LocalPath]).
+reload_user_config :-
+    format('No user config to reload~n').
 
 %% load_server_config is det.
 %
@@ -160,11 +172,20 @@ reload_user_config :-
 %  server-inappropriate and fail the load with a typed domain error
 %  instead of being silently accepted. Never creates the user config file.
 load_server_config :-
-    user_config_path(Path),
+    user_config_path(BasePath),
+    user_local_config_path(LocalPath),
+    ( exists_file(BasePath) ; exists_file(LocalPath) ),
+    !,
+    read_optional_server_user_config(BasePath, BaseFacts),
+    read_optional_server_user_config(LocalPath, LocalFacts),
+    append(BaseFacts, LocalFacts, Facts),
+    replace_server_user_config(Facts).
+load_server_config.
+
+read_optional_server_user_config(Path, Facts) :-
     ( exists_file(Path)
-    -> read_server_user_config(Path, Facts),
-       replace_server_user_config(Facts)
-    ; true
+    -> read_server_user_config(Path, Facts)
+    ; Facts = []
     ).
 
 read_server_user_config(Path, Facts) :-
@@ -191,6 +212,12 @@ replace_server_user_config(Facts) :-
            ( asserta(Module:Fact, Ref),
              assertz(loaded_server_clause(Ref))
            )).
+
+read_optional_user_config(Path, Facts) :-
+    ( exists_file(Path)
+    -> read_user_config(Path, Facts)
+    ; Facts = []
+    ).
 
 read_user_config(Path, Facts) :-
     setup_call_cleanup(

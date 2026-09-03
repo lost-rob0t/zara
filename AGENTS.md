@@ -119,6 +119,11 @@ Do not game coverage. Never weaken assertions, add meaningless execution-only te
 - Plugin loader expects tools to be `langchain_core.tools.BaseTool` instances.
 - Avoid custom tool registries; prefer LangChain `tool` or `StructuredTool`.
 
+## Long-Horizon Tasks
+- Long-horizon execution is owned by `RuntimeHost` via `zara/tasks/runner.py`; do not fork the conversational loop or add a second approval channel.
+- Task state changes must go through `zara/tasks/store.py` transitions; never graft machine task state onto `TodoStore`.
+- Task tools are gated by `[tasks].enabled` (default false) and share the existing tool approval policy. See `wiki/long-horizon-tasks.org`.
+
 ## External service-plugin configuration
 
 - External service plugins own their private configuration under
