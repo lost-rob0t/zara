@@ -1,0 +1,68 @@
+#+title: RAGE #260 - agent loop backend registry
+#+startup: overview
+
+* Immutable start
+- Consumed issue :: #260 - Emacs-grade hooks, advice and pluggable agent-loop / Prolog-runtime override system
+- RAGE start commit :: =7a89d6d0efeac92ba2ff47203882c2a89b663ede=
+- Branch :: =rage/260-agent-loop-backend-registry=
+- Slice :: named =[agent].backend= selection through one canonical agent-loop registry.
+
+* Iteration 1
+** Queue audit
+- Current master at consumption is =7a89d6d0efeac92ba2ff47203882c2a89b663ede=.
+- Open PR #256 is non-draft but GitHub reports mergeable=false, so it is not eligible for standing merge authorization.
+- Remaining open PRs are draft or non-mergeable; no exact-head green eligible PR displaced this work.
+- Android production ownership remains separate; this slice touches no =android/**= files.
+
+** Research
+- =AgentManager.process_async()= currently invokes =run_conversation_loop= directly through the already-landed =AgentLoopAdviceRegistry=.
+- =[agent]= config has no backend selector in the shipped default config; absence must remain backward-compatible and resolve to =langgraph=.
+- The #260 contract explicitly requires a pluggable =[agent].backend= resolved from a loop registry while preserving one runtime, approval controller, cancellation chain, history persistence, latency trace, and max-step bound.
+- The loop replacement boundary must sit underneath existing advice so before/after/around/override semantics remain stable regardless of selected backend.
+- Backend lookup must be deterministic and fail closed for unknown names; silently falling back to LangGraph would hide configuration errors.
+- Selecting a non-core loop is override-capable behavior, so it must obey the existing two-key =hooks.enabled + hooks.allow_override= policy rather than creating a new privilege path.
+
+** Architecture / design
+*** Selected boundary
+- Add =AgentLoopRegistry= under =zara/agent/=.
+- The registry owns named async loop callables and deterministic owner metadata.
+- Seed exactly one built-in backend, =langgraph=, bound to the existing =run_conversation_loop=.
+- =AgentManager= reads =[agent].backend= once per turn, defaulting to =langgraph= when omitted, resolves the named loop, then invokes that resolved loop through the existing advice registry.
+- A non-=langgraph= selection requires both =hooks.enabled=true= and =hooks.allow_override=true=.
+- Add narrow owner-safe registration/unregistration methods on =AgentManager= so later user-hook/service-plugin slices can register replacements without reaching into private state.
+
+*** Rejected alternatives
+- Conditional =if backend == ...= branches in =process_async=: not extensible and recreates command-specific hacks.
+- A second AgentManager/runtime per backend: violates the one-runtime invariant and forks approvals/history/cancellation.
+- Let unknown backends silently fall back to LangGraph: unsafe configuration ambiguity.
+- Allow custom backend selection while hook overrides are disabled: creates a second, less-auditable override policy.
+- Move backend selection into advice: advice wraps behavior; backend identity is a lower-level implementation choice and must remain independently diagnosable.
+
+*** Invariants
+- One AgentManager, one approval controller, one conversation manager, one tool registry.
+- Existing advice wraps the selected backend rather than being bypassed.
+- Non-core loop selection reuses the existing override authorization gate.
+- Backends receive the same state and keyword contract as =run_conversation_loop=.
+- No Android files, no second agent framework, no new dependency.
+
+*** Acceptance criteria -> tests
+1. Registry resolves named backends and exposes deterministic owner/name metadata.
+2. Duplicate names are rejected.
+3. Unregister is owner-safe and cannot remove another owner's backend.
+4. Unknown backend resolution raises a bounded explicit error.
+5. =AgentManager.process_async()= invokes an explicitly allowed configured backend through the existing advice seam.
+6. Custom backend selection fails closed unless both hook policy gates allow overrides.
+7. Omitting =[agent].backend= preserves the existing =langgraph= behavior.
+
+** TDD evidence
+- RED commit :: =2c6f9707220828d4318b4c5c9f7cd9ac5559c18c=
+- Draft PR :: #305
+- CI run :: #849 / =33713698448=
+- The branch contained the tests before =zara.agent.loops= existed; the run entered =scripts/test-all.sh= but was cancelled when implementation commits superseded the head. The deterministic import contract at that immutable head is retained as the RED artifact; cancelled CI is not merge evidence.
+
+** Gate
+- Focused registry/AgentManager tests.
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- Exact-head GitHub Actions; never merge pending/stale/failing heads.
