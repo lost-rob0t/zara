@@ -26,7 +26,8 @@
 - Initial test-only head :: =28f4c7d7658cd8780a447f20612d7382fe4920ed=.
 - CI #882 reached the full repository =Run all tests= step and reported success instead of the expected failure. This is not accepted as RED evidence; it exposed faulty test-unit invocation in the focused shell gate.
 - First harness correction attempted separate PlUnit summaries, but exact-head CI #884 again false-greened: =Run all tests= and =nix flake check= both passed while no production/config/docs implementation existed. The summary-based shell expression was therefore not accepted as a fail-closed test gate.
-- Second harness correction :: invoke each test unit in its own SWI-Prolog process and use the boolean result of =run_tests(Unit)= directly for process exit; isolate XDG state between the legacy and recovery units so prior mutable config cannot contaminate recovery assertions.
-- Second corrected RED candidate head :: =d05d7dc401b9463e284104ab079d5f6b9058bbbb=.
+- Second harness correction invoked each test unit in its own SWI-Prolog process, but exact-head CI #886 still false-greened at =504b38246f19fcc7eedd506786a1f92e6865d68c= while =kb/config.pl= still contained the DuckDuckGo default and dead RLM predicates. This result is also rejected as RED evidence.
+- Third harness correction :: add a direct semantic precondition to =scripts/test-prolog-config.sh= that requires the Brave default before the recovery PlUnit suite runs. This assertion is independent of PlUnit reporting and must fail on the untouched pre-implementation configuration.
+- Third corrected RED candidate head :: =8c60d925d9e29f177c1d4d09ecd0bdec08d00b49=.
 - Expected failures remain: Brave default missing; =prolog_rlm_*= predicates still exported; stale RLM user facts still accepted; generated config still contains RLM instructions and lacks =config.local.pl= ownership guidance.
 - No production/config/docs implementation change is present on the corrected RED candidate.
