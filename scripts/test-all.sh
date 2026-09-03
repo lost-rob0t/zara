@@ -183,7 +183,6 @@ phase_security_scripts() {
     scripts/test-todos.sh
     scripts/test-llm-clients.sh
     scripts/test-streaming-llm.sh
-    scripts/test-rlm-rewrite.sh
     scripts/test-memory.sh
     scripts/test-tts.sh
     scripts/test-wake-lifecycle.sh
