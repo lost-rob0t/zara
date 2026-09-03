@@ -12,7 +12,7 @@ target for desktop commands:
 
 | File | Scope | Content |
 |---+---+---|
-| =kb/config.pl= | shared semantic, server-safe | todo settings, =search_engine= URL template (data), =wake_word=, =llm_*=, =prolog_rlm_*= |
+| =kb/config.pl= | shared semantic, server-safe | todo settings, =search_engine= URL template (data), =wake_word=, =llm_*= |
 | =kb/device_providers.pl= | Linux device only (=main.pl= boot) | =app_mapping=, =direct_app= (shell strings), =dictation_command=, =timer_sound=, =alarm_sound= |
 | =kb/server_providers.pl= | server registry (versioned) | =api_service_registry_version(1)=, =api_service_provider(Id, Kind, TimeoutSeconds)= flat facts |
 
@@ -22,8 +22,10 @@ target for desktop commands:
 - =server_main.pl= (server boot) consults =kb/config.pl=, =kb/intents.pl=,
   =kb/server_providers.pl=, =modules/capability_plans.pl= and
   =modules/config_loader.pl= — never =kb/device_providers.pl=.
-- User config compatibility: old =~/.config/zarathushtra/config.pl= files
-  keep working unchanged on desktop; device facts are routed to
+- User config compatibility: =~/.config/zarathushtra/config.pl= remains the
+  provisioned/base layer. Mutable/private operator changes belong in
+  =~/.config/zarathushtra/config.local.pl=, which loads afterward and wins
+  without Zara rewriting the base file. Device facts are routed to
   =kb_device_providers=. The server scope (=config_loader:load_server_config=)
   accepts semantic + intent facts only and fails the boot with
   =domain_error(zarathushtra_server_config_fact, Term)= on

@@ -9,4 +9,4 @@ export XDG_CONFIG_HOME="$test_root/config"
 export PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}"
 
 swipl -q -g run_tests -t halt "$repo_root/t/commands.pl"
-pytest -q "$repo_root/t/test_command_routing.py"
+pytest -q "$repo_root/t/test_daemon_intent_router.py"

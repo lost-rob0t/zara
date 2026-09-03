@@ -1,0 +1,20 @@
+#+title: RAGE #309 research — Prolog config recovery
+
+* Scope
+Research current Zara Core at immutable start =e6d9409e49246a187d5ea015da681bfc4e4fdc63=. No Android production or external repository work.
+
+* Findings
+- #5 already solved the Home-Manager ownership defect structurally: =config.pl= remains the provisioned/base layer and =$XDG_CONFIG_HOME/zarathushtra/config.local.pl= is the optional mutable/private overlay. =config.local.pl= is not auto-created and is loaded after base, so this slice must preserve that contract rather than invent another config store.
+- Current =kb/config.pl= still defaults =search_engine/1= to DuckDuckGo. The current operator recovery contract explicitly selects Brave Search. Brave's own current documentation identifies =search.brave.com= as its browser-accessible search surface; the conventional query URL is =https://search.brave.com/search?q=<query>=.
+- Current =kb/config.pl= still exports and defines =prolog_rlm_enabled/1= and =prolog_rlm_model/1=.
+- Current =modules/config_loader.pl= still emits commented Prolog-RLM instructions in newly generated user config and accepts both =prolog_rlm_*= facts as supported user/server facts.
+- Current =t/prolog_config.pl= positively asserts that those RLM facts are accepted. That test now protects obsolete behavior and must be replaced with a fail-closed regression contract.
+- Current =wiki/install.org= still documents =modules/rlm_rewrite.pl=, =ZARA_PROLOG_RLM_ROOT=, an OpenRouter direct-mode path, and a live Prolog-RLM smoke test. Default-branch code search finds that description but no corresponding live =rlm_rewrite= source result, making the documentation/configuration surface stale even before applying the policy decision.
+- Zara roadmap #1 explicitly states RLM work is not part of Zara and #123 is closed not-planned. =skills/rage/SKILL.md= makes the permanent constraint stronger: ordinary SWI-Prolog remains, but do not add or revive a Prolog-RLM runtime/backend/dependency.
+- The existing supported Prolog LLM provider settings (=llm_provider/1=, =llm_model/1=, =llm_endpoint/1=) are separate and remain in scope; removing dead RLM knobs must not remove normal Prolog/LLM configuration.
+
+* Adversarial notes
+- Do not treat removal as merely hiding docs while continuing to accept dormant RLM facts; that leaves an undeclared authority path and stale compatibility surface.
+- Do not silently ignore old =prolog_rlm_*= facts. Existing validation semantics should reject them as unsupported, so stale configs fail explicitly instead of appearing effective.
+- Do not hard-code the operator's private mutable values into =config.local.pl= or generate that file. Brave is a safe product default; private overrides remain user-owned.
+- Do not change browser launch to a shell string. =search_engine/1= remains a data URL template consumed by the existing structured search/device path.

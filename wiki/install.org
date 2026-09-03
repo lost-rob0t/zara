@@ -124,47 +124,22 @@ Anthropic, OpenAI, and OpenRouter credentials come from =ANTHROPIC_API_KEY=,
 key settings. Leave =[llm].endpoint= empty to use the selected provider's
 default endpoint; set it only for an explicit compatible proxy or local service.
 
-Python runtime settings use =config.toml=. Prolog facts remain separate in
-=~/.config/zarathushtra/config.pl=. That Prolog file accepts only the generated
-fact forms; they are validated, installed into =kb_config= or =kb_intents=, and
-replace prior user overrides on reload.
+Python runtime settings use =config.toml=. Prolog facts use two XDG files with
+explicit ownership. =~/.config/zarathushtra/config.pl= is the provisioned/base
+layer and may be managed by Home Manager or another declarative system.
+=~/.config/zarathushtra/config.local.pl= is the mutable/private operator-owned
+overlay. Zara loads the local overlay after the base layer, so local values win,
+and Zara never creates or overwrites =config.local.pl=. Keep secrets and
+machine-private mutable facts in the local overlay, outside Git and the Nix
+store. Supported facts are validated and installed into =kb_config=,
+=kb_intents=, or the device-provider module; unsupported facts fail closed.
 
-* Prolog-RLM direct-mode rewrites
+Brave Search is the built-in =search_engine/1= template. Override it in
+=config.local.pl= when desired without rewriting the provisioned base file:
 
-When Prolog command resolution fails, the fallback rewrite can run through the
-pinned Prolog-RLM native direct runtime instead of the plain LLM client query.
-The Nix wrappers inject the pinned Prolog-RLM source as =ZARA_PROLOG_RLM_ROOT=;
-=modules/rlm_rewrite.pl= loads it lazily inside Zara's SWI-Prolog runtime and
-calls =rlm_direct/4= over OpenRouter with no tools, no context operations, a
-bounded budget (two model calls, 45 second wall limit), and temperature zero.
-Every failure path is closed: a missing or invalid =ZARA_PROLOG_RLM_ROOT=, a
-missing =OPENROUTER_API_KEY=, a runtime contract mismatch, or a direct-runtime
-error becomes a typed =rlm_rewrite_error/1= exception and the command resolution
-fails without contacting any other provider.
-
-Enable it with Prolog user configuration (disabled by default):
-
-#+begin_example
-prolog_rlm_enabled(true).
-prolog_rlm_model("openrouter/free").
-#+end_example
-
-=prolog_rlm_model= names the OpenRouter model id passed to
-=rlm_chain:openrouter_provider/2=. The credential is read only from the
-=OPENROUTER_API_KEY= environment variable; keep it out of any configuration
-file.
-
-Both OpenRouter paths have live smoke tests that require a real credential and
-never run in the deterministic gate:
-
-#+begin_example
-export OPENROUTER_API_KEY='sk-or-...'
-nix develop -c bash scripts/test-openrouter-live.sh      # plain Python client
-nix develop -c bash scripts/test-prolog-rlm-live.sh      # direct-mode rewrite
-#+end_example
-
-=ZARA_LLM_LIVE_MODEL= and =ZARA_RLM_LIVE_MODEL= override the default
-=openrouter/free= model for each smoke.
+#+begin_src prolog
+search_engine("https://search.brave.com/search?q=~w").
+#+end_src
 
 Dictation process state is determined from the configured PID file and live
 process. =ZARA_DICTATION_PIDFILE= and =ZARA_DICTATION_LOGFILE= can override the
@@ -289,8 +264,8 @@ instantiating the config manager.
   words = ["jarvis", "computer"]
   #+end_src
 - When =words= is empty, the listener loads phrases from the Prolog knowledge
-  base (=kb_config:wake_word/1= in =kb/config.pl=). Users can add or override
-  phrases in =~/.zarathushtra/config.pl=:
+  base (=kb_config:wake_word/1= in =kb/config.pl=). Users should put mutable
+  wake-word overrides in =~/.config/zarathushtra/config.local.pl=:
   #+begin_src prolog
   wake_word("jarvis").
   #+end_src

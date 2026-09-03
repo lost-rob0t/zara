@@ -1,0 +1,65 @@
+#+title: RAGE #309 — Prolog config recovery
+
+* Transaction
+- Consumed issue :: #309 — P1 regression — finish Prolog config recovery: Brave default and remove dead RLM knobs
+- Immutable start :: e6d9409e49246a187d5ea015da681bfc4e4fdc63
+- Branch :: rage/309-prolog-config-recovery
+- Scope :: Zara Core configuration/tests/docs only. No Android production, external Prolog-RLM, dotfiles/Home Manager, plugins, or other repositories.
+
+* Iteration 1
+** Research
+- Evidence :: =rage/309-prolog-config-recovery-research.org=
+- #5's =config.pl= + =config.local.pl= ownership split is correct and stays authoritative.
+- Current master still defaults search to DuckDuckGo and still exposes/configures dead =prolog_rlm_*= predicates despite roadmap/RAGE policy prohibiting that runtime path.
+- =wiki/install.org= additionally documents an RLM module/live-smoke path that is no longer a supported Zara configuration path.
+- Brave's current public search surface is =search.brave.com=; this slice keeps search configuration as a data URL template rather than adding a provider/runtime layer.
+
+** Design
+- Evidence :: =rage/309-prolog-config-recovery-design.org=
+- Change only the built-in search template, supported Prolog config schema/examples, and stale config documentation.
+- Preserve local-overlay precedence, server/device fact validation, normal SWI-Prolog, and normal LLM provider settings.
+- Old =prolog_rlm_*= facts must fail closed through the existing unsupported-fact domain error.
+
+** TDD
+- Test-only recovery unit :: =t/prolog_config_recovery.pl=
+- Gate inclusion :: =scripts/test-prolog-config.sh=
+- Initial test-only head :: =28f4c7d7658cd8780a447f20612d7382fe4920ed=.
+- CI #882 reached the full repository =Run all tests= step and reported success instead of the expected failure. This is not accepted as RED evidence; it exposed faulty test-unit invocation in the focused shell gate.
+- First harness correction attempted separate PlUnit summaries, but exact-head CI #884 again false-greened: =Run all tests= and =nix flake check= both passed while no production/config/docs implementation existed. The summary-based shell expression was therefore not accepted as a fail-closed test gate.
+- Second harness correction invoked each test unit in its own SWI-Prolog process, but exact-head CI #886 still false-greened at =504b38246f19fcc7eedd506786a1f92e6865d68c= while =kb/config.pl= still contained the DuckDuckGo default and dead RLM predicates. This result is also rejected as RED evidence.
+- Third harness correction added a direct semantic precondition to =scripts/test-prolog-config.sh= that requires the Brave default before the recovery PlUnit suite runs.
+- Repository gate hardening fixed =scripts/test-all.sh= so a failing command inside a phase can no longer be overwritten by a later successful command under Bash =errexit= suppression.
+- Genuine RED head :: =329e3db39ff13516b8aceb86e869de363be79229=.
+- Exact-head CI #889 :: failure in =Run all tests=; Arch shared-mic, Ubuntu shared-mic, and Android gates all passed. =nix flake check= and packaged build were correctly skipped after the failed full-test phase.
+- Pytest artifact :: 1675 tests, 0 failures. This isolates the RED to the intended shell/Prolog-config gate rather than a Python or Android regression.
+- RED accepted. Production implementation may proceed.
+
+** Implementation
+- First production commit :: =b6220dea467660ed6cdf9aded0eaeeb1222abf09=.
+- =kb/config.pl= now defaults =search_engine/1= to Brave Search, removes exported/dynamic/default =prolog_rlm_*= predicates, and points mutable/private operator overrides at =config.local.pl= while retaining provisioned =config.pl= compatibility.
+- Exact-head CI #891 at =0412cae73595f75a85e54b9ef058daca8dc34022= remained RED in =Run all tests= while pytest, Android, and both shared-mic jobs were clean. This was expected remaining contract work, not a new runtime regression.
+- =modules/config_loader.pl= now rejects =prolog_rlm_enabled/1= and =prolog_rlm_model/1= in both desktop and server config scopes, removes generated RLM instructions, explicitly teaches the provisioned =config.pl= versus mutable/private =config.local.pl= ownership split, and uses Brave for its no-loaded-config search fallback.
+- The legacy =t/prolog_config.pl= contract was reconciled with the new supported schema: RLM facts are no longer treated as valid configuration and default-search expectations now use Brave.
+- Adversarial adjacent-runtime review found =modules/command_loop.pl= still dereferenced the removed =kb_config:prolog_rlm_enabled/1= predicate. That would turn the config cleanup into an undefined-predicate failure on the fallback path. The dead conditional/import was removed; ordinary bounded LLM rewrite remains the fallback.
+- Legacy command-loop tests that asserted the removed RLM routing knob were retired while standalone historical =rlm_rewrite= module tests remain unchanged.
+- =wiki/install.org= and =wiki/api-service.org= now document the durable XDG ownership split and no longer advertise the removed RLM configuration path.
+- No =android/**= production files or external repositories were touched.
+
+** Evaluate
+- Exact-head CI #898 at =b3a065356fa70a389f9d99511f65b1acd786683c= progressed through phases 1-5 and then failed in phase 6 (=Server api_service providers=). All 15 Prolog API-service tests passed; Python API-service tests were 41 passed, 1 failed.
+- The sole failure was stale expected behavior in =t/test_api_service.py=: it asserted that server search returned a DuckDuckGo URL while production correctly returned =https://search.brave.com/search?q=prolog%20test=. This is a contract reconciliation, not a weakening: the assertion now requires =search.brave.com=.
+- Candidate test-reconciliation commit :: =3748d88f2bb1f059c90088b4ee62d3e80bbd3b45=.
+- Exact-head CI #900 at =1c87f3949b0018d1bde9240e017c574fc4eb5907= failed immediately in phase 1 with =IndentationError= in =t/test_api_service.py=. This was a branch-authoring error: a connector range read had been mistakenly written back as a complete-file replacement, truncating the test file. It is not accepted as product regression evidence.
+- The complete API-service test file was restored from pre-edit blob =e37a7abbd0ac4c84e82a0bdb0eacabfe43899179=, preserving the suite and changing only the stale DuckDuckGo assertion to require =search.brave.com=. Restore commit :: =fd51cee576a31dbedeb0727d5104fdc57cefbcc6=.
+- Verification after restore confirms the file begins with its module docstring/imports and the search-provider assertion is Brave.
+- Exact-head CI #902 at =1c5d4f589f2dfea0d99c45fbc8e56f9760100a94= passed phases 1-9, including the complete Python suite (1675 passed), plus Android and both shared-mic jobs, then failed phase 10 because =scripts/test-command-routing.sh= still invoked deleted =t/test_command_routing.py=.
+- The missing test was intentionally removed by commit =cc256c130cccc2914a4d900c62e6ccf3979d1e85= when wake routing migrated to the daemon ZARA/1 voice client. Current equivalent Python routing coverage is =t/test_daemon_intent_router.py=, so the shell gate must target that suite rather than dropping Python routing validation.
+- =nix flake check= and packaged build were correctly skipped after the phase-10 failure. #310 remains draft and unmergeable by policy until a replacement exact head is fully green.
+- Exact-head CI #904 at =6c5135dd7e5bb9c3f67ea3441ff3f5929140fda3= again passed the full Python/Android/shared-mic surfaces and failed inside phase 10. The remaining deterministic shell list still invoked =scripts/test-rlm-rewrite.sh=, which intentionally exits nonzero whenever =ZARA_PROLOG_RLM_ROOT= is absent. That live external-runtime smoke contradicts this repository's deterministic no-network full gate and Zara's permanent no-Prolog-RLM policy.
+- Removed =scripts/test-rlm-rewrite.sh= from the canonical deterministic full-gate list. This does not weaken supported Zara coverage: command-loop fallback is now the ordinary bounded LLM rewrite path, and #309 explicitly removes the RLM config authority. The historical standalone smoke file is not made a merge gate.
+- Exact-head CI #906 at =411c83ad3504d252937cec976518579262df0049= passed phases 1-9, all 1675 Python tests, Android, and both shared-mic jobs, then correctly failed phase 10 in =t/prolog_config.pl= test =local_overlay_wins_without_modifying_provisioned_config=.
+- Diagnosis :: the test wrote the provisioned config from an atom, then used =read_file_to_string/3= and strict identity =BaseAfter == Base=. SWI-Prolog therefore compared a string to an atom and failed even when file contents were unchanged. This was a test-type error, not evidence that Zara rewrote the base config.
+- Harness correction commit :: =b736091731658aa4b7d441883100c062d7c9f69b=. The assertion now reads character codes and compares them with =atom_codes/2=, preserving an exact-content check without atom/string type mismatch.
+- Exact-head CI #908 at =de529830ad7f70c4b695189562d054da6909989c= exposed the same atom/string identity bug in =t/prolog_config_recovery.pl=; the correction preserved exact byte/content comparison and produced candidate =6be2a50bd646591f6ac6e99b58bfaa9f37669add=.
+- Exact-head CI #909 at =6be2a50bd646591f6ac6e99b58bfaa9f37669add= passed =scripts/test-all.sh= completely (1675 Python tests), Android, and both shared-mic jobs, then failed only at =nix flake check=. The stale =checks.*.rlm-contract= still exercised removed =prolog_rlm_model/1= and the flake still fetched/exported the prohibited external Prolog-RLM input.
+- Nix cleanup commits :: =704b937f04f01e5f8149e5fc61fb067afe3b04e8= removes the Prolog-RLM input, wrapper/dev-shell environment injection, and =rlm-contract= check from =flake.nix=; =fdffbe5184d11ddd232e7ca83dd409dcbf02fe17= removes the corresponding lock node/input. This is Zara-only dependency cleanup; no external repository or =android/**= production file was modified.
