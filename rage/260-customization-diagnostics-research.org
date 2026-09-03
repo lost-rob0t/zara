@@ -1,0 +1,25 @@
+#+title: RAGE #260 — customization diagnostics research
+#+startup: overview
+
+* Current code audit
+- =AgentLoopAdviceRegistry= owns ordered Python before/after/around/override registrations and already exposes =list_registrations/0=, but those records include live callback objects and do not identify the effective override winner.
+- =AgentLoopRegistry= owns named loop backends and already exposes registration name/owner/callback records. =[agent].backend= selects one of those names at turn time.
+- =AgentManager= is the first place where the configured backend selection and advice registry coexist, so it is the narrowest truthful owner for one combined customization diagnostic.
+- =RuntimeHost= already exposes a bounded =plugin_diagnostics()= surface instead of dumping plugin internals. A customization diagnostic should follow the same model: immutable, bounded metadata only.
+- Prolog hook registry and trusted user =hooks.pl= reload are already landed. Python =hooks.py= generation replacement is also landed. Reimplementing those would duplicate existing architecture.
+
+* Security and failure analysis
+- Diagnostics must never expose Python callback objects, =repr(callback)=, source paths, closure state, transcripts, prompts, tool arguments, or plugin/private configuration.
+- A diagnostic must not execute callbacks or resolve arbitrary Prolog goals.
+- Unknown configured backend remains an execution error; diagnostics should report the configured name without silently choosing a fallback.
+- Multiple Python override registrations are already execution-invalid. Diagnostics must report that no single override winner exists rather than guessing.
+- Disabled hooks remain visible as configured/registered metadata but must be explicitly marked disabled so inspection cannot imply they are executing.
+
+* Decision
+Add a small immutable diagnostic projection at the agent customization boundary. It reports policy gates, configured backend, resolved backend owner when known, bounded registration metadata, and the unique override winner only when exactly one active override exists. Expose the projection through the existing runtime backend/host diagnostics boundary without callback objects or payload content.
+
+* Rejected alternatives
+- Dump raw =HookRegistration= / =AgentLoopRegistration=: leaks executable callback objects and couples diagnostics to internals.
+- Add a second diagnostics registry: duplicates ownership and can drift from the actual execution registries.
+- Infer a winner from priority when multiple overrides exist: conflicts with current fail-closed invocation semantics.
+- Put this in desktop UI first: UI is a consumer; runtime must own the truthful diagnostic contract.
