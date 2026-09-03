@@ -1,0 +1,28 @@
+#+title: RAGE #260 — customization wiki
+#+startup: overview
+
+* Immutable start
+- Consumed issue :: #260 — Emacs-grade hooks, advice and pluggable agent-loop / Prolog-runtime override system
+- RAGE start commit :: =e15fe203c69ef8196430aa5479158ccfde2e2322=
+- Branch :: =docs/260-customization-wiki=
+- Slice :: satisfy the remaining wiki/documentation acceptance contract after the diagnostics implementation merged in #306.
+
+* Research
+- Current =master= contains the Python advice registry, named agent-loop backend registry, Prolog/user-hook loading, service-plugin advice ownership, and callback-free customization diagnostics.
+- Issue #260 still explicitly requires a wiki page for hooks/advice/backend-registry operation.
+- The current =wiki/= tree has no customization/hooks/advice page; existing RAGE files are implementation evidence, not operator documentation.
+- =AGENTS.md= requires wiki documentation to track behavior changes.
+
+* Design
+- Add one operator-facing Org wiki page rather than duplicating implementation docs across multiple pages.
+- Document configuration gates, user-owned files, advice kinds and override policy, backend selection, service-plugin ownership, diagnostics, lifecycle/reload behavior, and security boundaries.
+- Keep examples bounded and free of machine-specific paths, secrets, transcripts, or tool payloads.
+- Do not change runtime behavior in this slice.
+
+* TDD applicability
+This slice is documentation-only and changes no executable behavior or test harness. Ordinary behavioral RED/GREEN TDD is therefore not applicable. Verification is repository-native full-gate plus exact-head CI; any executable change discovered as necessary must become a separate test-first slice.
+
+* Verification plan
+- Confirm the new wiki page describes only behavior present on the exact starting master.
+- Run/require =scripts/test-all.sh=, =nix flake check=, package/shared-mic/Android CI through the repository's normal exact-head workflow.
+- Merge only if exact-head CI is green, PR is mergeable/non-draft, and review/thread state is clean.
