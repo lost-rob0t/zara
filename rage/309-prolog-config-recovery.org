@@ -11,7 +11,7 @@
 - Evidence :: =rage/309-prolog-config-recovery-research.org=
 - #5's =config.pl= + =config.local.pl= ownership split is correct and stays authoritative.
 - Current master still defaults search to DuckDuckGo and still exposes/configures dead =prolog_rlm_*= predicates despite roadmap/RAGE policy prohibiting that runtime path.
-- =wiki/install.org= additionally documents an RLM module/live-smoke path that is no longer present in default-branch code search.
+- =wiki/install.org= additionally documents an RLM module/live-smoke path that is no longer a supported Zara configuration path.
 - Brave's current public search surface is =search.brave.com=; this slice keeps search configuration as a data URL template rather than adding a provider/runtime layer.
 
 ** Design
@@ -37,4 +37,13 @@
 ** Implementation
 - First production commit :: =b6220dea467660ed6cdf9aded0eaeeb1222abf09=.
 - =kb/config.pl= now defaults =search_engine/1= to Brave Search, removes exported/dynamic/default =prolog_rlm_*= predicates, and points mutable/private operator overrides at =config.local.pl= while retaining provisioned =config.pl= compatibility.
-- Remaining GREEN work in this transaction :: remove =prolog_rlm_*= acceptance/generated instructions from =modules/config_loader.pl= and update stale config documentation before full exact-head gates.
+- Exact-head CI #891 at =0412cae73595f75a85e54b9ef058daca8dc34022= remained RED in =Run all tests= while pytest, Android, and both shared-mic jobs were clean. This was expected remaining contract work, not a new runtime regression.
+- =modules/config_loader.pl= now rejects =prolog_rlm_enabled/1= and =prolog_rlm_model/1= in both desktop and server config scopes, removes generated RLM instructions, explicitly teaches the provisioned =config.pl= versus mutable/private =config.local.pl= ownership split, and uses Brave for its no-loaded-config search fallback.
+- The legacy =t/prolog_config.pl= contract was reconciled with the new supported schema: RLM facts are no longer treated as valid configuration and default-search expectations now use Brave.
+- Adversarial adjacent-runtime review found =modules/command_loop.pl= still dereferenced the removed =kb_config:prolog_rlm_enabled/1= predicate. That would turn the config cleanup into an undefined-predicate failure on the fallback path. The dead conditional/import was removed; ordinary bounded LLM rewrite remains the fallback.
+- =wiki/install.org= and =wiki/api-service.org= now document the durable XDG ownership split and no longer advertise the removed RLM configuration path.
+- No =android/**= production files or external repositories were touched.
+
+** Evaluate
+- Candidate implementation head before final evidence commit :: =8d49d942e6fc54fa94a333ebd2591496ed541697=.
+- Exact-head full repository/Nix/package CI is required before promotion or merge; any pending or failing head remains non-authoritative.
