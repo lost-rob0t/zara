@@ -4,7 +4,7 @@ Conversational agent with pure LangChain + LangGraph tool calling.
 This file mainly orchestrates:
 - conversation history
 - tool registry
-- running the LangGraph loop
+- running the configured agent loop
 
 Important behavior:
 - We validate history to drop truly orphaned ToolMessages.
@@ -25,6 +25,7 @@ from .approval import ToolApprovalController
 from .conversation import ConversationManager
 from .graph import run_conversation_loop, validate_and_clean_messages
 from .hooks import AgentLoopAdviceRegistry
+from .loops import AgentLoopRegistry
 from .prompting import build_agent_system_prompt
 from .tools.registry import ToolRegistry
 from .user_hooks import UserHookLoader
@@ -75,6 +76,12 @@ class AgentManager:
             timeout_seconds=float(approval_config.get("timeout_seconds", 300.0)),
             max_pending=int(approval_config.get("max_pending", 8)),
         )
+        self.agent_loop_registry = AgentLoopRegistry()
+        self.agent_loop_registry.register(
+            "langgraph",
+            "core:langgraph",
+            run_conversation_loop,
+        )
         get_hooks_config = getattr(self.config, "get_hooks_config", None)
         hooks_config = (
             get_hooks_config()
@@ -96,6 +103,12 @@ class AgentManager:
 
     def bind_event_publisher(self, publisher) -> None:
         self.approval_controller.bind_event_publisher(publisher)
+
+    def register_agent_loop_backend(self, name: str, owner: str, callback) -> int:
+        return self.agent_loop_registry.register(name, owner, callback)
+
+    def unregister_agent_loop_backend(self, registration_id: int, *, owner: str) -> bool:
+        return self.agent_loop_registry.unregister(registration_id, owner=owner)
 
     def _build_system_prompt(self):
         return build_agent_system_prompt(self.config)
@@ -158,6 +171,14 @@ class AgentManager:
             self.agent_loop_advice = registry
         return registry
 
+    def _get_agent_loop_registry(self) -> AgentLoopRegistry:
+        registry = getattr(self, "agent_loop_registry", None)
+        if registry is None:
+            registry = AgentLoopRegistry()
+            registry.register("langgraph", "core:langgraph", run_conversation_loop)
+            self.agent_loop_registry = registry
+        return registry
+
     async def process_async(
         self,
         user_input: str,
@@ -174,6 +195,8 @@ class AgentManager:
         agent_config = self.config.get_section("agent")
         self.conversation_manager.update_activity()
         max_steps = int(agent_config.get("max_steps", 10))
+        backend_name = str(agent_config.get("backend", "langgraph"))
+        backend = self._get_agent_loop_registry().resolve(backend_name)
 
         if turn_id is None:
             if latency_trace is not None:
@@ -183,6 +206,7 @@ class AgentManager:
 
         logger.info("[AgentManager] turn_id=%s", turn_id)
         logger.info("[AgentManager] conversation_id=%s", conversation_id)
+        logger.info("[AgentManager] backend=%s owner=%s", backend.name, backend.owner)
         logger.info("[AgentManager] user_input=%r", user_input)
         logger.info("[AgentManager] user_input_length=%d", len(user_input))
 
@@ -258,7 +282,7 @@ class AgentManager:
 
         principal_id = getattr(self.principal, "principal_id", "local")
         result = await self._get_agent_loop_advice().invoke(
-            run_conversation_loop,
+            backend.callback,
             self.llm_client,
             self.tool_registry,
             state,
