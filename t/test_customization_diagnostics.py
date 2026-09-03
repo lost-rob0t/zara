@@ -109,4 +109,5 @@ def test_runtime_host_exposes_backend_customization_diagnostics():
     try:
         assert host.customization_diagnostics() == manager.customization_diagnostics()
     finally:
-        host.stop().result(timeout=5)
+        host.shutdown().result(timeout=5)
+        host.join(timeout=5)
