@@ -10,18 +10,34 @@
 * Iteration 1
 ** Remote intake
 - Default branch =master= exact head =6141ac7d28c5eb32f0a8e78b31643792aa2c0fd7=.
-- Open PR recovery gate checked first. #256, #222, #223 and #138 are non-draft but non-mergeable; #262 is draft and non-mergeable. No existing PR is eligible to merge.
+- Open PR recovery gate checked first. The stale PR backlog was closed before this transaction; #306 is the active core PR.
 - #260 remains open after the registry, user hook loading, Prolog advice, service-plugin lifecycle and named backend slices landed.
-- Sibling Android has no open PR in the current Zara PR queue; this transaction owns no Android files.
+- Sibling Android transaction #307 consumes #159 as the minimum shared protocol/runtime dependency for Android #173. Its changed files are protocol/security/transport/RAGE/test files; #306 owns agent hook/loop diagnostics and RuntimeBackend/RuntimeHost diagnostics. There is no changed-file overlap and this worker does not modify #307.
 
 ** Research
-Pending. Inspect the existing registry/backend/runtime diagnostic boundaries and derive the smallest safe public projection. Callback objects, user text, prompts, transcripts and arbitrary payloads must not enter diagnostics.
+- Existing =AgentLoopAdviceRegistry.list_registrations()= and =AgentLoopRegistry.list_registrations()= expose callback-bearing registration objects, so they are unsafe as an operator diagnostic API.
+- =AgentManager= is the canonical owner of both registries and reads =[agent].backend= for execution; it can therefore project configured backend ownership and override state without introducing another source of truth.
+- Runtime diagnostics must stay on the existing =AgentManager -> LangGraphRuntimeBackend -> RuntimeHost= ownership path.
+- Multiple =override= registrations already fail closed during invocation; diagnostics must mirror that by reporting conflict with no guessed winner.
 
 ** Design
-Pending.
+- Add immutable callback-free advice metadata: registration id, kind, owner, priority, sequence.
+- Add immutable callback-free backend metadata: registration id, name, owner.
+- Add one immutable customization diagnostic containing hook gates, configured backend/known/owner state, safe registry snapshots, and unique override winner or conflict state.
+- Delegate the same object through =LangGraphRuntimeBackend= and =RuntimeHost=; no duplicate cache or registry.
+- Never include callbacks, source/config payloads, prompts, transcripts, tool data, exception text, credentials or secrets.
 
 ** TDD
-Pending.
+- Test-only head =94aeeae839da4f4d71241100d018f4b4b83c1bdb= ran CI #858.
+- Full repository test gate reached pytest and failed deterministically with exactly the intended missing boundary: three =t/test_customization_diagnostics.py= failures reported =AttributeError: 'AgentManager' object has no attribute 'customization_diagnostics'=; 1670 tests passed. Arch/Ubuntu shared-mic and Android jobs were green. Nix/package phases were not eligible after the pytest failure.
+- A second test-first commit =fa1e5e74bc89f56a84c40a69ce35109320683d2a= added the required backend/RuntimeHost delegation checks before those production seams were implemented.
+
+** Implementation
+- Advice and backend registries now provide immutable metadata-only projections while retaining callback-bearing registrations solely for execution.
+- =AgentManager.customization_diagnostics()= reports configured backend state without falling back when unknown and reports a winner only when exactly one override is active under enabled override policy.
+- =RuntimeBackend= defines the diagnostics capability; =LangGraphRuntimeBackend= delegates to its one manager and =AgentRuntimeBackend= delegates to its canonical backend.
+- =RuntimeHost.customization_diagnostics()= delegates to its one active backend.
+- No =android/**= or #307-owned files were modified.
 
 ** Evaluate
-Pending exact-head focused/full repository and Nix gates, then GitHub Actions for the exact candidate SHA.
+- Exact candidate head is pending repository CI after implementation. Merge remains forbidden until =scripts/test-all.sh=, =nix flake check=, package/build gates, shared-mic jobs and Android gate are green for the same exact SHA and PR review/thread state is clean.
