@@ -1,0 +1,31 @@
+#+title: RAGE #260 - service-plugin advice lifecycle
+#+startup: overview
+
+* Immutable start
+- Consumed issue :: #260 - Emacs-grade hooks, advice and pluggable agent-loop / Prolog-runtime override system
+- RAGE start commit :: =c07914416b5995f5b708e51790544151714e82bd=
+- Branch :: =rage/260-service-plugin-advice=
+- Slice :: ServicePlugin-owned Python agent-loop advice registration, deterministic owner binding, and automatic cleanup on plugin stop/start failure/runtime shutdown.
+
+* Iteration 1
+** Queue and pre-consumption audit
+- Current master is =c07914416b5995f5b708e51790544151714e82bd=.
+- No non-draft open PR is currently both mergeable and eligible for exact-head merge.
+- Sibling Android transaction is draft PR #299; this slice owns no =android/**= files.
+- Existing #260 work has already landed the per-AgentManager =AgentLoopAdviceRegistry=, user =hooks.py= loading, Prolog command-loop advice, and hook policy gates. This iteration does not duplicate those seams.
+
+** Research
+Pending after immutable consumption record.
+
+** Design
+Pending research.
+
+** TDD evidence
+Pending.
+
+** Gate
+- Focused service-plugin tests.
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- exact-head GitHub Actions.
