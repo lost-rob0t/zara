@@ -1,0 +1,43 @@
+#+title: RAGE #159 — ZARA/1 device-action design
+#+property: issue 159
+#+property: start_sha 6141ac7d28c5eb32f0a8e78b31643792aa2c0fd7
+
+* Selected contract
+** Capability advertisement
+- Closed v1 ids: =open_uri= and =open_app=.
+- =capability.snapshot= is client -> server and atomically replaces the current authenticated route/session set.
+- Entry schema is exactly ={id, version}= with version =1=; duplicates, unknown ids, unknown fields, wrong versions, non-lists, and oversized sets fail closed.
+- =capability.snapshot.ok= acknowledges only the accepted closed set. Advertisement is availability and never changes server authorization.
+
+** Device action lifecycle
+- Server -> client: =device.action.request=.
+- Client -> server: =device.action.accepted= then exactly one terminal =device.action.result= or =device.action.error=.
+- Server -> client: =device.action.cancel= is terminal at the gateway; later result/error for the same action is rejected.
+- Every action is bound internally to authenticated principal + route + session and externally carries only =action_id=, capability, typed args, deadline, trace correlation, and idempotency class.
+- No body-supplied principal, device, route, class, executable, shell, import, goal, or eval authority exists.
+
+* Initial typed arguments
+- =open_uri=: exactly ={uri: String}=, non-empty, bounded to 2048 characters. URI semantic/scheme policy is the Android adapter's later #174 responsibility; #159 only establishes a bounded opaque semantic URI argument without arbitrary extra fields.
+- =open_app=: exactly ={app: String}=, non-empty, bounded to 128 characters. This is a semantic alias, not an executable/package/class authority.
+- Idempotency: closed =at_most_once= or =idempotent=.
+- Terminal result v1: ={action_id, outcome: completed}=.
+- Terminal error v1: ={action_id, code[, message]}= with a closed result-code set and bounded diagnostic text.
+
+* Gateway ownership
+- Route state stores immutable advertised capability ids for its current session.
+- Pending device actions are bounded by the existing =pending_request_limit= and indexed by server-generated =action_id=.
+- =request_device_action= resolves exactly one live authenticated principal/session route, verifies advertisement and deadline, validates the outgoing message through =zara.protocol=, records pending state, and enqueues the request.
+- Accepted/result/error must originate from the same route/session/principal that owns the pending action.
+- Route replacement/drop and gateway shutdown fail outstanding route actions; a fresh hello begins with no inherited advertisements.
+- =cancel_device_action= removes the pending action before emitting cancel and completes its Future with a cancellation exception, making late terminal messages unknown.
+
+* Secure gateway
+- Inbound =capability.snapshot=, =device.action.accepted=, =device.action.result=, and =device.action.error= require only existing authenticated session-basic transport permission.
+- Advertised ids are never translated into =Capability.ADMIN= or any server capability. The secure gateway continues to decide authority independently.
+
+* Rejected alternatives
+- Arbitrary metadata dictionaries: rejected; they create schema/authority ambiguity.
+- Generic =device.action(args)= with arbitrary names: rejected; unknown capability ids fail closed.
+- Reusing =turn.submit= or runtime commands for device side effects: rejected; wrong ownership/correlation semantics.
+- Persisting advertised state across reconnect: rejected; stale route/device availability is unsafe.
+- Queueing old side effects for replay on reconnect: rejected; #159 provides no such policy.
