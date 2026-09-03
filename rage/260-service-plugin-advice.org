@@ -15,16 +15,49 @@
 - Existing #260 work has already landed the per-AgentManager =AgentLoopAdviceRegistry=, user =hooks.py= loading, Prolog command-loop advice, and hook policy gates. This iteration does not duplicate those seams.
 
 ** Research
-Pending after immutable consumption record.
+- =zara/agent/hooks.py= already owns registration validation, deterministic priority/sequence ordering, fixed owner cleanup, snapshot invocation, and the =enabled + allow_override= gate for around/override advice.
+- =AgentManager= owns exactly one =AgentLoopAdviceRegistry= per canonical conversational runtime and invokes it around the existing agent loop; there is no reason to create a plugin-specific registry.
+- =PluginRuntime= is deliberately a narrow facade. It currently exposes dispatch, bounded event subscriptions, configuration/status, and managed workers. It exposes no hook/advice registration boundary.
+- =PluginManager= already guarantees tool cleanup on startup failure and stop, and always calls =PluginRuntime._shutdown()= when a runtime is torn down. This is the correct ownership point for advice cleanup too.
+- =RuntimeHost= constructs =PluginManager= only after the backend starts and already supplies backend-owned tool registrar/unregistrar callables. Advice should follow the same dependency direction: RuntimeHost -> backend -> AgentManager registry, never plugin -> AgentManager reach-through.
+- A plugin-supplied owner string would make cleanup/diagnostics forgeable. The runtime facade must bind owner to the plugin identity itself.
+- Registration IDs are runtime-local capabilities. They should be retained privately by =PluginRuntime= and unregistered during shutdown even when plugin =stop()= throws or startup fails.
 
-** Design
-Pending research.
+** Architecture / design
+*** Selected boundary
+- Add optional advice registrar/unregistrar callables to =PluginRuntime= construction.
+- Expose =PluginRuntime.register_agent_loop_advice(kind, priority, callback)=. The plugin cannot supply owner; the facade binds =plugin:<plugin-name>=.
+- Store returned registration IDs in the plugin runtime under its existing lock. Reject registration after closure and reject unsupported backends explicitly.
+- During =PluginRuntime._shutdown()=, snapshot/clear registrations while closing subscriptions/workers, then unregister every advice registration. Cleanup failures are isolated through the existing plugin failure callback rather than preventing worker/subscription cleanup.
+- Add =RuntimeBackend.register_agent_loop_advice(...)= / =unregister_agent_loop_advice(...)= optional capability methods. =LangGraphRuntimeBackend= delegates to the manager's existing advice registry.
+- =RuntimeHost= passes those backend methods into =PluginManager=; =PluginManager= passes them into each =PluginRuntime=.
+
+*** Rejected alternatives
+- Directly hand =AgentLoopAdviceRegistry= to plugins: leaks mutable core runtime ownership and makes future backend replacement harder.
+- Let plugins choose owner strings: enables one plugin to collide with or clear another owner's registrations.
+- Register advice through a LangChain tool: advice is runtime customization, not an agent-callable tool and must not become model authority.
+- Add another plugin hook registry: duplicates the canonical AgentManager advice seam and violates #260's one-loop design.
+
+*** Invariants
+- Advice execution still goes through the existing registry, so override-capable kinds remain gated by both hook policy flags.
+- Plugin identity owns every registration; no cross-plugin owner spoofing.
+- Plugin shutdown/startup failure removes all registrations before the runtime object is discarded.
+- Ordinary service plugins that never register advice behave unchanged.
+- No =android/**= files and no second agent loop/tool approval path.
+
+*** Acceptance criteria -> tests
+1. Runtime facade binds owner and forwards kind/priority/callback -> direct =PluginRuntime= unit test.
+2. Closed or unsupported runtime rejects new advice -> unit tests.
+3. =_shutdown()= unregisters every registered ID exactly once -> unit test.
+4. Startup failure after registration cannot leak advice -> service-plugin lifecycle integration test.
+5. Normal host shutdown removes plugin advice -> service-plugin lifecycle integration test.
+6. LangGraph backend registration delegates to the manager registry and cleanup removes it -> backend-focused unit test or host integration fixture.
 
 ** TDD evidence
-Pending.
+Pending failing tests.
 
 ** Gate
-- Focused service-plugin tests.
+- Focused service-plugin/advice tests.
 - =nix develop -c bash scripts/test-all.sh=
 - =nix flake check=
 - =nix build=
