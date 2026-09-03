@@ -1,0 +1,27 @@
+#+title: RAGE #260 — customization diagnostics
+#+startup: overview
+
+* Transaction
+- Consumed issue :: #260
+- Immutable start :: =6141ac7d28c5eb32f0a8e78b31643792aa2c0fd7=
+- Branch :: =rage/260-customization-diagnostics=
+- Scope :: Zara core only. Complete the bounded diagnostics seam for the already-landed hooks/advice and named agent-loop backend system. No =android/**= production changes, no second runtime, no tool-policy bypass.
+
+* Iteration 1
+** Remote intake
+- Default branch =master= exact head =6141ac7d28c5eb32f0a8e78b31643792aa2c0fd7=.
+- Open PR recovery gate checked first. #256, #222, #223 and #138 are non-draft but non-mergeable; #262 is draft and non-mergeable. No existing PR is eligible to merge.
+- #260 remains open after the registry, user hook loading, Prolog advice, service-plugin lifecycle and named backend slices landed.
+- Sibling Android has no open PR in the current Zara PR queue; this transaction owns no Android files.
+
+** Research
+Pending. Inspect the existing registry/backend/runtime diagnostic boundaries and derive the smallest safe public projection. Callback objects, user text, prompts, transcripts and arbitrary payloads must not enter diagnostics.
+
+** Design
+Pending.
+
+** TDD
+Pending.
+
+** Evaluate
+Pending exact-head focused/full repository and Nix gates, then GitHub Actions for the exact candidate SHA.
