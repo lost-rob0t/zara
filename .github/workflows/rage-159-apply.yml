@@ -27,6 +27,20 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v31
 
+      - name: Tighten the known dual receive anchor
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/rage-159-apply.py')
+          text = path.read_text()
+          old = '''    count = text.count(old)\n    if count != 1:\n        raise SystemExit(f"{path}: expected exactly one source anchor, found {count}")\n    target.write_text(text.replace(old, new, 1))\n'''
+          new = '''    count = text.count(old)\n    dual_gateway_receive = (\n        path == "zara/zmq_transport.py"\n        and old == "    def _receive(self, socket: zmq.Socket) -> None:\\n"\n        and count == 2\n    )\n    if count != 1 and not dual_gateway_receive:\n        raise SystemExit(f"{path}: expected exactly one source anchor, found {count}")\n    target.write_text(text.replace(old, new, 1))\n'''
+          if text.count(old) != 1:
+              raise SystemExit('one-shot helper anchor drifted')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
       - name: Apply asserted source patch
         run: python scripts/rage-159-apply.py
 
