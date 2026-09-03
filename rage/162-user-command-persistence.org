@@ -1,0 +1,48 @@
+#+title: RAGE #162 — principal-scoped user command persistence
+
+* Start
+- Consumed issue :: #162
+- Immutable start commit :: f25aea5f9e5bceb747cb282b6a28c43f07e5b727
+- Branch :: rage/162-user-command-persistence
+- Scope :: Zara core only; no android/** and no external repositories.
+
+* Iteration 1 — research / design
+** Queue and dependency check
+- #131 is closed/completed: principal-owned private persistence is established.
+- #154 and #155 are closed/completed and freeze the IntentFrame/typed-slot ownership model used by this slice.
+- #150 remains an epic/container; #162 is the earliest open ordered #151 persistence slice and is dependency-ready against the frozen child contracts.
+- The only open PR is sibling Android/core-protocol PR #307; it is draft and currently non-mergeable, so it is not merge-eligible and this branch does not touch its files.
+
+** Current architecture findings
+- =DatabaseManager= is Zara's shared SQLite boundary with locked transactions and registered migrations.
+- =ConversationStore= already proves the repository pattern for binding a store instance to one =PrincipalContext= and adding =principal_id= to every read/write predicate.
+- User-authored commands must not be stored as executable Prolog/Python/shell. Persistence stores a closed declarative schema only; compilation/execution belongs to later #163+.
+
+** Design
+- Add a core =zara.user_commands= persistence module, independent of desktop UI and Android.
+- Store one JSON document per command only after structural validation into explicit typed Python dataclasses. JSON is data, not executable authority.
+- Every store instance is permanently bound to a =PrincipalContext=; owner is injected from the store, never accepted from command payloads.
+- Stable command IDs are caller-supplied or generated; lookups, list, update and delete include =principal_id= in SQL predicates.
+- Optimistic concurrency uses an integer =revision=. Updates require the observed revision and atomically advance it, preventing silent concurrent overwrite.
+- Use =BEGIN IMMEDIATE= for create/update/delete mutations so uniqueness/conflict decisions and writes are one SQLite transaction.
+- Version 1 accepts only: trigger/aliases, typed slot declarations, ordered semantic action references, location policy, enabled flag, timestamps/revision. No shell/import/provider-class/Prolog-goal fields exist.
+- Guest/ephemeral principals fail closed for durable mutations; local-owner/authenticated/synthetic test principals may persist unless later principal policy narrows that contract.
+
+** Threat / failure review
+- Cross-principal known-ID attack: SQL owner predicate makes get/update/delete indistinguishable from absence.
+- Payload owner spoofing: owner is not part of the persisted input API.
+- Code-smuggling: model has no free-form executable field; unknown keys fail validation.
+- Partial write/crash: each mutation is one SQLite transaction.
+- Lost update: revision compare-and-swap.
+- Trigger collision: unique constraint scoped to =principal_id + normalized trigger=; alias collision validation is deterministic in store snapshot.
+- Migration: =schema_version= is explicit; unsupported versions fail closed before activation.
+
+** TDD plan
+1. RED: importing/constructing =UserCommandStore= and creating a minimal semantic command currently fails because the module does not exist.
+2. RED: principal B cannot read/update/delete A even with exact id.
+3. RED: executable-looking/unknown fields are rejected.
+4. RED: stale revision update fails and leaves latest row unchanged.
+5. RED: duplicate trigger/alias collision is deterministic per principal but allowed across principals.
+6. RED: restart through a new store instance over the same DB preserves validated command data.
+
+No production implementation is allowed before these tests establish deterministic RED.
