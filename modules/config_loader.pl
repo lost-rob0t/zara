@@ -71,7 +71,10 @@ write_default_config(Stream) :-
     writeln(Stream, '% Zarathushtra User Configuration'),
     writeln(Stream, '% ================================'),
     writeln(Stream, '% Supported facts are validated and loaded into kb_config or kb_intents.'),
-    writeln(Stream, '% User facts take precedence over built-in defaults.'),
+    writeln(Stream, '% config.pl is the provisioned/base layer and may be managed declaratively.'),
+    writeln(Stream, '% Put mutable/private operator changes in config.local.pl beside this file.'),
+    writeln(Stream, '% config.local.pl loads after config.pl and therefore overrides base values.'),
+    writeln(Stream, '% Zara never creates or overwrites config.local.pl.'),
     writeln(Stream, '%'),
     writeln(Stream, '% Uncomment and modify as needed.'),
     writeln(Stream, ''),
@@ -126,12 +129,6 @@ write_default_config(Stream) :-
     writeln(Stream, '% For Anthropic (requires ANTHROPIC_API_KEY env var):'),
     writeln(Stream, '% llm_provider(anthropic).'),
     writeln(Stream, '% llm_model("claude-sonnet-4-20250514").'),
-    writeln(Stream, ''),
-    writeln(Stream, '% ---- Prolog-RLM Direct-Mode Rewrites ----'),
-    writeln(Stream, '% Route Prolog command fallback rewrites through Prolog-RLM direct mode.'),
-    writeln(Stream, '% Requires ZARA_PROLOG_RLM_ROOT and OPENROUTER_API_KEY env vars.'),
-    writeln(Stream, '% prolog_rlm_enabled(true).'),
-    writeln(Stream, '% prolog_rlm_model("openrouter/free").'),
     writeln(Stream, ''),
     writeln(Stream, '% ---- OSINT/Security Shortcuts ----'),
     writeln(Stream, '% app_mapping(shodan, ["brave", "--new-window", "https://shodan.io"]).'),
@@ -270,10 +267,6 @@ validate_user_fact(llm_model(Model), kb_config, llm_model(Model)) :-
     text_value(Model).
 validate_user_fact(llm_endpoint(Endpoint), kb_config, llm_endpoint(Endpoint)) :-
     text_value(Endpoint).
-validate_user_fact(prolog_rlm_enabled(Enabled), kb_config, prolog_rlm_enabled(Enabled)) :-
-    memberchk(Enabled, [true, false]).
-validate_user_fact(prolog_rlm_model(Model), kb_config, prolog_rlm_model(Model)) :-
-    text_value(Model).
 validate_user_fact(todo_destination(Path), kb_config, todo_destination(Path)) :-
     text_value(Path).
 validate_user_fact(todo_context_mode(Mode), kb_config, todo_context_mode(Mode)) :-
@@ -370,10 +363,6 @@ validate_server_user_fact(llm_model(Model), kb_config, llm_model(Model)) :-
     text_value(Model).
 validate_server_user_fact(llm_endpoint(Endpoint), kb_config, llm_endpoint(Endpoint)) :-
     text_value(Endpoint).
-validate_server_user_fact(prolog_rlm_enabled(Enabled), kb_config, prolog_rlm_enabled(Enabled)) :-
-    memberchk(Enabled, [true, false]).
-validate_server_user_fact(prolog_rlm_model(Model), kb_config, prolog_rlm_model(Model)) :-
-    text_value(Model).
 validate_server_user_fact(todo_destination(Path), kb_config, todo_destination(Path)) :-
     text_value(Path).
 validate_server_user_fact(todo_context_mode(Mode), kb_config, todo_context_mode(Mode)) :-
@@ -391,7 +380,7 @@ search_url(Query, URL) :-
     (   current_predicate(kb_config:search_engine/1),
         kb_config:search_engine(Template)
     ->  true
-    ;   Template = "https://duckduckgo.com/?q=~w"  % fallback
+    ;   Template = "https://search.brave.com/search?q=~w"
     ),
 
     % 2. URL-encode the query (crucial for special chars)
