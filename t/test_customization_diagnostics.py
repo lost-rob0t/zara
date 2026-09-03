@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 from zara.agent import AgentManager
 from zara.agent.hooks import AgentLoopAdviceRegistry
@@ -26,6 +27,7 @@ class FakeConfig:
 def _manager(backend: str = "langgraph") -> AgentManager:
     manager = AgentManager.__new__(AgentManager)
     manager.config = FakeConfig(backend)
+    manager.approval_controller = SimpleNamespace(bind_event_publisher=lambda _publisher: None)
     manager.agent_loop_advice = AgentLoopAdviceRegistry(
         enabled=True,
         allow_override=True,
