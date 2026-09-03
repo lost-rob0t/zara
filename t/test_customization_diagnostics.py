@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+import asyncio
 
 from zara.agent import AgentManager
 from zara.agent.hooks import AgentLoopAdviceRegistry
 from zara.agent.loops import AgentLoopRegistry
+from zara.runtime.backend import LangGraphRuntimeBackend
+from zara.runtime.host import RuntimeHost
 
 
 async def _loop(*_args, **_kwargs):
@@ -85,3 +87,26 @@ def test_customization_diagnostics_report_unknown_configured_backend_without_fal
     assert diagnostic.backend_known is False
     assert diagnostic.backend_owner is None
     assert [item.name for item in diagnostic.backends] == ["langgraph"]
+
+
+def test_runtime_backend_exposes_manager_customization_diagnostics():
+    manager = _manager()
+    backend = LangGraphRuntimeBackend(lambda: manager)
+
+    asyncio.run(backend.start())
+    try:
+        assert backend.customization_diagnostics() == manager.customization_diagnostics()
+    finally:
+        backend._manager = None
+
+
+def test_runtime_host_exposes_backend_customization_diagnostics():
+    manager = _manager()
+    backend = LangGraphRuntimeBackend(lambda: manager)
+    host = RuntimeHost(backend_factory=lambda: backend)
+
+    host.start().result(timeout=5)
+    try:
+        assert host.customization_diagnostics() == manager.customization_diagnostics()
+    finally:
+        host.stop().result(timeout=5)
