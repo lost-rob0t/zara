@@ -25,7 +25,7 @@ from .approval import ToolApprovalController
 from .conversation import ConversationManager
 from .graph import run_conversation_loop, validate_and_clean_messages
 from .hooks import AgentLoopAdviceRegistry
-from .loops import AgentLoopRegistry
+from .loops import AgentLoopBackendOverrideDisabled, AgentLoopRegistry
 from .prompting import build_agent_system_prompt
 from .tools.registry import ToolRegistry
 from .user_hooks import UserHookLoader
@@ -197,6 +197,14 @@ class AgentManager:
         max_steps = int(agent_config.get("max_steps", 10))
         backend_name = str(agent_config.get("backend", "langgraph"))
         backend = self._get_agent_loop_registry().resolve(backend_name)
+        advice_registry = self._get_agent_loop_advice()
+        if backend.name != "langgraph" and not (
+            advice_registry.enabled and advice_registry.allow_override
+        ):
+            raise AgentLoopBackendOverrideDisabled(
+                "custom agent loop backends require hooks.enabled=true and "
+                "hooks.allow_override=true"
+            )
 
         if turn_id is None:
             if latency_trace is not None:
@@ -281,7 +289,7 @@ class AgentManager:
         )
 
         principal_id = getattr(self.principal, "principal_id", "local")
-        result = await self._get_agent_loop_advice().invoke(
+        result = await advice_registry.invoke(
             backend.callback,
             self.llm_client,
             self.tool_registry,
