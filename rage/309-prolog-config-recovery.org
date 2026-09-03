@@ -1,0 +1,9 @@
+#+title: RAGE #309 — Prolog config recovery
+
+* Transaction
+- Consumed issue :: #309 — P1 regression — finish Prolog config recovery: Brave default and remove dead RLM knobs
+- Immutable start :: e6d9409e49246a187d5ea015da681bfc4e4fdc63
+- Branch :: rage/309-prolog-config-recovery
+- Scope :: Zara Core configuration/tests/docs only. No Android production, external Prolog-RLM, dotfiles/Home Manager, plugins, or other repositories.
+
+* Iteration 1
