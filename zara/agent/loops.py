@@ -12,6 +12,10 @@ class UnknownAgentLoopBackend(LookupError):
     pass
 
 
+class AgentLoopBackendOverrideDisabled(PermissionError):
+    pass
+
+
 @dataclass(frozen=True)
 class AgentLoopRegistration:
     registration_id: int
