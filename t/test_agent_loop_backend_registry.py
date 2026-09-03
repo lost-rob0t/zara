@@ -8,7 +8,11 @@ from langchain_core.messages import AIMessage
 from zara.agent import AgentManager
 from zara.agent.conversation import ConversationManager
 from zara.agent.hooks import AgentLoopAdviceRegistry
-from zara.agent.loops import AgentLoopRegistry, UnknownAgentLoopBackend
+from zara.agent.loops import (
+    AgentLoopBackendOverrideDisabled,
+    AgentLoopRegistry,
+    UnknownAgentLoopBackend,
+)
 
 
 async def _loop_a(*_args, **_kwargs):
@@ -74,7 +78,12 @@ class FakeConfig:
         return ""
 
 
-def _build_manager(backend: str | None) -> AgentManager:
+def _build_manager(
+    backend: str | None,
+    *,
+    hooks_enabled: bool = True,
+    allow_override: bool = False,
+) -> AgentManager:
     manager = AgentManager.__new__(AgentManager)
     manager.config = FakeConfig(backend)
     manager.llm_client = object()
@@ -85,14 +94,17 @@ def _build_manager(backend: str | None) -> AgentManager:
     manager.conversation_manager = ConversationManager()
     manager.principal = SimpleNamespace(principal_id="principal-a")
     manager.approval_controller = SimpleNamespace(publisher=object())
-    manager.agent_loop_advice = AgentLoopAdviceRegistry(enabled=True, allow_override=False)
+    manager.agent_loop_advice = AgentLoopAdviceRegistry(
+        enabled=hooks_enabled,
+        allow_override=allow_override,
+    )
     manager.agent_loop_registry = AgentLoopRegistry()
     return manager
 
 
 @pytest.mark.asyncio
 async def test_agent_manager_invokes_configured_backend_through_existing_advice():
-    manager = _build_manager("custom")
+    manager = _build_manager("custom", allow_override=True)
     events = []
 
     async def custom_loop(_llm_client, _tool_registry, state, **_kwargs):
@@ -124,8 +136,17 @@ async def test_agent_manager_invokes_configured_backend_through_existing_advice(
 
 
 @pytest.mark.asyncio
+async def test_custom_backend_requires_explicit_override_policy():
+    manager = _build_manager("custom", hooks_enabled=True, allow_override=False)
+    manager.agent_loop_registry.register("custom", "test", _loop_a)
+
+    with pytest.raises(AgentLoopBackendOverrideDisabled, match="allow_override"):
+        await manager.process_async("hello", turn_id="turn-denied")
+
+
+@pytest.mark.asyncio
 async def test_agent_manager_defaults_to_langgraph_when_backend_is_omitted():
-    manager = _build_manager(None)
+    manager = _build_manager(None, hooks_enabled=False, allow_override=False)
 
     async def default_loop(_llm_client, _tool_registry, state, **_kwargs):
         return {
