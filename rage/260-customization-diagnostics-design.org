@@ -1,0 +1,34 @@
+#+title: RAGE #260 — customization diagnostics design
+#+startup: overview
+
+* Contract
+Add immutable metadata-only projections:
+- advice registration: registration id, kind, owner, priority, sequence;
+- backend registration: registration id, name, owner;
+- customization diagnostic: hooks enabled, override permission, configured backend name, resolved backend owner or =None=, backend-known flag, advice registrations, backend registrations, unique override winner id/owner or =None=, override-conflict flag.
+
+No callback or executable object is part of a diagnostic record.
+
+* Ownership
+=AgentManager.customization_diagnostics()= combines the existing =AgentLoopAdviceRegistry= and =AgentLoopRegistry= because it already owns both and reads =[agent].backend= during execution. The registries provide safe metadata snapshots; they do not create a parallel source of truth.
+
+=LangGraphRuntimeBackend.customization_diagnostics()= delegates to its one =AgentManager=. =RuntimeHost.customization_diagnostics()= exposes the backend result to diagnostics consumers, analogous to =plugin_diagnostics()=.
+
+* Winner semantics
+- Exactly one registered =override= and hooks enabled + override allowed => that registration is the effective override winner.
+- Zero overrides => no winner.
+- More than one override => =override_conflict=true= and no winner, matching invocation's existing fail-closed ambiguity error.
+- Around advice is ordered but is not represented as a single winner because all around registrations participate.
+
+* Bounds and redaction
+Only prevalidated names/owners/integers/booleans are returned. No callbacks, source paths, config payloads, transcripts, prompts, tool data, secrets, or exception text.
+
+* TDD map
+1. Safe advice diagnostic strips callback and identifies a single override winner.
+2. Multiple overrides report conflict and no guessed winner.
+3. Agent customization diagnostic reports configured backend and actual registered owner.
+4. Unknown configured backend is inspectable as unknown without fallback.
+5. Runtime backend/host expose the same safe projection from the canonical manager.
+
+* Gate
+Focused pytest first, then =scripts/test-all.sh=, =nix flake check= and packaged/build gates as exercised by repository CI. Merge only exact-head green, non-draft, mergeable, with clean reviews/threads.
