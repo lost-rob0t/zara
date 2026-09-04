@@ -77,6 +77,34 @@ def test_parameterized_trigger_uses_canonical_duration_parser_and_fills_frame():
     assert result.frame.origin_of("label") is SlotOrigin.DEFAULT
 
 
+def test_schema_legal_hyphenated_slot_name_can_be_used_in_trigger_template():
+    definition = UserCommandDefinition(
+        command_id="named-timer",
+        trigger="timer {focus-label} for {duration}",
+        slots=(
+            CommandSlot("focus-label", "text"),
+            CommandSlot("duration", "duration"),
+        ),
+        actions=(
+            SemanticAction(
+                capability="timer.set",
+                arguments={
+                    "duration_slot": "duration",
+                    "label_slot": "focus-label",
+                },
+                location="server",
+            ),
+        ),
+    )
+    _, resolver = _resolver(definition)
+
+    result = resolver.resolve("timer deep work for 10 minutes")
+
+    assert result.kind is UserCommandResolutionKind.MATCHED
+    assert result.frame.slot_value("focus-label") == TextValue("deep work")
+    assert result.frame.slot_value("duration") == DurationValue(10 * 60)
+
+
 def test_bare_trigger_returns_missing_frame_and_opens_canonical_clarification():
     _, resolver = _resolver(_focus_timer())
     result = resolver.resolve("focus timer")
