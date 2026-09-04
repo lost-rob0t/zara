@@ -1,0 +1,68 @@
+#+title: RAGE #165 — parameterized user-command runtime
+#+startup: overview
+
+* Iteration 1
+** Consumption
+- Consumed issue :: #165
+- Immutable start :: =dd03e3309f5c09ddbc76c22ba936ce366508ac2a=
+- Branch :: =rage/165-user-command-runtime=
+- Scope :: Zara core only. No =android/**= production changes. Sibling Android transaction remains PR #307 / issue #159.
+
+** Run-state audit
+- =master= exact start is the merge of #313/#164.
+- The only open PR at consumption is draft sibling PR #307; exact head =f014ff791568d5001eec7b3838c8218b18a3fb72= has cancelled CI and is therefore not merge-authorized.
+- No open core PR is available for recovery before consuming #165.
+- Local clone/Nix execution is unavailable in this automation sandbox because direct GitHub DNS/network access is blocked. Authenticated GitHub repository operations and exact-head Actions remain available; no local-green claim will be made.
+
+** Initial research
+- #165 requires parameterized commands, collision policy, capability/provider revocation, and atomic hot reload while preserving principal ownership.
+- Existing =UserCommandDefinition= already persists typed =CommandSlot= schemas and exact trigger/alias uniqueness per principal.
+- Existing =UserCommandCompiler= already compiles slot bindings into =IntentFrame= templates, rejects protected built-in triggers, validates capability/location contracts, and publishes immutable =CompiledCommandRegistry= snapshots atomically.
+- Existing tests already prove a parameterized timer frame template, built-in collision rejection, atomic failed reload, and provider removal causing the next reload to fail.
+- Existing =UserCommandAuthoringService= performs compile-before-commit, rollback on publication failure, and bounded undo.
+- Code search finds no production consumer of =CompiledCommandRegistry.snapshot()= outside the registry itself. The missing architectural seam is therefore runtime-safe resolution/slot completion against an immutable compiled snapshot, not another persistence/compiler implementation.
+
+** Design direction
+- Add one small resolver over an immutable registry snapshot rather than wiring commands directly into =RuntimeHost= (owned later by #160).
+- Resolve exact trigger/alias first, then bounded parameterized trigger templates. Never use first-match ambiguity resolution.
+- Reuse =ClarificationCoordinator= / typed slot parsing for missing values instead of a command-specific parser.
+- Resolve produces typed command/frame/action-template data only; execution and approval remain outside this slice.
+- Capability revocation is represented by compiling/publishing a new valid snapshot from the current capability catalog. Failed reload preserves the prior snapshot; callers must not report the new capability state as active until publication succeeds.
+- Keep provider/platform implementation details out of persisted command definitions.
+
+** Planned acceptance tests
+1. =focus timer for 35 minutes= resolves a declared duration slot and returns a COMPLETE user =IntentFrame= with the existing duration validator semantics.
+2. Bare =focus timer= returns MISSING(duration) and can be projected through the canonical clarification coordinator rather than a parallel dialogue parser.
+3. Trigger/alias/template ambiguity returns an explicit conflict result, never first-match execution.
+4. Exact protected built-in phrases remain compiler-rejected.
+5. Concurrent readers holding an old immutable snapshot remain coherent while a new snapshot is published.
+6. Failed reload after capability removal leaves the previous registry snapshot identity/current commands unchanged.
+7. Principal isolation remains structural because each resolver is constructed over one principal-bound registry/store publication path.
+
+** Deterministic RED
+- Tests-first candidate :: =d992fd9c9b9f21309be8290bc705a8dc244b675f=
+- Pull request :: #314 (draft)
+- Exact-head Actions :: run #942 / =33887743473=
+- Core gate reached phase 9 and failed during pytest collection with =ModuleNotFoundError: No module named 'zara.user_command_runtime'=.
+- Earlier Prolog/protocol/approval phases passed. Arch and Ubuntu shared-mic gates passed independently.
+- =nix flake check= and packaged Zara build were correctly skipped after the failed full-test gate.
+- This is the intended RED: master has compiler/persistence/atomic snapshot substrate but no runtime user-command resolver.
+
+** Schema-placeholder regression RED
+- Exact candidate :: =96dde9843aa57e5e968bf4d470d4dfcc5505eee3=
+- Exact-head Actions :: run #947 / =33889584917=
+- Full repository gate reached phase 9 with =1 failed, 1722 passed=; Android plus Arch/Ubuntu shared-mic gates were green.
+- The sole failure was =test_schema_legal_hyphenated_slot_name_can_be_used_in_trigger_template=: persisted =CommandSlot= accepts =focus-label= under the canonical =[a-z][a-z0-9._-]{0,63}= schema, while the new compiler/runtime placeholder grammar accepted only alphanumeric/underscore names.
+- Root cause :: the runtime also encoded placeholders as Python named regex groups, which cannot represent schema-legal =-= or =.= names.
+- Fix :: align compiler/runtime placeholder recognition with the persisted slot-name grammar and compile template captures positionally, mapping captured values back to declared slot names. This preserves the typed parser and avoids a second slot-value parser.
+- Production commits :: =9fd706b6dd123663bf6292d9da5fea37a5291f1a=, =57734bfa6ca70fb96c3715584d80c318722505e8=.
+
+** Gate
+- Consume the observed RED with the minimum resolver/compiler seam, then require repository CI on the final exact implementation head.
+- No merge on pending/cancelled/failing/inconclusive checks.
+
+** Regression blocker and recovery
+- Exact candidate =8268443861524a27191d5529281585c827166e12= reached CI #950. Native =scripts/test-all.sh= passed, but =nix flake check= exposed the pre-existing route-backpressure harness regression now tracked as #315.
+- #315 was isolated into PR #316 with no production transport changes. Exact head =fbc22c09e4e4e40d5c8523b960f2c4efdeb81851= passed CI #951 completely, was promoted out of draft with no reviews/threads/comments blocking it, and merged to =master= as =a1b38d9b80a2f4dabe06d53d1185ff23acbbb84d= using expected-head protection.
+- The #165 branch then imported only the merged route-backpressure assertion contract into its existing test file, commit =996440122611c978a0b2d56558fafcbc67bb425e=, so the exact #165 candidate can be re-gated without transport production overlap.
+- Merge remains prohibited until the refreshed #314 exact head is mergeable, non-draft, review-clean, and fully green.
