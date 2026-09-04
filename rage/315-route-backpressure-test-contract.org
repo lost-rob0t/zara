@@ -1,0 +1,31 @@
+#+title: RAGE #315 — route-backpressure test contract regression
+#+property: issue 315
+#+property: start_sha dd03e3309f5c09ddbc76c22ba936ce366508ac2a
+
+* Consumption
+- Issue :: #315 — P1 regression: route-backpressure test asserts invalid cross-route ordering.
+- Exact immutable start :: =dd03e3309f5c09ddbc76c22ba936ce366508ac2a=.
+- Branch :: =rage/315-route-backpressure-test-contract=.
+- Trigger :: PR #314 exact-head CI #950 failed only during =nix flake check= at =t/test_zmq_transport_route_backpressure.py::test_stalled_route_completion_queue_cannot_evict_healthy_route=.
+- Scope :: test-contract repair only unless deterministic evidence proves a transport defect. No Android production changes.
+
+* Research
+- The test sends =stalled-1= and =stalled-2= through one DEALER route and =healthy-submit= through a second independent DEALER route, then asserts the global sequence is exactly =[stalled-1, stalled-2, healthy-submit]=.
+- ZMQ ROUTER/DEALER provides ordering within a route/connection, not a repository contract imposing total ordering between independent routes. The observed failing order =[stalled-1, healthy-submit, stalled-2]= is therefore legal while preserving per-route FIFO.
+- The actual named invariant is route isolation under backpressure: a stalled completion queue must not evict another route's command or prevent that route from remaining responsive.
+- Historical evidence in =rage/155-clarification-dialogue.org= already records this exact test failing under full-suite load and passing controlled reruns, identifying it as load-sensitive before #314 existed.
+- In CI #950 the same exact candidate passed this test once during =scripts/test-all.sh= and later failed inside the flake pytest check, further falsifying a deterministic #165 production regression.
+
+* Design / adversarial review
+- Replace only the invalid cross-route total-order assertion.
+- Preserve the stronger relevant checks: exactly three submissions are observed; all expected request ids are present; =stalled-1= precedes =stalled-2= to preserve same-route FIFO; the healthy request is accepted; and the healthy route still returns =pong= after the stalled route completion queue is saturated.
+- Do not skip, xfail, retry, sleep longer, or alter transport production code.
+- Counterexample retained: =[stalled-2, stalled-1, healthy-submit]= must still fail because same-route FIFO is contractual.
+- Counterexample retained: any missing/duplicate request must fail because the accepted-command multiset must match exactly.
+
+* TDD / gate evidence
+- RED :: exact PR #314 head =8268443861524a27191d5529281585c827166e12=, CI #950. Native full suite passed; flake pytest failed 1 test with observed cross-route interleaving =stalled-1, healthy-submit, stalled-2= versus the invalid total-order expectation.
+- Harness exception :: ordinary new-test-first RED is unnecessary because the failing existing assertion itself is the regression and repository AGENTS.md permits minimal test-harness repair when the harness is defective.
+
+* Outcome
+- Pending implementation and exact-head gates.
