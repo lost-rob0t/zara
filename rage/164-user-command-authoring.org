@@ -90,3 +90,18 @@
 - False confirmation closes the canonical clarification as cancelled and leaves both durable store and compiled registry untouched.
 - Shared clarification sessions deliberately retain closed tombstones until TTL pruning; therefore completion is proved by =active_question(...)= returning none / closed state, not by requiring =session_for(...)= to erase the object immediately. The initial test expectation of physical removal was inconsistent with #155 lifecycle semantics and is corrected before GREEN rather than changing coordinator ownership.
 - Production commit :: =70bd5040e027aac8aa947c8aa986e3b8c8fb0fba=
+
+* Iteration 1 — command-management acceptance RED
+- Test-first candidate :: =9d93b4ab9580a43fdfad3648207caa9c10378985=
+- CI #935 :: exact-head core gate failed at pytest with =4 failed, 1704 passed= while Android skeleton, Arch shared-mic, and Ubuntu shared-mic were GREEN. Flake/package gates were correctly skipped after the core failure.
+- Exact missing contracts :: =UserCommandAuthoringDialogue.list_commands/0=, =describe/1=, =start_edit/1=, and =start_delete/1=. The same tests also require dry-run/test, confirmed revision-aware edit/delete, one-step undo, and indistinguishable principal-scoped missing-command responses.
+- Interpretation :: valid deterministic RED for the remaining #164 conversational management surface, isolated from platform/voice behavior.
+
+* Iteration 1 — command-management implementation
+- Production commit :: =cccad6ca72ed29312ab2195470dc9034f29bbce9=
+- Added side-effect-free dialogue =list=/=describe=/=test= projections over the existing principal-bound authoring service and compiler; dry-run formats the compiled semantic command and executes nothing.
+- Added edit dialogue using the shared =ClarificationCoordinator= for action collection and Boolean confirmation. The original persisted revision is retained as the optimistic mutation fence; persistence/publication still occurs only through =UserCommandAuthoringService.edit= after compiler-backed preview.
+- Added delete confirmation through the same coordinator and =UserCommandAuthoringService.delete=, followed by the existing bounded one-step =undo= restoration path.
+- Missing/foreign command IDs collapse to one principal-local =not_found= result without probing any other principal.
+- The dialogue owns only the selected principal-local target definition while a coordinator session is active; it does not add another slot state machine, command store, execution path, mic runtime, or Android production change.
+- Next gate :: complete exact-head CI on the evidence-appended head; merge remains prohibited until full tests, flake, package, Android/shared-mic, and review/thread state are conclusively green.
