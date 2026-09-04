@@ -1,0 +1,22 @@
+#+title: RAGE #163 — user command compiler
+
+* Start
+- Consumed issue :: #163
+- Immutable start commit :: 7ae6739f44f11aaef2786fa9410e26f5b7aecab3
+- Branch :: rage/163-user-command-compiler
+- Scope :: Zara core only; no android/** and no external repositories.
+- Sibling transaction :: PR #307 / issue #159 remains Android-worker-owned; do not modify its files.
+
+* Iteration 1 — research / design
+** Queue check
+- PR #311 / issue #162 is merged/closed on master.
+- Issue #157 is already the frozen ExecutionPlan/capability contract consumed by this compiler.
+- #163 is the next ordered dependency-ready #151 core slice.
+
+** Initial invariants
+- Persisted definitions remain declarative data. Compilation is side-effect free.
+- The compiler must target existing IntentFrame / capability-plan types; no second macro interpreter.
+- Capability ids must resolve only against registered semantic capability metadata.
+- Built-in trigger collisions fail deterministically; no silent shadowing.
+- Invalid definitions never replace the last valid compiled registry snapshot.
+- Raw shell, executable/import names, Python/Prolog goals, and arbitrary provider implementation strings remain impossible.
