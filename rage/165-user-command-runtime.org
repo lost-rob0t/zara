@@ -39,6 +39,15 @@
 6. Failed reload after capability removal leaves the previous registry snapshot identity/current commands unchanged.
 7. Principal isolation remains structural because each resolver is constructed over one principal-bound registry/store publication path.
 
+** Deterministic RED
+- Tests-first candidate :: =d992fd9c9b9f21309be8290bc705a8dc244b675f=
+- Pull request :: #314 (draft)
+- Exact-head Actions :: run #942 / =33887743473=
+- Core gate reached phase 9 and failed during pytest collection with =ModuleNotFoundError: No module named 'zara.user_command_runtime'=.
+- Earlier Prolog/protocol/approval phases passed. Arch and Ubuntu shared-mic gates passed independently.
+- =nix flake check= and packaged Zara build were correctly skipped after the failed full-test gate.
+- This is the intended RED: master has compiler/persistence/atomic snapshot substrate but no runtime user-command resolver.
+
 ** Gate
-- Focused pytest for new resolver/compiler tests first, with expected RED recorded from exact-head GitHub Actions when local Nix is unavailable.
-- Then repository CI must pass on the exact implementation head before merge. No merge on pending/cancelled/failing/inconclusive checks.
+- Consume the observed RED with the minimum resolver/compiler seam, then require repository CI on the final exact implementation head.
+- No merge on pending/cancelled/failing/inconclusive checks.
