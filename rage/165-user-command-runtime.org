@@ -48,6 +48,15 @@
 - =nix flake check= and packaged Zara build were correctly skipped after the failed full-test gate.
 - This is the intended RED: master has compiler/persistence/atomic snapshot substrate but no runtime user-command resolver.
 
+** Schema-placeholder regression RED
+- Exact candidate :: =96dde9843aa57e5e968bf4d470d4dfcc5505eee3=
+- Exact-head Actions :: run #947 / =33889584917=
+- Full repository gate reached phase 9 with =1 failed, 1722 passed=; Android plus Arch/Ubuntu shared-mic gates were green.
+- The sole failure was =test_schema_legal_hyphenated_slot_name_can_be_used_in_trigger_template=: persisted =CommandSlot= accepts =focus-label= under the canonical =[a-z][a-z0-9._-]{0,63}= schema, while the new compiler/runtime placeholder grammar accepted only alphanumeric/underscore names.
+- Root cause :: the runtime also encoded placeholders as Python named regex groups, which cannot represent schema-legal =-= or =.= names.
+- Fix :: align compiler/runtime placeholder recognition with the persisted slot-name grammar and compile template captures positionally, mapping captured values back to declared slot names. This preserves the typed parser and avoids a second slot-value parser.
+- Production commits :: =9fd706b6dd123663bf6292d9da5fea37a5291f1a=, =57734bfa6ca70fb96c3715584d80c318722505e8=.
+
 ** Gate
 - Consume the observed RED with the minimum resolver/compiler seam, then require repository CI on the final exact implementation head.
 - No merge on pending/cancelled/failing/inconclusive checks.
