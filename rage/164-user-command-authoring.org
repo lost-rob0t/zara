@@ -74,3 +74,19 @@
 - =undo= is one-step and service-instance/principal bound; create/edit/delete restoration uses the store's revision-aware mutation APIs.
 - No action execution, shell strings, second persistence system, second voice runtime, or Android production changes were introduced.
 - Next gate :: exact-head CI on the implementation candidate; if GREEN, inspect acceptance gaps before merge rather than equating one green run with issue completion.
+
+* Iteration 1 — acceptance-gap RED
+- Prior exact head :: =de47813751ff32bc142a22a55e0c72232233a99b=
+- CI #930 :: complete GREEN for full tests, flake check, package build, Android skeleton and both shared-mic jobs.
+- Acceptance review :: GREEN did not satisfy issue #164. The branch exposed typed mutation APIs only; it did not provide the required conversational create flow through the shared typed dialogue machinery. The PR therefore remained draft and unmerged.
+- New test-first candidate :: =408466e45f4d50976cbc40a1774bd7b3ef46f6fe=
+- Added deterministic create-dialogue tests requiring shared =ClarificationCoordinator= ownership, trigger/action collection, normalized side-effect-free preview, explicit yes/no confirmation, and immediate atomic publication only after confirmation.
+- CI #931 :: core =Run all tests= failed on the exact candidate; flake/package steps were correctly skipped. Arch shared-mic remained GREEN. This is valid RED for the absent =UserCommandAuthoringDialogue= surface.
+
+* Iteration 1 — dialogue design refinement
+- The dialogue wrapper owns no independent slot/wizard state. A =DialogueTemplate= stored in the existing principal/conversation-scoped =ClarificationCoordinator= carries =trigger=, =actions= and =confirm=.
+- Action text is resolved through a caller-supplied bounded semantic-action resolver before the =actions= slot is committed. Unknown/ambiguous action text therefore leaves the active slot unchanged and asks again rather than guessing or persisting.
+- Preview reconstructs a typed =UserCommandDefinition= from the coordinator frame and runs the existing pure compiler; persistence remains zero until Boolean confirmation is true.
+- False confirmation closes the canonical clarification as cancelled and leaves both durable store and compiled registry untouched.
+- Shared clarification sessions deliberately retain closed tombstones until TTL pruning; therefore completion is proved by =active_question(...)= returning none / closed state, not by requiring =session_for(...)= to erase the object immediately. The initial test expectation of physical removal was inconsistent with #155 lifecycle semantics and is corrected before GREEN rather than changing coordinator ownership.
+- Production commit :: =70bd5040e027aac8aa947c8aa986e3b8c8fb0fba=
