@@ -7,6 +7,7 @@ IntentFrame/action templates. Execution remains owned by the normal runtime.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from threading import RLock
 from types import MappingProxyType
@@ -30,6 +31,7 @@ from .user_commands import CommandSlot, SemanticAction, UserCommandDefinition
 
 _VALUE_TYPES = frozenset({"text", "number", "duration", "datetime", "ref", "boolean"})
 _DEVICE_TARGET_POLICIES = frozenset({"initiating_device", "explicit_device"})
+_SLOT_PLACEHOLDER_NAME_RE = re.compile(r"^[a-z][a-z0-9._-]{0,63}$")
 
 
 class CommandCompileError(ValueError):
@@ -154,6 +156,7 @@ class UserCommandCompiler:
         )
 
     def _validate_phrases(self, definition: UserCommandDefinition) -> None:
+        declared_slots = {slot.name for slot in definition.slots}
         for field, phrase in (("trigger", definition.trigger), *(
             (f"aliases[{index}]", alias) for index, alias in enumerate(definition.aliases)
         )):
@@ -164,6 +167,31 @@ class UserCommandCompiler:
                     "protected_trigger",
                     "phrase collides with a protected built-in trigger",
                 )
+            placeholders = _phrase_placeholders(phrase)
+            if placeholders is None:
+                raise CommandCompileError(
+                    definition.command_id,
+                    field,
+                    "invalid_slot_placeholder",
+                    "phrase contains malformed slot placeholder syntax",
+                )
+            seen: set[str] = set()
+            for placeholder in placeholders:
+                if placeholder not in declared_slots:
+                    raise CommandCompileError(
+                        definition.command_id,
+                        field,
+                        "unknown_slot_placeholder",
+                        f"phrase placeholder names undeclared slot: {placeholder}",
+                    )
+                if placeholder in seen:
+                    raise CommandCompileError(
+                        definition.command_id,
+                        field,
+                        "duplicate_slot_placeholder",
+                        f"phrase repeats slot placeholder: {placeholder}",
+                    )
+                seen.add(placeholder)
 
     def _compile_action(
         self,
@@ -342,6 +370,27 @@ class CompiledCommandRegistry:
 
 def _phrase_key(value: str) -> str:
     return " ".join(value.split()).casefold()
+
+
+def _phrase_placeholders(value: str) -> Optional[tuple[str, ...]]:
+    placeholders: list[str] = []
+    cursor = 0
+    while cursor < len(value):
+        opening = value.find("{", cursor)
+        closing = value.find("}", cursor)
+        if opening < 0:
+            return None if closing >= 0 else tuple(placeholders)
+        if closing < opening:
+            return None
+        closing = value.find("}", opening + 1)
+        if closing < 0:
+            return None
+        body = value[opening + 1 : closing]
+        if "{" in body or _SLOT_PLACEHOLDER_NAME_RE.fullmatch(body) is None:
+            return None
+        placeholders.append(body)
+        cursor = closing + 1
+    return tuple(placeholders)
 
 
 def _typed_value(raw: Any, expected_type: str) -> SlotValue:
