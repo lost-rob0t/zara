@@ -63,6 +63,11 @@ test(app_mapping_preserves_explicit_argv, [setup(reset_log)]) :-
                      commands:open_app(process_safety_app)),
     read_invocation(["safe-launch", "--leading", Payload]).
 
+test(unregistered_app_never_becomes_executable_authority, [setup(reset_log)]) :-
+    \+ commands:open_app('unregistered-app'),
+    getenv('ZARA_PROCESS_LOG', Log),
+    assertion(\+ exists_file(Log)).
+
 test(dictation_preserves_explicit_argv,
      [setup((reset_log, dictation:stop_dictation)),
       cleanup(dictation:stop_dictation)]) :-
