@@ -20,3 +20,25 @@
 - Built-in trigger collisions fail deterministically; no silent shadowing.
 - Invalid definitions never replace the last valid compiled registry snapshot.
 - Raw shell, executable/import names, Python/Prolog goals, and arbitrary provider implementation strings remain impossible.
+
+** RED evidence
+- Test-first head :: cf03f6376d9be0799812d2c740e3ded559f45c21
+- GitHub Actions :: CI #923
+- Result :: core =Run all tests= failed at the intended missing =zara.user_command_compiler= surface; Android skeleton and both shared-mic jobs passed.
+- Nix/package steps were correctly skipped after the core RED; no false-green completion claim.
+
+** Architecture reconciliation
+- =zara/runtime/plans.py= remains the canonical #157 =ExecutionPlan= / provider-selection / execution boundary.
+- This compiler produces immutable user-command semantic templates and typed =IntentFrame= defaults only. It does not select providers, execute adapters, or create a second plan executor.
+- Capability contracts supplied to the compiler are validation metadata for registered semantic capability ids and argument/location schemas, not executable provider authority.
+- Reload policy is fail-whole: compile every enabled definition into a temporary immutable snapshot and publish only after the full set validates. This keeps concurrent readers on the last-good snapshot when any definition fails.
+
+** Implementation
+- Production commit :: 65ab9123088999473e7e9edf4df7e65085672492
+- Added :: =zara/user_command_compiler.py=
+- Implements deterministic source-field diagnostics, registered-capability checks, typed literal/default conversion, typed slot bindings, protected built-in collision checks, bounded device target policy, and atomic immutable registry replacement.
+- No side-effecting executor, shell/Python/Prolog goal path, Android production change, external repository change, or dependency addition.
+
+** Evaluation
+- Exact-head CI #924 on =65ab9123088999473e7e9edf4df7e65085672492= started after implementation and is the current gate authority.
+- Do not promote or merge PR #312 until focused/full repo/Nix/package checks are conclusively green on the final exact head and review/thread state remains clear.
