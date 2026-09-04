@@ -55,3 +55,22 @@
 
 * Status
 - RESEARCH/DESIGN COMPLETE FOR ITERATION 1. Next state is deterministic RED tests before production implementation.
+
+* Iteration 1 — RED evidence
+- Candidate :: =53ebf3a08071cef4f821271428cbc5a248f9fb27=
+- GitHub Actions :: CI #927 completed failure on the exact candidate.
+- Core =test= job failed specifically at =Run all tests=; =nix flake check= and packaged build were correctly skipped behind the failing test gate.
+- Android skeleton gate :: success.
+- Shared mic / Arch Linux :: success.
+- Shared mic / Ubuntu 24.04 :: success.
+- Interpretation :: valid deterministic RED for the missing authoring service; no platform/voice regression signal.
+
+* Iteration 1 — implementation
+- Commit :: =c1ee7bf865971a1781ddb9bdb1c3239fce451900=
+- Added =zara.user_command_authoring.UserCommandAuthoringService= as a narrow orchestration layer over the existing principal-bound store, pure compiler, and atomic compiled registry.
+- =preview= compiles only; no durable or active state mutation.
+- =create=/=edit=/=delete= pre-validate a complete candidate registry before persistence, then publish the principal's durable definitions through the existing atomic registry seam.
+- Publication failure attempts bounded rollback instead of claiming partial success.
+- =undo= is one-step and service-instance/principal bound; create/edit/delete restoration uses the store's revision-aware mutation APIs.
+- No action execution, shell strings, second persistence system, second voice runtime, or Android production changes were introduced.
+- Next gate :: exact-head CI on the implementation candidate; if GREEN, inspect acceptance gaps before merge rather than equating one green run with issue completion.
