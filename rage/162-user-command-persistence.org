@@ -1,0 +1,79 @@
+#+title: RAGE #162 — principal-scoped user command persistence
+
+* Start
+- Consumed issue :: #162
+- Immutable start commit :: f25aea5f9e5bceb747cb282b6a28c43f07e5b727
+- Branch :: rage/162-user-command-persistence
+- Scope :: Zara core only; no android/** and no external repositories.
+
+* Iteration 1 — research / design
+** Queue and dependency check
+- #131 is closed/completed: principal-owned private persistence is established.
+- #154 and #155 are closed/completed and freeze the IntentFrame/typed-slot ownership model used by this slice.
+- #150 remains an epic/container; #162 is the earliest open ordered #151 persistence slice and is dependency-ready against the frozen child contracts.
+- The only sibling transaction is Android/core-protocol PR #307; it remains draft/non-eligible and this branch does not touch its files.
+
+** Current architecture findings
+- =DatabaseManager= is Zara's shared SQLite boundary with locked transactions and registered migrations.
+- =ConversationStore= already proves the repository pattern for binding a store instance to one =PrincipalContext= and adding =principal_id= to every read/write predicate.
+- User-authored commands must not be stored as executable Prolog/Python/shell. Persistence stores a closed declarative schema only; compilation/execution belongs to later #163+.
+
+** Design
+- Add a core =zara.user_commands= persistence module, independent of desktop UI and Android.
+- Store one JSON document per command only after structural validation into explicit typed Python dataclasses. JSON is data, not executable authority.
+- Every store instance is permanently bound to one =PrincipalContext=; owner is injected from the store, never accepted from command payloads.
+- Stable command IDs are caller-supplied or generated; lookups, list, update and delete include =principal_id= in SQL predicates.
+- Optimistic concurrency uses an integer =revision=. Updates require the observed revision and atomically advance it, preventing silent concurrent overwrite.
+- Use =BEGIN IMMEDIATE= for create/update/delete mutations so uniqueness/conflict decisions and writes are one SQLite transaction.
+- Version 1 accepts only trigger/aliases, typed semantic action references, enabled state, ownership, timestamps and revision in this slice. No shell/import/provider-class/Prolog-goal fields exist.
+- Guest/ephemeral principals fail closed for durable mutations; local-owner/authenticated/synthetic test principals may persist unless later principal policy narrows that contract.
+
+** Threat / failure review
+- Cross-principal known-ID attack: SQL owner predicate makes get/update/delete indistinguishable from absence.
+- Payload owner spoofing: owner is not part of the persisted input API.
+- Code-smuggling: model has no free-form executable field; dangerous execution capabilities fail validation.
+- Partial write/crash: each mutation is one SQLite transaction.
+- Lost update: revision compare-and-swap.
+- Trigger collision: trigger/alias collision detection is scoped to the principal and normalized deterministically.
+- Migration: =schema_version= is explicit; unsupported versions fail closed before activation.
+
+** TDD plan
+1. RED: importing/constructing =UserCommandStore= and creating a minimal semantic command currently fails because the module does not exist.
+2. RED: principal B cannot read/update/delete A even with exact id.
+3. RED: executable capabilities/non-JSON arguments are rejected.
+4. RED: stale revision update fails and leaves latest row unchanged.
+5. RED: duplicate trigger/alias collision is deterministic per principal but allowed across principals.
+6. RED: restart through a new store instance over the same DB preserves validated command data.
+7. RED: durable mutation fails closed for a guest principal.
+
+** RED evidence
+- Exact head =7110b3a693ba566e1259fd8d3ba8a09bc38dadad= ran CI #914.
+- The core =test= job failed at =Run all tests= while Android and both shared-mic jobs passed; Nix/package correctly did not run after the failed full gate.
+- Production module =zara.user_commands= did not exist at that head, so the first persistence import/behavior contract was genuinely RED rather than a false-green harness result.
+- Expanded deterministic tests in commit =5c757371475cd823c6f59bc251c03e0c7c9ea1f7= now cover restart persistence, principal isolation, optimistic-concurrency stale writes, trigger/alias collisions, guest durability policy, executable-capability rejection, JSON-only arguments, and command normalization.
+- No production implementation has been committed yet. CI #915 was queued for the expanded RED candidate before this evidence append.
+
+* Iteration 2 — acceptance-gap recovery
+** Exact-head gate result
+- Exact implementation head =4cd886cecb2e71e5e054dc08daa0202f13b17d34= completed CI #918 fully green: repository tests, =nix flake check=, packaged Zara build, Android skeleton gate, and both shared-mic jobs all passed.
+- PR #311 was mergeable and had no comments, reviews, or unresolved review threads.
+- Green CI was not sufficient to authorize merge because an adversarial reread of issue #162 found material unimplemented acceptance requirements.
+
+** Acceptance gaps found
+- The issue requires typed slot schema/default persistence; iteration 1 stored no slot schema.
+- The issue requires location/target policy where allowed; persisted actions stored no typed placement/target policy.
+- The issue requires migration metadata; the definition stored none.
+- Isolation explicitly covers =search= and =export= as well as get/list/update/delete; no search/export boundary existed.
+- Schema upgrade/rollback and hot-load validation require explicit fixtures rather than relying only on a schema-version integer.
+- Partial-write atomicity needed a mutation failure fixture proving both the definition row and trigger index roll back together.
+
+** Contract reconciliation
+- Reuse the frozen #154/#155 slot-value vocabulary: =text=, =number=, =duration=, =datetime=, =ref=, =boolean=. Persistence records slot definitions/defaults only; parsing/dialogue remains #155 and compilation remains #163.
+- Reuse #157's placement vocabulary: =server= versus =device=. Persistence may express a bounded target policy such as =initiating_device= but never a concrete payload-supplied device/principal identity.
+- Search/export remain principal-bound store operations and cannot broaden ownership authority.
+- Unsupported stored schema versions and malformed stored action data fail closed without rewriting the durable row.
+
+** New RED candidate
+- Commit =c189c26dcda56eb363fcfee3586c97a5361da2a3= expands deterministic TDD coverage before production changes.
+- New tests require =CommandSlot= with typed/default validation, action location/target policy, migration metadata round-trip, principal-isolated search/export, rollback on trigger collision, unsupported-schema non-rewrite, and malformed hot-load rejection.
+- Production has not yet been changed for these new requirements; the candidate is intentionally expected RED until exact-head evidence confirms the missing surface.
