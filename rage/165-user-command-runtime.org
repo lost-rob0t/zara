@@ -66,3 +66,11 @@
 - #315 was isolated into PR #316 with no production transport changes. Exact head =fbc22c09e4e4e40d5c8523b960f2c4efdeb81851= passed CI #951 completely, was promoted out of draft with no reviews/threads/comments blocking it, and merged to =master= as =a1b38d9b80a2f4dabe06d53d1185ff23acbbb84d= using expected-head protection.
 - The #165 branch then imported only the merged route-backpressure assertion contract into its existing test file, commit =996440122611c978a0b2d56558fafcbc67bb425e=, so the exact #165 candidate can be re-gated without transport production overlap.
 - Merge remains prohibited until the refreshed #314 exact head is mergeable, non-draft, review-clean, and fully green.
+
+** Strict required-check recovery
+- Exact head =23fcd224a2742b76eb5b4c6d21d4776fc8c414e5= passed CI #954 attempt 2 completely: repository tests, =nix flake check=, packaged Zara, Android skeleton gate, and both shared-mic jobs were green.
+- Reviews and review threads were empty; PR #314 was non-draft and mergeable.
+- Expected-head merge was nevertheless rejected by the active =Require CI tests on master= ruleset because required context =test= was reported as expected. The ruleset uses =strict_required_status_checks_policy=true=, so the candidate must also contain current =master= ancestry.
+- GitHub had already materialized synthetic merge commit =69ff37f8b5d43d07bbf5e691abb57f146cdc6d7c= with parents current =master= =a1b38d9b80a2f4dabe06d53d1185ff23acbbb84d= and exact feature head =23fcd224a2742b76eb5b4c6d21d4776fc8c414e5=.
+- Fast-forwarded =rage/165-user-command-runtime= to that exact GitHub merge commit without force, preserving the feature history and bringing the branch up to current =master= for the strict check.
+- Fresh exact-head CI #955 started on =69ff37f8b5d43d07bbf5e691abb57f146cdc6d7c=. Merge remains prohibited until the final head after this evidence append is fully green.
