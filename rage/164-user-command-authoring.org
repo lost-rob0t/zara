@@ -105,3 +105,12 @@
 - Missing/foreign command IDs collapse to one principal-local =not_found= result without probing any other principal.
 - The dialogue owns only the selected principal-local target definition while a coordinator session is active; it does not add another slot state machine, command store, execution path, mic runtime, or Android production change.
 - Next gate :: complete exact-head CI on the evidence-appended head; merge remains prohibited until full tests, flake, package, Android/shared-mic, and review/thread state are conclusively green.
+
+* Iteration 1 — cancellation/isolation acceptance RED
+- Test-first candidate :: =3f6c38eea08bae8036e7040659ba81876e23b70a=
+- CI #938 :: exact-head core gate failed with =1 failed, 1713 passed=. Android skeleton and both shared-mic jobs were GREEN; flake/package gates correctly skipped behind the failing full-test gate.
+- Exact failure :: =test_create_can_cancel_while_collecting_actions_without_writing= expected canonical =cancelled= after =cancel that= while the =actions= slot was active, but the dialogue returned another =question=.
+- Root cause :: =UserCommandAuthoringDialogue= attempted semantic action resolution before handing the utterance to =ClarificationCoordinator.submit_follow_up/3=. The coordinator already owns the canonical cancellation vocabulary, so the action resolver incorrectly consumed a control utterance first.
+- Production commit :: =986d4252cc6818921f9dedaa755d4e7bfafef5de=.
+- Fix :: preflight only the shared =CANCEL_PHRASES= vocabulary and route matching utterances immediately through the existing coordinator. No duplicated phrase list, command-specific cancellation state, second dialogue runtime, or action-execution bypass was added.
+- Next gate :: complete exact-head CI on the evidence-appended head; merge remains prohibited until all repository/Nix/package/platform gates and review/thread state are conclusively green.
