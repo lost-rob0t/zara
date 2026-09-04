@@ -2,7 +2,11 @@ import pytest
 
 from zara.database import DatabaseManager
 from zara.principals import PrincipalContext
-from zara.user_command_authoring import UserCommandAuthoringService
+from zara.runtime.clarification import ClarificationCoordinator
+from zara.user_command_authoring import (
+    UserCommandAuthoringDialogue,
+    UserCommandAuthoringService,
+)
 from zara.user_command_compiler import (
     CapabilityContract,
     CommandCompileError,
@@ -49,6 +53,25 @@ def _service(tmp_path, principal_id="operator-a"):
     compiler = _compiler()
     registry = CompiledCommandRegistry(compiler)
     return UserCommandAuthoringService(store, compiler=compiler, registry=registry), store, registry
+
+
+def _resolve_actions(text):
+    if " ".join(text.casefold().split()) != "open emacs and firefox":
+        raise ValueError("ambiguous action request")
+    return (
+        SemanticAction(
+            capability="open_app",
+            arguments={"app": "emacs"},
+            location="device",
+            target_policy="initiating_device",
+        ),
+        SemanticAction(
+            capability="open_app",
+            arguments={"app": "firefox"},
+            location="device",
+            target_policy="initiating_device",
+        ),
+    )
 
 
 def test_preview_is_side_effect_free(tmp_path):
@@ -152,3 +175,62 @@ def test_undo_create_removes_only_latest_mutation(tmp_path):
     assert store.get(saved.command_id) is None
     assert registry.snapshot() == {}
     assert service.undo() is None
+
+
+def test_create_dialogue_uses_shared_clarification_and_requires_confirmation(tmp_path):
+    service, store, registry = _service(tmp_path)
+    clarifications = ClarificationCoordinator()
+    dialogue = UserCommandAuthoringDialogue(
+        service,
+        clarifications=clarifications,
+        action_resolver=_resolve_actions,
+        principal_id="operator-a",
+        conversation_id="voice",
+    )
+
+    started = dialogue.start_create()
+    assert started.kind == "question"
+    assert started.message == "What should you say?"
+    assert clarifications.session_for("operator-a", "voice") is not None
+
+    trigger = dialogue.submit("work mode")
+    assert trigger.kind == "question"
+    assert trigger.message == "What should work mode do?"
+
+    preview = dialogue.submit("open Emacs and Firefox")
+    assert preview.kind == "preview"
+    assert "open_app(emacs)" in preview.message
+    assert "open_app(firefox)" in preview.message
+    assert preview.message.endswith("Save it?")
+    assert store.list() == []
+    assert registry.snapshot() == {}
+
+    created = dialogue.submit("yes")
+    assert created.kind == "created"
+    assert created.definition is not None
+    assert created.definition.trigger == "work mode"
+    assert len(created.definition.actions) == 2
+    assert store.get(created.definition.command_id) == created.definition
+    assert created.definition.command_id in registry.snapshot()
+    assert clarifications.session_for("operator-a", "voice") is None
+
+
+def test_create_dialogue_no_confirmation_is_side_effect_free(tmp_path):
+    service, store, registry = _service(tmp_path)
+    dialogue = UserCommandAuthoringDialogue(
+        service,
+        clarifications=ClarificationCoordinator(),
+        action_resolver=_resolve_actions,
+        principal_id="operator-a",
+        conversation_id="voice",
+    )
+
+    dialogue.start_create()
+    dialogue.submit("work mode")
+    dialogue.submit("open Emacs and Firefox")
+    cancelled = dialogue.submit("no")
+
+    assert cancelled.kind == "cancelled"
+    assert cancelled.message == "Cancelled."
+    assert store.list() == []
+    assert registry.snapshot() == {}
