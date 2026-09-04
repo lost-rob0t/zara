@@ -212,7 +212,7 @@ def test_create_dialogue_uses_shared_clarification_and_requires_confirmation(tmp
     assert len(created.definition.actions) == 2
     assert store.get(created.definition.command_id) == created.definition
     assert created.definition.command_id in registry.snapshot()
-    assert clarifications.session_for("operator-a", "voice") is None
+    assert clarifications.active_question("operator-a", "voice") is None
 
 
 def test_create_dialogue_no_confirmation_is_side_effect_free(tmp_path):
