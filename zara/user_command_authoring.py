@@ -2,15 +2,42 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
-from typing import Optional
+from typing import Callable, Optional
 
+from .runtime.clarification import (
+    ClarificationCoordinator,
+    DialogueTemplate,
+    SessionCloseReason,
+    SlotSpec,
+    SlotType,
+)
+from .runtime.frames import BoolValue, TextValue
 from .user_command_compiler import (
     CompiledCommand,
     CompiledCommandRegistry,
     UserCommandCompiler,
 )
-from .user_commands import UserCommandDefinition, UserCommandStore
+from .user_commands import SemanticAction, UserCommandDefinition, UserCommandStore
+
+_CREATE_TEMPLATE = DialogueTemplate(
+    intent_ns="user_command",
+    intent_name="create_command",
+    specs=(
+        SlotSpec("trigger", SlotType.TEXT, prompt="What should you say?"),
+        SlotSpec("actions", SlotType.TEXT, prompt="What should it do?"),
+        SlotSpec("confirm", SlotType.BOOLEAN, prompt="Save it?"),
+    ),
+)
+_COMMAND_ID_PARTS = re.compile(r"[^a-z0-9]+")
+
+
+@dataclass(frozen=True)
+class AuthoringDialogueResult:
+    kind: str
+    message: str
+    definition: Optional[UserCommandDefinition] = None
 
 
 @dataclass(frozen=True)
@@ -101,7 +128,7 @@ class UserCommandAuthoringService:
         try:
             self._publish_store()
         except Exception:
-            restored = self._store.create(_as_new_definition(before))
+            self._store.create(_as_new_definition(before))
             self._publish_store()
             self._undo = None
             raise
@@ -148,6 +175,170 @@ class UserCommandAuthoringService:
         self._registry.replace_all(tuple(self._store.list()))
 
 
+class UserCommandAuthoringDialogue:
+    """Create-command dialogue projected through the shared clarification state."""
+
+    def __init__(
+        self,
+        service: UserCommandAuthoringService,
+        *,
+        clarifications: ClarificationCoordinator,
+        action_resolver: Callable[[str], tuple[SemanticAction, ...]],
+        principal_id: str,
+        conversation_id: str,
+    ) -> None:
+        if not isinstance(service, UserCommandAuthoringService):
+            raise TypeError("service must be a UserCommandAuthoringService")
+        if not isinstance(clarifications, ClarificationCoordinator):
+            raise TypeError("clarifications must be a ClarificationCoordinator")
+        if not callable(action_resolver):
+            raise TypeError("action_resolver must be callable")
+        if not isinstance(principal_id, str) or not principal_id.strip():
+            raise ValueError("principal_id must be non-empty")
+        if not isinstance(conversation_id, str) or not conversation_id.strip():
+            raise ValueError("conversation_id must be non-empty")
+        self._service = service
+        self._clarifications = clarifications
+        self._action_resolver = action_resolver
+        self._principal_id = principal_id
+        self._conversation_id = conversation_id
+
+    def start_create(self) -> AuthoringDialogueResult:
+        opened = self._clarifications.open(
+            _CREATE_TEMPLATE,
+            principal=self._principal_id,
+            conversation_id=self._conversation_id,
+        )
+        if opened.kind != "opened":
+            return AuthoringDialogueResult(opened.kind, opened.message)
+        return AuthoringDialogueResult("question", opened.question)
+
+    def submit(self, text: str) -> AuthoringDialogueResult:
+        session = self._clarifications.session_for(
+            self._principal_id,
+            self._conversation_id,
+        )
+        if session is None or session.state.value == "closed":
+            return AuthoringDialogueResult("stale", self._clarifications.STALE_MESSAGE)
+
+        active = session.active_spec()
+        resolved_actions: Optional[tuple[SemanticAction, ...]] = None
+        if active is not None and active.name == "actions":
+            try:
+                resolved_actions = tuple(self._action_resolver(text))
+            except (TypeError, ValueError):
+                trigger = _text_slot(session, "trigger") or "that command"
+                return AuthoringDialogueResult(
+                    "question",
+                    f"I couldn't map that to a known action. What should {trigger} do?",
+                )
+            if not resolved_actions:
+                trigger = _text_slot(session, "trigger") or "that command"
+                return AuthoringDialogueResult(
+                    "question",
+                    f"I couldn't map that to a known action. What should {trigger} do?",
+                )
+
+        outcome = self._clarifications.submit_follow_up(
+            text,
+            principal=self._principal_id,
+            conversation_id=self._conversation_id,
+        )
+        if outcome.kind == "cancelled":
+            return AuthoringDialogueResult("cancelled", outcome.message)
+        if outcome.kind in {"retry", "stale"}:
+            return AuthoringDialogueResult(outcome.kind, outcome.message or outcome.question or "")
+
+        session = outcome.session
+        if session is None:
+            return AuthoringDialogueResult("stale", self._clarifications.STALE_MESSAGE)
+
+        trigger = _text_slot(session, "trigger")
+        if outcome.kind == "filled" and session.active_spec() is not None:
+            next_spec = session.active_spec()
+            if next_spec.name == "actions" and trigger is not None:
+                return AuthoringDialogueResult("question", f"What should {trigger} do?")
+            if next_spec.name == "confirm":
+                definition = self._definition_from_session(session, resolved_actions)
+                preview = self._service.preview(definition)
+                return AuthoringDialogueResult(
+                    "preview",
+                    f"{_format_preview(preview)} Save it?",
+                    definition,
+                )
+            return AuthoringDialogueResult("question", outcome.question or "")
+
+        if outcome.kind != "complete":
+            return AuthoringDialogueResult(outcome.kind, outcome.message or "")
+
+        confirmed = session.frame.slot_value("confirm")
+        if not isinstance(confirmed, BoolValue) or not confirmed.value:
+            self._clarifications.cancel(
+                principal=self._principal_id,
+                conversation_id=self._conversation_id,
+                reason=SessionCloseReason.CANCELLED,
+            )
+            return AuthoringDialogueResult("cancelled", "Cancelled.")
+
+        definition = self._definition_from_session(session)
+        saved = self._service.create(definition)
+        self._clarifications.finish(
+            principal=self._principal_id,
+            conversation_id=self._conversation_id,
+        )
+        return AuthoringDialogueResult(
+            "created",
+            f'Created command "{saved.trigger}".',
+            saved,
+        )
+
+    def _definition_from_session(
+        self,
+        session,
+        actions: Optional[tuple[SemanticAction, ...]] = None,
+    ) -> UserCommandDefinition:
+        trigger = _text_slot(session, "trigger")
+        action_text = _text_slot(session, "actions")
+        if trigger is None or action_text is None:
+            raise RuntimeError("create dialogue is missing required semantic fields")
+        resolved = actions if actions is not None else tuple(self._action_resolver(action_text))
+        if not resolved:
+            raise ValueError("action resolver returned no semantic actions")
+        return UserCommandDefinition(
+            command_id=_command_id_for_trigger(trigger),
+            trigger=trigger,
+            actions=resolved,
+        )
+
+
+def _text_slot(session, name: str) -> Optional[str]:
+    value = session.frame.slot_value(name)
+    return value.text if isinstance(value, TextValue) else None
+
+
+def _command_id_for_trigger(trigger: str) -> str:
+    normalized = _COMMAND_ID_PARTS.sub("-", trigger.casefold()).strip("-")
+    if not normalized:
+        raise ValueError("trigger cannot produce an empty command id")
+    return normalized[:64].rstrip("-")
+
+
+def _format_preview(command: CompiledCommand) -> str:
+    actions: list[str] = []
+    for action in command.actions:
+        values = []
+        for name in action.contract.arguments:
+            value = action.arguments.get(name)
+            if isinstance(value, TextValue):
+                values.append(value.text)
+            elif value is not None:
+                values.append(str(value))
+            elif name in action.slot_bindings:
+                values.append(f"{{{action.slot_bindings[name]}}}")
+        actions.append(f"{action.contract.action_id}({', '.join(values)})")
+    return f'Command "{command.trigger}": ' + ", ".join(actions) + "."
+
+
 def _as_new_definition(definition: UserCommandDefinition) -> UserCommandDefinition:
     return replace(
         definition,
@@ -158,4 +349,8 @@ def _as_new_definition(definition: UserCommandDefinition) -> UserCommandDefiniti
     )
 
 
-__all__ = ["UserCommandAuthoringService"]
+__all__ = [
+    "AuthoringDialogueResult",
+    "UserCommandAuthoringDialogue",
+    "UserCommandAuthoringService",
+]
