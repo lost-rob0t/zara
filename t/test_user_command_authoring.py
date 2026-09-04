@@ -55,22 +55,34 @@ def _service(tmp_path, principal_id="operator-a"):
     return UserCommandAuthoringService(store, compiler=compiler, registry=registry), store, registry
 
 
+def _dialogue(tmp_path, principal_id="operator-a"):
+    service, store, registry = _service(tmp_path, principal_id)
+    dialogue = UserCommandAuthoringDialogue(
+        service,
+        clarifications=ClarificationCoordinator(),
+        action_resolver=_resolve_actions,
+        principal_id=principal_id,
+        conversation_id="voice",
+    )
+    return dialogue, service, store, registry
+
+
 def _resolve_actions(text):
-    if " ".join(text.casefold().split()) != "open emacs and firefox":
+    normalized = " ".join(text.casefold().split())
+    if normalized == "open emacs and firefox":
+        apps = ("emacs", "firefox")
+    elif normalized == "open firefox":
+        apps = ("firefox",)
+    else:
         raise ValueError("ambiguous action request")
-    return (
+    return tuple(
         SemanticAction(
             capability="open_app",
-            arguments={"app": "emacs"},
+            arguments={"app": app},
             location="device",
             target_policy="initiating_device",
-        ),
-        SemanticAction(
-            capability="open_app",
-            arguments={"app": "firefox"},
-            location="device",
-            target_policy="initiating_device",
-        ),
+        )
+        for app in apps
     )
 
 
@@ -216,14 +228,7 @@ def test_create_dialogue_uses_shared_clarification_and_requires_confirmation(tmp
 
 
 def test_create_dialogue_no_confirmation_is_side_effect_free(tmp_path):
-    service, store, registry = _service(tmp_path)
-    dialogue = UserCommandAuthoringDialogue(
-        service,
-        clarifications=ClarificationCoordinator(),
-        action_resolver=_resolve_actions,
-        principal_id="operator-a",
-        conversation_id="voice",
-    )
+    dialogue, _, store, registry = _dialogue(tmp_path)
 
     dialogue.start_create()
     dialogue.submit("work mode")
@@ -232,5 +237,85 @@ def test_create_dialogue_no_confirmation_is_side_effect_free(tmp_path):
 
     assert cancelled.kind == "cancelled"
     assert cancelled.message == "Cancelled."
+    assert store.list() == []
+    assert registry.snapshot() == {}
+
+
+def test_dialogue_lists_describes_and_dry_runs_without_mutation(tmp_path):
+    dialogue, service, store, registry = _dialogue(tmp_path)
+    saved = service.create(_definition())
+    before = registry.snapshot()
+
+    listed = dialogue.list_commands()
+    described = dialogue.describe("work-mode")
+    tested = dialogue.test("work-mode")
+
+    assert listed.kind == "list"
+    assert "work mode" in listed.message
+    assert described.kind == "description"
+    assert "open_app(emacs)" in described.message
+    assert tested.kind == "preview"
+    assert tested.message.endswith("Dry run only; nothing executed.")
+    assert store.get("work-mode") == saved
+    assert registry.snapshot() is before
+
+
+def test_edit_dialogue_previews_then_confirms_revisioned_mutation(tmp_path):
+    dialogue, service, store, registry = _dialogue(tmp_path)
+    saved = service.create(_definition())
+
+    started = dialogue.start_edit("work-mode")
+    assert started.kind == "question"
+    assert started.message == "What should work mode do instead?"
+
+    preview = dialogue.submit("open Firefox")
+    assert preview.kind == "preview"
+    assert "open_app(firefox)" in preview.message
+    assert preview.message.endswith("Save this edit?")
+    assert store.get("work-mode") == saved
+
+    edited = dialogue.submit("yes")
+    assert edited.kind == "edited"
+    assert edited.definition is not None
+    assert edited.definition.revision == 2
+    assert store.get("work-mode") == edited.definition
+    assert registry.snapshot()["work-mode"].actions[0].arguments["app"].text == "firefox"
+
+
+def test_delete_dialogue_requires_confirmation_and_can_be_undone(tmp_path):
+    dialogue, service, store, registry = _dialogue(tmp_path)
+    saved = service.create(_definition())
+
+    started = dialogue.start_delete("work-mode")
+    assert started.kind == "question"
+    assert started.message == 'Delete command "work mode"?'
+    cancelled = dialogue.submit("no")
+    assert cancelled.kind == "cancelled"
+    assert store.get("work-mode") == saved
+
+    dialogue.start_delete("work-mode")
+    deleted = dialogue.submit("yes")
+    assert deleted.kind == "deleted"
+    assert store.get("work-mode") is None
+    assert registry.snapshot() == {}
+
+    undone = dialogue.undo_last()
+    assert undone.kind == "undone"
+    assert undone.definition is not None
+    assert undone.definition.command_id == "work-mode"
+    assert store.get("work-mode") == undone.definition
+    assert "work-mode" in registry.snapshot()
+
+
+def test_dialogue_unknown_command_is_indistinguishable_and_side_effect_free(tmp_path):
+    dialogue, _, store, registry = _dialogue(tmp_path)
+
+    described = dialogue.describe("foreign-or-missing")
+    tested = dialogue.test("foreign-or-missing")
+    edited = dialogue.start_edit("foreign-or-missing")
+    deleted = dialogue.start_delete("foreign-or-missing")
+
+    assert {described.kind, tested.kind, edited.kind, deleted.kind} == {"not_found"}
+    assert len({described.message, tested.message, edited.message, deleted.message}) == 1
     assert store.list() == []
     assert registry.snapshot() == {}
