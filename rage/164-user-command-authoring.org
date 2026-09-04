@@ -17,5 +17,41 @@
 - Voice uses the existing daemon/client voice path; no second microphone/runtime.
 - Preserve #260 hooks/advice ownership and existing RuntimeHost/TurnCoordinator boundaries.
 
+* Research
+- =zara.user_commands.UserCommandStore= already owns principal-bound create/get/list/search/update/delete with optimistic revisions, durable SQLite state, trigger collision fencing, and guest durability denial. #164 must compose this store rather than add persistence.
+- =zara.user_command_compiler.UserCommandCompiler= is pure and validates definitions against a closed capability catalog; =CompiledCommandRegistry.replace_all= is the atomic last-good publication seam. #164 must compile before any durable mutation is reported successful.
+- =zara.runtime.clarification.ClarificationCoordinator= already owns typed, principal/conversation-scoped slot collection and cancellation/correction semantics. Authoring dialogue should feed semantic authoring intents into this machinery rather than add process-global wizard state.
+- Voice transport/client migration issues #132 and #133 are closed. The authoring service therefore stays text/transport-neutral and can be reached by voice through the canonical client path without owning audio.
+- Hooks/advice issue #260 is closed; no command-specific hook bypass is justified.
+
+* Design
+- Add a narrow =UserCommandAuthoringService= orchestration boundary over one principal-bound store + compiler + compiled registry.
+- The service accepts already-typed declarative =UserCommandDefinition= drafts. Natural-language collection remains the semantic/dialogue layer; this service is the mutation/preview/undo authority, not an LLM parser.
+- =preview= compiles only and returns a normalized semantic description; it never writes or executes.
+- =create= and =edit= compile against a candidate full principal registry first, then persist, then atomically publish. Any compile/collision failure leaves durable state and active registry unchanged.
+- =delete= requires the current revision; after deletion it republishes the remaining valid definitions.
+- =undo= is bounded to the most recent successful mutation held by the service instance for this principal. It restores create/edit/delete using revision-aware store operations and recompiles before publishing; it cannot cross principal because the store is permanently principal-bound.
+- =list=/=describe= expose semantic definitions only; they do not expose secrets/provider credentials or executable internals.
+- No action execution exists in this module. A later semantic runtime invokes compiled commands through normal capability authorization/execution.
+
+* Threat / failure model
+- Invalid capability/provider/schema: reject before persistence.
+- Trigger collision or stale revision: reject and preserve current registry.
+- Compile failure during undo: fail closed and preserve current durable/active state.
+- Foreign/nonexistent command: return missing through the principal-bound store; never query another principal.
+- Concurrent mutation: store revision/CAS is authoritative; no optimistic success claim.
+- Dry-run/preview: side-effect free by construction.
+
+* TDD map
+- Create + immediate compiled visibility.
+- Preview does not persist or publish.
+- Invalid definition cannot partially persist/publish.
+- List/describe remain principal scoped.
+- Edit uses expected revision and survives restart through store state.
+- Delete removes and republishes.
+- Undo restores the latest create/edit/delete mutation and is one-step bounded.
+- Focused gate: =scripts/test-user-command-authoring.sh=.
+- Full gates after GREEN: =scripts/test-all.sh=, =nix flake check=, =nix build=, then exact-head Actions.
+
 * Status
-- CONSUMED. Research/design/TDD follow from this exact start SHA.
+- RESEARCH/DESIGN COMPLETE FOR ITERATION 1. Next state is deterministic RED tests before production implementation.
