@@ -24,7 +24,7 @@ from .runtime.clarification import (
 from .runtime.frames import FilledSlot, FrameStatus, IntentFrame, SlotOrigin, SlotValue
 from .user_command_compiler import CompiledCommand, CompiledCommandRegistry
 
-_PLACEHOLDER = re.compile(r"\{([A-Za-z][A-Za-z0-9_]*)\}")
+_PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9._-]{0,63})\}")
 _MAX_UTTERANCE_CHARS = 512
 
 
@@ -168,14 +168,14 @@ def _match_command(command: CompiledCommand, utterance: str) -> Optional[IntentF
 def _match_template(
     command: CompiledCommand, phrase: str, utterance: str
 ) -> Optional[IntentFrame]:
-    pattern = _template_pattern(phrase)
+    pattern, names = _template_pattern(phrase)
     match = pattern.fullmatch(utterance)
     if match is None:
         return None
 
     specs = {slot.name: _slot_spec(slot.name, slot.value_type, slot.required) for slot in command.slots}
     captured: dict[str, SlotValue] = {}
-    for name, text in match.groupdict().items():
+    for name, text in zip(names, match.groups()):
         value = parse_slot_value(specs[name], text, max_chars=_MAX_UTTERANCE_CHARS)
         if value is None:
             return None
@@ -183,16 +183,18 @@ def _match_template(
     return _fill_frame(command, captured)
 
 
-def _template_pattern(phrase: str) -> re.Pattern[str]:
+def _template_pattern(phrase: str) -> tuple[re.Pattern[str], tuple[str, ...]]:
     normalized = " ".join(phrase.split())
     chunks: list[str] = []
+    names: list[str] = []
     offset = 0
     for match in _PLACEHOLDER.finditer(normalized):
         chunks.append(re.escape(normalized[offset : match.start()]))
-        chunks.append(f"(?P<{match.group(1)}>.+?)")
+        chunks.append("(.+?)")
+        names.append(match.group(1))
         offset = match.end()
     chunks.append(re.escape(normalized[offset:]))
-    return re.compile("".join(chunks), re.IGNORECASE)
+    return re.compile("".join(chunks), re.IGNORECASE), tuple(names)
 
 
 def _fill_frame(command: CompiledCommand, captured: dict[str, SlotValue]) -> IntentFrame:
