@@ -7,6 +7,7 @@ IntentFrame/action templates. Execution remains owned by the normal runtime.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from threading import RLock
 from types import MappingProxyType
@@ -30,6 +31,7 @@ from .user_commands import CommandSlot, SemanticAction, UserCommandDefinition
 
 _VALUE_TYPES = frozenset({"text", "number", "duration", "datetime", "ref", "boolean"})
 _DEVICE_TARGET_POLICIES = frozenset({"initiating_device", "explicit_device"})
+_SLOT_PLACEHOLDER_NAME_RE = re.compile(r"^[a-z][a-z0-9._-]{0,63}$")
 
 
 class CommandCompileError(ValueError):
@@ -384,12 +386,7 @@ def _phrase_placeholders(value: str) -> Optional[tuple[str, ...]]:
         if closing < 0:
             return None
         body = value[opening + 1 : closing]
-        if (
-            not body
-            or not body[0].isalpha()
-            or not all(character.isalnum() or character == "_" for character in body)
-            or "{" in body
-        ):
+        if "{" in body or _SLOT_PLACEHOLDER_NAME_RE.fullmatch(body) is None:
             return None
         placeholders.append(body)
         cursor = closing + 1
