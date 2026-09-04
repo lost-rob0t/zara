@@ -118,13 +118,16 @@ def test_overlapping_parameterized_commands_are_ambiguous_not_first_match():
     first = _focus_timer("focus-timer")
     second = UserCommandDefinition(
         command_id="focus-session",
-        trigger="focus timer for {duration}",
+        trigger="{label} timer for {duration}",
         aliases=("begin focus",),
-        slots=(CommandSlot("duration", "duration"),),
+        slots=(
+            CommandSlot("label", "text"),
+            CommandSlot("duration", "duration"),
+        ),
         actions=(
             SemanticAction(
                 capability="timer.set",
-                arguments={"duration_slot": "duration", "label": "focus"},
+                arguments={"duration_slot": "duration", "label_slot": "label"},
                 location="server",
             ),
         ),
