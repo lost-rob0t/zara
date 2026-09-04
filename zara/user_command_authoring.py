@@ -30,7 +30,16 @@ _CREATE_TEMPLATE = DialogueTemplate(
         SlotSpec("confirm", SlotType.BOOLEAN, prompt="Save it?"),
     ),
 )
+_EDIT_TEMPLATE = DialogueTemplate(
+    intent_ns="user_command",
+    intent_name="edit_command",
+    specs=(
+        SlotSpec("actions", SlotType.TEXT, prompt="What should it do instead?"),
+        SlotSpec("confirm", SlotType.BOOLEAN, prompt="Save this edit?"),
+    ),
+)
 _COMMAND_ID_PARTS = re.compile(r"[^a-z0-9]+")
+_NOT_FOUND_MESSAGE = "I couldn't find that command."
 
 
 @dataclass(frozen=True)
@@ -176,7 +185,7 @@ class UserCommandAuthoringService:
 
 
 class UserCommandAuthoringDialogue:
-    """Create-command dialogue projected through the shared clarification state."""
+    """User-command dialogue projected through shared clarification state."""
 
     def __init__(
         self,
@@ -202,8 +211,35 @@ class UserCommandAuthoringDialogue:
         self._action_resolver = action_resolver
         self._principal_id = principal_id
         self._conversation_id = conversation_id
+        self._target: Optional[UserCommandDefinition] = None
+
+    def list_commands(self) -> AuthoringDialogueResult:
+        commands = self._service.list_commands()
+        if not commands:
+            return AuthoringDialogueResult("list", "No user commands are defined.")
+        names = ", ".join(command.trigger for command in commands)
+        return AuthoringDialogueResult("list", f"User commands: {names}.")
+
+    def describe(self, command_id: str) -> AuthoringDialogueResult:
+        definition = self._service.describe(command_id)
+        if definition is None:
+            return _not_found()
+        preview = self._service.preview(definition)
+        return AuthoringDialogueResult("description", _format_preview(preview), definition)
+
+    def test(self, command_id: str) -> AuthoringDialogueResult:
+        definition = self._service.describe(command_id)
+        if definition is None:
+            return _not_found()
+        preview = self._service.preview(definition)
+        return AuthoringDialogueResult(
+            "preview",
+            f"{_format_preview(preview)} Dry run only; nothing executed.",
+            definition,
+        )
 
     def start_create(self) -> AuthoringDialogueResult:
+        self._target = None
         opened = self._clarifications.open(
             _CREATE_TEMPLATE,
             principal=self._principal_id,
@@ -213,6 +249,59 @@ class UserCommandAuthoringDialogue:
             return AuthoringDialogueResult(opened.kind, opened.message)
         return AuthoringDialogueResult("question", opened.question)
 
+    def start_edit(self, command_id: str) -> AuthoringDialogueResult:
+        target = self._service.describe(command_id)
+        if target is None:
+            return _not_found()
+        self._target = target
+        opened = self._clarifications.open(
+            _EDIT_TEMPLATE,
+            principal=self._principal_id,
+            conversation_id=self._conversation_id,
+        )
+        if opened.kind != "opened":
+            self._target = None
+            return AuthoringDialogueResult(opened.kind, opened.message)
+        return AuthoringDialogueResult(
+            "question", f"What should {target.trigger} do instead?", target
+        )
+
+    def start_delete(self, command_id: str) -> AuthoringDialogueResult:
+        target = self._service.describe(command_id)
+        if target is None:
+            return _not_found()
+        self._target = target
+        template = DialogueTemplate(
+            intent_ns="user_command",
+            intent_name="delete_command",
+            specs=(
+                SlotSpec(
+                    "confirm",
+                    SlotType.BOOLEAN,
+                    prompt=f'Delete command "{target.trigger}"?',
+                ),
+            ),
+        )
+        opened = self._clarifications.open(
+            template,
+            principal=self._principal_id,
+            conversation_id=self._conversation_id,
+        )
+        if opened.kind != "opened":
+            self._target = None
+            return AuthoringDialogueResult(opened.kind, opened.message)
+        return AuthoringDialogueResult("question", opened.question, target)
+
+    def undo_last(self) -> AuthoringDialogueResult:
+        restored = self._service.undo()
+        if restored is None:
+            return AuthoringDialogueResult("undone", "Undid the last command change.")
+        return AuthoringDialogueResult(
+            "undone",
+            f'Restored command "{restored.trigger}".',
+            restored,
+        )
+
     def submit(self, text: str) -> AuthoringDialogueResult:
         session = self._clarifications.session_for(
             self._principal_id,
@@ -221,17 +310,17 @@ class UserCommandAuthoringDialogue:
         if session is None or session.state.value == "closed":
             return AuthoringDialogueResult("stale", self._clarifications.STALE_MESSAGE)
 
+        if session.template.intent_name == "edit_command":
+            return self._submit_edit(text, session)
+        if session.template.intent_name == "delete_command":
+            return self._submit_delete(text)
+        return self._submit_create(text, session)
+
+    def _submit_create(self, text: str, session) -> AuthoringDialogueResult:
         active = session.active_spec()
         resolved_actions: Optional[tuple[SemanticAction, ...]] = None
         if active is not None and active.name == "actions":
-            try:
-                resolved_actions = tuple(self._action_resolver(text))
-            except (TypeError, ValueError):
-                trigger = _text_slot(session, "trigger") or "that command"
-                return AuthoringDialogueResult(
-                    "question",
-                    f"I couldn't map that to a known action. What should {trigger} do?",
-                )
+            resolved_actions = self._resolve_actions_or_none(text)
             if not resolved_actions:
                 trigger = _text_slot(session, "trigger") or "that command"
                 return AuthoringDialogueResult(
@@ -239,16 +328,12 @@ class UserCommandAuthoringDialogue:
                     f"I couldn't map that to a known action. What should {trigger} do?",
                 )
 
-        outcome = self._clarifications.submit_follow_up(
-            text,
-            principal=self._principal_id,
-            conversation_id=self._conversation_id,
-        )
-        if outcome.kind == "cancelled":
-            return AuthoringDialogueResult("cancelled", outcome.message)
-        if outcome.kind in {"retry", "stale"}:
-            return AuthoringDialogueResult(outcome.kind, outcome.message or outcome.question or "")
-
+        outcome = self._submit_follow_up(text)
+        if outcome.kind in {"cancelled", "retry", "stale"}:
+            return AuthoringDialogueResult(
+                outcome.kind,
+                outcome.message or outcome.question or "",
+            )
         session = outcome.session
         if session is None:
             return AuthoringDialogueResult("stale", self._clarifications.STALE_MESSAGE)
@@ -259,7 +344,7 @@ class UserCommandAuthoringDialogue:
             if next_spec.name == "actions" and trigger is not None:
                 return AuthoringDialogueResult("question", f"What should {trigger} do?")
             if next_spec.name == "confirm":
-                definition = self._definition_from_session(session, resolved_actions)
+                definition = self._definition_from_create_session(session, resolved_actions)
                 preview = self._service.preview(definition)
                 return AuthoringDialogueResult(
                     "preview",
@@ -270,29 +355,95 @@ class UserCommandAuthoringDialogue:
 
         if outcome.kind != "complete":
             return AuthoringDialogueResult(outcome.kind, outcome.message or "")
+        if not _confirmed(session):
+            return self._cancel_current()
 
-        confirmed = session.frame.slot_value("confirm")
-        if not isinstance(confirmed, BoolValue) or not confirmed.value:
-            self._clarifications.cancel(
-                principal=self._principal_id,
-                conversation_id=self._conversation_id,
-                reason=SessionCloseReason.CANCELLED,
-            )
-            return AuthoringDialogueResult("cancelled", "Cancelled.")
-
-        definition = self._definition_from_session(session)
+        definition = self._definition_from_create_session(session)
         saved = self._service.create(definition)
-        self._clarifications.finish(
-            principal=self._principal_id,
-            conversation_id=self._conversation_id,
-        )
+        self._finish_current()
         return AuthoringDialogueResult(
             "created",
             f'Created command "{saved.trigger}".',
             saved,
         )
 
-    def _definition_from_session(
+    def _submit_edit(self, text: str, session) -> AuthoringDialogueResult:
+        target = self._target
+        if target is None:
+            return AuthoringDialogueResult("stale", self._clarifications.STALE_MESSAGE)
+
+        active = session.active_spec()
+        resolved_actions: Optional[tuple[SemanticAction, ...]] = None
+        if active is not None and active.name == "actions":
+            resolved_actions = self._resolve_actions_or_none(text)
+            if not resolved_actions:
+                return AuthoringDialogueResult(
+                    "question", f"What should {target.trigger} do instead?"
+                )
+
+        outcome = self._submit_follow_up(text)
+        if outcome.kind in {"cancelled", "retry", "stale"}:
+            if outcome.kind == "cancelled":
+                self._target = None
+            return AuthoringDialogueResult(
+                outcome.kind,
+                outcome.message or outcome.question or "",
+            )
+        session = outcome.session
+        if session is None:
+            return AuthoringDialogueResult("stale", self._clarifications.STALE_MESSAGE)
+
+        if outcome.kind == "filled" and session.active_spec() is not None:
+            if session.active_spec().name == "confirm":
+                actions = resolved_actions or self._actions_from_session(session)
+                definition = target.with_updates(actions=actions)
+                preview = self._service.preview(definition)
+                return AuthoringDialogueResult(
+                    "preview",
+                    f"{_format_preview(preview)} Save this edit?",
+                    definition,
+                )
+            return AuthoringDialogueResult("question", outcome.question or "")
+
+        if outcome.kind != "complete":
+            return AuthoringDialogueResult(outcome.kind, outcome.message or "")
+        if not _confirmed(session):
+            return self._cancel_current()
+
+        definition = target.with_updates(actions=self._actions_from_session(session))
+        saved = self._service.edit(definition, expected_revision=target.revision)
+        self._finish_current()
+        return AuthoringDialogueResult(
+            "edited", f'Edited command "{saved.trigger}".', saved
+        )
+
+    def _submit_delete(self, text: str) -> AuthoringDialogueResult:
+        target = self._target
+        if target is None:
+            return AuthoringDialogueResult("stale", self._clarifications.STALE_MESSAGE)
+        outcome = self._submit_follow_up(text)
+        if outcome.kind in {"cancelled", "retry", "stale"}:
+            if outcome.kind == "cancelled":
+                self._target = None
+            return AuthoringDialogueResult(
+                outcome.kind,
+                outcome.message or outcome.question or "",
+            )
+        session = outcome.session
+        if session is None:
+            return AuthoringDialogueResult("stale", self._clarifications.STALE_MESSAGE)
+        if outcome.kind != "complete":
+            return AuthoringDialogueResult(outcome.kind, outcome.message or "")
+        if not _confirmed(session):
+            return self._cancel_current()
+
+        self._service.delete(target.command_id, expected_revision=target.revision)
+        self._finish_current()
+        return AuthoringDialogueResult(
+            "deleted", f'Deleted command "{target.trigger}".', target
+        )
+
+    def _definition_from_create_session(
         self,
         session,
         actions: Optional[tuple[SemanticAction, ...]] = None,
@@ -309,6 +460,54 @@ class UserCommandAuthoringDialogue:
             trigger=trigger,
             actions=resolved,
         )
+
+    def _actions_from_session(self, session) -> tuple[SemanticAction, ...]:
+        action_text = _text_slot(session, "actions")
+        if action_text is None:
+            raise RuntimeError("edit dialogue is missing action text")
+        actions = tuple(self._action_resolver(action_text))
+        if not actions:
+            raise ValueError("action resolver returned no semantic actions")
+        return actions
+
+    def _resolve_actions_or_none(self, text: str) -> Optional[tuple[SemanticAction, ...]]:
+        try:
+            actions = tuple(self._action_resolver(text))
+        except (TypeError, ValueError):
+            return None
+        return actions or None
+
+    def _submit_follow_up(self, text: str):
+        return self._clarifications.submit_follow_up(
+            text,
+            principal=self._principal_id,
+            conversation_id=self._conversation_id,
+        )
+
+    def _cancel_current(self) -> AuthoringDialogueResult:
+        self._clarifications.cancel(
+            principal=self._principal_id,
+            conversation_id=self._conversation_id,
+            reason=SessionCloseReason.CANCELLED,
+        )
+        self._target = None
+        return AuthoringDialogueResult("cancelled", "Cancelled.")
+
+    def _finish_current(self) -> None:
+        self._clarifications.finish(
+            principal=self._principal_id,
+            conversation_id=self._conversation_id,
+        )
+        self._target = None
+
+
+def _not_found() -> AuthoringDialogueResult:
+    return AuthoringDialogueResult("not_found", _NOT_FOUND_MESSAGE)
+
+
+def _confirmed(session) -> bool:
+    value = session.frame.slot_value("confirm")
+    return isinstance(value, BoolValue) and value.value
 
 
 def _text_slot(session, name: str) -> Optional[str]:
