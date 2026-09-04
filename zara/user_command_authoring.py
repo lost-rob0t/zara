@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from typing import Callable, Optional
 
 from .runtime.clarification import (
+    CANCEL_PHRASES,
     ClarificationCoordinator,
     DialogueTemplate,
     SessionCloseReason,
@@ -309,6 +310,15 @@ class UserCommandAuthoringDialogue:
         )
         if session is None or session.state.value == "closed":
             return AuthoringDialogueResult("stale", self._clarifications.STALE_MESSAGE)
+
+        normalized = " ".join(text.split()).casefold()
+        if normalized in CANCEL_PHRASES:
+            outcome = self._submit_follow_up(text)
+            self._target = None
+            return AuthoringDialogueResult(
+                outcome.kind,
+                outcome.message or outcome.question or "",
+            )
 
         if session.template.intent_name == "edit_command":
             return self._submit_edit(text, session)
