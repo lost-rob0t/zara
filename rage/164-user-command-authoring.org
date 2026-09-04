@@ -1,0 +1,21 @@
+#+title: RAGE #164 — user command authoring dialogue
+#+property: issue 164
+#+property: start_sha c4945cf3e848eb4e55355ed767ce780348beb414
+
+* Consumption
+- Repository :: lost-rob0t/zara
+- Issue :: #164 — add voice/text command-authoring dialogue for create, inspect, edit, delete, dry-run and undo
+- Immutable start :: c4945cf3e848eb4e55355ed767ce780348beb414
+- Branch :: rage/164-user-command-authoring
+- Rule :: One RAGE iteration; no Android production changes.
+
+* Initial constraints
+- Reuse #155 principal/conversation-scoped typed dialogue state.
+- Reuse #162 persistence and #163 compiler; do not create a second command store or macro language.
+- Mutations must compile/validate before commit and remain principal-scoped.
+- Side effects execute only through canonical capability/runtime policy; dry-run never executes.
+- Voice uses the existing daemon/client voice path; no second microphone/runtime.
+- Preserve #260 hooks/advice ownership and existing RuntimeHost/TurnCoordinator boundaries.
+
+* Status
+- CONSUMED. Research/design/TDD follow from this exact start SHA.
