@@ -58,7 +58,7 @@ def test_preview_is_side_effect_free(tmp_path):
 
     assert preview.command_id == "work-mode"
     assert preview.trigger == "work mode"
-    assert preview.actions[0].capability == "open_app"
+    assert preview.actions[0].contract.action_id == "open_app"
     assert preview.actions[0].location == "device"
     assert store.list() == []
     assert registry.snapshot() == {}
