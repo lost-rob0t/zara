@@ -24,3 +24,10 @@
 - Add deterministic coverage proving an unknown app is rejected before process launch.
 - Preserve positive coverage for an allow-listed direct app and a configured argv mapping.
 - Re-run =scripts/test-process-safety.sh=, then =scripts/test-all.sh=, =nix flake check=, build/package gates, and exact-head Actions.
+
+** RED evidence
+- Test-only candidate :: f7e4698f3afddcec7d5a46a4f96e660a24037cc9
+- Exact-head Actions :: CI #958 completed failure on 2026-09-04.
+- The required =test= job reached =Run all tests= and failed before flake/build steps; Android skeleton and both shared-mic jobs remained green.
+- The only new behavioral assertion on this head places =unregistered-app= on PATH, requires =commands:open_app('unregistered-app')= to fail, and asserts the fake process log was never created. Production code still launches that PATH entry, so the regression is deterministically exposed before any production change.
+- Minimum fix remains the design above: remove only the unknown-app executable fallback and fail closed after =app_mapping/2= / =direct_app/1= miss.
