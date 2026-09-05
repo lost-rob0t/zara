@@ -54,11 +54,14 @@ class AndroidAudioFocusPlatform(context: Context) : AudioFocusPlatform {
         loss: AudioFocusLoss,
         onLoss: (AudioFocusLoss) -> Unit,
     ) {
-        val notify = synchronized(lock) {
-            if (activeRequest == null) return@synchronized false
+        val request = synchronized(lock) {
+            val current = activeRequest ?: return
             activeRequest = null
-            true
+            current
         }
-        if (notify) onLoss(loss)
+        // Zara never auto-resumes old server audio after a transient loss. Abandon the
+        // framework request immediately so a later AUDIOFOCUS_GAIN cannot resurrect it.
+        audioManager.abandonAudioFocusRequest(request)
+        onLoss(loss)
     }
 }
