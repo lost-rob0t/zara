@@ -126,8 +126,11 @@ class SecurityRegistry:
         return frozenset(result)
 
     @staticmethod
-    def _new_user_id(device_id: str, generation: int) -> str:
-        return f"zara:{device_id}:{generation}:{uuid.uuid4().hex}"
+    def _new_user_id(_device_id: str, generation: int) -> str:
+        # ZAP string fields are ASCII and bounded to 255 characters. Keep the
+        # transport identity opaque instead of embedding an operator-supplied
+        # Unicode device label in security metadata.
+        return f"zara:{generation}:{uuid.uuid4().hex}"
 
     def enroll(
         self,
