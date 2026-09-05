@@ -56,6 +56,27 @@ class VoicePlaybackControllerTest {
         )
     }
 
+    @Test fun `failed replacement leaves no fabricated active output`() {
+        val sink = RecordingPcmOutput(failOnStartNumber = 2)
+        val controller = VoicePlaybackController(sink, "session-1")
+        controller.accept(
+            VoiceStreamEvent.AudioStarted("session-1", "turn-1", "speaker-1", 24_000, 1)
+        )
+
+        assertThrows(IllegalStateException::class.java) {
+            controller.accept(
+                VoiceStreamEvent.AudioStarted("session-1", "turn-2", "speaker-2", 24_000, 1)
+            )
+        }
+
+        assertEquals(null, controller.state().audio)
+        controller.close()
+        assertEquals(
+            listOf("start:24000:1", "stop", "start:24000:1", "close"),
+            sink.calls,
+        )
+    }
+
     @Test fun `stale chunk never reaches speaker`() {
         val sink = RecordingPcmOutput()
         val controller = VoicePlaybackController(sink, "session-1")
@@ -90,11 +111,16 @@ class VoicePlaybackControllerTest {
     }
 }
 
-private class RecordingPcmOutput : PcmOutput {
+private class RecordingPcmOutput(
+    private val failOnStartNumber: Int? = null,
+) : PcmOutput {
     val calls = mutableListOf<String>()
+    private var startCount = 0
 
     override fun start(sampleRate: Int, channels: Int) {
         calls += "start:$sampleRate:$channels"
+        startCount += 1
+        if (startCount == failOnStartNumber) throw IllegalStateException("start failed")
     }
 
     override fun write(pcm: ByteArray) {
