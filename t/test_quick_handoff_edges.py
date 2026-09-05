@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication
 from zara.database import DatabaseManager
 from zara.desktop.controller import DesktopController
 from zara.desktop.conversation import ConversationService, ConversationStore, MessageRole
+from zara.desktop.windows import CopilotMode
 from zara.runtime import events
 from zara.runtime.commands import CancelTurn, CommandReceipt, SubmitTurn
 
@@ -42,6 +43,7 @@ class FakeTray(QObject):
     toggle_requested = Signal()
     quick_requested = Signal()
     full_chat_requested = Signal()
+    settings_requested = Signal()
     restart_requested = Signal()
     diagnostics_requested = Signal()
     quit_requested = Signal()
@@ -100,7 +102,7 @@ def make_controller(tmp_path):
         conversation_service=service,
     )
     qt_app.processEvents()
-    assert controller.quick_window is not None
+    assert controller.quick_window is controller.window
     return qt_app, controller, bridge, tray, service
 
 
@@ -108,103 +110,99 @@ def dispose(controller: DesktopController) -> None:
     controller.window.prepare_for_quit()
     controller.window.close()
     controller.window.deleteLater()
-    if controller.quick_window is not None:
-        controller.quick_window.prepare_for_quit()
-        controller.quick_window.close()
-        controller.quick_window.deleteLater()
     controller.setParent(None)
     controller.deleteLater()
     app().processEvents()
 
 
-def test_tray_reuses_existing_quick_and_full_chat_windows(tmp_path):
+def test_tray_quick_and_full_actions_reuse_one_copilot(tmp_path):
     qt_app, controller, _, tray, service = make_controller(tmp_path)
-    quick = controller.quick_window
-    assert quick is not None
-    full = controller.window
+    copilot = controller.window
     try:
-        assert quick.conversations is service
-        assert full.conversations is service
+        assert controller.quick_window is copilot
+        assert copilot.conversations is service
 
         tray.quick_requested.emit()
         qt_app.processEvents()
-        assert controller.quick_window is quick
-        assert quick.isVisible()
-
-        tray.quick_requested.emit()
-        qt_app.processEvents()
-        assert controller.quick_window is quick
+        assert controller.window is copilot
+        assert copilot.mode is CopilotMode.COMPACT
+        assert copilot.isVisible()
 
         tray.full_chat_requested.emit()
         qt_app.processEvents()
-        assert controller.window is full
-        assert full.isVisible()
+        assert controller.window is copilot
+        assert controller.quick_window is copilot
+        assert copilot.mode is CopilotMode.EXPANDED
+        assert copilot.isVisible()
+
+        tray.quick_requested.emit()
+        qt_app.processEvents()
+        assert controller.window is copilot
+        assert copilot.mode is CopilotMode.COMPACT
     finally:
         dispose(controller)
 
 
-def test_local_quick_message_projects_to_full_chat_before_runtime_receipt(tmp_path):
+def test_local_compact_message_is_in_canonical_renderer_before_runtime_receipt(tmp_path):
     qt_app, controller, bridge, _, service = make_controller(tmp_path)
-    quick = controller.quick_window
-    assert quick is not None
+    copilot = controller.window
     try:
-        conversation_id = quick.current_conversation_id
-        assert controller.window.current_conversation_id == conversation_id
-
-        quick.composer.setPlainText("visible before receipt")
-        quick.submit_current_text()
+        conversation_id = copilot.current_conversation_id
+        copilot.composer.setPlainText("visible before receipt")
+        copilot.submit_current_text()
         qt_app.processEvents()
 
         state = service.get_state(conversation_id)
         user_message = state.latest_message(role=MessageRole.USER)
         assert user_message is not None
-        assert user_message.id in quick.message_widgets
-        assert user_message.id in controller.window.message_widgets
+        assert user_message.id in copilot.message_widgets
+        assert controller.quick_window is copilot
         assert len(bridge.commands) == 1
         assert isinstance(bridge.commands[0], SubmitTurn)
     finally:
         dispose(controller)
 
 
-def test_cancel_in_progress_survives_handoff_and_blocks_duplicate_stop(tmp_path):
+def test_cancel_in_progress_survives_mode_transition_and_blocks_duplicate_stop(tmp_path):
     qt_app, controller, bridge, _, service = make_controller(tmp_path)
-    quick = controller.quick_window
-    assert quick is not None
+    copilot = controller.window
     try:
-        conversation_id = quick.current_conversation_id
-        quick.composer.setPlainText("cancel during handoff")
-        quick.submit_current_text()
+        conversation_id = copilot.current_conversation_id
+        copilot.composer.setPlainText("cancel during expansion")
+        copilot.submit_current_text()
         submit = bridge.commands[-1]
         assert isinstance(submit, SubmitTurn)
 
         bridge.command_completed.emit(
-            CommandReceipt(request_id=submit.request_id, turn_id="turn-handoff-cancel")
+            CommandReceipt(request_id=submit.request_id, turn_id="turn-mode-cancel")
         )
         qt_app.processEvents()
-        quick.action_button.click()
+        copilot.action_button.click()
         qt_app.processEvents()
 
         cancel = bridge.commands[-1]
         assert isinstance(cancel, CancelTurn)
-        assert cancel.turn_id == "turn-handoff-cancel"
+        assert cancel.turn_id == "turn-mode-cancel"
         state = service.get_state(conversation_id)
         assert state.cancel_request_id == cancel.request_id
 
         command_count = len(bridge.commands)
         controller.expand_quick_to_full_chat()
         qt_app.processEvents()
-        assert controller.window.current_conversation_id == conversation_id
-        assert controller.window.action_button.isEnabled() is False
-        assert controller.window.action_button.action_mode == "stop"
+        assert controller.window is copilot
+        assert copilot.mode is CopilotMode.EXPANDED
+        assert copilot.current_conversation_id == conversation_id
+        assert copilot.action_button.isEnabled() is False
+        assert copilot.action_button.action_mode == "stop"
 
-        controller.window.action_button.click()
+        copilot.action_button.click()
         qt_app.processEvents()
         assert len(bridge.commands) == command_count
 
         bridge.runtime_event.emit(
             SimpleNamespace(
                 event=events.TurnCancelled(
-                    turn_id="turn-handoff-cancel",
+                    turn_id="turn-mode-cancel",
                     reason="cancel command",
                 )
             )
@@ -212,7 +210,7 @@ def test_cancel_in_progress_survives_handoff_and_blocks_duplicate_stop(tmp_path)
         qt_app.processEvents()
         assert state.active_turn_id is None
         assert state.cancel_request_id is None
-        assert controller.window.action_button.action_mode == "send"
-        assert controller.window.action_button.isEnabled() is False
+        assert copilot.action_button.action_mode == "send"
+        assert copilot.action_button.isEnabled() is False
     finally:
         dispose(controller)
