@@ -26,7 +26,11 @@ from .approval import (
 )
 from . import stream_events
 from .sentence_chunker import SentenceChunker
-from .tool_cancellation import inject_tool_cancellation, new_tool_cancellation_signal
+from .tool_cancellation import (
+    execute_with_tool_cancellation,
+    inject_tool_cancellation,
+    new_tool_cancellation_signal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -494,7 +498,7 @@ def create_approval_node(tool_registry):
 
 def create_tools_node(tool_registry, publisher=None, stream_publisher=None):
     tools = tool_registry.to_langchain_tools()
-    tool_node = ToolNode(tools)
+    tool_node = ToolNode(tools, awrap_tool_call=execute_with_tool_cancellation)
     bindings = {tool.name: tool for tool in tools}
     publish = publisher or runtime_bridge.publish
 
