@@ -23,8 +23,10 @@ import ai.zara.app.runtime.TextTurnResult
 import ai.zara.app.runtime.ZaraTextClientActor
 import ai.zara.app.runtime.reduce
 import ai.zara.app.runtime.toRuntimeReadiness
+import ai.zara.app.voice.AndroidAudioFocusPlatform
 import ai.zara.app.voice.AndroidPcmOutput
 import ai.zara.app.voice.AndroidPcmRecorder
+import ai.zara.app.voice.AudioFocusController
 import ai.zara.app.voice.AuthenticatedVoiceIngress
 import ai.zara.app.voice.ManualVoiceCapture
 import ai.zara.app.voice.ManualVoiceSessionCoordinator
@@ -90,7 +92,15 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         )
         voiceStreamSink = VoiceStreamSinkActor(
             playbackFactory = { sessionId ->
-                VoicePlaybackController(AndroidPcmOutput(), sessionId)
+                val audioFocus = AudioFocusController(
+                    platform = AndroidAudioFocusPlatform(context.applicationContext),
+                    onLoss = { interruptVoicePlaybackForFocusLoss() },
+                )
+                VoicePlaybackController(
+                    output = AndroidPcmOutput(),
+                    sessionId = sessionId,
+                    audioFocus = audioFocus,
+                )
             },
             stateObserver = { streamState ->
                 latestVoiceStreamState = streamState
@@ -192,6 +202,14 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     private fun refreshEnrollment() {
         controller.observeEnrollment(enrollment.state().toRuntimeReadiness())
+    }
+
+    private fun interruptVoicePlaybackForFocusLoss() {
+        try {
+            voiceStreamSink.interrupt()
+        } catch (error: Throwable) {
+            reportVoiceStreamFailure(error)
+        }
     }
 
     private fun reportVoiceStreamFailure(error: Throwable) {
