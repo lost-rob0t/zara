@@ -26,7 +26,7 @@ def zmq_context():
     try:
         yield context
     finally:
-        context.term()
+        context.destroy(linger=0)
 
 
 @pytest.fixture
