@@ -74,17 +74,16 @@ class WrappedCredentialStore(
         val temp = File(file.parentFile, ".${file.name}.tmp")
         try {
             FileOutputStream(temp).use { raw ->
-                DataOutputStream(BufferedOutputStream(raw)).use { output ->
-                    output.writeInt(CREDENTIAL_MAGIC)
-                    output.writeInt(CREDENTIAL_VERSION)
-                    output.writeInt(credential.publicKey.size)
-                    output.write(credential.publicKey)
-                    output.writeInt(sealed.iv.size)
-                    output.write(sealed.iv)
-                    output.writeInt(sealed.ciphertext.size)
-                    output.write(sealed.ciphertext)
-                    output.flush()
-                }
+                val output = DataOutputStream(BufferedOutputStream(raw))
+                output.writeInt(CREDENTIAL_MAGIC)
+                output.writeInt(CREDENTIAL_VERSION)
+                output.writeInt(credential.publicKey.size)
+                output.write(credential.publicKey)
+                output.writeInt(sealed.iv.size)
+                output.write(sealed.iv)
+                output.writeInt(sealed.ciphertext.size)
+                output.write(sealed.ciphertext)
+                output.flush()
                 raw.fd.sync()
             }
             atomicReplace(temp, file)
@@ -183,7 +182,11 @@ class ServerPinStore(private val file: File) {
         file.parentFile?.mkdirs()
         val temp = File(file.parentFile, ".${file.name}.tmp")
         try {
-            temp.writeBytes(pin.bytes())
+            FileOutputStream(temp).use { raw ->
+                raw.write(pin.bytes())
+                raw.flush()
+                raw.fd.sync()
+            }
             try {
                 Files.move(
                     temp.toPath(),
