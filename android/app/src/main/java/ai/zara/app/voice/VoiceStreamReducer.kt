@@ -56,16 +56,16 @@ private fun reduceTranscript(
     state: VoiceStreamState,
     event: VoiceStreamEvent.Transcript,
 ): VoiceStreamState {
-    val previous = state.lastTranscriptSequence
+    val sameStream = state.transcriptStreamId == event.streamId
+    if (!sameStream && state.transcriptStreamId != null && !state.transcriptFinal) {
+        throw StaleVoiceStreamException("voice transcript stream changed before terminal transcript")
+    }
+    if (sameStream && state.conversationId != null && state.conversationId != event.conversationId) {
+        throw StaleVoiceStreamException("voice transcript conversation is stale")
+    }
+    val previous = if (sameStream) state.lastTranscriptSequence else null
     if (previous != null && event.sequence <= previous) {
         throw StaleVoiceStreamException("voice transcript sequence is stale")
-    }
-    if (
-        state.transcriptStreamId != null &&
-        state.transcriptStreamId != event.streamId &&
-        !state.transcriptFinal
-    ) {
-        throw StaleVoiceStreamException("voice transcript stream changed before terminal transcript")
     }
     return state.copy(
         conversationId = event.conversationId,
