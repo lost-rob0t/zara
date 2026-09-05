@@ -5,13 +5,15 @@
 - Branch :: =rage/173-android-auth=.
 - RAGE start commit :: =da515c80a2ba18e889f62dc8f1816c8c95249f43=.
 - Operator direction :: implement authentication immediately.
-- Dependency exception :: #172 is merged; #133 and #159 are still open. This iteration is therefore intentionally limited to the authentication/enrollment foundation that does not depend on the unsettled #159 device-action wire contract. No action/capability integration is added here.
+- Initial dependency exception :: #172 was merged; #133 and #159 were still open at start. Iteration 1 therefore implemented the authentication/enrollment foundation without consuming the unsettled #159 device-action wire contract.
+- Dependency update :: #133 merged to master as =16b1eda8dd4a0b1e4a3dba7742787e8a75192347= while this iteration was gating. #159 remains open, so this branch does not claim complete #173 reconnect/action acceptance.
 
 * Research
 - #170 selected JeroMQ 0.6.x for Android ZMTP/3.0 + CURVE and delegated key storage to #173.
 - JeroMQ 0.6.0 =ZMQ.Socket.setCurveSecretKey(byte[])= requires the client long-term CURVE secret as raw 32-byte or 40-character Z85 material; =setCurvePublicKey= and =setCurveServerKey= use the same representation family.
 - Android Keystore keys are intended to remain inside the keystore boundary, while Android recommends KeyStore for long-term cryptographic key protection and AES/GCM for authenticated encryption.
 - =Context.getNoBackupFilesDir()= is explicitly excluded from automatic backup, preventing device-bound wrapped credentials from being restored onto a device that cannot unwrap them.
+- Production re-audit found an independent server regression: stock =zara-server= still rejected TCP and did not consume the completed #130 =SecureZaraZmqGateway=. That recovery is isolated in #329 / PR #331 and is not hidden inside the Android branch.
 
 Primary sources checked 2026-09-05:
 - https://javadoc.io/static/org.zeromq/jeromq/0.6.0/org/zeromq/ZMQ.Socket.html
@@ -21,39 +23,58 @@ Primary sources checked 2026-09-05:
 
 * Design
 ** Boundary
-Implement authentication state and credential protection now; leave reconnect/session/action protocol integration for the next #173 iteration after #133/#159 stabilize.
+Implement authentication state and credential protection now; leave full reconnect/session/action protocol integration for the next #173 iteration after #159 stabilizes. Server production-listener recovery belongs to #329.
 
 ** Selected architecture
 1. =CurveCredential= is the transport-facing value: client public key + client secret key bytes. It is never persisted in plaintext.
 2. =CredentialCipher= abstracts authenticated wrapping so JVM tests can use a deterministic fake while production uses AndroidKeyStore AES-256-GCM.
-3. =WrappedCredentialStore= persists only a versioned envelope containing public key, IV and ciphertext under =noBackupFilesDir= using atomic replace semantics.
+3. =WrappedCredentialStore= persists only a versioned envelope containing public key, IV and ciphertext under =noBackupFilesDir= using fsync + atomic replace semantics.
 4. =AndroidKeystoreCredentialCipher= owns a non-exportable AES wrapping key under a fixed application alias. It does not require per-use biometric authentication because background assistant reconnect must remain possible.
-5. =ServerPin= is a separately persisted public value containing the expected 32-byte CURVE server public key. Missing or mismatched pins fail closed.
-6. =CurveAuthConfigurator= is the only component allowed to place client public/secret/server keys onto a JeroMQ socket. It copies/validates key lengths and clears the temporary secret copy after socket configuration.
-7. =EnrollmentRepository= exposes typed states: UNENROLLED, READY and CORRUPT. Corrupt/undecryptable credentials never silently rotate identity.
+5. =ServerPin= is a separately persisted public value containing the expected 32-byte CURVE server public key. Missing pins fail closed. Re-pinning the same key is idempotent; silently replacing it with another key is forbidden.
+6. =CurveAuthConfigurator= is the only component allowed to place client public/secret/server keys onto a JeroMQ socket. It validates/copies material and clears the temporary secret copy after socket configuration.
+7. =EnrollmentRepository= exposes typed states =Unenrolled=, =AwaitingServerPin=, =Ready= and =Corrupt=. Corrupt/undecryptable credentials never silently rotate identity.
+8. =JeroMqCurveKeyCodec= exposes only public-key Z85 enrollment exchange. =JeroMqCurveDealerFactory= constructs a bounded-handshake DEALER and applies CURVE before connection use.
 
 ** Invariants
-- No plaintext CURVE secret in app-private persisted files, logs, diagnostics or resources.
-- Server pin is mandatory before CURVE socket configuration.
+- No plaintext CURVE secret in persisted app files, logs, diagnostics or resources.
+- The actual CURVE secret is wrapped by a distinct non-exportable AndroidKeyStore AES-256-GCM key; it is not falsely modeled as an exportable AndroidKeyStore private key.
+- Server pin is mandatory before CURVE socket configuration and cannot silently change.
 - Key, IV and ciphertext sizes are bounded and validated before decrypt/configure.
-- Credential replacement is atomic.
-- Lost/deleted Keystore wrapping key produces explicit re-enrollment/corrupt state, never implicit new identity.
-- Production code never logs key bytes or Z85 strings.
+- Credential and pin replacement writes are atomic.
+- Lost/deleted Keystore wrapping key produces explicit corrupt/re-enrollment state, never implicit new identity.
+- Loaded secret copies are explicitly cleared where the JVM/JeroMQ boundary permits.
+- Android manifest includes =INTERNET= because JeroMQ TCP is the selected remote transport.
 - No #159 capability/action message types are introduced on this branch.
 
 ** TDD map
-1. Wrapped credential round trip through a fake cipher; persisted bytes must not contain the raw secret.
-2. Corrupt envelope / wrong cipher key -> typed CORRUPT state.
-3. Server pin validates exactly 32 bytes and rejects mismatch.
-4. Auth configurator rejects absent/malformed credentials and pin mismatch before socket mutation.
-5. Auth configurator sets client public, secret and server pin and clears its temporary secret copy.
-6. Android Keystore implementation compiles under minSdk 29 and uses AES/GCM + AndroidKeyStore.
+1. Wrapped credential round trip through a fake authenticated cipher; persisted bytes must not contain the raw secret.
+2. Corrupt envelope / wrong cipher key -> typed =Corrupt= state.
+3. Missing credential -> explicit =Unenrolled=.
+4. CURVE client/server keys require exactly 32 bytes; Z85 exchange round-trips exactly 40 characters.
+5. Auth configurator sets pinned server/client public/client secret and fails closed if the socket rejects any option.
+6. Enrollment is explicit: identity creation -> awaiting pin -> ready; configuration before pin fails.
+7. Corrupt stored identity cannot be replaced silently.
+8. Server pin is idempotent for the same key but a different pin is rejected while preserving the original.
+9. Android Keystore implementation compiles under minSdk 29 using AES/GCM + AndroidKeyStore.
+10. Android debug APK/secret inspection gate remains green with the new authentication code and JeroMQ dependency.
+
+* TDD / implementation evidence
+- Test-first commit :: =01cbc085a05755f8705bae07789c5a90a86ae4e5= added =AuthenticationTest.kt= before production auth classes existed.
+- RED caveat :: the first Actions run was superseded/cancelled by rapid implementation pushes before it completed, so there is no fabricated exact-head RED CI claim. Source ordering still preserves test-before-production evidence.
+- Production implementation added =AuthCore.kt=, =AndroidCredentialCipher.kt=, =JeroMqAuth.kt= and =EnrollmentRepository.kt=; JeroMQ 0.6.0 was pinned in the Android version catalog/build.
+- Android network regression found during implementation :: manifest lacked =android.permission.INTERNET=; fixed before the final gate.
+- Security regression found during review :: server pin replacement was initially too permissive; a failing regression was added first and production =pinServer= was changed to reject a different existing pin.
+- Candidate before dependency-baseline merge :: =50dd567f0a976ce7dd97f5f3374cba75eff6f7c8=.
 
 * Gate
-- Focused JVM tests: =cd android && ./gradlew :app:testDebugUnitTest= through the pinned Nix Android environment.
-- Android gate: =nix develop -c bash scripts/test-android.sh=.
-- Full repository gate: =nix develop -c bash scripts/test-all.sh=, =nix flake check=, =nix build=.
-- Exact-head GitHub Actions required before merge.
+- Required Android/full command family is exercised by repository CI: Android unit/native/Trealla/debug-APK/secret gate, complete test suite, flake checks and packaged Zara build.
+- Exact candidate =50dd567f0a976ce7dd97f5f3374cba75eff6f7c8= :: GitHub Actions CI #994 = SUCCESS.
+- CI #994 Android skeleton gate = SUCCESS, including unit tests, native Trealla build, debug APK and secret inspection.
+- CI #994 repository =Run all tests= = SUCCESS; flake checks and packaged build completed successfully before the workflow concluded SUCCESS.
+- This green head predates the #133 merge commit only by unrelated desktop-only changes. The branch will consume master =16b1eda8...= next and must re-run exact-head CI before being considered current.
 
-* Iteration 1
-- Status :: DESIGN RECORDED; next step is RED tests before production implementation.
+* Iteration 1 outcome
+- Authentication/enrollment foundation :: GREEN at =50dd567...=.
+- #173 complete :: NO. #159 remains unresolved and full authenticated reconnect/session/action continuity is intentionally not claimed.
+- Production daemon remote-auth blocker :: tracked separately as #329 / PR #331.
+- Next branch action :: merge current master (#133) into this branch without changing the auth design, then require exact-head CI again.
