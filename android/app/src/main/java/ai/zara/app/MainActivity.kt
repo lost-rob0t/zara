@@ -2,6 +2,7 @@ package ai.zara.app
 
 import ai.zara.app.ui.RenderedTextTurn
 import ai.zara.app.ui.ZaraApp
+import ai.zara.app.voice.ManualVoiceState
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -15,25 +16,27 @@ import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
     private lateinit var appSession: AndroidAppSession
+    private var microphonePermissionGranted by mutableStateOf(false)
+    private var operationError by mutableStateOf<String?>(null)
+    private var voiceState by mutableStateOf<ManualVoiceState>(ManualVoiceState.Idle)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         appSession = (application as ZaraApplication).appSession
+        microphonePermissionGranted = hasMicrophonePermission()
+        voiceState = appSession.voiceState()
 
         var runtimeState by mutableStateOf(appSession.state())
         var enrollmentPublicKey by mutableStateOf(appSession.enrollmentPublicKeyZ85())
         var lastTurn by mutableStateOf<RenderedTextTurn?>(null)
-        var operationError by mutableStateOf<String?>(null)
         var operationBusy by mutableStateOf(false)
-        var microphonePermissionGranted by mutableStateOf(hasMicrophonePermission())
-        var voiceState by mutableStateOf(appSession.voiceState())
         var voiceStreamState by mutableStateOf(appSession.voiceStreamState())
         var voiceStreamFailure by mutableStateOf(appSession.voiceStreamFailure())
 
         val microphonePermission = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { granted ->
-            microphonePermissionGranted = granted
+            reconcileMicrophonePermission(granted)
             if (!granted) operationError = "Microphone permission denied"
         }
         val assistantRoleRequest = registerForActivityResult(
@@ -178,7 +181,21 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (::appSession.isInitialized) appSession.assessAssistantRole()
+        if (!::appSession.isInitialized) return
+        appSession.assessAssistantRole()
+        reconcileMicrophonePermission(hasMicrophonePermission())
+    }
+
+    override fun onStop() {
+        if (::appSession.isInitialized) {
+            appSession.onHostStopped().whenComplete { _, error ->
+                runOnUiThread {
+                    if (error != null) operationError = rootMessage(error)
+                    voiceState = appSession.voiceState()
+                }
+            }
+        }
+        super.onStop()
     }
 
     override fun onDestroy() {
@@ -187,6 +204,16 @@ class MainActivity : ComponentActivity() {
             appSession.setVoiceStreamObserver(null)
         }
         super.onDestroy()
+    }
+
+    private fun reconcileMicrophonePermission(granted: Boolean) {
+        microphonePermissionGranted = granted
+        appSession.onMicrophonePermissionChanged(granted).whenComplete { _, error ->
+            runOnUiThread {
+                if (error != null) operationError = rootMessage(error)
+                voiceState = appSession.voiceState()
+            }
+        }
     }
 
     private fun hasMicrophonePermission(): Boolean =
