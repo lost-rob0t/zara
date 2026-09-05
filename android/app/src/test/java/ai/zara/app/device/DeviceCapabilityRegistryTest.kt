@@ -50,5 +50,8 @@ class DeviceCapabilityRegistryTest {
         private val available: Boolean,
     ) : DeviceCapabilityAdapter {
         override fun isAvailable(): Boolean = available
+
+        override fun execute(arguments: DeviceActionArguments): DeviceActionResult =
+            DeviceActionResult.Completed
     }
 }
