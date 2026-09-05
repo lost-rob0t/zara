@@ -1,0 +1,47 @@
+:PROPERTIES:
+:ID:       zara-rage-388-plugin-tool-cancellation
+:END:
+#+title: RAGE #388 — canonical cancellation for running service-plugin tools
+#+status: ACTIVE
+
+* Recovery r2
+** Consumption
+- Issue :: #388
+- Immutable start :: 3676fc7e452eab409305f62a826b9f0b1f9841d4
+- Branch :: rage/388-plugin-tool-cancellation-r2
+- Scope :: Zara Core only; no =android/**= changes and no plugin-specific execution manager.
+
+** Contract
+- Service-plugin tools remain ordinary =BaseTool= registrations in the canonical =ToolRegistry -> ToolNode= path.
+- =PluginManager= wraps each service tool exactly once and preserves its name/schema/metadata, including approval metadata.
+- Every invocation receives one Core-owned =ToolCancellation= view via =current_tool_cancellation()=; the token is not a model/tool argument and cannot be retargeted.
+- Canonical task cancellation signals the token before child-task teardown. =create_tools_node= remains terminal-event authority and emits =ToolCancelled(reason="turn cancelled")=.
+- Concurrent invocations have isolated tokens. Async tools still receive =CancelledError=.
+
+** Prior deterministic RED and failed candidate
+- Original test-only RED :: b45e0c301af453f9dd44cb08079facf2284b9744 / CI #1402.
+- Original candidate head :: 1052078c06069cae33f665c8d6273cc2d7578324 / CI #1410.
+- CI #1410 passed Android and both shared-mic lanes but failed Core =Run all tests= in =test_running_sync_tool_observes_canonical_turn_cancellation=: the synchronous plugin tool did not enter within the deterministic acceptance window.
+- Root cause boundary :: relying on LangChain's generic async fallback for synchronous tools added another executor scheduling layer before the plugin function could observe its ContextVar.
+
+** Recovery design
+- Synchronous wrapped tools now run through one explicit =asyncio.to_thread= worker owned by the cancellation adapter; Python propagates the invocation ContextVar into that worker.
+- Async-only tools keep direct =ainvoke= execution under the same bound ContextVar.
+- Cancellation first sets the shared =threading.Event= and then cancels the child asyncio task. A synchronous worker may continue only long enough to observe that token and release owned work; it cannot report a successful canonical terminal after parent cancellation.
+- No global cancellation flag, process-id registry, user-visible cancel token, or secondary execution path exists.
+
+** Deterministic acceptance
+- running synchronous service tool observes canonical cancellation before side effects;
+- concurrent cancellation tokens remain isolated;
+- async-only service tool sees the same invocation-scoped token and receives =CancelledError= after the token is signalled;
+- Android compatibility and both shared-mic lanes remain unchanged.
+
+** Commits
+- a590b50865b28d5ac189fffe11ac48739998a61f :: bind service tools at canonical registration.
+- 216105c5ca1e96b41ba843a3847a5404acf64017 :: explicit context-propagating sync worker and async-only path.
+- b02d9432fe753eec2a6ea24fe875c4ba1bf49115 :: public cancellation API export.
+- d944f6bf7988e0c4e2c2cb2c6c6f7684bdd56621 :: deterministic sync/isolation/async regressions.
+
+** Gate
+- Exact-head GitHub Actions are authoritative.
+- Required before merge: full Core tests, =nix flake check=, packaged Zara, Android compatibility gate, Arch shared-mic and Ubuntu shared-mic, plus clear reviews/threads.
