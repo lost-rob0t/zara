@@ -48,7 +48,10 @@ class AudioRouteController(
                 started = false
                 current = null
             }
-            platform.stop()
+            val rollbackFailure = runCatching { platform.stop() }.exceptionOrNull()
+            if (rollbackFailure != null && rollbackFailure !== failure) {
+                failure.addSuppressed(rollbackFailure)
+            }
             throw failure
         }
     }
