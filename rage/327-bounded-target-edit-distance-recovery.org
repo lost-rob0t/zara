@@ -8,7 +8,7 @@
 - Scope :: Zara Core only; no =android/**= production changes.
 
 * Recovery reason
-- PR #330 proved the intended RED contract at test-only head =46d471c9dabea6827f90d80b0ed6eb9f88d05085= in CI #997.
+- PR #330 proved the intended RED contract at test-only head =46d471c9dabea6827f90b0ed6eb9f88d05085= in CI #997.
 - Its later head =1727d7b258a846ccf8ebf8cafc5a85411d9e9ef7= is not mergeable on current master and its PrologEngine commit carries a large stale-region rewrite unrelated to the bounded vocabulary method.
 - Do not merge or force-rebase that collateral. Preserve the RED evidence and recover only the narrow behavior on current canonical master.
 
@@ -28,7 +28,7 @@
 - Android skeleton and both shared-mic lanes must remain green.
 - Merge only exact current recovery head, mergeable, non-draft, with no blocking review/thread state.
 
-* Recovery iteration — 2026-09-05
+* Recovery iteration 1 — 2026-09-05
 - Recovery start :: =f590e50fdccd6b25453c09ba697ab70c770c9692=
 - Reason :: exact-green candidate =85612bdac953559869b63b9515b2a63b3a97ca5d= became stale after 90 sibling-owned Android commits landed on =master=.
 - Compatibility check :: the 90 canonical commits since =7cb047a390644c7da96cfb4620bfb8d569450fff= changed only =android/**=, Android RAGE evidence, and =scripts/test-android.sh=; none of this slice's Core production/test files changed.
@@ -36,3 +36,11 @@
 - Recovery implementation :: replay the exact proven Core blobs onto recovery start while retaining the old exact candidate as a merge parent; no design expansion and no Android production edits.
 - Recovery candidate parent commit :: =0cab11f49db73bbf0900fe61cada6ab726f36596=.
 - Gate :: require fresh exact-head full repository/Nix/package/Android/shared-mic CI before merge.
+
+* Recovery iteration 2 — 2026-09-05
+- Canonical start :: =a1429625ec43880310d6c53d8343e58749003b6f=.
+- Reason :: sibling Core recovery PR #356 landed the orthogonal CURVE enrollment parser fix after iteration 1 CI started, so iteration 1 could no longer authorize an exact-current-base merge.
+- Compatibility :: #356 changes =zara/server.py=, =t/test_security_threat_management.py= and its own RAGE evidence only; there is no overlap with this slice's router/matcher/test files.
+- Recovery implementation :: overlay the exact iteration-1 blobs onto =a1429625ec43880310d6c53d8343e58749003b6f= and retain iteration-1 head =4e34cd9992107550b0c9bac13c176e7e14f1b215= as merge provenance.
+- Recovery parent commit :: =d68e470103c6a8ec0755e4cb3b06fcbf28f80a7b=.
+- Gate :: fresh exact-head CI on this iteration is mandatory; prior green runs remain evidence only.
