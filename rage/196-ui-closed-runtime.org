@@ -1,0 +1,57 @@
+#+title: RAGE #196 B — Android UI-closed shared runtime lifecycle
+
+* Transaction
+- Parent issue :: #196
+- PR :: #373
+- Scope :: Android-only continuation after #369 public Assistant-role/onboarding surface.
+- Base :: =rage/196-android-assistant-role= at =d85fa83f47c9b372a9d7dd44363c6d33c1ed760f=.
+- Invariant :: one Android Zara client/runtime; no assistant-only ZARA/1 connection, STT, TTS, memory, Prolog stack, or LLM.
+
+* Analyze / research
+- Accepted #195 architecture requires UI-closed invocation while preserving the same typed runtime and explicit lifecycle cleanup.
+- Current Android manual voice path owns the canonical ZARA/1 audio-input lifecycle: =audio.input.start= + bounded PCM chunks + =audio.input.commit= / =audio.input.cancel=; the event pump starts only after commit.
+- Initial UI-closed prototype automatically opened the mic in =VoiceInteractionSession.onShow=. Adversarial review rejected it: a system invocation has no manual button-release callback, so the stream could remain open and never send canonical commit.
+- Current Android Developers reference confirms =VoiceInteractionSession.onCreateContentView()= is the public hook for session UI and =onShow()= follows content creation. It also defines =SHOW_SOURCE_PUSH_TO_TALK= for physical-button invocation. Therefore the bounded implementation uses an explicit session-overlay PTT control and reuses the existing manual voice/commit path instead of inventing local VAD.
+
+* Design
+- =ZaraApplication= owns exactly one lazy =AndroidAppSession= in the app's =:voice= process.
+- MainActivity and both VoiceInteraction services run in that same process. Closing/recreating Compose removes observers only; it does not destroy or duplicate the canonical Android client.
+- Process death still creates a new AndroidAppSession from durable enrollment/profile state; existing runtime reducers do not fabricate a live session.
+- Session overlay PTT: ACTION_DOWN starts/reconnects through canonical =AndroidAppSession=; ACTION_UP commits; ACTION_CANCEL/onHide/onDestroy cancels.
+- Start planning fails closed on missing microphone permission, missing Assistant role, bad enrollment, missing endpoint, transient connection state, or connected state without a real session id.
+- Async reconnect/start is fenced: release-before-start becomes immediate commit after successful start; cancel/hide-before-start becomes immediate cancel after successful start; duplicate presses cannot start a second capture.
+- VoiceInteractionService re-assesses role on ready/shutdown and cancels any active capture on shutdown.
+
+* TDD / realization
+- =bdff5bcd543dbf52e55b0bc1598c941fed954042= RED require one application-scoped runtime/process.
+- =33f8bd9133d5c63dea11ff9a110772ca33ceb12d= add =ZaraApplication= runtime owner.
+- =885657805fdc440211ee38f3b59db6c544e69c53= co-locate MainActivity + assistant services in =:voice=.
+- =7f75100265e5bca8a8948178be12e047721e3fc6= detach Compose lifecycle from runtime lifetime.
+- =3d6a00ecc2863ed7103df3a192b9e40f1587a625= RED fail-closed assistant start plan.
+- =bdaa690b66381610df664953ecaa6bd122d583ad= GREEN canonical start/reconnect plan.
+- =a0bad7c6f578843428b66a9c732a9f8132428c7d= RED initial invocation race fence.
+- =baf06e025069f41d47a184a28a7e3c39f918a31d= GREEN invocation gate.
+- =4f74bff6c0b6684f20f4490e0f110281496e6dc7= initial onShow auto-capture prototype; rejected by adversarial review before merge because no canonical commit edge existed.
+- =07bb81a8908d3740c4850d39e093c06853fdf125= RED cancellation race.
+- =b6256bc828122a835270f11d3ccff05f36fea750= GREEN single-claim cancellation.
+- =0193a713bd8220f7bdcdbeeaa522fe825756b5fb= cancellation race fix in prototype.
+- =7c8c59ee6e8b37fd27c725a279b7fff7e466a31b= RED shared VoiceInteractionService lifecycle.
+- =5b1f32e4a17fd8ad0e9ec9d8d6f1dbb8754d45aa= GREEN service role/shutdown lifecycle.
+- =ed1f7e89021424899a00b9ce2388f6d52eaa9c50= RED explicit overlay PTT state machine.
+- =f33d547a5e3f2ec1895615ffe2d16c47d098bb69= GREEN release/commit/cancel/late-start gate.
+- =34b479da73a398b58d36f8c8cfa92fb526444ea7= RED require real =onCreateContentView= overlay PTT and forbid auto mic start on =onShow=.
+- =30597abd6739f8963c50a6421a68cf42958538c5= GREEN public VoiceInteractionSession overlay: hold starts canonical voice; release commits; cancel/hide cancels; real error state shown.
+
+* Adversarial review
+- Rejected :: automatic mic start on session show. It can create an uncommitted stream and therefore no transcript/response/audio completion path.
+- Rejected :: local Android VAD solely to close system-assistant capture. Server remains canonical VAD/STT owner; duplicating VAD would create a parallel semantic/audio lifecycle.
+- Rejected :: separate assistant-process runtime or second DEALER. UI/services are co-located with one application-owned =AndroidAppSession=.
+- Race :: UI closes during reconnect/start -> gate converts late success into typed cancel.
+- Race :: finger releases before reconnect/start completes -> gate converts late success into typed commit.
+- Race :: role/service shutdown while capturing -> shared service cancellation stops the one capture owner.
+- Process death :: only durable profile/enrollment survives; no live session id is synthesized.
+
+* Verification
+- Required before merge: exact-head Android JVM/native/debug-APK/secret gate, full repository tests + Nix flake/package, Ubuntu mic, Arch mic.
+- Parent #369 must land first; then recover/retarget this transaction to current =master= and rerun exact-head gates.
+- Hardware-specific Samsung invocation/side-button proof remains #206 and is not claimed here.
