@@ -7,24 +7,28 @@
 * Consumption
 - Issue :: #203
 - Immutable start :: c09a61bb772b406905ed267e5c227d4a84edb7c7
-- Dependency :: stacked on #432 Assistant role-loss policy.
+- Current canonical base :: 0a370079f2bf293b320ea72865239e6ee4c08a73
+- Dependency :: #432 Assistant role-loss policy is canonical.
 - Scope :: Android voice ownership wiring only. No Core/protocol/plugin changes.
 
 * Failure analysis
-- The pure role-loss guard can distinguish Manual vs Assistant ownership, but production Assistant invocation still called the same =pressToTalk= entry as in-app manual PTT.
+- The role-loss guard distinguishes Manual vs Assistant ownership, but production Assistant invocation previously called the same =pressToTalk= entry as in-app manual PTT.
 - Without distinct production ownership, role loss cannot safely cancel Assistant capture without also threatening manual PTT.
-- A role transition may race capture startup, so Assistant ownership is checked again against canonical runtime role immediately after capture starts.
+- A role transition may race capture startup. The first implementation queued the right cancellation but could still report startup success before the queued cancel executed; adversarial review caught this and the start path now fails if canonical role is no longer Held.
 
 * Design
 - Manual UI calls =pressToTalk= and records =AssistantVoiceOwnership.Manual=.
 - VoiceInteraction calls =pressAssistantToTalk= and records =AssistantVoiceOwnership.Assistant=.
 - Canonical AssistantRole observation updates the runtime reducer and then the guard.
+- After Assistant capture begins, canonical role is checked again; role loss queues cancellation on the same voice-control owner and fails the start future.
 - Release/cancel/permission/host-stop/close clear ownership through the same existing voice owner.
 - Role-loss cancellation is serialized through the existing Android voice-control executor and reports failure through the redacted voice diagnostic boundary.
 
 * TDD
 - RED source contract requires distinct Manual/Assistant entry paths and canonical role observations reaching the guard.
 - GREEN production wiring adds no new capture or runtime state machine.
+- Adversarial fix closes false-success-on-mid-start-role-loss.
 
 * Gate
-- Exact stacked-head Android/full-Nix/package/shared-mic CI required before promotion after #432 becomes canonical.
+- #432 is canonical; PR is retargeted directly to master.
+- Fresh exact-current-base Android/full-Nix/package/shared-mic CI required before promotion.
