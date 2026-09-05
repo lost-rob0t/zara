@@ -19,36 +19,48 @@
 - Deterministic tests can inject cancellation without network or GUI dependencies.
 
 ** Research
-- =create_tools_node= is the one canonical LangGraph execution boundary for registered =BaseTool= instances, including service-plugin tools. It already emits =ToolCancelled= when the owning turn task receives =asyncio.CancelledError=, but the running tool receives no separate invocation-local cooperative signal.
-- =PluginManager= registers service-plugin =BaseTool= objects into the same =ToolRegistry= used by ordinary tools; adding a plugin-only execution manager or =shell.cancel= command would fork the control plane and violate current ownership.
-- =PluginRuntime= already owns lifecycle workers and runtime dispatch/subscription but does not own individual LangGraph tool calls. Cancellation therefore belongs at the canonical tool executor, not the service-plugin lifecycle facade.
-- Existing regression =test_cancellation_after_tool_start_emits_tool_terminal= proves only the external terminal event. It cannot prove a synchronous/subprocess-style plugin tool can observe cancellation and tear down owned resources.
+- =create_tools_node= remains the one canonical LangGraph execution boundary for registered =BaseTool= instances and already owns =ToolCancelled= publication on turn cancellation.
+- =PluginManager= registers service-plugin =BaseTool= objects into the same =ToolRegistry= used by ordinary tools. A plugin-only execution manager, process-id registry or cancel command would fork the control plane.
+- =PluginRuntime= owns lifecycle workers/subscriptions, not individual tool calls. Existing =test_cancellation_after_tool_start_emits_tool_terminal= proves only the external terminal event; a synchronous/subprocess-style plugin tool still cannot observe cancellation and release owned resources.
+- LangChain service tools already carry their canonical name/schema/metadata on the =BaseTool=. A narrow wrapper can add invocation context without widening RuntimeHost/backend signatures or changing approval identity.
 
-** Design
+** Deterministic RED
+- Test-only head :: b45e0c301af453f9dd44cb08079facf2284b9744
+- CI :: run #1402 / 33970821921
+- Result :: Core =Run all tests= failed before flake/package because the required public cancellation API did not exist. Both shared-mic lanes remained green. This is the expected contract failure before production code.
+
+** Final design
 *** Selected architecture
-- Add a tiny runtime-owned invocation context containing a Core-created cancellation token. The token is not model/tool input and has no public method for cancelling another invocation.
-- Bind exactly one token around each canonical tool execution. Expose read-only cooperative observation through the public plugin API so long-running plugin tools can poll/wait without inventing process IDs or side channels.
-- Execute the LangChain tool call in a child task shielded from immediate parent cancellation. On canonical turn cancellation: set the token first, then cancel the child task, then preserve the existing =ToolCancelled= event and re-raise cancellation.
-- The token uses a thread-safe event so synchronous =BaseTool= implementations running in LangChain's executor can observe the same cancellation state; async tools still receive ordinary =CancelledError= after the token is set.
+- Service-plugin =BaseTool= objects are wrapped exactly once by =PluginManager= immediately before the existing canonical =ToolRegistry= registration. The wrapper preserves tool name, schema, metadata and registration/unload identity, so approval and execution still flow through =ToolRegistry -> ToolNode= with no second manager.
+- Each wrapper invocation creates one Core-owned =threading.Event= and exposes only a read-only =ToolCancellation= view through =current_tool_cancellation()=. Cancellation state is carried by =ContextVar= so LangChain synchronous executor work sees the same invocation-local token.
+- The original tool runs in a child task shielded from immediate parent cancellation. When the canonical turn/task is cancelled, Core sets the cooperative token first, cancels the child task, waits for task cancellation cleanup, then re-raises. =create_tools_node= therefore remains the authority that emits the existing =ToolCancelled(reason="turn cancelled")= terminal event.
+- Async tools continue to receive =CancelledError=. Synchronous tools can poll =cancelled= or =wait(timeout)= and terminate subprocess/provider work cooperatively.
 
 *** Rejected alternatives
-- Plugin-specific cancel command / process-id registry: rejected because it creates a second control plane, exposes retargetable identifiers and diverges from Core turn cancellation.
-- Add a user-visible tool argument such as =cancel_token=: rejected because model/tool arguments must not control authorization/lifecycle state.
-- Only catch =CancelledError= inside the tool: rejected because a synchronous tool in an executor cannot receive asyncio cancellation and would keep owned subprocesses alive.
-- Signal token after cancelling child task: rejected because an async cleanup handler could observe cancellation before the cooperative state became true.
+- Plugin-specific cancel command / process-id registry: second control plane plus retargetable identifiers.
+- User/model-visible =cancel_token= tool argument: authorization/lifecycle state would become model-controlled.
+- Global mutable cancellation flag: concurrent calls could cancel each other.
+- Only catching =CancelledError= inside plugin code: synchronous executor tools cannot rely on receiving asyncio cancellation.
+- Widen RuntimeHost/backend signatures solely for plugin cancellation metadata: unnecessary duplication of the existing tool execution path.
 
-*** Invariants / threats
-- One token per invocation; no global mutable current cancellation flag.
-- External callers can inspect/wait/raise only; only Core execution code can signal it.
-- Approval remains before execution and is unchanged.
-- Tool unload/replacement validation remains before execution and is unchanged.
-- Cancellation produces =ToolCancelled=, never =ToolFailed= or a false successful completion.
-- A cancelled invocation cannot cancel or mark another concurrently running invocation.
+*** Invariants / adversarial checks
+- One token per invocation; concurrent tools do not share cancellation state.
+- Plugins can inspect/wait only; they cannot signal or retarget another token.
+- Approval occurs before execution exactly as before; =zara_requires_approval= metadata remains intact on the wrapper.
+- Plugin unload still unregisters the same bounded tool name and removes only plugin-owned dynamic approval state.
+- Model/tool arguments cannot provide, replace, suppress or retarget the cancellation token.
+- Canonical cancellation remains distinguishable from provider failure/timeout because the parent path still terminates as =CancelledError -> ToolCancelled= rather than =ToolFailed= or =ToolCompleted=.
 
-*** Planned TDD
-1. Extend the existing running-tool cancellation regression so a synchronous registered tool obtains the public cancellation token, blocks cooperatively, observes Core cancellation, and proves the side effect never executes. This must fail before production changes because the public token API does not exist.
-2. Add a direct isolation test for two invocation tokens if implementation structure makes it independently testable.
-3. Keep existing approval/rejection/timeout/removal regressions green.
+** Implementation
+- 532bca08f1192fff3405a2618b354c55ae6b173c :: invocation-scoped cancellation adapter and read-only token.
+- 549b0840d64f67affd1fdfaf7d91972e5d7c0ab3 :: bind service tools once at canonical PluginManager registration.
+- 281c831ab74a00ca9ce3d875a1bc126e09b3569a :: public plugin API export.
+- c5fc64875c88292fe568b9c35e607369e335707a :: deterministic running synchronous tool cancellation test.
+- d49c3d6c59936c12aec59dd0210fd30d8921b5fb :: adversarial concurrent-invocation isolation test.
+
+** Verification state
+- Exact-head code candidate =c5fc64875c88292fe568b9c35e607369e335707a= reached green on both shared-mic lanes; full Core and Android compatibility lanes were still executing when the isolation test was added, so that run is no longer authoritative.
+- Final exact-head CI after this RAGE record and test hardening is authoritative. Do not merge until full tests, =nix flake check=, packaged Zara, Android compatibility gate and both shared-mic lanes are green with reviews/threads clear.
 
 ** Gate
 - Focused deterministic tool/plugin cancellation tests.
