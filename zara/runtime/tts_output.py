@@ -234,6 +234,9 @@ class TtsOutputBridge:
             )
         except asyncio.CancelledError:
             raise
+        finally:
+            if self._turns.get(state.turn_id) is state:
+                self._turns.pop(state.turn_id, None)
 
     async def _synthesize_phrase(self, state: _TurnAudio, phrase: str) -> None:
         engine = self._get_engine()
