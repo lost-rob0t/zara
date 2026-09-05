@@ -322,4 +322,16 @@ def render_ui_fixtures(output_dir: Path) -> Path:
     return manifest_path
 
 
+def main() -> int:
+    """Render CI review artifacts into the configured artifact directory."""
+    artifact_root = Path(os.environ.get("ARTIFACT_DIR", "artifacts"))
+    manifest = render_ui_fixtures(artifact_root / "ui")
+    print(f"Rendered Zara UI fixtures: {manifest}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
 __all__ = ["REQUIRED_UI_FIXTURES", "render_ui_fixtures"]
