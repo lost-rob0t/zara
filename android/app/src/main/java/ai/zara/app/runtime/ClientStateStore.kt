@@ -24,8 +24,16 @@ data class RestorableClientState(
 
 class ClientStateStore(private val file: File) {
     fun save(state: RestorableClientState) {
-        file.parentFile?.mkdirs()
-        val temp = File(file.parentFile, ".${file.name}.tmp")
+        val directory = file.absoluteFile.parentFile
+            ?: throw IllegalStateException("client state path has no parent directory")
+        check(directory.exists() || directory.mkdirs()) {
+            "client state directory could not be created"
+        }
+        val temp = Files.createTempFile(
+            directory.toPath(),
+            ".${file.name}.",
+            ".tmp",
+        ).toFile()
         try {
             FileOutputStream(temp).use { raw ->
                 DataOutputStream(BufferedOutputStream(raw)).use { output ->
