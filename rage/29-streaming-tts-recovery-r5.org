@@ -1,0 +1,18 @@
+#+title: RAGE #29 — streaming TTS lifecycle recovery r5
+
+* Transaction
+- Consumed issue :: #29
+- Immutable RAGE start :: =03143a3cd4990734e3f9afaf63462c8b03108337=
+- Branch :: =rage/29-streaming-tts-current-r5=
+- Scope :: Zara Core only; no =android/**= changes.
+
+* Recovery
+- PR #370 exact head =a5c8e1b9168d5b22e04139bbdfcc79e195cfbca0= passed CI #1306 but became stale.
+- PR #374 replayed the same bounded Core slice on =d5f9a57e437cee72e2dfeae97ed5124727608085=; Android UI-closed lifecycle PR #373 then advanced master again.
+- Replay only the reviewed three-line production cleanup plus deterministic lifecycle tests and focused TTS gate onto this exact master.
+
+* Invariants / acceptance
+- Successful completed turns do not accumulate in =TtsOutputBridge._turns=.
+- Cleanup removes only the exact state object whose task exits; a reused turn id cannot let stale work delete its replacement.
+- Cancellation/error behavior, ZARA/1 shapes, synthesis provider, and client playback ownership remain unchanged.
+- Fresh exact-head Core/Nix/package/Android/shared-mic CI is mandatory before merge.
