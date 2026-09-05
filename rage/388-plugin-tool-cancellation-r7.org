@@ -1,0 +1,57 @@
+#+title: RAGE #388 — injected cooperative tool cancellation r7
+
+* Transaction
+- Consumed issue :: #388
+- Immutable RAGE start :: =27cb2d85a51c735213d807bacfe38a4880994da6=
+- Branch :: =rage/388-plugin-tool-cancellation-r7=
+- Scope :: Zara Core only; zero =android/**= changes.
+
+* Recovery note
+- This run discovered the r7 branch already existed one commit ahead of the exact immutable start at =a3a87fb81ad9fb8af18e54f9e4f39672b1501367=.
+- That commit only defines the proposed injected cancellation value/type; no execution path consumes it yet.
+- Preserve it as contract scaffolding and continue TDD from the exact branch state instead of duplicating the transaction.
+
+* Prior falsified iterations
+- r5 / PR #413: =ToolNode(awrap_tool_call=...)= plus ContextVar failed exact Core CI; sync, async and concurrent tool bodies never observed the token.
+- r6 / PR #420: outer =ToolNode.ainvoke()= ContextVar scope failed the same three acceptance cases at exact merge-ref CI #1540 while Android and both shared-mic lanes stayed green.
+- ContextVar propagation through ToolNode is retired for this issue.
+
+* Research restart
+- Zara owns approval, availability/unload checks, lifecycle events and the exact per-call ToolNode invocation inside =create_tools_node()=.
+- LangGraph provides =InjectedState= arguments that are removed from model-visible tool schemas and populated by ToolNode from graph state at invocation time.
+- This is materially different from thread/task-local propagation: the cancellation view travels as an explicit hidden runtime dependency attached to the exact tool call by ToolNode itself.
+- Core can create one private signal after approval + availability, place only its read-only view in the one-call ToolNode state, signal it before cancelling the owned ToolNode task, and retain the existing =ToolCancelled(reason="turn cancelled")= terminal authority.
+
+* Selected r7 architecture
+- Plugin tools opt into cooperative cancellation by declaring a parameter annotated with public =ToolCancellationArg=.
+- =ToolCancellationArg= is =Annotated[ToolCancellation, InjectedState(...)]=; the argument is hidden from the model schema and cannot be supplied, suppressed, or retargeted by model tool arguments.
+- Core creates the private signal only after approval and availability checks.
+- Each one-call ToolNode input receives that exact read-only cancellation view under the private injected-state key.
+- Core shields the child ToolNode task long enough to set the signal before child cancellation; then existing typed runtime cancellation remains the sole terminal event.
+- Tools that do not declare the injected argument remain source-compatible.
+
+* Adversarial invariants
+- rejected or unloaded tools never receive an injected cancellation value;
+- concurrent invocations receive distinct signal objects;
+- model-visible JSON schema excludes the cancellation parameter;
+- model-supplied arguments cannot override the injected value;
+- plugin code receives no setter/event/process id/control handle;
+- cancellation is signalled before async child cancellation is delivered;
+- ordinary success/error normalization and approval semantics stay canonical;
+- no Android changes and no second executor/runtime/approval path.
+
+* TDD map
+- RED-1 :: public plugin API exposes =ToolCancellation= and hidden =ToolCancellationArg= without adding it to model-visible input schema.
+- RED-2 :: running sync tool receives exact injected view and observes cancellation before side effects.
+- RED-3 :: async tool sees signal set before =CancelledError=.
+- RED-4 :: concurrent invocations remain isolated.
+- RED-5 :: rejected and unloaded tools never enter the injected execution seam.
+- RED-6 :: spoofed model argument for the private cancellation key cannot override injection.
+
+* Gate
+- focused =t/test_plugin_tool_cancellation.py=;
+- =nix develop -c bash scripts/test-all.sh=;
+- =nix flake check=;
+- =nix build=;
+- exact-head GitHub Actions including Android compatibility and Arch/Ubuntu shared-mic lanes;
+- zero unresolved review threads before expected-head merge.
