@@ -15,6 +15,51 @@ class ZaraTextCodecTest {
         )
     }
 
+    @Test fun `capability snapshot is closed sorted and session bound`() {
+        val frames = ZaraTextCodec.encodeCapabilitySnapshot(
+            requestId = "caps-1",
+            sessionId = "session-1",
+            capabilities = setOf(DeviceCapability.OpenUri, DeviceCapability.OpenApp),
+            timestampNs = 2,
+        )
+        assertEquals(
+            "{\"body\":{\"capabilities\":[{\"id\":\"open_app\",\"version\":1},{\"id\":\"open_uri\",\"version\":1}]},\"id\":\"caps-1\",\"payload_count\":0,\"session_id\":\"session-1\",\"timestamp_ns\":2,\"type\":\"capability.snapshot\"}",
+            frames[1].decodeToString(),
+        )
+
+        val ack = ZaraTextCodec.decode(
+            frames(
+                "{\"body\":{\"capabilities\":[{\"id\":\"open_app\",\"version\":1},{\"id\":\"open_uri\",\"version\":1}]},\"id\":\"caps-ok\",\"payload_count\":0,\"reply_to\":\"caps-1\",\"session_id\":\"session-1\",\"timestamp_ns\":3,\"type\":\"capability.snapshot.ok\"}"
+            )
+        )
+        assertEquals(
+            TextServerMessage.CapabilitySnapshotOk(
+                id = "caps-ok",
+                replyTo = "caps-1",
+                sessionId = "session-1",
+                capabilities = setOf(DeviceCapability.OpenApp, DeviceCapability.OpenUri),
+            ),
+            ack,
+        )
+    }
+
+    @Test fun `capability snapshot rejects unknown ids versions fields and duplicates`() {
+        listOf(
+            "[{\"id\":\"admin\",\"version\":1}]",
+            "[{\"id\":\"open_uri\",\"version\":2}]",
+            "[{\"authority\":\"admin\",\"id\":\"open_uri\",\"version\":1}]",
+            "[{\"id\":\"open_uri\",\"version\":1},{\"id\":\"open_uri\",\"version\":1}]",
+        ).forEach { capabilities ->
+            assertThrows(ZaraWireException::class.java) {
+                ZaraTextCodec.decode(
+                    frames(
+                        "{\"body\":{\"capabilities\":$capabilities},\"id\":\"caps-ok\",\"payload_count\":0,\"reply_to\":\"caps-1\",\"session_id\":\"session-1\",\"timestamp_ns\":3,\"type\":\"capability.snapshot.ok\"}"
+                    )
+                )
+            }
+        }
+    }
+
     @Test fun `turn submit carries current session conversation and escaped text`() {
         val frames = ZaraTextCodec.encodeTurnSubmit(
             requestId = "req-1",
