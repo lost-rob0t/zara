@@ -1,10 +1,12 @@
 package ai.zara.app.runtime
 
+import ai.zara.app.voice.AudioOutputFormat
 import ai.zara.app.voice.VoiceCaptureContext
 import ai.zara.app.voice.VoiceCommandClient
 import ai.zara.app.voice.VoiceInboundMessage
 import ai.zara.app.voice.VoiceServerReply
 import ai.zara.app.voice.VoiceStreamEvent
+import ai.zara.app.voice.ZaraVoiceHelloCodec
 import ai.zara.app.voice.ZaraVoiceInboundCodec
 import ai.zara.app.voice.ZaraVoiceCodec
 import java.util.concurrent.CompletableFuture
@@ -44,6 +46,7 @@ class ZaraTextClientActor(
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-android-text-client").apply { isDaemon = true }
     },
+    private val audioOutputFormats: List<AudioOutputFormat> = emptyList(),
 ) : TextSessionClient, VoiceCommandClient {
     companion object {
         private const val MAX_INTERLEAVED_VOICE_EVENTS = 256
@@ -55,10 +58,15 @@ class ZaraTextClientActor(
     private var voiceStreamObserver: ((VoiceStreamEvent) -> Unit)? = null
     private var voiceStreamFailureObserver: ((Throwable) -> Unit)? = null
     private var voicePumpActive = false
+    private var selectedAudioOutputFormat: AudioOutputFormat? = null
     private var closed = false
 
     init {
         require(requestTimeoutMillis > 0) { "request timeout must be positive" }
+        require(audioOutputFormats.size <= 8) { "audio output offer exceeds format limit" }
+        require(audioOutputFormats.distinct() == audioOutputFormats) {
+            "audio output offer contains duplicates"
+        }
     }
 
     fun setVoiceStreamObserver(observer: ((VoiceStreamEvent) -> Unit)?) {
@@ -68,6 +76,8 @@ class ZaraTextClientActor(
     fun setVoiceStreamFailureObserver(observer: ((Throwable) -> Unit)?) {
         voiceStreamFailureObserver = observer
     }
+
+    fun negotiatedAudioOutputFormat(): AudioOutputFormat? = selectedAudioOutputFormat
 
     override fun connect(
         profile: ServerProfile,
@@ -80,20 +90,41 @@ class ZaraTextClientActor(
             session = null
             val requestId = nextRequestId()
             val active = requireNotNull(dealer)
-            active.send(ZaraTextCodec.encodeHello(requestId, nextTimestamp()))
-            val response = receiveMessage(active)
-            if (response is TextServerMessage.ProtocolError) {
-                throw ZaraWireException("hello failed: ${response.code}")
+            val helloSessionId = if (audioOutputFormats.isEmpty()) {
+                active.send(ZaraTextCodec.encodeHello(requestId, nextTimestamp()))
+                val response = receiveMessage(active)
+                if (response is TextServerMessage.ProtocolError) {
+                    throw ZaraWireException("hello failed: ${response.code}")
+                }
+                val hello = response as? TextServerMessage.HelloOk
+                    ?: throw ZaraWireException("expected hello.ok")
+                if (hello.replyTo != requestId) throw ZaraWireException("hello reply correlation mismatch")
+                selectedAudioOutputFormat = null
+                hello.sessionId
+            } else {
+                active.send(
+                    ZaraVoiceHelloCodec.encodeHello(
+                        requestId = requestId,
+                        timestampNs = nextTimestamp(),
+                        audioOutputFormats = audioOutputFormats,
+                    )
+                )
+                val helloFrames = active.receive(requestTimeoutMillis)
+                    ?: throw TextRequestTimeoutException("ZARA/1 voice hello timed out")
+                val hello = ZaraVoiceHelloCodec.decodeHelloOk(helloFrames)
+                if (hello.replyTo != requestId) throw ZaraWireException("voice hello reply correlation mismatch")
+                if (hello.audioOutputFormat !in audioOutputFormats) {
+                    throw ZaraWireException("server selected an unoffered audio output format")
+                }
+                selectedAudioOutputFormat = hello.audioOutputFormat
+                hello.sessionId
             }
-            val hello = response as? TextServerMessage.HelloOk
-                ?: throw ZaraWireException("expected hello.ok")
-            if (hello.replyTo != requestId) throw ZaraWireException("hello reply correlation mismatch")
 
             val capabilityRequestId = nextRequestId()
             active.send(
                 ZaraCapabilityCodec.encodeSnapshot(
                     requestId = capabilityRequestId,
-                    sessionId = hello.sessionId,
+                    sessionId = helloSessionId,
                     capabilities = emptySet(),
                     timestampNs = nextTimestamp(),
                 )
@@ -104,14 +135,14 @@ class ZaraTextClientActor(
             if (capabilityAck.replyTo != capabilityRequestId) {
                 throw ZaraWireException("capability snapshot reply correlation mismatch")
             }
-            if (capabilityAck.sessionId != hello.sessionId) {
+            if (capabilityAck.sessionId != helloSessionId) {
                 throw ZaraWireException("capability snapshot session is stale")
             }
             if (capabilityAck.capabilities.isNotEmpty()) {
                 throw ZaraWireException("server acknowledged unadvertised device capabilities")
             }
 
-            val connected = ConnectedTextSession(generation, hello.sessionId)
+            val connected = ConnectedTextSession(generation, helloSessionId)
             session = connected
             connected
         }
@@ -295,6 +326,7 @@ class ZaraTextClientActor(
         voicePumpActive = false
         session = null
         correlations.clear()
+        selectedAudioOutputFormat = null
         dealer?.close()
         dealer = null
     }
@@ -409,11 +441,18 @@ class ZaraTextClientActor(
         if (event.sessionId != current.sessionId) {
             throw ZaraWireException("voice stream event session is stale")
         }
+        val negotiated = selectedAudioOutputFormat
+        if (event is VoiceStreamEvent.AudioStarted && negotiated != null) {
+            if (event.sampleRate != negotiated.sampleRate || event.channels != negotiated.channels) {
+                throw ZaraWireException("audio output start does not match negotiated format")
+            }
+        }
         voiceStreamObserver?.invoke(event)
     }
 
     private fun replaceDealer(profile: ServerProfile) {
         voicePumpActive = false
+        selectedAudioOutputFormat = null
         dealer?.close()
         dealer = null
         val created = dealerFactory.create(profile.endpoint)
