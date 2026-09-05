@@ -30,6 +30,18 @@ TODO_TOOL_NAMES = frozenset(
     }
 )
 
+_APPROVAL_REQUIRED_METADATA_KEY = "zara_requires_approval"
+
+
+def _tool_requires_approval(tool: LangChainTool) -> bool:
+    metadata = getattr(tool, "metadata", None)
+    if metadata is None:
+        return False
+    marker = metadata.get(_APPROVAL_REQUIRED_METADATA_KEY, False)
+    if not isinstance(marker, bool):
+        raise ValueError("zara_requires_approval tool metadata must be true or false")
+    return marker
+
 
 class ToolRegistry:
     """Central registry for all agent tools."""
@@ -40,19 +52,25 @@ class ToolRegistry:
         self._tools: Dict[str, LangChainTool] = {}
         self._mcp_manager: Any = None
         approval_config = config.get_section("tool_approval") if config else {}
-        self._approval_required = frozenset(
+        self._configured_approval_required = frozenset(
             str(name) for name in approval_config.get("required_tools", [])
         )
+        self._registered_approval_required: set[str] = set()
 
     def register_tool(self, tool: LangChainTool):
         if not valid_tool_name(tool.name):
             raise ValueError("tool name is invalid")
         if tool.name in self._tools:
             raise ValueError(f"Tool '{tool.name}' already registered")
+        requires_approval = _tool_requires_approval(tool)
         self._tools[tool.name] = tool
+        if requires_approval:
+            self._registered_approval_required.add(tool.name)
 
     def unregister_tool(self, name: str) -> Optional[LangChainTool]:
-        return self._tools.pop(name, None)
+        tool = self._tools.pop(name, None)
+        self._registered_approval_required.discard(name)
+        return tool
 
     def register_tools(self, tools: List[LangChainTool]):
         pending = list(tools)
@@ -64,11 +82,17 @@ class ToolRegistry:
         conflicts = duplicate_names + existing_names
         if conflicts:
             raise ValueError(f"Tool '{conflicts[0]}' already registered")
+
+        required_names = [
+            tool.name for tool in pending if _tool_requires_approval(tool)
+        ]
         self._tools.update((tool.name, tool) for tool in pending)
+        self._registered_approval_required.update(required_names)
 
     def unregister_tools(self, names: List[str]) -> None:
         for name in names:
             self._tools.pop(name, None)
+            self._registered_approval_required.discard(name)
 
     def get_tool(self, name: str) -> Optional[LangChainTool]:
         return self._tools.get(name)
@@ -80,7 +104,10 @@ class ToolRegistry:
         return list(self._tools.values())
 
     def requires_approval(self, name: str) -> bool:
-        return name in self._approval_required
+        return (
+            name in self._configured_approval_required
+            or name in self._registered_approval_required
+        )
 
     async def prepare_async(self) -> None:
         if self.config is None:
