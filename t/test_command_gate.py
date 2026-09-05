@@ -2,7 +2,12 @@
 
 import pytest
 
-from zara.command_gate import looks_like_command, target_only_candidate
+from zara.command_gate import (
+    looks_like_command,
+    match_registered_target,
+    open_target_candidate,
+    target_only_candidate,
+)
 
 
 @pytest.mark.parametrize(
@@ -136,3 +141,71 @@ def test_looks_like_command_case_insensitive():
 )
 def test_target_only_candidate(text, expected):
     assert target_only_candidate(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("open 4cham", ("open", "4cham")),
+        ("please launch thunderbrd", ("launch", "thunderbrd")),
+        ("run feishn now", ("run", "feishn")),
+        ("set a timer", None),
+        ("open https://example.com", None),
+        ("open /tmp/file", None),
+        ("open", None),
+    ],
+)
+def test_open_target_candidate_is_narrow(text, expected):
+    assert open_target_candidate(text) == expected
+
+
+def test_registered_target_match_exact_wins():
+    match = match_registered_target("4chan", ["fourchan", "4chan", "chan"])
+
+    assert match.status == "exact"
+    assert match.canonical == "4chan"
+    assert match.distance == 0
+    assert match.alternatives == ()
+
+
+@pytest.mark.parametrize(
+    ("candidate", "targets", "expected", "distance"),
+    [
+        ("4cham", ["4chan", "fourchan"], "4chan", 1),
+        ("thunderbrd", ["thunderbird", "tor"], "thunderbird", 1),
+        ("feishn", ["feishin", "firefox"], "feishin", 1),
+    ],
+)
+def test_registered_target_match_unique_bounded_rewrite(
+    candidate, targets, expected, distance
+):
+    match = match_registered_target(candidate, targets)
+
+    assert match.status == "rewrite"
+    assert match.canonical == expected
+    assert match.distance == distance
+    assert match.alternatives == ()
+
+
+def test_registered_target_match_short_tokens_are_exact_only():
+    match = match_registered_target("tol", ["tor"])
+
+    assert match.status == "no_match"
+    assert match.canonical is None
+
+
+def test_registered_target_match_tie_is_ambiguous_not_guessed():
+    match = match_registered_target("brav", ["brave", "bravo"])
+
+    assert match.status == "ambiguous"
+    assert match.canonical is None
+    assert match.distance == 1
+    assert match.alternatives == ("brave", "bravo")
+
+
+def test_registered_target_match_unrelated_text_is_no_match():
+    match = match_registered_target("astronomy", ["firefox", "thunderbird", "4chan"])
+
+    assert match.status == "no_match"
+    assert match.canonical is None
+    assert match.alternatives == ()
