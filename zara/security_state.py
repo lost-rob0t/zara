@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import stat
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Iterator
 
 import zmq
 
@@ -28,6 +30,7 @@ _MAX_CLIENTS = 256
 _SERVER_FILE = "server-curve.json"
 _CLIENTS_FILE = "clients.json"
 _CONTROL_SOCKET_FILE = "security-admin.sock"
+_STATE_LOCK_FILE = ".state.lock"
 
 
 class SecurityStateError(RuntimeError):
@@ -56,30 +59,35 @@ class PersistentSecurityState:
     def _clients_path(self) -> Path:
         return self._directory / _CLIENTS_FILE
 
+    @property
+    def _state_lock_path(self) -> Path:
+        return self._directory / _STATE_LOCK_FILE
+
     def prepare_directory(self) -> None:
         self._prepare_directory()
 
     def initialize(self) -> CurveServerConfig:
         self._prepare_directory()
-        if self._server_path.exists():
-            config = self.load_server_config()
-        else:
-            public_key, secret_key = zmq.curve_keypair()
-            payload = {
-                "version": _STATE_VERSION,
-                "public_key": public_key.decode("ascii"),
-                "secret_key": secret_key.decode("ascii"),
-            }
-            self._write_private_json(self._server_path, payload)
-            config = CurveServerConfig(public_key=public_key, secret_key=secret_key)
-        if not self._clients_path.exists():
-            self._write_private_json(
-                self._clients_path,
-                {"version": _STATE_VERSION, "clients": []},
-            )
-        else:
-            self._load_client_records()
-        return config
+        with self._state_transaction():
+            if self._server_path.exists():
+                config = self.load_server_config()
+            else:
+                public_key, secret_key = zmq.curve_keypair()
+                payload = {
+                    "version": _STATE_VERSION,
+                    "public_key": public_key.decode("ascii"),
+                    "secret_key": secret_key.decode("ascii"),
+                }
+                self._write_private_json(self._server_path, payload)
+                config = CurveServerConfig(public_key=public_key, secret_key=secret_key)
+            if not self._clients_path.exists():
+                self._write_private_json(
+                    self._clients_path,
+                    {"version": _STATE_VERSION, "clients": []},
+                )
+            else:
+                self._load_client_records()
+            return config
 
     def load_server_config(self) -> CurveServerConfig:
         payload = self._read_private_json(self._server_path)
@@ -120,37 +128,38 @@ class PersistentSecurityState:
         if live_registry is not None and not isinstance(live_registry, SecurityRegistry):
             raise TypeError("live_registry must be SecurityRegistry")
         self._prepare_directory()
-        if not self._server_path.exists():
-            raise SecurityStateError("server security state is not initialized")
-        records = self._load_client_records()
-        if len(records) >= _MAX_CLIENTS:
-            raise SecurityStateError("enrolled client limit reached")
-        candidate = self._registry_from_records(records)
-        enrolled = candidate.enroll(
-            public_key,
-            principal=principal,
-            device_id=device_id,
-            capabilities=capabilities,
-        )
-        updated = [*records, self._record_from_enrolled(enrolled)]
-        self._save_client_records(updated)
-        if live_registry is None:
-            return enrolled
-        try:
-            return live_registry.enroll(
-                enrolled.public_key,
-                principal=enrolled.principal,
-                device_id=enrolled.device_id,
-                capabilities=enrolled.capabilities,
+        with self._state_transaction():
+            if not self._server_path.exists():
+                raise SecurityStateError("server security state is not initialized")
+            records = self._load_client_records()
+            if len(records) >= _MAX_CLIENTS:
+                raise SecurityStateError("enrolled client limit reached")
+            candidate = self._registry_from_records(records)
+            enrolled = candidate.enroll(
+                public_key,
+                principal=principal,
+                device_id=device_id,
+                capabilities=capabilities,
             )
-        except (KeyAlreadyEnrolled, TypeError, ValueError) as error:
+            updated = [*records, self._record_from_enrolled(enrolled)]
+            self._save_client_records(updated)
+            if live_registry is None:
+                return enrolled
             try:
-                self._save_client_records(records)
-            except BaseException as rollback_error:
-                raise SecurityStateError(
-                    "live registry diverged and enrollment persistence rollback failed"
-                ) from rollback_error
-            raise SecurityStateError("live security registry diverged during enrollment") from error
+                return live_registry.enroll(
+                    enrolled.public_key,
+                    principal=enrolled.principal,
+                    device_id=enrolled.device_id,
+                    capabilities=enrolled.capabilities,
+                )
+            except Exception as error:
+                try:
+                    self._save_client_records(records)
+                except BaseException as rollback_error:
+                    raise SecurityStateError(
+                        "live registry diverged and enrollment persistence rollback failed"
+                    ) from rollback_error
+                raise SecurityStateError("live security registry diverged during enrollment") from error
 
     def revoke_device(
         self,
@@ -160,34 +169,36 @@ class PersistentSecurityState:
     ) -> EnrolledKey:
         if live_registry is not None and not isinstance(live_registry, SecurityRegistry):
             raise TypeError("live_registry must be SecurityRegistry")
-        records = self._load_client_records()
-        candidate = self._registry_from_records(records)
-        try:
-            revoked = candidate.revoke(device_id)
-        except (KeyNotActive, TypeError, ValueError) as error:
-            raise SecurityStateError("device is not actively enrolled") from error
-
-        updated = [dict(record) for record in records]
-        found = False
-        for record in updated:
-            if record["device_id"] == device_id and record["active"]:
-                record["active"] = False
-                found = True
-        if not found:
-            raise SecurityStateError("device is not actively enrolled")
-        self._save_client_records(updated)
-        if live_registry is None:
-            return revoked
-        try:
-            return live_registry.revoke(device_id)
-        except (KeyNotActive, TypeError, ValueError) as error:
+        self._prepare_directory()
+        with self._state_transaction():
+            records = self._load_client_records()
+            candidate = self._registry_from_records(records)
             try:
-                self._save_client_records(records)
-            except BaseException as rollback_error:
-                raise SecurityStateError(
-                    "live registry diverged and revocation persistence rollback failed"
-                ) from rollback_error
-            raise SecurityStateError("live security registry diverged during revocation") from error
+                revoked = candidate.revoke(device_id)
+            except (KeyNotActive, TypeError, ValueError) as error:
+                raise SecurityStateError("device is not actively enrolled") from error
+
+            updated = [dict(record) for record in records]
+            found = False
+            for record in updated:
+                if record["device_id"] == device_id and record["active"]:
+                    record["active"] = False
+                    found = True
+            if not found:
+                raise SecurityStateError("device is not actively enrolled")
+            self._save_client_records(updated)
+            if live_registry is None:
+                return revoked
+            try:
+                return live_registry.revoke(device_id)
+            except Exception as error:
+                try:
+                    self._save_client_records(records)
+                except BaseException as rollback_error:
+                    raise SecurityStateError(
+                        "live registry diverged and revocation persistence rollback failed"
+                    ) from rollback_error
+                raise SecurityStateError("live security registry diverged during revocation") from error
 
     def list_clients(self) -> tuple[dict[str, object], ...]:
         records = self._load_client_records()
@@ -242,6 +253,37 @@ class PersistentSecurityState:
             raise SecurityStateError("security state directory is not owner-owned")
         if stat.S_IMODE(info.st_mode) != 0o700:
             os.chmod(self._directory, 0o700)
+
+    @contextmanager
+    def _state_transaction(self) -> Iterator[None]:
+        """Serialize first-init and registry read/modify/write across processes."""
+        self._prepare_directory()
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(self._state_lock_path, flags, 0o600)
+        except OSError as error:
+            raise SecurityStateError("security state lock cannot be opened safely") from error
+        locked = False
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                raise SecurityStateError("security state lock is unsafe")
+            if stat.S_IMODE(info.st_mode) != 0o600:
+                os.fchmod(fd, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                locked = True
+            except OSError as error:
+                raise SecurityStateError("security state lock cannot be acquired") from error
+            yield
+        finally:
+            if locked:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                except OSError:
+                    pass
+            os.close(fd)
 
     def _read_private_json(self, path: Path) -> dict[str, object]:
         try:
