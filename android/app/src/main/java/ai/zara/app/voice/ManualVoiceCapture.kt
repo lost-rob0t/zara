@@ -88,6 +88,11 @@ class ManualVoiceCapture(private val ingress: VoiceIngress) {
         return true
     }
 
+    @Synchronized
+    fun onMicrophonePermissionChanged(granted: Boolean) {
+        if (!granted) cancelIfActive()
+    }
+
     companion object {
         const val PCM_FRAME_BYTES = 1024
         const val PCM_SAMPLE_RATE_HZ = 16_000
