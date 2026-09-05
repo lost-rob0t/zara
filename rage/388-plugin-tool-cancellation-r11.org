@@ -1,0 +1,36 @@
+* RAGE #388 r11 — model-hidden Core cancellation without injected transport
+
+** Immutable start
+- Issue: #388
+- Canonical master: 15499557e5994a05d57cc1c0a3ec97857939efda
+- Recovered implementation lineage: r10 head 6f9dda69b7172e937994a101032b2c4c1fe8404b
+
+** Research
+Exact-head CI #1607 falsified r10: LangGraph/LangChain treated the custom cancellation parameter as a generic injected argument and removed caller/Core supplied values before tool execution. r7-r9 already falsified InjectedState and r5-r6 falsified ContextVar transport.
+
+The remaining requirement is narrower than those transport mechanisms: the parameter must be omitted from the model JSON schema, but it must not be classified as a LangGraph/LangChain injected dependency. Pydantic v2 SkipJsonSchema provides exactly that schema property without participating in ToolNode injection.
+
+** Design
+- Preserve the one canonical ToolNode and the existing post-approval/post-current-binding Core injection boundary from r10.
+- Replace InjectedToolArg metadata with SkipJsonSchema so the cancellation field is not advertised to the model but remains an ordinary validated runtime argument.
+- Core overwrites any attacker/model supplied cancellation value after approval and current-binding validation.
+- Keep one Core-owned threading.Event per exact invocation and expose only ToolCancellation.cancelled/wait.
+- Signal before cancelling/awaiting the ToolNode execution task.
+- Preserve ToolCancelled(reason="turn cancelled") as the sole terminal cancellation authority.
+- No Android changes, second executor, second agent loop, side channel, dependency addition, or plugin-specific runtime.
+
+** Acceptance
+- cancellation absent from model JSON schema;
+- sync tool observes Core cancellation before side effects;
+- async tool sees cancellation signal before CancelledError;
+- concurrent invocation signals are isolated;
+- approval rejection never injects/executes;
+- unloaded tools never inject/execute;
+- model spoofed cancellation is overwritten by Core;
+- full scripts/test-all.sh, nix flake check, package build, Android compatibility, and both shared-mic lanes green on the exact candidate head.
+
+** Implementation
+- 09d8a3e510aa7e4e3183088aa9bdaf0f9ef86506 replaces generic injected-argument metadata with SkipJsonSchema and makes hidden-field detection operate on rendered model JSON schema while declaration detection uses the full input model.
+
+** Gate
+Pending exact-head GitHub Actions. Do not merge until every required lane is green on the exact current head and review threads are clear.
