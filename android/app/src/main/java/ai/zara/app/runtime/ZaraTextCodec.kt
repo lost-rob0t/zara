@@ -4,7 +4,7 @@ import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 
-class ZaraWireException(message: String, cause: Throwable? = null) : Exception(message, cause)
+class ZaraWireException(message: String, cause: Throwable? = null) : IllegalArgumentException(message, cause)
 
 sealed interface TextServerMessage {
     val id: String
@@ -280,13 +280,13 @@ object ZaraTextCodec {
         }
         is Boolean -> value.toString()
         is Byte, is Short, is Int, is Long -> value.toString()
-        is List<*> -> value.joinToString(prefix = "[", postfix = "]") { encodeJson(it) }
+        is List<*> -> value.joinToString(separator = ",", prefix = "[", postfix = "]") { encodeJson(it) }
         is Map<*, *> -> value.entries
             .map { (key, item) ->
                 (key as? String ?: throw ZaraWireException("JSON object key must be string")) to item
             }
             .sortedBy { it.first }
-            .joinToString(prefix = "{", postfix = "}") { (key, item) ->
+            .joinToString(separator = ",", prefix = "{", postfix = "}") { (key, item) ->
                 "${encodeJson(key)}:${encodeJson(item)}"
             }
         else -> throw ZaraWireException("unsupported JSON value")
