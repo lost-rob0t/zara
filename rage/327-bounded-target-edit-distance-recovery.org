@@ -1,0 +1,38 @@
+#+title: RAGE #327 — current-master registered-target recovery
+
+* Transaction
+- Consumed issue :: #327
+- Supersedes stale PR :: #330
+- Immutable recovery start :: =7cb047a390644c7da96cfb4620bfb8d569450fff=
+- Branch :: =rage/327-bounded-target-edit-distance-recovery=
+- Scope :: Zara Core only; no =android/**= production changes.
+
+* Recovery reason
+- PR #330 proved the intended RED contract at test-only head =46d471c9dabea6827f90d80b0ed6eb9f88d05085= in CI #997.
+- Its later head =1727d7b258a846ccf8ebf8cafc5a85411d9e9ef7= is not mergeable on current master and its PrologEngine commit carries a large stale-region rewrite unrelated to the bounded vocabulary method.
+- Do not merge or force-rebase that collateral. Preserve the RED evidence and recover only the narrow behavior on current canonical master.
+
+* Current-master design
+- Reuse =wake_words.edit_distance=; no second fuzzy algorithm or dependency.
+- Matching is side-effect-free and only accepts caller-supplied registered app names.
+- Exact match wins; names shorter than four characters are exact-only; 4-7 characters allow one edit; 8+ allow two edits; tied nearest matches fail closed as ambiguous.
+- Explicit recovery is limited to =open=/=launch=/=run= one-target commands and target-only utterances. URI/path/contact/message/duration/general-text rewriting is out of scope.
+- Registered vocabulary comes through the existing bounded =PrologEngine.query_all/2= interface with one query over =kb_device_providers:app_mapping/2= and =kb_device_providers:direct_app/1=, max 256 solutions. No new Prolog runtime abstraction is added.
+- Existing exact =get_app_mapping/1= remains the fast path and existing execution authority remains =resolve_intent/2= then =execute_intent/2=. Matching never executes a capability.
+- Ambiguous/unrelated inputs continue into the normal deterministic resolution/delegation path and never fabricate success.
+
+* Gates
+- Dedicated matcher/router tests.
+- Full =scripts/test-all.sh=.
+- =nix flake check= and packaged Zara build through repository CI.
+- Android skeleton and both shared-mic lanes must remain green.
+- Merge only exact current recovery head, mergeable, non-draft, with no blocking review/thread state.
+
+* Recovery iteration — 2026-09-05
+- Recovery start :: =f590e50fdccd6b25453c09ba697ab70c770c9692=
+- Reason :: exact-green candidate =85612bdac953559869b63b9515b2a63b3a97ca5d= became stale after 90 sibling-owned Android commits landed on =master=.
+- Compatibility check :: the 90 canonical commits since =7cb047a390644c7da96cfb4620bfb8d569450fff= changed only =android/**=, Android RAGE evidence, and =scripts/test-android.sh=; none of this slice's Core production/test files changed.
+- Prior exact-head evidence :: CI #1183 passed at =85612bdac953559869b63b9515b2a63b3a97ca5d=; valid behavior evidence, stale merge authority.
+- Recovery implementation :: replay the exact proven Core blobs onto recovery start while retaining the old exact candidate as a merge parent; no design expansion and no Android production edits.
+- Recovery candidate parent commit :: =0cab11f49db73bbf0900fe61cada6ab726f36596=.
+- Gate :: require fresh exact-head full repository/Nix/package/Android/shared-mic CI before merge.
