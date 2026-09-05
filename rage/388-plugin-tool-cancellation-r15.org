@@ -14,46 +14,59 @@ r4 through r14 established that cancellation transport which depends on LangGrap
 =create_tools_node= already owns the post-approval, current-registry-binding, per-tool-call boundary and still dispatches through one LangGraph =ToolNode=. This remains the authority for queue/start/terminal events.
 
 ** Upstream behavior relevant to the failure
-LangChain =BaseTool= injects runtime =RunnableConfig= into the tool implementation's internal =_run/_arun= method separately from model tool arguments. This is a different path from injected model/function arguments. Existing upstream defects around =InjectedState=, =ToolRuntime=, dynamic tools and directly injected arguments reinforce that r15 must not depend on ToolNode rewriting an extra plugin input field.
+LangChain =BaseTool= has a runtime-internal =_run/_arun= boundary separate from model tool arguments. Existing upstream defects around =InjectedState=, =ToolRuntime=, dynamic tools and directly injected arguments reinforce that r15 must not depend on ToolNode rewriting an extra plugin input field.
 
-** Selected architecture
-- Plugins opt into cooperative cancellation through explicit tool metadata, not schema introspection.
-- Core wraps an opted-in =BaseTool= once at registry binding.
-- The wrapper preserves the original public name/model-facing schema and delegates to the original tool.
-- For each approved/current invocation, Core creates one private cancellation signal and places only its read-only view in a private =RunnableConfig= key.
-- The registered wrapper receives that config in its own =_run/_arun=. Only there, inside the actual sync worker thread or async task, it binds the read-only view into a private =ContextVar= for the duration of the original tool call.
-- Plugin code observes the token through a public =current_tool_cancellation()= helper. It does not accept a model/tool-call argument.
-- On turn cancellation, Core sets the signal before cancelling the owned ToolNode task. The existing =ToolCancelled(reason="turn cancelled")= event remains terminal authority.
+** Selected architecture — amended after implementation-boundary review
+The initial r15 sketch still had Core carry the signal into the wrapper through private =RunnableConfig=. That was unnecessary and would have required touching =create_tools_node=. Before wiring that path, the design was reduced further:
 
-This deliberately uses =ContextVar= only *inside* the execution worker/task. r5/r6 used it outside ToolNode and were falsified because that context did not reliably reach plugin execution.
+- Plugins opt into cooperative cancellation through explicit boolean tool metadata, not schema introspection.
+- Core wraps an opted-in =BaseTool= once at registry binding. The same wrapper instance is therefore the object seen by the existing ToolNode and the existing stale-binding identity check.
+- The wrapper preserves the original public name/model-facing schema and delegates to the original =BaseTool=.
+- Each wrapper invocation creates exactly one private cancellation signal after approval/current-binding checks have already allowed ToolNode execution.
+- The wrapper's =_arun= owns the child execution. It shields the child from immediate parent cancellation, sets the signal first when cancellation reaches the wrapper, then cancels owned async work and re-raises.
+- Sync originals execute through =asyncio.to_thread= into a helper which binds the read-only token inside that exact worker thread before calling the original tool. This directly fixes the body-entry/context-loss boundary that falsified r5/r6.
+- Native async originals run in an owned task whose body binds the same read-only token before calling the original tool.
+- Plugin code observes the token through public =current_tool_cancellation()=. There is no cancellation tool argument, hidden schema field, ID lookup, mutable shared slot, or plugin-specific command.
+- The unchanged =create_tools_node= remains terminal event authority; its existing =ToolCancelled(reason="turn cancelled")= event is still the sole terminal cancellation outcome.
+
+This deliberately uses =ContextVar= only after entry into the exact plugin worker/task. It does not depend on ContextVar propagation across ToolNode.
 
 ** Rejected alternatives
 - =InjectedState= / =InjectedToolArg= / schema transport: falsified by r7-r14 and pinned-stack validation/injection behavior.
+- Outer ToolNode =ContextVar=: falsified by r5/r6.
 - Mutable token stored on a shared tool instance: rejects exact-invocation concurrency isolation.
 - Plugin-specific cancel command/side channel: creates a second control plane.
 - Directly calling plugin functions from Core: bypasses canonical BaseTool/ToolNode execution semantics.
 - Per-invocation ToolNode replacement: duplicates executor construction and has prior dynamic-tool failure evidence.
+- Private graph/config transport: unnecessary once the stable wrapper owns the exact invocation and its cancellation boundary.
 
 * Invariants
-- Approval and current registry binding are checked before token creation/execution.
+- Approval and current registry binding are checked before wrapped execution.
 - Exactly one signal per exact tool invocation.
 - Model arguments cannot provide, suppress, or retarget cancellation state.
 - Concurrent invocations never share cancellation state.
 - Sync and async plugin bodies can observe the token after body entry.
 - Signal is set before cancellation propagates into owned async work.
 - Unloaded/rejected tools never execute or receive a token.
-- Non-opted-in tools remain byte-for-byte model-input compatible.
+- Non-opted-in tools remain unchanged.
+- Malformed opt-in metadata fails closed before registry mutation.
 - One canonical ToolNode path; no second executor/runtime/approval channel.
 
 * Acceptance mapped to tests
-- Explicit opt-in is model-schema neutral and non-opted tools are untouched.
+- Explicit opt-in is model-schema neutral.
+- Access outside an active invocation fails explicitly.
+- Malformed metadata fails closed and does not partially register.
 - Sync plugin body reaches entry, sees =ToolCancellation=, and observes signal before side effect.
 - Async plugin body reaches entry and sees signal set before =CancelledError=.
 - Concurrent invocations have distinct token identities and cancellation isolation.
 - Rejection/unload never enter plugin body.
-- User/model arguments cannot spoof cancellation because no cancellation argument exists.
-- Calling =current_tool_cancellation()= outside an opted-in invocation fails explicitly.
+- User/model arguments cannot spoof cancellation because no cancellation argument exists; injected junk is rejected by the unchanged model schema before body entry.
 - Existing ordinary tool/approval/todo tests remain green.
+
+* TDD evidence
+- Test-only candidate: =67fe29f92ce69477bae920ccd50c1735c4a3234f=.
+- CI #1638 began the repository test gate against that RED candidate, but branch supersession auto-cancelled the job while =Run all tests= was executing. The candidate had no cancellation implementation or public API, so the new test module was intentionally non-green; no result from the cancelled run is used as green evidence.
+- Implementation remains subject to the exact-head full gate below. Any architecture-level focused failure retires r15 rather than being papered over.
 
 * Exact gate
 #+begin_src sh
