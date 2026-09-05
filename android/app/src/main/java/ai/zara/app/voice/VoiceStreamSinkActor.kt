@@ -84,10 +84,9 @@ class VoiceStreamSinkActor(
         val future = CompletableFuture<Unit>()
         try {
             executor.execute {
+                val owner = detachPlayback()
                 try {
-                    playback?.close()
-                    playback = null
-                    sessionId = null
+                    owner?.close()
                     future.complete(Unit)
                 } catch (error: Throwable) {
                     failureObserver?.invoke(error)
@@ -105,11 +104,19 @@ class VoiceStreamSinkActor(
     private fun ownerFor(eventSessionId: String): VoicePlaybackController {
         val current = playback
         if (current != null && sessionId == eventSessionId) return current
-        current?.close()
+        val stale = detachPlayback()
+        stale?.close()
         val replacement = playbackFactory(eventSessionId)
         playback = replacement
         sessionId = eventSessionId
         return replacement
+    }
+
+    private fun detachPlayback(): VoicePlaybackController? {
+        val owner = playback
+        playback = null
+        sessionId = null
+        return owner
     }
 
     override fun close() {
@@ -118,10 +125,9 @@ class VoiceStreamSinkActor(
         val future = CompletableFuture<Unit>()
         try {
             executor.execute {
+                val owner = detachPlayback()
                 try {
-                    playback?.close()
-                    playback = null
-                    sessionId = null
+                    owner?.close()
                     future.complete(Unit)
                 } catch (error: Throwable) {
                     failureObserver?.invoke(error)
@@ -130,9 +136,7 @@ class VoiceStreamSinkActor(
             }
             future.get()
         } catch (_: RejectedExecutionException) {
-            playback?.close()
-            playback = null
-            sessionId = null
+            detachPlayback()?.close()
         } finally {
             executor.shutdownNow()
         }
