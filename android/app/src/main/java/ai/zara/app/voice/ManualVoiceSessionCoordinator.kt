@@ -11,8 +11,10 @@ class ManualVoiceSessionCoordinator(
 ) : AutoCloseable {
     private var activeBinding: VoiceSessionBinding? = null
 
+    @Synchronized
     fun state(): ManualVoiceState = pushToTalk.state()
 
+    @Synchronized
     fun press(runtime: RuntimeState, permissionGranted: Boolean) {
         val connected = runtime.server as? ServerConnection.Connected
             ?: throw IllegalStateException("authenticated Zara session is required")
@@ -31,6 +33,7 @@ class ManualVoiceSessionCoordinator(
         activeBinding = VoiceSessionBinding(connected.generation, sessionId)
     }
 
+    @Synchronized
     fun release() {
         try {
             pushToTalk.release()
@@ -39,19 +42,23 @@ class ManualVoiceSessionCoordinator(
         }
     }
 
+    @Synchronized
     fun cancel() {
         cancelActive()
     }
 
+    @Synchronized
     fun onMicrophonePermissionChanged(granted: Boolean) {
         if (granted || pushToTalk.state() !is ManualVoiceState.Capturing) return
         cancelActive()
     }
 
+    @Synchronized
     fun onHostStopped() {
         if (pushToTalk.state() is ManualVoiceState.Capturing) cancelActive()
     }
 
+    @Synchronized
     fun onRuntimeStateChanged(runtime: RuntimeState) {
         val binding = activeBinding ?: return
         if (pushToTalk.state() !is ManualVoiceState.Capturing) {
@@ -68,6 +75,7 @@ class ManualVoiceSessionCoordinator(
         }
     }
 
+    @Synchronized
     override fun close() {
         try {
             pushToTalk.close()
