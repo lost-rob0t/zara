@@ -36,3 +36,12 @@
 - =--security-enroll-key= now uses =nargs=1= plus a scalar action so Z85 values beginning with =-= are consumed as the required argument rather than reclassified as options.
 - The option =type= calls the existing =SecurityRegistry._normalize_public_key= contract and translates invalid keys to =ArgumentTypeError=; malformed keys therefore fail before any security mutation.
 - No =android/**= files changed.
+
+* Recovery iteration — 2026-09-05
+- Recovery start :: =f590e50fdccd6b25453c09ba697ab70c770c9692=
+- Reason :: original exact-green candidate =9f05b3301a4f44d6bbf3b5ec25efe60fb3ecf127= became stale after 90 commits of sibling-owned Android work landed on =master=.
+- Compatibility check :: compare from original start =7cb047a390644c7da96cfb4620bfb8d569450fff= to recovery start touched only =android/**=, Android RAGE evidence, and =scripts/test-android.sh=; none of =zara/server.py=, =t/test_security_threat_management.py=, or this Core RAGE log changed.
+- Prior exact-head evidence :: CI #1195 passed on original behavior candidate; this evidence proves the patch itself but is stale for merge authorization.
+- Recovery implementation :: replay the exact tested Core blobs onto recovery start with original candidate retained as a merge parent; no behavior expansion and no Android production edits.
+- Recovery candidate parent commit :: =d858a9b4230d3edbcb23c5077143f6b0833b62d3=.
+- Gate :: fresh exact-head GitHub Actions is mandatory before merge; old CI #1195 cannot authorize the recovered head.
