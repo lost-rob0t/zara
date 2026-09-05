@@ -1,0 +1,22 @@
+:PROPERTIES:
+:ID:       zara-rage-203-android-assistant-role-loss-r3
+:END:
+#+title: RAGE #203 — Android Assistant role-loss voice ownership r3
+#+status: ACTIVE
+
+* Consumption
+- Issue :: #203
+- Immutable start :: 13cee05f2076c3c50dfe19937194fe3cdd5f63da
+- Source :: clean recovery of #429 after #428 became canonical.
+- Scope :: Android-only pure lifecycle policy. No Core/protocol/plugin changes.
+
+* Design
+- Assistant-owned capture is valid only while AssistantRole is Held.
+- Manual in-app PTT is independent of system Assistant-role ownership.
+- Role loss clears ownership before invoking cancellation so duplicate role observations are inert.
+- Completed capture clears ownership and later role loss cannot fabricate cancellation.
+
+* Gate
+- Pure JVM tests cover held/lost/unavailable/manual/idle and exact-once cancellation.
+- Production AppSession/service wiring intentionally follows after overlapping lifecycle transactions become canonical; no parallel voice state machine is introduced here.
+- Fresh exact-head Android/full-Nix/package/shared-mic CI required before promotion.
