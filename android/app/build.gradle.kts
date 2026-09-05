@@ -10,6 +10,7 @@ import org.gradle.api.tasks.TaskAction
 
 plugins {
     alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
 }
 
 abstract class GeneratePortableSemanticAssets : DefaultTask() {
@@ -95,6 +96,7 @@ android {
 
     buildFeatures {
         buildConfig = true
+        compose = true
     }
 
     buildTypes {
@@ -137,6 +139,11 @@ androidComponents {
 }
 
 dependencies {
+    implementation(platform(libs.compose.bom))
+    implementation(libs.activity.compose)
+    implementation(libs.compose.ui)
+    implementation(libs.compose.material3)
+    implementation(libs.compose.ui.tooling.preview)
     implementation(libs.jeromq)
     testImplementation(libs.junit)
 }
