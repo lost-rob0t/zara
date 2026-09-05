@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from zara.plugins import PluginCapabilityUnavailable, PluginMetadata, RuntimeStatus
+from zara.plugins import PluginMetadata, RuntimeStatus
+from zara.plugins.capabilities import PluginCapabilityUnavailable
 from zara.plugins.manager import PluginManager, PluginState, _PluginRecord
 
 
