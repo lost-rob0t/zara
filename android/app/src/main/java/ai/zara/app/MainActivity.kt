@@ -36,6 +36,16 @@ class MainActivity : ComponentActivity() {
             microphonePermissionGranted = granted
             if (!granted) operationError = "Microphone permission denied"
         }
+        val assistantRoleRequest = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) {
+            operationBusy = false
+            try {
+                appSession.completeAssistantRoleRequest()
+            } catch (error: Exception) {
+                operationError = rootMessage(error)
+            }
+        }
 
         appSession.setStateObserver { state ->
             runOnUiThread { runtimeState = state }
@@ -46,6 +56,7 @@ class MainActivity : ComponentActivity() {
                 voiceStreamFailure = failure
             }
         }
+        appSession.assessAssistantRole()
 
         setContent {
             ZaraApp(
@@ -117,6 +128,16 @@ class MainActivity : ComponentActivity() {
                 onRequestMicrophonePermission = {
                     operationError = null
                     microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                },
+                onRequestAssistantRole = {
+                    operationError = null
+                    val intent = appSession.assistantRoleRequestIntent()
+                    if (intent == null) {
+                        appSession.assessAssistantRole()
+                    } else {
+                        operationBusy = true
+                        assistantRoleRequest.launch(intent)
+                    }
                 },
                 onStartVoice = {
                     operationError = null
