@@ -1,0 +1,38 @@
+#+title: RAGE #348 - dash-prefixed Z85 security CLI
+
+* Consumption
+- Consumed issue :: #348
+- Immutable RAGE start :: =7cb047a390644c7da96cfb4620bfb8d569450fff=
+- Scope :: Zara Core only; no =android/**= changes.
+- Priority :: P0 Android first-usable authentication blocker discovered by exact CI.
+
+* Research / failure evidence
+- Android transaction CI #1165 failed in Core test =t.test_security_threat_management::test_security_list_exposes_no_server_secret_or_zap_internal_user_id=.
+- Generated client public key was =-.6(Vfv?M9JT!Y^l)iow0lAtnD(*w[0(d)(@EuI1=, a 40-character Z85 value beginning with =-=.
+- =argparse= classified that next token as an option and raised =argument --security-enroll-key: expected one argument= before Zara's security validation ran.
+- Shell quoting does not change this token classification. The equals form =--security-enroll-key=<key>= works, but relying on callers to discover that special case leaves generated valid keys nondeterministically unusable.
+- The bug is in Core CLI parsing, not Android transport or CURVE/ZAP authorization.
+
+* Architecture / adversarial decision
+- Preserve one existing =zara-server= management parser and the current security state/admin implementation.
+- Do not globally reinterpret unknown dash-prefixed tokens as values.
+- Configure only =--security-enroll-key= as an exact one-token argument; a tiny scalar action preserves the existing string-valued Namespace contract while allowing argparse to consume a leading-dash token.
+- Run that consumed token through Zara's canonical CURVE public-key normalizer during parsing. Invalid length/alphabet remains malformed CLI input, and unrelated unknown options retain argparse fail-closed behavior.
+- No new key format, enrollment path, protocol message, or Android-specific parser.
+
+* Acceptance mapped to tests
+- Deterministic fixed dash-prefixed valid 40-character Z85 key parses as =security_enroll_key=.
+- Dash-prefixed non-Z85 input is still rejected.
+- Existing security management tests continue proving enrollment/list redaction and authorization behavior.
+- Unknown option behavior remains rejected by argparse.
+- Full repository/Nix/package/Android/mic gates and exact-head Actions required before merge.
+
+* TDD
+- RED source is already captured by CI #1165 from the production parser with a real generated dash-prefixed key.
+- Deterministic parser regression was committed before production repair so the random key generator is no longer the only way to hit this branch.
+
+* Implementation
+- =zara/server.py= keeps the current parser and security-management path.
+- =--security-enroll-key= now uses =nargs=1= plus a scalar action so Z85 values beginning with =-= are consumed as the required argument rather than reclassified as options.
+- The option =type= calls the existing =SecurityRegistry._normalize_public_key= contract and translates invalid keys to =ArgumentTypeError=; malformed keys therefore fail before any security mutation.
+- No =android/**= files changed.
