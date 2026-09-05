@@ -55,7 +55,7 @@ def _recv_message(connection: socket.socket, *, limit: int) -> object:
             break
     try:
         return json.loads(raw.decode("utf-8"))
-    except (UnicodeError, json.JSONDecodeError) as error:
+    except (UnicodeError, ValueError, RecursionError) as error:
         raise SecurityAdminError("security admin request is invalid JSON") from error
 
 
