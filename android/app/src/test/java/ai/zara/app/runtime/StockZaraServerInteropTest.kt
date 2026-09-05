@@ -116,7 +116,7 @@ private class FixtureJeroMqDealer(
             frames += socket.recv(0) ?: error("truncated ZARA/1 multipart")
             require(frames.size <= 18) { "ZARA/1 multipart exceeds frame limit" }
         }
-        if (!acceptanceSignalled && ZaraTextCodec.decode(frames) is TextServerMessage.TurnAccepted) {
+        if (!acceptanceSignalled && isTurnAcceptedOrCapabilityAck(frames)) {
             Socket(acceptanceHost, acceptancePort).use { barrier ->
                 barrier.getOutputStream().write('A'.code)
                 barrier.getOutputStream().flush()
@@ -124,6 +124,19 @@ private class FixtureJeroMqDealer(
             acceptanceSignalled = true
         }
         return frames
+    }
+
+    private fun isTurnAcceptedOrCapabilityAck(frames: List<ByteArray>): Boolean {
+        return try {
+            ZaraTextCodec.decode(frames) is TextServerMessage.TurnAccepted
+        } catch (textError: ZaraWireException) {
+            try {
+                ZaraCapabilityCodec.decodeSnapshotOk(frames)
+                false
+            } catch (_: ZaraWireException) {
+                throw textError
+            }
+        }
     }
 
     override fun close() {
