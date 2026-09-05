@@ -16,16 +16,23 @@
 * Architecture / adversarial decision
 - Preserve one existing =zara-server= management parser and the current security state/admin implementation.
 - Do not globally reinterpret unknown dash-prefixed tokens as values.
-- Normalize only the closed =--security-enroll-key= option when its immediately following token has the exact Z85 public-key shape required by the security contract; then hand the normalized argv to ordinary argparse.
-- Invalid length/alphabet remains ordinary malformed CLI/security input; unrelated unknown options retain argparse fail-closed behavior.
+- Configure only =--security-enroll-key= as an exact one-token argument; a tiny scalar action preserves the existing string-valued Namespace contract while allowing argparse to consume a leading-dash token.
+- Run that consumed token through Zara's canonical CURVE public-key normalizer during parsing. Invalid length/alphabet remains malformed CLI input, and unrelated unknown options retain argparse fail-closed behavior.
 - No new key format, enrollment path, protocol message, or Android-specific parser.
 
 * Acceptance mapped to tests
 - Deterministic fixed dash-prefixed valid 40-character Z85 key parses as =security_enroll_key=.
+- Dash-prefixed non-Z85 input is still rejected.
 - Existing security management tests continue proving enrollment/list redaction and authorization behavior.
 - Unknown option behavior remains rejected by argparse.
 - Full repository/Nix/package/Android/mic gates and exact-head Actions required before merge.
 
 * TDD
 - RED source is already captured by CI #1165 from the production parser with a real generated dash-prefixed key.
-- Add a deterministic parser regression fixture before production repair so the random key generator is no longer the only way to hit this branch.
+- Deterministic parser regression was committed before production repair so the random key generator is no longer the only way to hit this branch.
+
+* Implementation
+- =zara/server.py= keeps the current parser and security-management path.
+- =--security-enroll-key= now uses =nargs=1= plus a scalar action so Z85 values beginning with =-= are consumed as the required argument rather than reclassified as options.
+- The option =type= calls the existing =SecurityRegistry._normalize_public_key= contract and translates invalid keys to =ArgumentTypeError=; malformed keys therefore fail before any security mutation.
+- No =android/**= files changed.
