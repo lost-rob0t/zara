@@ -13,6 +13,7 @@ from typing import Iterable, Iterator
 
 import zmq
 
+from zara.json_limits import require_bounded_json_nesting
 from zara.principals import PrincipalContext
 from zara.security import (
     Capability,
@@ -294,7 +295,9 @@ class PersistentSecurityState:
         if size <= 0 or size > _MAX_STATE_BYTES:
             raise SecurityStateError(f"security state file has invalid size: {path.name}")
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            text = path.read_text(encoding="utf-8")
+            require_bounded_json_nesting(text)
+            payload = json.loads(text)
         except (OSError, UnicodeError, ValueError, RecursionError) as error:
             raise SecurityStateError(f"invalid security state JSON: {path.name}") from error
         if not isinstance(payload, dict):
