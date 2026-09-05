@@ -6,7 +6,7 @@ import pytest
 import zmq
 
 from zara.principals import PrincipalContext
-from zara.security import Capability, KeyNotActive
+from zara.security import Capability, KeyAlreadyEnrolled, KeyNotActive
 from zara.security_state import PersistentSecurityState, SecurityStateError
 
 
@@ -70,7 +70,7 @@ def test_duplicate_active_device_with_different_key_cannot_replace_authority(tmp
         principal=PrincipalContext.local_owner(),
         capabilities=_CAPABILITIES,
     )
-    with pytest.raises(Exception):
+    with pytest.raises(KeyAlreadyEnrolled, match="device_id already has an active key"):
         state.enroll_client(
             attacker_key,
             device_id="phone",
