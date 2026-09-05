@@ -15,6 +15,7 @@ from zara.runtime import events
 
 @pytest.mark.asyncio
 async def test_running_sync_tool_observes_canonical_turn_cancellation():
+    tool_entered = threading.Event()
     cancellation_observed = threading.Event()
     side_effects: list[str] = []
 
@@ -23,6 +24,7 @@ async def test_running_sync_tool_observes_canonical_turn_cancellation():
         """Wait for Core cancellation before releasing owned work."""
         cancellation = current_tool_cancellation()
         assert cancellation is not None
+        tool_entered.set()
         if cancellation.wait(timeout=2.0):
             cancellation_observed.set()
             return "cancelled cooperatively"
@@ -53,10 +55,8 @@ async def test_running_sync_tool_observes_canonical_turn_cancellation():
     }
 
     invocation = asyncio.create_task(node(state, {}))
-    deadline = asyncio.get_running_loop().time() + 2.0
-    while not any(isinstance(event, events.ToolStarted) for event in published):
-        assert asyncio.get_running_loop().time() < deadline
-        await asyncio.sleep(0.01)
+    assert await asyncio.to_thread(tool_entered.wait, 1.0)
+    assert any(isinstance(event, events.ToolStarted) for event in published)
 
     invocation.cancel()
     with pytest.raises(asyncio.CancelledError):
