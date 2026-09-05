@@ -22,12 +22,17 @@
 - On reducer state publication, cancel through the existing sole =PushToTalkController= owner if the runtime is no longer connected, generation changes, or session id changes.
 - Cancellation remains idempotent at the coordinator boundary because repeated state publications observe Idle/no binding.
 - Clear the binding on release, cancel, close and failed cleanup.
-- AppSession wiring is deferred while #407 owns that file; after #407 is canonical, recover master and feed every canonical reducer publication into this coordinator before external UI observation.
+- Exact changed-file inspection proved #407 does not own =AndroidAppSession.kt=, so the wiring was safe to land immediately.
+- =ManualVoiceSessionCoordinator= lifecycle methods are synchronized so reducer publications and existing voice-control operations cannot mutate its one capture owner concurrently.
+- =AndroidAppSession= permanently owns the controller's single observer, invalidates voice first, then fans the exact same canonical RuntimeState to the optional UI observer. Voice safety therefore does not depend on Compose being attached.
 
 ** Deterministic RED / GREEN
 - RED :: c90a85eea4af766884610fd591531f74cd2b2c0b requires connection loss and replacement authenticated session to stop the physical recorder and emit exactly one canonical cancel.
 - GREEN :: e5b5b79b7c3f9a5d6ed84951c323c076114d91b4 binds capture to =Connected.generation + sessionId= and invalidates through the existing capture owner.
+- Serialization :: 9f5795a8232919c767ee6e0dd7b88cd437feb810 serializes coordinator lifecycle mutations around the one PushToTalkController owner.
+- RED wiring :: cdf676f1573a82b3056a7fd8bd2ceda54cb5215c requires canonical runtime publication to reach voice invalidation.
+- GREEN wiring :: 1d0428ddb330d9cec4d09079d9f6b7b49369014c installs the permanent AppSession reducer observer, invalidates voice before UI publication, and detaches it before close.
 
 ** Gate
-- Focused JVM coordinator tests.
-- After #407 lands: recover exact master, wire canonical reducer publication, add wiring/observer regression coverage, then Android/full repository/Nix/package/shared-mic exact-head gates.
+- Focused JVM coordinator/source-contract tests plus =scripts/test-android.sh= through the Android Actions gate.
+- Full repository/Nix/package and both shared-mic lanes must be exact-head green before promotion/merge.
