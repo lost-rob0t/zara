@@ -19,7 +19,8 @@ class ZaraVoiceInteractionSession(
     private val context: Context,
 ) : VoiceInteractionSession(context) {
     private val application = context.applicationContext as ZaraApplication
-    private val appSession: AndroidAppSession = application.appSession
+    private val appSession: AndroidAppSession =
+        (context.applicationContext as ZaraApplication).appSession
     private val lifecycleFence = application.assistantLifecycleFence
     private val invocationGate = AssistantInvocationGate()
     private var statusView: TextView? = null
