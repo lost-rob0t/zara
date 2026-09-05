@@ -148,7 +148,7 @@ class AndroidTextSessionController(
         future.whenComplete { session, error ->
             var scheduleNext = false
             synchronized(lock) {
-                if (closed) return@whenComplete
+                if (closed || runtimeState.generation != generation) return@whenComplete
                 if (error == null && session != null) {
                     runtimeState = reduce(
                         runtimeState,
