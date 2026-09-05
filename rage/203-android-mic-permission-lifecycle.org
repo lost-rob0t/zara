@@ -1,0 +1,25 @@
+#+title: RAGE #203 — Android microphone permission lifecycle
+
+* Scope
+- Android-only #203 lifecycle slice.
+- Immutable start :: =3676fc7e452eab409305f62a826b9f0b1f9841d4=
+- Branch :: =rage/203-android-mic-permission-lifecycle=
+- No Core/runtime/protocol files.
+
+* Deterministic RED
+- Existing manual capture checked =RECORD_AUDIO= only when capture began.
+- An active stream had no explicit lifecycle hook for a later permission revocation.
+- RED commit =4475031d3918b5294e6aa7551fe01407aa5e1538= proves revocation must cancel the one active stream exactly once and later permission restoration must not fabricate/restart capture.
+
+* Implementation
+- =ManualVoiceCapture.onMicrophonePermissionChanged(granted)= is synchronized with the existing single capture owner.
+- Revocation delegates to the existing typed =cancelIfActive()= path; duplicate revocation is idempotent.
+- Permission restoration is inert. A new user/system invocation must explicitly begin a new capture.
+
+* Remaining wiring
+- Activity/VoiceInteraction lifecycle must reconcile actual Android permission state into this hook after #174/#375 releases =AndroidAppSession.kt= ownership.
+- Do not create a second capture/permission state machine to avoid that dependency.
+
+* Gates
+- Exact-head Android unit/native/debug-APK/secret gate required.
+- Full repository/Nix/package and shared-mic gates required before landing production wiring.
