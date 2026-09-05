@@ -69,6 +69,28 @@ def test_malformed_cancellation_opt_in_fails_closed():
 
 
 @pytest.mark.asyncio
+async def test_registered_wrapper_reaches_original_body():
+    received = None
+
+    @_cancellable
+    @tool("reachable_effect")
+    def reachable_effect(value: str) -> str:
+        """Prove the canonical registered wrapper enters the original body."""
+        nonlocal received
+        received = current_tool_cancellation()
+        return value
+
+    registry = ToolRegistry()
+    registry.register_tool(reachable_effect)
+    registered = registry.get_tool("reachable_effect")
+
+    assert registered is not reachable_effect
+    assert await registered.ainvoke({"value": "ok"}) == "ok"
+    assert isinstance(received, ToolCancellation)
+    assert received.cancelled is False
+
+
+@pytest.mark.asyncio
 async def test_running_sync_tool_observes_canonical_turn_cancellation():
     entered = threading.Event()
     observed = threading.Event()
@@ -275,14 +297,14 @@ async def test_model_arguments_cannot_spoof_cancellation_context():
     registry.register_tool(spoof_guard)
     node = create_tools_node(registry)
 
-    result = await node(
-        _state(
-            "spoof_guard",
-            "spoof-1",
-            {"value": "ok", "cancellation": "attacker-controlled"},
-        ),
-        {},
-    )
+    with pytest.raises(RuntimeError, match="tool spoof_guard execution failed"):
+        await node(
+            _state(
+                "spoof_guard",
+                "spoof-1",
+                {"value": "ok", "cancellation": "attacker-controlled"},
+            ),
+            {},
+        )
 
     assert called is False
-    assert result["messages"][0].status == "error"
