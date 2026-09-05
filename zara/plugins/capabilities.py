@@ -26,6 +26,7 @@ class PluginCapability:
 
     name: str
     owner: str
+    _requester: str = field(repr=False, compare=True)
     _token: str = field(repr=False, compare=True)
 
 
