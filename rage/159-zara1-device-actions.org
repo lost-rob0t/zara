@@ -46,3 +46,10 @@
 - Recovery method :: branch =rage/159-zara1-device-actions-recovery= was created from #307 exact head, then current master was merged into it through recovery-only helper PR #320. No history rewrite and no master mutation occurred.
 - Post-recovery diff :: exactly the original nine #159 files: three RAGE artifacts, focused gate script, two deterministic test modules, and the three protocol/security/transport production files.
 - Verification authority :: fresh exact-head CI on the recovery successor PR; old green/cancelled evidence is context only.
+
+* Protocol-state repair iteration — 2026-09-05
+- Canonical master advanced through fully green research PR #328 to =8e247fd4cb6ffe1f3258bfb4f115a3339208e8c1=; the recovery branch was merged forward without rewriting history at =a86170c3009d56271c595305443a004d26fd02eb= before production mutation.
+- Deterministic RED evidence :: the unchanged adversarial #159 suite and PR review evidence identified three production mismatches: already-expired =deadline_ns= was enqueued, the returned Future hid the server-generated action id required for deterministic cancellation, and terminal result/error could complete before =device.action.accepted=.
+- Design decision :: keep one existing gateway/action table and tighten its state machine only. Reject expired deadlines before action construction/enqueue; return a Future-compatible typed =DeviceActionHandle= exposing =action_id=; and reject terminal-before-accepted with =protocol.error(action_not_accepted)= while retaining the pending action for a later valid accepted -> terminal sequence.
+- Realization :: =6e974fcdc11a10616a0dfa573cfb174eba44818a= changes only =zara/zmq_transport.py= and preserves all existing adversarial tests unchanged.
+- Verification :: exact-head focused/full repository, Nix/package, Android and shared-mic gates pending on the post-log candidate; no prior SHA authorizes merge.
