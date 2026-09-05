@@ -1,0 +1,31 @@
+#+title: RAGE #388 — injected cooperative tool cancellation r8
+
+* Transaction
+- Consumed issue :: #388
+- Immutable RAGE start :: =9cd82222375d1a4968babfa7f543fa7d9447d98e=
+- Branch :: =rage/388-plugin-tool-cancellation-r8=
+- Scope :: Zara Core only; zero =android/**= changes.
+
+* Recovery
+- r7 exact-head CI #1554 failed five focused cancellation tests while Android and both shared-mic lanes passed.
+- The failures localize to the injected argument schema: using =ToolCancellation= as the Pydantic field type makes inferred schema generation invalid before ToolNode can inject state.
+- r8 preserves LangGraph =InjectedState= as the single execution seam but makes the injected field =Any= at the schema boundary. Core still injects an actual read-only =ToolCancellation= instance, and acceptance asserts that concrete runtime type.
+- Model visibility is proven against =tool_call_schema=, the schema actually exposed to models, not the full internal args schema.
+
+* Invariants
+- approval and unload checks happen before signal creation;
+- one private signal per exact invocation;
+- Core signals before cancelling the owned ToolNode task;
+- model arguments cannot retarget or suppress the injected value;
+- plugin code receives read-only cancellation state only;
+- existing ToolCancelled terminal event remains authoritative;
+- no second executor, approval path, runtime, or Android implementation.
+
+* Acceptance
+- model-facing schema excludes cancellation;
+- sync tool observes cancellation before side effects;
+- async tool sees signal before CancelledError;
+- concurrent invocations remain isolated;
+- rejected and unloaded tools never execute;
+- spoofed cancellation input is replaced by Core injection;
+- full repository-native and exact-head CI gates remain mandatory.
