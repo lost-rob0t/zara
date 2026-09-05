@@ -42,12 +42,12 @@ class AssistantRoleControllerTest {
     }
 
     @Test
-    fun `role request completion trusts observed role state not optimistic result`() {
+    fun `role request completion trusts observed role state`() {
         val platform = FakeAssistantRolePlatform(available = true, held = false)
         val observed = mutableListOf<RoleOutcome>()
         val controller = AssistantRoleController(platform, observed::add)
 
-        val outcome = controller.completeRequest(reportedGranted = true)
+        val outcome = controller.completeRequest()
 
         assertEquals(RoleOutcome.NOT_HELD, outcome)
         assertEquals(listOf(RoleOutcome.NOT_HELD), observed)
@@ -59,7 +59,7 @@ class AssistantRoleControllerTest {
         val observed = mutableListOf<RoleOutcome>()
         val controller = AssistantRoleController(platform, observed::add)
 
-        val outcome = controller.completeRequest(reportedGranted = false)
+        val outcome = controller.completeRequest()
 
         assertEquals(RoleOutcome.HELD, outcome)
         assertEquals(listOf(RoleOutcome.HELD), observed)
