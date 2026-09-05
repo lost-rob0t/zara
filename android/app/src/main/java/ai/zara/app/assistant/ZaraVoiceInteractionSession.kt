@@ -2,6 +2,7 @@ package ai.zara.app.assistant
 
 import ai.zara.app.AndroidAppSession
 import ai.zara.app.ZaraApplication
+import ai.zara.app.ui.UiOperationFailure
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
@@ -97,7 +98,7 @@ class ZaraVoiceInteractionSession(
             context.mainExecutor.execute {
                 if (error != null) {
                     invocationGate.startFailed()
-                    updateStatus("Voice unavailable: ${rootMessage(error)}")
+                    updateStatus("Voice unavailable: ${UiOperationFailure.summarize(error)}")
                     return@execute
                 }
                 val finish = invocationGate.startSucceeded()
@@ -128,7 +129,7 @@ class ZaraVoiceInteractionSession(
                     context.mainExecutor.execute {
                         updateStatus(
                             if (error == null) "Waiting for Zara…"
-                            else "Voice send failed: ${rootMessage(error)}"
+                            else "Voice send failed: ${UiOperationFailure.summarize(error)}"
                         )
                     }
                 }
@@ -138,7 +139,7 @@ class ZaraVoiceInteractionSession(
                 appSession.cancelPushToTalk().whenComplete { _, error ->
                     if (error != null) {
                         context.mainExecutor.execute {
-                            updateStatus("Voice cancel failed: ${rootMessage(error)}")
+                            updateStatus("Voice cancel failed: ${UiOperationFailure.summarize(error)}")
                         }
                     }
                 }
@@ -148,13 +149,5 @@ class ZaraVoiceInteractionSession(
 
     private fun updateStatus(message: String) {
         statusView?.text = message
-    }
-
-    private fun rootMessage(error: Throwable): String {
-        var current = error
-        while (current.cause != null && current.cause !== current) {
-            current = current.cause!!
-        }
-        return current.message ?: current::class.java.simpleName
     }
 }

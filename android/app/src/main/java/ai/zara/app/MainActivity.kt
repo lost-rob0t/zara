@@ -1,6 +1,7 @@
 package ai.zara.app
 
 import ai.zara.app.ui.RenderedTextTurn
+import ai.zara.app.ui.UiOperationFailure
 import ai.zara.app.ui.ZaraApp
 import ai.zara.app.voice.ManualVoiceState
 import android.Manifest
@@ -46,7 +47,7 @@ class MainActivity : ComponentActivity() {
             try {
                 appSession.completeAssistantRoleRequest()
             } catch (error: Exception) {
-                operationError = rootMessage(error)
+                operationError = UiOperationFailure.summarize(error)
             }
         }
 
@@ -78,7 +79,7 @@ class MainActivity : ComponentActivity() {
                     try {
                         enrollmentPublicKey = appSession.createIdentity()
                     } catch (error: Exception) {
-                        operationError = rootMessage(error)
+                        operationError = UiOperationFailure.summarize(error)
                     }
                 },
                 onPinServer = { publicKey ->
@@ -87,7 +88,7 @@ class MainActivity : ComponentActivity() {
                         appSession.pinServer(publicKey)
                         enrollmentPublicKey = appSession.enrollmentPublicKeyZ85()
                     } catch (error: Exception) {
-                        operationError = rootMessage(error)
+                        operationError = UiOperationFailure.summarize(error)
                     }
                 },
                 onConnect = { endpoint ->
@@ -97,12 +98,12 @@ class MainActivity : ComponentActivity() {
                         appSession.connect(endpoint).whenComplete { _, error ->
                             runOnUiThread {
                                 operationBusy = false
-                                operationError = error?.let(::rootMessage)
+                                operationError = error?.let(UiOperationFailure::summarize)
                             }
                         }
                     } catch (error: Exception) {
                         operationBusy = false
-                        operationError = rootMessage(error)
+                        operationError = UiOperationFailure.summarize(error)
                     }
                 },
                 onSendText = { text ->
@@ -113,7 +114,7 @@ class MainActivity : ComponentActivity() {
                             runOnUiThread {
                                 operationBusy = false
                                 if (error != null) {
-                                    operationError = rootMessage(error)
+                                    operationError = UiOperationFailure.summarize(error)
                                 } else if (result != null) {
                                     lastTurn = RenderedTextTurn(
                                         userText = text,
@@ -125,7 +126,7 @@ class MainActivity : ComponentActivity() {
                         }
                     } catch (error: Exception) {
                         operationBusy = false
-                        operationError = rootMessage(error)
+                        operationError = UiOperationFailure.summarize(error)
                     }
                 },
                 onRequestMicrophonePermission = {
@@ -148,7 +149,7 @@ class MainActivity : ComponentActivity() {
                     appSession.pressToTalk(microphonePermissionGranted).whenComplete { _, error ->
                         runOnUiThread {
                             operationBusy = false
-                            operationError = error?.let(::rootMessage)
+                            operationError = error?.let(UiOperationFailure::summarize)
                             voiceState = appSession.voiceState()
                         }
                     }
@@ -159,7 +160,7 @@ class MainActivity : ComponentActivity() {
                     appSession.releasePushToTalk().whenComplete { _, error ->
                         runOnUiThread {
                             operationBusy = false
-                            operationError = error?.let(::rootMessage)
+                            operationError = error?.let(UiOperationFailure::summarize)
                             voiceState = appSession.voiceState()
                         }
                     }
@@ -170,7 +171,7 @@ class MainActivity : ComponentActivity() {
                     appSession.cancelPushToTalk().whenComplete { _, error ->
                         runOnUiThread {
                             operationBusy = false
-                            operationError = error?.let(::rootMessage)
+                            operationError = error?.let(UiOperationFailure::summarize)
                             voiceState = appSession.voiceState()
                         }
                     }
@@ -190,7 +191,7 @@ class MainActivity : ComponentActivity() {
         if (::appSession.isInitialized) {
             appSession.onHostStopped().whenComplete { _, error ->
                 runOnUiThread {
-                    if (error != null) operationError = rootMessage(error)
+                    if (error != null) operationError = UiOperationFailure.summarize(error)
                     voiceState = appSession.voiceState()
                 }
             }
@@ -210,7 +211,7 @@ class MainActivity : ComponentActivity() {
         microphonePermissionGranted = granted
         appSession.onMicrophonePermissionChanged(granted).whenComplete { _, error ->
             runOnUiThread {
-                if (error != null) operationError = rootMessage(error)
+                if (error != null) operationError = UiOperationFailure.summarize(error)
                 voiceState = appSession.voiceState()
             }
         }
@@ -219,12 +220,4 @@ class MainActivity : ComponentActivity() {
     private fun hasMicrophonePermission(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
-
-    private fun rootMessage(error: Throwable): String {
-        var current = error
-        while (current.cause != null && current.cause !== current) {
-            current = current.cause!!
-        }
-        return current.message ?: current::class.java.simpleName
-    }
 }
