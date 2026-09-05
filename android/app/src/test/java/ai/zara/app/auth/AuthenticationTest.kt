@@ -154,6 +154,35 @@ class AuthenticationTest {
         assertArrayEquals(secretKey, socket.secretKey)
     }
 
+    @Test fun `server pin is idempotent but cannot silently change`() {
+        val directory = Files.createTempDirectory("zara-pin-lock").toFile()
+        val repository = EnrollmentRepository(
+            credentials = WrappedCredentialStore(
+                File(directory, "credential.bin"),
+                TaggedCipher(0x21),
+            ),
+            serverPins = ServerPinStore(File(directory, "server-pin.bin")),
+            generator = FixedGenerator(ByteArray(32) { 3 }, ByteArray(32) { 4 }),
+        )
+        val first = ByteArray(32) { (it + 20).toByte() }
+        val different = first.copyOf().also { it[0] = (it[0].toInt() xor 1).toByte() }
+
+        repository.pinServer(first)
+        repository.pinServer(first.copyOf())
+        var failed = false
+        try {
+            repository.pinServer(different)
+        } catch (_: AuthenticationException) {
+            failed = true
+        }
+
+        assertTrue(failed)
+        val loaded = ServerPinStore(File(directory, "server-pin.bin")).load()
+        assertTrue(loaded is ServerPinLoadResult.Ready)
+        loaded as ServerPinLoadResult.Ready
+        assertTrue(loaded.pin.matches(first))
+    }
+
     @Test fun `corrupt credential blocks identity replacement`() {
         val directory = Files.createTempDirectory("zara-enrollment-corrupt").toFile()
         val file = File(directory, "credential.bin")
