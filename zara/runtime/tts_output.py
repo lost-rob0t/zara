@@ -39,6 +39,7 @@ class _TurnAudio:
     cancelled: bool = False
     started: bool = False
     synthesizing: bool = False
+    engine_failed: bool = False
 
 
 class TtsOutputBridge:
@@ -57,7 +58,6 @@ class TtsOutputBridge:
         self._publish = publish
         self._engine_factory = engine_factory
         self._engine: Optional[object] = None
-        self._engine_failed_turn: Optional[str] = None
         self._sample_rate = int(sample_rate)
         self._poll_interval = poll_interval
         self._turns: dict[str, _TurnAudio] = {}
@@ -66,18 +66,19 @@ class TtsOutputBridge:
         self._thread: Optional[threading.Thread] = None
         self._mp3_warned = False
 
-    def _get_engine(self, turn_id: str):
+    def _get_engine(self, state: _TurnAudio):
         if self._engine is not None:
             return self._engine
-        if self._engine_failed_turn == turn_id:
+        if state.engine_failed:
             return None
         try:
             self._engine = self._engine_factory()
         except Exception as error:
-            self._engine_failed_turn = turn_id
-            logger.warning("TTS engine unavailable for turn %s: %s", turn_id, error)
+            state.engine_failed = True
+            logger.warning(
+                "TTS engine unavailable for turn %s: %s", state.turn_id, error
+            )
             return None
-        self._engine_failed_turn = None
         return self._engine
 
     @property
@@ -244,7 +245,7 @@ class TtsOutputBridge:
                 self._turns.pop(state.turn_id, None)
 
     async def _synthesize_phrase(self, state: _TurnAudio, phrase: str) -> None:
-        engine = self._get_engine(state.turn_id)
+        engine = self._get_engine(state)
         if engine is None:
             return
         try:
