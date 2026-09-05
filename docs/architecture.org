@@ -1,0 +1,242 @@
+#+title: Zara architecture
+
+* Purpose
+
+This document describes Zara's current architectural boundaries and the invariants new work should preserve. It is intentionally implementation-facing: UI research belongs in the design/research documents, while this file explains which layer owns what.
+
+* System model
+
+#+begin_example
+                         clients
+           +---------------+---------------+
+           |               |               |
+       PySide6           CLI           Android
+        desktop                        Kotlin/NDK
+           |               |               |
+           +---------------+---------------+
+                           |
+                      ZaraClient
+                           |
+                +----------+----------+
+                |                     |
+          in-process path          ZARA/1
+                                      |
+                                 zara-server
+                                      |
+                              RuntimeSupervisor
+                                      |
+                               PrincipalRuntime
+                                      |
+                                  RuntimeHost
+                                      |
+        +-------------+--------+------+---------+-------------+
+        |             |        |                |             |
+      Prolog         Voice    Agent            Tools        Plugins
+        |                      |                               |
+        +----------------------+-------------------------------+
+                               |
+                 conversations / context / memory
+#+end_example
+
+The architecture is built around one rule: *clients and plugins project or request runtime state; they do not create competing assistant authorities*.
+
+* Process boundary
+
+** =zara-server=
+
+=zara-server= is the long-lived service process. It owns runtime lifecycle and accepts client work through the versioned Zara protocol.
+
+The server owns:
+
+- process/runtime supervision;
+- authenticated/principal-scoped runtime ownership;
+- canonical conversation and turn execution;
+- server-side provider/tool/plugin work;
+- bounded transport/event delivery;
+- lifecycle and shutdown.
+
+The server must not become a second implementation of Prolog, tools, memory, or voice. It composes the existing =RuntimeHost= boundary.
+
+** Clients
+
+A =ZaraClient= represents the caller boundary. Clients may be in-process or remote.
+
+Clients own presentation and device-local behavior. Examples:
+
+- desktop owns Qt windows, tray behavior, keyboard focus, and local audio devices;
+- Android owns Android UI, Android credential storage, assistant-role integration, and Android audio/device adapters;
+- CLI owns terminal interaction.
+
+Clients do not own a parallel agent runtime merely because they need a different UI.
+
+* Runtime boundary
+
+=RuntimeHost= is the application-service boundary between clients/plugins and low-level assistant machinery.
+
+It coordinates canonical commands/events and owns integration with the current backend. Runtime work should flow through explicit commands such as submit/cancel/status/tool approval rather than direct calls from UI widgets into backend internals.
+
+Provider-neutral events are the outward state language. UI, Pets, plugins, diagnostics, and transport adapters consume that language instead of provider SDK objects.
+
+* Conversations and turns
+
+A durable conversation has a stable identity and ordered messages. A turn has a canonical =turn_id=.
+
+Important invariants:
+
+- Quick/expanded desktop presentation must refer to the same conversation, not copied chat state.
+- Voice and typed input may share one conversation.
+- Cancellation targets the canonical turn id.
+- Late/stale output from cancelled turns must not mutate newer turns.
+- principal ownership is enforced below the presentation layer.
+- conversation identifiers are identifiers, not authorization capabilities.
+
+The desktop consolidation research extends this model by making voice sessions bind to durable conversations at the runtime/conversation boundary and by moving automatic title/summary generation there rather than into Qt widgets.
+
+* =ZARA/1= protocol
+
+=ZARA/1= is the versioned application protocol used across the daemon boundary.
+
+Current design/implementation principles:
+
+- ZeroMQ ROUTER on the daemon side and DEALER on clients;
+- a fixed protocol marker and typed JSON envelope;
+- optional binary payload frames for media;
+- explicit request/reply correlation;
+- stable session/conversation/turn/stream identifiers;
+- bounded frames, queues, timeouts, and message sizes;
+- unknown major versions and unknown message types fail closed;
+- transport routing ids are not user identities;
+- provider-specific objects and Python pickle/class paths never cross the wire.
+
+See [[file:server.org][server.org]] for operational/security details.
+
+* Principal ownership and isolation
+
+Daemon state is scoped by an authenticated principal rather than a process-global "current user" string.
+
+Private state includes at least:
+
+- conversations and messages;
+- context state;
+- memories/summaries/vector namespaces;
+- runtime events;
+- tool grants/approval state;
+- per-principal/session lifecycle state where supported.
+
+The presentation layer may filter or organize this state, but UI filtering is never the security boundary.
+
+* Voice ownership
+
+The cross-process voice design keeps device and runtime responsibilities separate.
+
+Client/device owns:
+
+- microphone capture;
+- speaker playback;
+- local playback stop on interruption;
+- local wake handling where available.
+
+Runtime/server owns:
+
+- VAD/STT processing after accepted ingress;
+- transcript/runtime events;
+- routing and canonical turn creation;
+- LLM/tool execution;
+- TTS generation;
+- cancellation of stale work.
+
+Voice frames use stream ids and bounded sequence handling. Binary audio is payload data, not base64 JSON and not normal log content.
+
+* Symbolic layer
+
+Zara has two Prolog execution environments because the clients have different platform constraints:
+
+- core/Linux: SWI-Prolog through the Python boundary;
+- Android: Trealla through a thin JNI/NDK bridge for the portable semantic subset.
+
+The goal is semantic compatibility, not pretending both engines expose identical implementation APIs. Portable symbolic fixtures define the subset Android must reproduce.
+
+Prolog should own deterministic symbolic decisions when practical. LLM fallback should not silently replace rules whose semantics can be made explicit.
+
+* Agent and tool layer
+
+The conversational agent handles open-ended requests and tool orchestration. It must still respect runtime lifecycle, cancellation, conversation state, and approval semantics.
+
+Tool behavior should remain observable through canonical runtime events. Tool approval/rejection is a runtime interaction, not a UI-only convention.
+
+* Plugins
+
+Service plugins are lifecycle-managed extensions. Import must not start background resources.
+
+A plugin receives a restricted runtime facade that can:
+
+- read bounded/sanitized status;
+- read only its own plugin configuration;
+- subscribe to bounded provider-neutral events;
+- dispatch supported runtime commands;
+- start bounded managed workers.
+
+Plugins must not receive Qt widgets, raw runtime backend objects, microphone handles, or unrestricted Prolog internals.
+
+See [[file:../wiki/plugins.org][wiki/plugins.org]].
+
+* Desktop UI
+
+Current implementation contains Quick Copilot and Full Chat as separate top-level presentation surfaces over shared conversation/runtime state.
+
+The accepted next architecture is one adaptive =CopilotWindow= with compact and expanded modes. That work should reduce duplicated presentation state without changing the runtime authority described above.
+
+The adaptive window target does *not* justify moving conversation ownership into UI code.
+
+* Android
+
+Android is a client, not a mobile fork of the assistant.
+
+Current Android foundations include:
+
+- typed client runtime state;
+- portable symbolic execution through Trealla;
+- shared semantic fixtures;
+- JeroMQ-based =ZARA/1= transport/authentication and enrollment work;
+- Android-local credential protection.
+
+Future Android voice, assistant-role, SmartThings, Termux, and device adapters should dispatch through the same client/runtime model instead of creating a separate agent or command language.
+
+* Desktop Pets
+
+Pets are optional consumers of runtime state. They may animate listening/thinking/tool/error states, but they never become the source of truth for those states.
+
+* Persistence
+
+Durable state belongs below presentation surfaces. The exact backing stores may evolve, but ownership must remain explicit and scoped.
+
+Avoid:
+
+- global mutable "current conversation" state shared across principals;
+- UI-owned copies of canonical history;
+- plugin-owned shadow conversation stores;
+- transport-specific provider state leaking into persistence.
+
+* Design invariants
+
+Changes should preserve these invariants unless an explicit architecture decision supersedes them:
+
+1. one canonical runtime authority per owned runtime;
+2. one canonical turn/cancellation lifecycle;
+3. durable conversation identity survives UI mode changes and client reconnect where supported;
+4. provider-neutral runtime events are the common outward state contract;
+5. UI and plugins do not call low-level backends directly;
+6. authenticated principal scope is injected by the server, never trusted from arbitrary caller metadata;
+7. voice audio ownership stays on the client device while assistant voice work remains in the runtime;
+8. symbolic semantics remain explicit and testable across supported Prolog runtimes;
+9. bounds/backpressure are architectural requirements, not optional performance polish;
+10. research/design documents do not become implementation claims without code/test evidence.
+
+* Related documents
+
+- [[file:server.org][server.org]] — daemon/protocol/security/voice details.
+- [[file:research/002-unified-copilot-voice-visual-ci.md][unified Copilot research]] — next desktop presentation architecture.
+- [[file:intentframe-contract.md][intentframe-contract.md]] — symbolic intent contract.
+- [[file:../wiki/android.org][wiki/android.org]] — Android details.
+- [[file:../wiki/plugins.org][wiki/plugins.org]] — plugin API.
+- [[file:pets.md][pets.md]] — Pet integration.
