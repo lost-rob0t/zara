@@ -77,10 +77,15 @@ class ManualVoiceCapture(private val ingress: VoiceIngress) {
 
     @Synchronized
     fun cancel() {
-        val capturing = state as? ManualVoiceState.Capturing
-            ?: throw IllegalStateException("manual voice capture is not active")
+        check(cancelIfActive()) { "manual voice capture is not active" }
+    }
+
+    @Synchronized
+    fun cancelIfActive(): Boolean {
+        val capturing = state as? ManualVoiceState.Capturing ?: return false
         ingress.cancel(capturing.context)
         state = ManualVoiceState.Idle
+        return true
     }
 
     companion object {
