@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import signal
 import sys
 import threading
@@ -88,6 +89,7 @@ class ZaraServer(_core.ZaraServer):
         self._gateway_transport_config = gateway_transport_config
         self._secure_tcp = secure_tcp
         self._security_registry = None
+        self._security_admin = None
         if secure_tcp:
             self._endpoint_override = endpoint
 
@@ -103,6 +105,8 @@ class ZaraServer(_core.ZaraServer):
             raise ServerError("secure TCP listener has no security state")
 
         from zara.runtime.tts_output import TtsOutputBridge
+        from zara.security import Capability
+        from zara.security_admin import SecurityAdminServer
         from zara.security_gateway import SecureZaraZmqGateway
         from zara.voice_runtime import RuntimeVoiceIngress
 
@@ -120,17 +124,52 @@ class ZaraServer(_core.ZaraServer):
         except AttributeError:
             self._tts_bridge = None
 
-        registry = self._security_state.load_registry()
-        self._security_registry = registry
-        return SecureZaraZmqGateway(
-            endpoint,
-            supervisor=supervisor,
-            security_registry=registry,
-            curve_server=self._security_state.load_server_config(),
-            context=None,
-            config=self._gateway_transport_config,
-            voice_ingress=voice_ingress,
+        admin = SecurityAdminServer(
+            self._security_state,
+            capabilities={Capability(value) for value in _SAFE_REMOTE_CAPABILITIES},
         )
+        admin.start()
+        try:
+            registry = self._security_state.load_registry()
+            admin.bind_registry(registry)
+            gateway = SecureZaraZmqGateway(
+                endpoint,
+                supervisor=supervisor,
+                security_registry=registry,
+                curve_server=self._security_state.load_server_config(),
+                context=None,
+                config=self._gateway_transport_config,
+                voice_ingress=voice_ingress,
+            )
+        except BaseException:
+            admin.close(timeout=self._shutdown_timeout)
+            raise
+        self._security_registry = registry
+        self._security_admin = admin
+        return gateway
+
+    def _close_security_admin(self) -> bool:
+        admin = self._security_admin
+        self._security_admin = None
+        if admin is None:
+            return True
+        try:
+            admin.close(timeout=self._shutdown_timeout)
+            return True
+        except BaseException:
+            logger.exception("Failed to stop owner security admin endpoint cleanly")
+            return False
+
+    def start(self) -> ServerState:
+        try:
+            return super().start()
+        except BaseException:
+            self._close_security_admin()
+            raise
+
+    def stop(self) -> bool:
+        admin_clean = self._close_security_admin()
+        return super().stop() and admin_clean
 
 
 def _parser():
@@ -184,6 +223,14 @@ def _security_state(args):
     return PersistentSecurityState(args.security_dir)
 
 
+def _live_security_admin(state):
+    if not os.path.lexists(state.control_socket_path):
+        return None
+    from zara.security_admin import SecurityAdminClient
+
+    return SecurityAdminClient(state.control_socket_path)
+
+
 def _run_security_management(args) -> Optional[int]:
     requested = any(
         (
@@ -210,6 +257,15 @@ def _run_security_management(args) -> Optional[int]:
     if args.security_enroll_key is not None:
         if not args.security_device_id:
             raise ValueError("--security-enroll-key requires --security-device-id")
+        admin = _live_security_admin(state)
+        if admin is not None:
+            result = admin.request(
+                "enroll",
+                public_key=args.security_enroll_key,
+                device_id=args.security_device_id,
+            )
+            print(json.dumps(result, sort_keys=True))
+            return 0
         from zara.security import Capability
 
         capabilities = {Capability(value) for value in _SAFE_REMOTE_CAPABILITIES}
@@ -233,11 +289,18 @@ def _run_security_management(args) -> Optional[int]:
         )
         return 0
     if args.security_revoke_device is not None:
+        admin = _live_security_admin(state)
+        if admin is not None:
+            result = admin.request("revoke", device_id=args.security_revoke_device)
+            print(json.dumps(result, sort_keys=True))
+            return 0
         state.revoke_device(args.security_revoke_device)
         print(json.dumps({"device_id": args.security_revoke_device, "active": False}, sort_keys=True))
         return 0
     if args.security_list_clients:
-        print(json.dumps(state.list_clients(), sort_keys=True))
+        admin = _live_security_admin(state)
+        clients = admin.request("list") if admin is not None else state.list_clients()
+        print(json.dumps(clients, sort_keys=True))
         return 0
     return None
 
