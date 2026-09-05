@@ -1,0 +1,184 @@
+#+title: Zara development guide
+
+* Scope
+
+This guide covers the current repository development workflow. Nix is the authoritative environment for normal Zara work; Android has its own flake output and Gradle project under =android/=.
+
+* Repository layout
+
+| Path | Purpose |
+|------+---------|
+| =zara/runtime/= | Canonical runtime commands/events, RuntimeHost, client/runtime boundaries. |
+| =zara/server.py= and protocol modules | Long-lived server, supervision, =ZARA/1= transport/auth/principal handling. |
+| =zara/desktop/= | Native PySide6 desktop shell and Qt runtime projection. |
+| =zara/agent/= | Conversational agent and tool integration. |
+| =zara/plugins/= | Plugin lifecycle and built-in plugin infrastructure. |
+| =zara/pets/= | Zarathushtra desktop Pet subsystem. |
+| =kb/=, =modules/=, =main.pl= | Core Prolog knowledge/semantic implementation. |
+| =android/= | Native Android client, Trealla bridge, transport/auth, tests. |
+| =docs/= | Architecture, protocol, research, and implementation docs. |
+| =wiki/= | User/feature-facing Org documentation. |
+| =scripts/= | Repository gates and helper scripts. |
+| =t/= | Python/desktop/runtime regression tests. |
+
+* Enter the development shell
+
+#+begin_src sh
+nix develop
+#+end_src
+
+Use the flake environment rather than reconstructing dependency versions manually. The flake is part of the build/test contract.
+
+* Main regression gate
+
+#+begin_src sh
+nix develop -c bash scripts/test-all.sh
+#+end_src
+
+This is the normal top-level regression command. Focused tests are useful while iterating, but a feature slice should not be called green solely because one local test passed when the repository gate exists.
+
+* Running Zara
+
+Run the long-lived service:
+
+#+begin_src sh
+zara-server
+#+end_src
+
+Launch the native desktop client:
+
+#+begin_src sh
+zara-desktop
+#+end_src
+
+Useful standalone/client commands include:
+
+#+begin_src sh
+zara-console
+zara-dictate
+zara-pets
+#+end_src
+
+The permanent executable boundary is intentional: =zara= is client-facing and =zara-server= is the service. Do not reintroduce a hidden mode where the ordinary client silently becomes the daemon authority.
+
+* Android
+
+Enter/run the Android gate with:
+
+#+begin_src sh
+nix develop .#android -c bash scripts/test-android.sh
+#+end_src
+
+The Android project lives under =android/= and uses the pinned Gradle/AGP/JDK toolchain documented in [[file:../wiki/android.org][wiki/android.org]].
+
+The gate covers the repository's Android unit/build checks and APK secret-marker inspection. The debug APK is produced under the standard Gradle debug output path.
+
+When working on Android:
+
+- keep client runtime state typed;
+- keep portable symbolic semantics behind the Trealla bridge and shared fixtures;
+- do not add a second Android-only assistant runtime;
+- keep =ZARA/1= transport/authentication compatible with the server contract;
+- do not store raw long-lived credentials in source, fixtures, logs, or APK assets;
+- preserve fail-closed server pin/enrollment behavior.
+
+* Desktop development
+
+The current desktop implementation still has Quick Copilot and Full Chat presentation code. The accepted design direction is one adaptive Copilot window.
+
+Until that consolidation lands:
+
+- do not create a third chat renderer;
+- preserve exact durable conversation identity across surfaces;
+- send runtime commands through the client/runtime boundary;
+- consume provider-neutral runtime events through Qt-safe bridges;
+- keep tray/window lifecycle distinct from server lifecycle;
+- keep close/hide behavior from accidentally killing the runtime service.
+
+New UI work should follow =DESIGN.md= for the semantic theme/component system and the current research note for adaptive-window behavior.
+
+* Visual CI
+
+The current design direction requires deterministic screenshot-producing UI tests/artifacts for important desktop states. Widget/unit tests prove behavior, not whether the rendered interface has giant gaps, clipped controls, broken hierarchy, or theme regressions.
+
+When adding visual fixtures:
+
+- use deterministic conversation/runtime fixtures;
+- disable or control animation/timing sources;
+- use stable artifact names;
+- capture compact and expanded states where relevant;
+- include error, streaming, tool, and settings states when they are part of the changed surface;
+- upload artifacts even when the test run fails where CI supports =if: always()= behavior.
+
+* Runtime/server work
+
+Server or protocol changes should preserve the invariants in [[file:architecture.org][architecture.org]] and [[file:server.org][server.org]].
+
+Minimum expectations for protocol/security-sensitive changes:
+
+- bounded input/output sizes and queues;
+- typed errors instead of dynamic dispatch;
+- explicit request/session/conversation/turn correlation;
+- principal scope injected from authenticated server state;
+- no secret/transcript/audio dumps in ordinary logs;
+- cancellation race coverage;
+- malformed frame/state coverage;
+- reconnect/restart behavior where applicable.
+
+The open daemon release gate is deliberately stronger than individual implementation slices. Do not weaken the gate to make a feature look complete.
+
+* Prolog work
+
+Core/Linux semantics use SWI-Prolog. Android portable semantics use Trealla.
+
+When behavior belongs to the portable subset:
+
+- update the symbolic source/fixtures intentionally;
+- run the cross-runtime semantic parity coverage;
+- avoid depending on SWI-only behavior in portable rules without explicitly isolating it;
+- keep symbolic results structured enough to compare deterministically.
+
+The long-term NLP direction favors explicit Prolog/DCG semantics over adding more shallow generated intent glue.
+
+* Plugins
+
+Long-running plugins must be restart-safe and lifecycle-managed.
+
+Do not start threads/processes/subscriptions at module import time. Use the service-plugin lifecycle and the restricted runtime facade. See [[file:../wiki/plugins.org][wiki/plugins.org]].
+
+Installable plugin development belongs in the companion =lost-rob0t/zara-plugins= repository unless the feature is core Zara infrastructure or a deliberately built-in plugin.
+
+* Documentation expectations
+
+Documentation is part of the implementation gate for architectural changes.
+
+When a slice changes a public or architectural boundary:
+
+1. update the canonical implementation doc;
+2. update README status if the high-level feature claim changed;
+3. preserve research history rather than rewriting old research to pretend it predicted the final implementation;
+4. mark superseded assumptions explicitly;
+5. distinguish implemented work from design-ready work;
+6. keep open release gates visible near the relevant claim.
+
+* Commit / review discipline
+
+Prefer commits that each leave the affected slice internally coherent. For autonomous/RAGE work, maximize useful progress per loop, but do not trade away reproducible gates or make giant undocumented architectural jumps.
+
+A reviewer should be able to answer from the diff and docs:
+
+- what boundary changed?
+- what owns the new state?
+- how is cancellation/shutdown handled?
+- what is the failure mode?
+- what tests prove it?
+- what remains explicitly incomplete?
+
+* Related docs
+
+- [[file:README.org][docs index]]
+- [[file:architecture.org][architecture]]
+- [[file:server.org][server / ZARA/1]]
+- [[file:research/002-unified-copilot-voice-visual-ci.md][unified Copilot research]]
+- [[file:../wiki/android.org][Android]]
+- [[file:../wiki/plugins.org][plugins]]
