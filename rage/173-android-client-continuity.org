@@ -56,17 +56,26 @@
 - Enrollment projection GREEN :: =b5c54cfb8242488ffac0ab459efab80e10383c1c= + =1a275917e20f0548b630c55a14f228b5cd74f70b=. UI/runtime state receives only a key-free readiness projection from the authoritative #322 =EnrollmentRepository=.
 - Launch wiring :: =d354638d035ddddeaaa5bd967046005ffda2acde= restores public client state and reads real enrollment authority on process launch; it does not fabricate connection/session continuity.
 
+** ZARA/1 text path
+- Codec/tests now cover closed =ZARA/1= hello, turn submit/accept, assistant response/delta/completed and protocol-error framing with bounds and unknown/malformed rejection.
+- =JeroMqTextDealerFactory= is the production DEALER edge. It consumes the one #322 =EnrollmentRepository=/CURVE configurator, applies authentication before connect, uses bounded receive timeouts and closes socket/context ownership together.
+- =ZaraTextClientActor= owns the blocking DEALER on one dedicated executor thread rather than Activity/UI threads. It performs canonical hello negotiation, records generation+session ownership, submits typed text turns, requires request/reply correlation, validates turn/conversation/session identity on streamed events, and rejects stale sessions.
+- Actor tests use deterministic fake dealers/request ids/timestamps to prove hello, real typed text-turn result, timeout/error, stale-session and ordering behavior without a second assistant runtime.
+- This establishes the dependency-safe A6/A7 client mechanics; stock authenticated TCP acceptance still waits for Core #331, and #159 capability/action negotiation still waits for #336.
+
 ** Exact source diagnostics
 - Initial BuildConfig source field :: =985e56d365c92eeaccf79550cbf8ba36ccc39d32= and launch display =f78f54c92a1a293824441a7fa32dadad4dcb3002=.
-- PR-checkout correction :: =09dfc355444b579d0120abb9a21544ba96b2aa17=. GitHub pull-request checkouts build a synthetic merge commit, so Android derives =HEAD^2= when =GITHUB_HEAD_REF= exists and =HEAD= otherwise. An explicit =ZARA_SOURCE_SHA= remains the controlled override.
-- Regression :: =8cf1d470cbac81bb5197c412573a54fe11eac560= requires the diagnostic source identifier to be an immutable 40-character git SHA.
+- Initial PR-checkout attempt used =HEAD^2= when =GITHUB_HEAD_REF= existed. CI #1107 showed the Android job uses a shallow pull-request checkout, so that parent is not guaranteed to exist even though the source branch is valid.
+- Build gate repair :: =c2a1547f88d59af29da58ffd6dbbc6ac30077f7c=. Gradle now reads the immutable =pull_request.head.sha= from GitHub's local event payload when present, falls back to =git rev-parse HEAD= outside PR events, preserves explicit =ZARA_SOURCE_SHA= override, and validates the result as a lowercase 40-character SHA before generating BuildConfig.
+- Regression =BuildMetadataTest= still requires the diagnostic source identifier to be an immutable 40-character git SHA; no assertion was weakened.
 
 ** Gate
 - PR :: #338, draft while implementation continues.
-- Current exact Android candidate :: =d354638d035ddddeaaa5bd967046005ffda2acde=.
-- Exact-head CI #1080 is queued; no older or superseded SHA authorizes merge.
-- Shared blockers remain #159/#336 for device-action negotiation and Core #329/#331 for stock secure TCP interoperability. Neither blocker prevents the Android-only state/correlation work above.
+- CI #1107 at =d8787394a62fcca108bebc7c364937b011a972b1= :: repository =Run all tests= green and shared-mic jobs green; Android gate RED before APK build because shallow PR checkout invalidated =HEAD^2= source-SHA derivation.
+- Fresh exact-head CI is required after the source-SHA repair/log update. No older or superseded SHA authorizes merge.
+- Shared blockers remain #159/#336 for device-action negotiation and Core #329/#331 for stock secure TCP interoperability. Neither blocker prevents the Android-only state/correlation/text-client work above.
 
 * Next
-- Consume the closed ZARA/1 framing + typed hello/turn response/event codec next, then one JeroMQ DEALER owner actor over the #322 CURVE factory.
+- Re-run exact-head Android/full gates for the repaired build identity path.
+- While #159/#336 and Core #331 gate, continue dependency-safe Android orchestration around the existing reducer/actor only; do not create a parallel connection state machine.
 - After Core #331 lands, add deterministic stock-daemon authenticated TCP hello/text-turn interoperability and only then claim #173 acceptance.
