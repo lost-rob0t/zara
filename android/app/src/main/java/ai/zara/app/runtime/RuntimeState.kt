@@ -116,13 +116,34 @@ fun reduce(state: RuntimeState, event: RuntimeEvent): RuntimeState = when (event
         }
     }
 
-    is RuntimeEvent.EnrollmentObserved -> state.copy(enrollment = event.readiness)
+    is RuntimeEvent.EnrollmentObserved -> {
+        if (event.readiness == EnrollmentReadiness.Ready) {
+            state.copy(enrollment = event.readiness)
+        } else {
+            invalidateSessionForEnrollment(state, event.readiness)
+        }
+    }
 
     is RuntimeEvent.RoleAssessed -> when (event.outcome) {
         RoleOutcome.HELD -> state.copy(assistantRole = AssistantRole.Held)
         RoleOutcome.NOT_HELD -> state.copy(assistantRole = AssistantRole.NotHeld)
         RoleOutcome.PLATFORM_UNAVAILABLE -> state.copy(assistantRole = AssistantRole.PlatformUnavailable)
     }
+}
+
+private fun invalidateSessionForEnrollment(
+    state: RuntimeState,
+    readiness: EnrollmentReadiness,
+): RuntimeState {
+    if (state.server is ServerConnection.Disconnected && state.sessionId == null) {
+        return state.copy(enrollment = readiness)
+    }
+    return state.copy(
+        server = ServerConnection.Disconnected,
+        enrollment = readiness,
+        generation = state.generation + 1,
+        sessionId = null,
+    )
 }
 
 private fun beginReconnect(state: RuntimeState, attempt: Int, reason: String): RuntimeState {
