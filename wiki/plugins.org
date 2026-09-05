@@ -1,17 +1,5 @@
 #+title: Zara user plugins
 
-* Ecosystem and scope
-
-Zara's plugin *runtime/API* lives in the core =zara= repository. Installable plugin implementations and examples should normally live in the companion repository:
-
-#+begin_example
-https://github.com/lost-rob0t/zara-plugins
-#+end_example
-
-Core Zara may still ship first-party built-in plugins when a feature is part of the assistant runtime itself. The companion repository is for extensible/installable plugin work and should exercise the same public lifecycle contract documented here rather than depending on private Zara internals.
-
-A plugin is an extension of the canonical Zara runtime. It is not permission to create a second agent runtime, conversation store, microphone loop, UI control plane, or provider configuration universe.
-
 * Installation and discovery
 
 Zara discovers public =*.py= files in each =[modules].search_paths= directory.
@@ -45,8 +33,6 @@ def register_skills(prolog_engine):
 
 Returned objects must be LangChain =BaseTool= instances. Tool names must be
 unique.
-
-Legacy registration remains compatibility surface, not the preferred model for long-running integrations.
 
 * Service plugin API version 1
 
@@ -178,7 +164,7 @@ Zara does not interpret or expose a plugin's private settings in diagnostics,
 except that the service manager consumes the generic =enabled= boolean before a
 service is started.
 
-* Failure isolation, diagnostics, and shutdown
+* Failures, diagnostics, and shutdown
 
 =RuntimeHost.plugin_diagnostics()= returns bounded =PluginDiagnostic= records
 with only =name=, =version=, =plugin_type=, =state=, and sanitized =error=.
@@ -195,34 +181,3 @@ On RuntimeHost shutdown, each started service is stopped in reverse discovery
 order. Its subscriptions are closed, managed workers are signalled and joined,
 and registered tools are removed. Repeated host start or shutdown calls do not
 duplicate lifecycle calls.
-
-* Daemon/client implications
-
-Plugins execute with the runtime they are installed into; they do not become protocol servers of their own.
-
-As Zara moves normal clients through =zara-server= / =ZARA/1=:
-
-- plugin work should remain visible as canonical runtime events;
-- plugin-triggered assistant work should use =runtime.dispatch(...)=;
-- UI clients should not need plugin-specific transport protocols for ordinary runtime behavior;
-- principal/authorization boundaries must not be bypassed by accepting arbitrary user identity from plugin payloads;
-- plugin diagnostics must remain sanitized across daemon/client boundaries;
-- a plugin failure must not kill unrelated principals or the server process.
-
-If a plugin needs a new durable runtime capability, prefer adding a typed core runtime command/event/capability contract rather than teaching one UI or one transport path to reach into that plugin directly.
-
-* Plugin development checklist
-
-Before considering a service plugin ready:
-
-- import has no side effects;
-- metadata/API version is explicit;
-- startup/shutdown are bounded;
-- workers use managed lifecycle or explicitly release external resources;
-- event queues are bounded;
-- runtime commands handle unsupported capabilities cleanly;
-- no Qt access from worker threads;
-- no secrets/config dumps in diagnostics;
-- restart does not duplicate workers/subscriptions/tools;
-- core Zara still works when the plugin fails or is disabled;
-- installable examples belong in =zara-plugins= rather than growing this core repository without reason.
