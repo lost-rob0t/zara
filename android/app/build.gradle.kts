@@ -46,10 +46,16 @@ val androidNdkVersion = providers.environmentVariable("ZARA_ANDROID_NDK_VERSION"
     ?: error("ZARA_ANDROID_NDK_VERSION must be supplied by the pinned Android Nix toolchain")
 val treallaSourceDir = providers.environmentVariable("ZARA_TREALLA_SOURCE_DIR").orNull ?: ""
 val treallaLibraryRoot = providers.environmentVariable("ZARA_TREALLA_LIBRARY_ROOT").orNull ?: ""
-val sourceSha = providers.environmentVariable("ZARA_SOURCE_SHA")
-    .orElse(providers.environmentVariable("GITHUB_SHA"))
-    .orElse("development")
-    .get()
+val sourceSha = providers.environmentVariable("ZARA_SOURCE_SHA").orNull ?: run {
+    val revision = if (providers.environmentVariable("GITHUB_HEAD_REF").orNull.isNullOrBlank()) {
+        "HEAD"
+    } else {
+        "HEAD^2"
+    }
+    providers.exec {
+        commandLine("git", "rev-parse", revision)
+    }.standardOutput.asText.get().trim()
+}
 
 android {
     namespace = "ai.zara.app"
