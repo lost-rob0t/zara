@@ -20,4 +20,7 @@ class AssistantRoleController(
         outcomeObserver(outcome)
         return outcome
     }
+
+    @Suppress("UNUSED_PARAMETER")
+    fun completeRequest(reportedGranted: Boolean): RoleOutcome = assess()
 }
