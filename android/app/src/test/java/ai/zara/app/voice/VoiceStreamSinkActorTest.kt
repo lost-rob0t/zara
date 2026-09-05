@@ -4,6 +4,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class VoiceStreamSinkActorTest {
@@ -73,6 +74,26 @@ class VoiceStreamSinkActorTest {
         queued.get()
         sink.close()
     }
+
+    @Test fun `playback failure is emitted by sink actor instead of disappearing in ignored future`() {
+        val failures = mutableListOf<Throwable>()
+        val output = FailingWriteSinkOutput()
+        val sink = VoiceStreamSinkActor(
+            playbackFactory = { sessionId -> VoicePlaybackController(output, sessionId) },
+            failureObserver = failures::add,
+        )
+        sink.accept(VoiceStreamEvent.AudioStarted("session-1", "turn-1", "speaker-1", 24_000, 1)).get()
+
+        assertThrows(Exception::class.java) {
+            sink.accept(
+                VoiceStreamEvent.AudioChunk("session-1", "turn-1", "speaker-1", 0, byteArrayOf(1, 0))
+            ).get()
+        }
+
+        assertEquals(1, failures.size)
+        assertTrue(failures.single().message!!.contains("speaker write failed"))
+        sink.close()
+    }
 }
 
 private open class RecordingSinkOutput : PcmOutput {
@@ -91,5 +112,11 @@ private class BlockingSinkOutput(
         entered.countDown()
         release.await(1, TimeUnit.SECONDS)
         super.start(sampleRate, channels)
+    }
+}
+
+private class FailingWriteSinkOutput : RecordingSinkOutput() {
+    override fun write(pcm: ByteArray) {
+        throw IllegalStateException("speaker write failed")
     }
 }
