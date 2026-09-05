@@ -9,15 +9,21 @@
 * Deterministic RED
 - Existing manual capture checked =RECORD_AUDIO= only when capture began.
 - An active stream had no explicit lifecycle hook for a later permission revocation.
-- RED commit =4475031d3918b5294e6aa7551fe01407aa5e1538= proves revocation must cancel the one active stream exactly once and later permission restoration must not fabricate/restart capture.
+- Initial RED =4475031d3918b5294e6aa7551fe01407aa5e1538= proved the canonical stream must be cancelled exactly once.
+- Adversarial review caught an ownership bug before merge: cancelling only =ManualVoiceCapture= could leave the physical =PcmRecorder= running.
+- Correct owner RED =ddd0038196a6a20b79548876a4eac76bcd8f7632= requires permission loss to stop recorder first, then emit exactly one canonical cancel, with duplicate revocation and later permission restoration inert.
+- Coordinator RED =5f8fd492b026cc669f7d5833c774e481e5d478db= proves the permission event crosses the existing voice coordinator rather than a parallel state machine.
 
 * Implementation
-- =ManualVoiceCapture.onMicrophonePermissionChanged(granted)= is synchronized with the existing single capture owner.
-- Revocation delegates to the existing typed =cancelIfActive()= path; duplicate revocation is idempotent.
+- =PushToTalkController.onMicrophonePermissionChanged(granted)= is the lifecycle owner because it owns both the recorder and =ManualVoiceCapture=.
+- Revocation uses the existing failure-safe =cancel()= ordering: recorder stop first, canonical stream cancel second.
+- Duplicate revocation is idempotent after state reaches Idle.
+- =ManualVoiceSessionCoordinator= delegates permission observations into the same controller.
 - Permission restoration is inert. A new user/system invocation must explicitly begin a new capture.
+- The temporary lower-level permission hook was removed so there is one mic lifecycle owner.
 
 * Remaining wiring
-- Activity/VoiceInteraction lifecycle must reconcile actual Android permission state into this hook after #174/#375 releases =AndroidAppSession.kt= ownership.
+- Activity/VoiceInteraction lifecycle must reconcile actual Android permission state into this coordinator after #174/#375 releases =AndroidAppSession.kt= ownership.
 - Do not create a second capture/permission state machine to avoid that dependency.
 
 * Gates
