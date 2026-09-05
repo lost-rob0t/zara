@@ -6,8 +6,11 @@ import ai.zara.app.voice.ManualVoiceState
 import android.service.voice.VoiceInteractionService
 
 class ZaraVoiceInteractionService : VoiceInteractionService() {
+    private val zaraApplication: ZaraApplication
+        get() = application as ZaraApplication
+
     private val appSession: AndroidAppSession
-        get() = (application as ZaraApplication).appSession
+        get() = zaraApplication.appSession
 
     override fun onReady() {
         super.onReady()
@@ -15,6 +18,7 @@ class ZaraVoiceInteractionService : VoiceInteractionService() {
     }
 
     override fun onShutdown() {
+        zaraApplication.assistantLifecycleFence.invalidate()
         if (appSession.voiceState() is ManualVoiceState.Capturing) {
             appSession.cancelPushToTalk()
         }
