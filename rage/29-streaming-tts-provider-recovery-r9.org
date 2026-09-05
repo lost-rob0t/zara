@@ -1,0 +1,24 @@
+#+title: RAGE #29 — streaming TTS provider recovery r9
+
+* Transaction
+- Consumed issue :: #29
+- Immutable RAGE start :: =efe112f74b130ec39e81f2fc538818895e790ea5=
+- Branch :: =rage/29-streaming-tts-provider-recovery-r9=
+- Scope :: Zara Core only; zero =android/**= changes.
+
+* Preserved evidence
+- r8 identified that =TtsOutputBridge._get_engine()= permanently latched the first engine-construction exception, disabling TTS for all future turns until daemon restart.
+- r8's initial global failed-turn marker was rejected during adversarial review because interleaved turns could re-enable retries for one another.
+- The retained implementation stores bootstrap failure on the exact =_TurnAudio= state: a failed turn attempts engine construction at most once; a later distinct turn may recover; a successful engine remains shared/cached.
+- r8 became stale when #390 moved canonical master, so its code/test blobs are replayed without its stale lineage or RAGE start metadata.
+
+* Invariants
+- a failed turn never fabricates audio success;
+- same-turn phrase storms do not hammer provider construction;
+- concurrent turn failure state is isolated;
+- a later turn can recover without daemon restart;
+- provider API, ZARA/1 wire shapes, playback ownership, phrase ordering and cancellation remain unchanged;
+- no =android/**= changes.
+
+* Gate
+Exact-head focused/full Core tests, =nix flake check=, packaged Zara, Android compatibility, Arch/Ubuntu shared-mic, reviews and unresolved threads remain mandatory before merge.
