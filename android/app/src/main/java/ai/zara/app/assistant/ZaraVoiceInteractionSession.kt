@@ -47,7 +47,10 @@ class ZaraVoiceInteractionSession(
     }
 
     private fun cancelCaptureIfActive() {
-        if (appSession.voiceState() is ManualVoiceState.Capturing) {
+        if (
+            appSession.voiceState() is ManualVoiceState.Capturing &&
+            invocationGate.claimCancellation()
+        ) {
             appSession.cancelPushToTalk()
         }
     }
