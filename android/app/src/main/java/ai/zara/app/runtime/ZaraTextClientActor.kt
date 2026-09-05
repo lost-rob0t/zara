@@ -2,7 +2,10 @@ package ai.zara.app.runtime
 
 import ai.zara.app.voice.VoiceCaptureContext
 import ai.zara.app.voice.VoiceCommandClient
+import ai.zara.app.voice.VoiceInboundMessage
 import ai.zara.app.voice.VoiceServerReply
+import ai.zara.app.voice.VoiceStreamEvent
+import ai.zara.app.voice.ZaraVoiceInboundCodec
 import ai.zara.app.voice.ZaraVoiceAckCodec
 import ai.zara.app.voice.ZaraVoiceCodec
 import java.util.concurrent.CompletableFuture
@@ -21,7 +24,6 @@ interface TextDealer : AutoCloseable {
 
 class StaleTextSessionException(message: String) : IllegalStateException(message)
 class TextRequestTimeoutException(message: String) : IllegalStateException(message)
-
 
 data class ConnectedTextSession(
     val generation: Long,
@@ -47,10 +49,15 @@ class ZaraTextClientActor(
     private var dealer: TextDealer? = null
     private var session: ConnectedTextSession? = null
     private val correlations = RequestCorrelations(limit = 256)
+    private var voiceStreamObserver: ((VoiceStreamEvent) -> Unit)? = null
     private var closed = false
 
     init {
         require(requestTimeoutMillis > 0) { "request timeout must be positive" }
+    }
+
+    fun setVoiceStreamObserver(observer: ((VoiceStreamEvent) -> Unit)?) {
+        voiceStreamObserver = observer
     }
 
     override fun connect(
@@ -304,9 +311,7 @@ class ZaraTextClientActor(
         val active = dealer ?: throw StaleTextSessionException("voice dealer is unavailable")
         val requestId = nextRequestId()
         active.send(frames(requestId, nextTimestamp()))
-        val responseFrames = active.receive(requestTimeoutMillis)
-            ?: throw TextRequestTimeoutException("ZARA/1 voice acknowledgement timed out")
-        when (val reply = ZaraVoiceAckCodec.decode(responseFrames)) {
+        when (val reply = receiveVoiceReply(active)) {
             is VoiceServerReply.ProtocolError -> {
                 if (reply.replyTo != null && reply.replyTo != requestId) {
                     throw ZaraWireException("voice error reply correlation mismatch")
@@ -332,6 +337,23 @@ class ZaraTextClientActor(
             }
         }
         Unit
+    }
+
+    private fun receiveVoiceReply(active: TextDealer): VoiceServerReply {
+        while (true) {
+            val frames = active.receive(requestTimeoutMillis)
+                ?: throw TextRequestTimeoutException("ZARA/1 voice acknowledgement timed out")
+            when (val inbound = ZaraVoiceInboundCodec.decode(frames)) {
+                is VoiceInboundMessage.Stream -> {
+                    val current = session ?: throw StaleTextSessionException("voice client is not connected")
+                    if (inbound.event.sessionId != current.sessionId) {
+                        throw ZaraWireException("voice stream event session is stale")
+                    }
+                    voiceStreamObserver?.invoke(inbound.event)
+                }
+                is VoiceInboundMessage.Reply -> return inbound.reply
+            }
+        }
     }
 
     private fun replaceDealer(profile: ServerProfile) {
