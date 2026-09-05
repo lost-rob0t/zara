@@ -21,6 +21,7 @@
 - Start planning fails closed on missing microphone permission, missing Assistant role, bad enrollment, missing endpoint, transient connection state, or connected state without a real session id.
 - Async reconnect/start is fenced: release-before-start becomes immediate commit after successful start; cancel/hide-before-start becomes immediate cancel after successful start; duplicate presses cannot start a second capture.
 - VoiceInteractionService re-assesses role on ready/shutdown and cancels any active capture on shutdown.
+- Settings renders bounded researched Samsung Digital Assistant / supported Side button guidance only when the role is not held; the text explicitly says hardware verification remains #206.
 
 * TDD / realization
 - =bdff5bcd543dbf52e55b0bc1598c941fed954042= RED require one application-scoped runtime/process.
@@ -41,6 +42,8 @@
 - =f33d547a5e3f2ec1895615ffe2d16c47d098bb69= GREEN release/commit/cancel/late-start gate.
 - =34b479da73a398b58d36f8c8cfa92fb526444ea7= RED require real =onCreateContentView= overlay PTT and forbid auto mic start on =onShow=.
 - =30597abd6739f8963c50a6421a68cf42958538c5= GREEN public VoiceInteractionSession overlay: hold starts canonical voice; release commits; cancel/hide cancels; real error state shown.
+- =43897bdc79ffe236acea55524adafe26579691ee= RED require bounded Samsung Assistant guidance to be rendered in Settings, not merely encoded.
+- =0858604bc4c422b7baa920dc326c5ac066a07457= GREEN render the guidance only in the missing-role onboarding state.
 
 * Adversarial review
 - Rejected :: automatic mic start on session show. It can create an uncommitted stream and therefore no transcript/response/audio completion path.
