@@ -5,7 +5,7 @@ Uses LangChain tools directly. The old custom registry is deprecated.
 """
 
 import logging
-from typing import Dict, List, Optional, Any, TYPE_CHECKING
+from typing import Dict, List, Optional, Any, TYPE_CHECKING, Sequence
 
 from langchain_core.tools import BaseTool as LangChainTool
 
@@ -40,9 +40,10 @@ class ToolRegistry:
         self._tools: Dict[str, LangChainTool] = {}
         self._mcp_manager: Any = None
         approval_config = config.get_section("tool_approval") if config else {}
-        self._approval_required = frozenset(
+        self._configured_approval_required = frozenset(
             str(name) for name in approval_config.get("required_tools", [])
         )
+        self._registered_approval_required: set[str] = set()
 
     def register_tool(self, tool: LangChainTool):
         if not valid_tool_name(tool.name):
@@ -52,9 +53,16 @@ class ToolRegistry:
         self._tools[tool.name] = tool
 
     def unregister_tool(self, name: str) -> Optional[LangChainTool]:
-        return self._tools.pop(name, None)
+        tool = self._tools.pop(name, None)
+        self._registered_approval_required.discard(name)
+        return tool
 
-    def register_tools(self, tools: List[LangChainTool]):
+    def register_tools(
+        self,
+        tools: List[LangChainTool],
+        *,
+        approval_required: Sequence[str] = (),
+    ):
         pending = list(tools)
         names = [tool.name for tool in pending]
         if any(not valid_tool_name(name) for name in names):
@@ -64,11 +72,30 @@ class ToolRegistry:
         conflicts = duplicate_names + existing_names
         if conflicts:
             raise ValueError(f"Tool '{conflicts[0]}' already registered")
+
+        required_names = list(approval_required)
+        if any(not isinstance(name, str) or not valid_tool_name(name) for name in required_names):
+            raise ValueError("approval-required tool name is invalid")
+        duplicate_required = sorted(
+            {name for name in required_names if required_names.count(name) > 1}
+        )
+        if duplicate_required:
+            raise ValueError(
+                f"approval-required tool '{duplicate_required[0]}' is declared more than once"
+            )
+        foreign_required = sorted(set(required_names).difference(names))
+        if foreign_required:
+            raise ValueError(
+                f"approval-required tool '{foreign_required[0]}' is not registered by this call"
+            )
+
         self._tools.update((tool.name, tool) for tool in pending)
+        self._registered_approval_required.update(required_names)
 
     def unregister_tools(self, names: List[str]) -> None:
         for name in names:
             self._tools.pop(name, None)
+            self._registered_approval_required.discard(name)
 
     def get_tool(self, name: str) -> Optional[LangChainTool]:
         return self._tools.get(name)
@@ -80,7 +107,10 @@ class ToolRegistry:
         return list(self._tools.values())
 
     def requires_approval(self, name: str) -> bool:
-        return name in self._approval_required
+        return (
+            name in self._configured_approval_required
+            or name in self._registered_approval_required
+        )
 
     async def prepare_async(self) -> None:
         if self.config is None:
