@@ -3,6 +3,8 @@ package ai.zara.app.ui
 import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.ServerConnection
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ZaraAppProjectionTest {
@@ -30,5 +32,14 @@ class ZaraAppProjectionTest {
         )
         assertEquals("ready", enrollmentLabel(EnrollmentReadiness.Ready))
         assertEquals("corrupt", enrollmentLabel(EnrollmentReadiness.Corrupt))
+    }
+
+    @Test
+    fun connectControlCannotStartParallelConnectionLifecycle() {
+        assertTrue(canRequestConnect(ServerConnection.Disconnected))
+        assertTrue(canRequestConnect(ServerConnection.OfflineDegraded(3, "network unavailable")))
+        assertFalse(canRequestConnect(ServerConnection.Connecting(4)))
+        assertFalse(canRequestConnect(ServerConnection.Connected(4)))
+        assertFalse(canRequestConnect(ServerConnection.Reconnecting(5, 2)))
     }
 }
