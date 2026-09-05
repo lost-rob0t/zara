@@ -28,6 +28,15 @@ sealed interface TextServerMessage {
         val turnId: String,
     ) : TextServerMessage
 
+    data class Progress(
+        override val id: String,
+        override val sessionId: String,
+        val conversationId: String?,
+        val turnId: String,
+        val sequence: Long,
+        val type: String,
+    ) : TextServerMessage
+
     data class AssistantDelta(
         override val id: String,
         override val sessionId: String,
@@ -44,6 +53,15 @@ sealed interface TextServerMessage {
         val turnId: String,
         val sequence: Long,
         val text: String,
+        val success: Boolean,
+    ) : TextServerMessage
+
+    data class TurnCompleted(
+        override val id: String,
+        override val sessionId: String,
+        val conversationId: String?,
+        val turnId: String,
+        val sequence: Long,
         val success: Boolean,
     ) : TextServerMessage
 
@@ -73,20 +91,9 @@ object ZaraTextCodec {
     private const val maxIdBytes = 128
     private const val maxTextBytes = 1024 * 1024
     private val envelopeKeys = setOf(
-        "type",
-        "id",
-        "reply_to",
-        "session_id",
-        "conversation_id",
-        "turn_id",
-        "stream_id",
-        "seq",
-        "timestamp_ns",
-        "trace_id",
-        "content_type",
-        "payload_count",
-        "flags",
-        "body",
+        "type", "id", "reply_to", "session_id", "conversation_id", "turn_id",
+        "stream_id", "seq", "timestamp_ns", "trace_id", "content_type",
+        "payload_count", "flags", "body",
     )
 
     fun encodeHello(requestId: String, timestampNs: Long): List<ByteArray> {
@@ -116,9 +123,7 @@ object ZaraTextCodec {
         requireTimestamp(timestampNs)
         require(text.isNotBlank()) { "turn text is required" }
         require(text.encodeToByteArray().size <= maxTextBytes) { "turn text exceeds byte limit" }
-        val envelope = linkedMapOf<String, Any?>(
-            "body" to linkedMapOf("text" to text),
-        )
+        val envelope = linkedMapOf<String, Any?>("body" to linkedMapOf("text" to text))
         if (conversation != null) envelope["conversation_id"] = conversation
         envelope["id"] = id
         envelope["payload_count"] = 0L
@@ -133,13 +138,12 @@ object ZaraTextCodec {
             throw ZaraWireException("invalid ZARA/1 text frame")
         }
         if (frames[1].size > maxEnvelopeBytes) throw ZaraWireException("envelope exceeds byte limit")
-        val text = decodeUtf8(frames[1])
-        val parsed = StrictJsonParser(text).parseObject()
+        val parsed = StrictJsonParser(decodeUtf8(frames[1])).parseObject()
         rejectUnknown(parsed, envelopeKeys, "envelope")
         requireLong(parsed, "payload_count", exact = 0)
         requireLong(parsed, "timestamp_ns", minimum = 0)
         val type = requireString(parsed, "type", 64)
-        val id = token("id", requireString(parsed, "id", maxIdBytes))
+        val id = wireToken("id", requireString(parsed, "id", maxIdBytes))
         val sessionId = optionalToken(parsed, "session_id")
         val replyTo = optionalToken(parsed, "reply_to")
         val conversationId = optionalToken(parsed, "conversation_id")
@@ -149,11 +153,18 @@ object ZaraTextCodec {
 
         return when (type) {
             "hello.ok" -> {
-                rejectUnknown(body, setOf("version", "max_payload_frames", "max_payload_frame_bytes", "max_payload_bytes", "audio_output_format"), "hello.ok body")
+                rejectUnknown(
+                    body,
+                    setOf(
+                        "version", "max_payload_frames", "max_payload_frame_bytes",
+                        "max_payload_bytes", "audio_output_format",
+                    ),
+                    "hello.ok body",
+                )
                 TextServerMessage.HelloOk(
                     id = id,
-                    replyTo = requireNotNull(replyTo) { "hello.ok requires reply_to" },
-                    sessionId = requireNotNull(sessionId) { "hello.ok requires session_id" },
+                    replyTo = wireRequired(replyTo, "hello.ok requires reply_to"),
+                    sessionId = wireRequired(sessionId, "hello.ok requires session_id"),
                     version = requireLong(body, "version", exact = 1).toInt(),
                     maxPayloadFrames = requirePositiveInt(body, "max_payload_frames"),
                     maxPayloadFrameBytes = requirePositiveInt(body, "max_payload_frame_bytes"),
@@ -164,20 +175,31 @@ object ZaraTextCodec {
                 rejectUnknown(body, emptySet(), "turn.accepted body")
                 TextServerMessage.TurnAccepted(
                     id = id,
-                    replyTo = requireNotNull(replyTo) { "turn.accepted requires reply_to" },
-                    sessionId = requireNotNull(sessionId) { "turn.accepted requires session_id" },
+                    replyTo = wireRequired(replyTo, "turn.accepted requires reply_to"),
+                    sessionId = wireRequired(sessionId, "turn.accepted requires session_id"),
                     conversationId = conversationId,
-                    turnId = requireNotNull(turnId) { "turn.accepted requires turn_id" },
+                    turnId = wireRequired(turnId, "turn.accepted requires turn_id"),
+                )
+            }
+            "turn.started", "assistant.started" -> {
+                rejectUnknown(body, emptySet(), "$type body")
+                TextServerMessage.Progress(
+                    id = id,
+                    sessionId = wireRequired(sessionId, "$type requires session_id"),
+                    conversationId = conversationId,
+                    turnId = wireRequired(turnId, "$type requires turn_id"),
+                    sequence = wireRequired(sequence, "$type requires seq"),
+                    type = type,
                 )
             }
             "assistant.delta" -> {
                 rejectUnknown(body, setOf("text"), "assistant.delta body")
                 TextServerMessage.AssistantDelta(
                     id = id,
-                    sessionId = requireNotNull(sessionId) { "assistant.delta requires session_id" },
+                    sessionId = wireRequired(sessionId, "assistant.delta requires session_id"),
                     conversationId = conversationId,
-                    turnId = requireNotNull(turnId) { "assistant.delta requires turn_id" },
-                    sequence = requireNotNull(sequence) { "assistant.delta requires seq" },
+                    turnId = wireRequired(turnId, "assistant.delta requires turn_id"),
+                    sequence = wireRequired(sequence, "assistant.delta requires seq"),
                     text = requireBoundedText(body, "text"),
                 )
             }
@@ -185,11 +207,22 @@ object ZaraTextCodec {
                 rejectUnknown(body, setOf("text", "success"), "assistant.completed body")
                 TextServerMessage.AssistantCompleted(
                     id = id,
-                    sessionId = requireNotNull(sessionId) { "assistant.completed requires session_id" },
+                    sessionId = wireRequired(sessionId, "assistant.completed requires session_id"),
                     conversationId = conversationId,
-                    turnId = requireNotNull(turnId) { "assistant.completed requires turn_id" },
-                    sequence = requireNotNull(sequence) { "assistant.completed requires seq" },
+                    turnId = wireRequired(turnId, "assistant.completed requires turn_id"),
+                    sequence = wireRequired(sequence, "assistant.completed requires seq"),
                     text = requireBoundedText(body, "text"),
+                    success = requireBoolean(body, "success"),
+                )
+            }
+            "turn.completed" -> {
+                rejectUnknown(body, setOf("success"), "turn.completed body")
+                TextServerMessage.TurnCompleted(
+                    id = id,
+                    sessionId = wireRequired(sessionId, "turn.completed requires session_id"),
+                    conversationId = conversationId,
+                    turnId = wireRequired(turnId, "turn.completed requires turn_id"),
+                    sequence = wireRequired(sequence, "turn.completed requires seq"),
                     success = requireBoolean(body, "success"),
                 )
             }
@@ -197,7 +230,7 @@ object ZaraTextCodec {
                 rejectUnknown(body, setOf("text", "truncated"), "assistant.response body")
                 TextServerMessage.AssistantResponse(
                     id = id,
-                    sessionId = requireNotNull(sessionId) { "assistant.response requires session_id" },
+                    sessionId = wireRequired(sessionId, "assistant.response requires session_id"),
                     conversationId = conversationId,
                     turnId = turnId,
                     sequence = sequence,
@@ -249,9 +282,13 @@ object ZaraTextCodec {
         is Byte, is Short, is Int, is Long -> value.toString()
         is List<*> -> value.joinToString(prefix = "[", postfix = "]") { encodeJson(it) }
         is Map<*, *> -> value.entries
-            .map { (key, item) -> (key as? String ?: throw ZaraWireException("JSON object key must be string")) to item }
+            .map { (key, item) ->
+                (key as? String ?: throw ZaraWireException("JSON object key must be string")) to item
+            }
             .sortedBy { it.first }
-            .joinToString(prefix = "{", postfix = "}") { (key, item) -> "${encodeJson(key)}:${encodeJson(item)}" }
+            .joinToString(prefix = "{", postfix = "}") { (key, item) ->
+                "${encodeJson(key)}:${encodeJson(item)}"
+            }
         else -> throw ZaraWireException("unsupported JSON value")
     }
 
@@ -266,24 +303,22 @@ object ZaraTextCodec {
     }
 
     private fun token(name: String, value: String): String {
-        val bytes = try {
-            value.encodeToByteArray()
-        } catch (error: Exception) {
-            throw IllegalArgumentException("$name is invalid", error)
-        }
+        val bytes = value.encodeToByteArray()
         require(value.isNotBlank() && bytes.size <= maxIdBytes) { "$name is invalid" }
         require(value.all { it.code in 0x21..0x7e }) { "$name must be printable ASCII" }
         return value
     }
 
+    private fun wireToken(name: String, value: String): String = try {
+        token(name, value)
+    } catch (error: IllegalArgumentException) {
+        throw ZaraWireException("$name is invalid", error)
+    }
+
     private fun optionalToken(objectValue: Map<String, Any?>, key: String): String? {
         val value = objectValue[key] ?: return null
         if (value !is String) throw ZaraWireException("$key must be a string")
-        return try {
-            token(key, value)
-        } catch (error: IllegalArgumentException) {
-            throw ZaraWireException("$key is invalid", error)
-        }
+        return wireToken(key, value)
     }
 
     private fun requireTimestamp(value: Long) {
@@ -291,7 +326,9 @@ object ZaraTextCodec {
     }
 
     private fun rejectUnknown(objectValue: Map<String, Any?>, allowed: Set<String>, name: String) {
-        if ((objectValue.keys - allowed).isNotEmpty()) throw ZaraWireException("$name contains unknown fields")
+        if ((objectValue.keys - allowed).isNotEmpty()) {
+            throw ZaraWireException("$name contains unknown fields")
+        }
     }
 
     private fun optionalObject(objectValue: Map<String, Any?>, key: String): Map<String, Any?> {
@@ -334,6 +371,9 @@ object ZaraTextCodec {
         val value = objectValue[key] ?: return null
         return value as? Long ?: throw ZaraWireException("$key must be integer")
     }
+
+    private fun <T : Any> wireRequired(value: T?, message: String): T =
+        value ?: throw ZaraWireException(message)
 }
 
 private class StrictJsonParser(private val source: String) {
