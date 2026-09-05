@@ -1,0 +1,30 @@
+:PROPERTIES:
+:ID:       zara-rage-203-android-reconnect-scheduler-failure
+:END:
+#+title: RAGE #203 — fail closed when Android reconnect scheduling fails
+#+status: ACTIVE
+
+* Consumption
+- Issue :: #203
+- Immutable start :: 83890b69962364c11a281680febe8b1659f95fd6
+- Scope :: Android runtime/reconnect lifecycle only. No Core/protocol/plugin changes.
+
+* Research
+- AndroidTextSessionController transitions to Reconnecting before scheduling the retry.
+- ReconnectScheduler.schedule may throw (for example executor rejection during lifecycle races).
+- Current code lets that exception escape after state already says Reconnecting, leaving an honest-state violation: no retry exists although UI/runtime claims reconnecting.
+- Existing reducer already owns all connection-state transitions, so the failure must not be repaired with an out-of-band controller state machine.
+
+* Design
+- Add one Android-local reducer event for reconnect-scheduling failure.
+- If and only if the event generation is current and state is Reconnecting, transition to OfflineDegraded using a fixed redacted reason.
+- Stale generation and closed-controller scheduling failures are ignored.
+- Do not spin recursively attempting to schedule a scheduler that already rejected work.
+
+* TDD
+- RED: scheduler rejection after connection loss must not escape and must leave OfflineDegraded, not zombie Reconnecting.
+- RED: stale/closed lifecycle cannot resurrect state.
+- GREEN: controller catches scheduler rejection and routes current generation through reducer-owned fail-closed transition.
+
+* Gate
+- Focused Android JVM tests, scripts/test-android.sh, full repository/Nix/package gate and exact-head Actions before promotion.
