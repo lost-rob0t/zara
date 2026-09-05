@@ -51,5 +51,14 @@ Then run full repository-native gates: scripts/test-all.sh, nix flake check, pac
 - 79ff7d4f723a962f9d4ffb8473d4698a7559ca0e binds that wrapper to the one canonical ToolNode.
 - d4f6e1d7cac0d8976a1f01d2f67b688611dceee9 is a two-parent recovery commit whose second parent is exact canonical master 28f8afea91f8e3f389d9a28df6fe8089f56f86f4. The master delta was verified as five sibling-owned Android/RAGE files with zero Core overlap; their exact canonical blobs were preserved unchanged.
 
+** Exact-head falsification — CI #1616
+Exact head 12ae6963fc105c702d9fc9fce6530c9a1162101c failed only the four plugin-entry/spoof cancellation cases. The full suite executed 1985 tests with 4 failures; approval rejection and unload acceptance passed. Android APK/native/secret compatibility plus Arch and Ubuntu shared-mic lanes were green. Flake/package were correctly skipped after Core test failure.
+
+The no-op wrapper at that head preserved the original registered tool, so LangGraph 1.1.0 recomputed injected arguments from that tool immediately before invocation and removed the Core-provided =InjectedToolArg= value. Plugin bodies therefore never entered.
+
+Upstream 1.1.0 source confirms =_execute_tool_async= calls =_inject_tool_args(call, request.runtime, tool)= using the possibly overridden =request.tool=. For a dynamic tool, =_inject_tool_args= computes injection metadata from that dynamic tool. This is the missing seam: the invocation-local delegate must expose a plain full JSON input schema so cancellation is no longer classified as caller-injected during the second ToolNode pass. The original registered tool remains model-hidden and performs its ordinary BaseTool validation after the delegate restores the exact Core-owned view.
+
+- e80fb1be82195725b31a7faf9a43592f1101fb58 restores the per-invocation BaseTool delegate but deliberately gives it the original full JSON schema with injection annotations erased. The delegate remains internal/unbound to the model and forwards once to the original tool. No Android code or second executor/approval path is introduced.
+
 ** Gate
 The next CI head after this append is the exact-master candidate. Do not merge until every required lane is green and review threads are clear. Re-read canonical master immediately before merge and recover again if it moves.
