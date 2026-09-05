@@ -13,6 +13,19 @@ class RuntimeStateTest {
         assertEquals(null, state.sessionId)
     }
 
+    @Test fun `restored state retains public server profile without fabricating session`() {
+        val profile = ServerProfile.create("tcp://127.0.0.1:5555")
+        val state = RuntimeState.fromRestored(
+            RestorableClientState(profile, "conversation-7")
+        )
+
+        assertEquals(profile, state.configuredProfile)
+        assertEquals("conversation-7", state.selectedConversationId)
+        assertEquals(ServerConnection.Disconnected, state.server)
+        assertEquals(null, state.sessionId)
+        assertEquals(0L, state.generation)
+    }
+
     @Test fun `connect request starts a new generation`() {
         val state = reduce(RuntimeState.initial(), RuntimeEvent.ConnectRequested)
         assertEquals(ServerConnection.Connecting(1), state.server)
