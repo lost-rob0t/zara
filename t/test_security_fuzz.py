@@ -233,9 +233,9 @@ def test_persisted_client_record_mutation_fuzz_fails_closed(tmp_path: Path, seed
         if mutation == 0:
             record["public_key"] = _invalid_curve_key(_valid_curve_key(rng), rng)
         elif mutation == 1:
-            record["principal_id"] = _jsonish(rng)
+            record["principal_id"] = rng.choice([None, 7, [], {}])
         elif mutation == 2:
-            record["principal_kind"] = _jsonish(rng)
+            record["principal_kind"] = rng.choice([None, 7, [], {}])
         elif mutation == 3:
             record["device_id"] = _invalid_device_id(rng)
         elif mutation == 4:
