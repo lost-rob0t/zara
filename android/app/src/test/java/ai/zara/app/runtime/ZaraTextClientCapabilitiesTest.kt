@@ -13,7 +13,7 @@ class ZaraTextClientCapabilitiesTest {
         val dealer = CapabilityDealer(
             listOf(
                 server(
-                    """{"body":{"max_payload_bytes":4194304,"max_payload_frame_bytes":1048576,"version":1},"id":"hello-ok","payload_count":0,"reply_to":"hello-1","session_id":"session-1","timestamp_ns":1,"type":"hello.ok"}"""
+                    """{"body":{"max_payload_bytes":4194304,"max_payload_frame_bytes":1048576,"max_payload_frames":4,"version":1},"id":"hello-ok","payload_count":0,"reply_to":"hello-1","session_id":"session-1","timestamp_ns":1,"type":"hello.ok"}"""
                 ),
                 server(
                     """{"body":{"capabilities":[{"id":"open_uri","version":1}]},"id":"caps-ok","payload_count":0,"reply_to":"caps-1","session_id":"session-1","timestamp_ns":2,"type":"capability.snapshot.ok"}"""
