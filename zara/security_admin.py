@@ -12,6 +12,7 @@ import threading
 from pathlib import Path
 from typing import Iterable
 
+from zara.json_limits import require_bounded_json_nesting
 from zara.principals import PrincipalContext
 from zara.security import Capability, SecurityError, SecurityRegistry
 from zara.security_state import PersistentSecurityState, SecurityStateError
@@ -54,7 +55,9 @@ def _recv_message(connection: socket.socket, *, limit: int) -> object:
             raw = bytes(chunks[:newline])
             break
     try:
-        return json.loads(raw.decode("utf-8"))
+        text = raw.decode("utf-8")
+        require_bounded_json_nesting(text)
+        return json.loads(text)
     except (UnicodeError, ValueError, RecursionError) as error:
         raise SecurityAdminError("security admin request is invalid JSON") from error
 
