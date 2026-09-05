@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Reproducible high-volume security fuzz + chaos soak.
+# Reproducible high-volume security fuzz + chaos + adversarial soak.
 #
 # Usage:
 #   nix develop -c bash scripts/security-fuzz-soak.sh
 #   ZARA_SECURITY_FUZZ_SEEDS=1024 nix develop -c bash scripts/security-fuzz-soak.sh
 #
-# Every generated case is derived from its integer seed. If a soak fails, rerun
-# the reported pytest parameter directly or rerun with the same seed corpus.
+# Every generated fuzz case is derived from its integer seed. If a soak fails,
+# rerun the reported pytest parameter directly or rerun with the same corpus.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,4 +30,5 @@ fi
 python -m pytest -q -o faulthandler_timeout=15 \
   t/test_security_fuzz.py \
   t/test_security_chaos.py \
+  t/test_security_adversarial.py \
   t/test_production_secure_listener.py
