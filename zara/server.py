@@ -1,473 +1,52 @@
-"""Long-lived Zara service lifecycle.
+"""Production Zara server facade with opt-in authenticated remote transport.
 
-``zara-server`` owns process lifecycle and RuntimeHost instances. It also owns
-the local-first ZARA/1 gateway lifecycle. Authentication and hard multi-user
-persistence isolation remain ordered work in issues #130-#131.
+The process/runtime lifecycle remains in :mod:`zara.server_core`. Local IPC is
+still the default. A TCP listener is accepted only when an explicit persistent
+security state is supplied, and is always backed by CURVE/ZAP.
 """
 
 from __future__ import annotations
 
-import argparse
-import concurrent.futures
-import enum
-import errno
-import fcntl
-import hashlib
 import json
 import logging
 import os
 import signal
-import stat
 import sys
-import tempfile
 import threading
-import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
+from zara import server_core as _core
 from zara.principals import PrincipalContext
-from zara.runtime import bridge, events
-from zara.runtime.backend import AgentRuntimeBackend
-from zara.runtime.commands import RuntimeCommand
-from zara.runtime.host import RuntimeHost
+
+GatewayFactory = _core.GatewayFactory
+HostFactory = _core.HostFactory
+PrincipalLimitExceeded = _core.PrincipalLimitExceeded
+PrincipalMismatch = _core.PrincipalMismatch
+PrincipalRuntime = _core.PrincipalRuntime
+RuntimeSupervisor = _core.RuntimeSupervisor
+ServerAlreadyRunning = _core.ServerAlreadyRunning
+ServerError = _core.ServerError
+ServerLease = _core.ServerLease
+ServerState = _core.ServerState
+ServerStateError = _core.ServerStateError
+default_zmq_endpoint = _core.default_zmq_endpoint
 
 logger = logging.getLogger(__name__)
 
-
-def _ipc_path_limit() -> int:
-    import zmq
-
-    return int(getattr(zmq, "IPC_PATH_MAX_LEN", 0) or 0)
-
-
-def _validate_ipc_endpoint(endpoint: str) -> str:
-    if not endpoint.startswith("ipc://"):
-        raise ValueError("TCP and non-IPC endpoints require authentication from issue #130")
-    path = endpoint.removeprefix("ipc://")
-    if not path:
-        raise ValueError("IPC endpoint path must not be empty")
-    max_len = _ipc_path_limit()
-    path_bytes = os.fsencode(path)
-    if max_len and len(path_bytes) > max_len:
-        raise ValueError(
-            f"IPC endpoint path is too long ({len(path_bytes)} bytes; maximum {max_len})"
-        )
-    return endpoint
-
-
-def _private_ipc_fallback(runtime_dir: Path) -> Path:
-    source = os.fsencode(os.fspath(runtime_dir.absolute()))
-    digest = hashlib.blake2s(source, digest_size=10).hexdigest()
-    parent = Path("/tmp") / f"zarathushtra-{os.getuid()}"
-    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    info = os.lstat(parent)
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
-        raise ServerError(f"IPC fallback directory is not owner-private: {parent}")
-    if stat.S_IMODE(info.st_mode) != 0o700:
-        os.chmod(parent, 0o700)
-    return parent / f"zara-server-{digest}.sock"
-
-
-def default_zmq_endpoint(runtime_dir: Path | str) -> str:
-    """Return a bounded owner-private local IPC endpoint for ``zara-server``."""
-
-    runtime_path = Path(runtime_dir).expanduser()
-    candidate = runtime_path / "zara-server.sock"
-    max_len = _ipc_path_limit()
-    if max_len and len(os.fsencode(candidate)) > max_len:
-        candidate = _private_ipc_fallback(runtime_path)
-    return _validate_ipc_endpoint(f"ipc://{candidate}")
-
-
-class ServerError(RuntimeError):
-    pass
-
-
-class ServerAlreadyRunning(ServerError):
-    pass
-
-
-class ServerStateError(ServerError):
-    pass
-
-
-class PrincipalLimitExceeded(ServerError):
-    pass
-
-
-class PrincipalMismatch(ServerError):
-    pass
-
-
-class ServerState(str, enum.Enum):
-    NEW = "new"
-    STARTING = "starting"
-    READY = "ready"
-    DEGRADED = "degraded"
-    STOPPING = "stopping"
-    STOPPED = "stopped"
-    FAILED = "failed"
-
-
-@dataclass
-class PrincipalRuntime:
-    principal: PrincipalContext
-    host: RuntimeHost
-    bus: bridge.RuntimeEventBus
-    startup_error: Optional[BaseException] = None
-
-    @property
-    def healthy(self) -> bool:
-        return self.startup_error is None and self.host.state.value == "running"
-
-
-HostFactory = Callable[[PrincipalContext, bridge.RuntimeEventBus], RuntimeHost]
-GatewayFactory = Callable[..., object]
-
-
-class RuntimeSupervisor:
-    """Principal-explicit lifecycle authority around RuntimeHost."""
-
-    def __init__(
-        self,
-        host_factory: Optional[HostFactory] = None,
-        *,
-        max_active_principals: int = 1,
-        shutdown_timeout: float = 5.0,
-        config=None,
-        prolog_factory: Optional[Callable[[PrincipalContext], Any]] = None,
-    ) -> None:
-        if max_active_principals < 1:
-            raise ValueError("max_active_principals must be at least 1")
-        self._host_factory = host_factory or self._build_default_host
-        self._prolog_factory = prolog_factory or self._default_prolog_factory
-        self._max_active_principals = int(max_active_principals)
-        self._shutdown_timeout = max(0.1, float(shutdown_timeout))
-        self._config = config
-        self._state = ServerState.NEW
-        self._lock = threading.RLock()
-        self._shutdown_lock = threading.Lock()
-        self._runtimes: dict[str, PrincipalRuntime] = {}
-
-    @property
-    def state(self) -> ServerState:
-        with self._lock:
-            return self._state
-
-    @property
-    def principals(self) -> tuple[PrincipalContext, ...]:
-        with self._lock:
-            return tuple(slot.principal for slot in self._runtimes.values())
-
-    def _build_default_host(
-        self,
-        principal: PrincipalContext,
-        bus: bridge.RuntimeEventBus,
-    ) -> RuntimeHost:
-        config = self._config
-        if config is None:
-            from zara.config import get_config
-
-            config = get_config()
-
-        prolog_engine = self._prolog_factory(principal)
-        router = None
-        if prolog_engine is not None:
-            from zara.runtime.intent_router import PrologFirstRouter
-            from zara.wake_words import resolve_wake_words
-
-            router = PrologFirstRouter(
-                prolog_engine,
-                wake_words=resolve_wake_words(config, prolog_engine),
-                principal_id=principal.principal_id,
-            )
-
-        def manager_factory():
-            from zara.agent import AgentManager
-
-            return AgentManager(
-                config=config,
-                principal=principal,
-                prolog_engine=prolog_engine,
-            )
-
-        return RuntimeHost(
-            backend_factory=lambda: AgentRuntimeBackend(manager_factory, router=router),
-            publisher=bus.publish,
-            subscriber=bus.subscribe,
-            shutdown_timeout=self._shutdown_timeout,
-            plugin_paths=tuple(config.get_module_search_paths()),
-            config=config,
-        )
-
-    @staticmethod
-    def _default_prolog_factory(principal: PrincipalContext):
-        from zara.prolog_engine import PrologEngine, locate_main_pl
-
-        try:
-            prolog_path = locate_main_pl()
-            logger.info(
-                "Loading principal Prolog engine for %s from %s",
-                principal.principal_id,
-                prolog_path,
-            )
-            return PrologEngine(prolog_path)
-        except Exception as error:
-            logger.warning(
-                "Prolog engine unavailable for principal %s; "
-                "deterministic intent routing is disabled: %s",
-                principal.principal_id,
-                error,
-            )
-            return None
-
-    @staticmethod
-    def _require_principal(principal: PrincipalContext) -> PrincipalContext:
-        if not isinstance(principal, PrincipalContext):
-            raise TypeError("supervisor operations require PrincipalContext")
-        return principal
-
-    def start(self, principal: PrincipalContext) -> PrincipalRuntime:
-        principal = self._require_principal(principal)
-        with self._lock:
-            if self._state not in {ServerState.NEW, ServerState.STOPPED}:
-                raise ServerStateError(f"supervisor cannot start from {self._state.value}")
-            self._state = ServerState.STARTING
-
-        try:
-            slot = self._open_runtime(principal)
-        except BaseException:
-            with self._lock:
-                self._state = ServerState.FAILED
-            raise
-
-        with self._lock:
-            self._state = ServerState.READY if slot.startup_error is None else ServerState.DEGRADED
-        return slot
-
-    def open_principal(self, principal: PrincipalContext) -> PrincipalRuntime:
-        principal = self._require_principal(principal)
-        with self._lock:
-            if self._state not in {ServerState.READY, ServerState.DEGRADED}:
-                raise ServerStateError(f"supervisor is not accepting principals: {self._state.value}")
-        slot = self._open_runtime(principal)
-        if slot.startup_error is not None:
-            with self._lock:
-                self._state = ServerState.DEGRADED
-        return slot
-
-    def _open_runtime(self, principal: PrincipalContext) -> PrincipalRuntime:
-        with self._lock:
-            existing = self._runtimes.get(principal.principal_id)
-            if existing is not None:
-                if existing.principal != principal:
-                    raise PrincipalMismatch(
-                        f"principal id {principal.principal_id!r} already has different ownership metadata"
-                    )
-                return existing
-            if len(self._runtimes) >= self._max_active_principals:
-                raise PrincipalLimitExceeded(
-                    f"active principal limit is {self._max_active_principals}; hard multi-user isolation is not enabled"
-                )
-            if self._state is ServerState.STOPPING:
-                raise ServerStateError("supervisor is stopping")
-            bus = bridge.RuntimeEventBus()
-            host = self._host_factory(principal, bus)
-            slot = PrincipalRuntime(principal=principal, host=host, bus=bus)
-            self._runtimes[principal.principal_id] = slot
-
-        try:
-            host.start().result(timeout=self._shutdown_timeout)
-        except BaseException as error:
-            slot.startup_error = error
-            logger.warning(
-                "Runtime startup degraded for principal %s: %s",
-                principal.principal_id,
-                error,
-            )
-        return slot
-
-    def runtime(self, principal: PrincipalContext) -> PrincipalRuntime:
-        principal = self._require_principal(principal)
-        with self._lock:
-            slot = self._runtimes.get(principal.principal_id)
-            if slot is None:
-                raise KeyError(principal.principal_id)
-            if slot.principal != principal:
-                raise PrincipalMismatch(principal.principal_id)
-            return slot
-
-    def submit(
-        self,
-        principal: PrincipalContext,
-        command: RuntimeCommand,
-    ) -> concurrent.futures.Future:
-        return self.runtime(principal).host.submit(command)
-
-    def subscribe(
-        self,
-        principal: PrincipalContext,
-        *,
-        maxsize: int = 0,
-    ) -> bridge.RuntimeEventSubscription:
-        return self.runtime(principal).bus.subscribe(maxsize=maxsize)
-
-    def publish(
-        self,
-        principal: PrincipalContext,
-        event: events.RuntimeEvent,
-    ) -> bridge.EventEnvelope:
-        return self.runtime(principal).bus.publish(event)
-
-    def shutdown(self) -> bool:
-        with self._shutdown_lock:
-            with self._lock:
-                if self._state in {ServerState.NEW, ServerState.STOPPED}:
-                    self._state = ServerState.STOPPED
-                    return True
-                if self._state is ServerState.FAILED and not self._runtimes:
-                    return False
-                self._state = ServerState.STOPPING
-                slots = tuple(self._runtimes.values())
-
-            deadline = time.monotonic() + self._shutdown_timeout
-            clean = True
-            futures: list[tuple[PrincipalRuntime, concurrent.futures.Future]] = []
-
-            for slot in slots:
-                try:
-                    futures.append(
-                        (slot, slot.host.shutdown(reason="zara-server shutdown"))
-                    )
-                except BaseException:
-                    logger.exception(
-                        "Failed to request runtime shutdown for %s",
-                        slot.principal.principal_id,
-                    )
-                    clean = False
-
-            for slot, future in futures:
-                remaining = max(0.0, deadline - time.monotonic())
-                try:
-                    future.result(timeout=remaining)
-                except BaseException:
-                    logger.exception(
-                        "Runtime shutdown failed for %s",
-                        slot.principal.principal_id,
-                    )
-                    clean = False
-
-            for slot in slots:
-                remaining = max(0.0, deadline - time.monotonic())
-                slot.host.join(timeout=remaining)
-                if slot.host.is_alive:
-                    logger.error(
-                        "Runtime host remained alive after shutdown deadline for %s",
-                        slot.principal.principal_id,
-                    )
-                    clean = False
-
-            with self._lock:
-                self._runtimes.clear()
-                self._state = ServerState.STOPPED if clean else ServerState.FAILED
-            return clean
-
-
-class ServerLease:
-    """Single-process ownership held by a local advisory file lock."""
-
-    def __init__(self, runtime_dir: Optional[Path | str] = None) -> None:
-        self._runtime_dir_override = None if runtime_dir is None else Path(runtime_dir)
-        self._fd: Optional[int] = None
-        self._path: Optional[Path] = None
-
-    @property
-    def path(self) -> Optional[Path]:
-        return self._path
-
-    @property
-    def held(self) -> bool:
-        return self._fd is not None
-
-    def _runtime_dir(self) -> Path:
-        if self._runtime_dir_override is not None:
-            return self._runtime_dir_override.expanduser()
-
-        xdg_runtime = os.environ.get("XDG_RUNTIME_DIR", "").strip()
-        if xdg_runtime and Path(xdg_runtime).is_absolute():
-            return Path(xdg_runtime) / "zarathushtra"
-
-        fallback = Path(tempfile.gettempdir()) / f"zarathushtra-{os.getuid()}"
-        logger.warning(
-            "XDG_RUNTIME_DIR is unavailable; using UID-scoped fallback %s",
-            fallback,
-        )
-        return fallback
-
-    @staticmethod
-    def _prepare_directory(path: Path) -> None:
-        path.mkdir(mode=0o700, parents=True, exist_ok=True)
-        info = os.lstat(path)
-        if not stat.S_ISDIR(info.st_mode):
-            raise ServerError(f"runtime path is not a directory: {path}")
-        if info.st_uid != os.getuid():
-            raise ServerError(f"runtime directory is not owned by current user: {path}")
-        if stat.S_IMODE(info.st_mode) != 0o700:
-            os.chmod(path, 0o700)
-
-    def acquire(self) -> Path:
-        if self._fd is not None:
-            return self._path
-
-        runtime_dir = self._runtime_dir()
-        self._prepare_directory(runtime_dir)
-        path = runtime_dir / "zara-server.lock"
-        flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        fd = os.open(path, flags, 0o600)
-        try:
-            os.fchmod(fd, 0o600)
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError as error:
-                if error.errno in {errno.EACCES, errno.EAGAIN}:
-                    raise ServerAlreadyRunning(
-                        f"another zara-server owns {path}"
-                    ) from error
-                raise
-
-            metadata = {
-                "pid": os.getpid(),
-                "started_ns": time.time_ns(),
-                "executable": "zara-server",
-            }
-            payload = (json.dumps(metadata, sort_keys=True) + "\n").encode("utf-8")
-            os.ftruncate(fd, 0)
-            os.lseek(fd, 0, os.SEEK_SET)
-            os.write(fd, payload)
-        except BaseException:
-            os.close(fd)
-            raise
-
-        self._fd = fd
-        self._path = path
-        return path
-
-    def release(self) -> None:
-        fd = self._fd
-        self._fd = None
-        if fd is None:
-            return
-        try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        finally:
-            os.close(fd)
-
-
-class ZaraServer:
-    """Foreground service process owning RuntimeSupervisor and ZARA/1 gateway."""
+_SAFE_REMOTE_CAPABILITIES = frozenset(
+    {
+        "session.basic",
+        "runtime.status",
+        "turn.submit",
+        "turn.cancel",
+        "tool.approve",
+    }
+)
+
+
+class ZaraServer(_core.ZaraServer):
+    """Zara service with secure opt-in TCP and unchanged local IPC defaults."""
 
     def __init__(
         self,
@@ -480,33 +59,56 @@ class ZaraServer:
         shutdown_timeout: float = 5.0,
         principal: Optional[PrincipalContext] = None,
         config=None,
+        security_state=None,
+        gateway_transport_config=None,
     ) -> None:
-        if endpoint is not None:
-            if not isinstance(endpoint, str) or not endpoint.strip():
-                raise ValueError("endpoint must be a non-empty string")
-            endpoint = _validate_ipc_endpoint(endpoint)
-        self._shutdown_timeout = max(0.1, float(shutdown_timeout))
-        self._supervisor = supervisor or RuntimeSupervisor(
-            shutdown_timeout=self._shutdown_timeout,
-            max_active_principals=1,
+        secure_tcp = isinstance(endpoint, str) and endpoint.startswith("tcp://")
+        if secure_tcp:
+            if security_state is None:
+                raise ValueError("TCP endpoint requires explicit security state")
+            if gateway_factory is not None:
+                raise ValueError("secure TCP endpoint does not accept a custom gateway factory")
+            from zara.security import validate_listener_security
+
+            validate_listener_security(endpoint, curve_enabled=True, zap_enabled=True)
+            core_endpoint = None
+        else:
+            core_endpoint = endpoint
+
+        super().__init__(
+            supervisor=supervisor,
+            lease=lease,
+            runtime_dir=runtime_dir,
+            endpoint=core_endpoint,
+            gateway_factory=gateway_factory,
+            shutdown_timeout=shutdown_timeout,
+            principal=principal,
             config=config,
         )
-        self._lease = lease or ServerLease(runtime_dir)
-        self._runtime_dir_override = None if runtime_dir is None else Path(runtime_dir).expanduser()
-        self._endpoint_override = endpoint
-        self._gateway_factory = gateway_factory or self._build_default_gateway
-        self._gateway = None
-        self._voice_ingress = None
-        self._tts_bridge = None
-        self._config = config
-        self._principal = principal or PrincipalContext.local_owner()
-        self._state = ServerState.NEW
-        self._lock = threading.RLock()
+        self._security_state = security_state
+        self._gateway_transport_config = gateway_transport_config
+        self._secure_tcp = secure_tcp
+        self._security_registry = None
+        self._security_admin = None
+        if secure_tcp:
+            self._endpoint_override = endpoint
 
     def _build_default_gateway(self, endpoint: str, *, supervisor, principal):
-        from zara.voice_runtime import RuntimeVoiceIngress
-        from zara.zmq_transport import ZaraZmqGateway
+        if not endpoint.startswith("tcp://"):
+            return super()._build_default_gateway(
+                endpoint,
+                supervisor=supervisor,
+                principal=principal,
+            )
+
+        if self._security_state is None:
+            raise ServerError("secure TCP listener has no security state")
+
         from zara.runtime.tts_output import TtsOutputBridge
+        from zara.security import Capability
+        from zara.security_admin import SecurityAdminServer
+        from zara.security_gateway import SecureZaraZmqGateway
+        from zara.voice_runtime import RuntimeVoiceIngress
 
         voice_ingress = RuntimeVoiceIngress(supervisor, principal=principal)
         self._voice_ingress = voice_ingress
@@ -521,209 +123,208 @@ class ZaraServer:
             )
         except AttributeError:
             self._tts_bridge = None
-        return ZaraZmqGateway(
-            endpoint,
-            supervisor=supervisor,
-            principal=principal,
-            voice_ingress=voice_ingress,
-            audio_output_format={
-                "codec": "pcm_s16le",
-                "sample_rate": sample_rate,
-                "channels": 1,
-            },
+
+        admin = SecurityAdminServer(
+            self._security_state,
+            capabilities={Capability(value) for value in _SAFE_REMOTE_CAPABILITIES},
         )
-
-    def _audio_output_sample_rate(self) -> int:
+        admin.start()
         try:
-            config = self._config
-            if config is None:
-                from zara.config import get_config
+            registry = self._security_state.load_registry()
+            admin.bind_registry(registry)
+            gateway = SecureZaraZmqGateway(
+                endpoint,
+                supervisor=supervisor,
+                security_registry=registry,
+                curve_server=self._security_state.load_server_config(),
+                context=None,
+                config=self._gateway_transport_config,
+                voice_ingress=voice_ingress,
+            )
+        except BaseException:
+            admin.close(timeout=self._shutdown_timeout)
+            raise
+        self._security_registry = registry
+        self._security_admin = admin
+        return gateway
 
-                config = get_config()
-            section = config.get_section("daemon") or {}
-            rate = int(section.get("audio_output_sample_rate", 24000))
-            if rate <= 0:
-                raise ValueError
-            return rate
-        except Exception:
-            return 24000
-
-    def _build_tts_engine(self):
-        from zara.tts.engine import TTSEngine
-
-        config = self._config
-        if config is None:
-            from zara.config import get_config
-
-            config = get_config()
-        tts_section = config.get_section("tts") or {}
-        provider = str(tts_section.get("provider", "qwen3"))
-        return TTSEngine(provider=provider, config={"tts": tts_section})
-
-    @property
-    def state(self) -> ServerState:
-        with self._lock:
-            return self._state
-
-    @property
-    def principal(self) -> PrincipalContext:
-        return self._principal
-
-    @property
-    def supervisor(self) -> RuntimeSupervisor:
-        return self._supervisor
-
-    def _resolve_endpoint(self, lease_path: Path) -> str:
-        if self._endpoint_override is not None:
-            return self._endpoint_override
-        runtime_dir = self._runtime_dir_override or lease_path.parent
-        return default_zmq_endpoint(runtime_dir)
-
-    def _close_voice_ingress(self) -> bool:
-        voice_ingress = self._voice_ingress
-        self._voice_ingress = None
-        if voice_ingress is None:
+    def _close_security_admin(self) -> bool:
+        admin = self._security_admin
+        self._security_admin = None
+        if admin is None:
             return True
         try:
-            voice_ingress.close(timeout=self._shutdown_timeout)
+            admin.close(timeout=self._shutdown_timeout)
             return True
         except BaseException:
-            logger.exception("Failed to stop daemon voice ingress cleanly")
-            return False
-
-    def _close_tts_bridge(self) -> bool:
-        bridge = self._tts_bridge
-        self._tts_bridge = None
-        if bridge is None:
-            return True
-        try:
-            bridge.stop(timeout=self._shutdown_timeout)
-            return True
-        except BaseException:
-            logger.exception("Failed to stop daemon TTS output bridge cleanly")
+            logger.exception("Failed to stop owner security admin endpoint cleanly")
             return False
 
     def start(self) -> ServerState:
-        with self._lock:
-            if self._state in {ServerState.READY, ServerState.DEGRADED}:
-                return self._state
-            if self._state not in {ServerState.NEW, ServerState.STOPPED}:
-                raise ServerStateError(f"server cannot start from {self._state.value}")
-            self._state = ServerState.STARTING
-
-        supervisor_started = False
-        gateway = None
         try:
-            lease_path = Path(self._lease.acquire())
-            self._supervisor.start(self._principal)
-            supervisor_started = True
-            endpoint = self._resolve_endpoint(lease_path)
-            gateway = self._gateway_factory(
-                endpoint,
-                supervisor=self._supervisor,
-                principal=self._principal,
-            )
-            self._gateway = gateway
-            gateway.start().result(timeout=self._shutdown_timeout)
-            if self._tts_bridge is not None:
-                self._tts_bridge.start()
-            supervisor_state = self._supervisor.state
-            with self._lock:
-                self._state = (
-                    ServerState.READY
-                    if supervisor_state is ServerState.READY
-                    else ServerState.DEGRADED
-                )
-                return self._state
+            return super().start()
         except BaseException:
-            if gateway is not None:
-                try:
-                    gateway.close(timeout=self._shutdown_timeout)
-                except BaseException:
-                    logger.exception("Failed to close ZARA/1 gateway after startup failure")
-            self._gateway = None
-            self._close_tts_bridge()
-            self._close_voice_ingress()
-            if supervisor_started:
-                try:
-                    self._supervisor.shutdown()
-                except BaseException:
-                    logger.exception("Failed to rollback runtime after gateway startup failure")
-            self._lease.release()
-            with self._lock:
-                self._state = ServerState.FAILED
+            self._close_security_admin()
             raise
 
     def stop(self) -> bool:
-        with self._lock:
-            if self._state is ServerState.STOPPED:
-                return True
-            if self._state is ServerState.NEW:
-                self._state = ServerState.STOPPED
-                self._close_tts_bridge()
-                self._close_voice_ingress()
-                self._lease.release()
-                return True
-            self._state = ServerState.STOPPING
-
-        clean = True
-        gateway = self._gateway
-        self._gateway = None
-        try:
-            if gateway is not None:
-                try:
-                    gateway.close(timeout=self._shutdown_timeout)
-                except BaseException:
-                    logger.exception("Failed to stop ZARA/1 gateway cleanly")
-                    clean = False
-            clean = self._close_tts_bridge() and clean
-            clean = self._close_voice_ingress() and clean
-            try:
-                clean = self._supervisor.shutdown() and clean
-            except BaseException:
-                logger.exception("Failed to stop runtime supervisor cleanly")
-                clean = False
-            return clean
-        finally:
-            self._lease.release()
-            with self._lock:
-                self._state = ServerState.STOPPED if clean else ServerState.FAILED
-
-    def run(self, stop_event: threading.Event) -> int:
-        self.start()
-        if self.state is ServerState.DEGRADED:
-            logger.warning("zara-server started in degraded state")
-        try:
-            stop_event.wait()
-        finally:
-            clean = self.stop()
-        return 0 if clean else 1
+        admin_clean = self._close_security_admin()
+        return super().stop() and admin_clean
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="zara-server",
-        description=(
-            "Long-lived Zara assistant service. ZARA/1 is local IPC only until "
-            "transport authentication lands in issue #130."
-        ),
+def _parser():
+    parser = _core._parser()
+    parser.description = (
+        "Long-lived Zara assistant service. Local IPC is the default; remote TCP "
+        "requires explicit owner-managed CURVE/ZAP security state."
     )
     parser.add_argument(
-        "--runtime-dir",
-        help="Override the owner-private runtime directory used for the server lease",
+        "--security-dir",
+        help="Owner-private directory containing daemon CURVE identity and enrolled clients",
+    )
+    management = parser.add_mutually_exclusive_group()
+    management.add_argument(
+        "--security-init",
+        action="store_true",
+        help="Initialize durable daemon CURVE state and print only the public server key",
+    )
+    management.add_argument(
+        "--security-show-public-key",
+        action="store_true",
+        help="Print the daemon CURVE public key",
+    )
+    management.add_argument(
+        "--security-enroll-key",
+        metavar="Z85_KEY",
+        help="Enroll one client CURVE public key for the local-owner principal",
+    )
+    management.add_argument(
+        "--security-revoke-device",
+        metavar="DEVICE_ID",
+        help="Revoke an enrolled device in durable security state",
+    )
+    management.add_argument(
+        "--security-list-clients",
+        action="store_true",
+        help="List enrolled public client metadata as JSON",
     )
     parser.add_argument(
-        "--endpoint",
-        help="Override the local ipc:// ZARA/1 endpoint; TCP is disabled until authentication",
+        "--security-device-id",
+        help="Device id required with --security-enroll-key",
     )
-    parser.add_argument(
-        "--shutdown-timeout",
-        type=float,
-        default=5.0,
-        help="Maximum seconds allowed for runtime/gateway drain and join (default: 5)",
-    )
-    parser.add_argument("-v", "--verbose", action="store_true")
     return parser
+
+
+def _security_state(args):
+    if not args.security_dir:
+        return None
+    from zara.security_state import PersistentSecurityState
+
+    return PersistentSecurityState(args.security_dir)
+
+
+def _live_security_admin(state):
+    if not os.path.lexists(state.control_socket_path):
+        return None
+    from zara.security_admin import SecurityAdminClient
+
+    return SecurityAdminClient(state.control_socket_path)
+
+
+def _require_daemon_offline(args) -> None:
+    """Prove no Zara daemon owns the runtime lease before touching disk directly."""
+    probe = ServerLease(args.runtime_dir)
+    try:
+        probe.acquire()
+    except ServerAlreadyRunning as error:
+        raise RuntimeError(
+            "zara-server is running but its live security admin endpoint is unavailable; "
+            "refusing disk-only security mutation"
+        ) from error
+    finally:
+        if probe.held:
+            probe.release()
+
+
+def _run_security_management(args) -> Optional[int]:
+    requested = any(
+        (
+            args.security_init,
+            args.security_show_public_key,
+            args.security_enroll_key is not None,
+            args.security_revoke_device is not None,
+            args.security_list_clients,
+        )
+    )
+    if not requested:
+        return None
+    state = _security_state(args)
+    if state is None:
+        raise ValueError("security management requires --security-dir")
+
+    if args.security_init:
+        _require_daemon_offline(args)
+        state.initialize()
+        print(state.server_public_key())
+        return 0
+    if args.security_show_public_key:
+        print(state.server_public_key())
+        return 0
+    if args.security_enroll_key is not None:
+        if not args.security_device_id:
+            raise ValueError("--security-enroll-key requires --security-device-id")
+        admin = _live_security_admin(state)
+        if admin is not None:
+            result = admin.request(
+                "enroll",
+                public_key=args.security_enroll_key,
+                device_id=args.security_device_id,
+            )
+            print(json.dumps(result, sort_keys=True))
+            return 0
+        _require_daemon_offline(args)
+        from zara.security import Capability
+
+        capabilities = {Capability(value) for value in _SAFE_REMOTE_CAPABILITIES}
+        enrolled = state.enroll_client(
+            args.security_enroll_key,
+            device_id=args.security_device_id,
+            principal=PrincipalContext.local_owner(),
+            capabilities=capabilities,
+        )
+        print(
+            json.dumps(
+                {
+                    "device_id": enrolled.device_id,
+                    "principal_id": enrolled.principal.principal_id,
+                    "public_key": enrolled.public_key,
+                    "capabilities": sorted(capability.value for capability in enrolled.capabilities),
+                    "active": enrolled.active,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.security_revoke_device is not None:
+        admin = _live_security_admin(state)
+        if admin is not None:
+            result = admin.request("revoke", device_id=args.security_revoke_device)
+            print(json.dumps(result, sort_keys=True))
+            return 0
+        _require_daemon_offline(args)
+        state.revoke_device(args.security_revoke_device)
+        print(json.dumps({"device_id": args.security_revoke_device, "active": False}, sort_keys=True))
+        return 0
+    if args.security_list_clients:
+        admin = _live_security_admin(state)
+        if admin is not None:
+            clients = admin.request("list")
+        else:
+            _require_daemon_offline(args)
+            clients = state.list_clients()
+        print(json.dumps(clients, sort_keys=True))
+        return 0
+    return None
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -733,6 +334,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    try:
+        management_result = _run_security_management(args)
+    except (OSError, RuntimeError, TypeError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    if management_result is not None:
+        return management_result
+
+    security_state = _security_state(args)
+    if isinstance(args.endpoint, str) and args.endpoint.startswith("tcp://"):
+        if security_state is None:
+            print("TCP endpoint requires --security-dir", file=sys.stderr)
+            return 2
+
     stop_event = threading.Event()
 
     def request_stop(_signum, _frame) -> None:
@@ -741,11 +356,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
 
-    server = ZaraServer(
-        runtime_dir=args.runtime_dir,
-        endpoint=args.endpoint,
-        shutdown_timeout=args.shutdown_timeout,
-    )
+    try:
+        server = ZaraServer(
+            runtime_dir=args.runtime_dir,
+            endpoint=args.endpoint,
+            shutdown_timeout=args.shutdown_timeout,
+            security_state=security_state,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 2
+
     try:
         return server.run(stop_event)
     except ServerAlreadyRunning as error:

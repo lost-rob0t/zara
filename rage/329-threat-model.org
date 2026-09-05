@@ -1,0 +1,255 @@
+#+title: RAGE #329 - Authenticated Zara daemon threat model and adversarial coverage
+#+property: header-args :results verbatim
+
+* Purpose
+This document is the security model for the production authenticated Zara TCP boundary introduced by #329 / PR #331. It is intentionally executable: =t/security_threat_catalog.py= contains the machine-readable threat catalog and =t/test_security_threat_model.py= fails CI when modeled coverage drifts.
+
+The target is not "prove the entire host secure". The target is narrower and testable: an Internet-reachable Zara ZARA/1 endpoint, authenticated with CURVE/ZAP, must bind requests to one live enrolled principal, enforce closed capabilities and bounded resources, expose only an owner-local administration channel, preserve one coherent durable security state, and recover safely from process crashes and concurrent management.
+
+* Method
+OWASP describes threat modeling as a structured and repeatable process that models trust boundaries, data flows, stores, processes and external entities, then asks what can go wrong and whether mitigations are testable. This model applies STRIDE to every modeled trust boundary instead of selecting only convenient categories.
+
+NIST SP 800-154 is used as the risk-modeling frame: model both attack and defense sides of the selected logical entities and preserve explicit assumptions/residual risks.
+
+The executable matrix is the Cartesian product:
+
+#+begin_src text
+8 trust boundaries × 6 STRIDE prompts = 48 mandatory modeled cells
+#+end_src
+
+Additional residual threats are recorded explicitly. Every threat is either:
+- =tested=: at least one deterministic pytest oracle is required; or
+- =out_of_scope=: a bounded rationale is mandatory and CI rejects missing rationale.
+
+* Target of evaluation
+** Assets
+1. Daemon long-term CURVE secret key.
+2. Daemon CURVE public identity / client pin.
+3. Enrolled client public keys and active/revoked state.
+4. Principal binding selected from authenticated transport identity.
+5. Capability set attached to each enrolled client.
+6. Live route/session ownership.
+7. Runtime commands and tool approval authority.
+8. Conversation/turn/session correlation metadata.
+9. Owner-local enroll/revoke/list authority.
+10. Durable =server-curve.json= and =clients.json= state.
+11. Security audit metadata.
+12. Service availability and bounded CPU/memory/socket/request resources.
+
+** Security objectives
+- Authentication :: only enrolled CURVE keys reach application protocol.
+- Server authenticity :: clients pin the daemon public key; wrong pins never complete ZARA/1.
+- Authorization :: authenticated identity does not imply capability; unknown actions fail deny.
+- Principal isolation :: ROUTER ids, payload fields and request ids never become cross-principal authority.
+- Revocation :: revoked keys lose live authority on the next application request without daemon restart.
+- Confidentiality :: daemon secret is owner-private and never printed; audit excludes arbitrary request bodies.
+- Integrity :: one canonical live registry and one serialized durable state; malformed state fails closed.
+- Availability :: bounded message/state sizes, per-principal quotas, bounded audit queues and hostile-handshake resilience.
+- Recovery :: concurrent first boot and mutation converge; process death releases locks; restart reconstructs committed state.
+
+* Data flow / trust boundaries
+#+begin_src text
+                    untrusted network
+                           |
+                           v
++-------------------------------------------------------+
+| B1 public_curve_tcp                                   |
+| TCP -> ZMTP -> CURVE server pin/client proof          |
++----------------------------+--------------------------+
+                             |
+                             v
++-------------------------------------------------------+
+| B2 zap_principal_binding                              |
+| ZAP CURVE credential -> live SecurityRegistry User-Id |
++----------------------------+--------------------------+
+                             |
+                             v
++-------------------------------------------------------+
+| B3 router_route_binding                               |
+| ROUTER routing id -> authenticated User-Id binding    |
++----------------------------+--------------------------+
+                             |
+                             v
++-------------------------------------------------------+
+| B4 zara1_protocol                                     |
+| strict ZARA/1 decode -> explicit message capability   |
++----------------------------+--------------------------+
+                             |
+                             v
++-------------------------------------------------------+
+| B5 quota_runtime_dispatch                             |
+| per-principal quota -> RuntimeSupervisor command      |
++-------------------------------------------------------+
+
+ owner-local process                         durable restart state
+        |                                             ^
+        v                                             |
++-------------------------+              +--------------------------+
+| B6 owner_unix_admin     |------------->| B7 persistent_security  |
+| mode 0600 AF_UNIX       |              | owner-private JSON       |
+| Linux SO_PEERCRED       |              | flock + atomic replace   |
++-------------------------+              +-------------+------------+
+                                                       |
+                                                       v
+                                           +------------------------+
+                                           | B8 crash_restart       |
+                                           | recovery/convergence   |
+                                           +------------------------+
+#+end_src
+
+* Threat actors
+** Remote unauthenticated attacker
+Can open arbitrary TCP connections, send malformed/raw ZMTP/CURVE traffic, choose routing identities and retry at volume. Has no enrolled key.
+
+** Remote authenticated limited client
+Owns one valid enrolled private key but only the capabilities assigned to it. May manipulate ZARA/1 fields, request ids, route ids, sequencing and reconnect behavior.
+
+** Compromised or revoked client
+Previously valid key/device whose authority is revoked or rotated. May keep an old connection alive and replay prior traffic.
+
+** Network MITM
+Can observe/drop/reorder/replace network packets but does not know pinned server/client long-term secrets.
+
+** Different-UID local attacker
+Can run local processes but is not the daemon owner. May attempt to connect to, replace or interfere with pathname AF_UNIX and state paths subject to Linux permissions.
+
+** Concurrent owner processes
+Legitimate owner CLI invocations may race each other. These are modeled as concurrency/fault conditions, not independent cryptographic principals.
+
+** Malformed persisted state
+Disk contents may be truncated, malformed, oversized, symlinked, permission-tampered or structurally inconsistent.
+
+** Resource-exhaustion attacker
+Attempts to maximize connections, requests, parser work, pending runtime commands, audit data, client records or malformed handshakes.
+
+** Crash/restart fault
+Process death may occur before persistence, before atomic replacement, or after durable state mutation but before live mutation returns.
+
+* STRIDE coverage
+The authoritative case list is =t/security_threat_catalog.py=. CI requires all 48 boundary/category cells.
+
+** Spoofing
+Representative required cases:
+- unknown CURVE client rejected before ZARA/1;
+- wrong server pin never reaches application handshake;
+- payload =user_id=/=principal= cannot override ZAP principal;
+- reused ROUTER id by another enrolled principal cannot inherit session;
+- different UID cannot use owner admin socket;
+- symlinked state cannot replace daemon identity;
+- concurrent first boot converges on one daemon identity.
+
+** Tampering
+Representative required cases:
+- malformed Z85 and mismatched CURVE public/secret pairs rejected;
+- bounded ASCII ZAP strings;
+- malformed authenticated ZARA/1 rejected before dispatch;
+- conflicting replay rejected as =idempotency_conflict=;
+- admin framing/path/permission attacks fail closed;
+- persisted JSON/records/keypair mismatch fail closed;
+- failed atomic replace does not mutate live authority;
+- lost-update/process-death interleavings preserve one canonical state.
+
+** Repudiation / accounting
+Representative required cases:
+- authenticated application decisions record bounded principal/device/request/action/decision metadata;
+- replay conflicts cannot silently rewrite a command;
+- restart reconstructs committed enroll/revoke state.
+
+The owner AF_UNIX boundary authenticates a Unix uid, not an individual process. Strong non-repudiation between two processes running as the same uid is explicitly out of scope because that uid can edit its own files/logs and signal/debug peers.
+
+** Information disclosure
+Representative required cases:
+- =--security-init= prints public key only, never server secret;
+- server/key state remains owner-private;
+- ZAP internal User-Id is opaque ASCII and not exposed by client listing;
+- authorization errors remain generic;
+- security audit has no arbitrary request-body surface and is bounded;
+- orphan atomic temp files are never interpreted as authority.
+
+** Denial of service
+Representative required cases:
+- reject libzmq < 4.3.3 for public CURVE/ZAP due known remotely reachable historical flaws;
+- unknown CURVE client storm cannot starve a valid enrolled client in the integration gate;
+- connection/rate/concurrent request quotas are per principal;
+- malformed authenticated traffic consumes rate budget;
+- admin request bytes, persisted state bytes and client count are bounded;
+- process death releases =flock= and process contention completes.
+
+** Elevation of privilege
+Representative required cases:
+- TCP cannot select unauthenticated/custom production gateway;
+- authentication does not grant missing capabilities;
+- unknown/future daemon messages have no default capability;
+- same request id across principals is isolated;
+- route-id handover cannot transfer session ownership;
+- persisted unknown capabilities/duplicate active identities fail closed;
+- revocation survives restart.
+
+* Research-derived hardening
+** CurveZMQ and ZAP
+CurveZMQ states goals including preventing eavesdropping, fraudulent/altered data, replay, amplification, MITM, key theft and identity attacks. Zara therefore treats CURVE as hop authentication/confidentiality but still performs application authorization and route/principal binding itself.
+
+ZAP CURVE credentials are the client's 32-byte long-term public key. ZAP's domain and returned User-Id are application security inputs; ZAP string fields are ASCII and bounded to 255 characters. Zara now validates that contract rather than accepting arbitrary UTF-8 identity metadata.
+
+** Known libzmq CURVE/ZAP vulnerabilities
+- CVE-2019-13132 affected CURVE-enabled servers before the fixed release lines including 4.3.2.
+- CVE-2020-15166 allowed an unauthenticated client to deny service to CURVE/ZAP servers through 4.3.2 and was fixed in 4.3.3.
+
+Production secure socket configuration therefore rejects =libzmq < 4.3.3=. This is a runtime safety invariant, not merely a dependency recommendation.
+
+** Linux owner-local control
+Linux pathname AF_UNIX permissions are meaningful on Linux and =SO_PEERCRED= returns connected peer credentials. Zara uses both mode/ownership checks and =SO_PEERCRED=; socket file permissions alone are not treated as portable authentication.
+
+** Cross-process state serialization
+Linux =flock= locks are associated with open file descriptions and are released when all corresponding file descriptors close. Zara serializes first initialization and registry read/modify/write with one exclusive owner-private lock. Real process-death tests verify lock release rather than assuming it.
+
+** Persistence limit
+Linux =fsync(file)= does not necessarily persist the containing directory entry; a separate directory =fsync= is needed for a full power-loss guarantee after rename. PR #331 deliberately claims process-crash convergence, not storage-device/power-loss transactional durability. A true power-loss guarantee needs a separately designed journal/directory-fsync protocol with explicit uncertain-commit semantics; silently bolting on one =fsync(directory)= after live/disk mutation would itself create ambiguous failure windows.
+
+* Historical vulnerability regression strategy
+Known libzmq vulnerabilities are not recreated with exploit payloads in CI. Instead:
+1. secure production runtime rejects versions below the fixed floor;
+2. current-runtime integration sends an unknown-client connection storm while proving a valid enrolled client still completes =hello.ok=;
+3. CURVE keypair/pinning/configuration invariants are unit-tested;
+4. exact-head CI remains the merge authority.
+
+This provides a safe regression oracle without embedding weaponized historical exploit material in the repository.
+
+* Explicit residual / out-of-scope risks
+1. Same-UID malicious owner process :: compromise of the Unix owner trust root. Requires separate service-account/sandbox/process-identity design.
+2. Root/kernel compromise :: below the TOE; root can bypass file ownership/process-memory assumptions.
+3. Upstream volumetric DDoS :: application quotas cannot restore a saturated uplink/provider; mitigate at network edge/upstream.
+4. Cryptanalytic break or compromised crypto supply chain :: Zara validates config/runtime floor but does not reimplement Curve25519/NaCl/libzmq.
+5. True power-loss/storage dishonesty :: current guarantee is process-crash/atomic-replace convergence, not a formally journaled power-loss transaction.
+6. Physical memory/side-channel attacks :: below this software boundary.
+
+* Source register
+- OWASP Threat Modeling Cheat Sheet :: https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html
+- OWASP Business Logic Security Cheat Sheet :: https://cheatsheetseries.owasp.org/cheatsheets/Business_Logic_Security_Cheat_Sheet.html
+- NIST SP 800-154 draft :: https://csrc.nist.gov/pubs/sp/800/154/ipd
+- ZeroMQ RFC 26 CurveZMQ :: https://rfc.zeromq.org/spec/26/
+- ZeroMQ RFC 27 ZAP :: https://rfc.zeromq.org/spec/27/
+- Linux unix(7) :: https://man7.org/linux/man-pages/man7/unix.7.html
+- Linux flock(2) :: https://man7.org/linux/man-pages/man2/flock.2.html
+- Linux fsync(2) :: https://man7.org/linux/man-pages/man2/fsync.2.html
+- NVD CVE-2019-13132 :: https://nvd.nist.gov/vuln/detail/CVE-2019-13132
+- libzmq 4.3.3 release / CVE-2020-15166 :: https://github.com/zeromq/libzmq/releases/tag/v4.3.3
+- CWE-287 Improper Authentication :: https://cwe.mitre.org/data/definitions/287.html
+- CWE-285 Improper Authorization :: https://cwe.mitre.org/data/definitions/285.html
+- CWE-294 Authentication Bypass by Capture-replay :: https://cwe.mitre.org/data/definitions/294.html
+- CWE-362 Concurrent Execution using Shared Resource with Improper Synchronization :: https://cwe.mitre.org/data/definitions/362.html
+- CWE-367 TOCTOU Race :: https://cwe.mitre.org/data/definitions/367.html
+- CWE-672 Operation on Resource after Expiration/Release :: https://cwe.mitre.org/data/definitions/672.html
+- CWE-770 Allocation of Resources Without Limits :: https://cwe.mitre.org/data/definitions/770.html
+
+* Gate
+Required before merge:
+1. threat catalog meta-tests green;
+2. focused security fuzz/chaos/adversarial/process-chaos suite green;
+3. full =scripts/test-all.sh= green;
+4. =nix flake check= green;
+5. packaged Zara build green;
+6. exact-head GitHub Actions green;
+7. branch reconciled with current master;
+8. no unresolved review/thread blockers;
+9. PR remains draft until all above are simultaneously true.
