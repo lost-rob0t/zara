@@ -36,8 +36,8 @@ class ZaraTextClientActorTest {
         ).get()
         assertEquals(TextTurnResult("conversation-1", "turn-1", "hello", true), result)
         assertEquals(2, dealer.sent.size)
-        assertEquals("hello", ZaraTextCodec.decodeClientForTest(dealer.sent[0]).type)
-        assertEquals("turn.submit", ZaraTextCodec.decodeClientForTest(dealer.sent[1]).type)
+        assertEquals(true, dealer.sent[0][1].decodeToString().contains("\"type\":\"hello\""))
+        assertEquals(true, dealer.sent[1][1].decodeToString().contains("\"type\":\"turn.submit\""))
         client.close()
         assertEquals(true, dealer.closed)
     }
