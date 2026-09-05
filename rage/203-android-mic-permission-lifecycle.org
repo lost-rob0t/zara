@@ -14,23 +14,27 @@
 - Correct owner RED =ddd0038196a6a20b79548876a4eac76bcd8f7632= requires permission loss to stop recorder first, then emit exactly one canonical cancel, with duplicate revocation and later permission restoration inert.
 - Coordinator RED =5f8fd492b026cc669f7d5833c774e481e5d478db= proves the permission event crosses the existing voice coordinator rather than a parallel state machine.
 - Stop-failure coverage =82f5e8d4c6042282707994810260be8ebd432985= proves canonical cancel and Idle cleanup still occur when recorder shutdown throws.
+- Foreground-loss RED =bfb3aaaa3c294464062d43c71056b8d8d4867220= proves Activity stop cancels an active manual capture exactly once and is idle-safe.
 
 * Implementation
 - =PushToTalkController.onMicrophonePermissionChanged(granted)= is the lifecycle owner because it owns both the recorder and =ManualVoiceCapture=.
 - Revocation uses the existing failure-safe =cancel()= ordering: recorder stop first, canonical stream cancel second.
 - Duplicate revocation is idempotent after state reaches Idle.
 - =ManualVoiceSessionCoordinator= delegates permission observations into the same controller.
+- =ManualVoiceSessionCoordinator.onHostStopped= uses that same owner and is a no-op while Idle.
 - Permission restoration is inert. A new user/system invocation must explicitly begin a new capture.
 - The temporary lower-level permission hook was removed so there is one mic lifecycle owner.
 
 * Production wiring
 - Stack helper #398 consumed recovered #174/current-master Android lineage before touching =AndroidAppSession.kt=.
 - =AndroidAppSession.onMicrophonePermissionChanged= serializes the observation on the existing voice-control executor.
+- =AndroidAppSession.onHostStopped= serializes foreground-loss cleanup on that same executor.
 - =MainActivity= owns the observable mic-permission bit instead of freezing an =onCreate= snapshot.
 - The ActivityResult callback immediately reconciles grant/revocation with the canonical voice coordinator.
 - =onResume= re-reads platform permission, catching Settings-side revocation while Zara was backgrounded.
+- =onStop= cancels any active manual PTT before it can remain recording in the background; cleanup failure is surfaced and canonical voice state is refreshed.
 - Reconciliation refreshes canonical voice state and surfaces cleanup failures to the existing operation error state; no failure is swallowed.
-- No permission restoration path restarts capture.
+- No permission restoration or foreground restoration path restarts capture.
 
 * VoiceInteraction note
 - =ZaraVoiceInteractionSession= already re-checks platform RECORD_AUDIO before every assistant capture start, and its recorder failure path cancels the canonical stream if permission disappears while actively reading.
