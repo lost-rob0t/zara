@@ -1,0 +1,64 @@
+* RAGE #388 r12 — exact-invocation cancellation at ToolNode request wrapper
+
+** Immutable start
+- Issue: #388
+- Recovered implementation lineage: r10 head 6f9dda69b7172e937994a101032b2c4c1fe8404b
+- Canonical master observed before implementation: 28f8afea91f8e3f389d9a28df6fe8089f56f86f4
+
+** Falsified transports
+- r5-r6: ContextVar transport; exact-head Core failures.
+- r7-r9: InjectedState variants; exact-head Core/schema failures.
+- r10: generic InjectedToolArg with caller/Core value; ToolNode strips the value before plugin execution.
+- r11: SkipJsonSchema without injected metadata; exact-head CI #1608 still failed the same four execution cases before plugin bodies entered. Android and both shared-mic lanes were green, isolating the defect to Core execution transport.
+
+** Source analysis
+LangGraph ToolNode exposes a documented async request wrapper. The wrapper receives ToolCallRequest plus the same execute(request) function that owns ToolNode validation, graph/runtime injection, error handling, and result normalization. ToolCallRequest.override(tool=...) is explicitly supported for per-invocation dynamic tool substitution.
+
+ToolNode strips caller-supplied values for InjectedToolArg fields immediately before invoking request.tool. That is the correct anti-spoofing behavior and must remain. Therefore Core must not fight the strip stage; it must reattach its trusted value at the final invocation boundary.
+
+** Design
+- Keep ToolCancellationArg as generic InjectedToolArg so it stays absent from the model-facing tool schema.
+- Keep the existing gated Core node as the only approval/current-binding authority.
+- Create one Core-owned cancellation signal per exact approved invocation and overwrite any model-supplied cancellation value before entering ToolNode.
+- Configure the existing ToolNode with one awrap_tool_call function.
+- Wrapper accepts a cancellation value only when it is the Core ToolCancellation object already placed by the gated node.
+- Wrapper substitutes only request.tool with a one-invocation delegate and invokes execute(request.override(tool=delegate)) exactly once.
+- ToolNode performs its normal injected-argument stripping/validation/error policy. The delegate then reattaches the captured Core cancellation view immediately before calling the original BaseTool.ainvoke.
+- On turn cancellation Core signals first, then cancels/awaits the ToolNode task; ToolCancelled(reason="turn cancelled") remains the sole terminal cancellation event.
+- No direct plugin-function call, no second executor, no second approval route, no ContextVar, no shared mutable per-tool cancellation state, no Android changes.
+
+** Adversarial properties
+- Model spoof: ToolNode strips caller cancellation and the delegate overwrites with the Core value.
+- Concurrent calls: cancellation lives in a per-request delegate, not a tool-global or context-global slot.
+- Approval rejection/unload: existing gates return before signal creation/execution.
+- Third-party BaseTool compatibility: delegate calls the registered tool's public ainvoke boundary; ToolNode remains the execution owner.
+- Errors: validation/errors still traverse ToolNode because its execute(request) path is retained.
+
+** Acceptance
+Existing deterministic #388 acceptance remains authoritative:
+- model schema excludes cancellation;
+- sync cooperative cancellation before side effects;
+- async signal before CancelledError;
+- concurrent invocation isolation;
+- approval rejection;
+- unloaded tools;
+- model spoof cannot retarget Core cancellation.
+
+Then run full repository-native gates: scripts/test-all.sh, nix flake check, package build, Android compatibility/APK/secret gate, and both shared-mic lanes on the exact candidate head. If master moves, recover onto exact current master and rerun before merge.
+
+** Implementation
+- 14508e6f89c03cd8be9db96b0fe38334de3be98a adds the per-invocation delegation wrapper.
+- 79ff7d4f723a962f9d4ffb8473d4698a7559ca0e binds that wrapper to the one canonical ToolNode.
+- d4f6e1d7cac0d8976a1f01d2f67b688611dceee9 is a two-parent recovery commit whose second parent is exact canonical master 28f8afea91f8e3f389d9a28df6fe8089f56f86f4. The master delta was verified as five sibling-owned Android/RAGE files with zero Core overlap; their exact canonical blobs were preserved unchanged.
+
+** Exact-head falsification — CI #1616
+Exact head 12ae6963fc105c702d9fc9fce6530c9a1162101c failed only the four plugin-entry/spoof cancellation cases. The full suite executed 1985 tests with 4 failures; approval rejection and unload acceptance passed. Android APK/native/secret compatibility plus Arch and Ubuntu shared-mic lanes were green. Flake/package were correctly skipped after Core test failure.
+
+The no-op wrapper at that head preserved the original registered tool, so LangGraph 1.1.0 recomputed injected arguments from that tool immediately before invocation and removed the Core-provided =InjectedToolArg= value. Plugin bodies therefore never entered.
+
+Upstream 1.1.0 source confirms =_execute_tool_async= calls =_inject_tool_args(call, request.runtime, tool)= using the possibly overridden =request.tool=. For a dynamic tool, =_inject_tool_args= computes injection metadata from that dynamic tool. This is the missing seam: the invocation-local delegate must expose a plain full JSON input schema so cancellation is no longer classified as caller-injected during the second ToolNode pass. The original registered tool remains model-hidden and performs its ordinary BaseTool validation after the delegate restores the exact Core-owned view.
+
+- e80fb1be82195725b31a7faf9a43592f1101fb58 restores the per-invocation BaseTool delegate but deliberately gives it the original full JSON schema with injection annotations erased. The delegate remains internal/unbound to the model and forwards once to the original tool. No Android code or second executor/approval path is introduced.
+
+** Gate
+The next CI head after this append is the exact-master candidate. Do not merge until every required lane is green and review threads are clear. Re-read canonical master immediately before merge and recover again if it moves.
