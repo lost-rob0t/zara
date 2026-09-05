@@ -50,6 +50,7 @@ sealed interface RuntimeEvent {
     data class HelloAccepted(val generation: Long, val sessionId: String) : RuntimeEvent
     data class ConnectionLost(val generation: Long, val reason: String) : RuntimeEvent
     data class ConnectionFailed(val generation: Long, val reason: String) : RuntimeEvent
+    data class ReconnectSchedulingFailed(val generation: Long) : RuntimeEvent
     data class EnrollmentObserved(val readiness: EnrollmentReadiness) : RuntimeEvent
     data class RoleAssessed(val outcome: RoleOutcome) : RuntimeEvent
 }
@@ -113,6 +114,21 @@ fun reduce(state: RuntimeState, event: RuntimeEvent): RuntimeState = when (event
                     failReconnect(state, state.server.attempt, event.reason)
                 else -> state
             }
+        }
+    }
+
+    is RuntimeEvent.ReconnectSchedulingFailed -> {
+        val reconnecting = state.server as? ServerConnection.Reconnecting
+        if (event.generation != state.generation || reconnecting == null) {
+            state
+        } else {
+            state.copy(
+                server = ServerConnection.OfflineDegraded(
+                    reconnecting.attempt,
+                    "reconnect scheduler unavailable",
+                ),
+                sessionId = null,
+            )
         }
     }
 
