@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from .config import init_config
+from .desktop.control import send_desktop_control
 from .stt_backends import (
     STT_PROVIDERS,
     backend_compat,
@@ -165,6 +166,31 @@ def _default_daemon_endpoint() -> str:
     return default_zmq_endpoint(ServerLease()._runtime_dir())
 
 
+def _desktop_control_runtime_dir() -> Path:
+    """Resolve the canonical owner-private Zara runtime directory."""
+    from .server import ServerLease
+
+    return ServerLease()._runtime_dir()
+
+
+def _run_desktop_control(command: str) -> int:
+    """Control the existing desktop or start exactly one visible owner."""
+    from .desktop.app import main as desktop_main
+
+    runtime_dir = _desktop_control_runtime_dir()
+    try:
+        send_desktop_control(command, runtime_dir=runtime_dir)
+        return 0
+    except ConnectionError:
+        if command == "hide":
+            print("Error: Zara desktop is not running.", file=sys.stderr)
+            return 2
+        return int(desktop_main([sys.argv[0]], initial_command="show"))
+    except Exception as error:
+        print(f"Error: desktop control failed: {error}", file=sys.stderr)
+        return 2
+
+
 def main():
     config = init_config()
     stt_config = config.get_section("stt") if config is not None else {}
@@ -184,6 +210,7 @@ def main():
                "  zara --standalone 'hello'     # Explicit private local runtime\n"
                "  zara --connect ipc:///run/user/1000/zara.sock 'hello'\n"
                "  zara --desktop                # Native desktop / Quick Copilot\n"
+               "  zara --toggle-desktop         # Toggle the existing desktop\n"
                "  zara --console                # Interactive REPL\n"
                "  zara --voice                  # One-shot voice command\n"
                "  zara --dictate                # Continuous dictation mode\n"
@@ -197,6 +224,21 @@ def main():
         "--desktop",
         action="store_true",
         help="Start the native desktop Copilot"
+    )
+    mode_group.add_argument(
+        "--toggle-desktop",
+        action="store_true",
+        help="Toggle the one running desktop Copilot, starting it if absent"
+    )
+    mode_group.add_argument(
+        "--show-desktop",
+        action="store_true",
+        help="Show/focus the one desktop Copilot, starting it if absent"
+    )
+    mode_group.add_argument(
+        "--hide-desktop",
+        action="store_true",
+        help="Hide the running desktop Copilot"
     )
     mode_group.add_argument(
         "--console",
@@ -309,6 +351,15 @@ def main():
     if args.desktop:
         from .desktop.app import main as desktop_main
         sys.exit(desktop_main([sys.argv[0]]))
+
+    elif args.toggle_desktop:
+        sys.exit(_run_desktop_control("toggle"))
+
+    elif args.show_desktop:
+        sys.exit(_run_desktop_control("show"))
+
+    elif args.hide_desktop:
+        sys.exit(_run_desktop_control("hide"))
 
     elif args.console:
         from .console import main as console_main
