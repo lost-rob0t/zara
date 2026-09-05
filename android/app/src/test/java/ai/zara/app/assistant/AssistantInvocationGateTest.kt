@@ -23,6 +23,28 @@ class AssistantInvocationGateTest {
     }
 
     @Test
+    fun `capture cancellation can only be claimed once per invocation`() {
+        val gate = AssistantInvocationGate()
+        gate.beginShow()
+        gate.endShow()
+
+        assertTrue(gate.claimCancellation())
+        assertFalse(gate.claimCancellation())
+    }
+
+    @Test
+    fun `next invocation resets cancellation claim`() {
+        val gate = AssistantInvocationGate()
+        gate.beginShow()
+        gate.endShow()
+        assertTrue(gate.claimCancellation())
+
+        assertTrue(gate.beginShow())
+        gate.endShow()
+        assertTrue(gate.claimCancellation())
+    }
+
+    @Test
     fun `hide while already hidden is idempotent`() {
         val gate = AssistantInvocationGate()
 
