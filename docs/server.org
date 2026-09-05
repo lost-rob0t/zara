@@ -1,89 +1,232 @@
-#+title: Zara Server
+#+title: Zara server and ZARA/1
 
-=zara= is the client-facing command. =zara-server= is the long-lived service process.
+* Overview
 
-This split is intentional. A client asks Zara to do work; the server owns runtime lifecycle. We do not make one executable quietly switch from caller to authority because a flag happened to be present.
+=zara= is the client-facing command. =zara-server= is the long-lived Zara service process.
 
-* Current slice: issue #128
+This split is permanent architectural intent: clients ask Zara to do work; the server owns runtime lifecycle. The ordinary client must not quietly become the service authority because a flag or UI mode happened to be selected.
 
-Issue #128 establishes the process boundary only:
+The original server bootstrap document in this path described issue #128 and said no network protocol existed. That is now stale. The daemon program, =ZARA/1= protocol, CURVE/ZAP authentication slice, principal-scoped state work, and cross-process voice transport have all progressed beyond that initial boundary.
 
-- =zara-server= runs in the foreground and is suitable for supervision by systemd, s6, runit, tmux, or an ordinary shell;
-- it owns a principal-explicit =RuntimeSupervisor=;
-- the supervisor owns existing =RuntimeHost= instances rather than bypassing them;
-- duplicate server processes are rejected with a held kernel file lock;
-- SIGINT/SIGTERM request a normal bounded shutdown;
-- every owned runtime is asked to stop and its worker thread is joined before the process releases ownership;
-- =ZaraClient= is the transport-neutral caller interface;
-- =InProcessZaraClient= preserves a standalone embedding path.
+The larger migration/release story is still active, so this document separates implemented foundations from open release claims.
 
-No network protocol exists in this slice. That is #129.
+* Current status
 
-* What the principal field means today
-
-A =PrincipalContext= is server-side ownership metadata. It is not authentication.
-
-The default server starts one local-owner principal and caps active principals at one. The registry can be exercised with multiple synthetic principals in tests, but that does not magically isolate current Chroma persistence, PySWIP global state, plugin subscriptions, or every event path.
-
-Authentication belongs to #130. Hard conversation/context/memory/event isolation belongs to #131. Until those gates land, calling a string =user_id= would be security theater with a type annotation.
+| Area | Status |
+|------+--------|
+| =zara-server= process ownership / supervision | Implemented. |
+| =ZaraClient= / in-process client boundary | Implemented. |
+| =ZARA/1= ZeroMQ ROUTER/DEALER protocol | Implemented foundation; issue #129 completed. |
+| CURVE/ZAP authentication / authorization / key lifecycle | Implemented security slice; issue #130 completed. |
+| Principal-scoped conversation/context/memory isolation | Implemented isolation slice; issue #131 completed. |
+| Cross-process voice/audio transport and interruption semantics | Implemented slice; issue #132 completed, with later integration/release work still relevant. |
+| CLI/desktop daemon-client migration | Active / reopened under issue #133. Desktop daemon-client default behavior has landed in slices but migration parity remains under test. |
+| Full daemon Voice-replacement / adversarial release gate | Open under issue #134. Do not claim the whole daemon architecture is release-proven until this gate passes. |
+| Android authenticated =ZARA/1= client | Foundations merged; issue #173 is reopened for remaining reconnect/session-continuity/full acceptance work. |
 
 * Runtime ownership
 
 #+begin_src text
-zara / future clients
-        |
-   ZaraClient
-        |
-   (#129 ZARA/1)
-        |
-   zara-server
-        |
-   ZaraServer
-        |
- RuntimeSupervisor
-        |
- PrincipalRuntime
-        |
-   RuntimeHost
-        |
- existing agent / TurnCoordinator / tools / plugins
+Desktop / CLI / Android / future clients
+                 |
+             ZaraClient
+                 |
+        ZARA/1 or in-process
+                 |
+            zara-server
+                 |
+            ZaraServer
+                 |
+        RuntimeSupervisor
+                 |
+         PrincipalRuntime
+                 |
+            RuntimeHost
+                 |
+  agent / Prolog / voice / tools / plugins
 #+end_src
 
-The server does not call AgentManager, Prolog, memory, tools, or Qt directly. =RuntimeHost= remains the application-service boundary.
+The server does not bypass =RuntimeHost= to call AgentManager, Prolog, memory, tools, or Qt directly. =RuntimeHost= remains the application-service boundary.
 
-* Process ownership
+* Server process lifecycle
 
-The server lock lives under:
+The daemon owns a process lease so multiple accidental server processes do not silently contend for the same local runtime state.
+
+The runtime lock lives under:
 
 #+begin_src text
 $XDG_RUNTIME_DIR/zarathushtra/zara-server.lock
 #+end_src
 
-The directory is owner-only. The lock file can contain PID/start metadata for humans, but the held =flock= is authority. A crash closes the descriptor and releases the lock; Zara does not decide that a stale PID file is a distributed consensus system.
+If =$XDG_RUNTIME_DIR= is unavailable, Zara uses its UID-scoped temporary fallback policy and warns.
 
-If =$XDG_RUNTIME_DIR= is unavailable, Zara uses a UID-scoped temporary fallback and warns.
+The held kernel lock is authority. Human-readable PID/start metadata may exist, but a stale PID file is not treated as a consensus mechanism.
 
 * Shutdown
 
-The signal handler only sets a stop event. Normal process flow then:
+Signal handling requests a bounded orderly shutdown rather than doing complex work in the signal handler.
 
-1. stops accepting new runtime slots;
-2. requests shutdown for every RuntimeHost;
-3. waits within the configured deadline;
-4. joins each worker thread;
-5. marks the server stopped or failed;
-6. releases the process lease;
-7. exits.
+Normal shutdown is responsible for:
 
-This is required because Python daemon threads may be abandoned abruptly during interpreter shutdown.
+1. stopping acceptance of new work/runtime slots;
+2. stopping owned RuntimeHost lifecycles;
+3. cancelling or completing bounded in-flight work according to runtime policy;
+4. stopping plugins/subscriptions/workers;
+5. joining owned worker threads/tasks within deadlines;
+6. closing transport resources;
+7. releasing the process lease;
+8. exiting with an honest final state.
 
-* Next slices
+Desktop window close/hide is not daemon shutdown. Client disconnect is not daemon shutdown unless an explicitly authorized administrative command says otherwise.
 
-- #129: =ZARA/1= ZeroMQ ROUTER/DEALER protocol and =ZmqZaraClient=.
-- #130: CURVE/ZAP authentication, authorization, key lifecycle, quotas, audit.
-- #131: principal-scoped conversations, context, memory, persistence, and event isolation.
-- #132: live voice/audio transport and cross-process barge-in.
-- #133: migrate normal CLI/desktop surfaces to the shared client.
-- #134: adversarial release gate deciding whether the server/client path becomes canonical.
+* =ZARA/1=
 
-The RAGE evidence for this slice is in =rage/daemon-128-research.org=, =rage/daemon-128-design.org=, and =rage/daemon-139.org=.
+=ZARA/1= is Zara's versioned application protocol over ZeroMQ.
+
+The transport model is:
+
+- server: ROUTER;
+- client: DEALER;
+- provider-neutral application messages;
+- optional opaque binary payload frames for media;
+- explicit negotiation and bounded behavior.
+
+A client application frame begins with the protocol marker and typed envelope. The ROUTER routing id is transport-owned and is never accepted as authenticated user identity.
+
+Important envelope concepts include:
+
+- message =type=;
+- request/message =id= and =reply_to=;
+- =session_id=;
+- =conversation_id= where applicable;
+- canonical =turn_id=;
+- =stream_id= and sequence for streaming media/events;
+- timestamps / trace ids where applicable;
+- =content_type= and payload count for binary media.
+
+Unknown major protocol versions and unknown message types fail closed. Provider SDK objects, Python pickle payloads, class paths, or arbitrary import names do not cross the protocol boundary.
+
+* Bounds and backpressure
+
+Protocol limits are security and correctness properties, not optional tuning.
+
+The daemon/client path uses bounded concepts including:
+
+- message/payload sizes;
+- ZeroMQ HWM / max message size;
+- connect/send/receive timeouts;
+- heartbeats/liveness;
+- per-route or per-session outbound pressure;
+- request correlation and deadlines;
+- bounded reconnect behavior;
+- per-principal/session resource controls.
+
+One stalled/hostile client must not be allowed to create unbounded memory growth or starve unrelated principals.
+
+* Authentication and principal identity
+
+Remote/authenticated Zara uses CURVE/ZAP-style device identity rather than trusting a caller-supplied =user_id= string.
+
+The security model includes:
+
+- daemon long-term public/private key material;
+- unique client/device key material;
+- client pinning of the daemon public key;
+- ZAP/auth mapping from authenticated client key to an internal Zara principal;
+- authorization policy separate from authentication;
+- revocation/rotation/enrollment states;
+- sanitized diagnostics/audit records;
+- unsafe wildcard/public listener configurations rejected when required authentication is absent.
+
+The authenticated principal is injected on the server side. Envelope/display metadata cannot override it.
+
+* Principal-scoped state
+
+Private state is structurally scoped to an authenticated principal rather than filtered by UI convention.
+
+This includes at least:
+
+- conversations and messages;
+- context state;
+- learned memories/summaries/vector namespaces;
+- runtime/turn/tool/voice event delivery;
+- tool approval/grant state;
+- durable user/session state where supported.
+
+Knowing another conversation id does not grant access to it. UI filtering is not treated as an isolation boundary.
+
+* Voice over the daemon boundary
+
+The voice protocol keeps device ownership at the client edge.
+
+The client/device owns:
+
+- microphone capture;
+- speaker playback;
+- immediate local playback stop during interruption;
+- wake-word handling where available.
+
+The daemon/runtime owns:
+
+- accepted audio ingress processing;
+- VAD/STT and transcript events;
+- canonical conversation/turn routing;
+- model and tool work;
+- TTS generation;
+- cancellation of stale work.
+
+Audio uses binary payload frames with explicit stream ids/sequences. Raw audio is not base64-encoded into ordinary JSON envelopes and must not leak into normal logs/audit records.
+
+Barge-in uses the same canonical turn cancellation model as typed interaction: stale text/audio/tool output for a cancelled turn must not mutate or speak into a newer turn.
+
+* Client migration
+
+Issue #133 remains active/reopened. The direction is still one reusable daemon client library for CLI and desktop rather than separate protocol implementations.
+
+Desktop daemon-client default behavior has landed in regression/fix slices, but the remaining migration work still includes proving reconnect/session continuity and preserving explicit standalone behavior while the final parity gate is open.
+
+Rules during migration:
+
+- do not create a Qt-specific wire protocol;
+- do not silently start a duplicate runtime when the service boundary should be used;
+- distinguish transport reconnect from actual in-flight turn resume;
+- stale events from an older session/connection must not mutate the current conversation;
+- closing desktop windows must not kill the daemon;
+- standalone fallback/deprecation decisions remain explicit.
+
+* Android clients
+
+Android uses the same =ZARA/1= security model rather than inventing mobile-only identity semantics.
+
+Current merged foundations include Android credential protection, enrollment state, server-key pin handling, JeroMQ/CURVE integration, and typed auth/repository pieces. Issue #173 remains reopened for the complete authenticated client acceptance surface, including reconnect/session continuity and ordinary turn/event integration.
+
+See [[file:../wiki/android.org][wiki/android.org]].
+
+* Release gate
+
+Issue #134 is deliberately stronger than the sum of individual implementation issues.
+
+The daemon should not be advertised as a proven replacement for the full daily Voice workflow until the release matrix demonstrates, together:
+
+- persistent authenticated sessions;
+- visible partial/final transcripts;
+- multi-turn voice/text conversation continuity;
+- streaming assistant text/audio;
+- natural barge-in;
+- durable history and memory;
+- tools and explicit approvals;
+- reconnect/restart behavior;
+- multiple isolated principals;
+- malformed/hostile client bounds;
+- security fuzz/property coverage;
+- latency and soak evidence.
+
+If that matrix exposes a regression, fix the owning slice. Do not weaken the gate to manufacture a green claim.
+
+* Related documents
+
+- [[file:architecture.org][architecture.org]] — system ownership/invariants.
+- [[file:development.org][development.org]] — build/test expectations.
+- [[file:research/002-unified-copilot-voice-visual-ci.md][unified Copilot/voice continuity research]].
+- [[file:../wiki/android.org][Android client]].
+- [[file:../wiki/tool-approvals.org][tool approvals]].
