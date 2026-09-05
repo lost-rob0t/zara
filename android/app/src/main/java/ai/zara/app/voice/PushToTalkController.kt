@@ -1,13 +1,14 @@
 package ai.zara.app.voice
 
 interface PcmRecorder : AutoCloseable {
-    fun start(onFrame: (ByteArray) -> Unit)
+    fun start(onFrame: (ByteArray) -> Unit, onFailure: (Throwable) -> Unit)
     fun stop()
 }
 
 class PushToTalkController(
     private val capture: ManualVoiceCapture,
     private val recorder: PcmRecorder,
+    private val onRecorderFailure: (Throwable) -> Unit = {},
 ) : AutoCloseable {
     fun state(): ManualVoiceState = capture.state()
 
@@ -18,9 +19,12 @@ class PushToTalkController(
     ) {
         capture.begin(context, permissionGranted, connected)
         try {
-            recorder.start(capture::acceptPcm)
+            recorder.start(
+                capture::acceptPcm,
+                ::handleRecorderFailure,
+            )
         } catch (error: Throwable) {
-            capture.cancel()
+            capture.cancelIfActive()
             throw error
         }
     }
@@ -32,7 +36,7 @@ class PushToTalkController(
         try {
             recorder.stop()
         } catch (error: Throwable) {
-            capture.cancel()
+            capture.cancelIfActive()
             throw error
         }
         capture.commit()
@@ -48,7 +52,7 @@ class PushToTalkController(
         } catch (error: Throwable) {
             stopFailure = error
         }
-        capture.cancel()
+        capture.cancelIfActive()
         if (stopFailure != null) throw stopFailure
     }
 
@@ -57,5 +61,10 @@ class PushToTalkController(
             cancel()
         }
         recorder.close()
+    }
+
+    private fun handleRecorderFailure(error: Throwable) {
+        capture.cancelIfActive()
+        onRecorderFailure(error)
     }
 }
