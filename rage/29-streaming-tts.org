@@ -53,14 +53,19 @@
 - No protocol shape, provider, playback ownership, Android code, authorization, or public runtime contract changed.
 
 * Exact-master recovery — 2026-09-05
-- Recovery base :: =a1429625ec43880310d6c53d8343e58749003b6f= after #356 landed.
-- Recovery PR :: #360.
-- The stale #358 wrapper inherited #348 security files from its old base; #360 replays only the three-file #29 delta onto canonical master and #358 is closed superseded.
-- Adversarial acceptance A2 now has a direct deterministic regression: a stale synthesis state using a reused turn id is forced through cleanup while a replacement occupies =_turns=; the replacement must survive by object identity.
-- Fresh exact-head full repository/Nix/package/Android/shared-mic CI is mandatory for the recovered head.
+- First recovery base :: =a1429625ec43880310d6c53d8343e58749003b6f= after #356 landed.
+- #358 was closed because its old base inherited already-landed #348 security files.
+- #360 replayed the isolated #29 blobs, then became stale when #359/#327 advanced canonical master; GitHub retained its old PR base snapshot, so #360 was closed rather than merge a misleading expanded diff.
+- Current recovery base :: =82f8f8cb17ece2c4731747b421300a16c00f4a71= after #359 landed.
+- Current recovery PR :: #363.
+- Current branch recovery head before this evidence update :: =5e7277c47eafaf822fc9cae226f597e92e871add=.
+- Compared with current master, the implementation is limited to =zara/runtime/tts_output.py=, =t/test_tts_output_lifecycle.py=, =scripts/test-streaming-tts.sh=, and this RAGE evidence file.
+- Adversarial acceptance A2 has a direct deterministic regression: a stale synthesis state using a reused turn id is forced through cleanup while a replacement occupies =_turns=; the replacement must survive by object identity.
+- Focused =scripts/test-streaming-tts.sh= runs daemon output ordering/cancellation, lifecycle reclamation, and persistent client speaker coverage using local/fake fixtures only.
+- Fresh exact-head full repository/Nix/package/Android/shared-mic CI is mandatory for #363.
 
 * RAGE state
-- Research :: slice A complete; broader #29 provider/jitter/backpressure research remains open.
+- Research :: slice A complete; broader #29 provider/jitter/backpressure/latency research remains open.
 - Design/adversarial review :: slice A accepted; no second player/runtime.
-- TDD realization :: RED proven; bounded GREEN implementation plus direct stale-state adversarial regression committed.
-- Exact-head verification :: pending on #360; no merge until current-head gates are green.
+- TDD realization :: RED proven; bounded GREEN implementation, stale-state adversarial regression, and focused streaming-TTS gate committed.
+- Exact-head verification :: pending on #363; no merge until current-head gates are green.
