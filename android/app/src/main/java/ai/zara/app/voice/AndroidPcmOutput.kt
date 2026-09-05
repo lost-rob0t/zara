@@ -2,7 +2,6 @@ package ai.zara.app.voice
 
 import android.media.AudioAttributes
 import android.media.AudioFormat
-import android.media.AudioManager
 import android.media.AudioTrack
 
 class AndroidPcmOutput : PcmOutput {
