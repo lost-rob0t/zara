@@ -46,6 +46,24 @@ class ClientStateStoreTest {
         val restored = store.load()
         assertEquals("tcp://two.example:7732", restored?.profile?.endpoint)
         assertEquals("c2", restored?.selectedConversationId)
-        assertEquals(false, File(root, ".client-state.bin.tmp").exists())
+        assertEquals(emptyList<String>(), root.listFiles()!!.filter { it.name != file.name }.map { it.name })
+    }
+
+    @Test fun `stale legacy temp path cannot block a process recreation save`() {
+        val root = Files.createTempDirectory("zara-client-state-stale-temp").toFile()
+        val file = File(root, "client-state.bin")
+        val staleLegacyTemp = File(root, ".client-state.bin.tmp")
+        staleLegacyTemp.mkdirs()
+
+        ClientStateStore(file).save(
+            RestorableClientState(
+                ServerProfile.create("tcp://zara.example:7731"),
+                "conversation-safe",
+            )
+        )
+
+        val restored = ClientStateStore(file).load()
+        assertEquals("conversation-safe", restored?.selectedConversationId)
+        assertEquals(true, staleLegacyTemp.isDirectory)
     }
 }
