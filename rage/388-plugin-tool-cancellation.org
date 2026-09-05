@@ -18,6 +18,38 @@
 - Cancelled execution is distinguishable from timeout/failure.
 - Deterministic tests can inject cancellation without network or GUI dependencies.
 
+** Research
+- =create_tools_node= is the one canonical LangGraph execution boundary for registered =BaseTool= instances, including service-plugin tools. It already emits =ToolCancelled= when the owning turn task receives =asyncio.CancelledError=, but the running tool receives no separate invocation-local cooperative signal.
+- =PluginManager= registers service-plugin =BaseTool= objects into the same =ToolRegistry= used by ordinary tools; adding a plugin-only execution manager or =shell.cancel= command would fork the control plane and violate current ownership.
+- =PluginRuntime= already owns lifecycle workers and runtime dispatch/subscription but does not own individual LangGraph tool calls. Cancellation therefore belongs at the canonical tool executor, not the service-plugin lifecycle facade.
+- Existing regression =test_cancellation_after_tool_start_emits_tool_terminal= proves only the external terminal event. It cannot prove a synchronous/subprocess-style plugin tool can observe cancellation and tear down owned resources.
+
+** Design
+*** Selected architecture
+- Add a tiny runtime-owned invocation context containing a Core-created cancellation token. The token is not model/tool input and has no public method for cancelling another invocation.
+- Bind exactly one token around each canonical tool execution. Expose read-only cooperative observation through the public plugin API so long-running plugin tools can poll/wait without inventing process IDs or side channels.
+- Execute the LangChain tool call in a child task shielded from immediate parent cancellation. On canonical turn cancellation: set the token first, then cancel the child task, then preserve the existing =ToolCancelled= event and re-raise cancellation.
+- The token uses a thread-safe event so synchronous =BaseTool= implementations running in LangChain's executor can observe the same cancellation state; async tools still receive ordinary =CancelledError= after the token is set.
+
+*** Rejected alternatives
+- Plugin-specific cancel command / process-id registry: rejected because it creates a second control plane, exposes retargetable identifiers and diverges from Core turn cancellation.
+- Add a user-visible tool argument such as =cancel_token=: rejected because model/tool arguments must not control authorization/lifecycle state.
+- Only catch =CancelledError= inside the tool: rejected because a synchronous tool in an executor cannot receive asyncio cancellation and would keep owned subprocesses alive.
+- Signal token after cancelling child task: rejected because an async cleanup handler could observe cancellation before the cooperative state became true.
+
+*** Invariants / threats
+- One token per invocation; no global mutable current cancellation flag.
+- External callers can inspect/wait/raise only; only Core execution code can signal it.
+- Approval remains before execution and is unchanged.
+- Tool unload/replacement validation remains before execution and is unchanged.
+- Cancellation produces =ToolCancelled=, never =ToolFailed= or a false successful completion.
+- A cancelled invocation cannot cancel or mark another concurrently running invocation.
+
+*** Planned TDD
+1. Extend the existing running-tool cancellation regression so a synchronous registered tool obtains the public cancellation token, blocks cooperatively, observes Core cancellation, and proves the side effect never executes. This must fail before production changes because the public token API does not exist.
+2. Add a direct isolation test for two invocation tokens if implementation structure makes it independently testable.
+3. Keep existing approval/rejection/timeout/removal regressions green.
+
 ** Gate
 - Focused deterministic tool/plugin cancellation tests.
 - =nix develop -c bash scripts/test-all.sh=
