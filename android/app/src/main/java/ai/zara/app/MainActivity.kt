@@ -1,69 +1,108 @@
 package ai.zara.app
 
-import ai.zara.app.auth.AndroidEnrollmentRepository
-import ai.zara.app.runtime.AssistantRole
-import ai.zara.app.runtime.ClientStateStore
-import ai.zara.app.runtime.RuntimeEvent
-import ai.zara.app.runtime.RuntimeState
-import ai.zara.app.runtime.ServerConnection
-import ai.zara.app.runtime.reduce
-import ai.zara.app.runtime.toRuntimeReadiness
-import android.app.Activity
+import ai.zara.app.ui.RenderedTextTurn
+import ai.zara.app.ui.ZaraApp
 import android.os.Bundle
-import android.widget.LinearLayout
-import android.widget.TextView
-import java.io.File
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
+    private lateinit var appSession: AndroidAppSession
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        appSession = AndroidAppSession(this)
 
-        val restored = ClientStateStore(File(noBackupFilesDir, "zara/client-state.bin")).load()
-        var state = restored?.let(RuntimeState::fromRestored) ?: RuntimeState.initial()
-        val enrollment = AndroidEnrollmentRepository.create(this).state().toRuntimeReadiness()
-        state = reduce(state, RuntimeEvent.EnrollmentObserved(enrollment))
+        var runtimeState by mutableStateOf(appSession.state())
+        var enrollmentPublicKey by mutableStateOf(appSession.enrollmentPublicKeyZ85())
+        var lastTurn by mutableStateOf<RenderedTextTurn?>(null)
+        var operationError by mutableStateOf<String?>(null)
+        var operationBusy by mutableStateOf(false)
 
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(64, 128, 64, 64)
+        appSession.setStateObserver { state ->
+            runOnUiThread { runtimeState = state }
         }
 
-        val title = TextView(this).apply {
-            text = "Zara"
-            textSize = 28f
+        setContent {
+            ZaraApp(
+                runtimeState = runtimeState,
+                sourceSha = BuildConfig.SOURCE_SHA,
+                enrollmentPublicKey = enrollmentPublicKey,
+                lastTurn = lastTurn,
+                operationError = operationError,
+                operationBusy = operationBusy,
+                onCreateIdentity = {
+                    operationError = null
+                    try {
+                        enrollmentPublicKey = appSession.createIdentity()
+                    } catch (error: Exception) {
+                        operationError = rootMessage(error)
+                    }
+                },
+                onPinServer = { publicKey ->
+                    operationError = null
+                    try {
+                        appSession.pinServer(publicKey)
+                        enrollmentPublicKey = appSession.enrollmentPublicKeyZ85()
+                    } catch (error: Exception) {
+                        operationError = rootMessage(error)
+                    }
+                },
+                onConnect = { endpoint ->
+                    operationError = null
+                    operationBusy = true
+                    try {
+                        appSession.connect(endpoint).whenComplete { _, error ->
+                            runOnUiThread {
+                                operationBusy = false
+                                operationError = error?.let(::rootMessage)
+                            }
+                        }
+                    } catch (error: Exception) {
+                        operationBusy = false
+                        operationError = rootMessage(error)
+                    }
+                },
+                onSendText = { text ->
+                    operationError = null
+                    operationBusy = true
+                    try {
+                        appSession.submitText(text).whenComplete { result, error ->
+                            runOnUiThread {
+                                operationBusy = false
+                                if (error != null) {
+                                    operationError = rootMessage(error)
+                                } else if (result != null) {
+                                    lastTurn = RenderedTextTurn(
+                                        userText = text,
+                                        assistantText = result.text,
+                                        success = result.success,
+                                    )
+                                }
+                            }
+                        }
+                    } catch (error: Exception) {
+                        operationBusy = false
+                        operationError = rootMessage(error)
+                    }
+                },
+            )
         }
-
-        val status = TextView(this).apply {
-            text = describe(state)
-            textSize = 15f
-        }
-
-        val diagnostics = TextView(this).apply {
-            text = "source: ${BuildConfig.SOURCE_SHA}"
-            textSize = 12f
-        }
-
-        layout.addView(title)
-        layout.addView(status)
-        layout.addView(diagnostics)
-        setContentView(layout)
     }
 
-    private fun describe(state: RuntimeState): String {
-        val server = when (val connection = state.server) {
-            is ServerConnection.Disconnected -> "disconnected"
-            is ServerConnection.Connecting -> "connecting"
-            is ServerConnection.Connected -> "connected"
-            is ServerConnection.Reconnecting -> "reconnecting (attempt ${connection.attempt})"
-            is ServerConnection.OfflineDegraded -> "offline degraded (${connection.reason})"
+    override fun onDestroy() {
+        if (::appSession.isInitialized) appSession.close()
+        super.onDestroy()
+    }
+
+    private fun rootMessage(error: Throwable): String {
+        var current = error
+        while (current.cause != null && current.cause !== current) {
+            current = current.cause!!
         }
-        val role = when (state.assistantRole) {
-            is AssistantRole.NotYetAssessed -> "not yet assessed"
-            is AssistantRole.Held -> "held"
-            is AssistantRole.NotHeld -> "not held"
-            is AssistantRole.PlatformUnavailable -> "platform unavailable"
-        }
-        return "server: $server\nenrollment: ${state.enrollment}\nassistant role: $role"
+        return current.message ?: current::class.java.simpleName
     }
 }

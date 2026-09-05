@@ -1,0 +1,70 @@
+#+title: RAGE #197 - First usable Compose shell
+
+* Run identity
+- Issue :: #197
+- Branch :: =rage/197-compose-first-usable=
+- Stacked base :: Android #173 branch at =37f19709974402927d77943c5d0e2984ff6b126a=.
+- Product target :: earliest honest installable Zara Android client; Chat, Connection, Settings and Diagnostics before deferred surfaces.
+
+* Analyze
+- #195 research gate is closed and its pinned Android stack is already present in =android/gradle/libs.versions.toml=: AGP 9.2.0, Kotlin 2.3.21, Compose BOM 2026.08.00 and Activity Compose 1.12.0.
+- #173 supplies the canonical reducer/runtime state. The UI must project that state rather than own connection/enrollment truth.
+- Existing =MainActivity= was a native =LinearLayout= diagnostics skeleton; it exposed no navigable first-usable surfaces.
+
+* Design
+- Use one =ComponentActivity= and one Material 3 Compose tree.
+- Preserve =ClientStateStore= restoration and =AndroidEnrollmentRepository= projection before composition.
+- Navigation is local presentation state only; runtime/auth/session data stays in =RuntimeState=.
+- First milestone surfaces are Chat, Connection, Settings and Diagnostics. Voice/tasks/calendar/devices/integrations remain subsequent issue slices.
+- Chat remains explicitly unavailable unless the canonical reducer says Connected and enrollment says Ready. No fake assistant response or fake connected state.
+- Diagnostics always show exact =BuildConfig.SOURCE_SHA= and non-secret reducer metadata only.
+
+* Adversarial review
+- Rejected a UI-owned connection Boolean: would split authority from the reducer.
+- Rejected placeholder chat replies: would violate the first-usable product gate.
+- Rejected copying endpoint/session into Compose persistence: durable client state already has a single owner.
+- Rejected displaying key material: diagnostics may expose source/session/correlation metadata, never credentials.
+
+* TDD / implementation
+- =62e3af73b571f5a15b1927e747d44fe33c5f9bb4= enables the already pinned Compose/Material3 dependencies and Compose compiler plugin.
+- =d0f79b0c85110de39f0f8b186cb72fc90f2a45de= adds the honest four-surface Material3 shell.
+- =71db459594950e4da4745f01fc45f32b2d6f2d69= replaces the legacy view skeleton with =ComponentActivity= while preserving restored canonical runtime/enrollment state.
+- =47b0d1d186130342ab522f96a3838ca978faea4a= locks connection/enrollment presentation to canonical typed states.
+
+* Gate
+- Run exact-head Android unit/native/debug-APK/secret gate.
+- Run repository full test/Nix/package gate and both shared-mic lanes through normal Actions.
+- This stacked transaction does not merge before #173; failures are consumed here without mutating Core.
+
+* Current acceptance
+- Chat/Connection/Settings/Diagnostics are navigable and honest.
+- Endpoint editing, enrollment actions and live text composer are intentionally not yet claimed; those are the next first-usable wiring slice after transport acceptance.
+
+* Iteration 2 — live first-usable wiring
+** Canonical session ownership
+- =84f097ab17e7c02f80a17788d989723726a2d043= adds one =AndroidAppSession= that owns the existing enrollment repository, public client-state store, one =ZaraTextClientActor= and one =AndroidTextSessionController=. No UI transport or second runtime is introduced.
+- Endpoint configuration is validated through =ServerProfile= and persisted only as public metadata. Conversation continuation is persisted after a real terminal text result; session ids remain ephemeral.
+- =0ee493350485cac0efe9404776fdcc027b688e0f= wires actual identity creation, server pin entry, endpoint connect, text composer and real text-result/error rendering into the four Compose surfaces.
+- =11e6db290073bd269a70760610c58b8e8ad1a0c5= binds those callbacks in =MainActivity= to the canonical app session and keeps asynchronous completion off the UI thread.
+
+** Reducer-driven UI
+- Adversarial review found a truth gap: reconnect side effects can advance the reducer after the initiating button future returns, so polling state only from UI callbacks could leave Compose displaying stale Connected state.
+- =03f052af3797d30f7533fb470c6fc7ff1d488409= adds one controller state observer and publishes immutable reducer snapshots after connection, reconnect, enrollment and conversation mutations, outside the controller lock.
+- =92c8b2d3dd19787278a0f1c6d7944c121c11d9ec= exposes that observer through =AndroidAppSession=.
+- =212defc49e5adbbacb672fa11f3daa256280d39d= drives Compose directly from that reducer observation on the UI thread.
+- Observer tests through exact branch head =ef356d75cba664c6375513c2710a2a72b208bfbf= require Connecting -> Connected -> Reconnecting -> fresh Connected publication and durable conversation projection after a real turn result.
+
+** Parallel-connect RED/GREEN and enrollment honesty
+- RED =f755d2b711fd5fc9aa72ccc6fce6ee9f6532e2f2= requires the Connect control to be available only from Disconnected or OfflineDegraded and rejects UI attempts to start a parallel lifecycle while Connecting, Connected or Reconnecting.
+- GREEN =41edb3eecada2161b88410d4e3d7d83c115b84b2= centralizes that projection in =canRequestConnect= and disables endpoint mutation during an active lifecycle.
+- The Settings surface now explicitly distinguishes the two-sided enrollment contract: the Android public key must be enrolled by the Zara server owner; pinning the server CURVE public key locally does not perform server enrollment. Private key material remains in Keystore-backed storage and is never rendered.
+
+* Iteration 2 gate evidence
+- CI #1165 on =11e6db290073bd269a70760610c58b8e8ad1a0c5= proved the Android skeleton gate, debug APK build/upload and both shared-mic lanes green.
+- Its repository-wide lane hit a Core-owned randomized CLI parsing failure when a generated CURVE key began with =-=. Android did not modify that Core CLI surface.
+- Current exact head after the parallel-connect GREEN and this append must receive a fresh Android/full-repo/mic Actions verdict; earlier APKs do not authorize this head.
+
+* Remaining first-usable gate
+- #173 must first land its actual stock secure =ZaraServer= JeroMQ hello/text-turn interoperability oracle.
+- After #173 merges, retarget this stacked PR to canonical master, recover any new master movement, and require a fresh exact-head debug APK artifact.
+- FIRST-USABLE may be claimed only when the inherited stock-server interop and these live Compose controls are green on the same exact candidate head.

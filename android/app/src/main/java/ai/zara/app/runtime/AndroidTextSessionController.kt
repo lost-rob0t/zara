@@ -48,8 +48,18 @@ class AndroidTextSessionController(
     private val lock = Any()
     private var runtimeState = initialState
     private var closed = false
+    private var stateObserver: ((RuntimeState) -> Unit)? = null
 
     fun state(): RuntimeState = synchronized(lock) { runtimeState }
+
+    fun setStateObserver(observer: ((RuntimeState) -> Unit)?) {
+        val snapshot = synchronized(lock) {
+            check(!closed) { "Android text session controller is closed" }
+            stateObserver = observer
+            runtimeState
+        }
+        observer?.invoke(snapshot)
+    }
 
     fun connect(profile: ServerProfile): CompletableFuture<ConnectedTextSession> {
         val generation = synchronized(lock) {
@@ -63,6 +73,7 @@ class AndroidTextSessionController(
                 ?: throw IllegalStateException("connection is already active")
             connecting.generation
         }
+        publishState()
         return connectGeneration(profile, generation)
     }
 
@@ -95,19 +106,24 @@ class AndroidTextSessionController(
                 return@whenComplete
             }
             if (result == null) return@whenComplete
-            synchronized(lock) {
+            val changed = synchronized(lock) {
                 val connected = runtimeState.server as? ServerConnection.Connected
                 if (
                     !closed &&
                     connected?.generation == request.generation &&
                     runtimeState.sessionId == request.sessionId
                 ) {
+                    val previous = runtimeState
                     runtimeState = runtimeState.copy(
                         selectedConversationId = result.conversationId
                             ?: runtimeState.selectedConversationId,
                     )
+                    runtimeState != previous
+                } else {
+                    false
                 }
             }
+            if (changed) publishState()
         }
         return future
     }
@@ -124,6 +140,7 @@ class AndroidTextSessionController(
             runtimeState.server is ServerConnection.Reconnecting &&
                 runtimeState.generation != previousGeneration
         }
+        publishState()
         if (shouldReconnect) {
             client.disconnect()
             scheduleReconnect()
@@ -138,6 +155,7 @@ class AndroidTextSessionController(
             wasActive && readiness != EnrollmentReadiness.Ready &&
                 runtimeState.server is ServerConnection.Disconnected
         }
+        publishState()
         if (shouldDisconnect) {
             client.disconnect()
         }
@@ -147,6 +165,7 @@ class AndroidTextSessionController(
         synchronized(lock) {
             if (closed) return
             closed = true
+            stateObserver = null
         }
         reconnectScheduler.close()
         client.close()
@@ -159,8 +178,10 @@ class AndroidTextSessionController(
         val future = client.connect(profile, generation)
         future.whenComplete { session, error ->
             var scheduleNext = false
+            var changed = false
             synchronized(lock) {
                 if (closed || runtimeState.generation != generation) return@whenComplete
+                val previous = runtimeState
                 if (error == null && session != null) {
                     runtimeState = reduce(
                         runtimeState,
@@ -176,13 +197,24 @@ class AndroidTextSessionController(
                     )
                     scheduleNext = runtimeState.server is ServerConnection.Reconnecting
                 }
+                changed = runtimeState != previous
             }
+            if (changed) publishState()
             if (scheduleNext) {
                 client.disconnect()
                 scheduleReconnect()
             }
         }
         return future
+    }
+
+    private fun publishState() {
+        val publication = synchronized(lock) {
+            if (closed) return
+            val observer = stateObserver ?: return
+            observer to runtimeState
+        }
+        publication.first.invoke(publication.second)
     }
 
     private fun requestIsCurrent(request: TurnRequest): Boolean = synchronized(lock) {
