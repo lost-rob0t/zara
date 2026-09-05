@@ -143,6 +143,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun pressToTalk(permissionGranted: Boolean): CompletableFuture<Unit> =
         submitVoiceControl {
+            voiceStreamSink.interrupt().get()
             voice.press(state(), permissionGranted)
         }
 

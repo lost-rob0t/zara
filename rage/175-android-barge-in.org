@@ -1,0 +1,26 @@
+#+title: RAGE #175 B3 — Android barge-in and audio focus
+
+* Transaction
+- Issue :: #175
+- Scope :: Android-only B3 stacked on streamed-voice B2.
+- Base :: =rage/175-android-streamed-voice= exact head =cf937c8ac514b7b4facd1ca2d0d8bc0741ce1165= at branch creation.
+
+* Source analysis
+- #175 requires local immediate playback stop on user interruption, upstream canonical cancel tied to turn/stream, audio-focus handling, and stale-audio rejection after cancel.
+- Canonical Core ZARA/1 already defines =turn.cancel= requiring =turn_id=; B3 must consume that existing command rather than inventing a new Android/Core protocol.
+- B2 already gives Android a single authenticated DEALER actor and a single bounded playback actor. B3 must preserve both ownership boundaries.
+
+* Invariants
+- User interruption stops Android speaker locally before waiting on network acknowledgement.
+- Upstream cancellation is the existing typed =turn.cancel= correlated to the active output =turn_id=; no new cancellation protocol.
+- Audio focus is Android-owned and may stop local output; it may not create a second assistant or media runtime.
+- Cancelled/superseded output cannot resume from late chunks.
+- One playback owner, one socket owner, one microphone owner.
+- B2 remains frozen while its exact-head CI runs; B3 changes stay on this stacked branch.
+
+* Planned RED / GREEN order
+1. Local playback interrupt clears active output and rejects late chunks.
+2. Encode/decode typed =turn.cancel= acknowledgement on the existing actor.
+3. Barge-in coordinator performs local interrupt first, then upstream cancel for the captured active turn.
+4. Android audio-focus adapter maps focus loss into the same local interruption path.
+5. Focused JVM tests, Android gate, full repository/Nix/package/shared-mic exact-head gates.

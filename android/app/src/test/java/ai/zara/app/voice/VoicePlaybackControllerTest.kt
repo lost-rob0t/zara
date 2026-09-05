@@ -77,6 +77,32 @@ class VoicePlaybackControllerTest {
         )
     }
 
+    @Test fun `barge in returns interrupted turn stops speaker immediately and rejects late chunk`() {
+        val sink = RecordingPcmOutput()
+        val controller = VoicePlaybackController(sink, "session-1")
+        controller.accept(
+            VoiceStreamEvent.AudioStarted("session-1", "turn-7", "speaker-7", 24_000, 1)
+        )
+
+        val interrupted = controller.interrupt()
+
+        assertEquals("turn-7", interrupted?.turnId)
+        assertEquals("speaker-7", interrupted?.streamId)
+        assertEquals(null, controller.state().audio)
+        assertEquals(listOf("start:24000:1", "stop"), sink.calls)
+        assertThrows(StaleVoiceStreamException::class.java) {
+            controller.accept(
+                VoiceStreamEvent.AudioChunk(
+                    "session-1",
+                    "turn-7",
+                    "speaker-7",
+                    0,
+                    byteArrayOf(1, 0),
+                )
+            )
+        }
+    }
+
     @Test fun `stale chunk never reaches speaker`() {
         val sink = RecordingPcmOutput()
         val controller = VoicePlaybackController(sink, "session-1")
