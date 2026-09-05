@@ -60,3 +60,11 @@
 - Harness finding :: both device-action test modules used =zmq.Context.term()=. Any assertion failure before test-local socket/gateway cleanup can therefore block fixture teardown indefinitely and hide the real RED until CI kills the job.
 - Harness repair :: =05b25f1edfce97ea5045b9f6b1956a35b3f7ebb6= and =31e1110576828ac4b5b778ce7898e68bc7fd3db5= switch only the two #159 test contexts to =destroy(linger=0)=. Assertions and production behavior are unchanged. This is failure surfacing, not a weakened gate.
 - Next authority :: fresh focused/full exact-head CI on the successor branch. Any now-visible assertion is the next deterministic RED to consume; no timeout/cancel result authorizes merge.
+
+* Surfaced RED — CI #1055
+- Exact head :: =752a46bc754e8c96bba4e98e59bee220e5735c62=.
+- Result :: Android/APK and both shared-mic lanes passed. Full pytest completed 1747 tests in about 219 seconds and reported exactly one failure instead of hanging.
+- JUnit oracle :: =test_error_and_reconnect_clear_route_local_action_authority= timed out waiting for =DeviceActionRemoteError= because that legacy test emitted terminal =device.action.error= without first emitting =device.action.accepted=.
+- This is not a production defect: the selected #159 contract and adversarial test require =request -> accepted -> terminal=. The hardened gateway correctly left the action pending and rejected the premature terminal message.
+- Test correction :: =06c9a62e77935f3eee28ad65bfb5ea8b0aa28ce4= adds the missing typed accepted message before the remote-error terminal. No production code or assertion strength was reduced.
+- Next authority :: exact-head CI after this test correction.
