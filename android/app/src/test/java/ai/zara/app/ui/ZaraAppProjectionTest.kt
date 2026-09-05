@@ -49,6 +49,16 @@ class ZaraAppProjectionTest {
     }
 
     @Test
+    fun samsungAssistantGuidanceIsBoundedAndDoesNotClaimHardwareProof() {
+        val guidance = samsungAssistantSetupGuidance()
+
+        assertTrue(guidance.contains("Settings > Apps > Choose default apps > Digital assistant app"))
+        assertTrue(guidance.contains("Settings > Advanced features > Side button > Long press"))
+        assertTrue(guidance.contains("supported One UI"))
+        assertTrue(guidance.contains("hardware verification remains pending"))
+    }
+
+    @Test
     fun connectControlCannotStartParallelConnectionLifecycle() {
         assertTrue(canRequestConnect(ServerConnection.Disconnected))
         assertTrue(canRequestConnect(ServerConnection.OfflineDegraded(3, "network unavailable")))
