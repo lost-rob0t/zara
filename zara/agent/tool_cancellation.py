@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 import threading
 from typing import Annotated, Any, FrozenSet, Mapping, Optional
 
@@ -92,14 +93,7 @@ def inject_tool_cancellation(
 
 
 def _plain_input_schema(tool: BaseTool) -> dict[str, Any]:
-    """Return the full tool schema without LangChain injection annotations.
-
-    The delegate is internal and never model-bound.  A plain JSON schema keeps
-    the trusted cancellation field present while preventing ToolNode from
-    treating it as another caller-supplied InjectedToolArg and stripping it a
-    second time.  The original tool still performs canonical argument
-    validation when the delegate forwards the call.
-    """
+    """Return the full tool schema without LangChain injection annotations."""
     schema = tool.get_input_schema()
     if isinstance(schema, Mapping):
         return dict(schema)
@@ -113,8 +107,12 @@ class _CancellationBoundTool(BaseTool):
     _cancellation: ToolCancellation = PrivateAttr()
 
     def __init__(self, tool: BaseTool, cancellation: ToolCancellation) -> None:
+        # ToolNode caches injection metadata by call name.  The delegate must use
+        # an unregistered Core-only name so that ToolNode inspects its plain
+        # schema instead of reusing the original tool's InjectedToolArg cache.
+        internal_name = f"zara_core_cancel_{secrets.token_hex(16)}"
         super().__init__(
-            name=tool.name,
+            name=internal_name,
             description=tool.description,
             args_schema=_plain_input_schema(tool),
             return_direct=tool.return_direct,
@@ -136,6 +134,7 @@ class _CancellationBoundTool(BaseTool):
         bound_call = dict(tool_call)
         bound_args = dict(args)
         bound_args["cancellation"] = self._cancellation
+        bound_call["name"] = self._tool.name
         bound_call["args"] = bound_args
         return await self._tool.ainvoke(bound_call, config, **kwargs)
 
@@ -143,11 +142,13 @@ class _CancellationBoundTool(BaseTool):
 async def execute_with_tool_cancellation(request: Any, execute: Any) -> Any:
     """Reattach trusted Core cancellation at ToolNode's final tool boundary.
 
-    ToolNode deliberately strips model/caller values for ``InjectedToolArg``.
-    Zara's wrapper therefore swaps in an invocation-local delegate whose plain
-    schema keeps the Core value intact through ToolNode's dynamic injection
-    pass.  The delegate then forwards once to the original registered tool,
-    which retains its normal LangChain validation and result behavior.
+    ToolNode first consults an injection cache keyed by the tool-call name.  A
+    cancellable registered tool therefore cannot retain a Core-supplied
+    ``InjectedToolArg`` merely by overriding ``request.tool``.  Zara swaps both
+    the tool and the internal call name for one invocation, forcing ToolNode to
+    inspect the delegate's plain schema.  The delegate restores the public tool
+    name and exact Core-owned cancellation view before forwarding once to the
+    original registered tool.
     """
     tool = request.tool
     if tool is None:
@@ -164,7 +165,9 @@ async def execute_with_tool_cancellation(request: Any, execute: Any) -> Any:
         return await execute(request)
 
     bound_tool = _CancellationBoundTool(tool, cancellation)
-    return await execute(request.override(tool=bound_tool))
+    internal_call = dict(tool_call)
+    internal_call["name"] = bound_tool.name
+    return await execute(request.override(tool=bound_tool, tool_call=internal_call))
 
 
 __all__ = ["ToolCancellation", "ToolCancellationArg"]
