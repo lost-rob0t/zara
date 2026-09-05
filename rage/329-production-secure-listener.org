@@ -1,0 +1,57 @@
+#+title: RAGE #329 - Production CURVE/ZAP listener recovery for Android #173
+
+* Run identity
+- Consumed issue :: #329, P0 regression - production =zara-server= must expose opt-in authenticated CURVE/ZAP listener for Android #173.
+- Branch :: =rage/329-production-secure-listener=.
+- RAGE start commit :: =16b1eda8dd4a0b1e4a3dba7742787e8a75192347= (master after #133 recovery merged).
+- Trigger :: Android #173 implementation re-audit proved production =ZaraServer= still creates unauthenticated =ZaraZmqGateway= and rejects TCP despite completed #130 security primitives.
+
+* Research
+** Current production gap
+- =zara/server.py::_validate_ipc_endpoint= rejects every non-IPC endpoint with the stale message that auth belongs to issue #130.
+- =ZaraServer._build_default_gateway= always creates =ZaraZmqGateway=.
+- =zara/security_gateway.py= already implements =SecureZaraZmqGateway=: mandatory CURVE server socket, ZAP =RegistryAuthenticator=, live =SecurityRegistry= lookup, principal binding, capability authorization, quotas and bounded audit.
+- =zara/security.py::SecurityRegistry= already owns enroll/revoke/rotate semantics but is memory-only.
+- =zara/security.py::validate_secret_key_file= already enforces owner-only, regular, non-symlink key files.
+- #130 acceptance explicitly requires long-term daemon CURVE identity, client enrollment/rotation/revocation, opt-in safe remote listening and sanitized diagnostics.
+
+** Design pressure
+Android #173 cannot prove authentication against stock =zara-server= if secure construction exists only in tests. Do not fork a second daemon or invent HTTP pairing. Reuse the existing #130 gateway/policy boundary and add the missing production state/CLI wiring.
+
+* Design
+** Scope
+1. Add durable owner-private security state under an explicit directory (default XDG state/config-owned path selected by implementation, overridable for tests/operators).
+2. Persist one daemon CURVE keypair and a versioned enrolled-client registry. Never serialize daemon secret into logs or CLI output.
+3. Add owner-local management commands to initialize/show-public-key/enroll/revoke/list clients without opening an unauthenticated network control plane.
+4. Keep local owner-private IPC as the default and existing =ZaraZmqGateway= path.
+5. Permit =tcp://= only when secure state is explicitly supplied/enabled; then construct =SecureZaraZmqGateway= with the durable registry and daemon keypair.
+6. Grant only an explicit bounded default Android/client capability set at enrollment; no implicit admin.
+7. Security registry persistence writes atomically and validates every record by reconstructing it through the existing typed registry semantics.
+
+** Invariants
+- No TCP listener can reach ordinary =ZaraZmqGateway=.
+- No secure TCP startup without a valid daemon secret + public key and readable valid registry state.
+- Daemon secret file is mode 0600, regular, owner-owned and non-symlink.
+- Public key may be printed; secret key never is.
+- Registry device/public-key uniqueness and active/revoked state survive restart.
+- Local IPC default behavior and current desktop/CLI path remain unchanged.
+- Enrollment is an owner-local operator action; remote unauthenticated self-enrollment is out of scope.
+- Android key Z85 form is accepted exactly as #130 already accepts it.
+
+** TDD map
+1. Production parser/server continues accepting default IPC and rejects TCP without secure configuration.
+2. Security state initialization creates stable daemon CURVE keypair with private permissions and stable public key across reload.
+3. Durable registry enroll -> reload -> resolve; revoke -> reload remains denied; malformed/duplicate/oversized state fails closed.
+4. Owner CLI enrollment/list/revoke exposes only public/device/principal metadata and never daemon/client secrets.
+5. =ZaraServer= secure TCP configuration selects =SecureZaraZmqGateway= and passes the durable registry/CurveServerConfig; IPC remains ordinary gateway.
+6. A deterministic inproc/tcp secure integration fixture performs CURVE client + ZARA/1 hello for enrolled key, rejects unknown/revoked key and wrong pin.
+
+* Gate
+- Focused security/server tests first.
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- exact-head GitHub Actions.
+
+* Iteration 1
+- Status :: DESIGN RECORDED; next action is RED production-wiring tests.
