@@ -9,21 +9,27 @@
 * Research
 - =ServicePlugin.tools()= publishes LangChain tools, but has no declaration for approval policy.
 - =ToolRegistry.requires_approval(name)= currently reads only global =[tool_approval].required_tools=.
-- =PluginManager= owns service-plugin tool registration/unregistration, so it is the correct lifecycle boundary to attach and remove plugin-owned approval metadata.
-- =LangGraphRuntimeBackend.register_tools= is the canonical bridge into =ToolRegistry=; no second approval controller is needed.
+- =PluginManager= owns service-plugin lifecycle, while =ToolRegistry= is the canonical source queried by the existing principal-scoped approval controller.
+- LangChain =BaseTool= already carries plugin-authored =metadata= with each tool registration. Reusing that registration object avoids a parallel manager/backend policy transport.
 
-* Design
-- Add =ServicePlugin.approval_required_tools() -> Sequence[str]= with an empty default.
-- A plugin may require approval only for names it returns from its own =tools()= call. Unknown, duplicate, malformed, or non-string declarations fail plugin startup closed.
-- Extend canonical tool registration with optional approval-required names. Keep configured global requirements separate from dynamic plugin requirements so unloading a plugin removes only plugin-owned metadata and can never weaken operator configuration.
-- Duplicate tool registration continues to fail before any approval metadata is mutated.
-- Plugin/model/client input has no path to downgrade a requirement; =requires_approval= is the union of operator-configured and registered requirements.
-- Existing plugins declaring no approval requirements remain API-compatible.
+* Design iteration 1 — discarded before merge
+- Initial design proposed =ServicePlugin.approval_required_tools() -> Sequence[str]= plus a second registration argument carried through PluginManager/backend.
+- Test-only head =66a70487d1d7fa56d072e47765ca37bd378e253d= was opened as PR #376 to prove the missing contract RED.
+- A partial registry implementation then showed this design would widen multiple runtime/backend call signatures solely to transport metadata already present on the canonical LangChain tool object.
+- Discard that transport design; do not expand PluginManager or RuntimeBackend for policy metadata.
+
+* Design iteration 2 — selected
+- Reserve boolean tool metadata key =zara_requires_approval=. A service plugin marks its own published =BaseTool= at construction/registration time.
+- =ToolRegistry= validates the marker is exactly boolean when present and records dynamic approval requirement atomically with successful registration.
+- =requires_approval(name)= is the union of operator-configured =[tool_approval].required_tools= and registered tool metadata. Plugin/model/client input therefore cannot downgrade operator policy.
+- Unregistering a tool removes only its dynamic registration requirement; configured requirements remain immutable for the registry lifetime.
+- Duplicate/conflicting registration is validated before dynamic policy mutation, preventing leaked or partial approval state.
+- Existing plugins without the metadata key are unchanged. No PluginManager, RuntimeHost, approval-controller, protocol, or Android path changes.
 
 * Acceptance mapping
-- plugin-declared tool is approval required before use -> service-plugin integration test.
-- undeclared/foreign name fails startup closed -> service-plugin failure test.
-- unload removes plugin-owned tool and approval metadata together -> registry/lifecycle test.
+- metadata-marked plugin tool is approval-required through canonical ToolRegistry -> service-plugin integration test.
+- malformed non-boolean marker fails registration closed -> registry test.
+- unload removes tool and plugin-owned approval metadata together -> service-plugin lifecycle test.
 - operator-configured approval remains after dynamic unregister -> registry test.
 - duplicate/conflicting registration leaves no partial approval metadata -> registry test.
 
