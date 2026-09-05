@@ -251,15 +251,35 @@ class AndroidTextSessionController(
                 delayMillis = reconnectDelayMillis(connection.attempt),
             )
         }
-        reconnectScheduler.schedule(reconnect.delayMillis) {
-            val stillCurrent = synchronized(lock) {
-                !closed &&
-                    runtimeState.generation == reconnect.generation &&
-                    runtimeState.server is ServerConnection.Reconnecting
+        try {
+            reconnectScheduler.schedule(reconnect.delayMillis) {
+                val stillCurrent = synchronized(lock) {
+                    !closed &&
+                        runtimeState.generation == reconnect.generation &&
+                        runtimeState.server is ServerConnection.Reconnecting
+                }
+                if (stillCurrent) {
+                    connectGeneration(reconnect.profile, reconnect.generation)
+                }
             }
-            if (stillCurrent) {
-                connectGeneration(reconnect.profile, reconnect.generation)
+        } catch (_: RuntimeException) {
+            val changed = synchronized(lock) {
+                if (
+                    closed ||
+                    runtimeState.generation != reconnect.generation ||
+                    runtimeState.server !is ServerConnection.Reconnecting
+                ) {
+                    false
+                } else {
+                    val previous = runtimeState
+                    runtimeState = reduce(
+                        runtimeState,
+                        RuntimeEvent.ReconnectSchedulingFailed(reconnect.generation),
+                    )
+                    runtimeState != previous
+                }
             }
+            if (changed) publishState()
         }
     }
 
