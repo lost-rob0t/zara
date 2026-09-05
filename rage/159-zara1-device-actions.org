@@ -1,0 +1,55 @@
+#+title: RAGE #159 — ZARA/1 client capabilities and typed device actions
+#+property: issue 159
+#+property: start_sha 6141ac7d28c5eb32f0a8e78b31643792aa2c0fd7
+
+* Consumption
+- Issue :: #159 — extend ZARA/1 with bounded client capability advertisement and typed device action lifecycle.
+- Exact start :: =6141ac7d28c5eb32f0a8e78b31643792aa2c0fd7=.
+- Owner :: Zara Android Auto-RAGE worker, consuming the minimum shared protocol/runtime compatibility dependency explicitly required by Android #173.
+- Scope :: closed ZARA/1 schemas, authenticated route/session capability state, typed device-action request/result lifecycle, deterministic client fixture support, and focused protocol/security tests only.
+- Non-goals :: Android Kotlin implementation (#173/#174), arbitrary remote execution, semantic-provider reasoning outside #159, ordinary core/desktop work, or sibling core PR #306 files.
+
+* Recovery inspection
+- Existing branch =rage/159-zara1-capability-advertisement= is abandoned residue: 217 commits behind current master and only carries #158/backlog bookkeeping; no #159 implementation or PR exists.
+- Current sibling core transaction #306 is AgentManager diagnostics and does not overlap protocol/transport/security files selected here.
+
+* Research checkpoint
+- Current =zara.protocol= is a closed transport-neutral ZARA/1 schema. Unknown message types and identity-looking top-level keys fail closed.
+- Current ROUTER gateway binds route state to a server-resolved principal/session; the secure gateway re-resolves authenticated CURVE/ZAP identity on every message and injects that principal before application dispatch.
+- Current DEALER client already has bounded pending/outbound queues and one request/reply correlation mechanism; #159 should extend these seams rather than introduce another transport/state machine.
+- Existing idempotency handling is runtime-command-specific. Device side effects need their own explicit action id/idempotency class and stale-session binding; they must not be encoded as turn.submit or arbitrary command bodies.
+
+* Design direction
+- Advertisement is availability, never authority.
+- Capability names are closed/bounded and metadata schemas are explicit.
+- Initial snapshot is negotiated during =hello=; later =capability.snapshot= updates replace the session-local advertised set atomically.
+- Server device action requests use a typed lifecycle: =device.action.request= -> client =device.action.accepted= -> terminal =device.action.result= or =device.action.error=; server may send =device.action.cancel=.
+- Action messages bind action id, capability, target session, typed bounded args, deadline, trace correlation, and explicit idempotency class. Payload-supplied principal/device identifiers remain forbidden.
+- Route drop/reconnect invalidates advertisements and outstanding route-local actions; stale-session results fail closed.
+- First concrete capabilities for deterministic fixtures are =open_uri= and =open_app= only; no arbitrary shell/import/eval primitive exists.
+
+* Planned deterministic proof
+- Protocol golden frames and closed-schema/bounds tests.
+- Fake gateway/client round trip for advertised =open_uri= / =open_app=.
+- Unknown/fake-admin capability rejection and bounded capability count/name/metadata.
+- Wrong/stale session action result rejection.
+- Duplicate action/idempotency and cancel/result terminal-race behavior.
+- Disconnect/reconnect clears stale advertisement/action state.
+- Secure gateway authorizes capability/result traffic only as session-basic authenticated device traffic and never promotes advertised names into server capabilities.
+- Focused =pytest= protocol/transport/security tests, then =scripts/test-zara1-protocol.sh=, =scripts/test-all.sh=, =nix flake check=, =nix build=, and exact-head Actions.
+
+* Recovery iteration — 2026-09-05
+- Original implementation PR :: #307 at =f014ff791568d5001eec7b3838c8218b18a3fb72=.
+- Original exact-head Actions :: CI #877. Android and both shared-mic jobs passed; the required core =Run all tests= job was cancelled at the 30-minute boundary, so the run is not merge authority.
+- Current master at recovery :: =da515c80a2ba18e889f62dc8f1816c8c95249f43= after Core #318.
+- Divergence check :: original #307 was 118 commits behind current master. Across those 118 commits, =zara/protocol.py=, =zara/security_gateway.py=, and =zara/zmq_transport.py= were unchanged; sibling Core #319 touches only desktop files and has no overlap.
+- Recovery method :: branch =rage/159-zara1-device-actions-recovery= was created from #307 exact head, then current master was merged into it through recovery-only helper PR #320. No history rewrite and no master mutation occurred.
+- Post-recovery diff :: exactly the original nine #159 files: three RAGE artifacts, focused gate script, two deterministic test modules, and the three protocol/security/transport production files.
+- Verification authority :: fresh exact-head CI on the recovery successor PR; old green/cancelled evidence is context only.
+
+* Protocol-state repair iteration — 2026-09-05
+- Canonical master advanced through fully green research PR #328 to =8e247fd4cb6ffe1f3258bfb4f115a3339208e8c1=; the recovery branch was merged forward without rewriting history at =a86170c3009d56271c595305443a004d26fd02eb= before production mutation.
+- Deterministic RED evidence :: the unchanged adversarial #159 suite and PR review evidence identified three production mismatches: already-expired =deadline_ns= was enqueued, the returned Future hid the server-generated action id required for deterministic cancellation, and terminal result/error could complete before =device.action.accepted=.
+- Design decision :: keep one existing gateway/action table and tighten its state machine only. Reject expired deadlines before action construction/enqueue; return a Future-compatible typed =DeviceActionHandle= exposing =action_id=; and reject terminal-before-accepted with =protocol.error(action_not_accepted)= while retaining the pending action for a later valid accepted -> terminal sequence.
+- Realization :: =6e974fcdc11a10616a0dfa573cfb174eba44818a= changes only =zara/zmq_transport.py= and preserves all existing adversarial tests unchanged.
+- Verification :: exact-head focused/full repository, Nix/package, Android and shared-mic gates pending on the post-log candidate; no prior SHA authorizes merge.
