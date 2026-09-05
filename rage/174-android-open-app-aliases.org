@@ -11,6 +11,12 @@
 - Branch :: rage/174-android-open-app-aliases
 - Scope :: Android device adapter only. No Core/protocol/plugin changes.
 
+** Research
+- Android package visibility applies to package-query APIs for targetSdk 30+, so a launcher that derives capability availability from known packages must declare only the reviewed packages it needs to inspect.
+- Android's package-visibility guidance prefers direct intent launch plus explicit failure handling when availability need not be known beforehand. Zara does need availability before advertising =open_app=, so bounded manifest =<queries><package>= declarations are justified here.
+- =PackageManager.getLaunchIntentForPackage= provides a front-door launch Intent for a known package and returns null when unavailable. The adapter never accepts a package name from ZARA/1; package candidates remain Android-owned constants.
+- Sources :: https://developer.android.com/training/package-visibility/use-cases ; https://developer.android.com/reference/android/content/pm/PackageManager
+
 ** Design
 - The server supplies a closed semantic app alias, never a package name, Intent, class, component or shell command.
 - Initial reviewed aliases are bounded in Android production code and map to fixed package candidates owned by the app.
@@ -18,9 +24,18 @@
 - Known-but-unavailable alias returns typed =unavailable=; unknown aliases and raw package-like input return =invalid_arguments=.
 - Launch success is returned only after Android accepts a resolved reviewed launch Intent; no optimistic/fake success.
 - Routine diagnostics do not record the requested alias or package target.
+- Initial reviewed aliases are =browser= and =youtube=. ReVanced/Vanced/provider preference remains a later provider-policy slice; this transaction does not hardcode one unofficial package as semantic truth.
 
 ** Deterministic RED
 - =OpenAppAdapterTest= is committed before production support and requires availability-derived advertisement, case-normalized reviewed alias execution, raw package/unknown rejection, and unavailable semantics.
+- RED head :: 12c8945ec5b6aa2aa728c1598aa2bf95585018eb
+
+** Implementation
+- =69ec9b2ba20f6a9375f6c2c438f174642403331c= :: closed =OpenAppAdapter=; typed invalid/unavailable/permission/failure outcomes; no arbitrary package authority.
+- =998974b3c61232a109233aea0876d34796600d1b= :: Android launcher resolves only local reviewed candidate lists and starts only a locally constructed front-door Intent.
+- =7b6c205f2dcf0f93df862473f84de7b6e4462844= :: bounded package-visibility declarations for only the reviewed candidates.
+- AppSession registration is intentionally deferred while #407 owns the current AppSession/Assistant lifecycle surface; after #407 is canonical this branch must recover current master and wire =OpenAppAdapter(AndroidAppLauncher(context))= into the one existing =DeviceCapabilityRegistry= before merge.
 
 ** Gate
 - focused JVM device tests; Android unit/native/debug APK + secret inspection; full repository/Nix/package; both shared-mic lanes; exact-head review clearance before merge.
+- Exact CI #1494 started on =7b6c205f2dcf0f93df862473f84de7b6e4462844=. Both shared-mic lanes are GREEN; Android and full repository gates are still running at this evidence point.
