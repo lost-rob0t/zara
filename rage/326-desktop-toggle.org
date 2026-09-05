@@ -1,0 +1,22 @@
+:PROPERTIES:
+:ID:       zara-rage-326-desktop-toggle
+:END:
+#+title: RAGE #326 — one desktop owner and bounded local toggle control
+#+status: ACTIVE
+
+* Iteration 1
+** Consumption
+- Issue :: #326
+- Immutable start :: 3676fc7e452eab409305f62a826b9f0b1f9841d4
+- Branch :: rage/326-desktop-toggle
+- Scope :: Zara Core desktop/client only. No =android/**= changes. Local desktop visibility is not a ZARA/1 assistant command.
+
+** First acceptance slice
+- Tray primary activation toggles the existing one Quick Copilot instance: visible -> hidden; hidden/minimized -> show, raise, activate and focus through the existing window behavior.
+- No new window/runtime is created by repeated activation.
+- Preserve the current explicit quit lifecycle.
+- Build toward =zara --toggle-desktop= through one bounded per-user local-control boundary, not remote daemon semantics.
+
+** Gate
+- Deterministic desktop-controller RED/TDD first.
+- Full repository-native tests, flake, package and exact-head CI before merge.
