@@ -88,7 +88,13 @@ class AndroidTextSessionController(
             text = text,
         )
         future.whenComplete { result, error ->
-            if (error != null || result == null) return@whenComplete
+            if (error != null) {
+                if (rootCause(error) is TextRequestTimeoutException && requestIsCurrent(request)) {
+                    connectionLost("text request timed out")
+                }
+                return@whenComplete
+            }
+            if (result == null) return@whenComplete
             synchronized(lock) {
                 val connected = runtimeState.server as? ServerConnection.Connected
                 if (
@@ -177,6 +183,21 @@ class AndroidTextSessionController(
             }
         }
         return future
+    }
+
+    private fun requestIsCurrent(request: TurnRequest): Boolean = synchronized(lock) {
+        val connected = runtimeState.server as? ServerConnection.Connected
+        !closed &&
+            connected?.generation == request.generation &&
+            runtimeState.sessionId == request.sessionId
+    }
+
+    private fun rootCause(error: Throwable): Throwable {
+        var current = error
+        while (current.cause != null && current.cause !== current) {
+            current = current.cause!!
+        }
+        return current
     }
 
     private fun scheduleReconnect() {
