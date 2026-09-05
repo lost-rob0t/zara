@@ -251,7 +251,8 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     override fun close() {
         actor.setVoiceStreamObserver(null)
         actor.setVoiceStreamFailureObserver(null)
-        audioRouteController.stop()
+        val routeFailure = runCatching { audioRouteController.stop() }.exceptionOrNull()
+        if (routeFailure != null) reportVoiceStreamFailure(routeFailure)
         try {
             voice.close()
         } finally {
@@ -262,5 +263,6 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 voiceStreamSink.close()
             }
         }
+        if (routeFailure != null) throw routeFailure
     }
 }
