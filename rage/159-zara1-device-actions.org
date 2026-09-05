@@ -53,3 +53,10 @@
 - Design decision :: keep one existing gateway/action table and tighten its state machine only. Reject expired deadlines before action construction/enqueue; return a Future-compatible typed =DeviceActionHandle= exposing =action_id=; and reject terminal-before-accepted with =protocol.error(action_not_accepted)= while retaining the pending action for a later valid accepted -> terminal sequence.
 - Realization :: =6e974fcdc11a10616a0dfa573cfb174eba44818a= changes only =zara/zmq_transport.py= and preserves all existing adversarial tests unchanged.
 - Verification :: exact-head focused/full repository, Nix/package, Android and shared-mic gates pending on the post-log candidate; no prior SHA authorizes merge.
+
+* Failure-surfacing recovery — 2026-09-05
+- CI #1024 at =45975f7baa0f81a91198861185993bb31a12597d= again reached the 30-minute workflow boundary inside =scripts/test-all.sh= while Android/APK and both shared-mic jobs were green.
+- The #159 branch was recovered onto exact Android-authenticated master =ceb2e13951af518cbc29df2dafabdea022baad89= through helper #335, producing =330402ef67f6c92b7c19ac63d10f65734b49cdd9= on =rage/159-zara1-device-actions-current=.
+- Harness finding :: both device-action test modules used =zmq.Context.term()=. Any assertion failure before test-local socket/gateway cleanup can therefore block fixture teardown indefinitely and hide the real RED until CI kills the job.
+- Harness repair :: =05b25f1edfce97ea5045b9f6b1956a35b3f7ebb6= and =31e1110576828ac4b5b778ce7898e68bc7fd3db5= switch only the two #159 test contexts to =destroy(linger=0)=. Assertions and production behavior are unchanged. This is failure surfacing, not a weakened gate.
+- Next authority :: fresh focused/full exact-head CI on the successor branch. Any now-visible assertion is the next deterministic RED to consume; no timeout/cancel result authorizes merge.
