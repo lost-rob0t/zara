@@ -45,6 +45,10 @@ class ZaraTextClientActor(
         Thread(runnable, "zara-android-text-client").apply { isDaemon = true }
     },
 ) : TextSessionClient, VoiceCommandClient {
+    companion object {
+        private const val MAX_INTERLEAVED_VOICE_EVENTS = 256
+    }
+
     private var dealer: TextDealer? = null
     private var session: ConnectedTextSession? = null
     private val correlations = RequestCorrelations(limit = 256)
@@ -349,11 +353,18 @@ class ZaraTextClientActor(
     }
 
     private fun receiveVoiceReply(active: TextDealer): VoiceServerReply {
+        var interleavedEvents = 0
         while (true) {
             val frames = active.receive(requestTimeoutMillis)
                 ?: throw TextRequestTimeoutException("ZARA/1 voice acknowledgement timed out")
             when (val inbound = ZaraVoiceInboundCodec.decode(frames)) {
-                is VoiceInboundMessage.Stream -> dispatchVoiceStream(inbound.event)
+                is VoiceInboundMessage.Stream -> {
+                    if (interleavedEvents >= MAX_INTERLEAVED_VOICE_EVENTS) {
+                        throw ZaraWireException("voice acknowledgement displaced by too many stream events")
+                    }
+                    dispatchVoiceStream(inbound.event)
+                    interleavedEvents += 1
+                }
                 is VoiceInboundMessage.Reply -> return inbound.reply
             }
         }
