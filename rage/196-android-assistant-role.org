@@ -21,7 +21,7 @@
 - Voice-interaction services use =BIND_VOICE_INTERACTION= and an isolated lightweight =:voice= process surface.
 - UI and diagnostics render canonical =AssistantRole= values verbatim enough to remain honest.
 - Activity resume re-checks the platform role so external revocation/change is reflected promptly.
-- Samsung-specific setup claims remain deferred to hardware issue #206.
+- Samsung setup guidance is bounded to the researched public picker/side-button paths and explicitly leaves hardware verification to #206.
 
 * TDD / implementation lineage
 - =86cfe5608e121432251215c1c4045952615a1787= RED role assessment contract.
@@ -42,10 +42,12 @@
 - =fdaf8a4dd87d6ac3baaa8a4e10de982b43674e5b= wire explicit user role request/result in =MainActivity=.
 - =0c6bddbd22c3bf506f24e0ddd9777e227608bd90= RED require role recheck on activity resume.
 - =d7893258c4ccfe124833848152773943334797af= GREEN resume re-assessment for external role loss/change.
+- =9cc6ad40c90e54a0ce463a6e80622d6b75abece0= RED require bounded Samsung assistant setup guidance.
+- =11f3d808486b2f26c2ac676bc23a41fc3b4760e3= GREEN encode researched Digital Assistant / supported Side button guidance with explicit #206 hardware caveat.
 
 * Current acceptance state
-- Implemented :: role held/not-held/unavailable projection; explicit role request; post-result platform recheck; canonical reducer publication; VoiceInteraction service/session manifest surface; honest Settings/Diagnostics role state; activity-resume role recheck.
-- Still open before full #196 closure :: prove UI-closed invocation handoff into the same authenticated runtime; deterministic cross-process recreation/cancellation cleanup; emulator/instrumentation coverage where feasible; Samsung setup guidance/hardware proof remains #206.
+- Implemented :: role held/not-held/unavailable projection; explicit role request; post-result platform recheck; canonical reducer publication; VoiceInteraction service/session manifest surface; honest Settings/Diagnostics role state; activity-resume role recheck; bounded Samsung setup guidance source.
+- Still open before full #196 closure :: render final guidance in onboarding UI; prove UI-closed invocation handoff into the same authenticated runtime; deterministic cross-process recreation/cancellation cleanup; emulator/instrumentation coverage where feasible; Samsung hardware proof remains #206.
 
 * Verification gate
 - Focused Android JVM tests including assistant/controller/manifest/UI projection.
