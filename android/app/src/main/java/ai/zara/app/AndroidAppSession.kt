@@ -103,8 +103,9 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         assistantRolePlatform = AndroidAssistantRolePlatform(context.applicationContext)
         assistantRoleController = AssistantRoleController(
             platform = assistantRolePlatform,
-            outcomeObserver = { role ->
-                controller.observeAssistantRole(role)
+            outcomeObserver = { roleOutcome ->
+                controller.observeAssistantRole(roleOutcome)
+                val role = state().assistantRole
                 assistantVoiceGuard.onRoleChanged(role)
             },
         )

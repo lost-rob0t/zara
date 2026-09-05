@@ -32,3 +32,11 @@
 * Gate
 - #432 is canonical; PR is retargeted directly to master.
 - Fresh exact-current-base Android/full-Nix/package/shared-mic CI required before promotion.
+
+* Iteration 2 — exact-head compile regression
+- CI #1576 on head =e46eebb1ec26a35baa9865a1980f36d0e5696f47= failed only the Android lane while the full repository/Nix/package and both shared-mic lanes passed.
+- Deterministic RED :: Kotlin rejected =assistantVoiceGuard.onRoleChanged(role)= because =AssistantRoleController= emits =RoleOutcome= while the guard accepts canonical =AssistantRole=.
+- Root cause :: production wiring bypassed the intended type boundary even though the reducer already owns the =RoleOutcome -> AssistantRole= transition.
+- RED contract commit :: =431d44e4ae7df3d58b299c1fcd4100742c35a9ba= requires the outcome to reach =controller.observeAssistantRole= before the canonical runtime role reaches the guard.
+- GREEN production commit :: =f10022616fa1dce5a80bbcb56b90b52f02c61695= reduces the outcome first and then reads =state().assistantRole= for the voice guard. No type weakening or parallel mapping was introduced.
+- Exact-head CI for the repaired candidate remains required before promotion.
