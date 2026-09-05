@@ -58,7 +58,17 @@ class EnrollmentRepository(
     fun createIdentityZ85(): String = JeroMqCurveKeyCodec.encode(createIdentity())
 
     fun pinServer(publicKey: ByteArray) {
-        serverPins.save(ServerPin(publicKey))
+        val candidate = ServerPin(publicKey)
+        when (val existing = serverPins.load()) {
+            ServerPinLoadResult.Missing -> serverPins.save(candidate)
+            is ServerPinLoadResult.Corrupt ->
+                throw AuthenticationException("stored server pin is corrupt: ${existing.reason}")
+            is ServerPinLoadResult.Ready -> {
+                if (!existing.pin.matches(publicKey)) {
+                    throw AuthenticationException("server CURVE public key is already pinned")
+                }
+            }
+        }
     }
 
     fun pinServerZ85(publicKey: String) {
