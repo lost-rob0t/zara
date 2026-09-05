@@ -1,0 +1,38 @@
+:PROPERTIES:
+:ID:       zara-rage-203-android-assistant-shutdown-fence
+:END:
+#+title: RAGE #203 — fence stale Android assistant starts after shutdown
+#+status: ACTIVE
+
+* Iteration 1
+** Consumption
+- Issue :: #203
+- Immutable start :: c827a71d394a5c574bf6e85e8a14400d294b6d07
+- Branch :: rage/203-android-assistant-shutdown-fence
+- Scope :: Android assistant lifecycle only. No Core/protocol/plugin changes.
+
+** Research
+- =ZaraVoiceInteractionService.onShutdown()= only cancels when the shared manual voice state is already =Capturing=.
+- =startAssistantVoice()= may reconnect asynchronously before calling =pressToTalk(true)=.
+- Therefore service/role shutdown during an in-flight assistant start can occur before the shared state becomes =Capturing=; the late completion can then start capture after shutdown.
+- =AssistantInvocationGate= already fences late UI-session starts after =onHide=, but the service shutdown lifecycle has no equivalent generation fence shared with the async start operation.
+
+** Architecture / design
+- Add one small Android assistant lifecycle fence with monotonically increasing generation.
+- A start captures the current generation before asynchronous reconnect/start work.
+- Service shutdown invalidates the generation before cancellation/role reassessment.
+- A late start continuation must fail closed if its captured generation is stale, and if capture crossed the boundary concurrently it must issue the canonical existing cancel rather than leaving a recorder alive.
+- Keep =AndroidAppSession= and =PushToTalkController= as the only voice/capture owners; this fence only authorizes whether an assistant-originated start may proceed.
+- No second state machine, socket, recorder, daemon, or assistant runtime.
+
+** Planned deterministic tests
+- start token is valid until shutdown invalidates it;
+- stale token cannot authorize a late start;
+- duplicate shutdown invalidation remains monotonic;
+- a fresh invocation after a later valid service lifecycle may obtain a new token without reviving the stale one.
+
+** Verification gate
+- focused JVM assistant lifecycle tests;
+- =scripts/test-android.sh=;
+- repository full tests, flake/package, Android secret/APK gate, shared-mic lanes at exact candidate SHA;
+- clear exact-head reviews/threads before merge.
