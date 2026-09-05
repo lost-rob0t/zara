@@ -10,7 +10,7 @@ class ZaraVoiceInteractionService : VoiceInteractionService() {
         get() = application as ZaraApplication
 
     private val appSession: AndroidAppSession
-        get() = zaraApplication.appSession
+        get() = (application as ZaraApplication).appSession
 
     override fun onReady() {
         super.onReady()
