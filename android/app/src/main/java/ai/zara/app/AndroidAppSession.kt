@@ -96,6 +96,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             PushToTalkController(
                 capture = ManualVoiceCapture(AuthenticatedVoiceIngress(actor)),
                 recorder = AndroidPcmRecorder(),
+                onRecorderFailure = ::reportVoiceStreamFailure,
             )
         )
         assistantVoiceGuard = AssistantRoleVoiceGuard(::cancelAssistantCaptureForRoleLoss)
