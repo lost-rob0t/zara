@@ -69,6 +69,34 @@ class ManualVoiceSessionCoordinatorTest {
         assertEquals(emptyList<String>(), ingress.calls)
         assertEquals(emptyList<String>(), recorder.calls)
     }
+
+    @Test fun `permission revocation crosses coordinator and cancels single capture owner`() {
+        val ingress = CoordinatorIngress()
+        val recorder = CoordinatorRecorder()
+        val coordinator = ManualVoiceSessionCoordinator(
+            PushToTalkController(ManualVoiceCapture(ingress), recorder),
+            streamIds = sequenceOf("mic-1").iterator(),
+        )
+        val state = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Ready,
+            server = ServerConnection.Connected(2),
+            sessionId = "session-1",
+        )
+
+        coordinator.press(state, permissionGranted = true)
+        coordinator.onMicrophonePermissionChanged(granted = false)
+        coordinator.onMicrophonePermissionChanged(granted = false)
+
+        assertEquals(
+            listOf(
+                "start:session-1:null:mic-1",
+                "cancel:mic-1",
+            ),
+            ingress.calls,
+        )
+        assertEquals(listOf("start", "stop"), recorder.calls)
+        assertEquals(ManualVoiceState.Idle, coordinator.state())
+    }
 }
 
 private class CoordinatorIngress : VoiceIngress {
