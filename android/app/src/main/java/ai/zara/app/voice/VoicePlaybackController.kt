@@ -59,6 +59,21 @@ class VoicePlaybackController(
         }
     }
 
+    fun interrupt(): ActiveAudioOutput? {
+        check(!closed) { "voice playback is closed" }
+        val interrupted = state.audio ?: return null
+        if (outputActive) {
+            output.stop()
+            outputActive = false
+        }
+        state = state.copy(
+            audio = null,
+            lastAudioSequence = null,
+            lastAudioChunk = null,
+        )
+        return interrupted
+    }
+
     override fun close() {
         if (closed) return
         closed = true
