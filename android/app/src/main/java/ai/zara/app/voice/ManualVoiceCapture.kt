@@ -33,8 +33,10 @@ interface VoiceIngress {
 class ManualVoiceCapture(private val ingress: VoiceIngress) {
     private var state: ManualVoiceState = ManualVoiceState.Idle
 
+    @Synchronized
     fun state(): ManualVoiceState = state
 
+    @Synchronized
     fun begin(
         context: VoiceCaptureContext,
         permissionGranted: Boolean,
@@ -48,6 +50,7 @@ class ManualVoiceCapture(private val ingress: VoiceIngress) {
         state = ManualVoiceState.Capturing(context, nextSequence = 0)
     }
 
+    @Synchronized
     fun acceptPcm(pcm: ByteArray) {
         require(pcm.size == PCM_FRAME_BYTES) {
             "manual voice PCM frame must be exactly $PCM_FRAME_BYTES bytes"
@@ -64,6 +67,7 @@ class ManualVoiceCapture(private val ingress: VoiceIngress) {
         state = capturing.copy(nextSequence = capturing.nextSequence + 1)
     }
 
+    @Synchronized
     fun commit() {
         val capturing = state as? ManualVoiceState.Capturing
             ?: throw IllegalStateException("manual voice capture is not active")
@@ -71,6 +75,7 @@ class ManualVoiceCapture(private val ingress: VoiceIngress) {
         state = ManualVoiceState.Idle
     }
 
+    @Synchronized
     fun cancel() {
         val capturing = state as? ManualVoiceState.Capturing
             ?: throw IllegalStateException("manual voice capture is not active")
