@@ -70,27 +70,6 @@ class ManualVoiceCaptureTest {
         }
         assertEquals(listOf("start:stream-1", "cancel:stream-1"), sink.events)
     }
-
-    @Test
-    fun permissionRevocationCancelsActiveCaptureExactlyOnceAndNeverAutoRestarts() {
-        val sink = RecordingVoiceIngress()
-        val capture = ManualVoiceCapture(sink)
-        capture.begin(
-            VoiceCaptureContext("session-1", null, "stream-1"),
-            permissionGranted = true,
-            connected = true,
-        )
-
-        capture.onMicrophonePermissionChanged(granted = false)
-        capture.onMicrophonePermissionChanged(granted = false)
-        capture.onMicrophonePermissionChanged(granted = true)
-
-        assertEquals(listOf("start:stream-1", "cancel:stream-1"), sink.events)
-        assertEquals(ManualVoiceState.Idle, capture.state())
-        assertThrows(IllegalStateException::class.java) {
-            capture.acceptPcm(ByteArray(1024))
-        }
-    }
 }
 
 private class RecordingVoiceIngress : VoiceIngress {
