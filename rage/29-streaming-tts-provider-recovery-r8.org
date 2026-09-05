@@ -1,0 +1,25 @@
+#+title: RAGE #29 — streaming TTS provider recovery r8
+
+* Transaction
+- Consumed issue :: #29
+- Immutable RAGE start :: =3676fc7e452eab409305f62a826b9f0b1f9841d4=
+- Branch :: =rage/29-streaming-tts-provider-recovery-r8=
+- Scope :: Zara Core only; no =android/**= changes.
+
+* Contract analysis
+- The r7 lifecycle slice is canonical on the immutable start SHA.
+- =TtsOutputBridge._get_engine()= currently latches the first engine-construction exception forever with =_engine_failed=True=.
+- A transient provider/bootstrap failure on one turn therefore disables daemon TTS for every later turn in the process, contradicting #29 acceptance that provider failures must not strand later turns.
+- Retrying construction for every phrase inside the same failed turn would amplify an outage and log repeatedly.
+
+* Bounded design
+- Cache a successfully constructed engine exactly as before.
+- If construction fails for turn T, suppress further construction attempts only for T.
+- A later turn may attempt one fresh construction and recover without daemon restart.
+- Do not change ZARA/1 messages, client playback ownership, provider APIs, cancellation, phrase ordering, or Android code.
+
+* Adversarial notes
+- Same-turn phrase storms must not hammer engine construction after failure.
+- Recovery must occur only on a later turn; it must not fabricate audio or success for the failed turn.
+- A successful recovery becomes the shared cached engine for subsequent turns.
+- Exact-head focused/full tests, Nix flake/package, Android and shared-mic gates remain mandatory.
