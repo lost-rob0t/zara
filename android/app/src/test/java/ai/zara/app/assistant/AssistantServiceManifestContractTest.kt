@@ -34,4 +34,12 @@ class AssistantServiceManifestContractTest {
         assertTrue(activity.contains("appSession.assistantRoleRequestIntent()"))
         assertTrue(activity.contains("onRequestAssistantRole"))
     }
+
+    @Test
+    fun `ordinary UI rechecks assistant role whenever it resumes`() {
+        val activity = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+
+        assertTrue(activity.contains("override fun onResume()"))
+        assertTrue(activity.contains("appSession.assessAssistantRole()"))
+    }
 }
