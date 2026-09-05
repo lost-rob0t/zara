@@ -4,6 +4,7 @@ import java.io.File
 import java.nio.file.Files
 import java.security.MessageDigest
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -29,6 +30,8 @@ class AuthenticationTest {
         loaded as CredentialLoadResult.Ready
         assertArrayEquals(credential.publicKey, loaded.credential.publicKey)
         assertArrayEquals(credential.secretKey, loaded.credential.secretKey)
+        loaded.credential.destroy()
+        credential.destroy()
     }
 
     @Test fun `wrong wrapping key reports corrupt instead of silently replacing identity`() {
@@ -36,6 +39,7 @@ class AuthenticationTest {
         val file = File(directory, "curve-credential.bin")
         val credential = CurveCredential(ByteArray(32) { 7 }, ByteArray(32) { 11 })
         WrappedCredentialStore(file, TaggedCipher(0x22)).save(credential)
+        credential.destroy()
 
         val loaded = WrappedCredentialStore(file, TaggedCipher(0x55)).load()
 
@@ -68,21 +72,34 @@ class AuthenticationTest {
         assertFalse(pin.matches(wrong))
     }
 
+    @Test fun `jero mq z85 enrollment key round trips exactly`() {
+        val key = ByteArray(32) { (it * 7 + 3).toByte() }
+
+        val encoded = JeroMqCurveKeyCodec.encode(key)
+        val decoded = JeroMqCurveKeyCodec.decode(encoded)
+
+        assertEquals(40, encoded.length)
+        assertArrayEquals(key, decoded)
+        expectIllegalArgument { JeroMqCurveKeyCodec.decode(encoded.dropLast(1)) }
+    }
+
     @Test fun `auth configurator applies client identity and pinned server key`() {
         val publicKey = ByteArray(32) { (it + 3).toByte() }
         val secretKey = ByteArray(32) { (it + 71).toByte() }
         val serverKey = ByteArray(32) { (it + 101).toByte() }
         val socket = RecordingCurveSocket()
+        val credential = CurveCredential(publicKey, secretKey)
 
         CurveAuthConfigurator().configure(
             socket = socket,
-            credential = CurveCredential(publicKey, secretKey),
+            credential = credential,
             serverPin = ServerPin(serverKey),
         )
 
         assertArrayEquals(serverKey, socket.serverKey)
         assertArrayEquals(publicKey, socket.publicKey)
         assertArrayEquals(secretKey, socket.secretKey)
+        credential.destroy()
     }
 
     @Test fun `auth configurator fails closed when socket rejects any curve option`() {
@@ -99,6 +116,65 @@ class AuthenticationTest {
             }
             assertTrue("$rejection must fail authentication", failed)
         }
+        credential.destroy()
+    }
+
+    @Test fun `enrollment is explicit and requires a server pin before socket auth`() {
+        val directory = Files.createTempDirectory("zara-enrollment").toFile()
+        val publicKey = ByteArray(32) { (it + 4).toByte() }
+        val secretKey = ByteArray(32) { (it + 44).toByte() }
+        val serverKey = ByteArray(32) { (it + 84).toByte() }
+        val repository = EnrollmentRepository(
+            credentials = WrappedCredentialStore(
+                File(directory, "credential.bin"),
+                TaggedCipher(0x17),
+            ),
+            serverPins = ServerPinStore(File(directory, "server-pin.bin")),
+            generator = FixedGenerator(publicKey, secretKey),
+        )
+
+        assertTrue(repository.state() is EnrollmentState.Unenrolled)
+        assertArrayEquals(publicKey, repository.createIdentity())
+        assertTrue(repository.state() is EnrollmentState.AwaitingServerPin)
+
+        var failed = false
+        try {
+            repository.configure(RecordingCurveSocket())
+        } catch (_: AuthenticationException) {
+            failed = true
+        }
+        assertTrue(failed)
+
+        repository.pinServer(serverKey)
+        assertTrue(repository.state() is EnrollmentState.Ready)
+        val socket = RecordingCurveSocket()
+        repository.configure(socket)
+        assertArrayEquals(serverKey, socket.serverKey)
+        assertArrayEquals(publicKey, socket.publicKey)
+        assertArrayEquals(secretKey, socket.secretKey)
+    }
+
+    @Test fun `corrupt credential blocks identity replacement`() {
+        val directory = Files.createTempDirectory("zara-enrollment-corrupt").toFile()
+        val file = File(directory, "credential.bin")
+        val goodCipher = TaggedCipher(0x12)
+        val credential = CurveCredential(ByteArray(32) { 1 }, ByteArray(32) { 2 })
+        WrappedCredentialStore(file, goodCipher).save(credential)
+        credential.destroy()
+        val repository = EnrollmentRepository(
+            credentials = WrappedCredentialStore(file, TaggedCipher(0x13)),
+            serverPins = ServerPinStore(File(directory, "server-pin.bin")),
+            generator = FixedGenerator(ByteArray(32) { 3 }, ByteArray(32) { 4 }),
+        )
+
+        assertTrue(repository.state() is EnrollmentState.Corrupt)
+        var failed = false
+        try {
+            repository.createIdentity()
+        } catch (_: AuthenticationException) {
+            failed = true
+        }
+        assertTrue(failed)
     }
 
     private fun expectIllegalArgument(block: () -> Unit) {
@@ -133,6 +209,13 @@ private class TaggedCipher(private val key: Int) : CredentialCipher {
     }
 
     private fun digest(value: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(value)
+}
+
+private class FixedGenerator(
+    private val publicKey: ByteArray,
+    private val secretKey: ByteArray,
+) : CurveCredentialGenerator {
+    override fun generate(): CurveCredential = CurveCredential(publicKey, secretKey)
 }
 
 private enum class Reject { NONE, SERVER, PUBLIC, SECRET }
