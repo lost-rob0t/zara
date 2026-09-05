@@ -13,8 +13,20 @@ from zara.desktop.controller import DesktopController
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.theme import apply_desktop_theme
 from zara.runtime.host import RuntimeHost
+from zara.server import ServerLease, default_zmq_endpoint
+from zara.zmq_transport import ZmqZaraClient
 
 _CONTROLLER_ATTR = "_zara_desktop_controller"
+
+
+def _default_daemon_endpoint() -> str:
+    """Resolve the same owner-private IPC endpoint used by ``zara-server``."""
+    return default_zmq_endpoint(ServerLease()._runtime_dir())
+
+
+def _default_desktop_client() -> ZaraClient:
+    """Construct the canonical daemon-backed client for normal desktop startup."""
+    return ZmqZaraClient(_default_daemon_endpoint())
 
 
 def create_application(
@@ -51,7 +63,7 @@ def create_application(
     # ZaraClient, so transport selection remains outside Qt surfaces.
     service = client if client is not None else host
     if service is None:
-        service = InProcessZaraClient()
+        service = _default_desktop_client()
     bridge = QtRuntimeBridge(service, parent=app)
     controller = DesktopController(app, service, bridge)
     setattr(app, _CONTROLLER_ATTR, controller)
