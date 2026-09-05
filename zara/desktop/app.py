@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Optional, Sequence
 
 from PySide6.QtWidgets import QApplication
 
 from zara.client import InProcessZaraClient, ZaraClient
 from zara.config import ZaraConfig, get_config
+from zara.desktop.control import (
+    DesktopControlAlreadyRunning,
+    DesktopControlServer,
+    send_desktop_control,
+)
 from zara.desktop.controller import DesktopController
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.theme import apply_desktop_theme
@@ -17,11 +23,17 @@ from zara.server import ServerLease, default_zmq_endpoint
 from zara.zmq_transport import ZmqZaraClient
 
 _CONTROLLER_ATTR = "_zara_desktop_controller"
+_CONTROL_ATTR = "_zara_desktop_control_server"
 
 
 def _default_daemon_endpoint() -> str:
     """Resolve the same owner-private IPC endpoint used by ``zara-server``."""
     return default_zmq_endpoint(ServerLease()._runtime_dir())
+
+
+def _desktop_control_runtime_dir() -> Path:
+    """Reuse Zara's owner-private XDG/UID runtime-directory policy."""
+    return ServerLease()._runtime_dir()
 
 
 def _default_desktop_client() -> ZaraClient:
@@ -70,6 +82,24 @@ def create_application(
     return app, controller
 
 
+def _install_desktop_control(
+    app: QApplication,
+    controller: DesktopController,
+    *,
+    runtime_dir: Optional[Path | str] = None,
+) -> DesktopControlServer:
+    """Reserve the single desktop owner before its Zara client starts."""
+    existing = getattr(app, _CONTROL_ATTR, None)
+    if existing is not None:
+        return existing
+    target_dir = _desktop_control_runtime_dir() if runtime_dir is None else Path(runtime_dir)
+    server = DesktopControlServer(target_dir, controller.desktop_control_requested.emit)
+    server.start()
+    app.aboutToQuit.connect(server.close)
+    setattr(app, _CONTROL_ATTR, server)
+    return server
+
+
 def start_desktop(
     argv: Optional[Sequence[str]] = None,
     *,
@@ -93,8 +123,22 @@ def start_desktop(
     return app, controller
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
-    app, _controller = start_desktop(argv)
+def main(
+    argv: Optional[Sequence[str]] = None,
+    *,
+    initial_command: str = "show",
+) -> int:
+    """Own one desktop process, or relay to the owner that won a startup race."""
+    app, controller = create_application(argv)
+    runtime_dir = _desktop_control_runtime_dir()
+    try:
+        _install_desktop_control(app, controller, runtime_dir=runtime_dir)
+    except DesktopControlAlreadyRunning:
+        send_desktop_control(initial_command, runtime_dir=runtime_dir)
+        return 0
+
+    controller.start()
+    controller.apply_desktop_control(initial_command)
     return int(app.exec())
 
 
