@@ -36,6 +36,39 @@ class VoiceStreamReducerTest {
         }
     }
 
+    @Test fun `terminal transcript permits a new stream to restart sequence from zero`() {
+        var state = VoiceStreamState.connected("session-1")
+        state = reduceVoiceStream(
+            state,
+            VoiceStreamEvent.Transcript("session-1", "conversation-1", "mic-1", 7, "first", true),
+        )
+
+        state = reduceVoiceStream(
+            state,
+            VoiceStreamEvent.Transcript("session-1", "conversation-1", "mic-2", 0, "second", false),
+        )
+
+        assertEquals("mic-2", state.transcriptStreamId)
+        assertEquals(0L, state.lastTranscriptSequence)
+        assertEquals("second", state.transcriptText)
+        assertEquals(false, state.transcriptFinal)
+    }
+
+    @Test fun `active transcript stream cannot change conversation identity`() {
+        var state = VoiceStreamState.connected("session-1")
+        state = reduceVoiceStream(
+            state,
+            VoiceStreamEvent.Transcript("session-1", "conversation-1", "mic-1", 0, "hello", false),
+        )
+
+        assertThrows(StaleVoiceStreamException::class.java) {
+            reduceVoiceStream(
+                state,
+                VoiceStreamEvent.Transcript("session-1", "conversation-2", "mic-1", 1, "wrong chat", true),
+            )
+        }
+    }
+
     @Test fun `audio lifecycle requires one current turn stream and increasing chunks`() {
         var state = VoiceStreamState.connected("session-1")
         state = reduceVoiceStream(
