@@ -70,6 +70,8 @@ class EnrolledKey:
 class SecurityRegistry:
     """Thread-safe live mapping from CURVE public keys to principals."""
 
+    _MAX_DEVICE_ID_BYTES = 128
+
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._by_public_key: dict[str, EnrolledKey] = {}
@@ -88,7 +90,10 @@ class SecurityRegistry:
         try:
             encoded = public_key.encode("ascii")
             decoded = z85.decode(encoded)
-        except (UnicodeEncodeError, ValueError) as error:
+        except (UnicodeEncodeError, ValueError, KeyError) as error:
+            # pyzmq's Z85 decoder raises KeyError for bytes outside its alphabet.
+            # Normalize third-party decoder details into Zara's stable fail-closed
+            # validation contract instead of leaking an implementation exception.
             raise ValueError("CURVE public key must be valid Z85") from error
         if len(encoded) != 40 or len(decoded) != 32:
             raise ValueError("CURVE public key must encode exactly 32 bytes")
@@ -100,6 +105,11 @@ class SecurityRegistry:
             raise ValueError("device_id must be a non-empty string")
         if device_id != device_id.strip():
             raise ValueError("device_id must not contain leading or trailing whitespace")
+        encoded = device_id.encode("utf-8")
+        if len(encoded) > SecurityRegistry._MAX_DEVICE_ID_BYTES:
+            raise ValueError("device_id exceeds byte limit")
+        if any(ord(character) < 0x20 or ord(character) == 0x7F for character in device_id):
+            raise ValueError("device_id must not contain control characters")
         return device_id
 
     @staticmethod
