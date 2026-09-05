@@ -176,6 +176,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (::appSession.isInitialized) appSession.assessAssistantRole()
+    }
+
     override fun onDestroy() {
         if (::appSession.isInitialized) appSession.close()
         super.onDestroy()
