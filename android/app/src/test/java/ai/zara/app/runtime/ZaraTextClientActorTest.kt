@@ -14,6 +14,7 @@ class ZaraTextClientActorTest {
                 server("{\"conversation_id\":\"conversation-1\",\"id\":\"accepted-1\",\"payload_count\":0,\"reply_to\":\"req-2\",\"session_id\":\"session-1\",\"timestamp_ns\":3,\"turn_id\":\"turn-1\",\"type\":\"turn.accepted\"}"),
                 server("{\"body\":{\"text\":\"hel\"},\"conversation_id\":\"conversation-1\",\"id\":\"delta-1\",\"payload_count\":0,\"seq\":1,\"session_id\":\"session-1\",\"timestamp_ns\":4,\"turn_id\":\"turn-1\",\"type\":\"assistant.delta\"}"),
                 server("{\"body\":{\"success\":true,\"text\":\"hello\"},\"conversation_id\":\"conversation-1\",\"id\":\"done-1\",\"payload_count\":0,\"seq\":2,\"session_id\":\"session-1\",\"timestamp_ns\":5,\"turn_id\":\"turn-1\",\"type\":\"assistant.completed\"}"),
+                server("{\"body\":{\"success\":true},\"conversation_id\":\"conversation-1\",\"id\":\"turn-done-1\",\"payload_count\":0,\"seq\":3,\"session_id\":\"session-1\",\"timestamp_ns\":6,\"turn_id\":\"turn-1\",\"type\":\"turn.completed\"}"),
             )
         )
         val client = ZaraTextClientActor(
