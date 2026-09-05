@@ -128,6 +128,22 @@ class AndroidTextSessionControllerTest {
     }
 
     @Test
+    fun enrollment_loss_disconnects_current_session_without_reconnect() {
+        val client = FakeTextSessionClient()
+        val scheduler = FakeReconnectScheduler()
+        val controller = connectedController(client, scheduler)
+
+        controller.observeEnrollment(EnrollmentReadiness.Unenrolled)
+
+        assertEquals(EnrollmentReadiness.Unenrolled, controller.state().enrollment)
+        assertEquals(ServerConnection.Disconnected, controller.state().server)
+        assertEquals(2L, controller.state().generation)
+        assertEquals(null, controller.state().sessionId)
+        assertEquals(1, client.disconnectCalls)
+        assertEquals(emptyList<Long>(), scheduler.delays)
+    }
+
+    @Test
     fun connect_failure_enters_bounded_reconnect_state_and_schedules_retry() {
         val client = FakeTextSessionClient()
         val scheduler = FakeReconnectScheduler()
