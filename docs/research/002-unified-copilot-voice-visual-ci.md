@@ -1,8 +1,8 @@
 # Unified Copilot, Voice Conversation Continuity, and Visual CI
 
-**Research baseline:** `16b1eda8dd4a0b1e4a3dba7742787e8a75192347`  
-**Date:** 2026-09-05  
-**Status:** design-ready research  
+**Research baseline:** `16b1eda8dd4a0b1e4a3dba7742787e8a75192347`
+**Date:** 2026-09-05
+**Status:** design-ready research
 **Primary target:** Linux desktop, preserving portable client/runtime boundaries
 
 ## Executive decision
