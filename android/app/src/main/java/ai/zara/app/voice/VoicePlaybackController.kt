@@ -22,8 +22,20 @@ class VoicePlaybackController(
         when (event) {
             is VoiceStreamEvent.AudioStarted -> {
                 val next = reduceVoiceStream(state, event)
-                if (outputActive) output.stop()
-                output.start(event.sampleRate, event.channels)
+                if (outputActive) {
+                    output.stop()
+                    outputActive = false
+                }
+                try {
+                    output.start(event.sampleRate, event.channels)
+                } catch (error: Throwable) {
+                    state = state.copy(
+                        audio = null,
+                        lastAudioSequence = null,
+                        lastAudioChunk = null,
+                    )
+                    throw error
+                }
                 outputActive = true
                 state = next
             }
