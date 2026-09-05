@@ -1,0 +1,43 @@
+#+title: RAGE #388 r9 — canonical plugin tool cancellation
+#+status: ACTIVE
+
+* Immutable start
+- Consumed issue :: #388
+- Start commit :: 0a370079f2bf293b320ea72865239e6ee4c08a73
+- Scope :: Zara Core only; zero android/** changes.
+
+* Research / inherited failure evidence
+- r5 exact-head CI #1518 falsified ToolNode awrap_tool_call + ContextVar propagation: sync/async/concurrent tool bodies never observed the cancellation token.
+- r6 exact-head CI #1540 falsified wrapping ToolNode.ainvoke in a ContextVar scope for the same acceptance seam.
+- r7 exact-head CI #1554 falsified a concrete ToolCancellation + LangGraph InjectedState form because Pydantic attempted to generate an internal schema for the runtime-only type before execution.
+- r8 exact-head CI #1561 at 0febbc79349e52587ea65acbd160d6a53d3923bd remained Android/mic compatible but Core failed 4 focused acceptance tests: sync/async/concurrent bodies never entered and spoof_guard failed before body execution.
+- Current master graph.py is byte-identical to r8's pre-change graph blob, so recovering the bounded r8 graph diff onto this start does not overwrite sibling Android work.
+- Zara is pinned to the existing LangChain/LangGraph stack; no dependency addition is allowed for this repair.
+
+* r9 decision
+Retain the materially distinct LangGraph InjectedState architecture, but test the concrete runtime type with Pydantic validation explicitly skipped at the schema boundary rather than replacing the annotation's underlying type with Any. The hypothesis is that r7 preserved InjectedState discovery but failed schema generation, while r8 avoided schema generation by erasing the concrete type and then failed injection/execution. Pydantic SkipValidation should preserve the concrete ToolCancellation annotation plus InjectedState metadata while producing a schema-safe field.
+
+This is a bounded hypothesis, not an authorization to patch indefinitely. If exact-head focused/Core CI still proves the tool body cannot receive the injected cancellation view, retire InjectedState entirely and move to Core-owned manual injection at the existing post-approval/post-availability ToolNode call boundary.
+
+* Invariants
+- One canonical ToolNode execution path; no second executor or plugin-specific cancel channel.
+- Approval and tool availability checks happen before a cancellation signal exists.
+- Cancellation signal is exact-invocation Core state and is read-only to plugins.
+- Signal is set before owned task cancellation reaches async tool code.
+- Model-visible tool schema excludes cancellation and model arguments cannot retarget it.
+- Terminal lifecycle remains one ToolCancelled(reason="turn cancelled") event.
+- Concurrent invocations cannot observe each other's signal.
+- Zero android/** changes.
+
+* Acceptance / tests
+- model-facing schema hides cancellation;
+- sync cooperative tool observes cancellation before side effects;
+- async tool observes signal before CancelledError;
+- concurrent invocation isolation;
+- rejected approval does not execute;
+- unloaded tool does not execute;
+- spoofed model cancellation input cannot replace Core state;
+- exact focused test file, scripts/test-all.sh, nix flake check, nix build, Android compatibility gate and shared-mic lanes must be green at the exact candidate SHA.
+
+* Outcome
+Pending.
