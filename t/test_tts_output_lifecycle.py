@@ -78,3 +78,22 @@ async def test_many_successful_turns_do_not_accumulate_state():
         await _complete_turn(bridge, f"turn-{index}")
 
     assert bridge._turns == {}
+
+
+@pytest.mark.asyncio
+async def test_stale_task_cannot_remove_replacement_with_same_turn_id():
+    bridge = _bridge()
+    event = events.AssistantDelta(
+        turn_id="turn-reused",
+        conversation_id="conv-1",
+        text="ignored",
+    )
+    stale = bridge._state_for(event)
+    bridge._turns.pop(event.turn_id)
+    replacement = bridge._state_for(event)
+
+    stale.cancelled = True
+    await stale.queue.put("ignored")
+    await bridge._synthesize_turn(stale)
+
+    assert bridge._turns[event.turn_id] is replacement
