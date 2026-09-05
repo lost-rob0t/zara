@@ -25,7 +25,7 @@ class AuthenticationRequired(RuntimeError):
 
 
 def require_secure_curve_runtime() -> tuple[int, ...]:
-    """Reject libzmq releases with known remotely reachable CURVE/ZAP flaws."""
+    """Reject libzmq runtimes that cannot safely provide CURVE/ZAP."""
     version = tuple(int(part) for part in zmq.zmq_version_info())
     if version < _MIN_SECURE_CURVE_LIBZMQ:
         minimum = ".".join(str(part) for part in _MIN_SECURE_CURVE_LIBZMQ)
@@ -33,6 +33,12 @@ def require_secure_curve_runtime() -> tuple[int, ...]:
         raise RuntimeError(
             f"secure CURVE/ZAP requires libzmq >= {minimum}; found {actual}"
         )
+    try:
+        curve_available = bool(zmq.has("curve"))
+    except (AttributeError, TypeError, ValueError, zmq.ZMQError):
+        curve_available = False
+    if not curve_available:
+        raise RuntimeError("secure CURVE/ZAP requires libzmq CURVE support")
     return version
 
 
