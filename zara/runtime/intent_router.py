@@ -117,11 +117,6 @@ class PrologFirstRouter:
             match = await self._registered_target_match(target)
             if match.status == "rewrite" and match.canonical is not None:
                 stripped = f"{verb} {match.canonical}"
-                _record("target_rewrite", status="rewrite", distance=match.distance)
-            elif match.status == "ambiguous":
-                _record("target_rewrite", status="ambiguous", distance=match.distance)
-            elif match.status == "no_match":
-                _record("target_rewrite", status="no_match")
 
         if not command_gate.looks_like_command(stripped):
             recovered = await self._recover_target_only(stripped)
