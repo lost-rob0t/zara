@@ -68,12 +68,38 @@ class AudioRouteControllerTest {
         assertEquals(AudioRouteSnapshot(setOf(AudioRouteKind.BuiltIn)), controller.current())
     }
 
+    @Test
+    fun `rollback failure never masks original route startup failure`() {
+        val platform = FakeAudioRoutePlatform(AudioRouteSnapshot(setOf(AudioRouteKind.BuiltIn))).apply {
+            failStart = true
+            failStop = true
+        }
+        val controller = AudioRouteController(
+            platform = platform,
+            onChanged = {},
+            onRouteInterrupted = { _, _ -> },
+        )
+
+        val failure = assertThrows(IllegalStateException::class.java) { controller.start() }
+
+        assertEquals("synthetic route monitor failure", failure.message)
+        assertEquals(1, failure.suppressed.size)
+        assertEquals("synthetic route rollback failure", failure.suppressed.single().message)
+        assertEquals(null, controller.current())
+
+        platform.failStart = false
+        platform.failStop = false
+        controller.start()
+        assertEquals(AudioRouteSnapshot(setOf(AudioRouteKind.BuiltIn)), controller.current())
+    }
+
     private class FakeAudioRoutePlatform(initial: AudioRouteSnapshot) : AudioRoutePlatform {
         private var snapshot = initial
         private var listener: ((AudioRouteSnapshot) -> Unit)? = null
         var stopped = false
             private set
         var failStart = false
+        var failStop = false
 
         override fun snapshot(): AudioRouteSnapshot = snapshot
 
@@ -84,6 +110,7 @@ class AudioRouteControllerTest {
         }
 
         override fun stop() {
+            check(!failStop) { "synthetic route rollback failure" }
             stopped = true
             listener = null
         }
