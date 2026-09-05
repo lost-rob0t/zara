@@ -1,0 +1,26 @@
+:PROPERTIES:
+:ID:       zara-rage-203-android-audio-route-rollback-failure-r2
+:END:
+#+title: RAGE #203 — preserve Android audio-route startup failure across rollback r2
+#+status: ACTIVE
+
+* Consumption
+- Issue :: #203
+- Immutable/current canonical start :: a3032be8e60220d2e34dc138db1f79a953355f92
+- Scope :: Android audio-route lifecycle failure handling only. No Core/protocol/plugin changes.
+
+* Recovery
+- Prior PR #450 became non-mergeable after canonical Android lifecycle work advanced master.
+- r2 replays only the route rollback failure-ordering slice onto exact current master.
+
+* Failure analysis
+- =AudioRouteController.start()= resets internal lifecycle after platform registration/snapshot failure.
+- Rollback used to call =platform.stop()= directly before rethrowing the startup failure.
+- If cleanup also throws, cleanup masks the primary startup defect and diagnostics lose the actual cause.
+
+* TDD
+- Regression requires startup failure to remain primary, rollback failure to be suppressed, controller state to return idle, and a later clean retry to succeed.
+- Production performs rollback best-effort, attaches a distinct rollback failure as suppressed evidence, then rethrows the original failure.
+
+* Gate
+- Fresh exact-head Android/native/APK/secret + repository/Nix/package + Arch/Ubuntu shared-mic CI required before promotion.
