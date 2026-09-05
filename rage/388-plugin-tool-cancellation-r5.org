@@ -1,0 +1,33 @@
+#+title: RAGE #388 — plugin tool cancellation r5
+
+* Transaction
+- Consumed issue :: #388
+- Immutable RAGE start :: =ada24b73ab599d417dfbda6c864854c19b3426e3=
+- Branch :: =rage/388-plugin-tool-cancellation-r5=
+- Scope :: Zara Core only; zero =android/**= changes.
+
+* Preserved RED / rejected architecture
+- r4 exact head =650bebc2a04aadee85535fdd413870f4110b3a59= ran 1981 Core tests with three deterministic failures, all proving that running plugin tools did not observe the cancellation token carried through =RunnableConfig=/=ensure_config()=.
+- Android and both shared-mic lanes were green, isolating the failure to the Core tool-execution seam.
+- r4 is closed unmerged. Its config-smuggling architecture is rejected rather than patched indefinitely.
+
+* Research
+- Zara's exact =flake.lock= pins nixpkgs =9fbb54b33e91ee4ca368e35a78e0613c720600b3=.
+- That nixpkgs revision packages =langgraph-prebuilt==1.1.0=.
+- Upstream =ToolNode= 1.1.0 exposes =awrap_tool_call= specifically to intercept exact asynchronous tool execution while retaining canonical ToolNode state/runtime/error handling.
+- Therefore Core can bind a read-only cancellation ContextVar inside ToolNode's own execution wrapper, where child async tasks and sync executor calls inherit the context, instead of passing hidden state through model/tool arguments or a second control plane.
+
+* Selected architecture
+- =ToolNode(..., awrap_tool_call=...)= is the sole interception point.
+- The wrapper creates one private =threading.Event= and public read-only =ToolCancellation= view per exact invocation.
+- The wrapper binds that view in a ContextVar, launches the canonical ToolNode =execute(request)= coroutine as a child task, and shields it.
+- On outer cancellation, the wrapper sets the event before cancelling/awaiting the child task, so cooperative sync cleanup and async =CancelledError= handlers can observe cancellation first.
+- =gated_tools_node= retains existing approval, availability, event publication, result normalization, and terminal =ToolCancelled(reason="turn cancelled")= authority.
+
+* Invariants
+- cancellation is exact-invocation scoped and concurrent invocations cannot signal each other;
+- plugins can observe but cannot set, replace, or retarget Core cancellation;
+- no model-visible cancellation argument, process ID, second runtime, or approval path exists;
+- rejected/unavailable tools never enter execution scope;
+- existing ToolNode injection/error semantics remain canonical;
+- exact-head full Core tests, =nix flake check=, packaged Zara, Android compatibility, both shared-mic lanes, reviews and unresolved threads are mandatory before merge.
