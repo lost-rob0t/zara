@@ -186,6 +186,18 @@ class MainActivity : ComponentActivity() {
         reconcileMicrophonePermission(hasMicrophonePermission())
     }
 
+    override fun onStop() {
+        if (::appSession.isInitialized) {
+            appSession.onHostStopped().whenComplete { _, error ->
+                runOnUiThread {
+                    if (error != null) operationError = rootMessage(error)
+                    voiceState = appSession.voiceState()
+                }
+            }
+        }
+        super.onStop()
+    }
+
     override fun onDestroy() {
         if (::appSession.isInitialized) {
             appSession.setStateObserver(null)
