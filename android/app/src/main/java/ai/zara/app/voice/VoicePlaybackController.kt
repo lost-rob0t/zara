@@ -10,6 +10,7 @@ interface PcmOutput : AutoCloseable {
 class VoicePlaybackController(
     private val output: PcmOutput,
     sessionId: String,
+    private val audioFocus: AudioFocusController? = null,
 ) : AutoCloseable {
     private var state = VoiceStreamState.connected(sessionId)
     private var outputActive = false
@@ -23,17 +24,17 @@ class VoicePlaybackController(
             is VoiceStreamEvent.AudioStarted -> {
                 val next = reduceVoiceStream(state, event)
                 if (outputActive) {
-                    output.stop()
-                    outputActive = false
+                    stopOutputAndReleaseFocus()
+                }
+                if (audioFocus?.acquire() == false) {
+                    state = clearAudioState()
+                    throw IllegalStateException("Android assistant audio focus was denied")
                 }
                 try {
                     output.start(event.sampleRate, event.channels)
                 } catch (error: Throwable) {
-                    state = state.copy(
-                        audio = null,
-                        lastAudioSequence = null,
-                        lastAudioChunk = null,
-                    )
+                    audioFocus?.release()
+                    state = clearAudioState()
                     throw error
                 }
                 outputActive = true
@@ -48,8 +49,7 @@ class VoicePlaybackController(
             is VoiceStreamEvent.AudioDone -> {
                 val next = reduceVoiceStream(state, event)
                 if (outputActive) {
-                    output.stop()
-                    outputActive = false
+                    stopOutputAndReleaseFocus()
                 }
                 state = next
             }
@@ -63,14 +63,11 @@ class VoicePlaybackController(
         check(!closed) { "voice playback is closed" }
         val interrupted = state.audio ?: return null
         if (outputActive) {
-            output.stop()
-            outputActive = false
+            stopOutputAndReleaseFocus()
+        } else {
+            audioFocus?.release()
         }
-        state = state.copy(
-            audio = null,
-            lastAudioSequence = null,
-            lastAudioChunk = null,
-        )
+        state = clearAudioState()
         return interrupted
     }
 
@@ -78,9 +75,25 @@ class VoicePlaybackController(
         if (closed) return
         closed = true
         if (outputActive) {
-            output.stop()
-            outputActive = false
+            stopOutputAndReleaseFocus()
+        } else {
+            audioFocus?.release()
         }
         output.close()
     }
+
+    private fun stopOutputAndReleaseFocus() {
+        try {
+            output.stop()
+        } finally {
+            outputActive = false
+            audioFocus?.release()
+        }
+    }
+
+    private fun clearAudioState(): VoiceStreamState = state.copy(
+        audio = null,
+        lastAudioSequence = null,
+        lastAudioChunk = null,
+    )
 }
