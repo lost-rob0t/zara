@@ -47,13 +47,16 @@ def test_desktop_control_endpoint_is_owner_private(tmp_path):
         server.close()
 
 
-def test_desktop_control_rejects_duplicate_owner(tmp_path):
+def test_desktop_control_rejects_duplicate_owner_without_unlinking_live_owner(tmp_path):
     first = DesktopControlServer(tmp_path, lambda _command: None)
     second = DesktopControlServer(tmp_path, lambda _command: None)
     first.start()
     try:
         with pytest.raises(DesktopControlAlreadyRunning):
             second.start()
+        second.close()
+        assert desktop_control_path(tmp_path).exists()
+        assert send_desktop_control("toggle", runtime_dir=tmp_path) == "ok"
     finally:
         second.close()
         first.close()
