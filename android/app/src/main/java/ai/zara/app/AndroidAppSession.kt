@@ -5,6 +5,7 @@ import ai.zara.app.auth.EnrollmentRepository
 import ai.zara.app.auth.EnrollmentState
 import ai.zara.app.auth.JeroMqCurveKeyCodec
 import ai.zara.app.runtime.AndroidTextSessionController
+import ai.zara.app.runtime.AudioOutputFormat
 import ai.zara.app.runtime.ClientStateStore
 import ai.zara.app.runtime.ConnectedTextSession
 import ai.zara.app.runtime.JeroMqTextDealerFactory
@@ -16,12 +17,16 @@ import ai.zara.app.runtime.TextTurnResult
 import ai.zara.app.runtime.ZaraTextClientActor
 import ai.zara.app.runtime.reduce
 import ai.zara.app.runtime.toRuntimeReadiness
+import ai.zara.app.voice.AndroidPcmOutput
 import ai.zara.app.voice.AndroidPcmRecorder
 import ai.zara.app.voice.AuthenticatedVoiceIngress
 import ai.zara.app.voice.ManualVoiceCapture
 import ai.zara.app.voice.ManualVoiceSessionCoordinator
 import ai.zara.app.voice.ManualVoiceState
 import ai.zara.app.voice.PushToTalkController
+import ai.zara.app.voice.VoicePlaybackController
+import ai.zara.app.voice.VoiceStreamSinkActor
+import ai.zara.app.voice.VoiceStreamState
 import android.content.Context
 import java.io.File
 import java.util.concurrent.CompletableFuture
@@ -34,6 +39,10 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     private val actor: ZaraTextClientActor
     private val controller: AndroidTextSessionController
     private val voice: ManualVoiceSessionCoordinator
+    private val voiceStreamSink: VoiceStreamSinkActor
+    @Volatile private var latestVoiceStreamState: VoiceStreamState? = null
+    @Volatile private var latestVoiceStreamFailure: String? = null
+    @Volatile private var voiceStreamObserver: ((VoiceStreamState?, String?) -> Unit)? = null
     private val voiceExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-android-voice-control").apply { isDaemon = true }
     }
@@ -45,7 +54,10 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             initial,
             RuntimeEvent.EnrollmentObserved(enrollment.state().toRuntimeReadiness()),
         )
-        actor = ZaraTextClientActor(JeroMqTextDealerFactory(enrollment))
+        actor = ZaraTextClientActor(
+            dealerFactory = JeroMqTextDealerFactory(enrollment),
+            audioOutputFormats = listOf(AudioOutputFormat.pcmS16leMono(24_000)),
+        )
         controller = AndroidTextSessionController(initial, actor)
         voice = ManualVoiceSessionCoordinator(
             PushToTalkController(
@@ -53,11 +65,35 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 recorder = AndroidPcmRecorder(),
             )
         )
+        voiceStreamSink = VoiceStreamSinkActor(
+            playbackFactory = { sessionId ->
+                VoicePlaybackController(AndroidPcmOutput(), sessionId)
+            },
+            stateObserver = { streamState ->
+                latestVoiceStreamState = streamState
+                latestVoiceStreamFailure = null
+                voiceStreamObserver?.invoke(streamState, null)
+            },
+            failureObserver = { error -> reportVoiceStreamFailure(error) },
+        )
+        actor.setVoiceStreamObserver { event ->
+            voiceStreamSink.accept(event)
+        }
+        actor.setVoiceStreamFailureObserver(::reportVoiceStreamFailure)
     }
 
     fun state(): RuntimeState = controller.state()
 
     fun voiceState(): ManualVoiceState = voice.state()
+
+    fun voiceStreamState(): VoiceStreamState? = latestVoiceStreamState
+
+    fun voiceStreamFailure(): String? = latestVoiceStreamFailure
+
+    fun setVoiceStreamObserver(observer: ((VoiceStreamState?, String?) -> Unit)?) {
+        voiceStreamObserver = observer
+        observer?.invoke(latestVoiceStreamState, latestVoiceStreamFailure)
+    }
 
     fun setStateObserver(observer: ((RuntimeState) -> Unit)?) {
         controller.setStateObserver(observer)
@@ -124,6 +160,12 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         controller.observeEnrollment(enrollment.state().toRuntimeReadiness())
     }
 
+    private fun reportVoiceStreamFailure(error: Throwable) {
+        val message = error.message ?: error::class.java.simpleName
+        latestVoiceStreamFailure = message
+        voiceStreamObserver?.invoke(latestVoiceStreamState, message)
+    }
+
     private fun submitVoiceControl(block: () -> Unit): CompletableFuture<Unit> {
         val future = CompletableFuture<Unit>()
         voiceExecutor.execute {
@@ -138,11 +180,17 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     }
 
     override fun close() {
+        actor.setVoiceStreamObserver(null)
+        actor.setVoiceStreamFailureObserver(null)
         try {
             voice.close()
         } finally {
             voiceExecutor.shutdownNow()
-            controller.close()
+            try {
+                controller.close()
+            } finally {
+                voiceStreamSink.close()
+            }
         }
     }
 }
