@@ -1,0 +1,30 @@
+:PROPERTIES:
+:ID:       zara-rage-203-android-recorder-failure-diagnostics
+:END:
+#+title: RAGE #203 — surface Android recorder failures through canonical diagnostics
+#+status: ACTIVE
+
+* Consumption
+- Issue :: #203
+- Current canonical base :: 0a370079f2bf293b320ea72865239e6ee4c08a73
+- Dependency :: stacked on #436 Assistant role-loss production wiring.
+- Scope :: Android microphone failure observability only. No Core/protocol/plugin changes.
+
+* Failure analysis
+- =AndroidPcmRecorder= correctly detects asynchronous =AudioRecord.read()= failure and reports it through its =onFailure= callback.
+- =PushToTalkController= correctly cancels the active capture/server stream before invoking =onRecorderFailure=.
+- =AndroidAppSession= previously omitted =onRecorderFailure=, accepting the controller default no-op. The physical/server capture stopped, but UI/Diagnostics could remain silent about the failure.
+
+* Design
+- Wire =PushToTalkController.onRecorderFailure= to the existing =reportVoiceStreamFailure= boundary.
+- Preserve one capture owner and the existing server cancellation path.
+- Reuse =VoiceDiagnosticFailure= redaction; never expose raw recorder/platform exception messages.
+- Do not create a parallel recorder state machine.
+
+* TDD
+- RED source contract requires =onRecorderFailure = ::reportVoiceStreamFailure= in canonical =AndroidAppSession= construction.
+- GREEN is the single production callback binding; recorder and controller behavior remain unchanged.
+
+* Gate
+- Stacked CI is useful development evidence only.
+- After #436 becomes canonical, retarget/recover onto exact master and require full Android/native/APK/secret, repository/Nix/package, Arch mic, and Ubuntu mic green before promotion.
