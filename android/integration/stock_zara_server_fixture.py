@@ -6,6 +6,7 @@ import os
 import socket
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 import zmq
@@ -19,16 +20,54 @@ from zara.server import ServerState, ZaraServer
 from zara.zmq_transport import TransportConfig
 
 
+class _AcceptanceBarrier:
+    def __init__(self) -> None:
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._socket.bind(("127.0.0.1", 0))
+        self._socket.listen(1)
+        self.host, self.port = self._socket.getsockname()
+        self._started = False
+
+    def publish_after_client_acceptance(self, publish) -> None:
+        if self._started:
+            raise RuntimeError("acceptance barrier already armed")
+        self._started = True
+
+        def wait_and_publish() -> None:
+            try:
+                connection, _ = self._socket.accept()
+                with connection:
+                    if connection.recv(1) != b"A":
+                        return
+                publish()
+            finally:
+                self._socket.close()
+
+        threading.Thread(
+            target=wait_and_publish,
+            name="zara-android-acceptance-barrier",
+            daemon=True,
+        ).start()
+
+    def close(self) -> None:
+        try:
+            self._socket.close()
+        except OSError:
+            pass
+
+
 class _ReceiptFuture(concurrent.futures.Future):
-    def __init__(self, receipt: CommandReceipt, publish) -> None:
+    def __init__(self, receipt: CommandReceipt, publish, barrier: _AcceptanceBarrier) -> None:
         super().__init__()
         self._publish = publish
+        self._barrier = barrier
         self.set_result(receipt)
 
     def add_done_callback(self, callback, *, context=None) -> None:
         def after_route_registration(done) -> None:
             callback(done)
-            self._publish()
+            self._barrier.publish_after_client_acceptance(self._publish)
 
         if context is None:
             super().add_done_callback(after_route_registration)
@@ -37,10 +76,11 @@ class _ReceiptFuture(concurrent.futures.Future):
 
 
 class _Supervisor:
-    def __init__(self) -> None:
+    def __init__(self, barrier: _AcceptanceBarrier) -> None:
         self.state = ServerState.NEW
         self.bus = bridge.RuntimeEventBus()
         self._turn = 0
+        self._barrier = barrier
 
     def start(self, principal: PrincipalContext):
         self.state = ServerState.READY
@@ -81,7 +121,7 @@ class _Supervisor:
                 )
             )
 
-        return _ReceiptFuture(receipt, publish)
+        return _ReceiptFuture(receipt, publish, self._barrier)
 
     def shutdown(self) -> bool:
         self.state = ServerState.STOPPED
@@ -119,6 +159,7 @@ def main() -> int:
     fixture_file = Path(args.fixture_file).resolve()
     endpoint = _tcp_endpoint()
     client_public, client_secret = zmq.curve_keypair()
+    barrier = _AcceptanceBarrier()
 
     with tempfile.TemporaryDirectory(prefix="zara-android-stock-") as temporary:
         state = PersistentSecurityState(Path(temporary) / "security")
@@ -130,7 +171,7 @@ def main() -> int:
             capabilities={Capability.SESSION_BASIC, Capability.TURN_SUBMIT},
         )
         server = ZaraServer(
-            supervisor=_Supervisor(),
+            supervisor=_Supervisor(barrier),
             endpoint=endpoint,
             security_state=state,
             gateway_transport_config=TransportConfig(
@@ -155,6 +196,8 @@ def main() -> int:
                     "server_public": server_curve.public_key.decode("ascii"),
                     "client_public": client_public.decode("ascii"),
                     "client_secret": client_secret.decode("ascii"),
+                    "acceptance_host": barrier.host,
+                    "acceptance_port": str(barrier.port),
                 },
             )
             print("READY", flush=True)
@@ -162,6 +205,7 @@ def main() -> int:
                 if line.strip() == "STOP":
                     break
         finally:
+            barrier.close()
             server.stop()
 
     return 0
