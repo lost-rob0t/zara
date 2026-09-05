@@ -1,0 +1,32 @@
+#+title: RAGE #175 — Android audio-focus and route lifecycle hardening
+
+* Transaction
+- Issue :: #175
+- Scope :: Android-only residual voice lifecycle after canonical B1/B2/B3 and #196 UI-closed Assistant runtime.
+- Base :: canonical master =03143a3cd4990734e3f9afaf63462c8b03108337=.
+- Concurrency :: intentionally avoids #174 action-registry files while #375 exact-head CI runs.
+
+* Audit
+#175 remains open after B1 manual PTT, B2 streamed transcript/audio and B3 local barge-in landed. The B3 RAGE plan named Android audio-focus ownership, but its production diff contains playback interrupt/cancel behavior and no =AudioManager= focus adapter. Current =AndroidPcmOutput= uses =USAGE_ASSISTANT= but directly starts/stops =AudioTrack= without requesting/releasing audio focus or reacting to system focus loss. Therefore audio-focus loss remains a real acceptance gap, not backlog bookkeeping.
+
+The separate residuals for wake mode, Bluetooth/headset route changes and background/foreground service behavior remain outside this first lifecycle slice until their platform contracts are individually bounded.
+
+* Invariants
+- Audio focus is owned exclusively by the Android playback edge, never Core/server.
+- Playback must not start unless assistant audio focus is granted.
+- Permanent/transient focus loss stops local playback through the same single playback owner; it does not fabricate server cancellation or start a second runtime.
+- Focus is released exactly once when playback stops/closes, including failed AudioTrack startup.
+- Focus callbacks are serialized into a small typed adapter boundary; raw Android constants do not leak into reducer/protocol state.
+- No activity/context leak: use application context / AudioManager service only.
+- No #174 files are modified in this parallel slice.
+
+* TDD order
+1. RED pure =AudioFocusController= state contract: granted/denied, loss callback, idempotent abandon.
+2. GREEN pure controller + platform boundary.
+3. RED Android platform adapter contract/source gate if deterministic JVM coverage cannot instantiate framework AudioManager.
+4. Wire focus ownership into =AndroidPcmOutput= without changing canonical stream/reducer/socket ownership.
+5. Test start denial, focus loss -> stop, failed AudioTrack start -> abandon, normal stop/close -> abandon once.
+6. Android + full repository/Nix/package/shared-mic exact-head gate after recovery onto canonical master.
+
+* Status
+RESEARCH/AUDIT RECORDED. Next: deterministic RED pure focus-owner state tests.
