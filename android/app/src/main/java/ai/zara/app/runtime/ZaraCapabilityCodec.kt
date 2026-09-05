@@ -173,7 +173,7 @@ private class CapabilityJsonParser(private val source: String) {
         if (consume('}')) return result
         while (true) {
             skipWhitespace()
-            if (peek() != '"') fail("object key must be string")
+            if (index >= source.length || source[index] != '"') fail("object key must be string")
             val key = parseString()
             if (result.containsKey(key)) fail("duplicate JSON key")
             skipWhitespace()
@@ -241,15 +241,18 @@ private class CapabilityJsonParser(private val source: String) {
 
     private fun parseInteger(): Long {
         val start = index
-        if (consume('-') && index >= source.length) fail("invalid integer")
-        if (peek() == '0') {
+        if (source[index] == '-') index++
+        if (index >= source.length) fail("invalid integer")
+        if (source[index] == '0') {
             index++
-            if (peek()?.isDigit() == true) fail("leading zero")
+            if (index < source.length && source[index].isDigit()) fail("leading zero")
         } else {
-            if (peek() !in '1'..'9') fail("invalid integer")
-            while (peek()?.isDigit() == true) index++
+            if (source[index] !in '1'..'9') fail("invalid integer")
+            while (index < source.length && source[index].isDigit()) index++
         }
-        if (peek() == '.' || peek() == 'e' || peek() == 'E') fail("non-integer number")
+        if (index < source.length && source[index] in listOf('.', 'e', 'E')) {
+            fail("non-integer number")
+        }
         return source.substring(start, index).toLongOrNull() ?: fail("integer out of range")
     }
 
@@ -268,12 +271,12 @@ private class CapabilityJsonParser(private val source: String) {
     }
 
     private fun consume(character: Char): Boolean {
-        if (peek() != character) return false
-        index++
-        return true
+        if (index < source.length && source[index] == character) {
+            index++
+            return true
+        }
+        return false
     }
-
-    private fun peek(): Char? = source.getOrNull(index)
 
     private fun fail(message: String): Nothing = throw ZaraWireException(message)
 }
