@@ -6,20 +6,11 @@
 #
 #   nix develop -c bash scripts/test-all.sh
 #
-# Phases (in order):
-#   1. Python compile/import checks
-#   2. Prolog module load and resolver corpus
-#   3. Focused ZARA/1 protocol/transport gate
-#   4. Runtime tool-approval security gate
-#   5. Full pytest suite (with JUnit XML output)
-#   6. Config/process/file-tool security scripts
-#   7. Deterministic latency budgets
-#   8. Packaging/Nix checks
-#
 # Output:
 #   - JUnit XML at $ARTIFACT_DIR/junit.xml (pytest)
-#   - Per-phase pass/fail summary on stdout
-#   - Artifacts under $ARTIFACT_DIR
+#   - deterministic Copilot screenshots under $ARTIFACT_DIR/ui
+#   - per-phase pass/fail summary on stdout
+#   - other regression artifacts under $ARTIFACT_DIR
 #
 # No live microphone, desktop, provider credential, model download, or
 # external network is required.
@@ -29,9 +20,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 # --- Isolated environment -------------------------------------------------
-# Every sub-test gets a clean HOME, XDG_CONFIG_HOME, XDG_RUNTIME_DIR, and
-# ZARA_DICTATION_* paths so no user data leaks in and no test pollutes the
-# user's real config.
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"; rm -rf "$repo_root/t/fixtures/audio"' EXIT
 
@@ -50,7 +38,6 @@ export XDG_CONFIG_HOME="$TEST_ROOT/config"
 export XDG_RUNTIME_DIR="$TEST_ROOT/run"
 export XDG_DATA_HOME="$TEST_ROOT/share"
 export XARA_DICTATION_PIDFILE="$TEST_ROOT/run/zara_dictation.pid"
-export ZARA_DICTATION_PIDFILE="$TEST_ROOT/run/zara_dictation.pid"
 export ZARA_DICTATION_LOGFILE="$TEST_ROOT/run/zara_dictation.log"
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
@@ -58,7 +45,7 @@ export PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}"
 
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR" "$XDG_DATA_HOME"
 
-# --- Artifact directory --------------------------------------------------
+# --- Artifact directory ---------------------------------------------------
 export ARTIFACT_DIR="${ARTIFACT_DIR:-$TEST_ROOT/artifacts}"
 mkdir -p "$ARTIFACT_DIR"
 
@@ -117,6 +104,13 @@ phase_generate_fixtures() {
 
 run_phase "Generate audio fixtures" phase_generate_fixtures
 
+# --- Phase 1c: Render deterministic native UI review evidence -------------
+phase_visual_fixtures() {
+  QT_QPA_PLATFORM=offscreen python -m zara.desktop.visual_fixtures
+}
+
+run_phase "Render Copilot visual fixtures" phase_visual_fixtures
+
 # --- Phase 2: Prolog module load and resolver corpus ----------------------
 phase_prolog_load() {
   swipl -q -g "consult('main.pl'), halt" -t "halt(1)" 2>&1
@@ -130,14 +124,14 @@ phase_resolver_corpus() {
 
 run_phase "Prolog resolver corpus" phase_resolver_corpus
 
-# --- Phase 2b: Capability plan selection gate (issue #157) -----------------
+# --- Phase 2b: Capability plan selection gate (issue #157) ---------------
 phase_capability_plans() {
   bash "$repo_root/scripts/test-capability-plans.sh"
 }
 
 run_phase "Capability plan selection" phase_capability_plans
 
-# --- Phase 2c: Server api_service provider gate (issue #158) ---------------
+# --- Phase 2c: Server api_service provider gate (issue #158) -------------
 phase_api_service() {
   bash "$repo_root/scripts/test-api-service.sh"
 }
@@ -151,7 +145,7 @@ phase_zara1_protocol() {
 
 run_phase "ZARA/1 protocol and transport" phase_zara1_protocol
 
-# --- Phase 4: Runtime tool-approval gate ---------------------------------
+# --- Phase 4: Runtime tool-approval gate ----------------------------------
 phase_runtime_tool_approvals() {
   bash "$repo_root/scripts/test-runtime-tool-approvals.sh"
 }
@@ -220,6 +214,7 @@ echo "Phases run:    $PHASE_COUNT"
 echo "Phases passed: $PASS_COUNT"
 echo "Phases failed: $FAIL_COUNT"
 echo "JUnit XML:     $ARTIFACT_DIR/junit.xml"
+echo "UI evidence:   $ARTIFACT_DIR/ui"
 echo "Test root:     $TEST_ROOT (cleaned up on exit)"
 echo ""
 if [ "$FAIL_COUNT" -eq 0 ]; then
