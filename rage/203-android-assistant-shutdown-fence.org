@@ -50,3 +50,6 @@
 - =scripts/test-android.sh=;
 - repository full tests, flake/package, Android secret/APK gate, shared-mic lanes at exact candidate SHA;
 - clear exact-head reviews/threads before merge.
+- Current-master recovery helper #409 merged =ada24b73ab599d417dfbda6c864854c19b3426e3= into this branch; recovered head =2f3b91cb405695bc0c3244b94a0bec2df14d9605=.
+- Exact recovered CI #1497 was fully GREEN: Android unit/native/debug APK + secret inspection, repository full tests + flake/package, Ubuntu mic, Arch mic.
+- Promotion from draft to ready caused repository rules to require a fresh =test= status before merge; the first expected-head merge was correctly rejected rather than bypassed. This evidence commit intentionally triggers that final exact-head status run.
