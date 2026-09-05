@@ -29,3 +29,9 @@
 ** Gate
 - Deterministic JVM RED/GREEN first.
 - scripts/test-android.sh, full repository/Nix/package gate, both shared-mic lanes, then exact-head GitHub Actions before merge.
+
+** TDD evidence
+- RED commit 88003cde67e502f9415bca877645e88cbcd93b32 added AssistantRoleVoicePolicyTest against intentionally absent AssistantVoiceOwnership/shouldCancelForAssistantRole symbols.
+- Exact GitHub CI #1536 Android skeleton gate failed on that RED head while both shared-mic lanes remained green, isolating the failure to Android code rather than shared audio infrastructure.
+- GREEN implementation commit 8bc601dc9ed5979801df77e25d4b82eb85ab791b adds only the closed ownership enum and pure role policy: cancellation is true exactly for Assistant-owned voice when canonical AssistantRole is not Held.
+- No AppSession/service wiring was added before the overlapping lifecycle transactions become canonical.
