@@ -86,3 +86,30 @@ Selected:
 
 ** Gate note
 - Current =master= advanced to =8e247fd4cb6ffe1f3258bfb4f115a3339208e8c1= via the merged Copilot/visual-CI research transaction while this branch was active. Reconcile current master before merge and rerun every exact-head gate.
+
+* Iteration 3 - security fuzz and chaos hardening
+** Motivation
+The authenticated boundary now has durable state, a live registry, a local owner control channel, CURVE/ZAP authentication and a remote protocol gateway. Deterministic happy-path tests are necessary but insufficient: malformed inputs and rare ordering/failure states must be able to fail closed without creating a second authority.
+
+** Fuzz coverage
+- =t/test_security_fuzz.py= uses deterministic seeded mutation fuzzing with no external dependency so it runs in the normal Nix/pytest gate.
+- CURVE public-key mutations cover truncation, extension, embedded NUL, non-ASCII and invalid byte forms; every malformed enrollment must reject without leaving an enrolled identity behind.
+- persisted =clients.json= receives randomized bounded JSON-shaped values plus malformed UTF-8 and known structural-invalid corpus entries; the accepted exception surface is =SecurityStateError=, and any accepted state must still traverse typed registry validation.
+- owner-admin requests receive randomized versions/actions/values plus an unknown field that guarantees invalid shape; malformed requests must not mutate persistence or live authority.
+
+** Chaos and fault-injection coverage
+- =t/test_security_chaos.py= concurrently drives eight owner clients through live enroll/list/revoke interleavings and reconciles final durable state against the exact live =SecurityRegistry=.
+- a client that disconnects after sending a truncated JSON request must not poison the admin loop; the next valid owner request must succeed.
+- live-registry divergence during enrollment or revocation is deliberately injected; persistence must roll back to its prior state instead of creating split-brain authorization.
+- the admin socket disappearing while the daemon lease remains held is modeled explicitly. This exposed a real gap: socket absence previously looked identical to an offline daemon and allowed a disk-only mutation.
+
+** Chaos-derived production fix
+- Offline security mutation now first proves that =ServerLease= can be acquired.
+- If the daemon lease is held but the live security admin endpoint is missing, Zara fails closed with =refusing disk-only security mutation=.
+- A stale/unreachable socket already failed closed; now both *present-but-broken* and *unexpectedly missing while daemon-live* paths reject disk-only authority changes.
+- Read-only client listing also prefers live state and refuses a disk-only snapshot while the daemon is live but its control endpoint is unavailable, avoiding misleading operator state.
+
+** CI policy
+- Fuzz seeds are fixed and bounded in the required suite so regressions are reproducible from the failing seed.
+- Chaos tests use bounded thread counts, socket deadlines and no sleeps as correctness oracles; no probabilistic pass condition is allowed.
+- Larger soak/fuzz counts can be run manually by increasing the seed/case corpus, but required CI remains fast and deterministic.
