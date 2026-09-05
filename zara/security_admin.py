@@ -22,6 +22,7 @@ _PROTOCOL_VERSION = 1
 _MAX_REQUEST_BYTES = 16 * 1024
 _MAX_RESPONSE_BYTES = 64 * 1024
 _SOCKET_TIMEOUT = 1.0
+_UNIX_PATH_SAFE_BYTES = 100
 
 
 class SecurityAdminError(RuntimeError):
@@ -72,6 +73,45 @@ def _socket_info(path: Path):
     return info
 
 
+def _open_socket_address(path: Path) -> tuple[int | None, str]:
+    """Return a bind/connect address without moving the socket out of its directory."""
+    direct = os.fspath(path)
+    if len(os.fsencode(direct)) <= _UNIX_PATH_SAFE_BYTES:
+        return None, direct
+    proc_fd = Path("/proc/self/fd")
+    if not proc_fd.is_dir():
+        raise SecurityAdminError("security admin path exceeds AF_UNIX limit and /proc/self/fd is unavailable")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        directory_fd = os.open(path.parent, flags)
+    except OSError as error:
+        raise SecurityAdminError("security admin directory cannot be opened safely") from error
+    address = f"/proc/self/fd/{directory_fd}/{path.name}"
+    if len(os.fsencode(address)) > _UNIX_PATH_SAFE_BYTES:
+        os.close(directory_fd)
+        raise SecurityAdminError("security admin socket name exceeds AF_UNIX limit")
+    return directory_fd, address
+
+
+def _connect_socket(connection: socket.socket, path: Path) -> None:
+    directory_fd, address = _open_socket_address(path)
+    try:
+        connection.connect(address)
+    finally:
+        if directory_fd is not None:
+            os.close(directory_fd)
+
+
+def _bind_socket(listener: socket.socket, path: Path) -> None:
+    directory_fd, address = _open_socket_address(path)
+    try:
+        listener.bind(address)
+    finally:
+        if directory_fd is not None:
+            os.close(directory_fd)
+
+
 class SecurityAdminServer:
     """Bounded AF_UNIX control plane that mutates one live SecurityRegistry."""
 
@@ -120,7 +160,7 @@ class SecurityAdminServer:
             probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             probe.settimeout(0.1)
             try:
-                probe.connect(str(path))
+                _connect_socket(probe, path)
             except (ConnectionRefusedError, FileNotFoundError):
                 path.unlink()
             except OSError as error:
@@ -132,7 +172,7 @@ class SecurityAdminServer:
 
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            listener.bind(str(path))
+            _bind_socket(listener, path)
             os.chmod(path, 0o600)
             listener.listen(8)
             listener.settimeout(0.1)
@@ -166,10 +206,7 @@ class SecurityAdminServer:
             thread.join(timeout=max(0.0, float(timeout)))
             if thread.is_alive():
                 raise SecurityAdminError("security admin thread did not stop")
-        try:
-            info = _socket_info(self.path)
-        except SecurityAdminError:
-            raise
+        info = _socket_info(self.path)
         if info is not None:
             self.path.unlink()
 
@@ -285,7 +322,7 @@ class SecurityAdminClient:
         connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         connection.settimeout(_SOCKET_TIMEOUT)
         try:
-            connection.connect(str(self._path))
+            _connect_socket(connection, self._path)
             connection.sendall(encoded)
             response = _recv_message(connection, limit=_MAX_RESPONSE_BYTES)
         except OSError as error:
