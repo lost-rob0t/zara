@@ -18,6 +18,14 @@ class OpenUriPolicyTest {
     }
 
     @Test
+    fun `normalization preserves valid percent encoding instead of double escaping it`() {
+        assertEquals(
+            "https://example.com/a%20b?q=x%2Fy",
+            OpenUriPolicy.normalize("https://example.com/a%20b?q=x%2Fy"),
+        )
+    }
+
+    @Test
     fun `unsupported or authority-free schemes fail closed`() {
         listOf(
             "file:///sdcard/private.txt",
