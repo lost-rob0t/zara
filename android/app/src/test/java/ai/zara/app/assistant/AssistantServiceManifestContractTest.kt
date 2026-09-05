@@ -24,4 +24,14 @@ class AssistantServiceManifestContractTest {
         assertTrue(metadata.contains("android:sessionService=\"ai.zara.app.assistant.ZaraVoiceInteractionSessionService\""))
         assertTrue(metadata.contains("android:supportsAssist=\"true\""))
     }
+
+    @Test
+    fun `ordinary UI role onboarding uses explicit activity result and platform recheck`() {
+        val activity = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+
+        assertTrue(activity.contains("ActivityResultContracts.StartActivityForResult"))
+        assertTrue(activity.contains("appSession.completeAssistantRoleRequest()"))
+        assertTrue(activity.contains("appSession.assistantRoleRequestIntent()"))
+        assertTrue(activity.contains("onRequestAssistantRole"))
+    }
 }
