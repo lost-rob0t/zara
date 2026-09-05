@@ -35,6 +35,7 @@ import ai.zara.app.voice.ManualVoiceCapture
 import ai.zara.app.voice.ManualVoiceSessionCoordinator
 import ai.zara.app.voice.ManualVoiceState
 import ai.zara.app.voice.PushToTalkController
+import ai.zara.app.voice.VoiceDiagnosticFailure
 import ai.zara.app.voice.VoicePlaybackController
 import ai.zara.app.voice.VoiceStreamSinkActor
 import ai.zara.app.voice.VoiceStreamState
@@ -240,7 +241,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     }
 
     private fun reportVoiceStreamFailure(error: Throwable) {
-        val message = error.message ?: error::class.java.simpleName
+        val message = VoiceDiagnosticFailure.summarize(error)
         latestVoiceStreamFailure = message
         voiceStreamObserver?.invoke(latestVoiceStreamState, message)
     }
