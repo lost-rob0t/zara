@@ -194,21 +194,33 @@ class DesktopControlServer:
                 connection.settimeout(0.5)
                 self._handle(connection)
 
+    @staticmethod
+    def _reply(connection: socket.socket, payload: bytes) -> None:
+        """Best-effort reply; a peer disconnect must never kill the owner thread."""
+        try:
+            connection.sendall(payload)
+        except OSError:
+            pass
+
     def _handle(self, connection: socket.socket) -> None:
         try:
             payload = connection.recv(_MAX_COMMAND_BYTES + 1)
-            if not payload or len(payload) > _MAX_COMMAND_BYTES:
-                connection.sendall(b"error invalid-command\n")
+            if not payload:
+                return
+            if len(payload) > _MAX_COMMAND_BYTES:
+                self._reply(connection, b"error invalid-command\n")
                 return
             if b"\n" in payload:
                 payload = payload.split(b"\n", 1)[0]
             command = _validate_command(payload.decode("ascii", errors="strict"))
             self._dispatch(command)
-            connection.sendall(b"ok\n")
+            self._reply(connection, b"ok\n")
         except (UnicodeError, ValueError):
-            connection.sendall(b"error invalid-command\n")
+            self._reply(connection, b"error invalid-command\n")
+        except (OSError, TimeoutError):
+            return
         except Exception:
-            connection.sendall(b"error dispatch-failed\n")
+            self._reply(connection, b"error dispatch-failed\n")
 
 
 def send_desktop_control(
