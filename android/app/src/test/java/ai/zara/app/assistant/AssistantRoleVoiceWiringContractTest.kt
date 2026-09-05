@@ -18,10 +18,11 @@ class AssistantRoleVoiceWiringContractTest {
     }
 
     @Test
-    fun `canonical assistant role observation reaches capture guard`() {
+    fun `role outcome is reduced before canonical assistant role reaches capture guard`() {
         val session = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
 
+        assertTrue(session.contains("controller.observeAssistantRole(roleOutcome)"))
+        assertTrue(session.contains("val role = state().assistantRole"))
         assertTrue(session.contains("assistantVoiceGuard.onRoleChanged(role)"))
-        assertTrue(session.contains("controller.observeAssistantRole(role)"))
     }
 }
