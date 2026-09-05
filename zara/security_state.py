@@ -16,6 +16,7 @@ from zara.security import (
     Capability,
     EnrolledKey,
     KeyAlreadyEnrolled,
+    KeyNotActive,
     SecurityRegistry,
     validate_secret_key_file,
 )
@@ -26,6 +27,7 @@ _MAX_STATE_BYTES = 1024 * 1024
 _MAX_CLIENTS = 256
 _SERVER_FILE = "server-curve.json"
 _CLIENTS_FILE = "clients.json"
+_CONTROL_SOCKET_FILE = "security-admin.sock"
 
 
 class SecurityStateError(RuntimeError):
@@ -43,12 +45,19 @@ class PersistentSecurityState:
         return self._directory
 
     @property
+    def control_socket_path(self) -> Path:
+        return self._directory / _CONTROL_SOCKET_FILE
+
+    @property
     def _server_path(self) -> Path:
         return self._directory / _SERVER_FILE
 
     @property
     def _clients_path(self) -> Path:
         return self._directory / _CLIENTS_FILE
+
+    def prepare_directory(self) -> None:
+        self._prepare_directory()
 
     def initialize(self) -> CurveServerConfig:
         self._prepare_directory()
@@ -83,8 +92,11 @@ class PersistentSecurityState:
         if not isinstance(public_key, str) or not isinstance(secret_key, str):
             raise SecurityStateError("server CURVE keys must be strings")
         try:
-            return CurveServerConfig(public_key=public_key, secret_key=secret_key)
-        except (TypeError, ValueError) as error:
+            return CurveServerConfig(
+                public_key=public_key.encode("ascii"),
+                secret_key=secret_key.encode("ascii"),
+            )
+        except (TypeError, ValueError, UnicodeEncodeError) as error:
             raise SecurityStateError("server CURVE key state is invalid") from error
 
     def server_public_key(self) -> str:
@@ -94,8 +106,117 @@ class PersistentSecurityState:
         return public_key
 
     def load_registry(self) -> SecurityRegistry:
+        return self._registry_from_records(self._load_client_records())
+
+    def enroll_client(
+        self,
+        public_key: str | bytes,
+        *,
+        device_id: str,
+        principal: PrincipalContext,
+        capabilities: Iterable[Capability],
+        live_registry: SecurityRegistry | None = None,
+    ) -> EnrolledKey:
+        if live_registry is not None and not isinstance(live_registry, SecurityRegistry):
+            raise TypeError("live_registry must be SecurityRegistry")
+        self._prepare_directory()
+        if not self._server_path.exists():
+            raise SecurityStateError("server security state is not initialized")
+        records = self._load_client_records()
+        if len(records) >= _MAX_CLIENTS:
+            raise SecurityStateError("enrolled client limit reached")
+        candidate = self._registry_from_records(records)
+        enrolled = candidate.enroll(
+            public_key,
+            principal=principal,
+            device_id=device_id,
+            capabilities=capabilities,
+        )
+        updated = [*records, self._record_from_enrolled(enrolled)]
+        self._save_client_records(updated)
+        if live_registry is None:
+            return enrolled
+        try:
+            return live_registry.enroll(
+                enrolled.public_key,
+                principal=enrolled.principal,
+                device_id=enrolled.device_id,
+                capabilities=enrolled.capabilities,
+            )
+        except (KeyAlreadyEnrolled, TypeError, ValueError) as error:
+            try:
+                self._save_client_records(records)
+            except BaseException as rollback_error:
+                raise SecurityStateError(
+                    "live registry diverged and enrollment persistence rollback failed"
+                ) from rollback_error
+            raise SecurityStateError("live security registry diverged during enrollment") from error
+
+    def revoke_device(
+        self,
+        device_id: str,
+        *,
+        live_registry: SecurityRegistry | None = None,
+    ) -> EnrolledKey:
+        if live_registry is not None and not isinstance(live_registry, SecurityRegistry):
+            raise TypeError("live_registry must be SecurityRegistry")
+        records = self._load_client_records()
+        candidate = self._registry_from_records(records)
+        try:
+            revoked = candidate.revoke(device_id)
+        except (KeyNotActive, TypeError, ValueError) as error:
+            raise SecurityStateError("device is not actively enrolled") from error
+
+        updated = [dict(record) for record in records]
+        found = False
+        for record in updated:
+            if record["device_id"] == device_id and record["active"]:
+                record["active"] = False
+                found = True
+        if not found:
+            raise SecurityStateError("device is not actively enrolled")
+        self._save_client_records(updated)
+        if live_registry is None:
+            return revoked
+        try:
+            return live_registry.revoke(device_id)
+        except (KeyNotActive, TypeError, ValueError) as error:
+            try:
+                self._save_client_records(records)
+            except BaseException as rollback_error:
+                raise SecurityStateError(
+                    "live registry diverged and revocation persistence rollback failed"
+                ) from rollback_error
+            raise SecurityStateError("live security registry diverged during revocation") from error
+
+    def list_clients(self) -> tuple[dict[str, object], ...]:
+        records = self._load_client_records()
+        return tuple(
+            {
+                "public_key": record["public_key"],
+                "principal_id": record["principal_id"],
+                "principal_kind": record["principal_kind"],
+                "device_id": record["device_id"],
+                "capabilities": tuple(record["capabilities"]),
+                "active": record["active"],
+            }
+            for record in records
+        )
+
+    @staticmethod
+    def _record_from_enrolled(enrolled: EnrolledKey) -> dict[str, object]:
+        return {
+            "public_key": enrolled.public_key,
+            "principal_id": enrolled.principal.principal_id,
+            "principal_kind": enrolled.principal.kind,
+            "device_id": enrolled.device_id,
+            "capabilities": sorted(capability.value for capability in enrolled.capabilities),
+            "active": enrolled.active,
+        }
+
+    def _registry_from_records(self, records: list[dict[str, object]]) -> SecurityRegistry:
         registry = SecurityRegistry()
-        for record in self._load_client_records():
+        for record in records:
             if not record["active"]:
                 continue
             try:
@@ -111,65 +232,6 @@ class PersistentSecurityState:
             except (KeyAlreadyEnrolled, TypeError, ValueError) as error:
                 raise SecurityStateError("persisted client registry is inconsistent") from error
         return registry
-
-    def enroll_client(
-        self,
-        public_key: str | bytes,
-        *,
-        device_id: str,
-        principal: PrincipalContext,
-        capabilities: Iterable[Capability],
-    ) -> EnrolledKey:
-        self._prepare_directory()
-        if not self._server_path.exists():
-            raise SecurityStateError("server security state is not initialized")
-        records = self._load_client_records()
-        registry = self.load_registry()
-        enrolled = registry.enroll(
-            public_key,
-            principal=principal,
-            device_id=device_id,
-            capabilities=capabilities,
-        )
-        if len(records) >= _MAX_CLIENTS:
-            raise SecurityStateError("enrolled client limit reached")
-        records.append(
-            {
-                "public_key": enrolled.public_key,
-                "principal_id": enrolled.principal.principal_id,
-                "principal_kind": enrolled.principal.kind,
-                "device_id": enrolled.device_id,
-                "capabilities": sorted(capability.value for capability in enrolled.capabilities),
-                "active": True,
-            }
-        )
-        self._save_client_records(records)
-        return enrolled
-
-    def revoke_device(self, device_id: str) -> None:
-        records = self._load_client_records()
-        found = False
-        for record in records:
-            if record["device_id"] == device_id and record["active"]:
-                record["active"] = False
-                found = True
-        if not found:
-            raise SecurityStateError("device is not actively enrolled")
-        self._save_client_records(records)
-
-    def list_clients(self) -> tuple[dict[str, object], ...]:
-        records = self._load_client_records()
-        return tuple(
-            {
-                "public_key": record["public_key"],
-                "principal_id": record["principal_id"],
-                "principal_kind": record["principal_kind"],
-                "device_id": record["device_id"],
-                "capabilities": tuple(record["capabilities"]),
-                "active": record["active"],
-            }
-            for record in records
-        )
 
     def _prepare_directory(self) -> None:
         self._directory.mkdir(mode=0o700, parents=True, exist_ok=True)
