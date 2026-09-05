@@ -1,0 +1,33 @@
+:PROPERTIES:
+:ID:       zara-rage-388-plugin-tool-cancellation-r4
+:END:
+#+title: RAGE #388 — exact-master plugin tool cancellation recovery r4
+#+status: ACTIVE
+
+* Consumption
+- Issue :: #388
+- Immutable start :: =efe112f74b130ec39e81f2fc538818895e790ea5=
+- Branch :: =rage/388-plugin-tool-cancellation-r4=
+- Scope :: Zara Core only; zero =android/**= changes.
+
+* Preserved RED / failed evidence
+- PR #397 CI #1467 failed three deterministic cancellation tests while Android and both shared-mic lanes stayed green.
+- The rejection test became green after switching to the canonical =zara_requires_approval= metadata contract from #371.
+- The remaining failure showed that a plain Python =ContextVar= was not sufficient across LangGraph ToolNode's executor boundary.
+- Review of #397 then found a larger blocker: its =zara/agent/graph.py= diff rewrote/removes hundreds of unrelated canonical streaming, validation, loop and approval lines. That transaction is rejected as unsafe prior art even if a later stale CI run turns green.
+
+* Selected bounded architecture
+- Preserve current-master =graph.py= byte-for-byte except the cancellation import, one exact ToolNode invocation helper, and replacement of the one direct =tool_node.ainvoke= call.
+- Core creates one private event per exact tool invocation.
+- The read-only token is carried in the explicit LangChain =RunnableConfig.configurable= map for executor crossings; a ContextVar remains a direct-call fallback.
+- On outer =CancelledError=, Core signals the token before cancelling/awaiting the ToolNode task, then the existing =ToolCancelled(reason="turn cancelled")= event remains the sole terminal authority.
+- Approval rejection and unavailable-tool paths never enter the cancellation scope.
+- Plugins receive only =ToolCancellation.cancelled/wait= through the public plugin API; no model-visible argument, arbitrary process control, new runtime, or second approval path exists.
+
+* Adversarial invariants
+- concurrent invocations cannot signal each other;
+- sync and async tools see the same Core-owned signal;
+- cancellation is signalled before cooperative cleanup observes task cancellation;
+- plugin code cannot set, replace or retarget the signal;
+- existing tool event ordering and failure semantics remain unchanged outside cancellation;
+- exact-head full tests, Nix flake/package, Android compatibility and both mic lanes remain mandatory before merge.
