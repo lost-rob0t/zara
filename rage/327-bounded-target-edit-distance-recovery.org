@@ -27,3 +27,12 @@
 - =nix flake check= and packaged Zara build through repository CI.
 - Android skeleton and both shared-mic lanes must remain green.
 - Merge only exact current recovery head, mergeable, non-draft, with no blocking review/thread state.
+
+* Recovery iteration — 2026-09-05
+- Recovery start :: =f590e50fdccd6b25453c09ba697ab70c770c9692=
+- Reason :: exact-green candidate =85612bdac953559869b63b9515b2a63b3a97ca5d= became stale after 90 sibling-owned Android commits landed on =master=.
+- Compatibility check :: the 90 canonical commits since =7cb047a390644c7da96cfb4620bfb8d569450fff= changed only =android/**=, Android RAGE evidence, and =scripts/test-android.sh=; none of this slice's Core production/test files changed.
+- Prior exact-head evidence :: CI #1183 passed at =85612bdac953559869b63b9515b2a63b3a97ca5d=; valid behavior evidence, stale merge authority.
+- Recovery implementation :: replay the exact proven Core blobs onto recovery start while retaining the old exact candidate as a merge parent; no design expansion and no Android production edits.
+- Recovery candidate parent commit :: =0cab11f49db73bbf0900fe61cada6ab726f36596=.
+- Gate :: require fresh exact-head full repository/Nix/package/Android/shared-mic CI before merge.
