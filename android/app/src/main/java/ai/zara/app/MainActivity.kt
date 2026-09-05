@@ -22,6 +22,10 @@ class MainActivity : ComponentActivity() {
         var operationError by mutableStateOf<String?>(null)
         var operationBusy by mutableStateOf(false)
 
+        appSession.setStateObserver { state ->
+            runOnUiThread { runtimeState = state }
+        }
+
         setContent {
             ZaraApp(
                 runtimeState = runtimeState,
@@ -34,10 +38,8 @@ class MainActivity : ComponentActivity() {
                     operationError = null
                     try {
                         enrollmentPublicKey = appSession.createIdentity()
-                        runtimeState = appSession.state()
                     } catch (error: Exception) {
                         operationError = rootMessage(error)
-                        runtimeState = appSession.state()
                     }
                 },
                 onPinServer = { publicKey ->
@@ -45,10 +47,8 @@ class MainActivity : ComponentActivity() {
                     try {
                         appSession.pinServer(publicKey)
                         enrollmentPublicKey = appSession.enrollmentPublicKeyZ85()
-                        runtimeState = appSession.state()
                     } catch (error: Exception) {
                         operationError = rootMessage(error)
-                        runtimeState = appSession.state()
                     }
                 },
                 onConnect = { endpoint ->
@@ -58,14 +58,11 @@ class MainActivity : ComponentActivity() {
                         appSession.connect(endpoint).whenComplete { _, error ->
                             runOnUiThread {
                                 operationBusy = false
-                                runtimeState = appSession.state()
                                 operationError = error?.let(::rootMessage)
                             }
                         }
-                        runtimeState = appSession.state()
                     } catch (error: Exception) {
                         operationBusy = false
-                        runtimeState = appSession.state()
                         operationError = rootMessage(error)
                     }
                 },
@@ -76,7 +73,6 @@ class MainActivity : ComponentActivity() {
                         appSession.submitText(text).whenComplete { result, error ->
                             runOnUiThread {
                                 operationBusy = false
-                                runtimeState = appSession.state()
                                 if (error != null) {
                                     operationError = rootMessage(error)
                                 } else if (result != null) {
@@ -90,7 +86,6 @@ class MainActivity : ComponentActivity() {
                         }
                     } catch (error: Exception) {
                         operationBusy = false
-                        runtimeState = appSession.state()
                         operationError = rootMessage(error)
                     }
                 },
