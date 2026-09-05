@@ -196,3 +196,26 @@ def test_connect_constructor_failure_is_bounded_and_never_falls_back(monkeypatch
     error = capsys.readouterr().err
     assert "invalid daemon endpoint" in error
     assert "Traceback" not in error
+
+
+def test_text_command_defaults_to_daemon_client_for_timer(monkeypatch):
+    calls = []
+
+    def fake_connected(endpoint, text):
+        calls.append((endpoint, text))
+        return 0
+
+    import zara.console as console_module
+
+    monkeypatch.setattr(cli, "_run_connected_text", fake_connected)
+    monkeypatch.setattr(
+        console_module,
+        "ZaraConsole",
+        lambda: pytest.fail("default command must not create a standalone runtime"),
+    )
+
+    assert run_main(monkeypatch, ["set", "a", "timer", "for", "10", "seconds"]) == 0
+    assert len(calls) == 1
+    endpoint, text = calls[0]
+    assert endpoint
+    assert text == "set a timer for 10 seconds"
