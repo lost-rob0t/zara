@@ -41,6 +41,10 @@ class ManualVoiceSessionCoordinator(
         pushToTalk.onMicrophonePermissionChanged(granted)
     }
 
+    fun onHostStopped() {
+        if (pushToTalk.state() is ManualVoiceState.Capturing) pushToTalk.cancel()
+    }
+
     override fun close() {
         pushToTalk.close()
     }
