@@ -34,5 +34,17 @@
 - =nix build=
 - Exact-head GitHub Actions before readiness/merge.
 
+** TDD evidence
+- RED head :: =dfca78b44fc0e7ccced4800476d2be52b0a67e9f=
+- CI :: #973
+- Result :: core =Run all tests= failed on the new desktop daemon-default regression; Android skeleton and both shared-mic jobs passed. This is the expected isolated RED.
+
+** Implementation
+- Commit :: =f6102b5d6cde02ae623f07fd4dc9e278e01bcc0c=
+- Added a narrow desktop default-client factory that constructs =ZmqZaraClient= at the existing owner-private daemon endpoint.
+- Reused =ServerLease()._runtime_dir()= + =default_zmq_endpoint=; no machine/UID socket path is hard-coded.
+- Normal no-injection desktop construction now uses that factory. Explicit injected clients and the legacy host compatibility seam remain unchanged.
+- No =android/**= production changes.
+
 ** Outcome
-- TDD RED pending.
+- GREEN candidate pending exact-head focused/full CI gates.
