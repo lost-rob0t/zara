@@ -9,7 +9,7 @@ This guide covers the current repository development workflow. Nix is the author
 | Path | Purpose |
 |------+---------|
 | =zara/runtime/= | Canonical runtime commands/events, RuntimeHost, client/runtime boundaries. |
-| =zara/server/= | Long-lived server, supervision, =ZARA/1= transport/auth/principal handling. |
+| =zara/server.py= and protocol modules | Long-lived server, supervision, =ZARA/1= transport/auth/principal handling. |
 | =zara/desktop/= | Native PySide6 desktop shell and Qt runtime projection. |
 | =zara/agent/= | Conversational agent and tool integration. |
 | =zara/plugins/= | Plugin lifecycle and built-in plugin infrastructure. |
