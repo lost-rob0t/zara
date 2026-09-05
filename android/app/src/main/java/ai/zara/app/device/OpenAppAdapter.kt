@@ -12,8 +12,11 @@ class OpenAppAdapter(
 ) : DeviceCapabilityAdapter {
     override val capability = DeviceCapability.OpenApp
 
-    override fun isAvailable(): Boolean =
+    override fun isAvailable(): Boolean = try {
         REVIEWED_ALIASES.any(launcher::isAvailable)
+    } catch (_: Throwable) {
+        false
+    }
 
     override fun execute(arguments: DeviceActionArguments): DeviceActionResult {
         if (arguments !is DeviceActionArguments.OpenApp) {
@@ -24,7 +27,15 @@ class OpenAppAdapter(
         if (alias !in REVIEWED_ALIASES) {
             return DeviceActionResult.Error(DeviceActionErrorCode.InvalidArguments)
         }
-        if (!launcher.isAvailable(alias)) {
+
+        val available = try {
+            launcher.isAvailable(alias)
+        } catch (_: SecurityException) {
+            return DeviceActionResult.Error(DeviceActionErrorCode.PermissionDenied)
+        } catch (_: Throwable) {
+            return DeviceActionResult.Error(DeviceActionErrorCode.Failed)
+        }
+        if (!available) {
             return DeviceActionResult.Error(DeviceActionErrorCode.Unavailable)
         }
 
