@@ -100,6 +100,10 @@ class _CancellationBoundTool:
         self._cancellation = cancellation
         self.name = tool.name
 
+    def __getattr__(self, name: str) -> Any:
+        """Delegate tool metadata required by ToolNode's dynamic-tool path."""
+        return getattr(self._tool, name)
+
     async def ainvoke(self, tool_call: Any, config: Any = None, **kwargs: Any) -> Any:
         if not isinstance(tool_call, Mapping):
             raise TypeError("cancellable tool invocation must be a mapping")
