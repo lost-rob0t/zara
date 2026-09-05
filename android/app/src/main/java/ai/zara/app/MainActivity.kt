@@ -30,8 +30,14 @@ class MainActivity : Activity() {
             textSize = 15f
         }
 
+        val diagnostics = TextView(this).apply {
+            text = "source: ${BuildConfig.SOURCE_SHA}"
+            textSize = 12f
+        }
+
         layout.addView(title)
         layout.addView(status)
+        layout.addView(diagnostics)
         setContentView(layout)
     }
 
