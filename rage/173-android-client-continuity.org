@@ -104,3 +104,40 @@
 - Once the candidate Android gate is green, preserve its debug APK artifact and source SHA.
 - After Core #331 lands, recover current master, add a real authenticated stock-daemon hello/text-turn interoperability gate, then close/merge #173 only if exact-head green.
 - Immediately proceed to #197 Compose Chat + Connection/Enrollment + Settings + Diagnostics for the first-usable APK; do not wait for Samsung/assistant-role work.
+
+* Iteration 3 — canonical terminal turn lifecycle, active capability negotiation and stale-retry hardening
+** CI RED — hidden text lifecycle mismatch
+- Exact candidate =5c97b44ce7f52490e048a867416a12bc9e1f4457= ran as CI #1140.
+- Shared-mic lanes were green and semantic/Trealla parity completed, but the Android gate failed compilation in =ZaraTextClientActor=: the sealed =TextServerMessage= =when= did not handle =Progress= and =TurnCompleted=.
+- The debug-APK upload step executed after failure but no APK existed; CI #1140 therefore produced parity diagnostics only, not a valid exact-head APK artifact.
+- Existing =ZaraTextTurnOrderingTest= already encoded the stronger canonical contract: the actor must consume =turn.started= / =assistant.started= / =assistant.completed= through terminal =turn.completed=. The production actor instead returned at =assistant.completed=, so adding a catch-all =else= would have hidden a real lifecycle bug.
+
+** Terminal lifecycle GREEN
+- Production repair :: =9a8d7df580e8ef155cd961f01e1fd8ee74986320=.
+- =Progress= events are now explicitly session/turn/conversation verified.
+- =assistant.completed= records one bounded candidate result but is not terminal; duplicate assistant completion fails closed.
+- Only matching terminal =turn.completed= may complete the streamed typed turn, and its =success= must agree with the assistant completion.
+- Stale/mismatched terminal events remain rejected. The legacy typed =assistant.response= path remains explicit rather than becoming a generic catch-all.
+- Fixture repair :: =d591e395878962cc10517d8bde71eedc031cd27b= adds the canonical =turn.completed= frame to the older actor happy-path fixture. This does not weaken the oracle; it aligns that fixture with the pre-existing ordering test.
+
+** Active #159 negotiation RED/GREEN
+- RED :: =d74b978f14124ee516d58250dde49d6d0f60d455= requires a successful hello to be followed by an empty, session-bound =capability.snapshot= and exact =capability.snapshot.ok= before the actor reports Connected.
+- GREEN :: =0e552e13e2ccb351c19af3ac7273e895b50f5353= performs that negotiation on the actor's one authenticated DEALER.
+- The acknowledgement must correlate to the capability request id and current hello session. Any server acknowledgement of a capability Android did not advertise fails closed.
+- The intentionally empty snapshot is the honest #173 state: it exercises merged #159 on every connect/reconnect while advertising no Android device-action success until #174 supplies real platform adapters.
+- Actor/reconnect fixtures were upgraded at =fb53318443f56de52cc3533729876a90518f1647= and ordering coverage at =9330314a8a201f6adc3b61d266c90ef1f36d7904= so both first connect and reconnect negotiate the closed snapshot before text traffic.
+
+** Stale reconnect completion race RED/GREEN
+- Adversarial review found a reducer/side-effect split race: a stale generation's failed connect was correctly rejected by =reduce=, but controller code then checked only whether the *current* state was Reconnecting and could schedule a duplicate retry/disconnect against the newer generation.
+- RED :: =0af3860c5784572b4697d1c9a990e59d3dfef797= deterministically advances from generation 2 to generation 3 while generation 2 remains in-flight, then completes the stale generation 2 future exceptionally. The required oracle is no additional delay and no extra disconnect.
+- GREEN :: =81e7aafc6fc4b36c1c3aec5535a5fdada6b39ca9= rejects stale connect completions before any reducer mutation or retry/disconnect side effect. Current-generation failures continue through the existing bounded retry path.
+
+** Core handoff state
+- Core-owned #329 / PR #331 exact head =fabea77133914976bd0da2373ad9392d42a46a1e= has all four exact-head CI #1138 jobs green, including the secure TCP integration and Android build lane.
+- #331 remains draft and Core-owned. Android does not mark it ready, merge it, or modify its Python/security files.
+- Once Core lands it, #173 must consume current master and prove the Android authenticated stock-daemon hello + text turn rather than relying on a custom fixture.
+
+** Current exact gate
+- Behavior candidate before this evidence append :: =81e7aafc6fc4b36c1c3aec5535a5fdada6b39ca9=, CI #1148.
+- At evidence-write time both shared-mic lanes were green; Android unit/native/debug-APK/secret gate and full repository/Nix/package gate were still running. No green or APK claim is made for that head yet.
+- This append creates a new exact head, so the post-evidence Actions run is authoritative for any later merge/readiness claim.
