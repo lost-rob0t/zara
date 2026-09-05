@@ -67,6 +67,42 @@ class VoiceStreamSinkActorTest {
         sink.close()
     }
 
+    @Test fun `failed reset close still drops stale playback ownership`() {
+        val outputs = mutableListOf<RecordingSinkOutput>()
+        val sink = VoiceStreamSinkActor(
+            playbackFactory = { sessionId ->
+                val output = if (outputs.isEmpty()) FailingCloseSinkOutput() else RecordingSinkOutput()
+                output.also(outputs::add).let { VoicePlaybackController(it, sessionId) }
+            },
+        )
+        sink.accept(VoiceStreamEvent.Transcript("session-1", "conversation-1", "mic-1", 0, "old", true)).get()
+
+        assertThrows(Exception::class.java) { sink.reset().get() }
+        sink.accept(VoiceStreamEvent.Transcript("session-1", "conversation-2", "mic-2", 0, "fresh", true)).get()
+
+        assertEquals(2, outputs.size)
+        sink.close()
+    }
+
+    @Test fun `failed replacement close does not poison later session ownership`() {
+        val outputs = mutableListOf<RecordingSinkOutput>()
+        val sink = VoiceStreamSinkActor(
+            playbackFactory = { sessionId ->
+                val output = if (outputs.isEmpty()) FailingCloseSinkOutput() else RecordingSinkOutput()
+                output.also(outputs::add).let { VoicePlaybackController(it, sessionId) }
+            },
+        )
+        sink.accept(VoiceStreamEvent.Transcript("session-1", "conversation-1", "mic-1", 0, "old", true)).get()
+
+        assertThrows(Exception::class.java) {
+            sink.accept(VoiceStreamEvent.Transcript("session-2", "conversation-2", "mic-2", 0, "new", true)).get()
+        }
+        sink.accept(VoiceStreamEvent.Transcript("session-2", "conversation-2", "mic-2", 1, "retry", true)).get()
+
+        assertEquals(2, outputs.size)
+        sink.close()
+    }
+
     @Test fun `bounded mailbox rejects excess events instead of growing without limit`() {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
@@ -137,5 +173,12 @@ private class BlockingSinkOutput(
 private class FailingWriteSinkOutput : RecordingSinkOutput() {
     override fun write(pcm: ByteArray) {
         throw IllegalStateException("speaker write failed")
+    }
+}
+
+private class FailingCloseSinkOutput : RecordingSinkOutput() {
+    override fun close() {
+        calls += "close"
+        throw IllegalStateException("speaker close failed")
     }
 }
