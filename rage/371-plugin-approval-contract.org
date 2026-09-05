@@ -1,0 +1,34 @@
+#+title: RAGE #371 — service-plugin approval-required tool contract
+
+* Transaction
+- Consumed issue :: #371
+- Immutable RAGE start :: =d5f9a57e437cee72e2dfeae97ed5124727608085=
+- Branch :: =rage/371-plugin-approval-contract=
+- Scope :: Zara Core plugin/tool approval contract only; no =android/**= changes.
+
+* Research
+- =ServicePlugin.tools()= publishes LangChain tools, but has no declaration for approval policy.
+- =ToolRegistry.requires_approval(name)= currently reads only global =[tool_approval].required_tools=.
+- =PluginManager= owns service-plugin tool registration/unregistration, so it is the correct lifecycle boundary to attach and remove plugin-owned approval metadata.
+- =LangGraphRuntimeBackend.register_tools= is the canonical bridge into =ToolRegistry=; no second approval controller is needed.
+
+* Design
+- Add =ServicePlugin.approval_required_tools() -> Sequence[str]= with an empty default.
+- A plugin may require approval only for names it returns from its own =tools()= call. Unknown, duplicate, malformed, or non-string declarations fail plugin startup closed.
+- Extend canonical tool registration with optional approval-required names. Keep configured global requirements separate from dynamic plugin requirements so unloading a plugin removes only plugin-owned metadata and can never weaken operator configuration.
+- Duplicate tool registration continues to fail before any approval metadata is mutated.
+- Plugin/model/client input has no path to downgrade a requirement; =requires_approval= is the union of operator-configured and registered requirements.
+- Existing plugins declaring no approval requirements remain API-compatible.
+
+* Acceptance mapping
+- plugin-declared tool is approval required before use -> service-plugin integration test.
+- undeclared/foreign name fails startup closed -> service-plugin failure test.
+- unload removes plugin-owned tool and approval metadata together -> registry/lifecycle test.
+- operator-configured approval remains after dynamic unregister -> registry test.
+- duplicate/conflicting registration leaves no partial approval metadata -> registry test.
+
+* Non-goals
+- No second approval channel, no shell execution feature, no Android work, no changes to approval decisions themselves.
+
+* Gate
+- Focused plugin/tool-registry tests, then full =scripts/test-all.sh=, =nix flake check=, package build, and exact-head Actions.
