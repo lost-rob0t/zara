@@ -1,0 +1,40 @@
+#+title: RAGE #371 — service-plugin approval-required tool contract
+
+* Transaction
+- Consumed issue :: #371
+- Immutable RAGE start :: =d5f9a57e437cee72e2dfeae97ed5124727608085=
+- Branch :: =rage/371-plugin-approval-contract=
+- Scope :: Zara Core plugin/tool approval contract only; no =android/**= changes.
+
+* Research
+- =ServicePlugin.tools()= publishes LangChain tools, but has no declaration for approval policy.
+- =ToolRegistry.requires_approval(name)= currently reads only global =[tool_approval].required_tools=.
+- =PluginManager= owns service-plugin lifecycle, while =ToolRegistry= is the canonical source queried by the existing principal-scoped approval controller.
+- LangChain =BaseTool= already carries plugin-authored =metadata= with each tool registration. Reusing that registration object avoids a parallel manager/backend policy transport.
+
+* Design iteration 1 — discarded before merge
+- Initial design proposed =ServicePlugin.approval_required_tools() -> Sequence[str]= plus a second registration argument carried through PluginManager/backend.
+- Test-only head =66a70487d1d7fa56d072e47765ca37bd378e253d= was opened as PR #376 to prove the missing contract RED.
+- A partial registry implementation then showed this design would widen multiple runtime/backend call signatures solely to transport metadata already present on the canonical LangChain tool object.
+- Discard that transport design; do not expand PluginManager or RuntimeBackend for policy metadata.
+
+* Design iteration 2 — selected
+- Reserve boolean tool metadata key =zara_requires_approval=. A service plugin marks its own published =BaseTool= at construction/registration time.
+- =ToolRegistry= validates the marker is exactly boolean when present and records dynamic approval requirement atomically with successful registration.
+- =requires_approval(name)= is the union of operator-configured =[tool_approval].required_tools= and registered tool metadata. Plugin/model/client input therefore cannot downgrade operator policy.
+- Unregistering a tool removes only its dynamic registration requirement; configured requirements remain immutable for the registry lifetime.
+- Duplicate/conflicting registration is validated before dynamic policy mutation, preventing leaked or partial approval state.
+- Existing plugins without the metadata key are unchanged. No PluginManager, RuntimeHost, approval-controller, protocol, or Android path changes.
+
+* Acceptance mapping
+- metadata-marked plugin tool is approval-required through canonical ToolRegistry -> service-plugin integration test.
+- malformed non-boolean marker fails registration closed -> registry test.
+- unload removes tool and plugin-owned approval metadata together -> service-plugin lifecycle test.
+- operator-configured approval remains after dynamic unregister -> registry test.
+- duplicate/conflicting registration leaves no partial approval metadata -> registry test.
+
+* Non-goals
+- No second approval channel, no shell execution feature, no Android work, no changes to approval decisions themselves.
+
+* Gate
+- Focused plugin/tool-registry tests, then full =scripts/test-all.sh=, =nix flake check=, package build, and exact-head Actions.
