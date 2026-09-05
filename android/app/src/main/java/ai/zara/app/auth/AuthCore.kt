@@ -44,12 +44,22 @@ interface CredentialCipher {
 }
 
 class CurveCredential(publicKey: ByteArray, secretKey: ByteArray) {
-    val publicKey: ByteArray = publicKey.copyOf()
-    val secretKey: ByteArray = secretKey.copyOf()
+    private val publicKeyBytes: ByteArray = publicKey.copyOf()
+    private val secretKeyBytes: ByteArray = secretKey.copyOf()
+
+    val publicKey: ByteArray
+        get() = publicKeyBytes.copyOf()
+
+    val secretKey: ByteArray
+        get() = secretKeyBytes.copyOf()
 
     init {
-        require(this.publicKey.size == CURVE_KEY_BYTES) { "CURVE public key must be 32 bytes" }
-        require(this.secretKey.size == CURVE_KEY_BYTES) { "CURVE secret key must be 32 bytes" }
+        require(publicKeyBytes.size == CURVE_KEY_BYTES) { "CURVE public key must be 32 bytes" }
+        require(secretKeyBytes.size == CURVE_KEY_BYTES) { "CURVE secret key must be 32 bytes" }
+    }
+
+    fun destroy() {
+        secretKeyBytes.fill(0)
     }
 }
 
@@ -65,20 +75,21 @@ class WrappedCredentialStore(
 ) {
     fun save(credential: CurveCredential) {
         file.parentFile?.mkdirs()
-        val secret = credential.secretKey.copyOf()
+        val secret = credential.secretKey
         val sealed = try {
             cipher.seal(secret)
         } finally {
             secret.fill(0)
         }
+        val publicKey = credential.publicKey
         val temp = File(file.parentFile, ".${file.name}.tmp")
         try {
             FileOutputStream(temp).use { raw ->
                 val output = DataOutputStream(BufferedOutputStream(raw))
                 output.writeInt(CREDENTIAL_MAGIC)
                 output.writeInt(CREDENTIAL_VERSION)
-                output.writeInt(credential.publicKey.size)
-                output.write(credential.publicKey)
+                output.writeInt(publicKey.size)
+                output.write(publicKey)
                 output.writeInt(sealed.iv.size)
                 output.write(sealed.iv)
                 output.writeInt(sealed.ciphertext.size)
@@ -227,8 +238,8 @@ class CurveAuthConfigurator {
         serverPin: ServerPin,
     ) {
         val serverKey = serverPin.bytes()
-        val publicKey = credential.publicKey.copyOf()
-        val secretKey = credential.secretKey.copyOf()
+        val publicKey = credential.publicKey
+        val secretKey = credential.secretKey
         try {
             if (!socket.setServerKey(serverKey)) {
                 throw AuthenticationException("failed to set pinned CURVE server key")
