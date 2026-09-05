@@ -58,14 +58,19 @@ class AssistantServiceManifestContractTest {
     }
 
     @Test
-    fun `voice session reuses application runtime and cancels capture on hide`() {
+    fun `voice session uses explicit overlay PTT instead of opening microphone on show`() {
         val session = File("src/main/java/ai/zara/app/assistant/ZaraVoiceInteractionSession.kt").readText()
 
         assertTrue(session.contains("(context.applicationContext as ZaraApplication).appSession"))
-        assertTrue(session.contains("override fun onShow"))
+        assertTrue(session.contains("override fun onCreateContentView()"))
+        assertTrue(session.contains("MotionEvent.ACTION_DOWN"))
+        assertTrue(session.contains("MotionEvent.ACTION_UP"))
+        assertTrue(session.contains("MotionEvent.ACTION_CANCEL"))
         assertTrue(session.contains("appSession.startAssistantVoice"))
-        assertTrue(session.contains("override fun onHide"))
+        assertTrue(session.contains("appSession.releasePushToTalk"))
         assertTrue(session.contains("appSession.cancelPushToTalk"))
+        val showBody = session.substringAfter("override fun onShow").substringBefore("override fun onHide")
+        assertFalse(showBody.contains("appSession.startAssistantVoice"))
     }
 
     @Test
