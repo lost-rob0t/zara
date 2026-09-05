@@ -170,14 +170,14 @@ private fun ConnectionSurface(
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Zara server endpoint") },
             supportingText = { Text("tcp://host:port") },
-            enabled = !operationBusy,
+            enabled = !operationBusy && canRequestConnect(state.server),
             singleLine = true,
         )
         Button(
             onClick = { onConnect(endpoint) },
             enabled = endpoint.isNotBlank() &&
                 state.enrollment == EnrollmentReadiness.Ready &&
-                state.server !is ServerConnection.Connecting &&
+                canRequestConnect(state.server) &&
                 !operationBusy,
         ) {
             Text("Connect")
@@ -201,7 +201,10 @@ private fun SettingsSurface(
         Text("Settings", style = MaterialTheme.typography.headlineMedium)
         Text("server endpoint: ${state.configuredProfile?.endpoint ?: "not configured"}")
         Text("enrollment: ${enrollmentLabel(state.enrollment)}")
-        enrollmentPublicKey?.let { Text("client public key: $it") }
+        enrollmentPublicKey?.let {
+            Text("client public key: $it")
+            Text("Enroll this public key on the Zara server before connecting. The private key stays in Android Keystore-backed storage.")
+        }
         when (state.enrollment) {
             EnrollmentReadiness.Unenrolled -> Button(
                 onClick = onCreateIdentity,
@@ -210,6 +213,7 @@ private fun SettingsSurface(
                 Text("Create client identity")
             }
             EnrollmentReadiness.AwaitingServerPin -> {
+                Text("After the server owner enrolls the client key, pin that server's CURVE public key here. Pinning does not enroll the client on the server.")
                 OutlinedTextField(
                     value = serverPin,
                     onValueChange = { serverPin = it },
@@ -225,7 +229,7 @@ private fun SettingsSurface(
                     Text("Pin server key")
                 }
             }
-            EnrollmentReadiness.Ready -> Text("Client identity and server pin are ready.")
+            EnrollmentReadiness.Ready -> Text("Client identity and server pin are ready. Server-side enrollment is still required for authentication.")
             EnrollmentReadiness.Corrupt -> Text("Enrollment storage is corrupt; connection is disabled.")
         }
         operationError?.let { Text("Error: $it") }
@@ -266,6 +270,9 @@ private fun SurfaceColumn(
         content()
     }
 }
+
+internal fun canRequestConnect(connection: ServerConnection): Boolean =
+    connection is ServerConnection.Disconnected || connection is ServerConnection.OfflineDegraded
 
 internal fun connectionLabel(connection: ServerConnection): String = when (connection) {
     ServerConnection.Disconnected -> "disconnected"
