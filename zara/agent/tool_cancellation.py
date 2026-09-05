@@ -7,6 +7,11 @@ import threading
 from contextlib import contextmanager
 from typing import Iterator, Optional
 
+from langchain_core.runnables.config import ensure_config
+
+
+_CONFIG_KEY = "_zara_tool_cancellation"
+
 
 class ToolCancellation:
     """Read-only cancellation view exposed to the currently running tool."""
@@ -41,8 +46,24 @@ _current_tool_cancellation: contextvars.ContextVar[Optional[ToolCancellation]] =
 
 
 def current_tool_cancellation() -> Optional[ToolCancellation]:
-    """Return cancellation state for the exact current tool invocation."""
-    return _current_tool_cancellation.get()
+    """Return cancellation state for the exact current tool invocation.
+
+    Direct invocations inherit Zara's local ContextVar. LangChain tool execution
+    may cross an executor boundary, so the canonical ToolNode path also carries
+    the same read-only view in RunnableConfig's private configurable context.
+    """
+    cancellation = _current_tool_cancellation.get()
+    if cancellation is not None:
+        return cancellation
+
+    try:
+        configurable = ensure_config().get("configurable") or {}
+    except Exception:
+        return None
+    candidate = configurable.get(_CONFIG_KEY)
+    if isinstance(candidate, ToolCancellation):
+        return candidate
+    return None
 
 
 @contextmanager
