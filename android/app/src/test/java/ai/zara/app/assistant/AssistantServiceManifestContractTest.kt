@@ -1,6 +1,7 @@
 package ai.zara.app.assistant
 
 import java.io.File
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -41,5 +42,29 @@ class AssistantServiceManifestContractTest {
 
         assertTrue(activity.contains("override fun onResume()"))
         assertTrue(activity.contains("appSession.assessAssistantRole()"))
+    }
+
+    @Test
+    fun `ui and voice services share one application scoped runtime process`() {
+        val manifest = File("src/main/AndroidManifest.xml").readText()
+        val activity = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+
+        assertTrue(manifest.contains("android:name=\".ZaraApplication\""))
+        assertTrue(manifest.contains("android:name=\".MainActivity\""))
+        assertTrue(manifest.contains("android:process=\":voice\""))
+        assertTrue(activity.contains("(application as ZaraApplication).appSession"))
+        assertFalse(activity.contains("AndroidAppSession(this)"))
+        assertFalse(activity.contains("appSession.close()"))
+    }
+
+    @Test
+    fun `voice session reuses application runtime and cancels capture on hide`() {
+        val session = File("src/main/java/ai/zara/app/assistant/ZaraVoiceInteractionSession.kt").readText()
+
+        assertTrue(session.contains("(context.applicationContext as ZaraApplication).appSession"))
+        assertTrue(session.contains("override fun onShow"))
+        assertTrue(session.contains("appSession.pressToTalk"))
+        assertTrue(session.contains("override fun onHide"))
+        assertTrue(session.contains("appSession.cancelPushToTalk"))
     }
 }
