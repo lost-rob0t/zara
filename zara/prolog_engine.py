@@ -452,6 +452,30 @@ class PrologEngine:
         result = self.query_once(goal)
         return result.get("Cmd") if result else None
 
+    def get_app_names(self) -> List[str]:
+        """Return a bounded, stable set of explicitly registered app targets."""
+        goal = (
+            "(kb_device_providers:app_mapping(Name, _); "
+            "kb_device_providers:direct_app(Name))"
+        )
+        results = self.query_all(goal, max_solutions=256)
+        names: List[str] = []
+        seen: set[str] = set()
+        for result in results:
+            value = result.get("Name")
+            if isinstance(value, bytes):
+                value = value.decode("utf-8")
+            if not isinstance(value, str):
+                value = getattr(value, "value", None)
+            if not isinstance(value, str):
+                continue
+            name = value.strip().casefold()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            names.append(name)
+        return names
+
     def get_wake_words(self) -> List[str]:
         """Query wake words from ``kb_config:wake_word/1``."""
         results = self.query_all("kb_config:wake_word(W)", max_solutions=64)
@@ -468,281 +492,90 @@ class PrologEngine:
 
     def resolve_intent(
         self,
-        text: str,
+        input_text: str,
         state: str = "passive",
     ) -> Optional[IntentResult]:
-        """Resolve natural language to an intent and arguments."""
-        if state not in {"passive", "conversation", "dictation"}:
-            raise ValueError(f"Unsupported intent state: {state}")
+        """Resolve input text to a stable :class:`IntentResult`."""
         goal = (
-            f"intent_resolver:resolve({_prolog_string(text)}, {state}, "
-            "Intent, Args)"
+            "intent_resolver:resolve_intent("
+            f"{_prolog_string(input_text)}, "
+            f"{_prolog_atom(state)}, Intent, Args)"
         )
-        self.logger.info("Resolving intent in state %s for input %r", state, text)
         result = self.query_once(goal)
-        self.logger.info("Intent result: %r", result)
-        return adapt_intent_result(result) if result else None
+        if result is None:
+            return None
+        return adapt_intent_result(result)
 
     def resolve_frames(
         self,
-        text: str,
+        input_text: str,
         state: str = "passive",
-        context_frame: Optional[Any] = None,
-        missing: tuple[str, ...] = (),
+        context_term: str = "[]",
+        *,
+        max_frames: int = 64,
+        max_slots: int = 512,
     ) -> List[IntentFrame]:
-        """Resolve an utterance to IntentFrame values (contract v1).
+        """Resolve text to canonical v1 IntentFrame values.
 
-        ``context_frame`` plus ``missing`` encode an open clarification
-        session frame as ``partial_frame(Frame, Missing)`` for follow-up
-        resolution. The resolver is pure; frames carry no envelope metadata.
+        The query uses the shared =intent_frames:resolve_frames/4= contract and
+        decodes the portable frame term in bounded follow-up queries so Python
+        callers never depend on PySWIP's private compound representation.
         """
-        if state not in {"passive", "conversation", "dictation"}:
-            raise ValueError(f"Unsupported intent state: {state}")
-        if context_frame is not None:
-            context_term = (
-                "partial_frame("
-                f"{encode_frame_term(context_frame)}, "
-                f"[{', '.join(_prolog_atom(str(name)) for name in missing)}]"
-                ")"
-            )
-        else:
-            context_term = "[]"
-        goal = (
-            f"intent_frames:resolve_frames({_prolog_string(text)}, {state}, "
-            f"{context_term}, Frames)"
+        state_term = _prolog_atom(state)
+        text_term = _prolog_string(input_text)
+        head_goal = (
+            "intent_frames:resolve_frames("
+            f"{text_term}, {state_term}, {context_term}, Frames), "
+            "nth0(Idx, Frames, frame(intent(ns(NS), name(Name)), Slots, Status)), "
+            "intent_frames:frame_status_parts(Status, StatusKind, Missing, Alternatives, "
+            "InvalidSlot, InvalidReason)"
         )
-        self.logger.info("Resolving frames in state %s for input %r", state, text)
-        return self.frames_from_goal(goal)
-
-    def frames_from_goal(self, goal: str) -> List[IntentFrame]:
-        """Project the ``Frames`` binding of ``goal`` into IntentFrame values.
-
-        Nested compounds stringify under pyswip marshalling, so frames are
-        decoded through the flat ``frame_head_row``/``frame_slot_row``
-        projections (atoms, integers and lists of atoms only).
-        """
-        head_rows = self.query_all(
-            f"{goal}, "
-            "intent_frames:frame_head_row(Frames, Idx, NS, Name, StatusKind, "
-            "Missing, Alternatives, InvalidSlot, InvalidReason)",
-            max_solutions=64,
-        )
-        if not head_rows:
+        heads = self.query_all(head_goal, max_solutions=max_frames)
+        if not heads:
             return []
-        slot_rows = self.query_all(
-            f"{goal}, "
-            "intent_frames:frame_slot_row(Frames, Idx, SlotIdx, SlotName, "
-            "Origin, ValueKind, A1, A2)",
-            max_solutions=256,
+        slot_goal = (
+            "intent_frames:resolve_frames("
+            f"{text_term}, {state_term}, {context_term}, Frames), "
+            "nth0(Idx, Frames, frame(_, Slots, _)), "
+            "nth0(SlotIdx, Slots, Slot), "
+            "intent_frames:frame_slot_parts(Slot, SlotName, Origin, ValueKind, A1, A2)"
         )
-        return _grouped_frames(head_rows, slot_rows)
+        slots = self.query_all(slot_goal, max_solutions=max_slots)
+        return _grouped_frames(heads, slots)
 
-    def plan_for_frame(self, frame: Any, environment: Any) -> Any:
-        """Derive the typed ExecutionPlan for a complete frame (issue #157).
-
-        The selection is pure Prolog; environments are encoded from the
-        typed PlanEnvironment mirror. Non-complete frames are refused here:
-        open frames belong to the clarification session, not the plan layer.
-        A ``None`` result means Prolog produced no plan structure (bounds
-        violation); typed unavailability otherwise rides the plan status.
-        """
-        from zara.runtime.frames import FrameStatus
-        from zara.runtime.plans import PlanEnvironment
-
-        if not isinstance(environment, PlanEnvironment):
-            raise TypeError("plan_for_frame requires a PlanEnvironment")
-        if frame.status is not FrameStatus.COMPLETE:
-            raise ValueError(
-                "plan_for_frame requires a complete frame; "
-                "clarification owns open frames"
-            )
+    def execute_intent(self, intent_name: str, args: List[Any]) -> bool:
+        """Execute an intent with typed Prolog serialization."""
         goal = (
-            f"capability_plans:plan_for_frame({encode_frame_term(frame)}, "
-            f"{encode_environment_term(environment)}, Plan), "
-            "Plans = [Plan], "
-            "capability_plans:plan_head_row(Plans, Idx, NS, Name, StatusKind, "
-            "Reason, ProviderId, Location, DeviceRef, SideEffect, "
-            "RequiresAuth, Evidence, Alternatives)"
-        )
-        self.logger.info("Deriving plan for frame %s/%s", frame.intent_ns, frame.intent_name)
-        head_rows = self.query_all(goal, max_solutions=2)
-        if not head_rows:
-            return None
-        if len(head_rows) > 1:
-            raise ValueError("plan_for_frame produced multiple plans for one frame")
-        arg_rows = self.query_all(
-            "capability_plans:plan_for_frame("
-            f"{encode_frame_term(frame)}, {encode_environment_term(environment)}, Plan), "
-            "Plans = [Plan], "
-            "capability_plans:plan_arg_row(Plans, Idx, ArgIdx, ArgName, "
-            "ValueKind, A1, A2)",
-            max_solutions=64,
-        )
-        plans = _grouped_plans(head_rows, arg_rows)
-        return plans[0]
-
-    def execute_intent(self, intent: str, args: List[Any]) -> bool:
-        """Execute a resolved intent and report logical success."""
-        goal = f"commands:execute({_prolog_atom(intent)}, {_prolog_term(args)})"
-        return self.query_once(goal) is not None
-
-    def schedule_has_no_overlap(
-        self,
-        schedule_iso: str,
-        existing_times: List[str],
-    ) -> bool:
-        """Check a proposed schedule through the Prolog overlap policy."""
-        goal = (
-            f"todo_schedule:no_overlap({_prolog_atom(schedule_iso)}, "
-            f"{_prolog_term(existing_times)})"
+            "intent_resolver:execute_intent("
+            f"{_prolog_atom(intent_name)}, {_prolog_term(args)})"
         )
         return self.query_once(goal) is not None
 
-    def is_conversation_stop(
-        self,
-        text: str,
-        state: str = "conversation",
-    ) -> bool:
-        """Check whether text matches a conversation stop intent."""
-        result = self.resolve_intent(text, state=state)
+    def apply_hook(self, hook_name: str, input_value: Any) -> Any:
+        """Apply a Prolog hook, preserving the input when no hook is installed."""
+        goal = (
+            "hooks:apply_hook("
+            f"{_prolog_atom(hook_name)}, {_prolog_term(input_value)}, Output)"
+        )
+        result = self.query_once(goal)
         if result is None:
-            return False
-        return result.kind == "prolog" and result.name == "end_conversation"
+            return input_value
+        return result.get("Output", input_value)
 
-    def dictation_active(self) -> bool:
-        """Check whether dictation mode is currently active."""
-        return self.query_once("dictation:dictation_active") is not None
+    def run_query(self, goal: str) -> List[Dict[str, Any]]:
+        """Compatibility helper for existing callers that need all solutions."""
+        return self.query_all(goal)
 
-    def reload_config(self) -> bool:
-        """Reload user configuration and report logical success."""
-        return self.query_once("config_loader:reload_user_config") is not None
+    def __enter__(self) -> "PrologEngine":
+        return self
 
-
-def encode_environment_term(environment: Any) -> str:
-    """Encode a PlanEnvironment mirror as a portable environment/6 term string."""
-    from zara.runtime.plans import PreferDevice, PreferLocation
-
-    auths = ", ".join(_prolog_atom(str(auth)) for auth in environment.auths)
-    devices = ", ".join(
-        "device({}, {}, [{}])".format(
-            _prolog_atom(str(device.device_id)),
-            _prolog_atom(str(device.owner)),
-            ", ".join(_prolog_atom(str(cap)) for cap in device.capabilities),
-        )
-        for device in environment.devices
-    )
-    providers = ", ".join(
-        _prolog_atom(str(provider)) for provider in environment.providers
-    )
-    aliases = ", ".join(
-        "alias({}, {})".format(
-            _prolog_atom(str(provider)), _prolog_atom(str(alias))
-        )
-        for provider, alias in environment.aliases
-    )
-    policies = ", ".join(
-        (
-            "prefer(location({}))".format(_prolog_atom(policy.location.value))
-            if isinstance(policy, PreferLocation)
-            else "prefer(device({}))".format(_prolog_atom(policy.device_id))
-        )
-        for policy in environment.policies
-    )
-    return (
-        "environment("
-        f"principal({_prolog_atom(str(environment.principal))}), "
-        f"auths([{auths}]), "
-        f"devices([{devices}]), "
-        f"providers([{providers}]), "
-        f"aliases([{aliases}]), "
-        f"policies([{policies}]))"
-    )
-
-
-def _sentinel(value: Any) -> Optional[str]:
-    return None if value in (None, "none") else str(value)
-
-
-def _grouped_plans(
-    head_rows: List[Dict[str, Any]],
-    arg_rows: List[Dict[str, Any]],
-) -> List[Any]:
-    from zara.runtime.plans import (
-        ExecutionPlan,
-        PlanArgument,
-        PlanLocation,
-        PlanSideEffect,
-        PlanStatus,
-    )
-
-    plans: List[Any] = []
-    by_index: Dict[int, Dict[str, Any]] = {}
-    for row in head_rows:
-        index = int(row["Idx"])
-        location = _sentinel(row.get("Location"))
-        by_index[index] = {
-            "intent_ns": str(row["NS"]),
-            "intent_name": str(row["Name"]),
-            "status": PlanStatus(str(row["StatusKind"])),
-            "reason": _sentinel(row.get("Reason")),
-            "provider": _sentinel(row.get("ProviderId")),
-            "location": PlanLocation(location) if location is not None else None,
-            "device": _sentinel(row.get("DeviceRef")),
-            "side_effect": PlanSideEffect(str(row["SideEffect"])),
-            "requires_auth": _sentinel(row.get("RequiresAuth")),
-            "evidence": tuple(str(item) for item in (row.get("Evidence") or [])),
-            "alternatives": tuple(
-                str(item) for item in (row.get("Alternatives") or [])
-            ),
-            "arguments": [],
-        }
-    for row in arg_rows:
-        index = int(row["Idx"])
-        entry = by_index.get(index)
-        if entry is None:
-            raise ValueError(f"Plan argument row references unknown index: {row!r}")
-        entry["arguments"].append(
-            (
-                int(row["ArgIdx"]),
-                PlanArgument(
-                    name=str(row["ArgName"]),
-                    value=_decode_slot_value(row),
-                ),
-            )
-        )
-    for index in sorted(by_index):
-        entry = by_index[index]
-        arguments = tuple(
-            argument
-            for _, argument in sorted(entry["arguments"], key=lambda pair: pair[0])
-        )
-        plans.append(
-            ExecutionPlan(
-                intent_ns=entry["intent_ns"],
-                intent_name=entry["intent_name"],
-                provider=entry["provider"],
-                location=entry["location"],
-                device=entry["device"],
-                side_effect=entry["side_effect"],
-                requires_auth=entry["requires_auth"],
-                status=entry["status"],
-                reason=entry["reason"],
-                alternatives=entry["alternatives"],
-                arguments=arguments,
-                evidence=entry["evidence"],
-            )
-        )
-    return plans
-
-
-def test_engine() -> None:
-    logging.basicConfig(level=logging.INFO)
-    main_file = Path(__file__).parent.parent / "main.pl"
-    engine = PrologEngine(main_file)
-    print(engine.resolve_intent("open firefox"))
-    print(engine.get_app_mapping("terminal"))
-    print(engine.execute_command("hello"))
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        return None
 
 
 if __name__ == "__main__":
-    test_engine()
+    logging.basicConfig(level=logging.INFO)
+    engine = PrologEngine(locate_main_pl())
+    print(engine.resolve_intent("open firefox"))
+    print(engine.get_app_mapping("terminal"))
+    print(engine.execute_command("hello"))
