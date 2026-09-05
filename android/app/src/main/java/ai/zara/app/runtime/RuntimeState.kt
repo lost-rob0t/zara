@@ -20,6 +20,7 @@ enum class RoleOutcome { HELD, NOT_HELD, PLATFORM_UNAVAILABLE }
 data class RuntimeState(
     val server: ServerConnection,
     val assistantRole: AssistantRole,
+    val enrollment: EnrollmentReadiness = EnrollmentReadiness.Unenrolled,
     val generation: Long = 0,
     val sessionId: String? = null,
     val selectedConversationId: String? = null,
@@ -44,6 +45,7 @@ sealed interface RuntimeEvent {
     data class HelloAccepted(val generation: Long, val sessionId: String) : RuntimeEvent
     data class ConnectionLost(val generation: Long, val reason: String) : RuntimeEvent
     data class ConnectionFailed(val generation: Long, val reason: String) : RuntimeEvent
+    data class EnrollmentObserved(val readiness: EnrollmentReadiness) : RuntimeEvent
     data class RoleAssessed(val outcome: RoleOutcome) : RuntimeEvent
 }
 
@@ -106,6 +108,8 @@ fun reduce(state: RuntimeState, event: RuntimeEvent): RuntimeState = when (event
             }
         }
     }
+
+    is RuntimeEvent.EnrollmentObserved -> state.copy(enrollment = event.readiness)
 
     is RuntimeEvent.RoleAssessed -> when (event.outcome) {
         RoleOutcome.HELD -> state.copy(assistantRole = AssistantRole.Held)
