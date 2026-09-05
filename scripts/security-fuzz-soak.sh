@@ -37,6 +37,9 @@ python -m pytest -q -o faulthandler_timeout=15 \
   t/test_security_threat_transport.py \
   t/test_security_threat_gateway.py \
   t/test_security_threat_management.py \
+  t/test_security_threat_json_depth.py \
+  t/test_security_threat_protocol_depth.py \
+  t/test_security_threat_reconnect.py \
   t/test_security_fuzz.py \
   t/test_security_chaos.py \
   t/test_security_adversarial.py \
