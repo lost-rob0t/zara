@@ -46,6 +46,10 @@ val androidNdkVersion = providers.environmentVariable("ZARA_ANDROID_NDK_VERSION"
     ?: error("ZARA_ANDROID_NDK_VERSION must be supplied by the pinned Android Nix toolchain")
 val treallaSourceDir = providers.environmentVariable("ZARA_TREALLA_SOURCE_DIR").orNull ?: ""
 val treallaLibraryRoot = providers.environmentVariable("ZARA_TREALLA_LIBRARY_ROOT").orNull ?: ""
+val sourceSha = providers.environmentVariable("ZARA_SOURCE_SHA")
+    .orElse(providers.environmentVariable("GITHUB_SHA"))
+    .orElse("development")
+    .get()
 
 android {
     namespace = "ai.zara.app"
@@ -58,6 +62,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0-skeleton"
+        buildConfigField("String", "SOURCE_SHA", "\"$sourceSha\"")
 
         ndk {
             abiFilters += setOf("arm64-v8a", "x86_64")
@@ -71,6 +76,10 @@ android {
                 )
             }
         }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {
