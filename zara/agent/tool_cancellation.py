@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from typing import Annotated, Any, FrozenSet, Mapping, Optional
 
-from langchain_core.tools import InjectedToolArg
+from pydantic.json_schema import SkipJsonSchema
 
 
 class ToolCancellation:
@@ -24,7 +24,7 @@ class ToolCancellation:
         return self.__event.wait(timeout=timeout)
 
 
-ToolCancellationArg = Annotated[Any, InjectedToolArg]
+ToolCancellationArg = Annotated[Any, SkipJsonSchema()]
 """Model-hidden cancellation dependency populated only by Zara Core."""
 
 
@@ -45,9 +45,16 @@ def new_tool_cancellation_signal() -> _ToolCancellationSignal:
 
 
 def _schema_field_names(schema: Any) -> FrozenSet[str]:
-    """Return declared field names for Pydantic or JSON-schema tool inputs."""
     if isinstance(schema, Mapping):
         properties = schema.get("properties")
+        if isinstance(properties, Mapping):
+            return frozenset(str(name) for name in properties)
+        return frozenset()
+
+    model_json_schema = getattr(schema, "model_json_schema", None)
+    if callable(model_json_schema):
+        rendered = model_json_schema()
+        properties = rendered.get("properties") if isinstance(rendered, Mapping) else None
         if isinstance(properties, Mapping):
             return frozenset(str(name) for name in properties)
         return frozenset()
@@ -60,19 +67,22 @@ def _schema_field_names(schema: Any) -> FrozenSet[str]:
     return frozenset()
 
 
+def _declared_field_names(schema: Any) -> FrozenSet[str]:
+    fields = getattr(schema, "model_fields", None)
+    if fields is None:
+        fields = getattr(schema, "__fields__", None)
+    if isinstance(fields, Mapping):
+        return frozenset(str(name) for name in fields)
+    return _schema_field_names(schema)
+
+
 def inject_tool_cancellation(
     tool_call: Any,
     tool: Any,
     cancellation: ToolCancellation,
 ) -> Any:
-    """Inject Core cancellation only for a tool's hidden cancellation input.
-
-    The full LangChain input schema retains injected arguments while
-    ``tool_call_schema`` is the model-facing schema.  Requiring the field to
-    exist only in the former makes opt-in explicit and prevents Core from
-    inventing arguments for ordinary tools.
-    """
-    full_fields = _schema_field_names(tool.get_input_schema())
+    """Bind Core cancellation to an explicit model-hidden tool parameter."""
+    full_fields = _declared_field_names(tool.get_input_schema())
     model_fields = _schema_field_names(tool.tool_call_schema)
     if "cancellation" not in full_fields or "cancellation" in model_fields:
         return tool_call
