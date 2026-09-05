@@ -1,0 +1,60 @@
+#+title: RAGE #29 — phrase-sized streaming TTS and persistent playback
+
+* Transaction
+- Consumed issue :: #29
+- Immutable RAGE start :: =f590e50fdccd6b25453c09ba697ab70c770c9692=
+- Branch :: =rage/29-streaming-tts-current=
+- Scope :: Zara Core only; no =android/**= production changes.
+- Dependency proof :: #28 is closed completed; #29 is the first open dependency-ready Phase 5 roadmap slice before #30/#31 and remains an owning blocker for final daemon Voice release #134.
+
+* Invariants
+- One canonical Zara runtime/turn/TTS path; no daemon-only or Android-specific synthesis stack.
+- Client-owned playback remains the daemon/mobile device boundary; local standalone playback compatibility must not create duplicate ownership.
+- Cancellation and stale-turn fencing remain canonical TurnCoordinator/runtime semantics.
+- No transcript, prompt, credential, provider secret, or audio payload is added to structured logs/latency records.
+- No provider/model switch and no new non-Nix dependency.
+
+* Research — current architecture
+- =zara/runtime/tts_output.py= already owns daemon phrase synthesis over =AssistantDelta=/=AssistantComplete= and emits canonical =AudioOutputStarted/Chunk/Finished= events. It uses =TTSEngine.synthesize_stream= and converts provider audio once to negotiated raw mono s16le PCM.
+- =zara/tts/engine.py= already exposes a provider-neutral async =synthesize_stream= contract. ElevenLabs streams provider chunks; local/Qwen currently use a one-chunk compatibility fallback; Edge delivers bounded chunks after its full synthesis call.
+- =zara/wake_daemon.py::PcmStreamSpeaker= already owns one persistent client =sounddevice.OutputStream= and cancellation drops queued stale audio. Android B1/B2 consumes the same =audio.output.*= wire contract and must not gain a Core-side parallel player.
+- Existing =t/test_daemon_tts_output.py= proves phrase ordering, completion flush, cancellation, PCM conversion and negotiated ZARA/1 egress. =t/test_wake_speaker.py= proves persistent client playback/cancel behavior.
+- Therefore the issue inherited an older implementation description: creating another player, phrase cutter, or daemon voice stack would now duplicate canonical #132/#244 work.
+
+* Research — discovered lifecycle defect
+- =TtsOutputBridge._state_for= stores each active turn in =self._turns=.
+- Cancellation and agent failure remove that entry explicitly.
+- Normal successful =AssistantComplete= queues the sentinel and =_synthesize_turn= publishes =AudioOutputFinished=, but no successful path removes the =_TurnAudio= entry.
+- A long-lived daemon therefore retains one completed state object per successful spoken turn. This violates #29's persistent-session objective and #134's bounded-memory/soak contract even when every provider and client behaves correctly.
+
+* Design / adversarial review — slice A: completed-turn reclamation
+- Acceptance A1 :: after successful output completion and idle settlement, the completed turn is no longer retained in =TtsOutputBridge._turns=.
+- Acceptance A2 :: reclamation must occur only for the exact state object whose task is ending; an old task may never remove a newer state that happens to reuse the same turn id.
+- Acceptance A3 :: cancellation remains prompt and does not publish a fake =AudioOutputFinished=.
+- Acceptance A4 :: multiple sequential successful turns leave no monotonic per-turn state growth.
+- Test mapping :: deterministic lifecycle tests with a fake streaming engine; no sleeps, provider network, microphone, or Android code.
+- Selected implementation :: task-owned cleanup in =_synthesize_turn= with an identity guard (=self._turns.get(turn_id) is state=). This reuses current ownership and handles success/cancellation/error without a second lifecycle manager.
+- Rejected :: periodic GC/sweeper (hides ownership bug and requires a timer); clearing all turns on every completion (cross-turn corruption); deleting in =AssistantComplete= before synthesis drains (breaks cancellation and active state).
+- Threat/failure analysis :: cleanup must execute on cancellation and provider exceptions while never deleting a replacement state; no transcript/audio/log content is added.
+
+* TDD — slice A
+** RED
+- Test-only head :: =7f1b4e40c0a478619f7ce25f0da61575ff919b12=
+- Exact CI :: run #1235 / workflow run =33962836774=.
+- Core test result :: 1940 tests, exactly 2 failures, both new lifecycle assertions; no unrelated failure.
+- =test_successful_turn_releases_completed_state= observed one completed =_TurnAudio= retained in =bridge._turns=.
+- =test_many_successful_turns_do_not_accumulate_state= observed all 32 completed turn states retained.
+- Regression artifact :: =regression-artifacts= artifact id =9968546727=; JUnit evidence inspected before production mutation.
+
+** GREEN implementation candidate
+- Production commit :: =ca263f8cc4b0bdc8b5972dd0ef0a05829aab2f15=.
+- =TtsOutputBridge._synthesize_turn= now reclaims its state in =finally= so success, cancellation and unexpected task termination cannot leak the completed turn.
+- Cleanup is identity-guarded: only =self._turns[state.turn_id] is state= may be removed, preventing a stale task from deleting a replacement state with the same id.
+- No protocol shape, provider, playback ownership, Android code, authorization, or public runtime contract changed.
+- Fresh exact-head CI on the final RAGE-log head is required to prove GREEN; this branch also requires recovery onto then-current canonical master before merge because #356 landed after the immutable #29 start.
+
+* RAGE state
+- Research :: slice A complete; broader #29 provider/jitter/backpressure research remains open.
+- Design/adversarial review :: slice A accepted; no second player/runtime.
+- TDD realization :: RED proven; bounded GREEN implementation committed.
+- Exact-head verification :: mandatory full repo/Nix/package/Android/shared-mic CI before any merge, followed by exact-current-master recovery if canonical advanced.
