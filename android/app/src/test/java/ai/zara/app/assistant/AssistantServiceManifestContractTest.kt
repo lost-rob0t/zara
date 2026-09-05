@@ -63,8 +63,20 @@ class AssistantServiceManifestContractTest {
 
         assertTrue(session.contains("(context.applicationContext as ZaraApplication).appSession"))
         assertTrue(session.contains("override fun onShow"))
-        assertTrue(session.contains("appSession.pressToTalk"))
+        assertTrue(session.contains("appSession.startAssistantVoice"))
         assertTrue(session.contains("override fun onHide"))
         assertTrue(session.contains("appSession.cancelPushToTalk"))
+    }
+
+    @Test
+    fun `voice interaction service rechecks role and stops capture on shutdown`() {
+        val service = File("src/main/java/ai/zara/app/assistant/ZaraVoiceInteractionService.kt").readText()
+
+        assertTrue(service.contains("(application as ZaraApplication).appSession"))
+        assertTrue(service.contains("override fun onReady"))
+        assertTrue(service.contains("appSession.assessAssistantRole()"))
+        assertTrue(service.contains("override fun onShutdown"))
+        assertTrue(service.contains("ManualVoiceState.Capturing"))
+        assertTrue(service.contains("appSession.cancelPushToTalk()"))
     }
 }
