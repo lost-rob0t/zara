@@ -6,13 +6,16 @@
 - Issue :: #173 — authenticated Android ZARA/1 enrollment, reconnect and session continuity.
 - Exact start :: =ceb2e13951af518cbc29df2dafabdea022baad89=, canonical master after #322 Android auth merged.
 - Owner :: Zara Android Auto-RAGE worker.
-- Scope :: Android-only endpoint/settings model, canonical connection reducer, bounded reconnect/session generations, ZARA/1 client framing/correlation and real typed text-turn client path. Shared #159 action messages are consumed only after their exact-head successor merges.
+- Scope :: Android-only endpoint/settings model, canonical connection reducer, bounded reconnect/session generations, ZARA/1 client framing/correlation and real typed text-turn client path. Shared compatibility is limited to the already-approved #159 contract.
 - Core dependency :: #329 / PR #331 owns production secure TCP listener. Do not modify Core files here.
 
 * Live-state correction
 - #322 merged the credential wrapping/server-pin substrate and auto-closed #173, but #322 explicitly did not implement connect/hello/reconnect/text-turn acceptance.
 - #173 was reopened on 2026-09-05 so issue state again matches its acceptance contract.
-- #172 and #133 are satisfied. #159 successor #336 is gating independently. Production stock-daemon secure TCP remains Core #331.
+- #172 and #133 are satisfied.
+- #159 successor #336 passed exact-head CI #1104 and merged to canonical master as =eb6e9bac0a9fc13ca90b3779fe1d7271107d431e=.
+- Recovery helper #341 merged that canonical master into this branch as =7ad60ae16aea72ba614e3b2b80334ab904efd742=, so Android #173 now consumes the real typed capability/action contract rather than a stale assumption.
+- Production stock-daemon secure TCP remains Core #331 and is the only external end-to-end blocker for a real device-to-stock-daemon authenticated smoke.
 
 * Design boundary
 - Android remains a client of the one Zara daemon/runtime; no local LLM, server, conversation database or memory authority is added.
@@ -20,7 +23,7 @@
 - One Android runtime reducer owns connection/session state rendered by future Compose surfaces.
 - A successful TCP/CURVE socket alone is not =Connected=: only canonical =hello.ok= for the current generation may establish an application session.
 - Reconnect creates a new transport/application generation. Old-session events/replies are rejected rather than applied to current state.
-- Durable conversation identity is retained separately from ephemeral ZARA/1 session identity; no invented =session.resume= message.
+- Durable conversation identity and public server profile are retained separately from ephemeral ZARA/1 session identity; no invented =session.resume= message.
 - Endpoint configuration is public metadata and must never contain embedded user-info credentials or client private material.
 
 * First implementation map
@@ -29,8 +32,10 @@
 3. TDD deterministic backoff calculation without wall-clock sleeps.
 4. TDD closed ZARA/1 frame codec for =hello=, =hello.ok=, =turn.submit= and text/runtime events.
 5. JeroMQ DEALER owner using the #322 CURVE configurator and typed generation/correlation tables.
-6. Fake/inproc deterministic client tests now; stock secure TCP interoperability after Core #331.
-7. Android gate + full repository/Nix gate + exact-head Actions.
+6. Deterministic controller orchestration for real bounded reconnect and stale completion rejection.
+7. Consume merged #159 with a closed capability-snapshot codec; advertise no platform capabilities until #174 provides real adapters.
+8. Fake/inproc deterministic client tests now; stock secure TCP interoperability after Core #331.
+9. Android gate + full repository/Nix gate + exact-head Actions.
 
 * Invariants / adversarial cases
 - wrong/missing pin, missing/corrupt credential and socket auth failure never downgrade to plaintext;
@@ -39,7 +44,8 @@
 - stale generation/session response/event cannot mutate current conversation/runtime state;
 - reconnect attempts and pending requests are bounded;
 - no transcript, private key, token or raw credential enters diagnostics;
-- process recreation may restore public server profile + durable conversation id, never fabricate a live session.
+- process recreation may restore public server profile + durable conversation id, never fabricate a live session;
+- capability advertisement is availability only and cannot create server authority.
 
 * Iteration 1 — dependency-safe client state
 ** TDD / implementation
@@ -57,25 +63,44 @@
 - Launch wiring :: =d354638d035ddddeaaa5bd967046005ffda2acde= restores public client state and reads real enrollment authority on process launch; it does not fabricate connection/session continuity.
 
 ** ZARA/1 text path
-- Codec/tests now cover closed =ZARA/1= hello, turn submit/accept, assistant response/delta/completed and protocol-error framing with bounds and unknown/malformed rejection.
+- Codec/tests cover closed =ZARA/1= hello, turn submit/accept, assistant response/delta/completed and protocol-error framing with bounds and unknown/malformed rejection.
 - =JeroMqTextDealerFactory= is the production DEALER edge. It consumes the one #322 =EnrollmentRepository=/CURVE configurator, applies authentication before connect, uses bounded receive timeouts and closes socket/context ownership together.
 - =ZaraTextClientActor= owns the blocking DEALER on one dedicated executor thread rather than Activity/UI threads. It performs canonical hello negotiation, records generation+session ownership, submits typed text turns, requires request/reply correlation, validates turn/conversation/session identity on streamed events, and rejects stale sessions.
 - Actor tests use deterministic fake dealers/request ids/timestamps to prove hello, real typed text-turn result, timeout/error, stale-session and ordering behavior without a second assistant runtime.
-- This establishes the dependency-safe A6/A7 client mechanics; stock authenticated TCP acceptance still waits for Core #331, and #159 capability/action negotiation still waits for #336.
+- Controller RED existed as =AndroidTextSessionControllerTest= before production controller implementation.
+- Controller GREEN :: =4353214b9a3e96a0e2d70986722117d09d5f71a7= creates the one reducer-owned orchestration seam; =759222b879825cf34bff226f247ef1a93eccae0e= binds the existing actor to that =TextSessionClient= seam.
 
 ** Exact source diagnostics
 - Initial BuildConfig source field :: =985e56d365c92eeaccf79550cbf8ba36ccc39d32= and launch display =f78f54c92a1a293824441a7fa32dadad4dcb3002=.
 - Initial PR-checkout attempt used =HEAD^2= when =GITHUB_HEAD_REF= existed. CI #1107 showed the Android job uses a shallow pull-request checkout, so that parent is not guaranteed to exist even though the source branch is valid.
-- Build gate repair :: =c2a1547f88d59af29da58ffd6dbbc6ac30077f7c=. Gradle now reads the immutable =pull_request.head.sha= from GitHub's local event payload when present, falls back to =git rev-parse HEAD= outside PR events, preserves explicit =ZARA_SOURCE_SHA= override, and validates the result as a lowercase 40-character SHA before generating BuildConfig.
+- Build gate repair :: =c2a1547f88d59af29da58ffd6dbbc6ac30077f7c=. Gradle now reads immutable =pull_request.head.sha= from GitHub's local event payload when present, falls back to =git rev-parse HEAD= outside PR events, preserves explicit =ZARA_SOURCE_SHA= override, and validates the result as a lowercase 40-character SHA before generating BuildConfig.
 - Regression =BuildMetadataTest= still requires the diagnostic source identifier to be an immutable 40-character git SHA; no assertion was weakened.
 
-** Gate
-- PR :: #338, draft while implementation continues.
-- CI #1107 at =d8787394a62fcca108bebc7c364937b011a972b1= :: repository =Run all tests= green and shared-mic jobs green; Android gate RED before APK build because shallow PR checkout invalidated =HEAD^2= source-SHA derivation.
-- Fresh exact-head CI is required after the source-SHA repair/log update. No older or superseded SHA authorizes merge.
-- Shared blockers remain #159/#336 for device-action negotiation and Core #329/#331 for stock secure TCP interoperability. Neither blocker prevents the Android-only state/correlation/text-client work above.
+* Iteration 2 — actual reconnect + canonical #159 consumption
+** Restored profile continuity
+- RED :: =bb55b494bbbdb8c93e73b5facb0646e6102b9d9e= proves process recreation must restore the public server profile while remaining disconnected/sessionless.
+- GREEN :: =a4173f79ec5bb51ea54c1711663ae2872afa0228= makes =configuredProfile= part of canonical =RuntimeState= and restores it from the bounded public =ClientStateStore= without fabricating generation/session state.
+
+** Bounded reconnect execution
+- RED :: =6f6dabd20578abad4218b4173883ed141dc44e7b= requires a lost connection to schedule a deterministic 250 ms generation-2 reconnect, commit only that fresh hello, then advance failure retries to 500/1000/2000/4000 ms under the existing reducer limit.
+- GREEN :: =c28f43701b5b7196dc64f2050966a2cea0116af2= adds one =ReconnectScheduler= owned by the same controller. Production uses one daemon scheduled executor; tests use a deterministic queue with no sleeps. Each retry reuses =configuredProfile=, clears the old dealer, remains generation-bound and stops once closed/degraded.
+- Stale text completions still cannot mutate selected durable conversation state after generation rollover.
+
+** #159 capability negotiation substrate
+- #159/#336 exact-head CI #1104 passed and canonical merge =eb6e9bac...= is now in this branch via helper #341.
+- Capability codec RED :: =acefb7b80abe4b7c59a492b5033245aa8a0c7587= requires closed/sorted/session-bound v1 snapshots, exact acknowledgement parsing, duplicate rejection, closed ids and version =1=.
+- The codec was intentionally isolated from the text-turn codec so #174 platform adapters can consume it without widening text parsing or creating a parallel runtime.
+- GREEN implementation :: =04ef8a261570f5a45639314b74fae404c9f354ce= plus parser hardening =af5a27979d66cbea75062f829dc565e17955d72e=. Only =open_app= and =open_uri= exist; unknown/admin ids, wrong versions, extra fields, duplicates, malformed JSON/UTF-8 and nonzero payload assumptions fail closed.
+- Current first-text milestone exposes no device adapter success until #174 wires actual Android actions. Capability visibility remains availability, never authority.
+
+* Gate
+- PR :: #338 remains draft while stock-daemon integration is blocked by Core #331.
+- Historical CI #1107 at =d8787394a62fcca108bebc7c364937b011a972b1= had repository tests and mic lanes green but Android gate RED because shallow PR checkout invalidated =HEAD^2= source-SHA derivation; that defect is repaired, not bypassed.
+- Current exact candidate after this log is the branch head containing =af5a279...= plus this evidence commit. Fresh exact-head Android unit/native/debug-APK/secret inspection and full repository/Nix/package Actions are required. No prior SHA authorizes merge.
+- Core #329/#331 remains the only blocker to deterministic stock =zara-server= authenticated TCP hello/text-turn interoperability. It is Core-owned and untouched here.
 
 * Next
-- Re-run exact-head Android/full gates for the repaired build identity path.
-- While #159/#336 and Core #331 gate, continue dependency-safe Android orchestration around the existing reducer/actor only; do not create a parallel connection state machine.
-- After Core #331 lands, add deterministic stock-daemon authenticated TCP hello/text-turn interoperability and only then claim #173 acceptance.
+- Freeze this exact head until CI surfaces the real Android verdict; consume any deterministic RED rather than superseding it.
+- Once the candidate Android gate is green, preserve its debug APK artifact and source SHA.
+- After Core #331 lands, recover current master, add a real authenticated stock-daemon hello/text-turn interoperability gate, then close/merge #173 only if exact-head green.
+- Immediately proceed to #197 Compose Chat + Connection/Enrollment + Settings + Diagnostics for the first-usable APK; do not wait for Samsung/assistant-role work.
