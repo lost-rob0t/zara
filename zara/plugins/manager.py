@@ -325,6 +325,7 @@ class PluginManager:
             return PluginCapability(
                 name=name,
                 owner=record.metadata.name,
+                _requester=requester,
                 _token=record.capability_tokens[name],
             )
 
@@ -348,6 +349,7 @@ class PluginManager:
                 record is not None
                 and record.state is PluginState.RUNNING
                 and record.metadata.name != requester
+                and capability._requester == requester
                 and record.capability_tokens.get(capability.name) == capability._token
             )
             invoker = self._capability_invoker
