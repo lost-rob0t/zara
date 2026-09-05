@@ -2,6 +2,8 @@ package ai.zara.app
 
 import ai.zara.app.assistant.AndroidAssistantRolePlatform
 import ai.zara.app.assistant.AssistantRoleController
+import ai.zara.app.assistant.AssistantRoleVoiceGuard
+import ai.zara.app.assistant.AssistantVoiceOwnership
 import ai.zara.app.auth.AndroidEnrollmentRepository
 import ai.zara.app.auth.EnrollmentRepository
 import ai.zara.app.auth.EnrollmentState
@@ -55,6 +57,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     private val controller: AndroidTextSessionController
     private val assistantRolePlatform: AndroidAssistantRolePlatform
     private val assistantRoleController: AssistantRoleController
+    private val assistantVoiceGuard: AssistantRoleVoiceGuard
     private val voice: ManualVoiceSessionCoordinator
     private val voiceStreamSink: VoiceStreamSinkActor
     private val audioRouteController: AudioRouteController
@@ -88,16 +91,20 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             deviceActionHandler = deviceActionHandler,
         )
         controller = AndroidTextSessionController(initial, actor)
-        assistantRolePlatform = AndroidAssistantRolePlatform(context.applicationContext)
-        assistantRoleController = AssistantRoleController(
-            platform = assistantRolePlatform,
-            outcomeObserver = controller::observeAssistantRole,
-        )
         voice = ManualVoiceSessionCoordinator(
             PushToTalkController(
                 capture = ManualVoiceCapture(AuthenticatedVoiceIngress(actor)),
                 recorder = AndroidPcmRecorder(),
             )
+        )
+        assistantVoiceGuard = AssistantRoleVoiceGuard(::cancelAssistantCaptureForRoleLoss)
+        assistantRolePlatform = AndroidAssistantRolePlatform(context.applicationContext)
+        assistantRoleController = AssistantRoleController(
+            platform = assistantRolePlatform,
+            outcomeObserver = { role ->
+                controller.observeAssistantRole(role)
+                assistantVoiceGuard.onRoleChanged(role)
+            },
         )
         voiceStreamSink = VoiceStreamSinkActor(
             playbackFactory = { sessionId ->
@@ -206,33 +213,74 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     }
 
     fun pressToTalk(permissionGranted: Boolean): CompletableFuture<Unit> =
-        submitVoiceControl {
-            voiceStreamSink.interrupt().get()
-            voice.press(state(), permissionGranted)
-        }
+        pressVoice(AssistantVoiceOwnership.Manual, permissionGranted)
+
+    internal fun pressAssistantToTalk(permissionGranted: Boolean): CompletableFuture<Unit> =
+        pressVoice(AssistantVoiceOwnership.Assistant, permissionGranted)
 
     fun releasePushToTalk(): CompletableFuture<Unit> =
         submitVoiceControl {
-            voice.release()
+            try {
+                voice.release()
+            } finally {
+                assistantVoiceGuard.onCaptureStopped()
+            }
         }
 
     fun cancelPushToTalk(): CompletableFuture<Unit> =
         submitVoiceControl {
-            voice.cancel()
+            try {
+                voice.cancel()
+            } finally {
+                assistantVoiceGuard.onCaptureStopped()
+            }
         }
 
     fun onMicrophonePermissionChanged(granted: Boolean): CompletableFuture<Unit> =
         submitVoiceControl {
             voice.onMicrophonePermissionChanged(granted)
+            clearVoiceOwnershipIfIdle()
         }
 
     fun onHostStopped(): CompletableFuture<Unit> =
         submitVoiceControl {
             voice.onHostStopped()
+            clearVoiceOwnershipIfIdle()
+        }
+
+    private fun pressVoice(
+        ownership: AssistantVoiceOwnership,
+        permissionGranted: Boolean,
+    ): CompletableFuture<Unit> =
+        submitVoiceControl {
+            voiceStreamSink.interrupt().get()
+            voice.press(state(), permissionGranted)
+            assistantVoiceGuard.onCaptureStarted(ownership)
+            if (ownership == AssistantVoiceOwnership.Assistant) {
+                assistantVoiceGuard.onRoleChanged(state().assistantRole)
+            }
         }
 
     private fun refreshEnrollment() {
         controller.observeEnrollment(enrollment.state().toRuntimeReadiness())
+    }
+
+    private fun clearVoiceOwnershipIfIdle() {
+        if (voice.state() is ManualVoiceState.Idle) {
+            assistantVoiceGuard.onCaptureStopped()
+        }
+    }
+
+    private fun cancelAssistantCaptureForRoleLoss() {
+        val future = try {
+            submitVoiceControl { voice.cancel() }
+        } catch (error: Throwable) {
+            reportVoiceStreamFailure(error)
+            return
+        }
+        future.whenComplete { _, error ->
+            if (error != null) reportVoiceStreamFailure(error)
+        }
     }
 
     private fun interruptVoicePlayback() {
@@ -265,6 +313,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     override fun close() {
         actor.setVoiceStreamObserver(null)
         actor.setVoiceStreamFailureObserver(null)
+        assistantVoiceGuard.onCaptureStopped()
         val routeFailure = runCatching { audioRouteController.stop() }.exceptionOrNull()
         if (routeFailure != null) reportVoiceStreamFailure(routeFailure)
         try {
