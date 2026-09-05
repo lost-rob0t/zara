@@ -80,6 +80,35 @@ def test_security_state_initializes_stable_server_identity_with_private_permissi
     assert state.server_public_key() == first.public_key.decode("ascii")
 
 
+def test_security_admin_socket_remains_in_long_owner_private_security_directory(
+    tmp_path: Path,
+    zmq_context: zmq.Context,
+):
+    long_directory = tmp_path / ("security-" + "a" * 56) / ("state-" + "b" * 56)
+    state = PersistentSecurityState(long_directory)
+    state.initialize()
+    assert len(os.fsencode(state.control_socket_path)) > 108
+
+    probe = zmq_context.socket(zmq.ROUTER)
+    port = probe.bind_to_random_port("tcp://127.0.0.1")
+    probe.close(0)
+    server = ZaraServer(
+        supervisor=FakeSupervisor(),
+        endpoint=f"tcp://127.0.0.1:{port}",
+        security_state=state,
+        gateway_transport_config=TransportConfig(linger_ms=0, poll_interval_ms=5),
+        shutdown_timeout=1.0,
+    )
+
+    assert server.start() is ServerState.READY
+    assert state.control_socket_path.parent == long_directory
+    assert stat.S_ISSOCK(os.lstat(state.control_socket_path).st_mode)
+    assert stat.S_IMODE(os.lstat(state.control_socket_path).st_mode) == 0o600
+    assert stat.S_IMODE(os.lstat(long_directory).st_mode) == 0o700
+    assert server.stop() is True
+    assert not os.path.lexists(state.control_socket_path)
+
+
 def test_security_registry_enrollment_and_revocation_survive_restart(tmp_path: Path):
     state = PersistentSecurityState(tmp_path / "security")
     state.initialize()
