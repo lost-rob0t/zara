@@ -1,28 +1,31 @@
 :PROPERTIES:
 :ID:       zara-rage-203-android-ui-error-redaction
 :END:
-#+title: RAGE #203 — redact Android Compose operation failures
+#+title: RAGE #203 — redact Android UI operation failures
 #+status: ACTIVE
 
 * Consumption
 - Issue :: #203
 - Immutable start :: 13cee05f2076c3c50dfe19937194fe3cdd5f63da
-- Scope :: Android UI error boundary only. No Core/protocol/plugin changes.
+- Scope :: Android application + VoiceInteraction UI error boundary only. No Core/protocol/plugin changes.
 
 * Research / failure analysis
 - =MainActivity= previously traversed to the root Throwable and copied its raw message into Compose =operationError=.
+- The system =ZaraVoiceInteractionSession= independently repeated the same raw-root-message pattern for voice start/send/cancel failures.
 - Network/auth/platform exceptions can contain endpoints, filesystem paths, tokens, provider internals, or other private implementation detail.
-- Voice streaming already has a coarse diagnostic boundary; ordinary Android operations need the same fail-closed property without creating a second runtime state machine.
+- Voice streaming already has a coarse diagnostic boundary; both human-facing Android surfaces need the same fail-closed property without creating a second runtime state machine.
 
 * Design
 - Classify by Throwable type only; never expose Throwable.message.
 - Stable bounded categories are =permission_denied=, =invalid_input=, =network_error=, and =operation_failed=.
 - Traverse causes at most eight levels with identity-based cycle detection.
+- Compose and VoiceInteraction surfaces share the same =UiOperationFailure= boundary.
 - Preserve explicit human-safe UI strings only where the application itself authors the text, such as microphone permission denial.
 
 * TDD
 - RED first: adversarial endpoint/token/path-bearing message must not escape and category matrix must remain stable.
-- GREEN: =UiOperationFailure= implements bounded message-free classification and =MainActivity= routes all exceptional operation paths through it.
+- RED follow-up: VoiceInteraction source contract forbids =rootMessage= / =current.message= and requires the shared classifier.
+- GREEN: =UiOperationFailure= implements bounded message-free classification; =MainActivity= and =ZaraVoiceInteractionSession= route all exceptional user-visible operation paths through it.
 
 * Gate
 - Focused JVM tests plus =scripts/test-android.sh=.
