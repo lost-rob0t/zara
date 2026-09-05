@@ -1,0 +1,33 @@
+#+title: RAGE #13 — open-app allowlist regression
+
+* Transaction
+- Consumed issue :: #13 — ZARA-012 (reopened regression)
+- Immutable start :: 7340ca414fff8b543a3a279acd93c2bb613b1eab
+- Branch :: rage/13-open-app-allowlist-regression
+- Scope :: Zara Core only. No Android production, external repositories, plugins, dotfiles, Home Manager, or Prolog-RLM.
+
+* Iteration 1
+** Regression discovery
+- Current =modules/commands.pl:open_app/1= checks =app_mapping/2=, then =direct_app/1=, then falls through to =launch_process(AppName, [])= for every unknown atom.
+- =launch_process/2= passes a bare atom through =path(Executable)=, so an unregistered speech/user-supplied app token is still executable authority.
+- This is not shell interpolation, but it bypasses the reviewed app mapping/direct-app boundary and violates the current closed typed-capability invariant.
+- Existing process-safety issue #13 is therefore reopened rather than creating a duplicate issue.
+- Sibling Android PR #307 is draft and its exact-head CI is cancelled; this branch does not touch =android/**= or #159 protocol work.
+
+** Design / adversarial decision
+- Unknown app identifiers must fail closed and must never reach =process_create/3=.
+- Preserve configured =app_mapping/2= and explicit =direct_app/1= as the legacy Linux allow-listed compatibility surface until RuntimeHost/device capability migration replaces it.
+- Do not add guessed app names, PATH discovery, shell fallback, or a new execution registry in this regression repair.
+- Keep literal argument boundaries and launch-status verification unchanged for allowed mappings.
+
+** TDD target
+- Add deterministic coverage proving an unknown app is rejected before process launch.
+- Preserve positive coverage for an allow-listed direct app and a configured argv mapping.
+- Re-run =scripts/test-process-safety.sh=, then =scripts/test-all.sh=, =nix flake check=, build/package gates, and exact-head Actions.
+
+** RED evidence
+- Test-only candidate :: f7e4698f3afddcec7d5a46a4f96e660a24037cc9
+- Exact-head Actions :: CI #958 completed failure on 2026-09-04.
+- The required =test= job reached =Run all tests= and failed before flake/build steps; Android skeleton and both shared-mic jobs remained green.
+- The only new behavioral assertion on this head places =unregistered-app= on PATH, requires =commands:open_app('unregistered-app')= to fail, and asserts the fake process log was never created. Production code still launches that PATH entry, so the regression is deterministically exposed before any production change.
+- Minimum fix remains the design above: remove only the unknown-app executable fallback and fail closed after =app_mapping/2= / =direct_app/1= miss.

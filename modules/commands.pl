@@ -96,8 +96,8 @@ open_app(AppName) :-
     ;   once(kb_device_providers:direct_app(AppName))
     ->  format('Launching ~w directly~n', [AppName]),
         launch_process(AppName, [])
-    ;   format('Attempting to launch ~w (not in config)~n', [AppName]),
-        launch_process(AppName, [])
+    ;   format(user_error, 'Refusing to launch unconfigured app: ~w~n', [AppName]),
+        fail
     ),
     !.
 

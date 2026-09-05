@@ -27,7 +27,7 @@ if name == "fail-launch":
 PY
 
 chmod +x "$fake_executable"
-for executable in xdg-open notify-send safe-launch safe-dictate fail-launch; do
+for executable in xdg-open notify-send safe-launch safe-dictate fail-launch unregistered-app; do
     ln -s "$fake_executable" "$test_root/bin/$executable"
 done
 
