@@ -14,8 +14,35 @@
 - No transcript, prompt, credential, provider secret, or audio payload is added to structured logs/latency records.
 - No provider/model switch and no new non-Nix dependency.
 
+* Research — current architecture
+- =zara/runtime/tts_output.py= already owns daemon phrase synthesis over =AssistantDelta=/=AssistantComplete= and emits canonical =AudioOutputStarted/Chunk/Finished= events. It uses =TTSEngine.synthesize_stream= and converts provider audio once to negotiated raw mono s16le PCM.
+- =zara/tts/engine.py= already exposes a provider-neutral async =synthesize_stream= contract. ElevenLabs streams provider chunks; local/Qwen currently use a one-chunk compatibility fallback; Edge delivers bounded chunks after its full synthesis call.
+- =zara/wake_daemon.py::PcmStreamSpeaker= already owns one persistent client =sounddevice.OutputStream= and cancellation drops queued stale audio. Android B1/B2 consumes the same =audio.output.*= wire contract and must not gain a Core-side parallel player.
+- Existing =t/test_daemon_tts_output.py= proves phrase ordering, completion flush, cancellation, PCM conversion and negotiated ZARA/1 egress. =t/test_wake_speaker.py= proves persistent client playback/cancel behavior.
+- Therefore the issue inherited an older implementation description: creating another player, phrase cutter, or daemon voice stack would now duplicate canonical #132/#244 work.
+
+* Research — discovered lifecycle defect
+- =TtsOutputBridge._state_for= stores each active turn in =self._turns=.
+- Cancellation and agent failure remove that entry explicitly.
+- Normal successful =AssistantComplete= queues the sentinel and =_synthesize_turn= publishes =AudioOutputFinished=, but no successful path removes the =_TurnAudio= entry.
+- A long-lived daemon therefore retains one completed state object per successful spoken turn. This violates #29's persistent-session objective and #134's bounded-memory/soak contract even when every provider and client behaves correctly.
+
+* Design / adversarial review — slice A: completed-turn reclamation
+- Acceptance A1 :: after successful output completion and idle settlement, the completed turn is no longer retained in =TtsOutputBridge._turns=.
+- Acceptance A2 :: reclamation must occur only for the exact state object whose task is ending; an old task may never remove a newer state that happens to reuse the same turn id.
+- Acceptance A3 :: cancellation remains prompt and does not publish a fake =AudioOutputFinished=.
+- Acceptance A4 :: multiple sequential successful turns leave no monotonic per-turn state growth.
+- Test mapping :: deterministic lifecycle tests with a fake streaming engine; no sleeps, provider network, microphone, or Android code.
+- Selected implementation :: task-owned cleanup in =_synthesize_turn= with an identity guard (=self._turns.get(turn_id) is state=). This reuses current ownership and handles success/cancellation/error without a second lifecycle manager.
+- Rejected :: periodic GC/sweeper (hides ownership bug and requires a timer); clearing all turns on every completion (cross-turn corruption); deleting in =AssistantComplete= before synthesis drains (breaks cancellation and active state).
+- Threat/failure analysis :: cleanup must execute on cancellation and provider exceptions while never deleting a replacement state; no transcript/audio/log content is added.
+
+* TDD — slice A
+- Next commit is test-only and must prove RED on the immutable/current implementation: repeated completed turns retain state today.
+- Production repair follows only after that deterministic RED is observed.
+
 * RAGE state
-- Research :: in progress from this immutable start.
-- Design/adversarial review :: pending research findings.
-- TDD realization :: forbidden until acceptance criteria are mapped to deterministic tests and the design gate passes.
-- Exact-head verification :: mandatory full repo/Nix/package/Android/shared-mic CI before merge.
+- Research :: slice A complete; broader #29 provider/jitter/backpressure research remains open.
+- Design/adversarial review :: slice A accepted; no second player/runtime.
+- TDD realization :: slice A entering RED.
+- Exact-head verification :: mandatory full repo/Nix/package/Android/shared-mic CI before any merge.
