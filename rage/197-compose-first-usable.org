@@ -1,0 +1,41 @@
+#+title: RAGE #197 - First usable Compose shell
+
+* Run identity
+- Issue :: #197
+- Branch :: =rage/197-compose-first-usable=
+- Stacked base :: Android #173 branch at =37f19709974402927d77943c5d0e2984ff6b126a=.
+- Product target :: earliest honest installable Zara Android client; Chat, Connection, Settings and Diagnostics before deferred surfaces.
+
+* Analyze
+- #195 research gate is closed and its pinned Android stack is already present in =android/gradle/libs.versions.toml=: AGP 9.2.0, Kotlin 2.3.21, Compose BOM 2026.08.00 and Activity Compose 1.12.0.
+- #173 supplies the canonical reducer/runtime state. The UI must project that state rather than own connection/enrollment truth.
+- Existing =MainActivity= was a native =LinearLayout= diagnostics skeleton; it exposed no navigable first-usable surfaces.
+
+* Design
+- Use one =ComponentActivity= and one Material 3 Compose tree.
+- Preserve =ClientStateStore= restoration and =AndroidEnrollmentRepository= projection before composition.
+- Navigation is local presentation state only; runtime/auth/session data stays in =RuntimeState=.
+- First milestone surfaces are Chat, Connection, Settings and Diagnostics. Voice/tasks/calendar/devices/integrations remain subsequent issue slices.
+- Chat remains explicitly unavailable unless the canonical reducer says Connected and enrollment says Ready. No fake assistant response or fake connected state.
+- Diagnostics always show exact =BuildConfig.SOURCE_SHA= and non-secret reducer metadata only.
+
+* Adversarial review
+- Rejected a UI-owned connection Boolean: would split authority from the reducer.
+- Rejected placeholder chat replies: would violate the first-usable product gate.
+- Rejected copying endpoint/session into Compose persistence: durable client state already has a single owner.
+- Rejected displaying key material: diagnostics may expose source/session/correlation metadata, never credentials.
+
+* TDD / implementation
+- =62e3af73b571f5a15b1927e747d44fe33c5f9bb4= enables the already pinned Compose/Material3 dependencies and Compose compiler plugin.
+- =d0f79b0c85110de39f0f8b186cb72fc90f2a45de= adds the honest four-surface Material3 shell.
+- =71db459594950e4da4745f01fc45f32b2d6f2d69= replaces the legacy view skeleton with =ComponentActivity= while preserving restored canonical runtime/enrollment state.
+- =47b0d1d186130342ab522f96a3838ca978faea4a= locks connection/enrollment presentation to canonical typed states.
+
+* Gate
+- Run exact-head Android unit/native/debug-APK/secret gate.
+- Run repository full test/Nix/package gate and both shared-mic lanes through normal Actions.
+- This stacked transaction does not merge before #173; failures are consumed here without mutating Core.
+
+* Current acceptance
+- Chat/Connection/Settings/Diagnostics are navigable and honest.
+- Endpoint editing, enrollment actions and live text composer are intentionally not yet claimed; those are the next first-usable wiring slice after transport acceptance.
