@@ -37,3 +37,12 @@
 - Disconnect/reconnect clears stale advertisement/action state.
 - Secure gateway authorizes capability/result traffic only as session-basic authenticated device traffic and never promotes advertised names into server capabilities.
 - Focused =pytest= protocol/transport/security tests, then =scripts/test-zara1-protocol.sh=, =scripts/test-all.sh=, =nix flake check=, =nix build=, and exact-head Actions.
+
+* Recovery iteration — 2026-09-05
+- Original implementation PR :: #307 at =f014ff791568d5001eec7b3838c8218b18a3fb72=.
+- Original exact-head Actions :: CI #877. Android and both shared-mic jobs passed; the required core =Run all tests= job was cancelled at the 30-minute boundary, so the run is not merge authority.
+- Current master at recovery :: =da515c80a2ba18e889f62dc8f1816c8c95249f43= after Core #318.
+- Divergence check :: original #307 was 118 commits behind current master. Across those 118 commits, =zara/protocol.py=, =zara/security_gateway.py=, and =zara/zmq_transport.py= were unchanged; sibling Core #319 touches only desktop files and has no overlap.
+- Recovery method :: branch =rage/159-zara1-device-actions-recovery= was created from #307 exact head, then current master was merged into it through recovery-only helper PR #320. No history rewrite and no master mutation occurred.
+- Post-recovery diff :: exactly the original nine #159 files: three RAGE artifacts, focused gate script, two deterministic test modules, and the three protocol/security/transport production files.
+- Verification authority :: fresh exact-head CI on the recovery successor PR; old green/cancelled evidence is context only.
