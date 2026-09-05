@@ -1,0 +1,57 @@
+#+title: RAGE #175 Android manual voice
+#+status: REVIEW
+#+filetags: :rage:android:voice:zara1:
+
+* Objective
+Land the first Android-owned manual push-to-talk slice on the canonical authenticated ZARA/1 client without adding a second assistant, recorder, transport, STT, TTS, or runtime.
+
+* Ownership and dependencies
+- Android owns microphone permission, =AudioRecord= capture, framing, UI controls, and client-side lifecycle.
+- The Zara daemon remains authoritative for STT, assistant routing, tools, LLM, memory, and TTS.
+- This transaction is based on canonical first-usable Android master after #173 authenticated client and #197 Compose shell landed.
+- No Core production file is changed by this PR.
+
+* Invariants
+1. There is exactly one Android microphone owner.
+2. Voice commands use the same authenticated CURVE DEALER, Zara session, and single-thread client actor as Chat.
+3. Permission denial, disconnected state, stale session/stream, malformed acknowledgement, remote protocol error, and recorder failure fail closed.
+4. Local capture state cannot advance to Capturing until the server has acknowledged =audio.input.start=.
+5. Every =audio.input.chunk= is exact mono PCM16 16 kHz, 512 samples / 1024 bytes, copied before transport ownership transfer.
+6. Commit/cancel are terminal and recorder ownership is released before the terminal server command.
+7. No transcript, playback, or success state is fabricated before canonical server events exist.
+
+* Test-first lineage
+- =1b22cf35f8041014d29c443814fe77387fbc9f98= specifies authenticated command acknowledgements before the adapter implementation.
+- =fe9faeaf0b349eb95cd04116d174a459d4c0a806= adds =AuthenticatedVoiceIngress= and propagates remote failure.
+- =fb021ae0114415b117d0148c2a85e580b7640b57= specifies strict acknowledgement decoding.
+- =561b0c6de0833f5443414f191dc4606956e04fed= implements fail-closed typed acknowledgement decoding.
+- =46d823ef514f5468221e413f7ac4b14f66df6ea2= makes =ZaraTextClientActor= the voice command client on the same actor/DEALER.
+- =2191c2e46674e5b20d43274fa716db90d60adfe0= proves same-DEALER/session use and stale-session/stream rejection.
+- =c12589b5f8978bca996ee9f8173504e6422b32d1= specifies canonical runtime/session binding.
+- =a9278a7314f92a81f5f3e5d9b23e06904f9e823a= implements =ManualVoiceSessionCoordinator=.
+- =7ca62614813e5659debcfa80cccd4e4b156917e3= shares one actor between AppSession text and voice ownership.
+- =090549d921cdb13a137491de98ff42780d4c980c= specifies honest UI availability.
+- =357101e720e7d2b3193649a6a9422360bc2d272a= adds the Compose Voice surface without fake transcript/playback.
+- =07cc092e4810dfef495c99b9283a650ffce6d8e9= wires runtime microphone permission and asynchronous UI control.
+- Recovery onto canonical first-usable master produced candidate =6096ca9188d27420e9e39b0bc388002a57dfdaf0=.
+
+* Verified candidate evidence
+On exact candidate =6096ca9188d27420e9e39b0bc388002a57dfdaf0=, CI #1222 / run =33961326883= established before this evidence-only commit:
+- Android unit/native/debug-APK/secret inspection: GREEN; debug APK upload succeeded.
+- shared mic / Arch Linux: GREEN.
+- shared mic / Ubuntu 24.04: GREEN.
+- full repository =Run all tests=: GREEN.
+- flake/package tail was still executing when this immutable evidence record was added; therefore that superseded head is not claimed merge-authoritative.
+
+The evidence commit intentionally creates a new exact head. Merge authority requires the complete repository-native gate to pass again on that final exact head, plus clear reviews/threads and expected-head protection.
+
+* Deferred from this B1 transaction
+- =voice.transcript.partial/final= rendering.
+- negotiated =audio.output.*= playback.
+- a permanent single-socket inbound event pump / mailbox multiplexing.
+- bounded asynchronous mic-frame backpressure instead of per-frame network wait.
+- audio focus and barge-in.
+- asynchronous recorder-failure UI observation.
+- lifecycle/process-death hardening and hardware/device smoke.
+
+These continue on stacked B2/B3 Android transactions; none is represented as already complete here.
