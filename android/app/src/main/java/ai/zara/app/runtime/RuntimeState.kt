@@ -33,6 +33,9 @@ data class RuntimeState(
     companion object {
         fun initial(): RuntimeState =
             RuntimeState(ServerConnection.Disconnected, AssistantRole.NotYetAssessed)
+
+        fun fromRestored(restored: RestorableClientState): RuntimeState =
+            initial().copy(selectedConversationId = restored.selectedConversationId)
     }
 }
 
