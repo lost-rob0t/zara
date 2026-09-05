@@ -7,6 +7,7 @@ security state is supplied, and is always backed by CURVE/ZAP.
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import os
@@ -43,6 +44,14 @@ _SAFE_REMOTE_CAPABILITIES = frozenset(
         "tool.approve",
     }
 )
+
+
+class _ScalarSingleValueAction(argparse.Action):
+    """Consume exactly one token while preserving a scalar Namespace value."""
+
+    def __call__(self, parser, namespace, values, option_string=None) -> None:
+        del parser, option_string
+        setattr(namespace, self.dest, values[0])
 
 
 class ZaraServer(_core.ZaraServer):
@@ -172,6 +181,15 @@ class ZaraServer(_core.ZaraServer):
         return super().stop() and admin_clean
 
 
+def _parse_curve_public_key(value: str) -> str:
+    from zara.security import SecurityRegistry
+
+    try:
+        return SecurityRegistry._normalize_public_key(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
 def _parser():
     parser = _core._parser()
     parser.description = (
@@ -196,6 +214,9 @@ def _parser():
     management.add_argument(
         "--security-enroll-key",
         metavar="Z85_KEY",
+        nargs=1,
+        action=_ScalarSingleValueAction,
+        type=_parse_curve_public_key,
         help="Enroll one client CURVE public key for the local-owner principal",
     )
     management.add_argument(
