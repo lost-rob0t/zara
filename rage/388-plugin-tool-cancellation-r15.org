@@ -14,31 +14,37 @@ r4 through r14 established that cancellation transport which depends on LangGrap
 =create_tools_node= already owns the post-approval, current-registry-binding, per-tool-call boundary and still dispatches through one LangGraph =ToolNode=. This remains the authority for queue/start/terminal events.
 
 ** Upstream behavior relevant to the failure
-LangChain =BaseTool= has a runtime-internal =_run/_arun= boundary separate from model tool arguments. Existing upstream defects around =InjectedState=, =ToolRuntime=, dynamic tools and directly injected arguments reinforce that r15 must not depend on ToolNode rewriting an extra plugin input field.
+LangChain =BaseTool= has public =invoke/ainvoke= execution entrypoints before its internal schema-to-=_run/_arun= dispatch. Existing upstream defects around =InjectedState=, =ToolRuntime=, dynamic tools and injected arguments mean #388 must not depend on ToolNode rewriting an extra plugin input field.
 
-** Selected architecture — amended after implementation-boundary review
-The initial r15 sketch still had Core carry the signal into the wrapper through private =RunnableConfig=. That was unnecessary and would have required touching =create_tools_node=. Before wiring that path, the design was reduced further:
-
+** Selected architecture
 - Plugins opt into cooperative cancellation through explicit boolean tool metadata, not schema introspection.
-- Core wraps an opted-in =BaseTool= once at registry binding. The same wrapper instance is therefore the object seen by the existing ToolNode and the existing stale-binding identity check.
+- Core wraps an opted-in =BaseTool= once at registry binding. The same wrapper instance is therefore the object seen by the existing ToolNode and stale-binding identity check.
 - The wrapper preserves the original public name/model-facing schema and delegates to the original =BaseTool=.
 - Each wrapper invocation creates exactly one private cancellation signal after approval/current-binding checks have already allowed ToolNode execution.
-- The wrapper's =_arun= owns the child execution. It shields the child from immediate parent cancellation, sets the signal first when cancellation reaches the wrapper, then cancels owned async work and re-raises.
-- Sync originals execute through =asyncio.to_thread= into a helper which binds the read-only token inside that exact worker thread before calling the original tool. This directly fixes the body-entry/context-loss boundary that falsified r5/r6.
-- Native async originals run in an owned task whose body binds the same read-only token before calling the original tool.
-- Plugin code observes the token through public =current_tool_cancellation()=. There is no cancellation tool argument, hidden schema field, ID lookup, mutable shared slot, or plugin-specific command.
-- The unchanged =create_tools_node= remains terminal event authority; its existing =ToolCancelled(reason="turn cancelled")= event is still the sole terminal cancellation outcome.
+- Plugin code observes only =current_tool_cancellation()=. There is no cancellation tool argument, hidden schema field, ID lookup, mutable shared slot, or plugin-specific cancel command.
+- The unchanged =create_tools_node= remains terminal event authority; its existing =ToolCancelled(reason="turn cancelled")= is the sole terminal cancellation outcome.
 
-This deliberately uses =ContextVar= only after entry into the exact plugin worker/task. It does not depend on ContextVar propagation across ToolNode.
+** CI #1644 falsification and boundary correction
+Exact-head candidate =0a81b4454c16273d4467826ae768026f51a463e1= ran 1987 Core tests and failed exactly four. Android compatibility and both shared-mic lanes were green; flake/package correctly skipped after Core failed.
+
+Three failures were architecture-relevant and identical in shape: sync, async, and concurrent acceptance never reached the original plugin body. The fourth was not a cancellation failure: the spoof test expected an error =ToolMessage= even though canonical =create_tools_node= intentionally converts ToolNode exceptions into =RuntimeError("tool <name> execution failed")=.
+
+The r15 wrapper had overridden internal =_run/_arun=. That left execution subject to BaseTool's wrapper-side schema dispatch before the cancellation wrapper body, reproducing the same pre-body boundary failure in a different form.
+
+The corrected r15 seam overrides the wrapper's public =invoke/ainvoke= entrypoints instead. It forwards ToolNode's original input unchanged to the original BaseTool, letting the original tool remain sole owner of input validation/schema conversion. The cancellation token is bound around that original invocation inside the exact worker thread/task. Sync originals run through =asyncio.to_thread=; async originals run in an owned task. Parent cancellation is shielded only long enough to set the private signal before cancelling owned async execution and re-raising.
+
+A new direct acceptance test first proves the registry-bound wrapper itself reaches the original body and exposes a real =ToolCancellation=. The spoof case now asserts canonical =RuntimeError= plus zero plugin-body entry; its security assertion is unchanged.
+
+This is a bounded correction within the registration-wrapper architecture. If public =invoke/ainvoke= still cannot prove body reachability at exact head, retire r15 rather than adding another transport layer.
 
 ** Rejected alternatives
 - =InjectedState= / =InjectedToolArg= / schema transport: falsified by r7-r14 and pinned-stack validation/injection behavior.
 - Outer ToolNode =ContextVar=: falsified by r5/r6.
-- Mutable token stored on a shared tool instance: rejects exact-invocation concurrency isolation.
+- Wrapper-internal =_run/_arun= transport: falsified by exact-head CI #1644 before plugin body entry.
+- Mutable token stored on a shared tool instance: violates exact-invocation concurrency isolation.
 - Plugin-specific cancel command/side channel: creates a second control plane.
-- Directly calling plugin functions from Core: bypasses canonical BaseTool/ToolNode execution semantics.
+- Direct plugin-function execution from graph: bypasses canonical BaseTool/ToolNode policy.
 - Per-invocation ToolNode replacement: duplicates executor construction and has prior dynamic-tool failure evidence.
-- Private graph/config transport: unnecessary once the stable wrapper owns the exact invocation and its cancellation boundary.
 
 * Invariants
 - Approval and current registry binding are checked before wrapped execution.
@@ -56,17 +62,19 @@ This deliberately uses =ContextVar= only after entry into the exact plugin worke
 - Explicit opt-in is model-schema neutral.
 - Access outside an active invocation fails explicitly.
 - Malformed metadata fails closed and does not partially register.
+- Registry-bound wrapper directly reaches the original body with an invocation token.
 - Sync plugin body reaches entry, sees =ToolCancellation=, and observes signal before side effect.
 - Async plugin body reaches entry and sees signal set before =CancelledError=.
 - Concurrent invocations have distinct token identities and cancellation isolation.
 - Rejection/unload never enter plugin body.
-- User/model arguments cannot spoof cancellation because no cancellation argument exists; injected junk is rejected by the unchanged model schema before body entry.
+- User/model arguments cannot spoof cancellation; invalid extra input is rejected by the original tool schema before body entry.
 - Existing ordinary tool/approval/todo tests remain green.
 
 * TDD evidence
 - Test-only candidate: =67fe29f92ce69477bae920ccd50c1735c4a3234f=.
-- CI #1638 began the repository test gate against that RED candidate, but branch supersession auto-cancelled the job while =Run all tests= was executing. The candidate had no cancellation implementation or public API, so the new test module was intentionally non-green; no result from the cancelled run is used as green evidence.
-- Implementation remains subject to the exact-head full gate below. Any architecture-level focused failure retires r15 rather than being papered over.
+- CI #1638 began the repository test gate against that RED candidate, but branch supersession auto-cancelled the job while =Run all tests= was executing. No result from that cancelled run is used as green evidence.
+- Exact-head CI #1644 at =0a81b4454c16273d4467826ae768026f51a463e1=: Core RED, 1987 tests / 4 failures; Android gate GREEN; Arch shared-mic GREEN; Ubuntu shared-mic GREEN; flake/package skipped after Core failure. Failure artifact digest =sha256:52467e23f1e6ebbb3200307ba65e998b040dd27bac508b37a9fceb28eafd18b5=.
+- Corrected implementation remains subject to a fresh exact-head full gate. No #1644 result is treated as green evidence for Core.
 
 * Exact gate
 #+begin_src sh
