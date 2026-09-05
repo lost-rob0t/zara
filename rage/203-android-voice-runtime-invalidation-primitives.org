@@ -1,0 +1,22 @@
+:PROPERTIES:
+:ID:       zara-rage-203-android-voice-runtime-invalidation-primitives
+:END:
+#+title: RAGE #203 — Android voice runtime invalidation primitives
+#+status: ACTIVE
+
+* Consumption
+- Issue :: #203
+- Immutable start :: 9cd82222375d1a4968babfa7f543fa7d9447d98e
+- Scope :: Android voice lifecycle primitives only. No AppSession/Core/protocol/plugin edits.
+- Source :: dependency-safe subset recovered from stale #412.
+
+* Design
+- Playback tied to a missing/reconnecting/replaced authenticated session is stale and must be interrupted.
+- VoiceStreamSinkActor reset runs on its existing single serialized owner, closes playback, clears session ownership, and permits a fresh stream even if the server later reuses the same session id.
+- No second playback owner or runtime state machine.
+
+* Gate
+- JVM policy tests cover same-session, reconnecting, replaced-session, and missing-stream cases.
+- Sink actor test proves reset closes old output and creates a fresh owner.
+- AppSession/capture wiring remains a later stacked slice after the diagnostic-redaction transaction becomes canonical.
+- Fresh exact-head Android/full-Nix/package/shared-mic CI required before promotion.

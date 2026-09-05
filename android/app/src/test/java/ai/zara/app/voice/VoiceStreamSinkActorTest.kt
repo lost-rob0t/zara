@@ -37,7 +37,9 @@ class VoiceStreamSinkActorTest {
     @Test fun `new authenticated session replaces prior playback owner`() {
         val outputs = mutableListOf<RecordingSinkOutput>()
         val sink = VoiceStreamSinkActor(
-            playbackFactory = { _ -> RecordingSinkOutput().also(outputs::add).let { VoicePlaybackController(it, "session-${outputs.size}") } },
+            playbackFactory = { sessionId ->
+                RecordingSinkOutput().also(outputs::add).let { VoicePlaybackController(it, sessionId) }
+            },
         )
 
         sink.accept(VoiceStreamEvent.Transcript("session-1", "conversation-1", "mic-1", 0, "one", true)).get()
@@ -45,6 +47,23 @@ class VoiceStreamSinkActorTest {
 
         assertEquals(2, outputs.size)
         assertEquals(listOf("close"), outputs.first().calls)
+        sink.close()
+    }
+
+    @Test fun `runtime reset closes active owner and permits fresh same-session stream`() {
+        val outputs = mutableListOf<RecordingSinkOutput>()
+        val sink = VoiceStreamSinkActor(
+            playbackFactory = { sessionId ->
+                RecordingSinkOutput().also(outputs::add).let { VoicePlaybackController(it, sessionId) }
+            },
+        )
+
+        sink.accept(VoiceStreamEvent.AudioStarted("session-1", "turn-1", "speaker-1", 24_000, 1)).get()
+        sink.reset().get()
+        sink.accept(VoiceStreamEvent.Transcript("session-1", "conversation-2", "mic-2", 0, "fresh", true)).get()
+
+        assertEquals(2, outputs.size)
+        assertEquals(listOf("start", "stop", "close"), outputs.first().calls)
         sink.close()
     }
 
