@@ -1,0 +1,56 @@
+#+title: RAGE #196 — Android Assistant role and voice-interaction surface
+
+* Transaction
+- Issue :: #196
+- Scope :: Android-only Assistant-role / public VoiceInteraction service surface.
+- Immutable RAGE start :: =5779e44c567147c1d344e69985761e74a863ebd7=
+- Ownership :: =android/**= only; no Core runtime or plugin work.
+
+* Research / source analysis
+- #196 requires =RoleManager.ROLE_ASSISTANT= eligibility, explicit user-driven onboarding, =VoiceInteractionService= / =VoiceInteractionSessionService= metadata, honest degraded state, UI-closed invocation, lifecycle cleanup, and one canonical typed runtime shared with Compose.
+- #194 keeps Samsung-only side-button/device claims behind later hardware proof; this slice uses public Android contracts only.
+- Existing Android =RuntimeState= already owns =AssistantRole= and =RuntimeEvent.RoleAssessed=, so role state must flow through that reducer rather than a second UI/service state machine.
+- B1/B2/B3 voice work remains one authenticated ZARA/1 client with one mic/playback owner; Assistant-role work must not create a second assistant, STT, TTS, memory, or protocol runtime.
+- Accepted #195 design requires role re-assessment on resume because role ownership may change outside Zara; UI-closed cross-process runtime ownership remains a separate acceptance item and is not faked by this slice.
+
+* Design / invariants
+- Android's observed =RoleManager= state is authoritative after a role request; Activity result data cannot optimistically grant the role.
+- Role request is emitted only after an explicit user action and only while canonical state is =NotHeld=.
+- Unavailable platforms fail closed and never claim Assistant eligibility.
+- Role observations enter the existing reducer and must not mutate connection/session state.
+- Voice-interaction services use =BIND_VOICE_INTERACTION= and an isolated lightweight =:voice= process surface.
+- UI and diagnostics render canonical =AssistantRole= values verbatim enough to remain honest.
+- Activity resume re-checks the platform role so external revocation/change is reflected promptly.
+- Samsung setup guidance is bounded to the researched public picker/side-button paths and explicitly leaves hardware verification to #206.
+
+* TDD / implementation lineage
+- =86cfe5608e121432251215c1c4045952615a1787= RED role assessment contract.
+- =6f84765ef51c6a3a93d876a6f73d999aae46245b= GREEN role controller.
+- =9092fc2e= RED manifest/service contract; subsequent commits added public VoiceInteraction service/session metadata.
+- =e0170a59c2118148f05227329ee5e074b6d627ec= initial RoleManager adapter + service surface; CI #1305 GREEN before later Android voice merges.
+- Recovery helper #372 merged canonical B2/B3 master into this branch at =6c20074158902f839f4984b0bf55cc1887da1871=.
+- =ea795271a1fa4159e86a8bc934962946af6e70c8= RED fail-closed role-result tests.
+- =caa3ffd425ff28206c436ab2b82043ab1413acb9= GREEN result recheck implementation.
+- =262b15b93dd2eb08234b29063d414d1d0a45e5bd= RED canonical role publication test.
+- =bb983d62af63ea31928204e35ab3fa5720fcc541= GREEN reducer publication; CI #1314 started on this intermediate head.
+- =4a9124a371f5c911117fdbd6b9c955b4a9421112= RED honest UI projection.
+- =ec836e07ca8ea30f9406ef04336a7e69a039658b= GREEN Settings/Diagnostics projection.
+- =c8778fe5ba1a055ab2fc786ddcd77e272711816d= RED explicit ActivityResult onboarding source contract.
+- =63f6bfaa1984623209d8bad1d85820b76ee745fe= simplify request completion to an observed platform recheck.
+- =6eac03ef965a311671ce68ba69870c4fabc58970= update result invariant test to the parameter-free recheck API.
+- =cd63eee181ed830151eaf2cec447c55f047a07d1= bind RoleManager/controller into canonical =AndroidAppSession=.
+- =fdaf8a4dd87d6ac3baaa8a4e10de982b43674e5b= wire explicit user role request/result in =MainActivity=.
+- =0c6bddbd22c3bf506f24e0ddd9777e227608bd90= RED require role recheck on activity resume.
+- =d7893258c4ccfe124833848152773943334797af= GREEN resume re-assessment for external role loss/change.
+- =9cc6ad40c90e54a0ce463a6e80622d6b75abece0= RED require bounded Samsung assistant setup guidance.
+- =11f3d808486b2f26c2ac676bc23a41fc3b4760e3= GREEN encode researched Digital Assistant / supported Side button guidance with explicit #206 hardware caveat.
+
+* Current acceptance state
+- Implemented :: role held/not-held/unavailable projection; explicit role request; post-result platform recheck; canonical reducer publication; VoiceInteraction service/session manifest surface; honest Settings/Diagnostics role state; activity-resume role recheck; bounded Samsung setup guidance source.
+- Still open before full #196 closure :: render final guidance in onboarding UI; prove UI-closed invocation handoff into the same authenticated runtime; deterministic cross-process recreation/cancellation cleanup; emulator/instrumentation coverage where feasible; Samsung hardware proof remains #206.
+
+* Verification gate
+- Focused Android JVM tests including assistant/controller/manifest/UI projection.
+- =scripts/test-android.sh= / repository Android gate including debug APK and secret inspection.
+- Full repository test + Nix/package gate and both shared-mic lanes.
+- Exact-head GitHub Actions green, mergeable/non-draft, no unresolved review concerns before merge.

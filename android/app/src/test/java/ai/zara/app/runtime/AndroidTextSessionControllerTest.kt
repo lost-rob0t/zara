@@ -164,6 +164,18 @@ class AndroidTextSessionControllerTest {
     }
 
     @Test
+    fun assistant_role_observation_uses_runtime_reducer_without_touching_connection() {
+        val client = FakeTextSessionClient()
+        val controller = connectedController(client)
+
+        controller.observeAssistantRole(RoleOutcome.HELD)
+
+        assertEquals(AssistantRole.Held, controller.state().assistantRole)
+        assertEquals(ServerConnection.Connected(1), controller.state().server)
+        assertEquals("session-1", controller.state().sessionId)
+    }
+
+    @Test
     fun connect_failure_enters_bounded_reconnect_state_and_schedules_retry() {
         val client = FakeTextSessionClient()
         val scheduler = FakeReconnectScheduler()

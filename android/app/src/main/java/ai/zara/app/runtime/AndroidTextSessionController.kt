@@ -161,6 +161,14 @@ class AndroidTextSessionController(
         }
     }
 
+    fun observeAssistantRole(outcome: RoleOutcome) {
+        synchronized(lock) {
+            if (closed) return
+            runtimeState = reduce(runtimeState, RuntimeEvent.RoleAssessed(outcome))
+        }
+        publishState()
+    }
+
     override fun close() {
         synchronized(lock) {
             if (closed) return

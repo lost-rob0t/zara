@@ -1,5 +1,6 @@
 package ai.zara.app.ui
 
+import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.RuntimeState
 import ai.zara.app.runtime.ServerConnection
@@ -33,6 +34,28 @@ class ZaraAppProjectionTest {
         )
         assertEquals("ready", enrollmentLabel(EnrollmentReadiness.Ready))
         assertEquals("corrupt", enrollmentLabel(EnrollmentReadiness.Corrupt))
+    }
+
+    @Test
+    fun assistantRoleProjectionIsExplicitAndOnlyMissingRoleCanRequestOnboarding() {
+        assertEquals("not assessed", assistantRoleLabel(AssistantRole.NotYetAssessed))
+        assertEquals("held", assistantRoleLabel(AssistantRole.Held))
+        assertEquals("not held", assistantRoleLabel(AssistantRole.NotHeld))
+        assertEquals("platform unavailable", assistantRoleLabel(AssistantRole.PlatformUnavailable))
+        assertFalse(canRequestAssistantRole(AssistantRole.NotYetAssessed))
+        assertFalse(canRequestAssistantRole(AssistantRole.Held))
+        assertTrue(canRequestAssistantRole(AssistantRole.NotHeld))
+        assertFalse(canRequestAssistantRole(AssistantRole.PlatformUnavailable))
+    }
+
+    @Test
+    fun samsungAssistantGuidanceIsBoundedAndDoesNotClaimHardwareProof() {
+        val guidance = samsungAssistantSetupGuidance()
+
+        assertTrue(guidance.contains("Settings > Apps > Choose default apps > Digital assistant app"))
+        assertTrue(guidance.contains("Settings > Advanced features > Side button > Long press"))
+        assertTrue(guidance.contains("supported One UI"))
+        assertTrue(guidance.contains("hardware verification remains pending"))
     }
 
     @Test

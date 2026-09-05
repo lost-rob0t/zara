@@ -1,5 +1,7 @@
 package ai.zara.app
 
+import ai.zara.app.assistant.AndroidAssistantRolePlatform
+import ai.zara.app.assistant.AssistantRoleController
 import ai.zara.app.auth.AndroidEnrollmentRepository
 import ai.zara.app.auth.EnrollmentRepository
 import ai.zara.app.auth.EnrollmentState
@@ -28,6 +30,7 @@ import ai.zara.app.voice.VoicePlaybackController
 import ai.zara.app.voice.VoiceStreamSinkActor
 import ai.zara.app.voice.VoiceStreamState
 import android.content.Context
+import android.content.Intent
 import java.io.File
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
@@ -38,6 +41,8 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     private val stateStore = ClientStateStore(File(context.noBackupFilesDir, "zara/client-state.bin"))
     private val actor: ZaraTextClientActor
     private val controller: AndroidTextSessionController
+    private val assistantRolePlatform: AndroidAssistantRolePlatform
+    private val assistantRoleController: AssistantRoleController
     private val voice: ManualVoiceSessionCoordinator
     private val voiceStreamSink: VoiceStreamSinkActor
     @Volatile private var latestVoiceStreamState: VoiceStreamState? = null
@@ -59,6 +64,11 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             audioOutputFormats = listOf(AudioOutputFormat.pcmS16leMono(24_000)),
         )
         controller = AndroidTextSessionController(initial, actor)
+        assistantRolePlatform = AndroidAssistantRolePlatform(context.applicationContext)
+        assistantRoleController = AssistantRoleController(
+            platform = assistantRolePlatform,
+            outcomeObserver = controller::observeAssistantRole,
+        )
         voice = ManualVoiceSessionCoordinator(
             PushToTalkController(
                 capture = ManualVoiceCapture(AuthenticatedVoiceIngress(actor)),
@@ -97,6 +107,16 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun setStateObserver(observer: ((RuntimeState) -> Unit)?) {
         controller.setStateObserver(observer)
+    }
+
+    fun assessAssistantRole() {
+        assistantRoleController.assess()
+    }
+
+    fun assistantRoleRequestIntent(): Intent? = assistantRolePlatform.createUserRequestIntent()
+
+    fun completeAssistantRoleRequest() {
+        assistantRoleController.completeRequest()
     }
 
     fun enrollmentPublicKeyZ85(): String? = when (val current = enrollment.state()) {
