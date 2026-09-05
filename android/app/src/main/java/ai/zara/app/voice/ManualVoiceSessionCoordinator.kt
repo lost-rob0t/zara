@@ -9,12 +9,15 @@ class ManualVoiceSessionCoordinator(
         "mic-${java.util.UUID.randomUUID().toString().replace("-", "")}"
     }.iterator(),
 ) : AutoCloseable {
+    private var activeBinding: VoiceSessionBinding? = null
+
+    @Synchronized
     fun state(): ManualVoiceState = pushToTalk.state()
 
+    @Synchronized
     fun press(runtime: RuntimeState, permissionGranted: Boolean) {
-        check(runtime.server is ServerConnection.Connected) {
-            "authenticated Zara session is required"
-        }
+        val connected = runtime.server as? ServerConnection.Connected
+            ?: throw IllegalStateException("authenticated Zara session is required")
         val sessionId = runtime.sessionId
             ?: throw IllegalStateException("connected Zara session is missing session id")
         check(streamIds.hasNext()) { "voice stream id source exhausted" }
@@ -27,25 +30,70 @@ class ManualVoiceSessionCoordinator(
             permissionGranted = permissionGranted,
             connected = true,
         )
+        activeBinding = VoiceSessionBinding(connected.generation, sessionId)
     }
 
+    @Synchronized
     fun release() {
-        pushToTalk.release()
+        try {
+            pushToTalk.release()
+        } finally {
+            activeBinding = null
+        }
     }
 
+    @Synchronized
     fun cancel() {
-        pushToTalk.cancel()
+        cancelActive()
     }
 
+    @Synchronized
     fun onMicrophonePermissionChanged(granted: Boolean) {
-        pushToTalk.onMicrophonePermissionChanged(granted)
+        if (granted || pushToTalk.state() !is ManualVoiceState.Capturing) return
+        cancelActive()
     }
 
+    @Synchronized
     fun onHostStopped() {
-        if (pushToTalk.state() is ManualVoiceState.Capturing) pushToTalk.cancel()
+        if (pushToTalk.state() is ManualVoiceState.Capturing) cancelActive()
     }
 
-    override fun close() {
-        pushToTalk.close()
+    @Synchronized
+    fun onRuntimeStateChanged(runtime: RuntimeState) {
+        val binding = activeBinding ?: return
+        if (pushToTalk.state() !is ManualVoiceState.Capturing) {
+            activeBinding = null
+            return
+        }
+        val connected = runtime.server as? ServerConnection.Connected
+        if (
+            connected == null ||
+            connected.generation != binding.generation ||
+            runtime.sessionId != binding.sessionId
+        ) {
+            cancelActive()
+        }
     }
+
+    @Synchronized
+    override fun close() {
+        try {
+            pushToTalk.close()
+        } finally {
+            activeBinding = null
+        }
+    }
+
+    private fun cancelActive() {
+        try {
+            pushToTalk.cancel()
+        } finally {
+            activeBinding = null
+        }
+    }
+
+    private data class VoiceSessionBinding(
+        val generation: Long,
+        val sessionId: String,
+    )
 }
