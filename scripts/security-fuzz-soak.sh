@@ -31,4 +31,5 @@ python -m pytest -q -o faulthandler_timeout=15 \
   t/test_security_fuzz.py \
   t/test_security_chaos.py \
   t/test_security_adversarial.py \
+  t/test_security_process_chaos.py \
   t/test_production_secure_listener.py
