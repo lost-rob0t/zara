@@ -1,36 +1,217 @@
-#+title: Android app
+#+title: Zara Android client
 
-The native Android Zara client (issues #152, #170–#179, Samsung epic #194).
+* Overview
 
-## Layout
+The native Android Zara client lives under =android/=. It is a client of the same Zara runtime/service architecture used by Linux rather than a second mobile-only assistant implementation.
 
-- =android/= — Gradle project, single =app= module, application id =ai.zara.app=.
-- =android/gradle/libs.versions.toml= — version catalog; pins live here.
-- =android/app/src/main/java/ai/zara/app/runtime/= — the single typed runtime state + pure reducer (server connection, assistant role). The assistant surface (#196) and the Compose shell (#197) must extend this state, never fork it.
-- =android/app/src/main/assets/prolog/= — reserved for the shared Prolog semantic fixtures (#172).
+The Android project is currently *active / evolving*. Core foundations are real and tested, but the complete daily-driver assistant surface is still being built.
 
-## Toolchain pins
+Parent work includes the Android epic/issues around #152, #170–#179, later assistant/UI slices, and Samsung integration work.
+
+* Current implementation status
+
+| Area | Status |
+|------+--------|
+| Gradle/Android application skeleton | Implemented. |
+| Typed runtime state/reducer | Implemented foundation. |
+| Portable Prolog semantic assets | Implemented. |
+| Trealla NDK/JNI bridge | Implemented foundation. |
+| Cross-runtime semantic fixture/parity coverage | Implemented foundation. |
+| Android credential protection | Implemented foundation. |
+| JeroMQ/CURVE enrollment/auth pieces | Merged foundation. |
+| Server public-key pin handling | Merged; fail-closed replacement behavior has regression coverage. |
+| Full authenticated =ZARA/1= reconnect/session continuity | Active; issue #173 is reopened. |
+| Complete native chat/assistant UI | Active work; not release-complete. |
+| Android Assistant / VoiceInteractionService integration | Active/planned in the Android queue. |
+| Samsung/SmartThings/Termux/device adapters | Follow-on active work, not core-complete. |
+
+Do not describe Android as finished merely because an APK builds or authentication code exists.
+
+* Architecture
+
+#+begin_example
+              Android UI / system integration
+                         |
+                  typed client state
+                         |
+                     ZaraClient
+                         |
+                ZARA/1 over JeroMQ
+                         |
+              CURVE + server-key pin
+                         |
+                    zara-server
+                         |
+                    RuntimeHost
+                         |
+              canonical Zara runtime
+#+end_example
+
+Android may run a portable symbolic subset locally through Trealla, but it must not create a separate LLM/tool/memory server runtime on the phone merely to avoid using the shared client boundary.
+
+* Project layout
+
+- =android/= — Gradle project.
+- =android/app/= — application module.
+- =android/app/src/main/java/ai/zara/app/= — Android application code.
+- =android/app/src/main/java/ai/zara/app/runtime/= — typed runtime state and reducer-style client state.
+- =android/app/src/main/java/ai/zara/app/auth/= — credential/enrollment/CURVE client code.
+- =android/app/src/main/java/ai/zara/app/prolog/= — portable Trealla bridge/runtime helpers.
+- =android/app/src/main/cpp/= — thin JNI/NDK bridge for Trealla.
+- =android/app/src/main/assets/prolog/portable/= — portable symbolic source/fixtures.
+- =android/gradle/libs.versions.toml= — version catalog/pins.
+- =android/build-trealla.sh= — Trealla build helper.
+- =android/patch-trealla-module-path.sh= — build integration helper for Trealla module layout.
+
+Application id:
+
+#+begin_example
+ai.zara.app
+#+end_example
+
+* Toolchain
+
+The Android toolchain is pinned/reproducible through the repository Nix and Gradle setup.
+
+Current documented pins:
 
 | Component | Pin |
-|---+---|
+|-----------+-----|
 | Gradle | 9.5.1 (=pkgs.gradle_9=) |
-| AGP | 9.2.0 (built-in Kotlin; the separate kotlin-android plugin is rejected by AGP 9) |
-| compileSdk / targetSdk / minSdk | 37 / 36 / 29 (min 29 = =RoleManager.ROLE_ASSISTANT=) |
-| Compose BOM (for #197) | 2026.08.00 |
+| Android Gradle Plugin | 9.2.0 |
 | JDK | 21 |
+| compileSdk | 37 |
+| targetSdk | 36 |
+| minSdk | 29 |
 
-## Build / test
+The separate Kotlin Android plugin is not used where AGP's built-in Kotlin path owns compilation.
 
-```sh
+* Build and test
+
+Run the Android repository gate with:
+
+#+begin_src sh
 nix develop .#android -c bash scripts/test-android.sh
-```
+#+end_src
 
-Runs JVM unit tests, =assembleDebug=, and an APK secret-marker inspection. The debug APK lands at =android/app/build/outputs/apk/debug/app-debug.apk= and is uploaded by the CI =android= job as an artifact.
+The gate is intended to cover the JVM/unit/build path plus the APK secret-marker inspection used by the repository.
 
-## Architecture decisions
+The debug APK is produced at the standard Gradle location:
 
-See =rage/170-android-bakeoff.org= (Prolog runtime: Trealla via NDK + thin JNI; transport: jeromq pure-Java ZMTP/3.0 CURVE against the pyzmq CURVE/ZAP server) and =rage/171-android-skeleton.org= (skeleton, gates, toolchain as-built evidence).
+#+begin_example
+android/app/build/outputs/apk/debug/app-debug.apk
+#+end_example
 
-## Queue
+A successful =assembleDebug= is necessary, but it is not acceptance for the whole Android assistant.
 
-#170 → #171 → #172/#173/#195 → #196 (assistant role + VoiceInteractionService) → #197 (Compose chat shell) → #198+ (Prolog-controlled adapters, SmartThings, Termux) → #206 (real Samsung acceptance + exact APK).
+* Portable Prolog / Trealla
+
+Android uses Trealla for the portable symbolic subset selected during the Android runtime bakeoff.
+
+The boundary is intentionally thin:
+
+- portable Prolog source is staged from application assets;
+- JNI exposes the minimal native execution bridge needed by Android;
+- Kotlin wraps that bridge in typed application code;
+- deterministic semantic fixtures compare expected behavior;
+- portable rules should not accidentally depend on SWI-only features.
+
+The goal is semantic parity for the explicitly portable subset, not API parity between SWI-Prolog and Trealla.
+
+Core/Linux Zara continues to use SWI-Prolog through the Python application boundary.
+
+* Authentication and enrollment
+
+Android uses the same Zara daemon identity model as other authenticated clients.
+
+Merged/current foundations include:
+
+- Android-side credential encryption/storage boundary;
+- typed enrollment state/repository code;
+- client key material handling;
+- daemon public-key pinning;
+- JeroMQ CURVE socket configuration;
+- Z85 key exchange helpers;
+- bounded plaintext secret lifetime during enrollment operations;
+- explicit rejection of silent server repinning.
+
+The important rule is *fail closed on server identity changes*. A changed server key is not silently accepted as "probably the same server."
+
+Issue #173 remains reopened because the full client acceptance is larger than the merged auth primitives. Remaining/continuing work includes complete authenticated connect/hello behavior, reconnect, durable session/conversation continuity, stale-session rejection, and ordinary typed turn/event integration across lifecycle changes.
+
+* Runtime state
+
+Android client state should remain typed and reducer-driven rather than letting Activities/Composables each invent their own connection/assistant truth.
+
+State should represent facts such as:
+
+- disconnected / connecting / authenticating / connected / degraded states;
+- current server/enrollment status;
+- active session/conversation identifiers where valid;
+- current turn/activity state;
+- capability negotiation results;
+- explicit errors that can be rendered honestly by UI.
+
+UI recreations must not create a new assistant authority or silently duplicate submitted work.
+
+* Chat / assistant surface
+
+The native chat/assistant UI is still active work.
+
+The intended direction is:
+
+- real Android UI rather than an embedded web app;
+- one durable conversation model compatible with desktop/server history;
+- streaming assistant updates;
+- explicit cancellation;
+- clear connection/auth states;
+- voice and typed turns sharing durable conversation identity;
+- Android system-assistant integration without bypassing =ZARA/1= runtime semantics.
+
+Do not fork protocol message types just because Compose needs a particular widget state. Adapt canonical runtime events into presentation state.
+
+* Android Assistant role / voice
+
+The Android goal includes integration with Android's assistant/voice surfaces where supported by the target API level.
+
+The ownership model remains:
+
+- Android device owns microphone/speaker and OS-level assistant entry points;
+- =zara-server= owns the shared assistant runtime work;
+- local wake/system activation may start a Zara voice session;
+- voice transcript and assistant output should correlate with canonical conversation/turn ids.
+
+The exact Android system-service implementation remains active work and should not be claimed as shipped until the relevant acceptance tests pass.
+
+* Device integrations
+
+Planned/follow-on integrations include Samsung/SmartThings, Termux, and other device-local capabilities.
+
+These should be modeled as explicit capabilities/adapters and routed through Zara's normal authorization/runtime model. They should not become arbitrary hidden side effects attached to chat parsing.
+
+* Security rules
+
+Android-specific work must preserve these rules:
+
+1. no long-lived secret keys/tokens embedded in APK assets or source;
+2. no private key material in logs, crash text, diagnostics, screenshots, or test artifacts;
+3. changed/unexpected server pins fail closed;
+4. caller-supplied display/user strings never override the authenticated principal;
+5. stale connection/session events cannot mutate current state;
+6. reconnect must not duplicate side-effecting requests;
+7. malformed/oversized protocol input remains bounded;
+8. phone UI/process lifecycle must not be treated as proof that the daemon session or turn resumed.
+
+* Current queue direction
+
+The original queue was roughly =#170 -> #171 -> #172/#173 -> assistant-role/UI -> device adapters=. Several early foundations have now landed, but issue #173 is reopened and the higher-level assistant/UI/device work is still progressing.
+
+Use the live issue state rather than this page as the sole scheduler. This page describes architecture and implementation status, not a frozen work queue.
+
+* Related docs
+
+- [[file:../docs/architecture.org][docs/architecture.org]] — overall client/runtime ownership.
+- [[file:../docs/server.org][docs/server.org]] — =ZARA/1=, auth, principals, voice transport.
+- [[file:../docs/development.org][docs/development.org]] — build/test workflow.
+- =rage/170-android-bakeoff.org= — Trealla/JeroMQ architecture bakeoff evidence.
+- =rage/171-android-skeleton.org= — Android skeleton/toolchain evidence.
