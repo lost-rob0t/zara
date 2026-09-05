@@ -81,7 +81,7 @@ private fun AndroidAppSession.startAssistantCaptureIfCurrent(
     lifecycleToken: Long,
 ): CompletableFuture<Unit> =
     if (lifecycleFence.isCurrent(lifecycleToken)) {
-        pressToTalk(true)
+        pressAssistantToTalk(true)
     } else {
         failedFuture(AssistantInvocationInvalidated())
     }
