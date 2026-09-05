@@ -1,8 +1,8 @@
 package ai.zara.app
 
+import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.RuntimeState
 import ai.zara.app.runtime.ServerConnection
-import ai.zara.app.runtime.AssistantRole
 import android.app.Activity
 import android.os.Bundle
 import android.widget.LinearLayout
@@ -41,7 +41,7 @@ class MainActivity : Activity() {
             is ServerConnection.Connecting -> "connecting"
             is ServerConnection.Connected -> "connected"
             is ServerConnection.Reconnecting -> "reconnecting (attempt ${connection.attempt})"
-            is ServerConnection.OfflineDegraded -> "offline degraded"
+            is ServerConnection.OfflineDegraded -> "offline degraded (${connection.reason})"
         }
         val role = when (state.assistantRole) {
             is AssistantRole.NotYetAssessed -> "not yet assessed"
