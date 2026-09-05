@@ -1,0 +1,50 @@
+#+title: RAGE #133 — desktop daemon-default regression
+
+* Run identity
+- Consumed issue :: #133
+- Branch :: =rage/133-desktop-daemon-default-regression=
+- RAGE start commit :: =da515c80a2ba18e889f62dc8f1816c8c95249f43=
+- Scope :: Zara Core desktop/client migration only. No =android/**= production changes.
+
+* Iteration 1
+** Research
+- Current =master= already routes ordinary one-shot =zara <command>= through the daemon client after #318, while explicit =--standalone= remains the private compatibility path.
+- =DesktopController= and =QtRuntimeBridge= already operate through the =ZaraClient= seam and closing the UI no longer owns shared-daemon shutdown.
+- Current =zara/desktop/app.py= still chooses =InProcessZaraClient()= when no client/legacy host is injected, so ordinary =zara-desktop= silently starts a private RuntimeHost-backed assistant instead of joining the canonical daemon.
+- Existing #133 design already selected dependency inversion through =ZaraClient= and preserved =InProcessZaraClient= only for explicit standalone compatibility; no second Qt protocol is needed.
+- Sibling Android transaction #307 owns #159 typed device actions and remains untouched.
+
+** Design
+- Keep =create_application(client=...)= as the explicit injection seam and legacy =host= only for compatibility tests/embedders.
+- Change only the normal no-injection desktop default to construct =ZmqZaraClient= for Zara's existing owner-private daemon endpoint.
+- Reuse the same =ServerLease()._runtime_dir()= + =default_zmq_endpoint= resolution already used by the CLI; do not hard-code a UID/socket path.
+- Startup/connect failure remains visible and fail-closed through the existing client/controller lifecycle; never silently fall back to =InProcessZaraClient=.
+- Explicit private-runtime compatibility remains available only by injected =InProcessZaraClient= / legacy host until #134 decides standalone retirement.
+
+** Planned TDD
+1. Normal desktop construction selects the daemon client at the canonical endpoint and does not construct =InProcessZaraClient=.
+2. Explicit injected client remains unchanged.
+3. Legacy host injection remains unchanged for compatibility.
+4. Focused desktop tests, full =scripts/test-all.sh=, =nix flake check=, package/build gates, then exact-head Actions.
+
+** Gate
+- Focused desktop/client regression tests.
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- Exact-head GitHub Actions before readiness/merge.
+
+** TDD evidence
+- RED head :: =dfca78b44fc0e7ccced4800476d2be52b0a67e9f=
+- CI :: #973
+- Result :: core =Run all tests= failed on the new desktop daemon-default regression; Android skeleton and both shared-mic jobs passed. This is the expected isolated RED.
+
+** Implementation
+- Commit :: =f6102b5d6cde02ae623f07fd4dc9e278e01bcc0c=
+- Added a narrow desktop default-client factory that constructs =ZmqZaraClient= at the existing owner-private daemon endpoint.
+- Reused =ServerLease()._runtime_dir()= + =default_zmq_endpoint=; no machine/UID socket path is hard-coded.
+- Normal no-injection desktop construction now uses that factory. Explicit injected clients and the legacy host compatibility seam remain unchanged.
+- No =android/**= production changes.
+
+** Outcome
+- GREEN candidate pending exact-head focused/full CI gates.

@@ -25,6 +25,34 @@ class FakeApp:
     pass
 
 
+def test_default_desktop_client_uses_canonical_daemon_endpoint(monkeypatch):
+    expected_client = object()
+    seen = {}
+
+    monkeypatch.setattr(
+        desktop_app,
+        "_default_daemon_endpoint",
+        lambda: "ipc:///run/user/test/zara.sock",
+        raising=False,
+    )
+
+    def fake_zmq_client(endpoint):
+        seen["endpoint"] = endpoint
+        return expected_client
+
+    monkeypatch.setattr(desktop_app, "ZmqZaraClient", fake_zmq_client, raising=False)
+    monkeypatch.setattr(
+        desktop_app,
+        "InProcessZaraClient",
+        lambda: pytest.fail("normal desktop startup must not create a private runtime"),
+    )
+
+    client = desktop_app._default_desktop_client()
+
+    assert client is expected_client
+    assert seen == {"endpoint": "ipc:///run/user/test/zara.sock"}
+
+
 def test_explicit_desktop_start_summons_quick_once(monkeypatch):
     fake_app = FakeApp()
     controller = FakeController()
