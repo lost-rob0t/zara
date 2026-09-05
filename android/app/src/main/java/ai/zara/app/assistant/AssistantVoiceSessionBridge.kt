@@ -71,9 +71,7 @@ internal fun AndroidAppSession.startAssistantVoice(
         if (lifecycleFence.isCurrent(lifecycleToken)) {
             CompletableFuture.completedFuture(Unit)
         } else {
-            cancelPushToTalk().handle { _, _ -> Unit }.thenCompose {
-                failedFuture(AssistantInvocationInvalidated())
-            }
+            cancelInvalidatedAssistantCapture()
         }
     }
 }
@@ -87,6 +85,31 @@ private fun AndroidAppSession.startAssistantCaptureIfCurrent(
     } else {
         failedFuture(AssistantInvocationInvalidated())
     }
+
+private fun AndroidAppSession.cancelInvalidatedAssistantCapture(): CompletableFuture<Unit> {
+    val result = CompletableFuture<Unit>()
+    cancelPushToTalk().whenComplete { _, cancelError ->
+        if (cancelError == null) {
+            result.completeExceptionally(AssistantInvocationInvalidated())
+        } else {
+            result.completeExceptionally(
+                IllegalStateException(
+                    "assistant invocation was invalidated and voice cancellation failed",
+                    unwrapCompletion(cancelError),
+                ),
+            )
+        }
+    }
+    return result
+}
+
+private fun unwrapCompletion(error: Throwable): Throwable {
+    var current = error
+    while (current.cause != null && current.cause !== current) {
+        current = current.cause!!
+    }
+    return current
+}
 
 private class AssistantInvocationInvalidated :
     IllegalStateException("assistant invocation was invalidated")
