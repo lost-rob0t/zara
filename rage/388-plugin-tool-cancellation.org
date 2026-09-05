@@ -1,0 +1,26 @@
+:PROPERTIES:
+:ID:       zara-rage-388-plugin-tool-cancellation
+:END:
+#+title: RAGE #388 — canonical cancellation for running service-plugin tools
+#+status: ACTIVE
+
+* Iteration 1
+** Consumption
+- Issue :: #388
+- Immutable start :: 3676fc7e452eab409305f62a826b9f0b1f9841d4
+- Branch :: rage/388-plugin-tool-cancellation
+- Scope :: Zara Core only. No =android/**= changes. Extend the existing tool/approval/runtime lifecycle; do not add a plugin-specific execution manager or cancellation side channel.
+
+** Acceptance carried from issue
+- A running service-plugin tool can observe canonical Zara turn/tool cancellation.
+- Cancellation is scoped to the exact invocation and cannot be retargeted by model/tool arguments.
+- Cancellation composes with existing approval and plugin unload lifecycle.
+- Cancelled execution is distinguishable from timeout/failure.
+- Deterministic tests can inject cancellation without network or GUI dependencies.
+
+** Gate
+- Focused deterministic tool/plugin cancellation tests.
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- packaged Zara build.
+- Exact-head GitHub Actions before merge.
