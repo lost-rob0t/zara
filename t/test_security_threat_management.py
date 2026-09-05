@@ -32,6 +32,20 @@ def test_security_enroll_parser_accepts_dash_prefixed_z85_key():
     assert args.security_device_id == "android"
 
 
+def test_security_enroll_parser_rejects_dash_prefixed_non_z85_value():
+    with pytest.raises(SystemExit):
+        server_module._parser().parse_args(
+            [
+                "--security-dir",
+                "/tmp/zara-security",
+                "--security-enroll-key",
+                "--not-a-z85-key",
+                "--security-device-id",
+                "android",
+            ]
+        )
+
+
 def test_security_init_prints_public_identity_but_never_server_secret(tmp_path: Path, capsys):
     runtime_dir = tmp_path / "runtime"
     security_dir = tmp_path / "security"
