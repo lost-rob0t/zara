@@ -74,15 +74,12 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 latestVoiceStreamFailure = null
                 voiceStreamObserver?.invoke(streamState, null)
             },
+            failureObserver = { error -> reportVoiceStreamFailure(error) },
         )
         actor.setVoiceStreamObserver { event ->
             voiceStreamSink.accept(event)
         }
-        actor.setVoiceStreamFailureObserver { error ->
-            val message = error.message ?: error::class.java.simpleName
-            latestVoiceStreamFailure = message
-            voiceStreamObserver?.invoke(latestVoiceStreamState, message)
-        }
+        actor.setVoiceStreamFailureObserver(::reportVoiceStreamFailure)
     }
 
     fun state(): RuntimeState = controller.state()
@@ -161,6 +158,12 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     private fun refreshEnrollment() {
         controller.observeEnrollment(enrollment.state().toRuntimeReadiness())
+    }
+
+    private fun reportVoiceStreamFailure(error: Throwable) {
+        val message = error.message ?: error::class.java.simpleName
+        latestVoiceStreamFailure = message
+        voiceStreamObserver?.invoke(latestVoiceStreamState, message)
     }
 
     private fun submitVoiceControl(block: () -> Unit): CompletableFuture<Unit> {
