@@ -7,7 +7,7 @@ import threading
 from contextlib import contextmanager
 from typing import Iterator, Optional
 
-from langchain_core.runnables.config import ensure_config
+from langchain_core.runnables.config import ensure_config, var_child_runnable_config
 
 
 _CONFIG_KEY = "_zara_tool_cancellation"
@@ -71,9 +71,17 @@ def tool_cancellation_scope() -> Iterator[_ToolCancellationSignal]:
     """Bind one private signal around Zara's canonical tool execution boundary."""
     signal = _ToolCancellationSignal()
     token = _current_tool_cancellation.set(signal.view)
+
+    inherited = ensure_config()
+    inherited_configurable = dict(inherited.get("configurable") or {})
+    inherited_configurable[_CONFIG_KEY] = signal.view
+    invocation_config = dict(inherited)
+    invocation_config["configurable"] = inherited_configurable
+    config_token = var_child_runnable_config.set(invocation_config)
     try:
         yield signal
     finally:
+        var_child_runnable_config.reset(config_token)
         _current_tool_cancellation.reset(token)
 
 
