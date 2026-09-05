@@ -192,7 +192,7 @@ async def test_rejected_tool_never_enters_cancellation_scope():
         called = True
         return "unexpected"
 
-    setattr(approved_effect, "zara_requires_approval", True)
+    approved_effect.metadata = {"zara_requires_approval": True}
     registry = ToolRegistry()
     registry.register_tool(approved_effect)
     node = create_tools_node(registry)
