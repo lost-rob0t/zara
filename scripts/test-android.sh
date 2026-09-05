@@ -37,7 +37,9 @@ nix develop "$repo_root" -c python3 "$repo_root/android/integration/stock_zara_s
   --fixture-file "$interop_fixture" <&9 >"$interop_log" 2>&1 &
 interop_pid=$!
 
-for _ in $(seq 1 200); do
+# The nested root Nix shell may be cold on Actions. This bound is only for
+# environment/process readiness; protocol correctness remains event-driven.
+for _ in $(seq 1 1200); do
   if [[ -f "$interop_fixture" ]] && grep -qx 'READY' "$interop_log"; then
     break
   fi
