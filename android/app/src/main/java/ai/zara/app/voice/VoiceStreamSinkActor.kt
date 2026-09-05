@@ -11,6 +11,7 @@ class VoiceStreamBackpressureException(message: String) : IllegalStateException(
 class VoiceStreamSinkActor(
     private val playbackFactory: (String) -> VoicePlaybackController,
     private val stateObserver: ((VoiceStreamState) -> Unit)? = null,
+    private val failureObserver: ((Throwable) -> Unit)? = null,
     capacity: Int = 64,
 ) : AutoCloseable {
     private val executor: ThreadPoolExecutor
@@ -43,11 +44,14 @@ class VoiceStreamSinkActor(
                     stateObserver?.invoke(state)
                     future.complete(state)
                 } catch (error: Throwable) {
+                    failureObserver?.invoke(error)
                     future.completeExceptionally(error)
                 }
             }
         } catch (error: RejectedExecutionException) {
-            throw VoiceStreamBackpressureException("voice stream mailbox is full")
+            val failure = VoiceStreamBackpressureException("voice stream mailbox is full")
+            failureObserver?.invoke(failure)
+            throw failure
         }
         return future
     }
@@ -74,6 +78,7 @@ class VoiceStreamSinkActor(
                     sessionId = null
                     future.complete(Unit)
                 } catch (error: Throwable) {
+                    failureObserver?.invoke(error)
                     future.completeExceptionally(error)
                 }
             }
