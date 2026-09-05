@@ -15,6 +15,7 @@ import ai.zara.app.device.OpenAppAdapter
 import ai.zara.app.device.OpenUriAdapter
 import ai.zara.app.device.RegistryDeviceActionHandler
 import ai.zara.app.runtime.AndroidTextSessionController
+import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.AudioOutputFormat
 import ai.zara.app.runtime.ClientStateStore
 import ai.zara.app.runtime.ConnectedTextSession
@@ -257,7 +258,11 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             voice.press(state(), permissionGranted)
             assistantVoiceGuard.onCaptureStarted(ownership)
             if (ownership == AssistantVoiceOwnership.Assistant) {
-                assistantVoiceGuard.onRoleChanged(state().assistantRole)
+                val role = state().assistantRole
+                assistantVoiceGuard.onRoleChanged(role)
+                check(role is AssistantRole.Held) {
+                    "Android Assistant role was lost during voice startup"
+                }
             }
         }
 
