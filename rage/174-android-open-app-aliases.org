@@ -1,0 +1,26 @@
+:PROPERTIES:
+:ID:       zara-rage-174-android-open-app-aliases
+:END:
+#+title: RAGE #174 — closed Android open_app semantic aliases
+#+status: ACTIVE
+
+* Iteration 1
+** Consumption
+- Issue :: #174
+- Immutable start :: ada24b73ab599d417dfbda6c864854c19b3426e3
+- Branch :: rage/174-android-open-app-aliases
+- Scope :: Android device adapter only. No Core/protocol/plugin changes.
+
+** Design
+- The server supplies a closed semantic app alias, never a package name, Intent, class, component or shell command.
+- Initial reviewed aliases are bounded in Android production code and map to fixed package candidates owned by the app.
+- Capability is advertised only if at least one reviewed alias resolves locally.
+- Known-but-unavailable alias returns typed =unavailable=; unknown aliases and raw package-like input return =invalid_arguments=.
+- Launch success is returned only after Android accepts a resolved reviewed launch Intent; no optimistic/fake success.
+- Routine diagnostics do not record the requested alias or package target.
+
+** Deterministic RED
+- =OpenAppAdapterTest= is committed before production support and requires availability-derived advertisement, case-normalized reviewed alias execution, raw package/unknown rejection, and unavailable semantics.
+
+** Gate
+- focused JVM device tests; Android unit/native/debug APK + secret inspection; full repository/Nix/package; both shared-mic lanes; exact-head review clearance before merge.
