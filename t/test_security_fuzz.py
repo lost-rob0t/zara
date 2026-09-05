@@ -15,7 +15,10 @@ from zara.security_admin import SecurityAdminError, SecurityAdminServer
 from zara.security_state import PersistentSecurityState, SecurityStateError
 
 
-FUZZ_SEEDS = tuple(range(16))
+_FUZZ_SEED_COUNT = int(os.environ.get("ZARA_SECURITY_FUZZ_SEEDS", "16"))
+if not 1 <= _FUZZ_SEED_COUNT <= 4096:
+    raise RuntimeError("ZARA_SECURITY_FUZZ_SEEDS must be between 1 and 4096")
+FUZZ_SEEDS = tuple(range(_FUZZ_SEED_COUNT))
 
 
 def _jsonish(rng: random.Random, depth: int = 0):
