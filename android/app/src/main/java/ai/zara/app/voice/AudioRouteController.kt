@@ -22,22 +22,41 @@ class AudioRouteController(
     private val onRouteInterrupted: (AudioRouteSnapshot, AudioRouteSnapshot) -> Unit,
 ) {
     private val lock = Any()
+    private var starting = false
     private var started = false
     private var current: AudioRouteSnapshot? = null
 
     fun start() {
-        val initial = synchronized(lock) {
-            check(!started) { "audio route controller already started" }
-            started = true
-            platform.snapshot().also { current = it }
+        synchronized(lock) {
+            check(!starting && !started) { "audio route controller already started" }
+            starting = true
         }
-        platform.start(::handleChanged)
-        onChanged(initial)
+
+        try {
+            platform.start(::handleChanged)
+            val initial = platform.snapshot()
+            synchronized(lock) {
+                starting = false
+                started = true
+                current = initial
+            }
+            onChanged(initial)
+            handleChanged(platform.snapshot())
+        } catch (failure: Throwable) {
+            synchronized(lock) {
+                starting = false
+                started = false
+                current = null
+            }
+            platform.stop()
+            throw failure
+        }
     }
 
     fun stop() {
         val shouldStop = synchronized(lock) {
-            if (!started) return@synchronized false
+            if (!starting && !started) return@synchronized false
+            starting = false
             started = false
             current = null
             true
