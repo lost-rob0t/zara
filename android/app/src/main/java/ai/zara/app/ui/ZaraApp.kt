@@ -300,6 +300,7 @@ private fun SettingsSurface(
             AssistantRole.Held -> Text("Zara is the current Android Assistant.")
             AssistantRole.NotHeld -> {
                 Text("Zara can only become the Assistant after you approve Android's system role prompt.")
+                Text(samsungAssistantSetupGuidance())
                 Button(
                     onClick = onRequestAssistantRole,
                     enabled = !operationBusy && canRequestAssistantRole(state.assistantRole),

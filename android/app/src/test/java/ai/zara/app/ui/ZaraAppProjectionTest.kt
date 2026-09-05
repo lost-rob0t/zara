@@ -4,6 +4,7 @@ import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.RuntimeState
 import ai.zara.app.runtime.ServerConnection
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -56,6 +57,15 @@ class ZaraAppProjectionTest {
         assertTrue(guidance.contains("Settings > Advanced features > Side button > Long press"))
         assertTrue(guidance.contains("supported One UI"))
         assertTrue(guidance.contains("hardware verification remains pending"))
+    }
+
+    @Test
+    fun assistantSetupGuidanceIsActuallyRenderedInSettingsWhenRoleIsMissing() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val missingRoleBlock = source.substringAfter("AssistantRole.NotHeld -> {")
+            .substringBefore("AssistantRole.PlatformUnavailable")
+
+        assertTrue(missingRoleBlock.contains("samsungAssistantSetupGuidance()"))
     }
 
     @Test
