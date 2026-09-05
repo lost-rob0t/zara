@@ -1,0 +1,45 @@
+#+title: RAGE #173 — Android ZARA/1 client continuity and text transport
+#+property: issue 173
+#+property: start_sha ceb2e13951af518cbc29df2dafabdea022baad89
+
+* Consumption
+- Issue :: #173 — authenticated Android ZARA/1 enrollment, reconnect and session continuity.
+- Exact start :: =ceb2e13951af518cbc29df2dafabdea022baad89=, canonical master after #322 Android auth merged.
+- Owner :: Zara Android Auto-RAGE worker.
+- Scope :: Android-only endpoint/settings model, canonical connection reducer, bounded reconnect/session generations, ZARA/1 client framing/correlation and real typed text-turn client path. Shared #159 action messages are consumed only after their exact-head successor merges.
+- Core dependency :: #329 / PR #331 owns production secure TCP listener. Do not modify Core files here.
+
+* Live-state correction
+- #322 merged the credential wrapping/server-pin substrate and auto-closed #173, but #322 explicitly did not implement connect/hello/reconnect/text-turn acceptance.
+- #173 was reopened on 2026-09-05 so issue state again matches its acceptance contract.
+- #172 and #133 are satisfied. #159 successor #336 is gating independently. Production stock-daemon secure TCP remains Core #331.
+
+* Design boundary
+- Android remains a client of the one Zara daemon/runtime; no local LLM, server, conversation database or memory authority is added.
+- Enrollment material from #322 remains the sole CURVE identity/pin authority.
+- One Android runtime reducer owns connection/session state rendered by future Compose surfaces.
+- A successful TCP/CURVE socket alone is not =Connected=: only canonical =hello.ok= for the current generation may establish an application session.
+- Reconnect creates a new transport/application generation. Old-session events/replies are rejected rather than applied to current state.
+- Durable conversation identity is retained separately from ephemeral ZARA/1 session identity; no invented =session.resume= message.
+- Endpoint configuration is public metadata and must never contain embedded user-info credentials or client private material.
+
+* First implementation map
+1. TDD endpoint validation + server profile value.
+2. TDD reducer states for configured/enrollment/auth/session/error/reconnect with generation and bounded retry.
+3. TDD deterministic backoff calculation without wall-clock sleeps.
+4. TDD closed ZARA/1 frame codec for =hello=, =hello.ok=, =turn.submit= and text/runtime events.
+5. JeroMQ DEALER owner using the #322 CURVE configurator and typed generation/correlation tables.
+6. Fake/inproc deterministic client tests now; stock secure TCP interoperability after Core #331.
+7. Android gate + full repository/Nix gate + exact-head Actions.
+
+* Invariants / adversarial cases
+- wrong/missing pin, missing/corrupt credential and socket auth failure never downgrade to plaintext;
+- malformed/oversized/wrong-magic/unknown message input fails closed;
+- duplicate reply cannot complete two requests;
+- stale generation/session response/event cannot mutate current conversation/runtime state;
+- reconnect attempts and pending requests are bounded;
+- no transcript, private key, token or raw credential enters diagnostics;
+- process recreation may restore public server profile + durable conversation id, never fabricate a live session.
+
+* TDD status
+- RED/implementation pending. Tests are written before each production behavior.
