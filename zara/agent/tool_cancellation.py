@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from contextvars import ContextVar
 from typing import Any, Mapping, Optional
@@ -11,7 +12,6 @@ from langchain_core.tools import BaseTool
 from pydantic import PrivateAttr
 
 _CANCELLATION_METADATA_KEY = "zara_supports_cancellation"
-_CONFIG_KEY = "__zara_tool_cancellation"
 _ACTIVE_CANCELLATION: ContextVar[Optional["ToolCancellation"]] = ContextVar(
     "zara_tool_cancellation",
     default=None,
@@ -53,35 +53,12 @@ def current_tool_cancellation() -> ToolCancellation:
     return cancellation
 
 
-def new_tool_cancellation_signal() -> _ToolCancellationSignal:
-    return _ToolCancellationSignal()
-
-
-def tool_supports_cancellation(tool: BaseTool) -> bool:
+def tool_supports_cancellation(tool: Any) -> bool:
     metadata = getattr(tool, "metadata", None) or {}
     marker = metadata.get(_CANCELLATION_METADATA_KEY, False)
     if not isinstance(marker, bool):
         raise ValueError("zara_supports_cancellation tool metadata must be true or false")
     return marker
-
-
-def with_tool_cancellation(
-    config: Optional[RunnableConfig],
-    cancellation: ToolCancellation,
-) -> RunnableConfig:
-    bound = dict(config or {})
-    configurable = dict(bound.get("configurable") or {})
-    configurable[_CONFIG_KEY] = cancellation
-    bound["configurable"] = configurable
-    return bound
-
-
-def _cancellation_from_config(config: RunnableConfig) -> ToolCancellation:
-    configurable = config.get("configurable") or {}
-    cancellation = configurable.get(_CONFIG_KEY)
-    if not isinstance(cancellation, ToolCancellation):
-        raise RuntimeError("cancellable tool invocation is missing Core cancellation state")
-    return cancellation
 
 
 def _tool_input(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> Any:
@@ -96,8 +73,40 @@ def _tool_input(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> Any:
     raise TypeError("tool invocation has unsupported positional input")
 
 
+def _has_native_async(tool: BaseTool) -> bool:
+    if hasattr(tool, "coroutine"):
+        return getattr(tool, "coroutine") is not None
+    return type(tool)._arun is not BaseTool._arun
+
+
+def _invoke_sync(
+    tool: BaseTool,
+    tool_input: Any,
+    config: RunnableConfig,
+    cancellation: ToolCancellation,
+) -> Any:
+    binding = _ACTIVE_CANCELLATION.set(cancellation)
+    try:
+        return tool.invoke(tool_input, config=config)
+    finally:
+        _ACTIVE_CANCELLATION.reset(binding)
+
+
+async def _invoke_async(
+    tool: BaseTool,
+    tool_input: Any,
+    config: RunnableConfig,
+    cancellation: ToolCancellation,
+) -> Any:
+    binding = _ACTIVE_CANCELLATION.set(cancellation)
+    try:
+        return await tool.ainvoke(tool_input, config=config)
+    finally:
+        _ACTIVE_CANCELLATION.reset(binding)
+
+
 class CancellationTransportTool(BaseTool):
-    """Core wrapper that binds cancellation inside the actual execution worker."""
+    """Core wrapper that owns cancellation inside the actual invocation."""
 
     _tool: BaseTool = PrivateAttr()
     _model_schema: Any = PrivateAttr()
@@ -121,18 +130,22 @@ class CancellationTransportTool(BaseTool):
     def tool_call_schema(self) -> Any:
         return self._model_schema
 
+    def original_tool(self) -> BaseTool:
+        return self._tool
+
     def _run(
         self,
         *args: Any,
         config: RunnableConfig,
         **kwargs: Any,
     ) -> Any:
-        cancellation = _cancellation_from_config(config)
-        binding = _ACTIVE_CANCELLATION.set(cancellation)
-        try:
-            return self._tool.invoke(_tool_input(args, kwargs), config=config)
-        finally:
-            _ACTIVE_CANCELLATION.reset(binding)
+        signal = _ToolCancellationSignal()
+        return _invoke_sync(
+            self._tool,
+            _tool_input(args, kwargs),
+            config,
+            signal.view,
+        )
 
     async def _arun(
         self,
@@ -140,25 +153,55 @@ class CancellationTransportTool(BaseTool):
         config: RunnableConfig,
         **kwargs: Any,
     ) -> Any:
-        cancellation = _cancellation_from_config(config)
-        binding = _ACTIVE_CANCELLATION.set(cancellation)
+        signal = _ToolCancellationSignal()
+        tool_input = _tool_input(args, kwargs)
+        if _has_native_async(self._tool):
+            execution = asyncio.create_task(
+                _invoke_async(self._tool, tool_input, config, signal.view)
+            )
+        else:
+            execution = asyncio.create_task(
+                asyncio.to_thread(
+                    _invoke_sync,
+                    self._tool,
+                    tool_input,
+                    config,
+                    signal.view,
+                )
+            )
+
         try:
-            return await self._tool.ainvoke(_tool_input(args, kwargs), config=config)
-        finally:
-            _ACTIVE_CANCELLATION.reset(binding)
+            return await asyncio.shield(execution)
+        except asyncio.CancelledError:
+            signal.cancel()
+            execution.cancel()
+            try:
+                await execution
+            except asyncio.CancelledError:
+                pass
+            raise
 
 
-def bind_tool_cancellation_transport(tool: BaseTool) -> BaseTool:
+def bind_tool_cancellation_transport(tool: Any) -> Any:
     if not tool_supports_cancellation(tool):
         return tool
+    if not isinstance(tool, BaseTool):
+        raise ValueError("cancellable tools must be LangChain BaseTool instances")
+    if isinstance(tool, CancellationTransportTool):
+        return tool
     return CancellationTransportTool(tool)
+
+
+def original_tool(tool: Any) -> Any:
+    if isinstance(tool, CancellationTransportTool):
+        return tool.original_tool()
+    return tool
 
 
 __all__ = [
     "ToolCancellation",
     "bind_tool_cancellation_transport",
     "current_tool_cancellation",
-    "new_tool_cancellation_signal",
+    "original_tool",
     "tool_supports_cancellation",
-    "with_tool_cancellation",
 ]
