@@ -1,5 +1,6 @@
 package ai.zara.app.ui
 
+import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.RuntimeState
 import ai.zara.app.runtime.ServerConnection
@@ -57,6 +58,7 @@ fun ZaraApp(
     onConnect: (String) -> Unit,
     onSendText: (String) -> Unit,
     onRequestMicrophonePermission: () -> Unit,
+    onRequestAssistantRole: () -> Unit,
     onStartVoice: () -> Unit,
     onStopVoice: () -> Unit,
     onCancelVoice: () -> Unit,
@@ -114,6 +116,7 @@ fun ZaraApp(
                     operationBusy = operationBusy,
                     onCreateIdentity = onCreateIdentity,
                     onPinServer = onPinServer,
+                    onRequestAssistantRole = onRequestAssistantRole,
                     padding = padding,
                 )
                 AppSurface.Diagnostics -> DiagnosticsSurface(
@@ -283,6 +286,7 @@ private fun SettingsSurface(
     operationBusy: Boolean,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
+    onRequestAssistantRole: () -> Unit,
     padding: PaddingValues,
 ) {
     var serverPin by rememberSaveable { mutableStateOf("") }
@@ -290,6 +294,21 @@ private fun SettingsSurface(
         Text("Settings", style = MaterialTheme.typography.headlineMedium)
         Text("server endpoint: ${state.configuredProfile?.endpoint ?: "not configured"}")
         Text("enrollment: ${enrollmentLabel(state.enrollment)}")
+        Text("assistant role: ${assistantRoleLabel(state.assistantRole)}")
+        when (state.assistantRole) {
+            AssistantRole.NotYetAssessed -> Text("Checking whether this Android device supports the Assistant role.")
+            AssistantRole.Held -> Text("Zara is the current Android Assistant.")
+            AssistantRole.NotHeld -> {
+                Text("Zara can only become the Assistant after you approve Android's system role prompt.")
+                Button(
+                    onClick = onRequestAssistantRole,
+                    enabled = !operationBusy && canRequestAssistantRole(state.assistantRole),
+                ) {
+                    Text("Make Zara assistant")
+                }
+            }
+            AssistantRole.PlatformUnavailable -> Text("This Android configuration does not expose the public Assistant role to Zara.")
+        }
         enrollmentPublicKey?.let {
             Text("client public key: $it")
             Text("Enroll this public key on the Zara server before connecting. The private key stays in Android Keystore-backed storage.")
@@ -342,6 +361,7 @@ private fun DiagnosticsSurface(
         Text("session: ${state.sessionId ?: "none"}")
         Text("conversation: ${state.selectedConversationId ?: "none"}")
         Text("enrollment: ${enrollmentLabel(state.enrollment)}")
+        Text("assistant role: ${assistantRoleLabel(state.assistantRole)}")
         voiceStreamState?.let { stream ->
             Text("voice session: ${stream.sessionId}")
             Text("voice transcript stream: ${stream.transcriptStreamId ?: "none"}")
@@ -371,6 +391,8 @@ private fun SurfaceColumn(
 internal fun canRequestConnect(connection: ServerConnection): Boolean =
     connection is ServerConnection.Disconnected || connection is ServerConnection.OfflineDegraded
 
+internal fun canRequestAssistantRole(role: AssistantRole): Boolean = role is AssistantRole.NotHeld
+
 internal fun canStartManualVoice(
     state: RuntimeState,
     microphonePermissionGranted: Boolean,
@@ -393,4 +415,11 @@ internal fun enrollmentLabel(readiness: EnrollmentReadiness): String = when (rea
     EnrollmentReadiness.AwaitingServerPin -> "awaiting server pin"
     EnrollmentReadiness.Ready -> "ready"
     EnrollmentReadiness.Corrupt -> "corrupt"
+}
+
+internal fun assistantRoleLabel(role: AssistantRole): String = when (role) {
+    AssistantRole.NotYetAssessed -> "not assessed"
+    AssistantRole.Held -> "held"
+    AssistantRole.NotHeld -> "not held"
+    AssistantRole.PlatformUnavailable -> "platform unavailable"
 }
