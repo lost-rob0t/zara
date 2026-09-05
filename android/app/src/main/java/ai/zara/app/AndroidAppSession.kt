@@ -23,8 +23,13 @@ import ai.zara.app.runtime.TextTurnResult
 import ai.zara.app.runtime.ZaraTextClientActor
 import ai.zara.app.runtime.reduce
 import ai.zara.app.runtime.toRuntimeReadiness
+import ai.zara.app.voice.AndroidAudioFocusPlatform
+import ai.zara.app.voice.AndroidAudioRoutePlatform
 import ai.zara.app.voice.AndroidPcmOutput
 import ai.zara.app.voice.AndroidPcmRecorder
+import ai.zara.app.voice.AudioFocusController
+import ai.zara.app.voice.AudioRouteController
+import ai.zara.app.voice.AudioRouteSnapshot
 import ai.zara.app.voice.AuthenticatedVoiceIngress
 import ai.zara.app.voice.ManualVoiceCapture
 import ai.zara.app.voice.ManualVoiceSessionCoordinator
@@ -49,8 +54,10 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     private val assistantRoleController: AssistantRoleController
     private val voice: ManualVoiceSessionCoordinator
     private val voiceStreamSink: VoiceStreamSinkActor
+    private val audioRouteController: AudioRouteController
     @Volatile private var latestVoiceStreamState: VoiceStreamState? = null
     @Volatile private var latestVoiceStreamFailure: String? = null
+    @Volatile private var latestAudioRoute: AudioRouteSnapshot? = null
     @Volatile private var voiceStreamObserver: ((VoiceStreamState?, String?) -> Unit)? = null
     private val voiceExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-android-voice-control").apply { isDaemon = true }
@@ -90,7 +97,15 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         )
         voiceStreamSink = VoiceStreamSinkActor(
             playbackFactory = { sessionId ->
-                VoicePlaybackController(AndroidPcmOutput(), sessionId)
+                val audioFocus = AudioFocusController(
+                    platform = AndroidAudioFocusPlatform(context.applicationContext),
+                    onLoss = { interruptVoicePlayback() },
+                )
+                VoicePlaybackController(
+                    output = AndroidPcmOutput(),
+                    sessionId = sessionId,
+                    audioFocus = audioFocus,
+                )
             },
             stateObserver = { streamState ->
                 latestVoiceStreamState = streamState
@@ -99,6 +114,16 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             },
             failureObserver = { error -> reportVoiceStreamFailure(error) },
         )
+        audioRouteController = AudioRouteController(
+            platform = AndroidAudioRoutePlatform(context.applicationContext),
+            onChanged = { route -> latestAudioRoute = route },
+            onRouteInterrupted = { _, _ -> interruptVoicePlayback() },
+        )
+        try {
+            audioRouteController.start()
+        } catch (error: Throwable) {
+            reportVoiceStreamFailure(error)
+        }
         actor.setVoiceStreamObserver { event ->
             voiceStreamSink.accept(event)
         }
@@ -112,6 +137,8 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     fun voiceStreamState(): VoiceStreamState? = latestVoiceStreamState
 
     fun voiceStreamFailure(): String? = latestVoiceStreamFailure
+
+    fun audioRouteState(): AudioRouteSnapshot? = latestAudioRoute
 
     fun setVoiceStreamObserver(observer: ((VoiceStreamState?, String?) -> Unit)?) {
         voiceStreamObserver = observer
@@ -204,6 +231,14 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         controller.observeEnrollment(enrollment.state().toRuntimeReadiness())
     }
 
+    private fun interruptVoicePlayback() {
+        try {
+            voiceStreamSink.interrupt()
+        } catch (error: Throwable) {
+            reportVoiceStreamFailure(error)
+        }
+    }
+
     private fun reportVoiceStreamFailure(error: Throwable) {
         val message = error.message ?: error::class.java.simpleName
         latestVoiceStreamFailure = message
@@ -226,6 +261,8 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     override fun close() {
         actor.setVoiceStreamObserver(null)
         actor.setVoiceStreamFailureObserver(null)
+        val routeFailure = runCatching { audioRouteController.stop() }.exceptionOrNull()
+        if (routeFailure != null) reportVoiceStreamFailure(routeFailure)
         try {
             voice.close()
         } finally {
@@ -236,5 +273,6 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 voiceStreamSink.close()
             }
         }
+        if (routeFailure != null) throw routeFailure
     }
 }

@@ -28,6 +28,7 @@ class DesktopController(QObject):
     """Own the desktop shell while delegating assistant work to ZaraClient."""
 
     diagnostics_requested = Signal()
+    desktop_control_requested = Signal(str)
 
     def __init__(
         self,
@@ -83,7 +84,7 @@ class DesktopController(QObject):
         full_chat_requested = getattr(self.tray, "full_chat_requested", None)
         settings_requested = getattr(self.tray, "settings_requested", None)
         if quick_requested is not None and self.quick_window is not None:
-            quick_requested.connect(self.show_quick_copilot)
+            quick_requested.connect(self.toggle_quick_copilot)
             if full_chat_requested is not None:
                 full_chat_requested.connect(self.open_full_chat)
         else:
@@ -100,6 +101,7 @@ class DesktopController(QObject):
         if window_settings_requested is not None:
             window_settings_requested.connect(self.open_settings)
 
+        self.desktop_control_requested.connect(self.apply_desktop_control)
         self.bridge.runtime_event.connect(self._on_runtime_envelope)
         self.bridge.command_completed.connect(self._on_command_completed)
         self.bridge.command_failed.connect(self._on_command_failed)
@@ -131,6 +133,36 @@ class DesktopController(QObject):
             return
         self.quick_window.sync_from_shared_state()
         self.quick_window.show_raised()
+
+    def hide_quick_copilot(self) -> None:
+        """Hide the process-owned Copilot without changing runtime ownership."""
+        if self.quick_window is None:
+            self.window.hide()
+            return
+        self.quick_window.hide()
+
+    def toggle_quick_copilot(self) -> None:
+        """Toggle the one process-owned Quick Copilot instance."""
+        if self.quick_window is None:
+            self.window.toggle_visibility()
+            return
+        if self.quick_window.isVisible():
+            self.quick_window.hide()
+            return
+        self.show_quick_copilot()
+
+    def apply_desktop_control(self, command: str) -> None:
+        """Apply one validated local desktop-control command on the Qt thread."""
+        if command == "toggle":
+            self.toggle_quick_copilot()
+            return
+        if command == "show":
+            self.show_quick_copilot()
+            return
+        if command == "hide":
+            self.hide_quick_copilot()
+            return
+        raise ValueError(f"unsupported desktop control command: {command!r}")
 
     def open_full_chat(self, conversation_id: Optional[str] = None) -> None:
         """Show Full Chat, optionally selecting one durable conversation."""
