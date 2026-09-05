@@ -7,12 +7,13 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QSize, Signal
 from PySide6.QtWidgets import QApplication
 
 from zara.database import DatabaseManager
 from zara.desktop.controller import DesktopController
 from zara.desktop.conversation import ConversationService, ConversationStore
+from zara.desktop.state import DesktopRuntimeState, DesktopStatus
 from zara.desktop.visual_fixtures import REQUIRED_UI_FIXTURES, render_ui_fixtures
 from zara.desktop.windows import CopilotMode, CopilotWindow
 
@@ -137,13 +138,13 @@ def test_compact_expanded_transition_preserves_conversation_and_draft(tmp_path):
             "state must survive the presentation transition",
             request_id="mode-state",
         )
-        window.apply_conversation_update(None)
+        window.load_conversation(conversation_id)
         window.composer.setPlainText("draft survives too")
 
         window.set_mode(CopilotMode.EXPANDED)
         qt_app.processEvents()
         assert window.mode is CopilotMode.EXPANDED
-        assert window.sidebar.isVisible()
+        assert not window.sidebar.isHidden()
         assert window.current_conversation_id == conversation_id
         assert window.composer.toPlainText() == "draft survives too"
         assert any(
@@ -154,15 +155,43 @@ def test_compact_expanded_transition_preserves_conversation_and_draft(tmp_path):
         window.set_mode(CopilotMode.COMPACT)
         qt_app.processEvents()
         assert window.mode is CopilotMode.COMPACT
-        assert not window.sidebar.isVisible()
+        assert window.sidebar.isHidden()
         assert window.current_conversation_id == conversation_id
         assert window.composer.toPlainText() == "draft survives too"
     finally:
         dispose(controller)
 
 
+def test_compact_layout_removes_secondary_chrome_at_minimum_size(tmp_path):
+    qt_app, controller, _ = make_controller(tmp_path)
+    window = controller.window
+    try:
+        window.set_status(DesktopStatus(DesktopRuntimeState.READY, "Response ready"))
+        window.set_mode(CopilotMode.COMPACT)
+        window.resize(480, 320)
+        window.show()
+        qt_app.processEvents()
+
+        assert window.minimumSize() == QSize(480, 320)
+        assert window.sidebar.isHidden()
+        assert window.provider_label.isHidden()
+        assert window.status_frame.isHidden()
+        assert window.composer_shell.isVisible()
+        assert window.composer_shell.height() > 0
+        assert window.message_scroll.viewport().height() > 0
+
+        window.set_mode(CopilotMode.EXPANDED)
+        qt_app.processEvents()
+        assert not window.sidebar.isHidden()
+        assert not window.provider_label.isHidden()
+        assert not window.status_frame.isHidden()
+    finally:
+        dispose(controller)
+
+
 def test_visual_fixture_harness_writes_required_pngs_and_manifest(tmp_path):
-    output = tmp_path / "artifacts" / "ui"
+    artifact_root = Path(os.environ.get("ARTIFACT_DIR", str(tmp_path / "artifacts")))
+    output = artifact_root / "ui"
     manifest_path = render_ui_fixtures(output)
 
     assert manifest_path == output / "manifest.json"
