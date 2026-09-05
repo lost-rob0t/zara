@@ -113,19 +113,59 @@ class ZaraTextClientActor(
                 throw ZaraWireException("turn conversation correlation mismatch")
             }
 
+            var assistantCompletion: TextTurnResult? = null
             while (true) {
                 when (val event = receiveMessage(active)) {
+                    is TextServerMessage.Progress -> {
+                        verifyEvent(
+                            event.sessionId,
+                            event.turnId,
+                            accepted.turnId,
+                            event.conversationId,
+                            accepted.conversationId,
+                        )
+                    }
                     is TextServerMessage.AssistantDelta -> {
-                        verifyEvent(event.sessionId, event.turnId, accepted.turnId, event.conversationId, accepted.conversationId)
+                        verifyEvent(
+                            event.sessionId,
+                            event.turnId,
+                            accepted.turnId,
+                            event.conversationId,
+                            accepted.conversationId,
+                        )
                     }
                     is TextServerMessage.AssistantCompleted -> {
-                        verifyEvent(event.sessionId, event.turnId, accepted.turnId, event.conversationId, accepted.conversationId)
-                        return@submit TextTurnResult(
+                        verifyEvent(
+                            event.sessionId,
+                            event.turnId,
+                            accepted.turnId,
+                            event.conversationId,
+                            accepted.conversationId,
+                        )
+                        if (assistantCompletion != null) {
+                            throw ZaraWireException("duplicate assistant completion")
+                        }
+                        assistantCompletion = TextTurnResult(
                             conversationId = event.conversationId,
                             turnId = event.turnId,
                             text = event.text,
                             success = event.success,
                         )
+                    }
+                    is TextServerMessage.TurnCompleted -> {
+                        verifyEvent(
+                            event.sessionId,
+                            event.turnId,
+                            accepted.turnId,
+                            event.conversationId,
+                            accepted.conversationId,
+                        )
+                        val completion = assistantCompletion
+                            ?: throw ZaraWireException("turn completed before assistant completion")
+                        if (event.success != completion.success) {
+                            throw ZaraWireException("turn completion success mismatch")
+                        }
+                        return@submit completion
                     }
                     is TextServerMessage.AssistantResponse -> {
                         verifySession(event.sessionId, sessionId)
