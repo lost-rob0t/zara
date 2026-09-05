@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import threading
 from types import MappingProxyType
-from typing import Annotated, Any, Mapping, Optional
+from typing import Annotated, Mapping, Optional
 
 from langgraph.prebuilt import InjectedState
+from pydantic import SkipValidation
 
 _CANCELLATION_STATE_KEY = "__zara_tool_cancellation"
 
@@ -28,7 +29,8 @@ class ToolCancellation:
 
 
 ToolCancellationArg = Annotated[
-    Any,
+    ToolCancellation,
+    SkipValidation(),
     InjectedState(_CANCELLATION_STATE_KEY),
 ]
 """Model-hidden cancellation dependency populated only by Zara Core."""
