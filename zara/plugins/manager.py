@@ -16,6 +16,7 @@ from langchain_core.tools import BaseTool
 from zara.runtime import events
 
 from .api import PLUGIN_API_VERSION, PluginMetadata, PluginRuntime, RuntimeStatus
+from .cancellation import bind_tool_cancellation
 from .loader import iter_plugin_files, load_plugin_module
 
 logger = logging.getLogger(__name__)
@@ -240,6 +241,7 @@ class PluginManager:
             )
             if any(not isinstance(tool, BaseTool) for tool in tools):
                 raise TypeError("service plugin tools() must return LangChain BaseTool instances")
+            tools = tuple(bind_tool_cancellation(tool) for tool in tools)
             if tools:
                 self._tool_registrar(tools)
                 record.tool_names = tuple(tool.name for tool in tools)
