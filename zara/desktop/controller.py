@@ -28,6 +28,7 @@ class DesktopController(QObject):
     """Own the desktop shell while delegating assistant work to ZaraClient."""
 
     diagnostics_requested = Signal()
+    desktop_control_requested = Signal(str)
 
     def __init__(
         self,
@@ -43,8 +44,6 @@ class DesktopController(QObject):
         super().__init__(app)
         self.app = app
         self.client = client
-        # Compatibility alias for existing embedders/tests while #133 migrates
-        # callers. New desktop code must use the ZaraClient-facing name.
         self.host = client
         self.bridge = bridge
         self.tray = tray_factory()
@@ -100,6 +99,7 @@ class DesktopController(QObject):
         if window_settings_requested is not None:
             window_settings_requested.connect(self.open_settings)
 
+        self.desktop_control_requested.connect(self.apply_desktop_control)
         self.bridge.runtime_event.connect(self._on_runtime_envelope)
         self.bridge.command_completed.connect(self._on_command_completed)
         self.bridge.command_failed.connect(self._on_command_failed)
@@ -132,6 +132,13 @@ class DesktopController(QObject):
         self.quick_window.sync_from_shared_state()
         self.quick_window.show_raised()
 
+    def hide_quick_copilot(self) -> None:
+        """Hide the process-owned Copilot without changing runtime ownership."""
+        if self.quick_window is None:
+            self.window.hide()
+            return
+        self.quick_window.hide()
+
     def toggle_quick_copilot(self) -> None:
         """Toggle the one process-owned Quick Copilot instance."""
         if self.quick_window is None:
@@ -141,6 +148,19 @@ class DesktopController(QObject):
             self.quick_window.hide()
             return
         self.show_quick_copilot()
+
+    def apply_desktop_control(self, command: str) -> None:
+        """Apply one validated local desktop-control command on the Qt thread."""
+        if command == "toggle":
+            self.toggle_quick_copilot()
+            return
+        if command == "show":
+            self.show_quick_copilot()
+            return
+        if command == "hide":
+            self.hide_quick_copilot()
+            return
+        raise ValueError(f"unsupported desktop control command: {command!r}")
 
     def open_full_chat(self, conversation_id: Optional[str] = None) -> None:
         """Show Full Chat, optionally selecting one durable conversation."""
@@ -266,47 +286,20 @@ class DesktopController(QObject):
         if self.quick_window is not None:
             self.quick_window.set_status(status)
 
-    def _close_client(self) -> None:
-        close = getattr(self.client, "close", None)
-        if callable(close):
-            close()
+    def _about_to_quit(self) -> None:
+        if self._finalized:
             return
-        # Temporary compatibility for legacy RuntimeHost injection. Normal
-        # application construction always supplies a ZaraClient.
-        shutdown = getattr(self.client, "shutdown", None)
-        if callable(shutdown):
-            shutdown("desktop standalone compatibility exit")
-
-    def _close_surfaces(self) -> None:
-        self.bridge.close()
-        self.tray.hide()
-        self.window.prepare_for_quit()
-        self.window.close()
-        if self.quick_window is not None:
-            self.quick_window.prepare_for_quit()
-            self.quick_window.close()
-        if self.settings_window is not None:
-            self.settings_window.prepare_for_quit()
-            self.settings_window.close()
+        self._quitting = True
+        self._finalize_quit()
 
     def _finalize_quit(self) -> None:
         if self._finalized:
             return
-        # Mark finalized before QApplication.quit() emits aboutToQuit, keeping
-        # cleanup idempotent and preventing a second client close.
         self._finalized = True
         try:
-            self._close_client()
+            self.bridge.close()
         finally:
-            self._close_surfaces()
-        self.app.quit()
-
-    def _about_to_quit(self) -> None:
-        """Best-effort client/surface cleanup for non-tray application exits."""
-        if self._finalized:
-            return
-        self._finalized = True
-        try:
-            self._close_client()
-        finally:
-            self._close_surfaces()
+            try:
+                self.client.close()
+            finally:
+                self.app.quit()
