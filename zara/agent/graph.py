@@ -26,6 +26,7 @@ from .approval import (
 )
 from . import stream_events
 from .sentence_chunker import SentenceChunker
+from .tool_cancellation import tool_cancellation_scope
 
 logger = logging.getLogger(__name__)
 
@@ -493,7 +494,22 @@ def create_approval_node(tool_registry):
 
 def create_tools_node(tool_registry, publisher=None, stream_publisher=None):
     tools = tool_registry.to_langchain_tools()
-    tool_node = ToolNode(tools)
+
+    async def wrap_tool_call(request, execute):
+        with tool_cancellation_scope() as cancellation:
+            execution = asyncio.create_task(execute(request))
+            try:
+                return await asyncio.shield(execution)
+            except asyncio.CancelledError:
+                cancellation.cancel()
+                execution.cancel()
+                try:
+                    await execution
+                except asyncio.CancelledError:
+                    pass
+                raise
+
+    tool_node = ToolNode(tools, awrap_tool_call=wrap_tool_call)
     bindings = {tool.name: tool for tool in tools}
     publish = publisher or runtime_bridge.publish
 
