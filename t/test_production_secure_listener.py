@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 import zmq
 
+import zara.server as server_module
 from zara.principals import PrincipalContext
 from zara.protocol import ProtocolMessage, decode_message, encode_message
 from zara.runtime import bridge
@@ -101,6 +102,108 @@ def test_security_registry_enrollment_and_revocation_survive_restart(tmp_path: P
     after_revoke = PersistentSecurityState(tmp_path / "security").load_registry()
     with pytest.raises(KeyNotActive):
         after_revoke.resolve_public_key(public)
+
+
+def test_owner_security_management_mutates_running_registry_without_reload(
+    tmp_path: Path,
+    zmq_context: zmq.Context,
+    capsys,
+):
+    state = PersistentSecurityState(tmp_path / "security")
+    server_curve = state.initialize()
+    client_public, client_secret = zmq.curve_keypair()
+
+    probe = zmq_context.socket(zmq.ROUTER)
+    port = probe.bind_to_random_port("tcp://127.0.0.1")
+    probe.close(0)
+    endpoint = f"tcp://127.0.0.1:{port}"
+    config = TransportConfig(
+        sndhwm=8,
+        rcvhwm=8,
+        heartbeat_interval_ms=100,
+        heartbeat_timeout_ms=500,
+        linger_ms=0,
+        request_timeout=1.0,
+        poll_interval_ms=5,
+    )
+    server = ZaraServer(
+        supervisor=FakeSupervisor(),
+        endpoint=endpoint,
+        security_state=state,
+        gateway_transport_config=config,
+        shutdown_timeout=1.0,
+    )
+    assert server.start() is ServerState.READY
+
+    client = zmq_context.socket(zmq.DEALER)
+    apply_socket_options(client, config, router=False)
+    configure_curve_client_socket(
+        client,
+        CurveClientConfig(
+            public_key=client_public,
+            secret_key=client_secret,
+            server_public_key=server_curve.public_key,
+        ),
+    )
+    try:
+        enroll_args = server_module._parser().parse_args(
+            [
+                "--security-dir",
+                str(state.directory),
+                "--security-enroll-key",
+                client_public.decode("ascii"),
+                "--security-device-id",
+                "android-live",
+            ]
+        )
+        assert server_module._run_security_management(enroll_args) == 0
+        capsys.readouterr()
+
+        client.connect(endpoint)
+        client.send_multipart(
+            encode_message(
+                ProtocolMessage(
+                    type="hello",
+                    id="live-enroll-hello",
+                    timestamp_ns=time.time_ns(),
+                    payload_count=0,
+                    body={"versions": [1]},
+                )
+            )
+        )
+        response = receive(client)
+        assert response.type == "hello.ok"
+        assert response.reply_to == "live-enroll-hello"
+
+        revoke_args = server_module._parser().parse_args(
+            [
+                "--security-dir",
+                str(state.directory),
+                "--security-revoke-device",
+                "android-live",
+            ]
+        )
+        assert server_module._run_security_management(revoke_args) == 0
+        capsys.readouterr()
+
+        client.send_multipart(
+            encode_message(
+                ProtocolMessage(
+                    type="ping",
+                    id="revoked-ping",
+                    timestamp_ns=time.time_ns(),
+                    payload_count=0,
+                    body={},
+                )
+            )
+        )
+        denied = receive(client)
+        assert denied.type == "protocol.error"
+        assert denied.reply_to is None
+        assert denied.body["code"] == "authentication_required"
+    finally:
+        client.close(0)
+        assert server.stop() is True
 
 
 def test_production_zara_server_secure_tcp_accepts_only_enrolled_curve_client(
