@@ -1,0 +1,22 @@
+:PROPERTIES:
+:ID:       zara-rage-203-android-voice-diagnostic-redaction-r2
+:END:
+#+title: RAGE #203 — redact Android voice diagnostic failures r2
+#+status: ACTIVE
+
+* Recovery
+- Issue :: #203
+- Immutable start :: 9cd82222375d1a4968babfa7f543fa7d9447d98e
+- Scope :: Android diagnostics only. No Core/protocol/plugin changes.
+- Prior transaction :: #411 was exact-head green at 294015db0562405578b64bb3edd22e02c0167e3c but became non-mergeable after adjacent Android #408 landed.
+
+* Design
+- Preserve only stable coarse voice failure categories.
+- Never surface raw Throwable messages into Compose diagnostics.
+- Bound cause traversal to eight hops and guard self-cycles.
+- Canonical categories: voice_protocol_error, voice_backpressure, voice_permission_denied, voice_runtime_error.
+
+* Replayed acceptance
+- Production wiring crosses VoiceDiagnosticFailure.summarize(error) before external observation.
+- Tests prove token/path/endpoint-bearing exception messages cannot escape.
+- Fresh exact-head Android/full-Nix/package/shared-mic CI is mandatory before promotion/merge.
