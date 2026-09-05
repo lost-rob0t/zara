@@ -1,0 +1,47 @@
+#+title: RAGE #174 - Android closed device capability registry
+
+* Run identity
+- Consumed issue :: #174, P2 - implement the closed Android device-capability registry and typed action adapters.
+- Branch :: =rage/174-android-device-capabilities=.
+- RAGE start commit :: =d5f9a57e437cee72e2dfeae97ed5124727608085=.
+- Dependencies :: #173 completed after merged #338 exact-head stock-daemon authenticated text interoperability; #159 merged via #336.
+
+* Research
+** Existing contract
+- Shared ZARA/1 #159 already owns =capability.snapshot= and the session-bound =device.action.request -> device.action.accepted -> device.action.result|device.action.error= lifecycle.
+- Android already has strict closed v1 capability encoding/ack decoding for =open_app= and =open_uri=, but #173 intentionally advertises an empty set until real Android adapters exist.
+- Availability advertisement is not authorization and Android OS permission cannot be granted remotely.
+
+** First implementation slice
+Earliest useful/safest adapter is =open_uri= because it can be expressed through a closed URI schema and public Android ACTION_VIEW without package ids, arbitrary Intent extras, reflection, shell, or dynamic invocation.
+
+Before execution, Android must validate the request against the authenticated current session, closed capability id/version, bounded deadline/arguments, and URI policy. Only explicit reviewed schemes are accepted. Result/error must be typed and correlated; no optimistic success before Android resolves/starts a handler.
+
+=open_app= follows only after a bounded app-alias/visibility design. Package identifiers remain platform adapter state, not portable semantic arguments.
+
+* Design
+** Invariants
+- One Android registry is the source of advertised device availability and executable adapters.
+- Registry keys are the closed =DeviceCapability= enum; no dynamic class, method, raw Intent, shell or reflection registration.
+- Snapshot derives from currently available registered adapters; no capability is advertised without an executable adapter.
+- Every action is bound to the current authenticated session and is rejected when stale, cancelled or expired.
+- =open_uri= accepts only bounded normalized URIs using explicitly approved public schemes and constructs a fresh ACTION_VIEW Intent locally.
+- No URI payload is written to routine diagnostics/logs.
+- Android acknowledges accepted only after request validation/ownership; terminal success is emitted only from actual platform result evidence available to the adapter.
+
+** TDD map
+1. RED: closed registry advertises only adapters that report available; unknown/unregistered ids cannot execute.
+2. RED: =open_uri= parser rejects blank/oversized/control-character/userinfo/unsupported-scheme/malformed inputs and permits reviewed HTTPS/HTTP URI forms.
+3. RED: stale session, expired deadline and wrong capability fail before adapter invocation.
+4. RED: adapter unavailable/no handler/launch exception produce typed terminal error; successful launch produces typed result.
+5. RED: capability snapshot changes when adapter availability changes and remains deterministic.
+6. Integrate request handling into the existing single Android ZARA/1 actor without a second socket/runtime.
+
+* Gate
+- Focused JVM tests for registry/action codec/platform adapter.
+- =scripts/test-android.sh=.
+- repository full tests / flake checks / package gate.
+- exact-head GitHub Actions, mergeability and review/thread checks.
+
+* Iteration 1
+- Status :: RESEARCH/DESIGN RECORDED; next action is deterministic RED registry/open_uri tests.
