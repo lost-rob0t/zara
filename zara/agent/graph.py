@@ -26,6 +26,7 @@ from .approval import (
 )
 from . import stream_events
 from .sentence_chunker import SentenceChunker
+from .tool_cancellation import tool_cancellation_scope
 
 logger = logging.getLogger(__name__)
 
@@ -578,10 +579,23 @@ def create_tools_node(tool_registry, publisher=None, stream_publisher=None):
             )
             single_call = AIMessage(content="", tool_calls=[tool_call])
             try:
-                output = await tool_node.ainvoke(
-                    {"messages": [single_call]},
-                    config,
-                )
+                with tool_cancellation_scope() as cancellation:
+                    execution = asyncio.create_task(
+                        tool_node.ainvoke(
+                            {"messages": [single_call]},
+                            config,
+                        )
+                    )
+                    try:
+                        output = await asyncio.shield(execution)
+                    except asyncio.CancelledError:
+                        cancellation.cancel()
+                        execution.cancel()
+                        try:
+                            await execution
+                        except asyncio.CancelledError:
+                            pass
+                        raise
             except asyncio.CancelledError:
                 publish(
                     events.ToolCancelled(
@@ -657,7 +671,6 @@ def should_continue(state: Dict[str, Any]) -> Literal["approval", "end"]:
         return "approval"
 
     return "end"
-
 
 # ----------------------------------------------------------------------
 # Graph + runner
