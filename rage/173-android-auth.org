@@ -1,0 +1,59 @@
+#+title: RAGE #173 - Android ZARA/1 authentication and enrollment
+
+* Run identity
+- Consumed issue :: #173, Android authenticated ZARA/1 enrollment/reconnect/session continuity.
+- Branch :: =rage/173-android-auth=.
+- RAGE start commit :: =da515c80a2ba18e889f62dc8f1816c8c95249f43=.
+- Operator direction :: implement authentication immediately.
+- Dependency exception :: #172 is merged; #133 and #159 are still open. This iteration is therefore intentionally limited to the authentication/enrollment foundation that does not depend on the unsettled #159 device-action wire contract. No action/capability integration is added here.
+
+* Research
+- #170 selected JeroMQ 0.6.x for Android ZMTP/3.0 + CURVE and delegated key storage to #173.
+- JeroMQ 0.6.0 =ZMQ.Socket.setCurveSecretKey(byte[])= requires the client long-term CURVE secret as raw 32-byte or 40-character Z85 material; =setCurvePublicKey= and =setCurveServerKey= use the same representation family.
+- Android Keystore keys are intended to remain inside the keystore boundary, while Android recommends KeyStore for long-term cryptographic key protection and AES/GCM for authenticated encryption.
+- =Context.getNoBackupFilesDir()= is explicitly excluded from automatic backup, preventing device-bound wrapped credentials from being restored onto a device that cannot unwrap them.
+
+Primary sources checked 2026-09-05:
+- https://javadoc.io/static/org.zeromq/jeromq/0.6.0/org/zeromq/ZMQ.Socket.html
+- https://developer.android.com/privacy-and-security/keystore
+- https://developer.android.com/reference/android/security/keystore/KeyGenParameterSpec
+- https://developer.android.com/reference/android/content/Context#getNoBackupFilesDir()
+
+* Design
+** Boundary
+Implement authentication state and credential protection now; leave reconnect/session/action protocol integration for the next #173 iteration after #133/#159 stabilize.
+
+** Selected architecture
+1. =CurveCredential= is the transport-facing value: client public key + client secret key bytes. It is never persisted in plaintext.
+2. =CredentialCipher= abstracts authenticated wrapping so JVM tests can use a deterministic fake while production uses AndroidKeyStore AES-256-GCM.
+3. =WrappedCredentialStore= persists only a versioned envelope containing public key, IV and ciphertext under =noBackupFilesDir= using atomic replace semantics.
+4. =AndroidKeystoreCredentialCipher= owns a non-exportable AES wrapping key under a fixed application alias. It does not require per-use biometric authentication because background assistant reconnect must remain possible.
+5. =ServerPin= is a separately persisted public value containing the expected 32-byte CURVE server public key. Missing or mismatched pins fail closed.
+6. =CurveAuthConfigurator= is the only component allowed to place client public/secret/server keys onto a JeroMQ socket. It copies/validates key lengths and clears the temporary secret copy after socket configuration.
+7. =EnrollmentRepository= exposes typed states: UNENROLLED, READY and CORRUPT. Corrupt/undecryptable credentials never silently rotate identity.
+
+** Invariants
+- No plaintext CURVE secret in app-private persisted files, logs, diagnostics or resources.
+- Server pin is mandatory before CURVE socket configuration.
+- Key, IV and ciphertext sizes are bounded and validated before decrypt/configure.
+- Credential replacement is atomic.
+- Lost/deleted Keystore wrapping key produces explicit re-enrollment/corrupt state, never implicit new identity.
+- Production code never logs key bytes or Z85 strings.
+- No #159 capability/action message types are introduced on this branch.
+
+** TDD map
+1. Wrapped credential round trip through a fake cipher; persisted bytes must not contain the raw secret.
+2. Corrupt envelope / wrong cipher key -> typed CORRUPT state.
+3. Server pin validates exactly 32 bytes and rejects mismatch.
+4. Auth configurator rejects absent/malformed credentials and pin mismatch before socket mutation.
+5. Auth configurator sets client public, secret and server pin and clears its temporary secret copy.
+6. Android Keystore implementation compiles under minSdk 29 and uses AES/GCM + AndroidKeyStore.
+
+* Gate
+- Focused JVM tests: =cd android && ./gradlew :app:testDebugUnitTest= through the pinned Nix Android environment.
+- Android gate: =nix develop -c bash scripts/test-android.sh=.
+- Full repository gate: =nix develop -c bash scripts/test-all.sh=, =nix flake check=, =nix build=.
+- Exact-head GitHub Actions required before merge.
+
+* Iteration 1
+- Status :: DESIGN RECORDED; next step is RED tests before production implementation.
