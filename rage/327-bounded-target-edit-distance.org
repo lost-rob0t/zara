@@ -37,6 +37,14 @@
 8. Router: ambiguity/unrelated text delegates and executes nothing.
 9. Prolog engine app vocabulary query is bounded and includes mappings/direct apps without hard-coded aliases.
 
+** RED evidence
+- Test-only head :: =46d471c9dabea6827f90d80b0ed6eb9f88d05085=
+- Exact CI :: #997, run =33948856084=, core job =101259737941=
+- Earlier repository phases were green through runtime tool approvals; phase 9 pytest collection failed exactly because the production matcher API did not yet exist.
+- Failure :: =ImportError: cannot import name 'match_registered_target' from 'zara.command_gate'=
+- Result :: one collection error, regression gate failed at phase 9; downstream Nix/package steps were correctly skipped. Shared-mic jobs remained green.
+- This is the deterministic RED boundary. Production mutation begins only after this record.
+
 ** Gate
 - Focused pytest for matcher/router/Prolog boundary.
 - =scripts/test-all.sh=.
