@@ -92,6 +92,26 @@ class RuntimeStateTest {
         assertEquals(null, state.sessionId)
     }
 
+    @Test fun `enrollment loss invalidates active session without erasing durable conversation`() {
+        var state = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Ready,
+            selectedConversationId = "conversation-7",
+        )
+        state = reduce(state, RuntimeEvent.ConnectRequested)
+        state = reduce(state, RuntimeEvent.HelloAccepted(1, "session-1"))
+
+        val revoked = reduce(
+            state,
+            RuntimeEvent.EnrollmentObserved(EnrollmentReadiness.Unenrolled),
+        )
+
+        assertEquals(EnrollmentReadiness.Unenrolled, revoked.enrollment)
+        assertEquals(ServerConnection.Disconnected, revoked.server)
+        assertEquals(2L, revoked.generation)
+        assertEquals(null, revoked.sessionId)
+        assertEquals("conversation-7", revoked.selectedConversationId)
+    }
+
     @Test fun `reconnect backoff is deterministic bounded and monotonic`() {
         assertEquals(250L, reconnectDelayMillis(1))
         assertEquals(500L, reconnectDelayMillis(2))
