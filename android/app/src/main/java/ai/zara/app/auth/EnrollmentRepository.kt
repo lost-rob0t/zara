@@ -25,13 +25,12 @@ class EnrollmentRepository(
                 try {
                     when (val pinResult = serverPins.load()) {
                         ServerPinLoadResult.Missing ->
-                            EnrollmentState.AwaitingServerPin(credential.publicKey.copyOf())
+                            EnrollmentState.AwaitingServerPin(credential.publicKey)
                         is ServerPinLoadResult.Corrupt -> EnrollmentState.Corrupt(pinResult.reason)
-                        is ServerPinLoadResult.Ready ->
-                            EnrollmentState.Ready(credential.publicKey.copyOf())
+                        is ServerPinLoadResult.Ready -> EnrollmentState.Ready(credential.publicKey)
                     }
                 } finally {
-                    credential.secretKey.fill(0)
+                    credential.destroy()
                 }
             }
         }
@@ -42,7 +41,7 @@ class EnrollmentRepository(
             is CredentialLoadResult.Corrupt ->
                 throw AuthenticationException("stored CURVE credential is corrupt: ${existing.reason}")
             is CredentialLoadResult.Ready -> {
-                existing.credential.secretKey.fill(0)
+                existing.credential.destroy()
                 throw AuthenticationException("CURVE identity already exists")
             }
             CredentialLoadResult.Unenrolled -> Unit
@@ -50,9 +49,9 @@ class EnrollmentRepository(
         val credential = generator.generate()
         return try {
             credentials.save(credential)
-            credential.publicKey.copyOf()
+            credential.publicKey
         } finally {
-            credential.secretKey.fill(0)
+            credential.destroy()
         }
     }
 
@@ -78,7 +77,7 @@ class EnrollmentRepository(
             }
             configurator.configure(socket, credential, pin)
         } finally {
-            credential.secretKey.fill(0)
+            credential.destroy()
         }
     }
 
