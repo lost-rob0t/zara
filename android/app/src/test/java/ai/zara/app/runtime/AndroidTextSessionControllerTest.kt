@@ -50,6 +50,26 @@ class AndroidTextSessionControllerTest {
     }
 
     @Test
+    fun text_timeout_invalidates_session_and_schedules_bounded_reconnect() {
+        val client = FakeTextSessionClient()
+        val scheduler = FakeReconnectScheduler()
+        val controller = connectedController(client, scheduler)
+
+        val future = controller.submitText("hello")
+        client.turnFuture.completeExceptionally(TextRequestTimeoutException("timed out"))
+        try {
+            future.get()
+        } catch (_: Exception) {
+        }
+
+        assertEquals(ServerConnection.Reconnecting(2, 1), controller.state().server)
+        assertEquals(2L, controller.state().generation)
+        assertEquals(null, controller.state().sessionId)
+        assertEquals(1, client.disconnectCalls)
+        assertEquals(listOf(250L), scheduler.delays)
+    }
+
+    @Test
     fun stale_turn_completion_cannot_mutate_new_generation() {
         val client = FakeTextSessionClient()
         val scheduler = FakeReconnectScheduler()
