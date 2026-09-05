@@ -7,6 +7,29 @@ import org.junit.Test
 
 class ZaraTextClientActorTest {
 
+    @Test fun `connect negotiates an empty capability snapshot before becoming ready`() {
+        val dealer = ScriptedTextDealer(
+            responses = listOf(
+                server("{\"body\":{\"max_payload_bytes\":4194304,\"max_payload_frame_bytes\":1048576,\"max_payload_frames\":16,\"version\":1},\"id\":\"hello-ok\",\"payload_count\":0,\"reply_to\":\"req-1\",\"session_id\":\"session-1\",\"timestamp_ns\":2,\"type\":\"hello.ok\"}"),
+                server("{\"body\":{\"capabilities\":[]},\"id\":\"caps-ok\",\"payload_count\":0,\"reply_to\":\"req-caps\",\"session_id\":\"session-1\",\"timestamp_ns\":3,\"type\":\"capability.snapshot.ok\"}"),
+            )
+        )
+        val client = ZaraTextClientActor(
+            dealerFactory = TextDealerFactory { dealer },
+            requestIds = sequenceOf("req-1", "req-caps").iterator(),
+            timestamps = sequenceOf(1L, 2L).iterator(),
+        )
+
+        assertEquals(
+            ConnectedTextSession(1, "session-1"),
+            client.connect(ServerProfile.create("tcp://zara.example:7731"), 1).get(),
+        )
+        assertEquals(2, dealer.sent.size)
+        assertEquals(true, dealer.sent[1][1].decodeToString().contains("\"type\":\"capability.snapshot\""))
+        assertEquals(true, dealer.sent[1][1].decodeToString().contains("\"capabilities\":[]"))
+        client.close()
+    }
+
     @Test fun `actor performs hello then real typed text turn on one dealer owner`() {
         val dealer = ScriptedTextDealer(
             responses = listOf(
