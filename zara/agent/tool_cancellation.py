@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import threading
-from typing import Annotated, Optional
+from types import MappingProxyType
+from typing import Annotated, Mapping, Optional
 
 from langgraph.prebuilt import InjectedState
 
@@ -30,22 +31,29 @@ ToolCancellationArg = Annotated[
     ToolCancellation,
     InjectedState(_CANCELLATION_STATE_KEY),
 ]
-"""Hidden ToolNode-injected cancellation argument for cooperative tools."""
+"""Model-hidden cancellation dependency for cooperatively cancellable tools."""
 
 
 class _ToolCancellationSignal:
-    __slots__ = ("_event", "view")
+    __slots__ = ("_event", "view", "_injected_state")
 
     def __init__(self) -> None:
         self._event = threading.Event()
         self.view = ToolCancellation(self._event)
+        self._injected_state = MappingProxyType(
+            {_CANCELLATION_STATE_KEY: self.view}
+        )
+
+    @property
+    def injected_state(self) -> Mapping[str, ToolCancellation]:
+        return self._injected_state
 
     def cancel(self) -> None:
         self._event.set()
 
 
 def new_tool_cancellation_signal() -> _ToolCancellationSignal:
-    """Create the private Core-owned signal for one approved invocation."""
+    """Create Core-owned state for one approved tool invocation."""
     return _ToolCancellationSignal()
 
 
