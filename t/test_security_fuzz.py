@@ -7,7 +7,7 @@ import string
 from pathlib import Path
 
 import pytest
-import zmq
+from zmq.utils import z85
 
 from zara.principals import PrincipalContext
 from zara.security import Capability, KeyNotActive, SecurityError, SecurityRegistry
@@ -51,6 +51,11 @@ def _jsonish(rng: random.Random, depth: int = 0):
     return bool(rng.getrandbits(1))
 
 
+def _valid_curve_key(rng: random.Random) -> bytes:
+    raw = bytes(rng.getrandbits(8) for _ in range(32))
+    return z85.encode(raw)
+
+
 def _invalid_curve_key(public_key: bytes, rng: random.Random) -> str | bytes:
     key = public_key.decode("ascii")
     mutation = rng.randrange(6)
@@ -76,7 +81,7 @@ def test_curve_public_key_mutation_fuzz_fails_closed(seed: int):
     principal = PrincipalContext.local_owner()
 
     for index in range(32):
-        public_key, _secret_key = zmq.curve_keypair()
+        public_key = _valid_curve_key(rng)
         malformed = _invalid_curve_key(public_key, rng)
         with pytest.raises(ValueError):
             registry.enroll(
