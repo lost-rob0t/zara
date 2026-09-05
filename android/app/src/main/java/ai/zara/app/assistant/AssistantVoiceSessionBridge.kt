@@ -49,15 +49,70 @@ internal fun planAssistantVoiceStart(
 
 internal fun AndroidAppSession.startAssistantVoice(
     microphonePermissionGranted: Boolean,
+    lifecycleFence: AssistantLifecycleFence,
+    lifecycleToken: Long,
 ): CompletableFuture<Unit> {
     assessAssistantRole()
-    return when (val plan = planAssistantVoiceStart(state(), microphonePermissionGranted)) {
-        AssistantVoiceStartPlan.StartNow -> pressToTalk(true)
-        is AssistantVoiceStartPlan.Reconnect ->
-            connect(plan.endpoint).thenCompose { pressToTalk(true) }
+    val start = when (val plan = planAssistantVoiceStart(state(), microphonePermissionGranted)) {
+        AssistantVoiceStartPlan.StartNow ->
+            startAssistantCaptureIfCurrent(lifecycleFence, lifecycleToken)
+        is AssistantVoiceStartPlan.Reconnect -> {
+            if (!lifecycleFence.isCurrent(lifecycleToken)) {
+                failedFuture(AssistantInvocationInvalidated())
+            } else {
+                connect(plan.endpoint).thenCompose {
+                    startAssistantCaptureIfCurrent(lifecycleFence, lifecycleToken)
+                }
+            }
+        }
         is AssistantVoiceStartPlan.Reject -> failedFuture(IllegalStateException(plan.reason))
     }
+    return start.thenCompose {
+        if (lifecycleFence.isCurrent(lifecycleToken)) {
+            CompletableFuture.completedFuture(Unit)
+        } else {
+            cancelInvalidatedAssistantCapture()
+        }
+    }
 }
+
+private fun AndroidAppSession.startAssistantCaptureIfCurrent(
+    lifecycleFence: AssistantLifecycleFence,
+    lifecycleToken: Long,
+): CompletableFuture<Unit> =
+    if (lifecycleFence.isCurrent(lifecycleToken)) {
+        pressToTalk(true)
+    } else {
+        failedFuture(AssistantInvocationInvalidated())
+    }
+
+private fun AndroidAppSession.cancelInvalidatedAssistantCapture(): CompletableFuture<Unit> {
+    val result = CompletableFuture<Unit>()
+    cancelPushToTalk().whenComplete { _, cancelError ->
+        if (cancelError == null) {
+            result.completeExceptionally(AssistantInvocationInvalidated())
+        } else {
+            result.completeExceptionally(
+                IllegalStateException(
+                    "assistant invocation was invalidated and voice cancellation failed",
+                    unwrapCompletion(cancelError),
+                ),
+            )
+        }
+    }
+    return result
+}
+
+private fun unwrapCompletion(error: Throwable): Throwable {
+    var current = error
+    while (current.cause != null && current.cause !== current) {
+        current = current.cause!!
+    }
+    return current
+}
+
+private class AssistantInvocationInvalidated :
+    IllegalStateException("assistant invocation was invalidated")
 
 private fun <T> failedFuture(error: Throwable): CompletableFuture<T> =
     CompletableFuture<T>().also { it.completeExceptionally(error) }

@@ -18,8 +18,10 @@ import androidx.core.content.ContextCompat
 class ZaraVoiceInteractionSession(
     private val context: Context,
 ) : VoiceInteractionSession(context) {
+    private val application = context.applicationContext as ZaraApplication
     private val appSession: AndroidAppSession =
         (context.applicationContext as ZaraApplication).appSession
+    private val lifecycleFence = application.assistantLifecycleFence
     private val invocationGate = AssistantInvocationGate()
     private var statusView: TextView? = null
 
@@ -86,7 +88,12 @@ class ZaraVoiceInteractionSession(
         val permissionGranted =
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED
-        appSession.startAssistantVoice(permissionGranted).whenComplete { _, error ->
+        val lifecycleToken = lifecycleFence.beginStart()
+        appSession.startAssistantVoice(
+            permissionGranted,
+            lifecycleFence,
+            lifecycleToken,
+        ).whenComplete { _, error ->
             context.mainExecutor.execute {
                 if (error != null) {
                     invocationGate.startFailed()
