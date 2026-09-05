@@ -1,0 +1,32 @@
+:PROPERTIES:
+:ID:       zara-rage-388-plugin-tool-cancellation-r14
+:END:
+#+title: RAGE #388 — canonical plugin tool cancellation r14
+#+status: ACTIVE
+
+* Consumption
+- Issue :: #388
+- Immutable start :: a3032be8e60220d2e34dc138db1f79a953355f92
+- Scope :: Core plugin/tool runtime only. Zero =android/**= changes.
+
+* Recovery evidence
+- r13 exact head =480eb0f18d02e0009d26ba275d9293b159543738= was falsified by CI #1630: 4 focused cancellation failures / 1981 passes; Android and both mic lanes green; flake/package correctly skipped.
+- The same four failures occurred before plugin-body entry after preserving the public call name, disproving call-name mismatch as the root cause.
+- LangGraph ToolNode performs injected-argument processing inside final execution, after =awrap_tool_call=, and strips caller values classified as injected before invoking the resolved tool.
+- Upstream LangChain issue #35305 independently records broken injection semantics for dynamic tools.
+
+* Bounded design
+- Keep exactly one canonical LangGraph ToolNode and its existing approval/unload boundary.
+- Cancellable tools are wrapped once at ToolRegistry registration, never per invocation.
+- The stable transport keeps the original public name and model-facing schema, but uses a plain full execution schema so ToolNode does not classify =cancellation= as a framework-owned injected argument and strip Core's trusted value.
+- Core creates one private signal per approved invocation and overwrites any spoofed model value before ToolNode execution.
+- The stable transport forwards once to the original LangChain BaseTool; no second registry, executor, agent loop, runtime, ContextVar, shared per-tool slot, or Android-specific path.
+
+* Acceptance
+- Model schema excludes =cancellation=.
+- Running sync tool observes canonical turn cancellation before side effects.
+- Async tool sees cooperative signal before task cancellation.
+- Concurrent invocations remain isolated.
+- Approval rejection and unload prevent execution.
+- Model spoofing cannot replace the Core cancellation view.
+- Exact-head full Core -> flake -> package, Android compatibility, Arch mic, Ubuntu mic required before merge.
