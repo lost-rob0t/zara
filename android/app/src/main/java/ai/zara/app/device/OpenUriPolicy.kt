@@ -28,19 +28,21 @@ object OpenUriPolicy {
         require(scheme in allowedSchemes) { "URI scheme is not allowed" }
         require(parsed.rawUserInfo == null) { "URI userinfo is not allowed" }
         require(parsed.rawFragment == null) { "URI fragment is not allowed" }
-        val host = parsed.host
-        require(!host.isNullOrBlank()) { "URI host is required" }
+        require(!parsed.host.isNullOrBlank()) { "URI host is required" }
+        val authority = parsed.rawAuthority
+            ?: throw IllegalArgumentException("URI authority is required")
 
-        val path = parsed.rawPath?.takeIf(String::isNotEmpty) ?: "/"
-        val normalized = URI(
-            scheme,
-            null,
-            host,
-            parsed.port,
-            path,
-            parsed.rawQuery,
-            null,
-        ).normalize().toASCIIString()
+        val rebuilt = buildString {
+            append(scheme)
+            append("://")
+            append(authority)
+            append(parsed.rawPath?.takeIf(String::isNotEmpty) ?: "/")
+            parsed.rawQuery?.let {
+                append('?')
+                append(it)
+            }
+        }
+        val normalized = URI(rebuilt).normalize().toASCIIString()
         require(normalized.toByteArray(StandardCharsets.UTF_8).size <= MAX_URI_BYTES) {
             "normalized URI exceeds byte limit"
         }
