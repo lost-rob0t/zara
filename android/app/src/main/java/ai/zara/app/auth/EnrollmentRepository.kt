@@ -55,8 +55,14 @@ class EnrollmentRepository(
         }
     }
 
+    fun createIdentityZ85(): String = JeroMqCurveKeyCodec.encode(createIdentity())
+
     fun pinServer(publicKey: ByteArray) {
         serverPins.save(ServerPin(publicKey))
+    }
+
+    fun pinServerZ85(publicKey: String) {
+        pinServer(JeroMqCurveKeyCodec.decode(publicKey))
     }
 
     fun configure(socket: CurveSocketOptions) {
