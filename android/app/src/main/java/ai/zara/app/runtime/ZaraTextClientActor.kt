@@ -6,7 +6,6 @@ import ai.zara.app.voice.VoiceInboundMessage
 import ai.zara.app.voice.VoiceServerReply
 import ai.zara.app.voice.VoiceStreamEvent
 import ai.zara.app.voice.ZaraVoiceInboundCodec
-import ai.zara.app.voice.ZaraVoiceAckCodec
 import ai.zara.app.voice.ZaraVoiceCodec
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
@@ -50,6 +49,8 @@ class ZaraTextClientActor(
     private var session: ConnectedTextSession? = null
     private val correlations = RequestCorrelations(limit = 256)
     private var voiceStreamObserver: ((VoiceStreamEvent) -> Unit)? = null
+    private var voiceStreamFailureObserver: ((Throwable) -> Unit)? = null
+    private var voicePumpActive = false
     private var closed = false
 
     init {
@@ -58,6 +59,10 @@ class ZaraTextClientActor(
 
     fun setVoiceStreamObserver(observer: ((VoiceStreamEvent) -> Unit)?) {
         voiceStreamObserver = observer
+    }
+
+    fun setVoiceStreamFailureObserver(observer: ((Throwable) -> Unit)?) {
+        voiceStreamFailureObserver = observer
     }
 
     override fun connect(
@@ -151,24 +156,20 @@ class ZaraTextClientActor(
             var assistantCompletion: TextTurnResult? = null
             while (true) {
                 when (val event = receiveMessage(active)) {
-                    is TextServerMessage.Progress -> {
-                        verifyEvent(
-                            event.sessionId,
-                            event.turnId,
-                            accepted.turnId,
-                            event.conversationId,
-                            accepted.conversationId,
-                        )
-                    }
-                    is TextServerMessage.AssistantDelta -> {
-                        verifyEvent(
-                            event.sessionId,
-                            event.turnId,
-                            accepted.turnId,
-                            event.conversationId,
-                            accepted.conversationId,
-                        )
-                    }
+                    is TextServerMessage.Progress -> verifyEvent(
+                        event.sessionId,
+                        event.turnId,
+                        accepted.turnId,
+                        event.conversationId,
+                        accepted.conversationId,
+                    )
+                    is TextServerMessage.AssistantDelta -> verifyEvent(
+                        event.sessionId,
+                        event.turnId,
+                        accepted.turnId,
+                        event.conversationId,
+                        accepted.conversationId,
+                    )
                     is TextServerMessage.AssistantCompleted -> {
                         verifyEvent(
                             event.sessionId,
@@ -260,7 +261,12 @@ class ZaraTextClientActor(
         }
 
     override fun commitVoice(context: VoiceCaptureContext): CompletableFuture<Unit> =
-        voiceCommand(context, expectedType = "audio.input.committed", expectedSequence = null) { requestId, timestamp ->
+        voiceCommand(
+            context,
+            expectedType = "audio.input.committed",
+            expectedSequence = null,
+            startPumpAfterReply = true,
+        ) { requestId, timestamp ->
             ZaraVoiceCodec.encodeCommit(
                 requestId = requestId,
                 sessionId = context.sessionId,
@@ -282,6 +288,7 @@ class ZaraTextClientActor(
         }
 
     override fun disconnect(): CompletableFuture<Unit> = submit {
+        voicePumpActive = false
         session = null
         correlations.clear()
         dealer?.close()
@@ -302,6 +309,7 @@ class ZaraTextClientActor(
         context: VoiceCaptureContext,
         expectedType: String,
         expectedSequence: Long?,
+        startPumpAfterReply: Boolean = false,
         frames: (requestId: String, timestampNs: Long) -> List<ByteArray>,
     ): CompletableFuture<Unit> = submit {
         val current = session ?: throw StaleTextSessionException("voice client is not connected")
@@ -336,6 +344,7 @@ class ZaraTextClientActor(
                 }
             }
         }
+        if (startPumpAfterReply) startVoicePump()
         Unit
     }
 
@@ -344,19 +353,56 @@ class ZaraTextClientActor(
             val frames = active.receive(requestTimeoutMillis)
                 ?: throw TextRequestTimeoutException("ZARA/1 voice acknowledgement timed out")
             when (val inbound = ZaraVoiceInboundCodec.decode(frames)) {
-                is VoiceInboundMessage.Stream -> {
-                    val current = session ?: throw StaleTextSessionException("voice client is not connected")
-                    if (inbound.event.sessionId != current.sessionId) {
-                        throw ZaraWireException("voice stream event session is stale")
-                    }
-                    voiceStreamObserver?.invoke(inbound.event)
-                }
+                is VoiceInboundMessage.Stream -> dispatchVoiceStream(inbound.event)
                 is VoiceInboundMessage.Reply -> return inbound.reply
             }
         }
     }
 
+    private fun startVoicePump() {
+        if (voicePumpActive || closed || session == null || dealer == null) return
+        voicePumpActive = true
+        executor.execute(::pollVoiceEvents)
+    }
+
+    private fun pollVoiceEvents() {
+        if (!voicePumpActive || closed || session == null) return
+        val active = dealer ?: return
+        try {
+            val frames = active.receive(25)
+            if (frames == null) {
+                Thread.sleep(10)
+            } else {
+                when (val inbound = ZaraVoiceInboundCodec.decode(frames)) {
+                    is VoiceInboundMessage.Stream -> dispatchVoiceStream(inbound.event)
+                    is VoiceInboundMessage.Reply ->
+                        throw ZaraWireException("unsolicited voice acknowledgement")
+                }
+            }
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            voicePumpActive = false
+            return
+        } catch (error: Throwable) {
+            voicePumpActive = false
+            voiceStreamFailureObserver?.invoke(error)
+            return
+        }
+        if (voicePumpActive && !closed && session != null && dealer != null) {
+            executor.execute(::pollVoiceEvents)
+        }
+    }
+
+    private fun dispatchVoiceStream(event: VoiceStreamEvent) {
+        val current = session ?: throw StaleTextSessionException("voice client is not connected")
+        if (event.sessionId != current.sessionId) {
+            throw ZaraWireException("voice stream event session is stale")
+        }
+        voiceStreamObserver?.invoke(event)
+    }
+
     private fun replaceDealer(profile: ServerProfile) {
+        voicePumpActive = false
         dealer?.close()
         dealer = null
         val created = dealerFactory.create(profile.endpoint)
@@ -364,9 +410,17 @@ class ZaraTextClientActor(
     }
 
     private fun receiveMessage(active: TextDealer): TextServerMessage {
-        val frames = active.receive(requestTimeoutMillis)
-            ?: throw TextRequestTimeoutException("ZARA/1 response timed out")
-        return ZaraTextCodec.decode(frames)
+        while (true) {
+            val frames = active.receive(requestTimeoutMillis)
+                ?: throw TextRequestTimeoutException("ZARA/1 response timed out")
+            try {
+                val voiceEvent = ai.zara.app.voice.ZaraVoiceStreamCodec.decode(frames)
+                dispatchVoiceStream(voiceEvent)
+                continue
+            } catch (_: ZaraWireException) {
+                return ZaraTextCodec.decode(frames)
+            }
+        }
     }
 
     private fun verifySession(actual: String?, expected: String) {
