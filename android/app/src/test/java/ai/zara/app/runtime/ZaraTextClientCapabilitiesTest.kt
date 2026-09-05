@@ -1,5 +1,6 @@
 package ai.zara.app.runtime
 
+import ai.zara.app.device.DeviceActionResult
 import java.util.ArrayDeque
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertFalse
@@ -12,18 +13,28 @@ class ZaraTextClientCapabilitiesTest {
         val dealer = CapabilityDealer(
             listOf(
                 server(
-                    """{"body":{"max_payload_bytes":4194304,"max_payload_frame_bytes":1048576,"max_payload_frames":16,"version":1},"id":"hello-ok","payload_count":0,"reply_to":"hello-1","session_id":"session-1","timestamp_ns":1,"type":"hello.ok"}"""
+                    """{"body":{"max_payload_bytes":4194304,"max_payload_frame_bytes":1048576,"version":1},"id":"hello-ok","payload_count":0,"reply_to":"hello-1","session_id":"session-1","timestamp_ns":1,"type":"hello.ok"}"""
                 ),
                 server(
                     """{"body":{"capabilities":[{"id":"open_uri","version":1}]},"id":"caps-ok","payload_count":0,"reply_to":"caps-1","session_id":"session-1","timestamp_ns":2,"type":"capability.snapshot.ok"}"""
                 ),
             )
         )
+        val handler = object : DeviceActionHandler {
+            override fun availableCapabilities(): Set<DeviceCapability> =
+                setOf(DeviceCapability.OpenUri)
+
+            override fun execute(request: DeviceServerMessage.Request): DeviceActionResult =
+                DeviceActionResult.Completed
+
+            override fun cancel(cancel: DeviceServerMessage.Cancel) = Unit
+        }
         val client = ZaraTextClientActor(
             dealerFactory = TextDealerFactory { dealer },
             requestIds = listOf("hello-1", "caps-1").iterator(),
             timestamps = listOf(1L, 2L).iterator(),
-            deviceCapabilities = { setOf(DeviceCapability.OpenUri) },
+            deviceCapabilities = handler::availableCapabilities,
+            deviceActionHandler = handler,
         )
 
         try {
