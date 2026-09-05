@@ -1,0 +1,33 @@
+:PROPERTIES:
+:ID:       zara-rage-203-android-state-store-temp-isolation-r2
+:END:
+#+title: RAGE #203 — isolate Android state-store temp files across processes r2
+#+status: ACTIVE
+
+* Consumption
+- Issue :: #203
+- Immutable start :: 28f8afea91f8e3f389d9a28df6fe8089f56f86f4
+- Scope :: Android durable client-state persistence only. No Core/protocol/plugin changes.
+
+* Recovery
+- Prior PR #439 carried the same isolated persistence slice but became non-mergeable after canonical Android playback invalidation #433 landed.
+- r2 replays only the two Android persistence changes onto the exact new canonical master; no stale merge commit or unrelated transaction is retained.
+
+* Failure analysis
+- The app and VoiceInteraction service can run in separate Android processes while sharing noBackupFilesDir.
+- ClientStateStore.save used one fixed sibling .client-state.bin.tmp for every writer.
+- Concurrent writers or a killed process leaving that path unusable could make a later save fail before the existing atomic replace step.
+
+* Design
+- Create a unique sibling temp file for every save with Files.createTempFile.
+- Keep fsync-before-replace and atomic-move-with-safe-fallback semantics unchanged.
+- Delete only the temp file created by this save.
+- This removes fixed-temp ownership collisions; it does not claim semantic multi-writer merge/last-writer conflict resolution.
+
+* TDD
+- RED commit :: 5ecd8ddeaded04d9626a10297164b906701a61bb
+- GREEN commit :: 62f26669005e28154bbfafde715340ac262e0dd8
+- Regression :: stale legacy .client-state.bin.tmp directory must not block a valid process-recreation save; successful saves leave no generated temp siblings behind.
+
+* Gate
+- Fresh exact-head Android/native/APK/secret, repository/Nix/package, Arch mic, and Ubuntu mic CI required before promotion.
