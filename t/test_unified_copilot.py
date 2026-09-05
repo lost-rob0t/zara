@@ -16,6 +16,7 @@ from zara.desktop.conversation import ConversationService, ConversationStore
 from zara.desktop.state import DesktopRuntimeState, DesktopStatus
 from zara.desktop.visual_fixtures import REQUIRED_UI_FIXTURES, render_ui_fixtures
 from zara.desktop.windows import CopilotMode, CopilotWindow
+from zara.runtime import events
 
 
 def app() -> QApplication:
@@ -185,6 +186,61 @@ def test_compact_layout_removes_secondary_chrome_at_minimum_size(tmp_path):
         assert not window.sidebar.isHidden()
         assert not window.provider_label.isHidden()
         assert not window.status_frame.isHidden()
+    finally:
+        dispose(controller)
+
+
+def test_compact_short_messages_do_not_expand_into_large_blank_rows(tmp_path):
+    qt_app, controller, service = make_controller(tmp_path)
+    window = controller.window
+    try:
+        conversation_id = window.current_conversation_id
+        service.add_user_message(
+            conversation_id,
+            "Short user message.",
+            request_id="short-user",
+        )
+        service.apply_event(
+            events.AssistantComplete(
+                conversation_id=conversation_id,
+                turn_id="short-assistant",
+                text="Short assistant response.",
+            )
+        )
+        window.load_conversation(conversation_id)
+        window.set_status(DesktopStatus(DesktopRuntimeState.READY, "Response ready"))
+        window.set_mode(CopilotMode.COMPACT)
+        window.resize(680, 460)
+        window.show()
+        qt_app.processEvents()
+
+        row_heights = [widget.height() for widget in window.message_widgets.values()]
+        assert row_heights
+        assert max(row_heights) <= 90, row_heights
+    finally:
+        dispose(controller)
+
+
+def test_compact_long_title_is_elided_instead_of_clipped(tmp_path):
+    qt_app, controller, service = make_controller(tmp_path)
+    window = controller.window
+    try:
+        full_title = (
+            "Investigate the complete deployment failure and explain every relevant "
+            "runtime dependency"
+        )
+        service.rename_conversation(window.current_conversation_id, full_title)
+        window.load_conversation(window.current_conversation_id)
+        window.set_mode(CopilotMode.COMPACT)
+        window.resize(680, 460)
+        window.show()
+        qt_app.processEvents()
+
+        rendered = window.title_label.text()
+        assert window.title_label.toolTip() == full_title
+        assert rendered != full_title
+        assert rendered.endswith("…")
+        assert window.title_label.fontMetrics().horizontalAdvance(rendered) <= window.title_label.width()
     finally:
         dispose(controller)
 
