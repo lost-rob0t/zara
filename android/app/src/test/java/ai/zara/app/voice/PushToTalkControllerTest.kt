@@ -107,6 +107,37 @@ class PushToTalkControllerTest {
             events,
         )
     }
+
+    @Test
+    fun permissionRevocationStopsRecorderAndCanonicalStreamExactlyOnce() {
+        val events = mutableListOf<String>()
+        val recorder = FakePcmRecorder(events)
+        val controller = PushToTalkController(
+            ManualVoiceCapture(OrderedIngress(events)),
+            recorder,
+        )
+        controller.press(
+            VoiceCaptureContext("session-1", null, "stream-1"),
+            permissionGranted = true,
+            connected = true,
+        )
+
+        controller.onMicrophonePermissionChanged(granted = false)
+        controller.onMicrophonePermissionChanged(granted = false)
+        controller.onMicrophonePermissionChanged(granted = true)
+
+        assertEquals(
+            listOf(
+                "start:stream-1",
+                "recorder.start",
+                "recorder.stop",
+                "cancel:stream-1",
+            ),
+            events,
+        )
+        assertFalse(recorder.running)
+        assertEquals(ManualVoiceState.Idle, controller.state())
+    }
 }
 
 private class FakePcmRecorder(
