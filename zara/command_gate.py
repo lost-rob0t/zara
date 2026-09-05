@@ -7,16 +7,18 @@ Prolog intents (e.g. ``ask``) hijack the conversation before the LLM had
 a chance to respond.
 
 This module exposes dependency-free routing signals: a curated set of command
-trigger verbs and a conservative target-only candidate extractor. The wake
-loop can validate a short target against Prolog app mappings when speech
-recognition drops a leading verb, while longer conversational text still
-skips Prolog and reaches the LLM directly.
+trigger verbs, conservative target extractors, and a bounded matcher for
+already-registered app targets. The matcher is discovery-only: it never owns
+or executes a capability, and ambiguous or unsafe candidates fail closed.
 """
 
 from __future__ import annotations
 
 import re
-from typing import FrozenSet, Optional
+from dataclasses import dataclass
+from typing import FrozenSet, Iterable, Optional
+
+from .wake_words import edit_distance
 
 
 # Verbs that signal a command-style utterance. Sourced from
@@ -91,7 +93,24 @@ COMMAND_TRIGGER_WORDS: FrozenSet[str] = frozenset(
     }
 )
 
+# Keep the fuzzy slice deliberately narrower than COMMAND_TRIGGER_WORDS.
+# ``start`` is intentionally excluded because it overlaps non-app intents such
+# as ``start voice mode``. Broader utterance rewriting remains owned by #122.
+OPEN_TARGET_VERBS: FrozenSet[str] = frozenset({"open", "launch", "run"})
+
 _TOKEN_SPLIT = re.compile(r"[^a-z0-9_]+")
+_SAFE_TARGET = re.compile(r"^[a-z0-9_]+$")
+_MAX_REGISTERED_TARGETS = 256
+
+
+@dataclass(frozen=True)
+class RegisteredTargetMatch:
+    """Result of bounded matching against an already-registered vocabulary."""
+
+    status: str
+    canonical: Optional[str] = None
+    distance: Optional[int] = None
+    alternatives: tuple[str, ...] = ()
 
 
 def _tokens(text: str) -> list[str]:
@@ -124,3 +143,97 @@ def target_only_candidate(text: str, max_words: int = 2) -> Optional[str]:
     if any(token in COMMAND_TRIGGER_WORDS for token in tokens):
         return None
     return "_".join(tokens)
+
+
+def open_target_candidate(
+    text: str,
+    *,
+    look_words: int = 3,
+) -> Optional[tuple[str, str]]:
+    """Extract one safe app target following an explicit open-style verb.
+
+    URI/path-shaped text is deliberately excluded. The current Prolog open
+    intent consumes one app token, so this helper mirrors that narrow semantic
+    boundary rather than attempting a general utterance rewrite.
+    """
+    raw = text or ""
+    if "://" in raw or "/" in raw or "\\" in raw:
+        return None
+    tokens = _tokens(raw)
+    if len(tokens) < 2:
+        return None
+    for index, token in enumerate(tokens[:look_words]):
+        if token not in OPEN_TARGET_VERBS:
+            continue
+        target_index = index + 1
+        if target_index >= len(tokens):
+            return None
+        target = tokens[target_index]
+        if not _SAFE_TARGET.fullmatch(target):
+            return None
+        return token, target
+    return None
+
+
+def _normalized_targets(registered_targets: Iterable[str]) -> tuple[str, ...]:
+    targets: list[str] = []
+    seen: set[str] = set()
+    for raw in registered_targets:
+        if len(targets) >= _MAX_REGISTERED_TARGETS:
+            break
+        if not isinstance(raw, str):
+            continue
+        target = raw.strip().casefold()
+        if not target or not _SAFE_TARGET.fullmatch(target) or target in seen:
+            continue
+        seen.add(target)
+        targets.append(target)
+    return tuple(targets)
+
+
+def match_registered_target(
+    candidate: str,
+    registered_targets: Iterable[str],
+) -> RegisteredTargetMatch:
+    """Match a target only against explicitly registered app names.
+
+    Exact matches always win. Fuzzy recovery is disabled for names shorter
+    than four characters, limited to one edit for 4-7 character names and two
+    edits for longer names, and only succeeds when the closest in-threshold
+    candidate is unique. Equal-distance ties are reported as ambiguous.
+    """
+    if not isinstance(candidate, str):
+        return RegisteredTargetMatch("no_match")
+    normalized = candidate.strip().casefold()
+    if not normalized or not _SAFE_TARGET.fullmatch(normalized):
+        return RegisteredTargetMatch("no_match")
+
+    targets = _normalized_targets(registered_targets)
+    if normalized in targets:
+        return RegisteredTargetMatch("exact", normalized, 0)
+    if len(normalized) < 4:
+        return RegisteredTargetMatch("no_match")
+
+    matches: list[tuple[int, str]] = []
+    for target in targets:
+        if len(target) < 4:
+            continue
+        threshold = 1 if max(len(normalized), len(target)) <= 7 else 2
+        if abs(len(normalized) - len(target)) > threshold:
+            continue
+        distance = edit_distance(normalized, target)
+        if distance <= threshold:
+            matches.append((distance, target))
+
+    if not matches:
+        return RegisteredTargetMatch("no_match")
+
+    best_distance = min(distance for distance, _ in matches)
+    best = tuple(sorted(target for distance, target in matches if distance == best_distance))
+    if len(best) != 1:
+        return RegisteredTargetMatch(
+            "ambiguous",
+            distance=best_distance,
+            alternatives=best,
+        )
+    return RegisteredTargetMatch("rewrite", best[0], best_distance)
