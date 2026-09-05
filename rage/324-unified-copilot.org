@@ -30,16 +30,134 @@ This iteration does not create a second runtime, daemon protocol, conversation s
 - What rendering path gives stable screenshots in current Nix/CI: Qt offscreen, Xvfb, or both?
 - Which geometry/accessibility assertions can hard-gate before perceptual image comparison is stable?
 
-* Acceptance-to-test map (initial)
-- one canonical window :: controller test asserts only one chat top-level instance is constructed
+* Acceptance-to-test map
+- one canonical window :: controller test asserts the process constructs one =CopilotWindow= and compatibility aliases point to that same object
 - mode transition preserves state :: Qt test preserves conversation ID, composer draft, messages, active turn
-- compact/expanded history :: Qt test selects another conversation in expanded mode without handoff
-- close/Escape compatibility :: existing hide behavior retained on canonical surface
-- minimum geometry :: composer/message viewport nonzero and non-overlapping at minimum supported size
-- long wrap :: deterministic long message does not widen window or clip outside viewport
-- screenshot evidence :: fixture test writes required PNGs plus manifest under =artifacts/ui/=
-- CI artifact transport :: existing =artifacts/= upload path includes UI fixture output
+- compact/expanded history :: Qt test exposes the existing history sidebar only in expanded mode and switches conversations in place
+- close/Escape compatibility :: canonical window hides in compact mode without terminating the desktop client
+- minimum geometry :: composer/message viewport remain nonzero and non-overlapping at the supported compact minimum
+- long wrap :: deterministic long message remains inside the viewport rather than widening/clipping the window
+- screenshot evidence :: deterministic renderer writes required PNGs plus =manifest.json=
+- CI artifact transport :: =scripts/test-all.sh= renders into =$ARTIFACT_DIR/ui= before the broader pytest phase, while Actions already uploads =artifacts/= with =if: always()=
+
+* Research findings
+** Existing ownership defect
+At the start commit =DesktopController= constructs both =FullChatWindow= and =QuickCopilotWindow=. Both point at one =ConversationService=, but the controller manually forwards conversation/runtime/command changes to both widgets and implements expansion by selecting the Quick conversation in Full Chat and hiding Quick.
+
+This does not duplicate durable data, but it duplicates presentation state and creates synchronization paths that should not exist once Quick is the primary application surface.
+
+** Full Chat contains the capabilities worth preserving
+=FullChatWindow= already owns the complete durable desktop UX primitives:
+- all messages in the selected conversation rather than the last six only;
+- conversation search/history selection;
+- rename/new chat;
+- provider metadata;
+- runtime/error rendering;
+- streaming message mutation without widget replacement;
+- cancellation;
+- one shared composer and message renderer.
+
+Therefore the smallest coherent migration is to promote this renderer into the canonical =CopilotWindow= and add compact/expanded presentation modes around it. Reimplementing chat from =QuickCopilotWindow= would throw away mature behavior and retain the old six-message projection bias.
+
+** Quick contains useful lifecycle details, not a renderer to preserve
+=QuickCopilotWindow= contributes useful compact-window behavior:
+- compact minimum/default geometry;
+- Escape-to-hide;
+- focus recovery on show;
+- multi-monitor geometry recovery;
+- hide/close geometry persistence.
+
+Those behaviors should move into the canonical Copilot rather than keeping the Quick renderer alive in the normal process.
+
+** Stable top-level flags preferred
+The old Quick window uses =Tool= and =WindowStaysOnTopHint= while Full Chat is a normal top-level widget. Changing top-level window flags during mode switches can recreate/hide the native window and is risky on Wayland/X11. The selected first implementation keeps one stable normal top-level window and changes only layout, geometry, sidebar/chrome visibility, and minimum size. If later UX research proves compact-only native flags essential, that becomes a separately tested change.
+
+** CI already supplies the artifact transport
+=scripts/test-all.sh= creates =$ARTIFACT_DIR= and the main Actions job uploads =artifacts/= even on failure. Screenshot CI therefore needs only an offline deterministic renderer plus a gate invocation; no new artifact backend is needed.
+
+** Offscreen is sufficient for the first evidence loop
+Existing Qt tests explicitly set =QT_QPA_PLATFORM=offscreen= and already exercise widgets successfully. For the first slice, use the same environment for deterministic widget grabs and structural assertions. Xvfb/perceptual baselines are deferred until actual artifacts demonstrate a need; introducing a second display stack now would increase variance before there is evidence it helps.
+
+* Selected architecture
+** Canonical class
+Introduce =CopilotMode(COMPACT, EXPANDED)= and =CopilotWindow= as the single normal desktop chat top-level.
+
+Implementation should reuse =FullChatWindow= behavior rather than duplicate it. A compatibility =FullChatWindow= import may remain temporarily for embedders/tests, but =DesktopController= must not instantiate a second chat window.
+
+** Controller aliases during migration
+The process owns:
+- =controller.window= -> canonical Copilot
+- =controller.copilot_window= -> same object
+- =controller.quick_window= -> same object as a compatibility alias during the migration
+
+The alias is deliberately identity-equal, proving one process-owned chat instance. Compatibility methods such as =show_quick_copilot= and =open_full_chat= become mode requests on the same object.
+
+** Presentation state
+Compact:
+- history sidebar hidden;
+- provider/model label hidden in healthy/ordinary view;
+- full-width runtime rail hidden when healthy and shown only for abnormal/actionable states;
+- tighter margins and composer height;
+- compact saved geometry/minimum size;
+- Escape hides.
+
+Expanded:
+- history/search/new/rename/settings sidebar visible;
+- provider/status detail available;
+- expanded saved geometry/minimum size;
+- same conversation widgets/composer; no handoff.
+
+** Geometry persistence
+Persist separate compact/expanded geometry keys. Recover each against current screens using the proven Quick geometry algorithm. Save before mode transition/hide/close, restore after changing mode.
+
+** Visual fixture harness
+Add an offline module that creates a temporary conversation store and a canonical Copilot against a fake bridge. It renders named deterministic states via =QWidget.grab()= to =$ARTIFACT_DIR/ui/*.png= and writes a manifest with fixture name, dimensions, theme, logical state, and path.
+
+Initial required fixtures are issue-owned and include empty, short chat, long wrap, streaming, error, disconnected, tool running/approval, voice listening/partial, expanded/history, and smallest supported size.
+
+* Rejected alternatives
+** Keep two windows but make them look the same
+Rejected because it preserves the manual synchronization/handoff architecture and continues to require two focus/geometry/rendering implementations.
+
+** Rebuild the canonical UI starting from Quick
+Rejected because Quick intentionally truncates to six messages and lacks history/search/rename/full durable rendering. This would be a regression-prone rewrite of already working Full Chat behavior.
+
+** Use a QStackedWidget with two complete chat renderers
+Rejected because it hides duplication inside one native window instead of removing it.
+
+** Switch to Qt Quick/QML now
+Rejected for this issue. Existing PySide6 Widgets are tested, packaged, and capable of the target UX. A toolkit migration would swamp the ownership/CI goals and destroy useful regression coverage.
+
+** Make exact PNG bytes a required gate immediately
+Rejected because font/raster variance can make raw equality noisy. Structural assertions are hard gates now; screenshot artifacts are review evidence. Golden/perceptual gating can be added after the render environment is proven stable.
+
+* Threat / failure analysis
+- Mode switch accidentally changes conversation :: assert conversation ID/messages/draft identity before and after.
+- Mode switch recreates a second window :: controller identity assertion and QApplication top-level inspection in focused tests.
+- Hidden sidebar still steals minimum width :: minimum-size geometry assertion and screenshot fixture.
+- Healthy status rail consumes compact viewport :: status visibility policy tied to coarse =DesktopStatus=.
+- Error text causes pathological expansion :: word-wrap/bounded detail fixture and geometry assertion.
+- Screenshot fixture leaks user config/data :: isolated temp DB, fake bridge, fixed theme/content, no default user DB.
+- Fixture calls network/provider/mic :: fake bridge and direct service/event injection only.
+- Screenshot generation fails before pytest :: run as its own deterministic phase; Actions uploads any already-created files with =if: always()=.
+- Legacy tests encode independent Quick/Full state :: rewrite those tests to assert same-instance mode semantics rather than preserving obsolete behavior.
+
+* TDD transaction
+** RED definition
+Commit =3158798d28e244086ed4941ca83e90d4547b805a= adds =t/test_unified_copilot.py= before production code. It requires:
+- exported =CopilotWindow= / =CopilotMode=;
+- one controller-owned instance;
+- state-preserving mode transitions;
+- =zara.desktop.visual_fixtures= and required PNG manifest output.
+
+Exact-head Actions run #1005 was started for this RED commit. Production changes remain blocked until the test job demonstrates the expected failure.
 
 * Research log
 ** 2026-09-05 - queue consumption
-Issue #324 consumed from =master= at exact SHA =16b1eda8...= after #323 was created as the parent queue/design epic. Research PR #328 is not treated as implementation authority; this RAGE iteration must independently verify current source/tests and may disprove details.
+Issue #324 consumed from =master= at exact SHA =16b1eda8...= after #323 was created as the parent queue/design epic. Research PR #328 is not treated as implementation authority; this RAGE iteration independently inspected current controller/windows/tests.
+
+** 2026-09-05 - source audit
+Confirmed the existing split is presentation-only over one durable conversation service. Selected Full Chat capability promotion + adaptive mode as the migration because it deletes synchronization rather than duplicating mature chat behavior.
+
+** 2026-09-05 - RED submitted
+Opened draft PR #332 at test-only head =3158798d...=. CI run #1005 is the RED proof target.
