@@ -18,6 +18,7 @@ import ai.zara.app.runtime.reduce
 import ai.zara.app.runtime.toRuntimeReadiness
 import ai.zara.app.voice.AndroidPcmOutput
 import ai.zara.app.voice.AndroidPcmRecorder
+import ai.zara.app.voice.AudioOutputFormat
 import ai.zara.app.voice.AuthenticatedVoiceIngress
 import ai.zara.app.voice.ManualVoiceCapture
 import ai.zara.app.voice.ManualVoiceSessionCoordinator
@@ -53,7 +54,10 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             initial,
             RuntimeEvent.EnrollmentObserved(enrollment.state().toRuntimeReadiness()),
         )
-        actor = ZaraTextClientActor(JeroMqTextDealerFactory(enrollment))
+        actor = ZaraTextClientActor(
+            dealerFactory = JeroMqTextDealerFactory(enrollment),
+            audioOutputFormats = listOf(AudioOutputFormat.pcmS16leMono(24_000)),
+        )
         controller = AndroidTextSessionController(initial, actor)
         voice = ManualVoiceSessionCoordinator(
             PushToTalkController(
