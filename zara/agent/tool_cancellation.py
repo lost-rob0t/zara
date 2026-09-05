@@ -5,9 +5,9 @@ from __future__ import annotations
 import contextvars
 import threading
 from contextlib import contextmanager
-from typing import Iterator, Optional
+from typing import Any, Iterator, Mapping, Optional
 
-from langchain_core.runnables.config import ensure_config, var_child_runnable_config
+from langchain_core.runnables.config import ensure_config
 
 
 _CONFIG_KEY = "_zara_tool_cancellation"
@@ -39,6 +39,17 @@ class _ToolCancellationSignal:
     def cancel(self) -> None:
         self._event.set()
 
+    def invocation_config(
+        self,
+        config: Optional[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Return an invocation config carrying this exact read-only token."""
+        invocation = dict(config or {})
+        configurable = dict(invocation.get("configurable") or {})
+        configurable[_CONFIG_KEY] = self.view
+        invocation["configurable"] = configurable
+        return invocation
+
 
 _current_tool_cancellation: contextvars.ContextVar[Optional[ToolCancellation]] = (
     contextvars.ContextVar("zara_tool_cancellation", default=None)
@@ -48,9 +59,9 @@ _current_tool_cancellation: contextvars.ContextVar[Optional[ToolCancellation]] =
 def current_tool_cancellation() -> Optional[ToolCancellation]:
     """Return cancellation state for the exact current tool invocation.
 
-    Direct invocations inherit Zara's local ContextVar. LangChain tool execution
-    may cross an executor boundary, so the canonical ToolNode path also carries
-    the same read-only view in RunnableConfig's private configurable context.
+    Direct invocations inherit Zara's local ContextVar. ToolNode execution can
+    cross an executor boundary, so Core also passes the same read-only view in
+    the explicit RunnableConfig used for that invocation.
     """
     cancellation = _current_tool_cancellation.get()
     if cancellation is not None:
@@ -71,17 +82,9 @@ def tool_cancellation_scope() -> Iterator[_ToolCancellationSignal]:
     """Bind one private signal around Zara's canonical tool execution boundary."""
     signal = _ToolCancellationSignal()
     token = _current_tool_cancellation.set(signal.view)
-
-    inherited = ensure_config()
-    inherited_configurable = dict(inherited.get("configurable") or {})
-    inherited_configurable[_CONFIG_KEY] = signal.view
-    invocation_config = dict(inherited)
-    invocation_config["configurable"] = inherited_configurable
-    config_token = var_child_runnable_config.set(invocation_config)
     try:
         yield signal
     finally:
-        var_child_runnable_config.reset(config_token)
         _current_tool_cancellation.reset(token)
 
 
