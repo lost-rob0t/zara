@@ -41,6 +41,30 @@ class AssistantRoleControllerTest {
         assertEquals(1, platform.heldChecks)
     }
 
+    @Test
+    fun `role request completion trusts observed role state not optimistic result`() {
+        val platform = FakeAssistantRolePlatform(available = true, held = false)
+        val observed = mutableListOf<RoleOutcome>()
+        val controller = AssistantRoleController(platform, observed::add)
+
+        val outcome = controller.completeRequest(reportedGranted = true)
+
+        assertEquals(RoleOutcome.NOT_HELD, outcome)
+        assertEquals(listOf(RoleOutcome.NOT_HELD), observed)
+    }
+
+    @Test
+    fun `role request completion reports held when platform confirms ownership`() {
+        val platform = FakeAssistantRolePlatform(available = true, held = true)
+        val observed = mutableListOf<RoleOutcome>()
+        val controller = AssistantRoleController(platform, observed::add)
+
+        val outcome = controller.completeRequest(reportedGranted = false)
+
+        assertEquals(RoleOutcome.HELD, outcome)
+        assertEquals(listOf(RoleOutcome.HELD), observed)
+    }
+
     private class FakeAssistantRolePlatform(
         private val available: Boolean,
         private val held: Boolean,
