@@ -7,10 +7,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,10 +31,24 @@ enum class AppSurface(val label: String) {
     Diagnostics("Diagnostics"),
 }
 
+data class RenderedTextTurn(
+    val userText: String,
+    val assistantText: String,
+    val success: Boolean,
+)
+
 @Composable
 fun ZaraApp(
     runtimeState: RuntimeState,
     sourceSha: String,
+    enrollmentPublicKey: String?,
+    lastTurn: RenderedTextTurn?,
+    operationError: String?,
+    operationBusy: Boolean,
+    onCreateIdentity: () -> Unit,
+    onPinServer: (String) -> Unit,
+    onConnect: (String) -> Unit,
+    onSendText: (String) -> Unit,
 ) {
     var selected by rememberSaveable { mutableStateOf(AppSurface.Chat) }
     MaterialTheme {
@@ -50,22 +67,81 @@ fun ZaraApp(
             },
         ) { padding ->
             when (selected) {
-                AppSurface.Chat -> ChatSurface(runtimeState, padding)
-                AppSurface.Connection -> ConnectionSurface(runtimeState, padding)
-                AppSurface.Settings -> SettingsSurface(runtimeState, padding)
-                AppSurface.Diagnostics -> DiagnosticsSurface(runtimeState, sourceSha, padding)
+                AppSurface.Chat -> ChatSurface(
+                    state = runtimeState,
+                    lastTurn = lastTurn,
+                    operationError = operationError,
+                    operationBusy = operationBusy,
+                    onSendText = onSendText,
+                    padding = padding,
+                )
+                AppSurface.Connection -> ConnectionSurface(
+                    state = runtimeState,
+                    operationError = operationError,
+                    operationBusy = operationBusy,
+                    onConnect = onConnect,
+                    padding = padding,
+                )
+                AppSurface.Settings -> SettingsSurface(
+                    state = runtimeState,
+                    enrollmentPublicKey = enrollmentPublicKey,
+                    operationError = operationError,
+                    operationBusy = operationBusy,
+                    onCreateIdentity = onCreateIdentity,
+                    onPinServer = onPinServer,
+                    padding = padding,
+                )
+                AppSurface.Diagnostics -> DiagnosticsSurface(
+                    state = runtimeState,
+                    sourceSha = sourceSha,
+                    operationError = operationError,
+                    padding = padding,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun ChatSurface(state: RuntimeState, padding: PaddingValues) {
+private fun ChatSurface(
+    state: RuntimeState,
+    lastTurn: RenderedTextTurn?,
+    operationError: String?,
+    operationBusy: Boolean,
+    onSendText: (String) -> Unit,
+    padding: PaddingValues,
+) {
+    var input by rememberSaveable { mutableStateOf("") }
+    val ready = state.server is ServerConnection.Connected &&
+        state.enrollment == EnrollmentReadiness.Ready
     SurfaceColumn(padding) {
         Text("Zara", style = MaterialTheme.typography.headlineMedium)
         Text(connectionLabel(state.server))
-        if (state.server is ServerConnection.Connected && state.enrollment == EnrollmentReadiness.Ready) {
-            Text("Authenticated text session ready. Chat composer wiring is next.")
+        lastTurn?.let { turn ->
+            Text("You: ${turn.userText}")
+            Text(if (turn.success) "Zara: ${turn.assistantText}" else "Zara error: ${turn.assistantText}")
+        }
+        operationError?.let { Text("Error: $it") }
+        if (ready) {
+            OutlinedTextField(
+                value = input,
+                onValueChange = { input = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Message") },
+                enabled = !operationBusy,
+            )
+            Button(
+                onClick = {
+                    val message = input.trim()
+                    if (message.isNotEmpty()) {
+                        input = ""
+                        onSendText(message)
+                    }
+                },
+                enabled = input.isNotBlank() && !operationBusy,
+            ) {
+                Text(if (operationBusy) "Working…" else "Send")
+            }
         } else {
             Text("Chat unavailable until an authenticated Zara session is connected.")
         }
@@ -73,22 +149,86 @@ private fun ChatSurface(state: RuntimeState, padding: PaddingValues) {
 }
 
 @Composable
-private fun ConnectionSurface(state: RuntimeState, padding: PaddingValues) {
+private fun ConnectionSurface(
+    state: RuntimeState,
+    operationError: String?,
+    operationBusy: Boolean,
+    onConnect: (String) -> Unit,
+    padding: PaddingValues,
+) {
+    var endpoint by rememberSaveable {
+        mutableStateOf(state.configuredProfile?.endpoint.orEmpty())
+    }
     SurfaceColumn(padding) {
         Text("Connection", style = MaterialTheme.typography.headlineMedium)
-        Text("server: ${state.configuredProfile?.endpoint ?: "not configured"}")
         Text("state: ${connectionLabel(state.server)}")
         Text("enrollment: ${enrollmentLabel(state.enrollment)}")
         Text("session: ${state.sessionId ?: "none"}")
+        OutlinedTextField(
+            value = endpoint,
+            onValueChange = { endpoint = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Zara server endpoint") },
+            supportingText = { Text("tcp://host:port") },
+            enabled = !operationBusy,
+            singleLine = true,
+        )
+        Button(
+            onClick = { onConnect(endpoint) },
+            enabled = endpoint.isNotBlank() &&
+                state.enrollment == EnrollmentReadiness.Ready &&
+                state.server !is ServerConnection.Connecting &&
+                !operationBusy,
+        ) {
+            Text("Connect")
+        }
+        operationError?.let { Text("Error: $it") }
     }
 }
 
 @Composable
-private fun SettingsSurface(state: RuntimeState, padding: PaddingValues) {
+private fun SettingsSurface(
+    state: RuntimeState,
+    enrollmentPublicKey: String?,
+    operationError: String?,
+    operationBusy: Boolean,
+    onCreateIdentity: () -> Unit,
+    onPinServer: (String) -> Unit,
+    padding: PaddingValues,
+) {
+    var serverPin by rememberSaveable { mutableStateOf("") }
     SurfaceColumn(padding) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium)
         Text("server endpoint: ${state.configuredProfile?.endpoint ?: "not configured"}")
-        Text("Endpoint editing and enrollment controls are not wired yet.")
+        Text("enrollment: ${enrollmentLabel(state.enrollment)}")
+        enrollmentPublicKey?.let { Text("client public key: $it") }
+        when (state.enrollment) {
+            EnrollmentReadiness.Unenrolled -> Button(
+                onClick = onCreateIdentity,
+                enabled = !operationBusy,
+            ) {
+                Text("Create client identity")
+            }
+            EnrollmentReadiness.AwaitingServerPin -> {
+                OutlinedTextField(
+                    value = serverPin,
+                    onValueChange = { serverPin = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Server CURVE public key") },
+                    enabled = !operationBusy,
+                    singleLine = true,
+                )
+                Button(
+                    onClick = { onPinServer(serverPin) },
+                    enabled = serverPin.isNotBlank() && !operationBusy,
+                ) {
+                    Text("Pin server key")
+                }
+            }
+            EnrollmentReadiness.Ready -> Text("Client identity and server pin are ready.")
+            EnrollmentReadiness.Corrupt -> Text("Enrollment storage is corrupt; connection is disabled.")
+        }
+        operationError?.let { Text("Error: $it") }
     }
 }
 
@@ -96,6 +236,7 @@ private fun SettingsSurface(state: RuntimeState, padding: PaddingValues) {
 private fun DiagnosticsSurface(
     state: RuntimeState,
     sourceSha: String,
+    operationError: String?,
     padding: PaddingValues,
 ) {
     SurfaceColumn(padding) {
@@ -106,6 +247,7 @@ private fun DiagnosticsSurface(
         Text("session: ${state.sessionId ?: "none"}")
         Text("conversation: ${state.selectedConversationId ?: "none"}")
         Text("enrollment: ${enrollmentLabel(state.enrollment)}")
+        operationError?.let { Text("last error: $it") }
     }
 }
 
