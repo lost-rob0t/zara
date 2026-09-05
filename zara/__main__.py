@@ -158,6 +158,13 @@ def _run_connected_text(endpoint: str, command_text: str) -> int:
     return exit_code
 
 
+def _default_daemon_endpoint() -> str:
+    """Resolve the same owner-private IPC endpoint used by ``zara-server``."""
+    from .server import ServerLease, default_zmq_endpoint
+
+    return default_zmq_endpoint(ServerLease()._runtime_dir())
+
+
 def main():
     config = init_config()
     stt_config = config.get_section("stt") if config is not None else {}
@@ -381,8 +388,9 @@ def main():
     elif args.command:
         command_text = " ".join(args.command)
 
-        if args.connect:
-            sys.exit(_run_connected_text(args.connect, command_text))
+        if not args.standalone:
+            endpoint = args.connect or _default_daemon_endpoint()
+            sys.exit(_run_connected_text(endpoint, command_text))
 
         from .console import ZaraConsole
 

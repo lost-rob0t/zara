@@ -1,0 +1,52 @@
+#+title: RAGE #133 — daemon-default CLI regression recovery
+
+* Iteration 1 — recover daemon-owned default command path
+:PROPERTIES:
+:issue: 133
+:rage_start: 59e9654176fa02eb4aab4cbed4e1532d02f71d2f
+:prior_art_pr: 223
+:END:
+
+** Regression
+- Issue #133 was completed historically, but exact current master still routes ordinary =zara <command>= through =ZaraConsole()= unless =--connect= is explicit.
+- This violates the daemon-capable default contract and can make one-shot timers process-owned rather than daemon-owned.
+- Stale PR #223 contains prior art for this behavior but is non-mergeable and 27 files wide; it will not be replayed wholesale.
+
+** Research / ownership
+- =zara/__main__.py= already has a bounded =_run_connected_text/= path using =ZmqZaraClient= and keeps =--standalone= as an explicit compatibility path.
+- The smallest recovery should reuse that client boundary, preserve explicit =--connect= and =--standalone= behavior, and never silently fall back to a private runtime when the daemon is unavailable.
+- Timer ownership remains daemon/runtime-owned; this slice changes client routing, not timer storage or the todo subsystem.
+- Android production is out of scope.
+
+** TDD plan
+1. Add a deterministic regression proving an ordinary timer command selects the daemon client path and never constructs =ZaraConsole=.
+2. Prove RED on the exact test-only head in GitHub Actions.
+3. Only after RED, implement the minimum endpoint/default routing change required by the test.
+4. Preserve explicit standalone behavior and bounded daemon failure behavior.
+5. Run focused client migration tests, =scripts/test-all.sh=, =nix flake check=, package/build gates, then exact-head Actions before merge.
+
+** Invariants
+- One daemon/runtime brain for the default supported command path.
+- =--standalone= remains explicit and never becomes an implicit failure fallback.
+- No second timer store or todo store.
+- No Android production changes.
+- No merge from stale/pending/failing/inconclusive CI.
+
+** RED evidence
+- Test-only head :: =1de5c5ad041a54868aaeaf6c4163bd9fbeab1b8b=
+- GitHub Actions :: CI #968, run =33934913624=
+- Result :: =test= failed in =Run all tests= as intended. =android skeleton gate=, =shared mic / Arch Linux=, and =shared mic / Ubuntu 24.04= all passed.
+- Interpretation :: the current production path still instantiated the private console for an ordinary timer command, so the regression is deterministic and isolated to core CLI routing.
+
+** GREEN candidate implementation
+- Production commit :: =2f5effd17e388637974ce2d6c7917bbece1db614=
+- Ordinary =zara <command>= now uses =_run_connected_text/= through =ZmqZaraClient= by default.
+- The default endpoint is derived from the same =ServerLease= runtime-directory resolver and =default_zmq_endpoint/= function used by =zara-server=, avoiding a hard-coded UID or machine path.
+- Explicit =--connect ENDPOINT= still overrides the endpoint.
+- Explicit =--standalone= remains the only path that constructs =ZaraConsole=.
+- Daemon connection failure remains a bounded error; there is no silent fallback to a private runtime.
+- No timer storage, todo, Android production, or alternate runtime code changed.
+
+** Remaining gate
+- Exact-head CI after this implementation commit is the authority for focused/full tests, flake/package checks, Android non-regression, and shared-mic non-regression.
+- Keep PR draft until that exact head is conclusively green and review/thread/mergeability state is revalidated.
