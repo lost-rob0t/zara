@@ -11,7 +11,11 @@ import zmq
 import zara.server as server_module
 from zara.principals import PrincipalContext
 from zara.security import Capability, KeyNotActive, SecurityRegistry
-from zara.security_admin import SecurityAdminClient, SecurityAdminServer
+from zara.security_admin import (
+    SecurityAdminClient,
+    SecurityAdminServer,
+    _connect_socket,
+)
 from zara.security_state import PersistentSecurityState, SecurityStateError
 from zara.server import ServerLease
 
@@ -85,7 +89,7 @@ def test_partial_admin_request_does_not_poison_next_owner_request(tmp_path: Path
     try:
         attacker = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         attacker.settimeout(1.0)
-        attacker.connect(str(state.control_socket_path))
+        _connect_socket(attacker, state.control_socket_path)
         attacker.sendall(b'{"version":1,"action":"enroll"')
         attacker.close()
 
