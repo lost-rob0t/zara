@@ -5,17 +5,18 @@
 - Branch :: =rage/174-android-device-capabilities=.
 - RAGE start commit :: =d5f9a57e437cee72e2dfeae97ed5124727608085=.
 - Dependencies :: #173 completed after merged #338 exact-head stock-daemon authenticated text interoperability; #159 merged via #336.
+- Recovery :: canonical Assistant/UI-closed runtime master from merged #373 was merged into this transaction via recovery helper #377.
 
 * Research
 ** Existing contract
 - Shared ZARA/1 #159 already owns =capability.snapshot= and the session-bound =device.action.request -> device.action.accepted -> device.action.result|device.action.error= lifecycle.
-- Android already has strict closed v1 capability encoding/ack decoding for =open_app= and =open_uri=, but #173 intentionally advertises an empty set until real Android adapters exist.
+- Android already had strict closed v1 capability encoding/ack decoding for =open_app= and =open_uri=, but #173 intentionally advertised an empty set until real Android adapters existed.
 - Availability advertisement is not authorization and Android OS permission cannot be granted remotely.
 
 ** First implementation slice
 Earliest useful/safest adapter is =open_uri= because it can be expressed through a closed URI schema and public Android ACTION_VIEW without package ids, arbitrary Intent extras, reflection, shell, or dynamic invocation.
 
-Before execution, Android must validate the request against the authenticated current session, closed capability id/version, bounded deadline/arguments, and URI policy. Only explicit reviewed schemes are accepted. Result/error must be typed and correlated; no optimistic success before Android resolves/starts a handler.
+Before execution, Android validates the request against the authenticated current session, closed capability id/version, bounded deadline/arguments, and URI policy. Only explicit reviewed schemes are accepted. Result/error is typed and correlated; no optimistic success is emitted before Android resolves/starts a handler.
 
 =open_app= follows only after a bounded app-alias/visibility design. Package identifiers remain platform adapter state, not portable semantic arguments.
 
@@ -25,23 +26,44 @@ Before execution, Android must validate the request against the authenticated cu
 - Registry keys are the closed =DeviceCapability= enum; no dynamic class, method, raw Intent, shell or reflection registration.
 - Snapshot derives from currently available registered adapters; no capability is advertised without an executable adapter.
 - Every action is bound to the current authenticated session and is rejected when stale, cancelled or expired.
-- =open_uri= accepts only bounded normalized URIs using explicitly approved public schemes and constructs a fresh ACTION_VIEW Intent locally.
+- =open_uri= accepts only bounded normalized HTTP(S) URIs and constructs a fresh ACTION_VIEW + CATEGORY_BROWSABLE intent locally.
+- URI userinfo, fragments, backslashes, controls, unsupported schemes, missing hosts and values over 2048 bytes fail closed.
 - No URI payload is written to routine diagnostics/logs.
-- Android acknowledges accepted only after request validation/ownership; terminal success is emitted only from actual platform result evidence available to the adapter.
+- Android acknowledges accepted only after request validation/ownership; terminal success is emitted only after the platform launcher returns successfully.
+- Device requests are consumed by the existing =ZaraTextClientActor= on its one authenticated DEALER, including while text or voice replies are interleaved. No second socket/pump/runtime is created.
+- Route-local terminal action ids are remembered in a bounded set and cleared on reconnect/disconnect so duplicate terminal actions fail closed without becoming durable authority.
 
-** TDD map
-1. RED: closed registry advertises only adapters that report available; unknown/unregistered ids cannot execute.
-2. RED: =open_uri= parser rejects blank/oversized/control-character/userinfo/unsupported-scheme/malformed inputs and permits reviewed HTTPS/HTTP URI forms.
-3. RED: stale session, expired deadline and wrong capability fail before adapter invocation.
-4. RED: adapter unavailable/no handler/launch exception produce typed terminal error; successful launch produces typed result.
-5. RED: capability snapshot changes when adapter availability changes and remains deterministic.
-6. Integrate request handling into the existing single Android ZARA/1 actor without a second socket/runtime.
+* TDD / implementation evidence
+- =8ebc039baa526faafa714d74e66796e967a29c78= RED :: require closed executable registry.
+- =97de0a48759c8e2b5d0aea50784d57c0feaf14d2= RED :: require bounded =open_uri= policy.
+- =a900a8b354f9b5da59115e072292c01b6ca85bfc= / =53f5bd73845ea14228b0094ba5751ab6c0a37784= GREEN :: registry + strict URI policy.
+- =ef0e5082f0c4664e019a97f92845c70196061616= RED :: typed platform adapter result behavior.
+- =a5b680c0a947d9fb05dd04e87a7802411370ea18= / =5e7a39d88e6b6ec95fe1225e13e61c82395ef8c9= GREEN :: closed result/error types + =OpenUriAdapter=.
+- =3608cb36e78ec9779ef357f544dd73914eb55a53= / =288201a12a634f3a7cc6a985cf5b354145dd545d= registry execution boundary + test fixture.
+- =8b0bb2d011b74c2a1dc09bddd9a59fbc59e7efa2= constrained Android ACTION_VIEW launcher.
+- =ae6d34b195347582b739d69fe9bb409428fb1e55= RED :: strict =device.action.request/cancel= decode and accepted/result/error golden wire.
+- =7e7eeac6a18af969621332aee93c784600af3219= GREEN :: strict closed device action wire codec.
+- =d5c283997cc6995fbc8747241ef423c728e39209= RED :: handshake snapshot must derive from executable capabilities.
+- =816ef34694480778a84a3d6ef6f98d494e68681d= RED :: real interleaved action on canonical actor; expired action must fail before handler/ack.
+- =4767d64847263ca3c734603b4f96621d51426a7d= handler boundary.
+- =52c7e3d95a2d9a193d7dd514045703f8d18406bb= GREEN :: canonical actor advertises live capabilities and executes interleaved action lifecycle on the same DEALER.
+- =036b599dfa2349a97db2935c004ffcf026cfe57e= registry-to-actor adapter.
+- =0a343c43c852fb9a1d4bf479c25ecceb74d858c0= AppSession wires exactly the executable =open_uri= adapter; =open_app= remains unadvertised.
+
+* Adversarial review
+- Capability advertisement and execution share one source; a non-empty advertisement without a handler fails before session acceptance.
+- Server acknowledgement must exactly equal the advertised set; server-added authority fails the connect.
+- Device request session must exactly equal current authenticated session.
+- Expired request fails before =device.action.accepted= and before adapter invocation.
+- Unadvertised capability, duplicate terminal action id and device action without a handler fail closed.
+- Adapter exceptions are reduced to bounded typed errors; raw platform exceptions/URI payloads are not serialized.
+- =device.action.cancel= is handed to the adapter boundary and made terminal. Current advertised adapter is synchronous; any future long-running adapter must add explicit cancellation ownership before advertisement.
 
 * Gate
-- Focused JVM tests for registry/action codec/platform adapter.
+- Focused JVM tests for registry/action codec/platform adapter/actor interleaving.
 - =scripts/test-android.sh=.
 - repository full tests / flake checks / package gate.
 - exact-head GitHub Actions, mergeability and review/thread checks.
 
 * Iteration 1
-- Status :: RESEARCH/DESIGN RECORDED; next action is deterministic RED registry/open_uri tests.
+- Status :: IMPLEMENTED; exact-head GitHub gate pending. Do not promote/merge until Android/full repository/package/shared-mic lanes are all green and review/thread state remains clear.
