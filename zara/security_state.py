@@ -295,7 +295,7 @@ class PersistentSecurityState:
             raise SecurityStateError(f"security state file has invalid size: {path.name}")
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        except (OSError, UnicodeError, ValueError, RecursionError) as error:
             raise SecurityStateError(f"invalid security state JSON: {path.name}") from error
         if not isinstance(payload, dict):
             raise SecurityStateError(f"security state root must be an object: {path.name}")
