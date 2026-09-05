@@ -106,6 +106,28 @@ class AndroidTextSessionControllerTest {
     }
 
     @Test
+    fun stale_connect_failure_cannot_schedule_duplicate_current_generation_retry() {
+        val client = FakeTextSessionClient()
+        val scheduler = FakeReconnectScheduler()
+        val controller = connectedController(client, scheduler)
+
+        controller.connectionLost("network")
+        scheduler.runNext()
+        assertEquals(listOf(1L, 2L), client.connectGenerations)
+
+        controller.connectionLost("network-again")
+        assertEquals(ServerConnection.Reconnecting(3, 2), controller.state().server)
+        assertEquals(listOf(250L, 500L), scheduler.delays)
+        assertEquals(2, client.disconnectCalls)
+
+        client.failConnect(1, ZaraWireException("stale generation failed late"))
+
+        assertEquals(ServerConnection.Reconnecting(3, 2), controller.state().server)
+        assertEquals(listOf(250L, 500L), scheduler.delays)
+        assertEquals(2, client.disconnectCalls)
+    }
+
+    @Test
     fun connect_failure_enters_bounded_reconnect_state_and_schedules_retry() {
         val client = FakeTextSessionClient()
         val scheduler = FakeReconnectScheduler()
