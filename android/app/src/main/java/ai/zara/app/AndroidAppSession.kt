@@ -38,6 +38,10 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun state(): RuntimeState = controller.state()
 
+    fun setStateObserver(observer: ((RuntimeState) -> Unit)?) {
+        controller.setStateObserver(observer)
+    }
+
     fun enrollmentPublicKeyZ85(): String? = when (val current = enrollment.state()) {
         EnrollmentState.Unenrolled, is EnrollmentState.Corrupt -> null
         is EnrollmentState.AwaitingServerPin -> JeroMqCurveKeyCodec.encode(current.publicKey)
