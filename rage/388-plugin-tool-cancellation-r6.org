@@ -1,0 +1,47 @@
+#+title: RAGE #388 — plugin tool cancellation r6
+
+* Transaction
+- Consumed issue :: #388
+- Immutable RAGE start :: =bff04e48423fb4a9a935a8b69d980df33c701878=
+- Branch :: =rage/388-plugin-tool-cancellation-r6=
+- Scope :: Zara Core only; zero =android/**= changes.
+
+* Prior iteration evidence
+- r5 exact head =4e792febeb7b0ebdf834d14810f0676aa9d50ffb= failed CI #1518 deterministically.
+- Android APK/native/secret inspection and Ubuntu/Arch shared-mic lanes were green.
+- Core ran 1983 tests with three failures, all proving tools never observed the cancellation token before entering their bodies.
+- The =ToolNode(..., awrap_tool_call=...)= + ContextVar architecture is rejected. PR #413 is closed unmerged and the failure evidence is preserved on issue #388.
+
+* Research restart
+- Zara already owns the exact post-approval/post-availability invocation in =create_tools_node()=: one validated tool call is converted to one =AIMessage= and passed through the canonical =ToolNode.ainvoke()= path.
+- Cancellation terminal ownership already sits in the surrounding =gated_tools_node= =CancelledError= handler via typed =ToolCancelled(reason="turn cancelled")=.
+- Therefore cancellation lifecycle should be bound at Zara's own exact invocation boundary, not delegated to a dependency interceptor whose context propagation has failed under the pinned stack.
+
+* Selected r6 architecture
+- Preserve ordinary =ToolNode(tools)= with no execution interceptor.
+- After approval and unload/availability checks and immediately before the one exact =ToolNode.ainvoke()=, bind one private cancellation signal for that invocation.
+- Run the canonical =ainvoke()= as the owned child task and shield it from outer cancellation long enough to set the cooperative signal first.
+- On outer cancellation: signal first, cancel the owned child task, await its cancellation/cleanup, publish the existing single typed =ToolCancelled= terminal event, then re-raise.
+- Expose only the read-only =ToolCancellation= view to plugin code. No model argument, process identifier, registry bypass, second runtime, or cancellation side channel.
+
+* Adversarial invariants
+- Rejected/unavailable tools never receive a cancellation scope.
+- Concurrent invocations cannot signal one another.
+- A plugin cannot set, replace, retarget, or suppress Core cancellation.
+- Approval remains authoritative before execution.
+- Tool result normalization and terminal events remain owned by the existing gated tools node.
+- The implementation must work for both async tools and synchronous tools delegated by LangChain.
+
+* TDD map
+- RED-1 :: a running sync tool sees the Core token and observes it before owned side effects after cancellation.
+- RED-2 :: an async tool sees the same token and sees it signalled before =CancelledError=.
+- RED-3 :: cancelling one concurrent invocation does not signal another.
+- RED-4 :: rejected and unloaded tools never enter cancellation scope.
+
+* Gate
+- Focused cancellation acceptance tests.
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- exact-head GitHub CI including Android compatibility and both shared-mic lanes.
+- zero unresolved review threads before expected-head merge.
