@@ -80,6 +80,33 @@ class ProtocolRemoteError(RuntimeError):
         self.retryable = retryable
 
 
+class DeviceCapabilityUnavailable(RuntimeError):
+    pass
+
+
+class DeviceActionCancelled(RuntimeError):
+    pass
+
+
+class DeviceActionRemoteError(RuntimeError):
+    def __init__(self, code: str, message: str = "device action failed") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+@dataclass(frozen=True)
+class DeviceActionResult:
+    action_id: str
+    capability: str
+    outcome: str
+
+
+class DeviceActionHandle(concurrent.futures.Future):
+    def __init__(self, action_id: str) -> None:
+        super().__init__()
+        self.action_id = action_id
+
+
 def _normalize_audio_output_format(value: object) -> dict[str, object]:
     if not isinstance(value, dict) or set(value) != _AUDIO_OUTPUT_FORMAT_KEYS:
         raise ValueError("audio output format requires codec, sample_rate and channels")
@@ -199,6 +226,7 @@ class _RouteState:
     conversation_id: Optional[str] = None
     audio_output: bool = False
     audio_inputs: dict[str, _AudioInputState] = field(default_factory=dict)
+    capabilities: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -224,6 +252,16 @@ class _RequestRoute:
 class _ApprovalOwner:
     route: bytes
     session_id: str
+
+
+@dataclass
+class _DeviceActionPending:
+    route: bytes
+    principal_id: str
+    session_id: str
+    capability: str
+    future: DeviceActionHandle
+    accepted: bool = False
 
 
 class ZaraZmqGateway:
@@ -265,6 +303,7 @@ class ZaraZmqGateway:
         self._approval_owners: dict[tuple[str, str], _ApprovalOwner] = {}
         self._replay: OrderedDict[tuple[str, str], _ReplayEntry] = OrderedDict()
         self._inflight: dict[tuple[str, str], _InflightEntry] = {}
+        self._device_actions: dict[str, _DeviceActionPending] = {}
         self._event_subscription = None
         self._lock = threading.RLock()
         self._generation = 0
@@ -286,6 +325,10 @@ class ZaraZmqGateway:
             self._approval_owners.clear()
             self._replay.clear()
             self._inflight.clear()
+            for pending in self._device_actions.values():
+                if not pending.future.done():
+                    pending.future.set_exception(ClientDisconnected("gateway restarted"))
+            self._device_actions.clear()
             self._route_outbound.clear()
             self._stop.clear()
             self._started = concurrent.futures.Future()
@@ -382,6 +425,11 @@ class ZaraZmqGateway:
             inflight.routes[:] = [
                 candidate for candidate in inflight.routes if candidate.route != route
             ]
+        for action_id, pending in tuple(self._device_actions.items()):
+            if pending.route == route:
+                self._device_actions.pop(action_id, None)
+                if not pending.future.done():
+                    pending.future.set_exception(ClientDisconnected("device route disconnected"))
         return state
 
     def _drop_route(self, route: bytes) -> None:
@@ -406,6 +454,206 @@ class ZaraZmqGateway:
             self._cancel_audio_inputs(dropped_state)
             return False
         return True
+
+    def _route_for_session_locked(self, principal_id: str, session_id: str) -> tuple[bytes, _RouteState] | None:
+        matches = [
+            (route, state)
+            for route, state in self._routes.items()
+            if state.ready
+            and state.principal_id == principal_id
+            and state.session_id == session_id
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    def capabilities_for(self, principal_id: str, session_id: str) -> frozenset[str]:
+        with self._lock:
+            match = self._route_for_session_locked(principal_id, session_id)
+            return frozenset() if match is None else match[1].capabilities
+
+    def request_device_action(
+        self,
+        *,
+        principal_id: str,
+        session_id: str,
+        capability: str,
+        args: dict[str, object],
+        deadline_ns: int,
+        idempotency: str = "at_most_once",
+        trace_id: Optional[str] = None,
+    ) -> DeviceActionHandle:
+        if type(deadline_ns) is not int:
+            raise TypeError("deadline_ns must be an integer")
+        if deadline_ns <= _now_ns():
+            raise ValueError("device action deadline has expired")
+        action_id = _message_id()
+        message = ProtocolMessage(
+            type="device.action.request",
+            id=_message_id(),
+            session_id=session_id,
+            trace_id=trace_id,
+            timestamp_ns=_now_ns(),
+            payload_count=0,
+            body={
+                "action_id": action_id,
+                "capability": capability,
+                "args": dict(args),
+                "deadline_ns": deadline_ns,
+                "idempotency": idempotency,
+            },
+        )
+        encode_message(message, limits=self._limits)
+        future = DeviceActionHandle(action_id)
+        with self._lock:
+            match = self._route_for_session_locked(principal_id, session_id)
+            if match is None:
+                raise DeviceCapabilityUnavailable("device session is unavailable")
+            route, state = match
+            if capability not in state.capabilities:
+                raise DeviceCapabilityUnavailable(f"device capability is unavailable: {capability}")
+            if len(self._device_actions) >= self._config.pending_request_limit:
+                raise ClientBackpressureError("too many device actions are pending")
+            self._device_actions[action_id] = _DeviceActionPending(
+                route=route,
+                principal_id=principal_id,
+                session_id=session_id,
+                capability=capability,
+                future=future,
+            )
+        if not self._enqueue_outbound(route, message):
+            with self._lock:
+                self._device_actions.pop(action_id, None)
+            future.set_exception(ClientDisconnected("device route disconnected"))
+        return future
+
+    def cancel_device_action(self, action_id: str, *, reason: str = "cancelled") -> bool:
+        with self._lock:
+            pending = self._device_actions.pop(action_id, None)
+        if pending is None:
+            return False
+        message = ProtocolMessage(
+            type="device.action.cancel",
+            id=_message_id(),
+            session_id=pending.session_id,
+            timestamp_ns=_now_ns(),
+            payload_count=0,
+            body={"action_id": action_id, "reason": reason},
+        )
+        encode_message(message, limits=self._limits)
+        self._enqueue_outbound(pending.route, message)
+        if not pending.future.done():
+            pending.future.set_exception(DeviceActionCancelled(reason))
+        return True
+
+    def _device_action_pending(
+        self,
+        route: bytes,
+        state: _RouteState,
+        action_id: str,
+    ) -> _DeviceActionPending | None:
+        pending = self._device_actions.get(action_id)
+        if pending is None:
+            return None
+        if (
+            pending.route != route
+            or pending.principal_id != state.principal_id
+            or pending.session_id != state.session_id
+        ):
+            return None
+        return pending
+
+    def _handle_device_message(
+        self,
+        socket: zmq.Socket,
+        route: bytes,
+        state: _RouteState,
+        message: ProtocolMessage,
+    ) -> None:
+        if message.session_id != state.session_id:
+            self._send(
+                socket,
+                route,
+                _protocol_error(
+                    reply_to=message.id,
+                    code="stale_session",
+                    message="message session is stale",
+                    retryable=False,
+                ),
+            )
+            return
+        body = dict(message.body or {})
+        if message.type == "capability.snapshot":
+            capabilities = frozenset(entry["id"] for entry in body["capabilities"])
+            with self._lock:
+                current = self._routes.get(route)
+                if current is None or current.session_id != state.session_id:
+                    return
+                current.capabilities = capabilities
+            self._send(
+                socket,
+                route,
+                ProtocolMessage(
+                    type="capability.snapshot.ok",
+                    id=_message_id(),
+                    reply_to=message.id,
+                    session_id=state.session_id,
+                    timestamp_ns=_now_ns(),
+                    payload_count=0,
+                    body={
+                        "capabilities": [
+                            {"id": capability, "version": 1}
+                            for capability in sorted(capabilities)
+                        ]
+                    },
+                ),
+            )
+            return
+
+        action_id = body["action_id"]
+        with self._lock:
+            pending = self._device_action_pending(route, state, action_id)
+            if pending is None:
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="unknown_action",
+                        message="device action is unknown or stale",
+                        retryable=False,
+                    ),
+                )
+                return
+            if message.type == "device.action.accepted":
+                pending.accepted = True
+                return
+            if not pending.accepted:
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="action_not_accepted",
+                        message="device action has not been accepted",
+                        retryable=False,
+                    ),
+                )
+                return
+            self._device_actions.pop(action_id, None)
+
+        if message.type == "device.action.result":
+            if not pending.future.done():
+                pending.future.set_result(
+                    DeviceActionResult(
+                        action_id=action_id,
+                        capability=pending.capability,
+                        outcome=body["outcome"],
+                    )
+                )
+            return
+        if not pending.future.done():
+            pending.future.set_exception(
+                DeviceActionRemoteError(body["code"], body.get("message", "device action failed"))
+            )
 
     def _receive(self, socket: zmq.Socket) -> None:
         frames = socket.recv_multipart()
@@ -443,6 +691,14 @@ class ZaraZmqGateway:
                     retryable=True,
                 ),
             )
+            return
+        if message.type in {
+            "capability.snapshot",
+            "device.action.accepted",
+            "device.action.result",
+            "device.action.error",
+        }:
+            self._handle_device_message(socket, route, state, message)
             return
         if message.type == "ping":
             self._send(
@@ -1122,6 +1378,12 @@ class ZaraZmqGateway:
             self._drop_route(route)
 
     def close(self, timeout: Optional[float] = None) -> None:
+        with self._lock:
+            pending_actions = tuple(self._device_actions.values())
+            self._device_actions.clear()
+        for pending in pending_actions:
+            if not pending.future.done():
+                pending.future.set_exception(ClientDisconnected("gateway closed"))
         self._stop.set()
         thread = self._thread
         if thread is not None:
@@ -1875,6 +2137,7 @@ __all__ = [
     "ClientBackpressureError",
     "ClientDisconnected",
     "ClientNotReady",
+    "DeviceActionHandle",
     "ProtocolRemoteError",
     "TransportConfig",
     "ZaraZmqGateway",
