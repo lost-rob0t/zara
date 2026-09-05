@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, QRect, QSettings, QSize, Qt, Signal
+from PySide6.QtCore import QObject, QRect, QSize, Qt, Signal
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -19,7 +19,7 @@ from zara.desktop.conversation import (
     MessageStatus,
 )
 from zara.desktop.state import DesktopRuntimeState
-from zara.desktop.windows import QuickCopilotWindow
+from zara.desktop.windows import CopilotMode, CopilotWindow
 from zara.desktop.windows.quick import recover_quick_geometry
 from zara.runtime import events
 from zara.runtime.commands import CancelTurn, CommandReceipt, RestartRuntime, SubmitTurn
@@ -51,6 +51,7 @@ class FakeTray(QObject):
     toggle_requested = Signal()
     quick_requested = Signal()
     full_chat_requested = Signal()
+    settings_requested = Signal()
     restart_requested = Signal()
     diagnostics_requested = Signal()
     quit_requested = Signal()
@@ -119,6 +120,7 @@ def make_controller(tmp_path):
     )
     qt_app.processEvents()
     assert controller.quick_window is not None
+    assert controller.quick_window is controller.window
     return qt_app, controller, bridge, tray, service, database
 
 
@@ -127,10 +129,6 @@ def dispose_controller(controller: DesktopController) -> None:
     controller.tray.hide()
     controller.window.prepare_for_quit()
     controller.window.close()
-    if controller.quick_window is not None:
-        controller.quick_window.prepare_for_quit()
-        controller.quick_window.close()
-        controller.quick_window.deleteLater()
     controller.window.deleteLater()
     controller.setParent(None)
     controller.deleteLater()
@@ -142,7 +140,7 @@ def emit(bridge: FakeBridge, event) -> None:
     app().processEvents()
 
 
-def test_quick_is_one_reused_keyboard_first_window(tmp_path):
+def test_quick_alias_is_one_reused_keyboard_first_copilot(tmp_path):
     qt_app, controller, bridge, tray, service, _ = make_controller(tmp_path)
     quick = controller.quick_window
     assert quick is not None
@@ -151,6 +149,8 @@ def test_quick_is_one_reused_keyboard_first_window(tmp_path):
         tray.quick_requested.emit()
         qt_app.processEvents()
         assert controller.quick_window is original
+        assert controller.window is original
+        assert quick.mode is CopilotMode.COMPACT
         assert quick.isVisible()
         assert quick.composer.hasFocus()
 
@@ -197,6 +197,7 @@ def test_quick_is_one_reused_keyboard_first_window(tmp_path):
         tray.quick_requested.emit()
         qt_app.processEvents()
         assert controller.quick_window is original
+        assert quick.mode is CopilotMode.COMPACT
         assert quick.isVisible()
         assert quick.composer.hasFocus()
 
@@ -207,13 +208,15 @@ def test_quick_is_one_reused_keyboard_first_window(tmp_path):
         dispose_controller(controller)
 
 
-def test_quick_copilot_exposes_signal_cabin_visual_hierarchy(tmp_path):
+def test_compact_copilot_exposes_one_native_visual_hierarchy(tmp_path):
     _, controller, _, _, _, _ = make_controller(tmp_path)
     quick = controller.quick_window
     assert quick is not None
     try:
-        assert quick.objectName() == "zaraQuickCopilot"
-        assert quick.header_frame.objectName() == "zaraQuickHeader"
+        assert isinstance(quick, CopilotWindow)
+        assert quick.objectName() == "zaraCopilot"
+        assert quick.header_frame.objectName() == "zaraConversationHeader"
+        assert quick.sidebar.isHidden()
         assert quick.status_frame.objectName() == "zaraRuntimeRail"
         assert quick.status_lamp.objectName() == "zaraStatusLamp"
         assert quick.status_lamp.property("runtimeState") == "starting"
@@ -243,16 +246,13 @@ def test_quick_send_action_tracks_meaningful_composer_text(tmp_path):
         dispose_controller(controller)
 
 
-def test_handoff_preserves_exact_shared_state_without_resubmit_or_duplication(tmp_path):
+def test_expand_preserves_exact_state_without_handoff_or_duplication(tmp_path):
     qt_app, controller, bridge, _, service, database = make_controller(tmp_path)
     quick = controller.quick_window
     assert quick is not None
     try:
         quick_id = quick.current_conversation_id
         other = service.create_conversation("Other history")
-        controller.window.load_conversation(other.conversation.id)
-        assert controller.window.current_conversation_id == other.conversation.id
-        assert quick.current_conversation_id == quick_id
 
         quick.composer.setPlainText("stream this")
         quick.submit_current_text()
@@ -297,11 +297,14 @@ def test_handoff_preserves_exact_shared_state_without_resubmit_or_duplication(tm
 
         conversation_count = len(service.list_conversations())
         command_count = len(bridge.commands)
+        original = controller.window
         controller.expand_quick_to_full_chat()
         qt_app.processEvents()
 
+        assert controller.window is original
+        assert controller.quick_window is original
+        assert quick.mode is CopilotMode.EXPANDED
         assert controller.window.current_conversation_id == quick_id
-        assert quick.current_conversation_id == quick_id
         assert len(service.list_conversations()) == conversation_count
         assert len(bridge.commands) == command_count
         assert service.get_state(quick_id).active_turn_id == "turn-shared"
@@ -322,7 +325,6 @@ def test_handoff_preserves_exact_shared_state_without_resubmit_or_duplication(tm
         assert len(tool_messages) == 1
         assert tool_messages[0].content == "search: running"
         assert tool_messages[0].id in quick.message_widgets
-        assert tool_messages[0].id in controller.window.message_widgets
 
         emit(
             bridge,
@@ -333,7 +335,6 @@ def test_handoff_preserves_exact_shared_state_without_resubmit_or_duplication(tm
             ),
         )
         assert "openrouter" in quick.provider_label.text()
-        assert "openrouter" in controller.window.provider_label.text()
 
         emit(
             bridge,
@@ -364,9 +365,10 @@ def test_handoff_preserves_exact_shared_state_without_resubmit_or_duplication(tm
             message.content for message in state.messages
         ]
 
-        controller.window.load_conversation(other.conversation.id)
+        controller.open_full_chat(other.conversation.id)
         assert controller.window.current_conversation_id == other.conversation.id
-        assert quick.current_conversation_id == quick_id
+        assert quick.current_conversation_id == other.conversation.id
+        assert quick.mode is CopilotMode.EXPANDED
     finally:
         dispose_controller(controller)
 
@@ -476,7 +478,7 @@ def test_stop_uses_canonical_active_turn_and_cancel_propagates(tmp_path):
         dispose_controller(controller)
 
 
-def test_quick_new_chat_is_durable_and_reopen_keeps_binding(tmp_path):
+def test_new_chat_is_durable_and_quick_full_actions_share_binding(tmp_path):
     qt_app, controller, _, tray, service, _ = make_controller(tmp_path)
     quick = controller.quick_window
     assert quick is not None
@@ -490,10 +492,13 @@ def test_quick_new_chat_is_durable_and_reopen_keeps_binding(tmp_path):
         tray.quick_requested.emit()
         qt_app.processEvents()
         assert quick.current_conversation_id == created_id
+        assert quick.mode is CopilotMode.COMPACT
 
         full_only = service.create_conversation("Full only")
-        controller.window.load_conversation(full_only.conversation.id)
-        assert quick.current_conversation_id == created_id
+        controller.open_full_chat(full_only.conversation.id)
+        assert controller.window.current_conversation_id == full_only.conversation.id
+        assert quick.current_conversation_id == full_only.conversation.id
+        assert quick.mode is CopilotMode.EXPANDED
     finally:
         dispose_controller(controller)
 
