@@ -125,6 +125,64 @@ class ManualVoiceSessionCoordinatorTest {
         assertEquals(listOf("start", "stop"), recorder.calls)
         assertEquals(ManualVoiceState.Idle, coordinator.state())
     }
+
+    @Test fun `connection loss cancels active capture exactly once`() {
+        val ingress = CoordinatorIngress()
+        val recorder = CoordinatorRecorder()
+        val coordinator = ManualVoiceSessionCoordinator(
+            PushToTalkController(ManualVoiceCapture(ingress), recorder),
+            streamIds = sequenceOf("mic-1").iterator(),
+        )
+        val connected = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Ready,
+            server = ServerConnection.Connected(2),
+            sessionId = "session-1",
+        )
+
+        coordinator.press(connected, permissionGranted = true)
+        val reconnecting = connected.copy(
+            server = ServerConnection.Reconnecting(3, 1),
+            sessionId = null,
+        )
+        coordinator.onRuntimeStateChanged(reconnecting)
+        coordinator.onRuntimeStateChanged(reconnecting)
+
+        assertEquals(
+            listOf("start:session-1:null:mic-1", "cancel:mic-1"),
+            ingress.calls,
+        )
+        assertEquals(listOf("start", "stop"), recorder.calls)
+        assertEquals(ManualVoiceState.Idle, coordinator.state())
+    }
+
+    @Test fun `replacement authenticated session invalidates stale capture`() {
+        val ingress = CoordinatorIngress()
+        val recorder = CoordinatorRecorder()
+        val coordinator = ManualVoiceSessionCoordinator(
+            PushToTalkController(ManualVoiceCapture(ingress), recorder),
+            streamIds = sequenceOf("mic-1").iterator(),
+        )
+        val connected = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Ready,
+            server = ServerConnection.Connected(2),
+            sessionId = "session-1",
+        )
+
+        coordinator.press(connected, permissionGranted = true)
+        coordinator.onRuntimeStateChanged(
+            connected.copy(
+                server = ServerConnection.Connected(3),
+                sessionId = "session-2",
+            )
+        )
+
+        assertEquals(
+            listOf("start:session-1:null:mic-1", "cancel:mic-1"),
+            ingress.calls,
+        )
+        assertEquals(listOf("start", "stop"), recorder.calls)
+        assertEquals(ManualVoiceState.Idle, coordinator.state())
+    }
 }
 
 private class CoordinatorIngress : VoiceIngress {
