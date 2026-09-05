@@ -1,8 +1,8 @@
 # Zara Desktop Copilot: Current Architecture
 
-**Status:** canonical desktop architecture after issue #324  
-**Primary target:** Linux desktop, with portable runtime/client boundaries  
-**UI toolkit:** PySide6 / Qt Widgets  
+**Status:** canonical desktop architecture after issue #324
+**Primary target:** Linux desktop, with portable runtime/client boundaries
+**UI toolkit:** PySide6 / Qt Widgets
 **Detailed research:** `docs/research/002-unified-copilot-voice-visual-ci.md` and RAGE log `rage/324-unified-copilot.org`
 
 > Historical note: earlier versions of this document intentionally designed Quick Copilot and Full Chat as separate top-level Qt windows. That decision is superseded by #323/#324. Git history preserves the old research; new implementation and review work must use the architecture below.
