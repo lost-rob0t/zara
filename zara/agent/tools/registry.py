@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Any, TYPE_CHECKING
 from langchain_core.tools import BaseTool as LangChainTool
 
 from ..approval import valid_tool_name
+from ..tool_cancellation import bind_tool_cancellation_transport, original_tool
 
 logger = logging.getLogger(__name__)
 
@@ -63,14 +64,15 @@ class ToolRegistry:
         if tool.name in self._tools:
             raise ValueError(f"Tool '{tool.name}' already registered")
         requires_approval = _tool_requires_approval(tool)
-        self._tools[tool.name] = tool
+        bound_tool = bind_tool_cancellation_transport(tool)
+        self._tools[bound_tool.name] = bound_tool
         if requires_approval:
-            self._registered_approval_required.add(tool.name)
+            self._registered_approval_required.add(bound_tool.name)
 
     def unregister_tool(self, name: str) -> Optional[LangChainTool]:
         tool = self._tools.pop(name, None)
         self._registered_approval_required.discard(name)
-        return tool
+        return original_tool(tool)
 
     def register_tools(self, tools: List[LangChainTool]):
         pending = list(tools)
@@ -86,7 +88,8 @@ class ToolRegistry:
         required_names = [
             tool.name for tool in pending if _tool_requires_approval(tool)
         ]
-        self._tools.update((tool.name, tool) for tool in pending)
+        bound_tools = [bind_tool_cancellation_transport(tool) for tool in pending]
+        self._tools.update((tool.name, tool) for tool in bound_tools)
         self._registered_approval_required.update(required_names)
 
     def unregister_tools(self, names: List[str]) -> None:
