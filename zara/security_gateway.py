@@ -328,7 +328,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             message = decode_message(frames[1:], limits=self._limits).message
         except (ZaraProtocolError, RecursionError):
             try:
-                self._quotas.acquire_request(principal_id)
+                self._quotas.consume_request_rate(principal_id)
             except QuotaExceeded:
                 self._send(
                     socket,
@@ -340,22 +340,27 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
                     ),
                 )
                 return
-            self._quotas.release_request(principal_id)
-            if not isinstance(message := None, ProtocolMessage):
-                self._send(
-                    socket,
-                    route,
-                    _security_error(
-                        reply_to=None,
-                        code="invalid_message",
-                        message="invalid protocol message",
-                    ),
-                )
+            self._send(
+                socket,
+                route,
+                _security_error(
+                    reply_to=None,
+                    code="invalid_message",
+                    message="invalid protocol message",
+                ),
+            )
             return
 
         started_ns = time.monotonic_ns()
+        request_slot_acquired = message.type != "hello"
         try:
-            self._quotas.acquire_request(principal_id)
+            if request_slot_acquired:
+                self._quotas.acquire_request(principal_id)
+            else:
+                # Reconnect must remain possible while an earlier runtime turn
+                # still owns the principal's concurrent slot. The handshake is
+                # still rate-limited, and connection quota is enforced below.
+                self._quotas.consume_request_rate(principal_id)
         except QuotaExceeded:
             self._audit(
                 enrolled=enrolled,
@@ -378,7 +383,8 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         try:
             authorize(enrolled, self._capability_for(message.type))
         except (AuthorizationDenied, KeyNotActive):
-            self._quotas.release_request(principal_id)
+            if request_slot_acquired:
+                self._quotas.release_request(principal_id)
             self._audit(
                 enrolled=enrolled,
                 message=message,
@@ -402,7 +408,8 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             try:
                 self._quotas.acquire_connection(principal_id)
             except QuotaExceeded:
-                self._quotas.release_request(principal_id)
+                if request_slot_acquired:
+                    self._quotas.release_request(principal_id)
                 self._audit(
                     enrolled=enrolled,
                     message=message,
@@ -425,7 +432,8 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         else:
             bound_user_id = self._route_user_ids.get(route)
             if bound_user_id is not None and bound_user_id != enrolled.user_id:
-                self._quotas.release_request(principal_id)
+                if request_slot_acquired:
+                    self._quotas.release_request(principal_id)
                 self._drop_route(route)
                 self._audit(
                     enrolled=enrolled,
@@ -461,7 +469,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             if runtime_pending:
                 self._runtime_quota_holds.add(replay_key)
 
-        if not runtime_pending:
+        if request_slot_acquired and not runtime_pending:
             self._quotas.release_request(principal_id)
 
         self._audit(
