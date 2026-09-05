@@ -79,6 +79,7 @@ class DesktopControlServer:
         self._socket: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
         self._closed = threading.Event()
+        self._owns_endpoint = False
 
     @property
     def endpoint(self) -> Path:
@@ -91,18 +92,31 @@ class DesktopControlServer:
         _recover_endpoint(self.endpoint)
 
         owner = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        bound = False
         try:
             owner.bind(str(self.endpoint))
+            bound = True
             os.chmod(self.endpoint, 0o600)
             owner.listen(8)
             owner.settimeout(0.1)
+        except OSError as error:
+            owner.close()
+            if bound:
+                self.endpoint.unlink(missing_ok=True)
+            if error.errno == errno.EADDRINUSE:
+                raise DesktopControlAlreadyRunning(
+                    "desktop control endpoint already has a live owner"
+                ) from error
+            raise
         except Exception:
             owner.close()
-            self.endpoint.unlink(missing_ok=True)
+            if bound:
+                self.endpoint.unlink(missing_ok=True)
             raise
 
         self._closed.clear()
         self._socket = owner
+        self._owns_endpoint = True
         self._thread = threading.Thread(
             target=self._serve,
             name="zara-desktop-control",
@@ -120,6 +134,9 @@ class DesktopControlServer:
         self._thread = None
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=1.0)
+        if not self._owns_endpoint:
+            return
+        self._owns_endpoint = False
         try:
             info = os.lstat(self.endpoint)
         except FileNotFoundError:
