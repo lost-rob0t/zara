@@ -1,0 +1,21 @@
+#+title: RAGE #29 — phrase-sized streaming TTS and persistent playback
+
+* Transaction
+- Consumed issue :: #29
+- Immutable RAGE start :: =f590e50fdccd6b25453c09ba697ab70c770c9692=
+- Branch :: =rage/29-streaming-tts-current=
+- Scope :: Zara Core only; no =android/**= production changes.
+- Dependency proof :: #28 is closed completed; #29 is the first open dependency-ready Phase 5 roadmap slice before #30/#31 and remains an owning blocker for final daemon Voice release #134.
+
+* Invariants
+- One canonical Zara runtime/turn/TTS path; no daemon-only or Android-specific synthesis stack.
+- Client-owned playback remains the daemon/mobile device boundary; local standalone playback compatibility must not create duplicate ownership.
+- Cancellation and stale-turn fencing remain canonical TurnCoordinator/runtime semantics.
+- No transcript, prompt, credential, provider secret, or audio payload is added to structured logs/latency records.
+- No provider/model switch and no new non-Nix dependency.
+
+* RAGE state
+- Research :: in progress from this immutable start.
+- Design/adversarial review :: pending research findings.
+- TDD realization :: forbidden until acceptance criteria are mapped to deterministic tests and the design gate passes.
+- Exact-head verification :: mandatory full repo/Nix/package/Android/shared-mic CI before merge.
