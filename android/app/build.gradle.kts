@@ -1,3 +1,4 @@
+import groovy.json.JsonSlurper
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
@@ -42,10 +43,28 @@ abstract class GeneratePortableSemanticAssets : DefaultTask() {
     }
 }
 
+fun githubPullRequestHeadSha(): String? {
+    val eventPath = providers.environmentVariable("GITHUB_EVENT_PATH").orNull ?: return null
+    val eventFile = file(eventPath)
+    if (!eventFile.isFile) return null
+    val payload = JsonSlurper().parse(eventFile) as? Map<*, *> ?: return null
+    val pullRequest = payload["pull_request"] as? Map<*, *> ?: return null
+    val head = pullRequest["head"] as? Map<*, *> ?: return null
+    return head["sha"] as? String
+}
+
 val androidNdkVersion = providers.environmentVariable("ZARA_ANDROID_NDK_VERSION").orNull
     ?: error("ZARA_ANDROID_NDK_VERSION must be supplied by the pinned Android Nix toolchain")
 val treallaSourceDir = providers.environmentVariable("ZARA_TREALLA_SOURCE_DIR").orNull ?: ""
 val treallaLibraryRoot = providers.environmentVariable("ZARA_TREALLA_LIBRARY_ROOT").orNull ?: ""
+val sourceSha = providers.environmentVariable("ZARA_SOURCE_SHA").orNull
+    ?: githubPullRequestHeadSha()
+    ?: providers.exec {
+        commandLine("git", "rev-parse", "HEAD")
+    }.standardOutput.asText.get().trim()
+require(sourceSha.matches(Regex("[0-9a-f]{40}"))) {
+    "Zara source SHA must be an immutable 40-character lowercase git SHA"
+}
 
 android {
     namespace = "ai.zara.app"
@@ -58,6 +77,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0-skeleton"
+        buildConfigField("String", "SOURCE_SHA", "\"$sourceSha\"")
 
         ndk {
             abiFilters += setOf("arm64-v8a", "x86_64")
@@ -71,6 +91,10 @@ android {
                 )
             }
         }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {
