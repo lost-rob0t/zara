@@ -26,6 +26,7 @@ from .approval import (
 )
 from . import stream_events
 from .sentence_chunker import SentenceChunker
+from .tool_cancellation import tool_cancellation_scope
 
 logger = logging.getLogger(__name__)
 
@@ -503,6 +504,26 @@ def create_tools_node(tool_registry, publisher=None, stream_publisher=None):
                 stream_events.ToolResult(name=tool_name, id=tool_run_id)
             )
 
+    async def invoke_tool_node(single_call: AIMessage, config: RunnableConfig):
+        with tool_cancellation_scope() as cancellation_signal:
+            invocation_config = cancellation_signal.invocation_config(config)
+            execution = asyncio.create_task(
+                tool_node.ainvoke(
+                    {"messages": [single_call]},
+                    invocation_config,
+                )
+            )
+            try:
+                return await asyncio.shield(execution)
+            except asyncio.CancelledError:
+                cancellation_signal.cancel()
+                execution.cancel()
+                try:
+                    await execution
+                except asyncio.CancelledError:
+                    pass
+                raise
+
     async def gated_tools_node(
         state: Dict[str, Any],
         config: RunnableConfig,
@@ -578,10 +599,7 @@ def create_tools_node(tool_registry, publisher=None, stream_publisher=None):
             )
             single_call = AIMessage(content="", tool_calls=[tool_call])
             try:
-                output = await tool_node.ainvoke(
-                    {"messages": [single_call]},
-                    config,
-                )
+                output = await invoke_tool_node(single_call, config)
             except asyncio.CancelledError:
                 publish(
                     events.ToolCancelled(
