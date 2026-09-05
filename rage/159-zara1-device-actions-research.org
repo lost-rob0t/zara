@@ -1,0 +1,34 @@
+#+title: RAGE #159 — ZARA/1 device-action research
+#+property: issue 159
+#+property: start_sha 6141ac7d28c5eb32f0a8e78b31643792aa2c0fd7
+
+* Current protocol boundary
+- =zara/protocol.py= is already the authoritative closed ZARA/1 schema. Message types, top-level envelope keys, payload counts, body fields, identifiers, and voice/tool subcontracts are validated before dispatch.
+- Unknown message names and identity-looking top-level keys fail closed. #159 should extend this exact validator instead of adding an extension dictionary or Android-only schema.
+- Binary payloads are not needed for the initial device-action lifecycle; all #159 control messages remain zero-payload typed envelopes.
+
+* Current authenticated transport boundary
+- =ZaraZmqGateway= owns ROUTER route/session state and has one authoritative hello/session lifecycle.
+- Re-hello rotates the route session and discards route-local state. Gateway close/restart drops route state rather than attempting to resurrect an in-flight action.
+- =SecureZaraZmqGateway= resolves CURVE/ZAP identity on every inbound message and injects an authenticated =PrincipalContext= before base dispatch. Payload fields cannot choose principal authority.
+- Therefore device capability state belongs to the authenticated route/session, not a payload principal/device id and not Prolog semantic state.
+
+* Existing state/correlation mechanisms
+- Runtime request idempotency is scoped to runtime commands and must not be reused as an implicit device-action contract.
+- ZARA/1 already exposes message ids, =reply_to=, =session_id=, and =trace_id=. Device actions need an explicit =action_id= because accepted/result/error/cancel are a lifecycle independent of the request envelope id.
+- Existing ROUTER and DEALER queues are bounded. The new server-side action table should use the configured pending-request bound rather than add an unbounded map.
+
+* Security/adversarial findings
+- Capability advertisement reports device availability only. It cannot create server/admin permissions because secure-gateway authorization remains transport policy and capability ids are separately closed.
+- No generic executable representation is required. The first fixtures can prove the plane with only =open_uri= and =open_app=; each receives a tiny exact argument schema.
+- Reconnect must not inherit old advertisements or outstanding action ownership. A result from a stale or cancelled action must fail as unknown/stale rather than complete a newer action.
+- Cancellation must be terminal server-side. A late client result after server cancellation cannot resurrect the side effect as a successful remote acknowledgement.
+
+* TDD RED evidence
+- Exact RED head :: =8f602872227903c8a6c1110068e84e47c3e1f83a=
+- Actions run :: =33725626235= / CI #859
+- Existing ZARA/1 protocol/transport phase :: 145 passed.
+- Existing authenticated tool-approval phase :: 10 passed.
+- Shared microphone Ubuntu/Arch jobs :: green.
+- New #159 suite :: collection failed exactly because =DEVICE_CAPABILITIES= is absent from =zara.protocol=.
+- This proves the RED is the missing #159 surface and not an unrelated protocol regression.

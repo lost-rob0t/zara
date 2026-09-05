@@ -33,6 +33,10 @@ CLIENT_MESSAGE_TYPES = frozenset(
         "turn.cancel",
         "tool.approve",
         "tool.reject",
+        "capability.snapshot",
+        "device.action.accepted",
+        "device.action.result",
+        "device.action.error",
     }
 )
 
@@ -55,6 +59,9 @@ SERVER_MESSAGE_TYPES = frozenset(
         "tool.completed",
         "tool.failed",
         "tool.cancelled",
+        "capability.snapshot.ok",
+        "device.action.request",
+        "device.action.cancel",
         "assistant.started",
         "assistant.delta",
         "assistant.completed",
@@ -133,6 +140,12 @@ _TOOL_EVENT_BODY_FIELDS = {
     "tool.cancelled": frozenset({"tool_run_id", "tool_name", "reason"}),
 }
 _TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+DEVICE_CAPABILITIES = frozenset({"open_app", "open_uri"})
+_DEVICE_CAPABILITY_LIMIT = 32
+_DEVICE_ACTION_IDEMPOTENCY = frozenset({"at_most_once", "idempotent"})
+_DEVICE_ACTION_ERROR_CODES = frozenset(
+    {"permission_denied", "unavailable", "invalid_arguments", "failed", "cancelled"}
+)
 
 
 class ZaraProtocolError(ValueError):
@@ -557,6 +570,146 @@ def _validate_tool_envelope(message: ProtocolMessage) -> None:
         _bounded_safe_text("reason", body["reason"], max_bytes=256)
 
 
+def _validate_device_capability_id(value: Any) -> str:
+    capability = _validate_ascii_token("capability", value, max_bytes=64)
+    if capability not in DEVICE_CAPABILITIES:
+        raise ProtocolValidationError("unknown device capability")
+    return capability
+
+
+def _validate_capability_snapshot(body: Mapping[str, Any]) -> None:
+    if set(body) != {"capabilities"}:
+        raise ProtocolValidationError("capability snapshot body has invalid fields")
+    capabilities = body["capabilities"]
+    if not isinstance(capabilities, list):
+        raise ProtocolValidationError("capabilities must be a list")
+    if len(capabilities) > _DEVICE_CAPABILITY_LIMIT:
+        raise ProtocolValidationError("capability count exceeds limit")
+    seen: set[str] = set()
+    for entry in capabilities:
+        if not isinstance(entry, dict) or set(entry) != {"id", "version"}:
+            raise ProtocolValidationError("capability entry has invalid fields")
+        capability = _validate_device_capability_id(entry["id"])
+        if entry["version"] != 1:
+            raise ProtocolValidationError("unsupported device capability version")
+        if capability in seen:
+            raise ProtocolValidationError("duplicate device capability")
+        seen.add(capability)
+
+
+def _validate_device_action_args(capability: str, value: Any) -> None:
+    if not isinstance(value, dict):
+        raise ProtocolValidationError("device action args must be an object")
+    if capability == "open_uri":
+        if set(value) != {"uri"}:
+            raise ProtocolValidationError("open_uri args have invalid fields")
+        uri = _bounded_safe_text("uri", value["uri"], max_bytes=2048)
+        if not uri:
+            raise ProtocolValidationError("uri must not be empty")
+        return
+    if capability == "open_app":
+        if set(value) != {"app"}:
+            raise ProtocolValidationError("open_app args have invalid fields")
+        app = _bounded_safe_text("app", value["app"], max_bytes=128)
+        if not app:
+            raise ProtocolValidationError("app must not be empty")
+        return
+    raise ProtocolValidationError("unknown device capability")
+
+
+def _validate_device_common(message: ProtocolMessage) -> dict[str, Any]:
+    if message.session_id is None:
+        raise ProtocolValidationError(f"{message.type} requires session_id")
+    if message.payload_count != 0:
+        raise ProtocolValidationError(f"{message.type} does not accept payload frames")
+    if any(
+        value is not None
+        for value in (
+            message.conversation_id,
+            message.turn_id,
+            message.stream_id,
+            message.seq,
+            message.content_type,
+        )
+    ):
+        raise ProtocolValidationError(f"{message.type} has invalid correlation fields")
+    if message.flags:
+        raise ProtocolValidationError(f"{message.type} does not accept flags")
+    return dict(message.body or {})
+
+
+def _validate_device_envelope(message: ProtocolMessage) -> None:
+    if message.type in {"capability.snapshot", "capability.snapshot.ok"}:
+        body = _validate_device_common(message)
+        if message.trace_id is not None:
+            raise ProtocolValidationError(f"{message.type} does not accept trace_id")
+        if message.type == "capability.snapshot":
+            if message.reply_to is not None:
+                raise ProtocolValidationError("capability.snapshot does not accept reply_to")
+        elif message.reply_to is None:
+            raise ProtocolValidationError("capability.snapshot.ok requires reply_to")
+        _validate_capability_snapshot(body)
+        return
+
+    if message.type == "device.action.request":
+        body = _validate_device_common(message)
+        if message.reply_to is not None:
+            raise ProtocolValidationError("device.action.request does not accept reply_to")
+        required = {"action_id", "capability", "args", "deadline_ns", "idempotency"}
+        if set(body) != required:
+            raise ProtocolValidationError("device.action.request body has invalid fields")
+        _validate_ascii_token("action_id", body["action_id"], max_bytes=128)
+        capability = _validate_device_capability_id(body["capability"])
+        _validate_device_action_args(capability, body["args"])
+        deadline_ns = body["deadline_ns"]
+        if type(deadline_ns) is not int or deadline_ns <= 0:
+            raise ProtocolValidationError("device action deadline_ns must be positive")
+        if body["idempotency"] not in _DEVICE_ACTION_IDEMPOTENCY:
+            raise ProtocolValidationError("invalid device action idempotency")
+        return
+
+    if message.type == "device.action.cancel":
+        body = _validate_device_common(message)
+        if message.reply_to is not None or message.trace_id is not None:
+            raise ProtocolValidationError("device.action.cancel has invalid correlation")
+        if set(body) not in ({"action_id"}, {"action_id", "reason"}):
+            raise ProtocolValidationError("device.action.cancel body has invalid fields")
+        _validate_ascii_token("action_id", body["action_id"], max_bytes=128)
+        if "reason" in body:
+            _bounded_safe_text("reason", body["reason"], max_bytes=256)
+        return
+
+    if message.type == "device.action.accepted":
+        body = _validate_device_common(message)
+        if message.reply_to is not None or message.trace_id is not None:
+            raise ProtocolValidationError("device.action.accepted has invalid correlation")
+        if set(body) != {"action_id"}:
+            raise ProtocolValidationError("device.action.accepted body has invalid fields")
+        _validate_ascii_token("action_id", body["action_id"], max_bytes=128)
+        return
+
+    if message.type == "device.action.result":
+        body = _validate_device_common(message)
+        if message.reply_to is not None or message.trace_id is not None:
+            raise ProtocolValidationError("device.action.result has invalid correlation")
+        if set(body) != {"action_id", "outcome"} or body.get("outcome") != "completed":
+            raise ProtocolValidationError("device.action.result body has invalid fields")
+        _validate_ascii_token("action_id", body["action_id"], max_bytes=128)
+        return
+
+    if message.type == "device.action.error":
+        body = _validate_device_common(message)
+        if message.reply_to is not None or message.trace_id is not None:
+            raise ProtocolValidationError("device.action.error has invalid correlation")
+        if set(body) not in ({"action_id", "code"}, {"action_id", "code", "message"}):
+            raise ProtocolValidationError("device.action.error body has invalid fields")
+        _validate_ascii_token("action_id", body["action_id"], max_bytes=128)
+        if body["code"] not in _DEVICE_ACTION_ERROR_CODES:
+            raise ProtocolValidationError("unknown device action error code")
+        if "message" in body:
+            _bounded_safe_text("message", body["message"], max_bytes=256)
+
+
 def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> ProtocolMessage:
     unknown = set(data) - _ALLOWED_ENVELOPE_KEYS
     if unknown:
@@ -605,6 +758,7 @@ def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> Pr
     _validate_audio_output_envelope(message)
     _validate_visible_stt_envelope(message)
     _validate_tool_envelope(message)
+    _validate_device_envelope(message)
     return message
 
 

@@ -1,0 +1,86 @@
+#+title: Zara documentation index
+
+* Documentation index
+
+This directory contains implementation-facing documentation for Zara. The project changes quickly, so documents should distinguish between code that exists, code that is actively changing, researched/design-ready work, and release-gated claims.
+
+* Status vocabulary
+
+- *Implemented* — present on the current branch with repository test/build evidence.
+- *Active / evolving* — real foundations exist, but the surface is being changed or expanded.
+- *Design-ready / researched* — an accepted design or research direction; not automatically implemented.
+- *Release-gated* — constituent work exists, but Zara intentionally withholds the larger claim until an explicit adversarial gate passes.
+
+Do not turn a research document into a feature claim just because the design is detailed.
+
+* Start here
+
+| Document | Purpose |
+|----------+---------|
+| [[file:../README.org][README.org]] | Project overview, commands, current platform status. |
+| [[file:architecture.org][architecture.org]] | Runtime/client/server architecture and invariants. |
+| [[file:server.org][server.org]] | =zara-server=, =ZARA/1=, principal ownership, authentication, voice transport. |
+| [[file:development.org][development.org]] | Nix shells, test gates, Android build, docs rules. |
+| [[file:STT.md][STT.md]] | Speech-to-text pipeline and tuning. |
+| [[file:intentframe-contract.md][intentframe-contract.md]] | Symbolic IntentFrame contract. |
+| [[file:pets.md][pets.md]] | Zarathushtra Pet runtime/event integration. |
+| [[file:desktop-copilot-design.md][desktop-copilot-design.md]] | Historical/current desktop design material; verify implementation status before treating planned sections as shipped. |
+| [[file:research/002-unified-copilot-voice-visual-ci.md][research/002-unified-copilot-voice-visual-ci.md]] | Current design-ready direction for one adaptive Copilot, voice/chat continuity, and screenshot-producing CI. |
+
+* Wiki / feature documentation
+
+The repository's =wiki/= directory holds user- and feature-facing Org documentation.
+
+Important entry points:
+
+- [[file:../wiki/install.org][install.org]] — installation.
+- [[file:../wiki/customization.org][customization.org]] — configuration/customization.
+- [[file:../wiki/android.org][android.org]] — Android client architecture and status.
+- [[file:../wiki/plugins.org][plugins.org]] — plugin lifecycle and API.
+- [[file:../wiki/mcp.org][mcp.org]] — MCP integration.
+- [[file:../wiki/agent-mode.org][agent-mode.org]] — long-running agent mode.
+- [[file:../wiki/tool-approvals.org][tool-approvals.org]] — explicit tool approval behavior.
+- [[file:../wiki/capability-plans.org][capability-plans.org]] — capability planning and symbolic control.
+
+* Source-of-truth order
+
+When docs disagree, prefer evidence in this order:
+
+1. code and tests on the current branch;
+2. merged issue/PR acceptance evidence;
+3. implementation docs describing current code;
+4. research/design documents;
+5. old roadmap text.
+
+Docs should be repaired when lower-priority text contradicts current implementation.
+
+* Major current directions
+
+** Daemon/client architecture
+
+The long-lived service boundary and =ZARA/1= protocol are implemented. Desktop operation has moved toward daemon-client by default. Principal isolation, voice transport, and authenticated client work have landed in slices, while the larger Voice-replacement/security release claim remains behind the explicit daemon release gate.
+
+See [[file:server.org][server.org]].
+
+** Desktop consolidation
+
+The repository currently contains separate Quick Copilot and Full Chat presentation code. The accepted direction is one adaptive Copilot surface with compact and expanded modes, one conversation renderer, tray-toggle behavior, durable voice-session conversation ownership, automatic conversation naming/summarization, and deterministic screenshot artifacts in CI.
+
+See [[file:research/002-unified-copilot-voice-visual-ci.md][research/002-unified-copilot-voice-visual-ci.md]].
+
+** Android
+
+Android is a native client in =android/=. The project currently includes typed runtime state, Trealla/NDK symbolic execution, shared semantic fixtures, and authenticated JeroMQ/CURVE =ZARA/1= enrollment/transport foundations. The full daily-driver assistant UI and device integration are still active work.
+
+See [[file:../wiki/android.org][wiki/android.org]].
+
+* Documentation maintenance rules
+
+- Prefer links to canonical docs instead of duplicating entire specifications.
+- Keep implementation docs concise enough to audit against code.
+- Keep research docs appendable and explicit about their baseline/date/status.
+- Mark superseded architectural assumptions rather than silently leaving two conflicting "current" designs.
+- Never describe a security property as complete solely because a happy-path feature landed.
+- When a release gate remains open, say so near the feature claim.
+- For Android, distinguish portable symbolic/runtime foundations from complete assistant UX.
+- For desktop, distinguish the currently shipped two-window code from the design-ready adaptive-window target until consolidation lands.

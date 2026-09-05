@@ -113,5 +113,6 @@ androidComponents {
 }
 
 dependencies {
+    implementation(libs.jeromq)
     testImplementation(libs.junit)
 }
