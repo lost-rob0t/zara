@@ -46,6 +46,18 @@ class OpenAppAdapterTest {
     }
 
     @Test
+    fun `wrong typed arguments fail closed`() {
+        val launcher = FakeAppLauncher(setOf("browser"))
+        val adapter = OpenAppAdapter(launcher)
+
+        assertEquals(
+            DeviceActionResult.Error(DeviceActionErrorCode.InvalidArguments),
+            adapter.execute(DeviceActionArguments.OpenUri("https://example.com")),
+        )
+        assertTrue(launcher.launched.isEmpty())
+    }
+
+    @Test
     fun `known but unavailable alias reports unavailable`() {
         val launcher = FakeAppLauncher(setOf("browser"))
         val adapter = OpenAppAdapter(launcher)
@@ -57,8 +69,38 @@ class OpenAppAdapterTest {
         assertTrue(launcher.launched.isEmpty())
     }
 
+    @Test
+    fun `platform security rejection reports permission denied`() {
+        val launcher = FakeAppLauncher(
+            available = setOf("browser"),
+            failure = SecurityException("denied"),
+        )
+        val adapter = OpenAppAdapter(launcher)
+
+        assertEquals(
+            DeviceActionResult.Error(DeviceActionErrorCode.PermissionDenied),
+            adapter.execute(DeviceActionArguments.OpenApp("browser")),
+        )
+    }
+
+    @Test
+    fun `platform launch failure reports failed without optimistic completion`() {
+        val launcher = FakeAppLauncher(
+            available = setOf("browser"),
+            failure = IllegalStateException("handler disappeared"),
+        )
+        val adapter = OpenAppAdapter(launcher)
+
+        assertEquals(
+            DeviceActionResult.Error(DeviceActionErrorCode.Failed),
+            adapter.execute(DeviceActionArguments.OpenApp("browser")),
+        )
+        assertTrue(launcher.launched.isEmpty())
+    }
+
     private class FakeAppLauncher(
         var available: Set<String>,
+        private val failure: Throwable? = null,
     ) : AppLauncher {
         val launched = mutableListOf<String>()
 
@@ -66,6 +108,7 @@ class OpenAppAdapterTest {
 
         override fun launch(alias: String) {
             check(alias in available)
+            failure?.let { throw it }
             launched += alias
         }
     }
