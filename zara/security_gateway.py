@@ -177,23 +177,32 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             )
         )
 
+    def _release_runtime_quota_key(self, key: tuple[str, str]) -> None:
+        with self._lock:
+            if key not in self._runtime_quota_holds:
+                return
+            self._runtime_quota_holds.remove(key)
+        self._quotas.release_request(key[0])
+
     def _release_runtime_quota(self, route: bytes, message: ProtocolMessage) -> None:
         if message.reply_to is None:
             return
         principal_id = self._route_principal_ids.get(route)
         if principal_id is None:
             return
-        key = (principal_id, message.reply_to)
-        with self._lock:
-            if key not in self._runtime_quota_holds:
-                return
-            self._runtime_quota_holds.remove(key)
-        self._quotas.release_request(principal_id)
+        self._release_runtime_quota_key((principal_id, message.reply_to))
+
+    def _remember_response(self, key, command, response) -> None:
+        # Completion is authoritative for the concurrent-request hold even when
+        # every requesting route disappeared before the result became deliverable.
+        # Releasing only from _enqueue_outbound leaks quota forever in that case.
+        self._release_runtime_quota_key(key)
+        super()._remember_response(key, command, response)
 
     def _enqueue_outbound(self, route: bytes, message: ProtocolMessage) -> bool:
         # Runtime completions are delivered asynchronously by the base gateway.
-        # Release the principal's concurrent-request slot exactly once when that
-        # completion becomes available, even when the route has since stalled.
+        # The _remember_response completion hook releases the quota even when no
+        # route survives; this remains as a harmless fallback for old paths.
         self._release_runtime_quota(route, message)
         return super()._enqueue_outbound(route, message)
 
@@ -275,6 +284,21 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         finally:
             self._hello_route_resets.discard(route)
 
+    def _replace_prior_credential_routes(self, route: bytes, user_id: str) -> None:
+        # ROUTER does not provide a portable routing-id-aware disconnect event.
+        # A restarted device may therefore arrive with a new route while its old
+        # route is still present in application bookkeeping. The cryptographic
+        # ZAP User-Id is the stronger identity: one enrolled credential may own
+        # only one current route. A fresh authenticated hello supersedes stale
+        # routes for that same credential before connection quota is charged.
+        stale_routes = [
+            candidate
+            for candidate, bound_user_id in tuple(self._route_user_ids.items())
+            if candidate != route and bound_user_id == user_id
+        ]
+        for candidate in stale_routes:
+            self._drop_route(candidate)
+
     def _receive(self, socket: zmq.Socket) -> None:
         raw_frames = socket.recv_multipart(copy=False)
         if len(raw_frames) < 2:
@@ -302,7 +326,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
 
         try:
             message = decode_message(frames[1:], limits=self._limits).message
-        except ZaraProtocolError:
+        except (ZaraProtocolError, RecursionError):
             try:
                 self._quotas.acquire_request(principal_id)
             except QuotaExceeded:
@@ -317,7 +341,16 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
                 )
                 return
             self._quotas.release_request(principal_id)
-            super()._receive(_PreloadedSocket(socket, frames))
+            if not isinstance(message := None, ProtocolMessage):
+                self._send(
+                    socket,
+                    route,
+                    _security_error(
+                        reply_to=None,
+                        code="invalid_message",
+                        message="invalid protocol message",
+                    ),
+                )
             return
 
         started_ns = time.monotonic_ns()
@@ -365,6 +398,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             return
 
         if message.type == "hello" and route not in self._route_principal_ids:
+            self._replace_prior_credential_routes(route, enrolled.user_id)
             try:
                 self._quotas.acquire_connection(principal_id)
             except QuotaExceeded:
