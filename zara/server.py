@@ -231,6 +231,21 @@ def _live_security_admin(state):
     return SecurityAdminClient(state.control_socket_path)
 
 
+def _require_daemon_offline(args) -> None:
+    """Prove no Zara daemon owns the runtime lease before touching disk directly."""
+    probe = ServerLease(args.runtime_dir)
+    try:
+        probe.acquire()
+    except ServerAlreadyRunning as error:
+        raise RuntimeError(
+            "zara-server is running but its live security admin endpoint is unavailable; "
+            "refusing disk-only security mutation"
+        ) from error
+    finally:
+        if probe.held:
+            probe.release()
+
+
 def _run_security_management(args) -> Optional[int]:
     requested = any(
         (
@@ -248,6 +263,7 @@ def _run_security_management(args) -> Optional[int]:
         raise ValueError("security management requires --security-dir")
 
     if args.security_init:
+        _require_daemon_offline(args)
         state.initialize()
         print(state.server_public_key())
         return 0
@@ -266,6 +282,7 @@ def _run_security_management(args) -> Optional[int]:
             )
             print(json.dumps(result, sort_keys=True))
             return 0
+        _require_daemon_offline(args)
         from zara.security import Capability
 
         capabilities = {Capability(value) for value in _SAFE_REMOTE_CAPABILITIES}
@@ -294,12 +311,17 @@ def _run_security_management(args) -> Optional[int]:
             result = admin.request("revoke", device_id=args.security_revoke_device)
             print(json.dumps(result, sort_keys=True))
             return 0
+        _require_daemon_offline(args)
         state.revoke_device(args.security_revoke_device)
         print(json.dumps({"device_id": args.security_revoke_device, "active": False}, sort_keys=True))
         return 0
     if args.security_list_clients:
         admin = _live_security_admin(state)
-        clients = admin.request("list") if admin is not None else state.list_clients()
+        if admin is not None:
+            clients = admin.request("list")
+        else:
+            _require_daemon_offline(args)
+            clients = state.list_clients()
         print(json.dumps(clients, sort_keys=True))
         return 0
     return None
