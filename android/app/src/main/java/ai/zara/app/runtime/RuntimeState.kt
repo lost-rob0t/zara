@@ -73,48 +73,73 @@ fun reduce(state: RuntimeState, event: RuntimeEvent): RuntimeState = when (event
         }
         else -> state
     }
+
     is RuntimeEvent.ServerConfigured -> state.copy(configuredProfile = event.profile)
+
     is RuntimeEvent.HelloAccepted -> {
-        if (event.generation != state.generation || event.sessionId.isBlank()) state
-        else when (state.server) {
-            is ServerConnection.Connecting, is ServerConnection.Reconnecting -> state.copy(
-                server = ServerConnection.Connected(state.generation),
-                sessionId = event.sessionId,
-            )
-            else -> state
+        if (event.generation != state.generation || event.sessionId.isBlank()) {
+            state
+        } else {
+            when (state.server) {
+                is ServerConnection.Connecting, is ServerConnection.Reconnecting ->
+                    state.copy(
+                        server = ServerConnection.Connected(state.generation),
+                        sessionId = event.sessionId,
+                    )
+                else -> state
+            }
         }
     }
+
     is RuntimeEvent.ConnectionLost -> {
-        if (event.generation != state.generation) state
-        else when (state.server) {
-            is ServerConnection.Connected -> beginReconnect(state, 1, event.reason)
-            is ServerConnection.Reconnecting -> failReconnect(state, state.server.attempt, event.reason)
-            else -> state
+        if (event.generation != state.generation) {
+            state
+        } else {
+            when (state.server) {
+                is ServerConnection.Connected -> beginReconnect(state, 1, event.reason)
+                is ServerConnection.Reconnecting ->
+                    failReconnect(state, state.server.attempt, event.reason)
+                else -> state
+            }
         }
     }
+
     is RuntimeEvent.ConnectionFailed -> {
-        if (event.generation != state.generation) state
-        else when (state.server) {
-            is ServerConnection.Connecting -> beginReconnect(state, 1, event.reason)
-            is ServerConnection.Reconnecting -> failReconnect(state, state.server.attempt, event.reason)
-            else -> state
+        if (event.generation != state.generation) {
+            state
+        } else {
+            when (state.server) {
+                is ServerConnection.Connecting -> beginReconnect(state, 1, event.reason)
+                is ServerConnection.Reconnecting ->
+                    failReconnect(state, state.server.attempt, event.reason)
+                else -> state
+            }
         }
     }
+
     is RuntimeEvent.ReconnectSchedulingFailed -> {
         val reconnecting = state.server as? ServerConnection.Reconnecting
-        if (event.generation != state.generation || reconnecting == null) state
-        else state.copy(
-            server = ServerConnection.OfflineDegraded(
-                reconnecting.attempt,
-                "reconnect scheduler unavailable",
-            ),
-            sessionId = null,
-        )
+        if (event.generation != state.generation || reconnecting == null) {
+            state
+        } else {
+            state.copy(
+                server = ServerConnection.OfflineDegraded(
+                    reconnecting.attempt,
+                    "reconnect scheduler unavailable",
+                ),
+                sessionId = null,
+            )
+        }
     }
+
     is RuntimeEvent.EnrollmentObserved -> {
-        if (event.readiness == EnrollmentReadiness.Ready) state.copy(enrollment = event.readiness)
-        else invalidateSessionForEnrollment(state, event.readiness)
+        if (event.readiness == EnrollmentReadiness.Ready) {
+            state.copy(enrollment = event.readiness)
+        } else {
+            invalidateSessionForEnrollment(state, event.readiness)
+        }
     }
+
     is RuntimeEvent.RoleAssessed -> when (event.outcome) {
         RoleOutcome.HELD -> state.copy(assistantRole = AssistantRole.Held)
         RoleOutcome.NOT_HELD -> state.copy(assistantRole = AssistantRole.NotHeld)
