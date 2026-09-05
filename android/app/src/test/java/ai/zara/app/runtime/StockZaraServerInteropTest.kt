@@ -2,6 +2,7 @@ package ai.zara.app.runtime
 
 import ai.zara.app.auth.JeroMqCurveKeyCodec
 import java.io.File
+import java.net.Socket
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -24,6 +25,8 @@ class StockZaraServerInteropTest {
                 serverPublic = fixture.getValue("server_public"),
                 clientPublic = fixture.getValue("client_public"),
                 clientSecret = fixture.getValue("client_secret"),
+                acceptanceHost = fixture.getValue("acceptance_host"),
+                acceptancePort = fixture.getValue("acceptance_port").toInt(),
             )
         }
         val actor = ZaraTextClientActor(factory, requestTimeoutMillis = 2_000)
@@ -59,7 +62,14 @@ class StockZaraServerInteropTest {
                 line.substring(0, separator) to line.substring(separator + 1)
             }
         assertEquals(
-            setOf("endpoint", "server_public", "client_public", "client_secret"),
+            setOf(
+                "endpoint",
+                "server_public",
+                "client_public",
+                "client_secret",
+                "acceptance_host",
+                "acceptance_port",
+            ),
             values.keys,
         )
         return values
@@ -71,9 +81,12 @@ private class FixtureJeroMqDealer(
     serverPublic: String,
     clientPublic: String,
     clientSecret: String,
+    private val acceptanceHost: String,
+    private val acceptancePort: Int,
 ) : TextDealer {
     private val context = ZContext()
     private val socket: ZMQ.Socket = context.createSocket(SocketType.DEALER)
+    private var acceptanceSignalled = false
     private var closed = false
 
     init {
@@ -102,6 +115,13 @@ private class FixtureJeroMqDealer(
         while (socket.hasReceiveMore()) {
             frames += socket.recv(0) ?: error("truncated ZARA/1 multipart")
             require(frames.size <= 18) { "ZARA/1 multipart exceeds frame limit" }
+        }
+        if (!acceptanceSignalled && ZaraTextCodec.decode(frames) is TextServerMessage.TurnAccepted) {
+            Socket(acceptanceHost, acceptancePort).use { barrier ->
+                barrier.getOutputStream().write('A'.code)
+                barrier.getOutputStream().flush()
+            }
+            acceptanceSignalled = true
         }
         return frames
     }
