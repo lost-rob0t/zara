@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import os
 import socket
 import stat
+import tempfile
 import threading
 from pathlib import Path
 from typing import Callable, Optional
@@ -13,6 +15,9 @@ from typing import Callable, Optional
 _ALLOWED_COMMANDS = frozenset({"toggle", "show", "hide"})
 _MAX_COMMAND_BYTES = 64
 _SOCKET_NAME = "zara-desktop-control.sock"
+# Linux sockaddr_un.sun_path is 108 bytes including the terminating NUL. Keep
+# margin for platform differences and encoded path bytes.
+_MAX_UNIX_PATH_BYTES = 100
 
 
 class DesktopControlAlreadyRunning(RuntimeError):
@@ -20,7 +25,20 @@ class DesktopControlAlreadyRunning(RuntimeError):
 
 
 def desktop_control_path(runtime_dir: Path | str) -> Path:
-    return Path(runtime_dir).expanduser() / _SOCKET_NAME
+    runtime = Path(runtime_dir).expanduser()
+    direct = runtime / _SOCKET_NAME
+    if len(os.fsencode(direct)) <= _MAX_UNIX_PATH_BYTES:
+        return direct
+
+    digest = hashlib.blake2s(
+        os.fsencode(str(runtime.absolute())),
+        digest_size=10,
+    ).hexdigest()
+    fallback_dir = Path(tempfile.gettempdir()) / f"zara-desktop-control-{os.getuid()}"
+    fallback = fallback_dir / f"{digest}.sock"
+    if len(os.fsencode(fallback)) > _MAX_UNIX_PATH_BYTES:
+        raise OSError(errno.ENAMETOOLONG, "desktop control fallback path is too long")
+    return fallback
 
 
 def _prepare_runtime_dir(runtime_dir: Path) -> None:
@@ -28,7 +46,17 @@ def _prepare_runtime_dir(runtime_dir: Path) -> None:
     info = runtime_dir.stat()
     if info.st_uid != os.getuid():
         raise PermissionError("desktop control runtime directory is not owned by current user")
+    if not stat.S_ISDIR(info.st_mode):
+        raise PermissionError("desktop control runtime path is not a directory")
     os.chmod(runtime_dir, 0o700)
+
+
+def _validate_private_directory(path: Path) -> None:
+    info = path.stat()
+    if info.st_uid != os.getuid() or not stat.S_ISDIR(info.st_mode):
+        raise PermissionError("desktop control endpoint directory is not private")
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        raise PermissionError("desktop control endpoint directory is not private")
 
 
 def _validate_command(command: str) -> str:
@@ -89,20 +117,24 @@ class DesktopControlServer:
         if self._socket is not None:
             return
         _prepare_runtime_dir(self._runtime_dir)
-        _recover_endpoint(self.endpoint)
+        endpoint = self.endpoint
+        if endpoint.parent != self._runtime_dir:
+            _prepare_runtime_dir(endpoint.parent)
+        _validate_private_directory(endpoint.parent)
+        _recover_endpoint(endpoint)
 
         owner = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         bound = False
         try:
-            owner.bind(str(self.endpoint))
+            owner.bind(str(endpoint))
             bound = True
-            os.chmod(self.endpoint, 0o600)
+            os.chmod(endpoint, 0o600)
             owner.listen(8)
             owner.settimeout(0.1)
         except OSError as error:
             owner.close()
             if bound:
-                self.endpoint.unlink(missing_ok=True)
+                endpoint.unlink(missing_ok=True)
             if error.errno == errno.EADDRINUSE:
                 raise DesktopControlAlreadyRunning(
                     "desktop control endpoint already has a live owner"
@@ -111,7 +143,7 @@ class DesktopControlServer:
         except Exception:
             owner.close()
             if bound:
-                self.endpoint.unlink(missing_ok=True)
+                endpoint.unlink(missing_ok=True)
             raise
 
         self._closed.clear()
@@ -137,12 +169,13 @@ class DesktopControlServer:
         if not self._owns_endpoint:
             return
         self._owns_endpoint = False
+        endpoint = self.endpoint
         try:
-            info = os.lstat(self.endpoint)
+            info = os.lstat(endpoint)
         except FileNotFoundError:
             return
         if info.st_uid == os.getuid() and stat.S_ISSOCK(info.st_mode):
-            self.endpoint.unlink(missing_ok=True)
+            endpoint.unlink(missing_ok=True)
 
     def _serve(self) -> None:
         while not self._closed.is_set():
@@ -189,6 +222,7 @@ def send_desktop_control(
     normalized = _validate_command(command)
     endpoint = desktop_control_path(runtime_dir)
     try:
+        _validate_private_directory(endpoint.parent)
         info = os.lstat(endpoint)
     except FileNotFoundError as error:
         raise ConnectionError("desktop control endpoint is not running") from error
