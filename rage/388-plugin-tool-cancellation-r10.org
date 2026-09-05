@@ -1,0 +1,43 @@
+#+title: RAGE #388 r10 — explicit Core injection at canonical ToolNode boundary
+#+status: ACTIVE
+
+* Immutable start
+- Consumed issue :: #388
+- Start commit :: 15499557e5994a05d57cc1c0a3ec97857939efda
+- Scope :: Zara Core only; zero android/** changes.
+
+* Falsified architectures retained as evidence
+- r5/#413: ToolNode awrap_tool_call + ContextVar failed exact-head acceptance.
+- r6/#420: ContextVar around ToolNode.ainvoke failed exact-head acceptance.
+- r7/#425: concrete ToolCancellation + InjectedState failed Pydantic schema generation.
+- r8/#431: Any + InjectedState avoided schema generation but exact-head CI #1561 failed four focused execution tests.
+- r9/#446: concrete ToolCancellation + Pydantic SkipValidation + InjectedState exact-head CI #1595 failed the same four focused execution tests. InjectedState is retired for this contract.
+
+* Selected architecture
+Core manually inserts a runtime-only cancellation value into the exact approved tool call immediately before invoking the existing canonical ToolNode. The plugin-facing annotation is LangChain's model-hidden InjectedToolArg marker; Core overwrites any model-supplied =cancellation= value with its own exact-invocation read-only ToolCancellation view. ToolNode remains the sole executor.
+
+The injection helper only opts a tool in when its full input schema contains =cancellation= while its model-facing =tool_call_schema= does not. This keeps ordinary tool arguments untouched and makes the hidden/runtime boundary explicit and testable.
+
+* Invariants
+- Approval and current tool binding are verified before Core allocates the cancellation signal.
+- One ToolNode; no direct BaseTool executor, no ContextVar, no InjectedState, no plugin-specific side channel.
+- Runtime value is exact-invocation Core state and read-only to plugin code.
+- Model cannot expose, suppress, or retarget the value; Core overwrites spoofed cancellation args.
+- Signal is set before owned execution cancellation reaches async tool code.
+- Terminal lifecycle remains one ToolCancelled(reason="turn cancelled") event.
+- Concurrent invocations receive different signals.
+- Unloaded/rejected tools never receive a signal or execute.
+- Zero android/** changes.
+
+* Acceptance
+- model-facing tool schema hides cancellation;
+- sync tool observes cancellation before side effects;
+- async tool sees signal before CancelledError;
+- concurrent invocation isolation;
+- rejection/unload no-execution;
+- spoofed cancellation input replaced by Core value;
+- existing lifecycle event contract unchanged;
+- full repository-native Core/Nix/package gates plus Android compatibility and both shared-mic lanes exact-head green before merge.
+
+* Outcome
+Pending.
