@@ -116,7 +116,15 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
 
     @staticmethod
     def _capability_for(message_type: str) -> Capability:
-        if message_type in {"hello", "ping", "conversation.open"}:
+        if message_type in {
+            "hello",
+            "ping",
+            "conversation.open",
+            "capability.snapshot",
+            "device.action.accepted",
+            "device.action.result",
+            "device.action.error",
+        }:
             return Capability.SESSION_BASIC
         if message_type == "runtime.status":
             return Capability.RUNTIME_STATUS
