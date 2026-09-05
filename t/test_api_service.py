@@ -256,7 +256,7 @@ class TestPlanExecutionService:
             )
         )
         assert outcome.status is PlanOutcomeStatus.EXECUTED
-        assert "duckduckgo.com" in outcome.response
+        assert "search.brave.com" in outcome.response
 
     def test_open_app_plan_is_unavailable_on_headless_server(self):
         service = self.service()

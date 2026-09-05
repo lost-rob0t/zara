@@ -32,6 +32,15 @@ class HookRegistration:
     callback: HookCallback
 
 
+@dataclass(frozen=True)
+class HookDiagnostic:
+    registration_id: int
+    kind: str
+    owner: str
+    priority: int
+    sequence: int
+
+
 class AgentLoopAdviceRegistry:
     def __init__(self, *, enabled: bool, allow_override: bool) -> None:
         self.enabled = bool(enabled)
@@ -80,6 +89,18 @@ class AgentLoopAdviceRegistry:
 
     def list_registrations(self) -> tuple[HookRegistration, ...]:
         return tuple(self._snapshot())
+
+    def diagnostics(self) -> tuple[HookDiagnostic, ...]:
+        return tuple(
+            HookDiagnostic(
+                registration_id=registration.registration_id,
+                kind=registration.kind,
+                owner=registration.owner,
+                priority=registration.priority,
+                sequence=registration.sequence,
+            )
+            for registration in self._snapshot()
+        )
 
     async def invoke(self, base_callable: BaseCallable, *args: Any, **kwargs: Any) -> Any:
         if not callable(base_callable):

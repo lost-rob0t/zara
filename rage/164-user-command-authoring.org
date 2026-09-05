@@ -1,0 +1,116 @@
+#+title: RAGE #164 — user command authoring dialogue
+#+property: issue 164
+#+property: start_sha c4945cf3e848eb4e55355ed767ce780348beb414
+
+* Consumption
+- Repository :: lost-rob0t/zara
+- Issue :: #164 — add voice/text command-authoring dialogue for create, inspect, edit, delete, dry-run and undo
+- Immutable start :: c4945cf3e848eb4e55355ed767ce780348beb414
+- Branch :: rage/164-user-command-authoring
+- Rule :: One RAGE iteration; no Android production changes.
+
+* Initial constraints
+- Reuse #155 principal/conversation-scoped typed dialogue state.
+- Reuse #162 persistence and #163 compiler; do not create a second command store or macro language.
+- Mutations must compile/validate before commit and remain principal-scoped.
+- Side effects execute only through canonical capability/runtime policy; dry-run never executes.
+- Voice uses the existing daemon/client voice path; no second microphone/runtime.
+- Preserve #260 hooks/advice ownership and existing RuntimeHost/TurnCoordinator boundaries.
+
+* Research
+- =zara.user_commands.UserCommandStore= already owns principal-bound create/get/list/search/update/delete with optimistic revisions, durable SQLite state, trigger collision fencing, and guest durability denial. #164 must compose this store rather than add persistence.
+- =zara.user_command_compiler.UserCommandCompiler= is pure and validates definitions against a closed capability catalog; =CompiledCommandRegistry.replace_all= is the atomic last-good publication seam. #164 must compile before any durable mutation is reported successful.
+- =zara.runtime.clarification.ClarificationCoordinator= already owns typed, principal/conversation-scoped slot collection and cancellation/correction semantics. Authoring dialogue should feed semantic authoring intents into this machinery rather than add process-global wizard state.
+- Voice transport/client migration issues #132 and #133 are closed. The authoring service therefore stays text/transport-neutral and can be reached by voice through the canonical client path without owning audio.
+- Hooks/advice issue #260 is closed; no command-specific hook bypass is justified.
+
+* Design
+- Add a narrow =UserCommandAuthoringService= orchestration boundary over one principal-bound store + compiler + compiled registry.
+- The service accepts already-typed declarative =UserCommandDefinition= drafts. Natural-language collection remains the semantic/dialogue layer; this service is the mutation/preview/undo authority, not an LLM parser.
+- =preview= compiles only and returns a normalized semantic description; it never writes or executes.
+- =create= and =edit= compile against a candidate full principal registry first, then persist, then atomically publish. Any compile/collision failure leaves durable state and active registry unchanged.
+- =delete= requires the current revision; after deletion it republishes the remaining valid definitions.
+- =undo= is bounded to the most recent successful mutation held by the service instance for this principal. It restores create/edit/delete using revision-aware store operations and recompiles before publishing; it cannot cross principal because the store is permanently principal-bound.
+- =list=/=describe= expose semantic definitions only; they do not expose secrets/provider credentials or executable internals.
+- No action execution exists in this module. A later semantic runtime invokes compiled commands through normal capability authorization/execution.
+
+* Threat / failure model
+- Invalid capability/provider/schema: reject before persistence.
+- Trigger collision or stale revision: reject and preserve current registry.
+- Compile failure during undo: fail closed and preserve current durable/active state.
+- Foreign/nonexistent command: return missing through the principal-bound store; never query another principal.
+- Concurrent mutation: store revision/CAS is authoritative; no optimistic success claim.
+- Dry-run/preview: side-effect free by construction.
+
+* TDD map
+- Create + immediate compiled visibility.
+- Preview does not persist or publish.
+- Invalid definition cannot partially persist/publish.
+- List/describe remain principal scoped.
+- Edit uses expected revision and survives restart through store state.
+- Delete removes and republishes.
+- Undo restores the latest create/edit/delete mutation and is one-step bounded.
+- Focused gate: =scripts/test-user-command-authoring.sh=.
+- Full gates after GREEN: =scripts/test-all.sh=, =nix flake check=, =nix build=, then exact-head Actions.
+
+* Status
+- RESEARCH/DESIGN COMPLETE FOR ITERATION 1. Next state is deterministic RED tests before production implementation.
+
+* Iteration 1 — RED evidence
+- Candidate :: =53ebf3a08071cef4f821271428cbc5a248f9fb27=
+- GitHub Actions :: CI #927 completed failure on the exact candidate.
+- Core =test= job failed specifically at =Run all tests=; =nix flake check= and packaged build were correctly skipped behind the failing test gate.
+- Android skeleton gate :: success.
+- Shared mic / Arch Linux :: success.
+- Shared mic / Ubuntu 24.04 :: success.
+- Interpretation :: valid deterministic RED for the missing authoring service; no platform/voice regression signal.
+
+* Iteration 1 — implementation
+- Commit :: =c1ee7bf865971a1781ddb9bdb1c3239fce451900=
+- Added =zara.user_command_authoring.UserCommandAuthoringService= as a narrow orchestration layer over the existing principal-bound store, pure compiler, and atomic compiled registry.
+- =preview= compiles only; no durable or active state mutation.
+- =create=/=edit=/=delete= pre-validate a complete candidate registry before persistence, then publish the principal's durable definitions through the existing atomic registry seam.
+- Publication failure attempts bounded rollback instead of claiming partial success.
+- =undo= is one-step and service-instance/principal bound; create/edit/delete restoration uses the store's revision-aware mutation APIs.
+- No action execution, shell strings, second persistence system, second voice runtime, or Android production changes were introduced.
+- Next gate :: exact-head CI on the implementation candidate; if GREEN, inspect acceptance gaps before merge rather than equating one green run with issue completion.
+
+* Iteration 1 — acceptance-gap RED
+- Prior exact head :: =de47813751ff32bc142a22a55e0c72232233a99b=
+- CI #930 :: complete GREEN for full tests, flake check, package build, Android skeleton and both shared-mic jobs.
+- Acceptance review :: GREEN did not satisfy issue #164. The branch exposed typed mutation APIs only; it did not provide the required conversational create flow through the shared typed dialogue machinery. The PR therefore remained draft and unmerged.
+- New test-first candidate :: =408466e45f4d50976cbc40a1774bd7b3ef46f6fe=
+- Added deterministic create-dialogue tests requiring shared =ClarificationCoordinator= ownership, trigger/action collection, normalized side-effect-free preview, explicit yes/no confirmation, and immediate atomic publication only after confirmation.
+- CI #931 :: core =Run all tests= failed on the exact candidate; flake/package steps were correctly skipped. Arch shared-mic remained GREEN. This is valid RED for the absent =UserCommandAuthoringDialogue= surface.
+
+* Iteration 1 — dialogue design refinement
+- The dialogue wrapper owns no independent slot/wizard state. A =DialogueTemplate= stored in the existing principal/conversation-scoped =ClarificationCoordinator= carries =trigger=, =actions= and =confirm=.
+- Action text is resolved through a caller-supplied bounded semantic-action resolver before the =actions= slot is committed. Unknown/ambiguous action text therefore leaves the active slot unchanged and asks again rather than guessing or persisting.
+- Preview reconstructs a typed =UserCommandDefinition= from the coordinator frame and runs the existing pure compiler; persistence remains zero until Boolean confirmation is true.
+- False confirmation closes the canonical clarification as cancelled and leaves both durable store and compiled registry untouched.
+- Shared clarification sessions deliberately retain closed tombstones until TTL pruning; therefore completion is proved by =active_question(...)= returning none / closed state, not by requiring =session_for(...)= to erase the object immediately. The initial test expectation of physical removal was inconsistent with #155 lifecycle semantics and is corrected before GREEN rather than changing coordinator ownership.
+- Production commit :: =70bd5040e027aac8aa947c8aa986e3b8c8fb0fba=
+
+* Iteration 1 — command-management acceptance RED
+- Test-first candidate :: =9d93b4ab9580a43fdfad3648207caa9c10378985=
+- CI #935 :: exact-head core gate failed at pytest with =4 failed, 1704 passed= while Android skeleton, Arch shared-mic, and Ubuntu shared-mic were GREEN. Flake/package gates were correctly skipped after the core failure.
+- Exact missing contracts :: =UserCommandAuthoringDialogue.list_commands/0=, =describe/1=, =start_edit/1=, and =start_delete/1=. The same tests also require dry-run/test, confirmed revision-aware edit/delete, one-step undo, and indistinguishable principal-scoped missing-command responses.
+- Interpretation :: valid deterministic RED for the remaining #164 conversational management surface, isolated from platform/voice behavior.
+
+* Iteration 1 — command-management implementation
+- Production commit :: =cccad6ca72ed29312ab2195470dc9034f29bbce9=
+- Added side-effect-free dialogue =list=/=describe=/=test= projections over the existing principal-bound authoring service and compiler; dry-run formats the compiled semantic command and executes nothing.
+- Added edit dialogue using the shared =ClarificationCoordinator= for action collection and Boolean confirmation. The original persisted revision is retained as the optimistic mutation fence; persistence/publication still occurs only through =UserCommandAuthoringService.edit= after compiler-backed preview.
+- Added delete confirmation through the same coordinator and =UserCommandAuthoringService.delete=, followed by the existing bounded one-step =undo= restoration path.
+- Missing/foreign command IDs collapse to one principal-local =not_found= result without probing any other principal.
+- The dialogue owns only the selected principal-local target definition while a coordinator session is active; it does not add another slot state machine, command store, execution path, mic runtime, or Android production change.
+- Next gate :: complete exact-head CI on the evidence-appended head; merge remains prohibited until full tests, flake, package, Android/shared-mic, and review/thread state are conclusively green.
+
+* Iteration 1 — cancellation/isolation acceptance RED
+- Test-first candidate :: =3f6c38eea08bae8036e7040659ba81876e23b70a=
+- CI #938 :: exact-head core gate failed with =1 failed, 1713 passed=. Android skeleton and both shared-mic jobs were GREEN; flake/package gates correctly skipped behind the failing full-test gate.
+- Exact failure :: =test_create_can_cancel_while_collecting_actions_without_writing= expected canonical =cancelled= after =cancel that= while the =actions= slot was active, but the dialogue returned another =question=.
+- Root cause :: =UserCommandAuthoringDialogue= attempted semantic action resolution before handing the utterance to =ClarificationCoordinator.submit_follow_up/3=. The coordinator already owns the canonical cancellation vocabulary, so the action resolver incorrectly consumed a control utterance first.
+- Production commit :: =986d4252cc6818921f9dedaa755d4e7bfafef5de=.
+- Fix :: preflight only the shared =CANCEL_PHRASES= vocabulary and route matching utterances immediately through the existing coordinator. No duplicated phrase list, command-specific cancellation state, second dialogue runtime, or action-execution bypass was added.
+- Next gate :: complete exact-head CI on the evidence-appended head; merge remains prohibited until all repository/Nix/package/platform gates and review/thread state are conclusively green.

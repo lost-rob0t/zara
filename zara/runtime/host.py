@@ -150,6 +150,9 @@ class RuntimeHost:
             return manager.diagnostics()
         return self._last_plugin_diagnostics
 
+    def customization_diagnostics(self):
+        return self._require_backend().customization_diagnostics()
+
     @property
     def plan_service(self):
         """The api_service plan execution service, or None when disabled."""

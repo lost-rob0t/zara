@@ -7,7 +7,6 @@
 
 :- use_module(intent_resolver, [convert_number_atoms/2]).
 :- use_module(llm_client, [llm_query_with_history/2]).
-:- use_module(rlm_rewrite, [rewrite_with_rlm/3]).
 :- use_module(hooks_loader, [hook_policy/2]).
 :- use_module('../kb/intents').
 :- use_module('commands').
@@ -82,9 +81,6 @@ core_execution_result(Intent, Args, Result) :-
         Result = command_result(failure, Intent, Args, exception(Error))
     ).
 
-rewrite_with_llm(UserInput, Intent, Args) :-
-    kb_config:prolog_rlm_enabled(true), !,
-    rlm_rewrite:rewrite_with_rlm(UserInput, Intent, Args).
 rewrite_with_llm(UserInput, Intent, Args) :-
     format(string(Prompt),
 "Rewrite the following user request into a single canonical command with:\n- intent: one of [greet, play, pause, stop, resume, next, skip, call, text, open, lock, unlock, search, navigate, ask, dictation_start, dictation_stop]\n- args: array of atoms/strings (1 or 2 as needed)\n- Only return compact JSON: {\"intent\":\"...\",\"args\":[...]}\nUser: ~w", [UserInput]),

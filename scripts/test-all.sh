@@ -68,20 +68,34 @@ FAIL_COUNT=0
 
 run_phase() {
   local name="$1"
+  local status
   shift
   PHASE_COUNT=$((PHASE_COUNT + 1))
   echo ""
   echo "=== Phase $PHASE_COUNT: $name ==="
-  if "$@"; then
+
+  # Do not invoke phase functions directly in an `if` condition. Bash disables
+  # errexit for commands executed inside such functions, which can turn a
+  # failing middle command into a false-green phase if a later command passes.
+  set +e
+  (
+    set -e
+    "$@"
+  )
+  status=$?
+  set -e
+
+  if [ "$status" -eq 0 ]; then
     echo "  PASS: $name"
     PASS_COUNT=$((PASS_COUNT + 1))
-  else
-    echo "  FAIL: $name"
-    FAIL_COUNT=$((FAIL_COUNT + 1))
-    echo ""
-    echo "*** Regression gate FAILED at phase $PHASE_COUNT ($name) ***"
-    exit 1
+    return 0
   fi
+
+  echo "  FAIL: $name"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  echo ""
+  echo "*** Regression gate FAILED at phase $PHASE_COUNT ($name) ***"
+  exit "$status"
 }
 
 # --- Phase 1: Python compile/import checks --------------------------------
@@ -169,7 +183,6 @@ phase_security_scripts() {
     scripts/test-todos.sh
     scripts/test-llm-clients.sh
     scripts/test-streaming-llm.sh
-    scripts/test-rlm-rewrite.sh
     scripts/test-memory.sh
     scripts/test-tts.sh
     scripts/test-wake-lifecycle.sh

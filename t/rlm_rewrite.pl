@@ -1,7 +1,5 @@
 :- use_module(library(plunit)).
 :- use_module('../modules/rlm_rewrite').
-:- use_module('../modules/command_loop').
-:- use_module('../kb/config').
 
 :- dynamic ambient_rlm_root/1.
 :- dynamic ambient_openrouter_key/1.
@@ -161,30 +159,5 @@ test(rewrite_options_are_bounded_and_direct, [condition(ambient_rlm_root(_))]) :
 test(rewrite_options_accept_test_handler, [condition(ambient_rlm_root(_))]) :-
     rlm_rewrite:rewrite_options([model_handler(user:scripted_rewrite_model)], Options),
     memberchk(model_handler(user:scripted_rewrite_model), Options).
-
-test(command_loop_routes_rewrites_to_rlm_when_enabled,
-     [throws(error(rlm_rewrite_error(root_invalid(_)), _)),
-      cleanup((restore_root, restore_rlm_toggle))]) :-
-    reset_rlm_state,
-    asserta(kb_config:prolog_rlm_enabled(true)),
-    setenv('ZARA_PROLOG_RLM_ROOT', '/nonexistent-zara-rlm-root'),
-    command_loop:rewrite_with_llm("open firefox", _, _).
-
-test(command_loop_keeps_llm_client_rewrites_when_disabled,
-     [throws(error(llm_error(authentication, _, none), _)),
-      cleanup((restore_rlm_toggle, restore_llm_provider, setenv('OPENAI_API_KEY', '')))]) :-
-    reset_rlm_state,
-    asserta(kb_config:prolog_rlm_enabled(false)),
-    asserta(kb_config:llm_provider(openai)),
-    unsetenv('OPENAI_API_KEY'),
-    command_loop:rewrite_with_llm("open firefox", _, _).
-
-restore_rlm_toggle :-
-    retractall(kb_config:prolog_rlm_enabled(_)),
-    asserta(kb_config:prolog_rlm_enabled(false)).
-
-restore_llm_provider :-
-    retractall(kb_config:llm_provider(_)),
-    asserta(kb_config:llm_provider(ollama)).
 
 :- end_tests(rlm_rewrite).

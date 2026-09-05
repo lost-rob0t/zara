@@ -24,6 +24,13 @@ class AgentLoopRegistration:
     callback: AgentLoopCallback
 
 
+@dataclass(frozen=True)
+class AgentLoopDiagnostic:
+    registration_id: int
+    name: str
+    owner: str
+
+
 class AgentLoopRegistry:
     def __init__(self) -> None:
         self._lock = RLock()
@@ -81,6 +88,16 @@ class AgentLoopRegistry:
                     key=lambda registration: registration.registration_id,
                 )
             )
+
+    def diagnostics(self) -> tuple[AgentLoopDiagnostic, ...]:
+        return tuple(
+            AgentLoopDiagnostic(
+                registration_id=registration.registration_id,
+                name=registration.name,
+                owner=registration.owner,
+            )
+            for registration in self.list_registrations()
+        )
 
     @staticmethod
     def _normalize_name(name: str) -> str:

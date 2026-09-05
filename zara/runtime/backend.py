@@ -82,6 +82,11 @@ class RuntimeBackend:
     def unregister_agent_loop_advice(self, registration_id: int) -> bool:
         return False
 
+    def customization_diagnostics(self):
+        raise UnsupportedRuntimeCommand(
+            "customization diagnostics are not available in this runtime backend"
+        )
+
     async def start_voice(self) -> None:
         raise UnsupportedRuntimeCommand("voice start is not available in this runtime backend")
 
@@ -356,6 +361,16 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             return False
         return bool(registry.unregister(registration_id))
 
+    def customization_diagnostics(self):
+        if self._manager is None:
+            raise RuntimeError("runtime backend is not started")
+        diagnostics = getattr(self._manager, "customization_diagnostics", None)
+        if diagnostics is None:
+            raise UnsupportedRuntimeCommand(
+                "customization diagnostics are not available in this runtime backend"
+            )
+        return diagnostics()
+
     async def stop(self) -> None:
         manager = self._manager
         self._manager = None
@@ -470,6 +485,9 @@ class AgentRuntimeBackend(RuntimeBackend):
 
     def unregister_agent_loop_advice(self, registration_id: int) -> bool:
         return self._delegate.unregister_agent_loop_advice(registration_id)
+
+    def customization_diagnostics(self):
+        return self._delegate.customization_diagnostics()
 
     async def start_voice(self) -> None:
         await self._delegate.start_voice()

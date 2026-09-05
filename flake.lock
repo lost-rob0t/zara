@@ -16,27 +16,9 @@
         "type": "github"
       }
     },
-    "prolog-rlm": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1788008639,
-        "narHash": "sha256-+16sXtJWEmfL8bCWlCi96zksc6O37bPVXXzkgLJJOgU=",
-        "owner": "lost-rob0t",
-        "repo": "prolog-rlm",
-        "rev": "b654831a0150a593821179da1d3886dfd64deb5c",
-        "type": "github"
-      },
-      "original": {
-        "owner": "lost-rob0t",
-        "repo": "prolog-rlm",
-        "rev": "b654831a0150a593821179da1d3886dfd64deb5c",
-        "type": "github"
-      }
-    },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs",
-        "prolog-rlm": "prolog-rlm"
+        "nixpkgs": "nixpkgs"
       }
     }
   },
