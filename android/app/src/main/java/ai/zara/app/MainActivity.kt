@@ -18,7 +18,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        appSession = AndroidAppSession(this)
+        appSession = (application as ZaraApplication).appSession
 
         var runtimeState by mutableStateOf(appSession.state())
         var enrollmentPublicKey by mutableStateOf(appSession.enrollmentPublicKeyZ85())
@@ -182,7 +182,10 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        if (::appSession.isInitialized) appSession.close()
+        if (::appSession.isInitialized) {
+            appSession.setStateObserver(null)
+            appSession.setVoiceStreamObserver(null)
+        }
         super.onDestroy()
     }
 
