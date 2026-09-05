@@ -361,6 +361,17 @@ def test_error_and_reconnect_clear_route_local_action_authority(zmq_context, tra
     send(
         dealer,
         ProtocolMessage(
+            type="device.action.accepted",
+            id="accepted-before-error",
+            session_id=session_id,
+            timestamp_ns=4,
+            payload_count=0,
+            body={"action_id": action_id},
+        ),
+    )
+    send(
+        dealer,
+        ProtocolMessage(
             type="device.action.error",
             id="error-1",
             session_id=session_id,
