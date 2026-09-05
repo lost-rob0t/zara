@@ -5,7 +5,8 @@ from __future__ import annotations
 import threading
 from typing import Annotated, Any, FrozenSet, Mapping, Optional
 
-from langchain_core.tools import InjectedToolArg
+from langchain_core.tools import BaseTool, InjectedToolArg
+from pydantic import PrivateAttr
 
 
 class ToolCancellation:
@@ -90,19 +91,25 @@ def inject_tool_cancellation(
     return injected
 
 
-class _CancellationBoundTool:
-    """One-invocation delegate that restores Core cancellation at invocation."""
+class _CancellationBoundTool(BaseTool):
+    """One-invocation BaseTool delegate restoring trusted cancellation."""
 
-    __slots__ = ("_tool", "_cancellation", "name")
+    _tool: BaseTool = PrivateAttr()
+    _cancellation: ToolCancellation = PrivateAttr()
 
-    def __init__(self, tool: Any, cancellation: ToolCancellation) -> None:
+    def __init__(self, tool: BaseTool, cancellation: ToolCancellation) -> None:
+        super().__init__(
+            name=tool.name,
+            description=tool.description,
+            args_schema=tool.args_schema,
+            return_direct=tool.return_direct,
+            response_format=tool.response_format,
+        )
         self._tool = tool
         self._cancellation = cancellation
-        self.name = tool.name
 
-    def __getattr__(self, name: str) -> Any:
-        """Delegate tool metadata required by ToolNode's dynamic-tool path."""
-        return getattr(self._tool, name)
+    def _run(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("cancellation-bound tool requires async invocation")
 
     async def ainvoke(self, tool_call: Any, config: Any = None, **kwargs: Any) -> Any:
         if not isinstance(tool_call, Mapping):
@@ -123,9 +130,10 @@ async def execute_with_tool_cancellation(request: Any, execute: Any) -> Any:
 
     The gated graph node overwrites any model value with a Core-owned
     ``ToolCancellation`` before entering ToolNode. ToolNode's wrapper sees that
-    trusted value, binds it to a one-invocation delegate, and then calls the
-    canonical ToolNode executor exactly once. ToolNode still owns validation,
-    injected state/runtime handling, error policy, and response normalization.
+    trusted value, binds it to a one-invocation BaseTool delegate, and then
+    calls the canonical ToolNode executor exactly once. ToolNode still owns
+    validation, injected state/runtime handling, error policy, and response
+    normalization.
     """
     tool = request.tool
     if tool is None:
