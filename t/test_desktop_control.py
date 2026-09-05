@@ -43,6 +43,8 @@ def test_desktop_control_endpoint_is_owner_private(tmp_path):
         assert stat.S_ISSOCK(info.st_mode)
         assert info.st_uid == os.getuid()
         assert stat.S_IMODE(info.st_mode) == 0o600
+        assert endpoint.parent.stat().st_uid == os.getuid()
+        assert stat.S_IMODE(endpoint.parent.stat().st_mode) == 0o700
     finally:
         server.close()
 
@@ -66,6 +68,8 @@ def test_desktop_control_recovers_same_user_stale_socket(tmp_path):
     runtime_dir = Path(tmp_path)
     endpoint = desktop_control_path(runtime_dir)
     runtime_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    endpoint.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(endpoint.parent, 0o700)
     stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     stale.bind(str(endpoint))
     stale.close()
@@ -93,5 +97,24 @@ def test_desktop_control_rejects_oversized_raw_command(tmp_path):
         response = client.recv(64)
         client.close()
         assert response.startswith(b"error")
+    finally:
+        server.close()
+
+
+def test_desktop_control_long_runtime_path_uses_deterministic_private_fallback(tmp_path):
+    runtime_dir = tmp_path / ("nested-" * 24)
+    endpoint = desktop_control_path(runtime_dir)
+    assert len(os.fsencode(endpoint)) <= 100
+    assert endpoint == desktop_control_path(runtime_dir)
+    assert endpoint.parent != runtime_dir
+
+    commands: list[str] = []
+    server = DesktopControlServer(runtime_dir, commands.append)
+    server.start()
+    try:
+        assert send_desktop_control("show", runtime_dir=runtime_dir) == "ok"
+        assert commands == ["show"]
+        assert endpoint.parent.stat().st_uid == os.getuid()
+        assert stat.S_IMODE(endpoint.parent.stat().st_mode) == 0o700
     finally:
         server.close()
