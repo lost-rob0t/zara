@@ -90,6 +90,27 @@ A service may also implement =tools()= and return ordinary LangChain
 service fails or stops. The default LangGraph backend supports service tools;
 backends without a tool registry reject them without killing Zara.
 
+A plugin tool that performs a dangerous or mutating action can require Zara's
+canonical principal-scoped approval by setting boolean LangChain tool metadata
+=zara_requires_approval = True= when the tool is constructed:
+
+#+begin_src python
+StructuredTool.from_function(
+    mutate,
+    name="example.mutate",
+    description="Perform a bounded mutation.",
+    metadata={"zara_requires_approval": True},
+)
+#+end_src
+
+The marker must be a boolean when present. Invalid marker values fail tool
+registration closed. Approval requirements declared by tool metadata are added
+to, never substituted for, =[tool_approval].required_tools=. Unloading the tool
+removes its plugin-owned requirement while operator-configured requirements
+remain in force. Duplicate tool registration is rejected before approval policy
+is changed. The marker selects the existing =ToolApprovalController= path; it
+does not create a plugin-specific approval channel.
+
 * Runtime facade
 
 The object passed to =start()= is a per-plugin =PluginRuntime= facade:
