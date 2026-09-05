@@ -138,11 +138,42 @@ class PushToTalkControllerTest {
         assertFalse(recorder.running)
         assertEquals(ManualVoiceState.Idle, controller.state())
     }
+
+    @Test
+    fun permissionRevocationStillCancelsCanonicalStreamWhenRecorderStopFails() {
+        val events = mutableListOf<String>()
+        val recorder = FakePcmRecorder(events, failStop = true)
+        val controller = PushToTalkController(
+            ManualVoiceCapture(OrderedIngress(events)),
+            recorder,
+        )
+        controller.press(
+            VoiceCaptureContext("session-1", null, "stream-1"),
+            permissionGranted = true,
+            connected = true,
+        )
+
+        assertThrows(IllegalStateException::class.java) {
+            controller.onMicrophonePermissionChanged(granted = false)
+        }
+
+        assertEquals(
+            listOf(
+                "start:stream-1",
+                "recorder.start",
+                "recorder.stop",
+                "cancel:stream-1",
+            ),
+            events,
+        )
+        assertEquals(ManualVoiceState.Idle, controller.state())
+    }
 }
 
 private class FakePcmRecorder(
     private val events: MutableList<String>,
     private val failStart: Boolean = false,
+    private val failStop: Boolean = false,
 ) : PcmRecorder {
     private var consumer: ((ByteArray) -> Unit)? = null
     private var failureConsumer: ((Throwable) -> Unit)? = null
@@ -164,6 +195,7 @@ private class FakePcmRecorder(
         running = false
         consumer = null
         failureConsumer = null
+        if (failStop) throw IllegalStateException("recorder stop failed")
     }
 
     fun emit(frame: ByteArray) {
