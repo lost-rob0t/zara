@@ -6,8 +6,10 @@ import ai.zara.app.auth.AndroidEnrollmentRepository
 import ai.zara.app.auth.EnrollmentRepository
 import ai.zara.app.auth.EnrollmentState
 import ai.zara.app.auth.JeroMqCurveKeyCodec
+import ai.zara.app.device.AndroidAppLauncher
 import ai.zara.app.device.AndroidUriLauncher
 import ai.zara.app.device.DeviceCapabilityRegistry
+import ai.zara.app.device.OpenAppAdapter
 import ai.zara.app.device.OpenUriAdapter
 import ai.zara.app.device.RegistryDeviceActionHandler
 import ai.zara.app.runtime.AndroidTextSessionController
@@ -74,6 +76,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             DeviceCapabilityRegistry(
                 listOf(
                     OpenUriAdapter(AndroidUriLauncher(context)),
+                    OpenAppAdapter(AndroidAppLauncher(context)),
                 )
             )
         )
