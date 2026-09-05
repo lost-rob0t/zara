@@ -56,6 +56,29 @@ class VoiceStreamSinkActor(
         return future
     }
 
+    fun interrupt(): CompletableFuture<ActiveAudioOutput?> {
+        check(!closed) { "voice stream sink is closed" }
+        val future = CompletableFuture<ActiveAudioOutput?>()
+        try {
+            executor.execute {
+                try {
+                    val owner = playback
+                    val interrupted = owner?.interrupt()
+                    if (owner != null) stateObserver?.invoke(owner.state())
+                    future.complete(interrupted)
+                } catch (error: Throwable) {
+                    failureObserver?.invoke(error)
+                    future.completeExceptionally(error)
+                }
+            }
+        } catch (error: RejectedExecutionException) {
+            val failure = VoiceStreamBackpressureException("voice stream mailbox is full")
+            failureObserver?.invoke(failure)
+            throw failure
+        }
+        return future
+    }
+
     private fun ownerFor(eventSessionId: String): VoicePlaybackController {
         val current = playback
         if (current != null && sessionId == eventSessionId) return current
