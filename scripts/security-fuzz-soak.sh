@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reproducible high-volume security fuzz + chaos + adversarial soak.
+# Reproducible high-volume authenticated-daemon security soak.
 #
 # Usage:
 #   nix develop -c bash scripts/security-fuzz-soak.sh
@@ -28,6 +28,14 @@ if [ "$ZARA_SECURITY_FUZZ_SEEDS" -lt 1 ] || [ "$ZARA_SECURITY_FUZZ_SEEDS" -gt 40
 fi
 
 python -m pytest -q -o faulthandler_timeout=15 \
+  t/test_daemon_security.py \
+  t/test_daemon_security_transport.py \
+  t/test_daemon_security_gateway.py \
+  t/test_daemon_security_policy.py \
+  t/test_security_threat_model.py \
+  t/test_security_threat_transport.py \
+  t/test_security_threat_gateway.py \
+  t/test_security_threat_management.py \
   t/test_security_fuzz.py \
   t/test_security_chaos.py \
   t/test_security_adversarial.py \
