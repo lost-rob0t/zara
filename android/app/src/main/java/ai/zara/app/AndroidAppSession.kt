@@ -190,6 +190,11 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             voice.cancel()
         }
 
+    fun onMicrophonePermissionChanged(granted: Boolean): CompletableFuture<Unit> =
+        submitVoiceControl {
+            voice.onMicrophonePermissionChanged(granted)
+        }
+
     private fun refreshEnrollment() {
         controller.observeEnrollment(enrollment.state().toRuntimeReadiness())
     }
