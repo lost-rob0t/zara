@@ -5,8 +5,7 @@ from __future__ import annotations
 import threading
 from typing import Annotated, Any, FrozenSet, Mapping, Optional
 
-from langchain_core.tools import BaseTool, InjectedToolArg
-from pydantic import PrivateAttr
+from langchain_core.tools import InjectedToolArg
 
 
 class ToolCancellation:
@@ -91,54 +90,16 @@ def inject_tool_cancellation(
     return injected
 
 
-class _CancellationBoundTool(BaseTool):
-    """One-invocation BaseTool delegate restoring trusted cancellation."""
-
-    _tool: BaseTool = PrivateAttr()
-    _cancellation: ToolCancellation = PrivateAttr()
-
-    def __init__(self, tool: BaseTool, cancellation: ToolCancellation) -> None:
-        super().__init__(
-            name=tool.name,
-            description=tool.description,
-            args_schema=tool.args_schema,
-            return_direct=tool.return_direct,
-            response_format=tool.response_format,
-        )
-        self._tool = tool
-        self._cancellation = cancellation
-
-    def _run(self, *args: Any, **kwargs: Any) -> Any:
-        raise RuntimeError("cancellation-bound tool requires async invocation")
-
-    async def ainvoke(self, tool_call: Any, config: Any = None, **kwargs: Any) -> Any:
-        if not isinstance(tool_call, Mapping):
-            raise TypeError("cancellable tool invocation must be a mapping")
-        args = tool_call.get("args")
-        if not isinstance(args, Mapping):
-            raise TypeError("cancellable tool invocation args must be a mapping")
-
-        bound_call = dict(tool_call)
-        bound_args = dict(args)
-        bound_args["cancellation"] = self._cancellation
-        bound_call["args"] = bound_args
-        return await self._tool.ainvoke(bound_call, config, **kwargs)
-
-
 async def execute_with_tool_cancellation(request: Any, execute: Any) -> Any:
-    """Reattach trusted Core cancellation after ToolNode strips injected args.
+    """Execute one trusted cancellation-bearing request through ToolNode.
 
-    The gated graph node overwrites any model value with a Core-owned
-    ``ToolCancellation`` before entering ToolNode. ToolNode's wrapper sees that
-    trusted value, binds it to a one-invocation BaseTool delegate, and then
-    calls the canonical ToolNode executor exactly once. ToolNode still owns
-    validation, injected state/runtime handling, error policy, and response
-    normalization.
+    ``ToolNode.awrap_tool_call`` receives the original tool call before its
+    canonical state/runtime injection step. Zara Core has already overwritten
+    any model-supplied ``cancellation`` value with its private read-only view,
+    so the registered tool can be executed directly. Keeping the original tool
+    preserves ToolNode validation, injected state/runtime handling, error
+    policy, and response normalization without a dynamic replacement tool.
     """
-    tool = request.tool
-    if tool is None:
-        return await execute(request)
-
     tool_call = request.tool_call
     if not isinstance(tool_call, Mapping):
         return await execute(request)
@@ -149,8 +110,7 @@ async def execute_with_tool_cancellation(request: Any, execute: Any) -> Any:
     if not isinstance(cancellation, ToolCancellation):
         return await execute(request)
 
-    bound_tool = _CancellationBoundTool(tool, cancellation)
-    return await execute(request.override(tool=bound_tool))
+    return await execute(request)
 
 
 __all__ = ["ToolCancellation", "ToolCancellationArg"]
