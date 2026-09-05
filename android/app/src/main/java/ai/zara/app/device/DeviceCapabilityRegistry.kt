@@ -5,6 +5,7 @@ import ai.zara.app.runtime.DeviceCapability
 interface DeviceCapabilityAdapter {
     val capability: DeviceCapability
     fun isAvailable(): Boolean
+    fun execute(arguments: DeviceActionArguments): DeviceActionResult
 }
 
 class DeviceCapabilityUnavailableException(message: String) : IllegalStateException(message)
@@ -27,7 +28,7 @@ class DeviceCapabilityRegistry(adapters: List<DeviceCapabilityAdapter>) {
             .entries
             .asSequence()
             .filter { (_, adapter) -> adapter.isAvailable() }
-            .map(Map.Entry<DeviceCapability, DeviceCapabilityAdapter>::key)
+            .map { (capability, _) -> capability }
             .sortedBy(DeviceCapability::wireId)
             .toCollection(linkedSetOf())
 
@@ -42,4 +43,9 @@ class DeviceCapabilityRegistry(adapters: List<DeviceCapabilityAdapter>) {
         }
         return adapter
     }
+
+    fun execute(
+        capability: DeviceCapability,
+        arguments: DeviceActionArguments,
+    ): DeviceActionResult = requireAdapter(capability).execute(arguments)
 }
