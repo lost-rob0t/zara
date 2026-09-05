@@ -41,5 +41,32 @@
 - no transcript, private key, token or raw credential enters diagnostics;
 - process recreation may restore public server profile + durable conversation id, never fabricate a live session.
 
-* TDD status
-- RED/implementation pending. Tests are written before each production behavior.
+* Iteration 1 — dependency-safe client state
+** TDD / implementation
+- Server-profile RED :: =f17105cb1daaa33d6c9757aa9d636602696979ac=.
+- Server-profile GREEN :: =9abadedaac91557e344135c233a593f8898d31fa=. Only canonical =tcp://host:port= endpoints are accepted; user-info credentials, paths, queries/fragments, missing host/port and non-TCP schemes fail closed.
+- Connection-reducer RED :: =9d13265325f85ada47cb7852063f782121dbfda1=.
+- Connection-reducer GREEN :: =0c9a971dfead6170af221ea94b35539268e3cc06=. =hello.ok= is generation-bound; reconnect increments generation, clears ephemeral session, rejects stale generation input, retains selected durable conversation id and caps exponential retry at 4 seconds / configured attempt limit.
+- Existing launch renderer was updated at =9edcc1c97a504f19752484d19de9f485b71112de= to compile against the one evolved reducer rather than introduce parallel UI state.
+- Restore-state RED :: =696d832cdcafe9cd2bca9a95083cee97128369ca=.
+- Restore-state GREEN :: =81adb076b2d32650f0b8430a2a0722fbebefbb17= plus =69c76809abc8d6f128e012fcde8d8d1ee7c3b2f9=. The bounded atomic store persists only public server profile + durable conversation selection. Corrupt/oversized state fails closed. Rehydration always starts disconnected with no session id.
+- Request-correlation RED :: =605993c0f533bc7907588b2b8b90c04d61253c7f=.
+- Request-correlation GREEN :: =ef7c7b832962679efdf0296fd802cba16575f9ee=. Pending request ids are bounded and bound to generation + session; stale replies cannot consume current requests and duplicate completion becomes unknown.
+- Enrollment projection RED :: =a57c02a7ca5b072fc5fa87c40df90ebf3ec75715=.
+- Enrollment projection GREEN :: =b5c54cfb8242488ffac0ab459efab80e10383c1c= + =1a275917e20f0548b630c55a14f228b5cd74f70b=. UI/runtime state receives only a key-free readiness projection from the authoritative #322 =EnrollmentRepository=.
+- Launch wiring :: =d354638d035ddddeaaa5bd967046005ffda2acde= restores public client state and reads real enrollment authority on process launch; it does not fabricate connection/session continuity.
+
+** Exact source diagnostics
+- Initial BuildConfig source field :: =985e56d365c92eeaccf79550cbf8ba36ccc39d32= and launch display =f78f54c92a1a293824441a7fa32dadad4dcb3002=.
+- PR-checkout correction :: =09dfc355444b579d0120abb9a21544ba96b2aa17=. GitHub pull-request checkouts build a synthetic merge commit, so Android derives =HEAD^2= when =GITHUB_HEAD_REF= exists and =HEAD= otherwise. An explicit =ZARA_SOURCE_SHA= remains the controlled override.
+- Regression :: =8cf1d470cbac81bb5197c412573a54fe11eac560= requires the diagnostic source identifier to be an immutable 40-character git SHA.
+
+** Gate
+- PR :: #338, draft while implementation continues.
+- Current exact Android candidate :: =d354638d035ddddeaaa5bd967046005ffda2acde=.
+- Exact-head CI #1080 is queued; no older or superseded SHA authorizes merge.
+- Shared blockers remain #159/#336 for device-action negotiation and Core #329/#331 for stock secure TCP interoperability. Neither blocker prevents the Android-only state/correlation work above.
+
+* Next
+- Consume the closed ZARA/1 framing + typed hello/turn response/event codec next, then one JeroMQ DEALER owner actor over the #322 CURVE factory.
+- After Core #331 lands, add deterministic stock-daemon authenticated TCP hello/text-turn interoperability and only then claim #173 acceptance.
