@@ -11,6 +11,7 @@
 - #194 keeps Samsung-only side-button/device claims behind later hardware proof; this slice uses public Android contracts only.
 - Existing Android =RuntimeState= already owns =AssistantRole= and =RuntimeEvent.RoleAssessed=, so role state must flow through that reducer rather than a second UI/service state machine.
 - B1/B2/B3 voice work remains one authenticated ZARA/1 client with one mic/playback owner; Assistant-role work must not create a second assistant, STT, TTS, memory, or protocol runtime.
+- Accepted #195 design requires role re-assessment on resume because role ownership may change outside Zara; UI-closed cross-process runtime ownership remains a separate acceptance item and is not faked by this slice.
 
 * Design / invariants
 - Android's observed =RoleManager= state is authoritative after a role request; Activity result data cannot optimistically grant the role.
@@ -19,6 +20,7 @@
 - Role observations enter the existing reducer and must not mutate connection/session state.
 - Voice-interaction services use =BIND_VOICE_INTERACTION= and an isolated lightweight =:voice= process surface.
 - UI and diagnostics render canonical =AssistantRole= values verbatim enough to remain honest.
+- Activity resume re-checks the platform role so external revocation/change is reflected promptly.
 - Samsung-specific setup claims remain deferred to hardware issue #206.
 
 * TDD / implementation lineage
@@ -38,10 +40,12 @@
 - =6eac03ef965a311671ce68ba69870c4fabc58970= update result invariant test to the parameter-free recheck API.
 - =cd63eee181ed830151eaf2cec447c55f047a07d1= bind RoleManager/controller into canonical =AndroidAppSession=.
 - =fdaf8a4dd87d6ac3baaa8a4e10de982b43674e5b= wire explicit user role request/result in =MainActivity=.
+- =0c6bddbd22c3bf506f24e0ddd9777e227608bd90= RED require role recheck on activity resume.
+- =d7893258c4ccfe124833848152773943334797af= GREEN resume re-assessment for external role loss/change.
 
 * Current acceptance state
-- Implemented :: role held/not-held/unavailable projection; explicit role request; post-result platform recheck; canonical reducer publication; VoiceInteraction service/session manifest surface; honest Settings/Diagnostics role state.
-- Still open before full #196 closure :: prove UI-closed invocation handoff into the same authenticated runtime; deterministic process recreation/cancellation cleanup; emulator/instrumentation coverage where feasible; Samsung setup guidance/hardware proof remains #206.
+- Implemented :: role held/not-held/unavailable projection; explicit role request; post-result platform recheck; canonical reducer publication; VoiceInteraction service/session manifest surface; honest Settings/Diagnostics role state; activity-resume role recheck.
+- Still open before full #196 closure :: prove UI-closed invocation handoff into the same authenticated runtime; deterministic cross-process recreation/cancellation cleanup; emulator/instrumentation coverage where feasible; Samsung setup guidance/hardware proof remains #206.
 
 * Verification gate
 - Focused Android JVM tests including assistant/controller/manifest/UI projection.
