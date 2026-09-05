@@ -25,11 +25,25 @@
 - Keep =AndroidAppSession= and =PushToTalkController= as the only voice/capture owners; this fence only authorizes whether an assistant-originated start may proceed.
 - No second state machine, socket, recorder, daemon, or assistant runtime.
 
-** Planned deterministic tests
-- start token is valid until shutdown invalidates it;
-- stale token cannot authorize a late start;
-- duplicate shutdown invalidation remains monotonic;
-- a fresh invocation after a later valid service lifecycle may obtain a new token without reviving the stale one.
+** Deterministic RED
+- Test-only head :: a4bcf97fb3ae424bba7c834b097ade30aab992e6
+- PR/CI :: #407 / run #1477 (33975360654)
+- Result :: Android skeleton gate failed exactly after adding =AssistantLifecycleFenceTest= without production support. Both shared-mic lanes remained green. No test was skipped, weakened, xfailed or converted to a warning.
+- Required contract :: shutdown invalidates an in-flight token; a fresh token after invalidation does not revive the stale token; repeated invalidation keeps all prior starts stale.
+
+** Smallest coherent realization
+- 83b16bec6d99c7e28fb3c559369278f9ddbf6f13 :: monotonic =AssistantLifecycleFence=.
+- e625cfe21d884d68b40a0a72bcf6a45918587337 :: one application-shared fence visible to both VoiceInteraction service and session.
+- 1293278a216115eec09fa8af2d11f5efd3ac12b2 :: async reconnect/capture checks the token before capture and after capture-start completion; stale completion uses canonical =cancelPushToTalk=.
+- 0369cb9fd15c72e77ea69e5c251a50346cce2c4b :: VoiceInteractionSession captures one generation token for each accepted assistant press.
+- 90891d5f5573ea58e21ecd1fe653edfd0b242a16 :: service shutdown invalidates before existing capture cancellation and role reassessment.
+- 4a740213be72736c37bd69ba5538cfc1dfe72925 :: stale-start cancellation failure is preserved as explicit failure evidence instead of swallowed.
+
+** Adversarial review
+- A session-local fence is insufficient because =VoiceInteractionService.onShutdown()= must invalidate the same generation observed by an in-flight session start.
+- A second reducer/AppSession lifecycle state machine would duplicate ownership, so the fence contains generation only and never owns recorder/socket/runtime state.
+- The pre-capture token check alone has a race if shutdown occurs immediately after it. The post-start check closes that race and issues canonical cancel if capture crossed the boundary.
+- Cleanup failure is not hidden: stale invalidation plus failed voice cancellation completes exceptionally with the cancellation root cause attached.
 
 ** Verification gate
 - focused JVM assistant lifecycle tests;
