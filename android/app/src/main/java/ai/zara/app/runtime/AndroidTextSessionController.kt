@@ -187,7 +187,7 @@ class AndroidTextSessionController(
 
     private fun requestIsCurrent(request: TurnRequest): Boolean = synchronized(lock) {
         val connected = runtimeState.server as? ServerConnection.Connected
-        !closed &&
+        return@synchronized !closed &&
             connected?.generation == request.generation &&
             runtimeState.sessionId == request.sessionId
     }
