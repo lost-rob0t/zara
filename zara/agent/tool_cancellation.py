@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
 import threading
 from typing import Annotated, Any, FrozenSet, Mapping, Optional
 
@@ -107,12 +106,14 @@ class _CancellationBoundTool(BaseTool):
     _cancellation: ToolCancellation = PrivateAttr()
 
     def __init__(self, tool: BaseTool, cancellation: ToolCancellation) -> None:
-        # ToolNode caches injection metadata by call name.  The delegate must use
-        # an unregistered Core-only name so that ToolNode inspects its plain
-        # schema instead of reusing the original tool's InjectedToolArg cache.
-        internal_name = f"zara_core_cancel_{secrets.token_hex(16)}"
+        # Keep the public call name stable. The awrap boundary has already
+        # resolved the registered tool; changing the call name here makes the
+        # downstream ToolNode executor reject the invocation before the plugin
+        # body can run. The delegate's plain schema prevents model-visible
+        # injection metadata from being reintroduced while Core restores the
+        # exact trusted cancellation view immediately before forwarding.
         super().__init__(
-            name=internal_name,
+            name=tool.name,
             description=tool.description,
             args_schema=_plain_input_schema(tool),
             return_direct=tool.return_direct,
@@ -142,13 +143,11 @@ class _CancellationBoundTool(BaseTool):
 async def execute_with_tool_cancellation(request: Any, execute: Any) -> Any:
     """Reattach trusted Core cancellation at ToolNode's final tool boundary.
 
-    ToolNode first consults an injection cache keyed by the tool-call name.  A
-    cancellable registered tool therefore cannot retain a Core-supplied
-    ``InjectedToolArg`` merely by overriding ``request.tool``.  Zara swaps both
-    the tool and the internal call name for one invocation, forcing ToolNode to
-    inspect the delegate's plain schema.  The delegate restores the public tool
-    name and exact Core-owned cancellation view before forwarding once to the
-    original registered tool.
+    The wrapper runs after ToolNode has resolved the registered public tool.
+    Zara may therefore substitute a one-invocation delegate, but must preserve
+    the public call name so the canonical executor continues to recognize the
+    invocation. The delegate restores the exact Core-owned cancellation view
+    before forwarding once to the original registered tool.
     """
     tool = request.tool
     if tool is None:
@@ -165,9 +164,7 @@ async def execute_with_tool_cancellation(request: Any, execute: Any) -> Any:
         return await execute(request)
 
     bound_tool = _CancellationBoundTool(tool, cancellation)
-    internal_call = dict(tool_call)
-    internal_call["name"] = bound_tool.name
-    return await execute(request.override(tool=bound_tool, tool_call=internal_call))
+    return await execute(request.override(tool=bound_tool))
 
 
 __all__ = ["ToolCancellation", "ToolCancellationArg"]
