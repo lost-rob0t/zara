@@ -5,7 +5,7 @@ Uses LangChain tools directly. The old custom registry is deprecated.
 """
 
 import logging
-from typing import Dict, List, Optional, Any, TYPE_CHECKING, Sequence
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
 
 from langchain_core.tools import BaseTool as LangChainTool
 
@@ -30,6 +30,18 @@ TODO_TOOL_NAMES = frozenset(
     }
 )
 
+_APPROVAL_REQUIRED_METADATA_KEY = "zara_requires_approval"
+
+
+def _tool_requires_approval(tool: LangChainTool) -> bool:
+    metadata = getattr(tool, "metadata", None)
+    if metadata is None:
+        return False
+    marker = metadata.get(_APPROVAL_REQUIRED_METADATA_KEY, False)
+    if not isinstance(marker, bool):
+        raise ValueError("zara_requires_approval tool metadata must be true or false")
+    return marker
+
 
 class ToolRegistry:
     """Central registry for all agent tools."""
@@ -50,19 +62,17 @@ class ToolRegistry:
             raise ValueError("tool name is invalid")
         if tool.name in self._tools:
             raise ValueError(f"Tool '{tool.name}' already registered")
+        requires_approval = _tool_requires_approval(tool)
         self._tools[tool.name] = tool
+        if requires_approval:
+            self._registered_approval_required.add(tool.name)
 
     def unregister_tool(self, name: str) -> Optional[LangChainTool]:
         tool = self._tools.pop(name, None)
         self._registered_approval_required.discard(name)
         return tool
 
-    def register_tools(
-        self,
-        tools: List[LangChainTool],
-        *,
-        approval_required: Sequence[str] = (),
-    ):
+    def register_tools(self, tools: List[LangChainTool]):
         pending = list(tools)
         names = [tool.name for tool in pending]
         if any(not valid_tool_name(name) for name in names):
@@ -73,22 +83,9 @@ class ToolRegistry:
         if conflicts:
             raise ValueError(f"Tool '{conflicts[0]}' already registered")
 
-        required_names = list(approval_required)
-        if any(not isinstance(name, str) or not valid_tool_name(name) for name in required_names):
-            raise ValueError("approval-required tool name is invalid")
-        duplicate_required = sorted(
-            {name for name in required_names if required_names.count(name) > 1}
-        )
-        if duplicate_required:
-            raise ValueError(
-                f"approval-required tool '{duplicate_required[0]}' is declared more than once"
-            )
-        foreign_required = sorted(set(required_names).difference(names))
-        if foreign_required:
-            raise ValueError(
-                f"approval-required tool '{foreign_required[0]}' is not registered by this call"
-            )
-
+        required_names = [
+            tool.name for tool in pending if _tool_requires_approval(tool)
+        ]
         self._tools.update((tool.name, tool) for tool in pending)
         self._registered_approval_required.update(required_names)
 
