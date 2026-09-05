@@ -3,6 +3,7 @@ agp = "9.2.0"
 kotlin = "2.3.21"
 composeBom = "2026.08.00"
 activityCompose = "1.12.0"
+jeromq = "0.6.0"
 junit = "4.13.2"
 
 [libraries]
@@ -11,6 +12,7 @@ compose-ui = { group = "androidx.compose.ui", name = "ui" }
 compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+jeromq = { group = "org.zeromq", name = "jeromq", version.ref = "jeromq" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
