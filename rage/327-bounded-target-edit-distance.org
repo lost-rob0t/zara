@@ -1,0 +1,45 @@
+#+title: RAGE #327 — bounded registered-target edit distance
+
+* Transaction
+- Consumed issue :: #327
+- Parent :: #122
+- Immutable start :: =16b1eda8dd4a0b1e4a3dba7742787e8a75192347=
+- Branch :: =rage/327-bounded-target-edit-distance=
+- Scope :: Zara Core only; no =android/**= production changes and no external repository work.
+
+* Iteration 1
+** Research
+- Current daemon routing is centralized in =zara/runtime/intent_router.py=; all voice/desktop daemon turns cross =PrologFirstRouter= before agent fallback.
+- =zara/command_gate.py= intentionally owns only cheap command-shape detection and exact short target extraction. It has no registered app vocabulary.
+- =PrologEngine.get_app_mapping/1= is the existing Python/Prolog boundary for device app configuration; =modules/commands.pl=open_app/1= now fails closed for unknown apps.
+- Current =modules/intent_resolver.pl= resolves =open/launch/start/run= with the first target token. Therefore a typo such as =open 4chna= resolves syntactically but execution rejects the unknown target.
+- Zara already ships tested Levenshtein =edit_distance/2= in =zara/wake_words.py= for wake-word ASR tolerance. Reuse it; do not add another dependency or a second algorithm.
+- Broad issue #122 owns a future bounded utterance-rewrite stage, but its declared #124 model dependency is stale. #124 was closed not-planned and later Prolog-RLM configuration was removed from current Zara. This iteration deliberately consumes only the deterministic allow-listed target slice.
+
+** Architecture / design
+- Add a typed, side-effect-free bounded matcher alongside the existing command-gate helpers. It receives a candidate plus a caller-supplied registered vocabulary; it never owns capabilities or execution.
+- Exact normalized match wins immediately.
+- Fuzzy matching is disabled below four characters, bounded to at most two edits, and uses a length-scaled threshold: one edit for 4–7 characters, two edits for 8+ characters.
+- A rewrite is valid only when the best in-threshold distance is unique. Equal-distance ties return ambiguous/no rewrite rather than guessing.
+- Add =PrologEngine.get_app_names()= as a bounded query over =app_mapping/2= and =direct_app/1=. This remains discovery of explicitly registered/allow-listed app targets, not new authority.
+- =PrologFirstRouter= canonicalizes only the single app-target token of exact open-style command verbs, and the existing target-only recovery path. It does not fuzzy-match URLs, paths, contacts, messages, durations, arbitrary shell text, or command verbs.
+- After rewrite, the canonical text still goes through =PrologEngine.resolve_intent()= and existing =open_app/1= execution. The matcher cannot execute anything.
+- Emit only bounded latency metadata: rewrite status/distance, never transcript contents or candidate vocabulary.
+
+** Planned RED tests
+1. Matcher: exact target unchanged.
+2. Matcher: =4chna -> 4chan= and =thunderbrd -> thunderbird= when unique.
+3. Matcher: short candidates do not fuzzy-match.
+4. Matcher: equal-distance registered neighbors are ambiguous/no rewrite.
+5. Matcher: out-of-threshold unrelated input is no match.
+6. Router: =open 4chna= reaches Prolog as =open 4chan= and executes only the canonical target.
+7. Router: target-only typo recovers through the same registered vocabulary.
+8. Router: ambiguity/unrelated text delegates and executes nothing.
+9. Prolog engine app vocabulary query is bounded and includes mappings/direct apps without hard-coded aliases.
+
+** Gate
+- Focused pytest for matcher/router/Prolog boundary.
+- =scripts/test-all.sh=.
+- =nix flake check=.
+- packaged build gate as used by repository CI.
+- exact-head GitHub Actions; merge only current-head green, mergeable, non-draft, no blocking discussion.
