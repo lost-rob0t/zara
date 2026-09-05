@@ -1,0 +1,55 @@
+:PROPERTIES:
+:ID:       zara-rage-203-android-assistant-shutdown-fence
+:END:
+#+title: RAGE #203 — fence stale Android assistant starts after shutdown
+#+status: ACTIVE
+
+* Iteration 1
+** Consumption
+- Issue :: #203
+- Immutable start :: c827a71d394a5c574bf6e85e8a14400d294b6d07
+- Branch :: rage/203-android-assistant-shutdown-fence
+- Scope :: Android assistant lifecycle only. No Core/protocol/plugin changes.
+
+** Research
+- =ZaraVoiceInteractionService.onShutdown()= only cancels when the shared manual voice state is already =Capturing=.
+- =startAssistantVoice()= may reconnect asynchronously before calling =pressToTalk(true)=.
+- Therefore service/role shutdown during an in-flight assistant start can occur before the shared state becomes =Capturing=; the late completion can then start capture after shutdown.
+- =AssistantInvocationGate= already fences late UI-session starts after =onHide=, but the service shutdown lifecycle has no equivalent generation fence shared with the async start operation.
+
+** Architecture / design
+- Add one small Android assistant lifecycle fence with monotonically increasing generation.
+- A start captures the current generation before asynchronous reconnect/start work.
+- Service shutdown invalidates the generation before cancellation/role reassessment.
+- A late start continuation must fail closed if its captured generation is stale, and if capture crossed the boundary concurrently it must issue the canonical existing cancel rather than leaving a recorder alive.
+- Keep =AndroidAppSession= and =PushToTalkController= as the only voice/capture owners; this fence only authorizes whether an assistant-originated start may proceed.
+- No second state machine, socket, recorder, daemon, or assistant runtime.
+
+** Deterministic RED
+- Test-only head :: a4bcf97fb3ae424bba7c834b097ade30aab992e6
+- PR/CI :: #407 / run #1477 (33975360654)
+- Result :: Android skeleton gate failed exactly after adding =AssistantLifecycleFenceTest= without production support. Both shared-mic lanes remained green. No test was skipped, weakened, xfailed or converted to a warning.
+- Required contract :: shutdown invalidates an in-flight token; a fresh token after invalidation does not revive the stale token; repeated invalidation keeps all prior starts stale.
+
+** Smallest coherent realization
+- 83b16bec6d99c7e28fb3c559369278f9ddbf6f13 :: monotonic =AssistantLifecycleFence=.
+- e625cfe21d884d68b40a0a72bcf6a45918587337 :: one application-shared fence visible to both VoiceInteraction service and session.
+- 1293278a216115eec09fa8af2d11f5efd3ac12b2 :: async reconnect/capture checks the token before capture and after capture-start completion; stale completion uses canonical =cancelPushToTalk=.
+- 0369cb9fd15c72e77ea69e5c251a50346cce2c4b :: VoiceInteractionSession captures one generation token for each accepted assistant press.
+- 90891d5f5573ea58e21ecd1fe653edfd0b242a16 :: service shutdown invalidates before existing capture cancellation and role reassessment.
+- 4a740213be72736c37bd69ba5538cfc1dfe72925 :: stale-start cancellation failure is preserved as explicit failure evidence instead of swallowed.
+
+** Adversarial review
+- A session-local fence is insufficient because =VoiceInteractionService.onShutdown()= must invalidate the same generation observed by an in-flight session start.
+- A second reducer/AppSession lifecycle state machine would duplicate ownership, so the fence contains generation only and never owns recorder/socket/runtime state.
+- The pre-capture token check alone has a race if shutdown occurs immediately after it. The post-start check closes that race and issues canonical cancel if capture crossed the boundary.
+- Cleanup failure is not hidden: stale invalidation plus failed voice cancellation completes exceptionally with the cancellation root cause attached.
+
+** Verification gate
+- focused JVM assistant lifecycle tests;
+- =scripts/test-android.sh=;
+- repository full tests, flake/package, Android secret/APK gate, shared-mic lanes at exact candidate SHA;
+- clear exact-head reviews/threads before merge.
+- Current-master recovery helper #409 merged =ada24b73ab599d417dfbda6c864854c19b3426e3= into this branch; recovered head =2f3b91cb405695bc0c3244b94a0bec2df14d9605=.
+- Exact recovered CI #1497 was fully GREEN: Android unit/native/debug APK + secret inspection, repository full tests + flake/package, Ubuntu mic, Arch mic.
+- Promotion from draft to ready caused repository rules to require a fresh =test= status before merge; the first expected-head merge was correctly rejected rather than bypassed. This evidence commit intentionally triggers that final exact-head status run.
