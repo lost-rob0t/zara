@@ -58,6 +58,32 @@ class PushToTalkControllerTest {
     }
 
     @Test
+    fun recorderRuntimeFailureCancelsCanonicalStreamAndSurfacesError() {
+        val events = mutableListOf<String>()
+        val failures = mutableListOf<String>()
+        val recorder = FakePcmRecorder(events)
+        val controller = PushToTalkController(
+            ManualVoiceCapture(OrderedIngress(events)),
+            recorder,
+            onRecorderFailure = { failures += requireNotNull(it.message) },
+        )
+        controller.press(
+            VoiceCaptureContext("session-1", null, "stream-1"),
+            permissionGranted = true,
+            connected = true,
+        )
+
+        recorder.fail(IllegalStateException("audio read failed"))
+
+        assertEquals(
+            listOf("start:stream-1", "recorder.start", "cancel:stream-1"),
+            events,
+        )
+        assertEquals(listOf("audio read failed"), failures)
+        assertEquals(ManualVoiceState.Idle, controller.state())
+    }
+
+    @Test
     fun cancelStopsRecorderBeforeCanonicalCancel() {
         val events = mutableListOf<String>()
         val controller = PushToTalkController(
@@ -88,15 +114,17 @@ private class FakePcmRecorder(
     private val failStart: Boolean = false,
 ) : PcmRecorder {
     private var consumer: ((ByteArray) -> Unit)? = null
+    private var failureConsumer: ((Throwable) -> Unit)? = null
     var running = false
         private set
 
-    override fun start(onFrame: (ByteArray) -> Unit) {
+    override fun start(onFrame: (ByteArray) -> Unit, onFailure: (Throwable) -> Unit) {
         events += "recorder.start"
         if (failStart) throw IllegalStateException("recorder failed")
         check(!running)
         running = true
         consumer = onFrame
+        failureConsumer = onFailure
     }
 
     override fun stop() {
@@ -104,11 +132,21 @@ private class FakePcmRecorder(
         events += "recorder.stop"
         running = false
         consumer = null
+        failureConsumer = null
     }
 
     fun emit(frame: ByteArray) {
         check(running)
         requireNotNull(consumer).invoke(frame)
+    }
+
+    fun fail(error: Throwable) {
+        check(running)
+        running = false
+        consumer = null
+        val callback = requireNotNull(failureConsumer)
+        failureConsumer = null
+        callback(error)
     }
 
     override fun close() {
