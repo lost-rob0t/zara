@@ -59,6 +59,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     @Volatile private var latestVoiceStreamFailure: String? = null
     @Volatile private var latestAudioRoute: AudioRouteSnapshot? = null
     @Volatile private var voiceStreamObserver: ((VoiceStreamState?, String?) -> Unit)? = null
+    @Volatile private var runtimeStateObserver: ((RuntimeState) -> Unit)? = null
     private val voiceExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-android-voice-control").apply { isDaemon = true }
     }
@@ -128,6 +129,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             voiceStreamSink.accept(event)
         }
         actor.setVoiceStreamFailureObserver(::reportVoiceStreamFailure)
+        controller.setStateObserver(::observeRuntimeState)
     }
 
     fun state(): RuntimeState = controller.state()
@@ -146,7 +148,8 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     }
 
     fun setStateObserver(observer: ((RuntimeState) -> Unit)?) {
-        controller.setStateObserver(observer)
+        runtimeStateObserver = observer
+        observer?.invoke(state())
     }
 
     fun assessAssistantRole() {
@@ -231,6 +234,15 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         controller.observeEnrollment(enrollment.state().toRuntimeReadiness())
     }
 
+    private fun observeRuntimeState(state: RuntimeState) {
+        try {
+            voice.onRuntimeStateChanged(state)
+        } catch (error: Throwable) {
+            reportVoiceStreamFailure(error)
+        }
+        runtimeStateObserver?.invoke(state)
+    }
+
     private fun interruptVoicePlayback() {
         try {
             voiceStreamSink.interrupt()
@@ -259,6 +271,8 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     }
 
     override fun close() {
+        controller.setStateObserver(null)
+        runtimeStateObserver = null
         actor.setVoiceStreamObserver(null)
         actor.setVoiceStreamFailureObserver(null)
         val routeFailure = runCatching { audioRouteController.stop() }.exceptionOrNull()
