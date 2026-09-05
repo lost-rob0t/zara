@@ -27,6 +27,20 @@ class AndroidReconnectSchedulerFailureTest {
         assertEquals(null, controller.state().sessionId)
         assertEquals(1, client.disconnectCalls)
     }
+
+    @Test
+    fun `stale scheduler failure cannot degrade a newer authenticated generation`() {
+        val current = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Ready,
+            generation = 7,
+            server = ServerConnection.Connected(7),
+            sessionId = "session-7",
+        )
+
+        val reduced = reduce(current, RuntimeEvent.ReconnectSchedulingFailed(6))
+
+        assertEquals(current, reduced)
+    }
 }
 
 private class SchedulerFailureClient : TextSessionClient {
