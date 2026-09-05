@@ -83,7 +83,7 @@ class DesktopController(QObject):
         full_chat_requested = getattr(self.tray, "full_chat_requested", None)
         settings_requested = getattr(self.tray, "settings_requested", None)
         if quick_requested is not None and self.quick_window is not None:
-            quick_requested.connect(self.show_quick_copilot)
+            quick_requested.connect(self.toggle_quick_copilot)
             if full_chat_requested is not None:
                 full_chat_requested.connect(self.open_full_chat)
         else:
@@ -131,6 +131,16 @@ class DesktopController(QObject):
             return
         self.quick_window.sync_from_shared_state()
         self.quick_window.show_raised()
+
+    def toggle_quick_copilot(self) -> None:
+        """Toggle the one process-owned Quick Copilot instance."""
+        if self.quick_window is None:
+            self.window.toggle_visibility()
+            return
+        if self.quick_window.isVisible():
+            self.quick_window.hide()
+            return
+        self.show_quick_copilot()
 
     def open_full_chat(self, conversation_id: Optional[str] = None) -> None:
         """Show Full Chat, optionally selecting one durable conversation."""
