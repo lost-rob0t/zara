@@ -1,0 +1,31 @@
+#+title: RAGE #203 — Android Assistant role-loss lifecycle
+
+* Iteration 1
+:PROPERTIES:
+:RAGE_START: bff04e48423fb4a9a935a8b69d980df33c701878
+:ISSUE: 203
+:END:
+
+** Research
+- Consumed #203 from exact canonical master bff04e48423fb4a9a935a8b69d980df33c701878.
+- Scope is Android-only role-loss lifecycle hardening. No Core/protocol/plugin ownership.
+- Existing Assistant voice start already fails closed unless RuntimeState.assistantRole is Held.
+- Existing VoiceInteractionService shutdown cancels active capture, but runtime role reassessment can change Held -> NotHeld/Unavailable independently of service shutdown.
+- #203 requires explicit role-loss behavior while background/system-assistant voice is active.
+
+** Design
+- Do not create another runtime, recorder, socket, or role state machine.
+- Add a pure Android-local policy for whether an active assistant-owned capture must be cancelled when canonical RuntimeState loses AssistantRole.Held.
+- Manual in-app PTT must not be cancelled merely because the system Assistant role is absent.
+- Policy input must explicitly distinguish assistant-owned from manual capture; role loss is not authority to kill unrelated manual voice.
+- Wiring into AndroidAppSession/VoiceInteractionService is deferred until overlapping #407/#411/#412 AppSession transactions become canonical.
+
+** Acceptance mapping
+- Held + assistant capture -> keep running.
+- NotHeld/Unavailable + assistant capture -> cancel exactly once through existing PushToTalkController owner.
+- Role loss with manual capture -> no cancellation.
+- Duplicate role-loss observations -> no duplicate cancel after capture is already idle.
+
+** Gate
+- Deterministic JVM RED/GREEN first.
+- scripts/test-android.sh, full repository/Nix/package gate, both shared-mic lanes, then exact-head GitHub Actions before merge.
