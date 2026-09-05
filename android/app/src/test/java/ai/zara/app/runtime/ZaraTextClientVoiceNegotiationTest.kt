@@ -1,6 +1,5 @@
 package ai.zara.app.runtime
 
-import ai.zara.app.voice.AudioOutputFormat
 import java.util.ArrayDeque
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
