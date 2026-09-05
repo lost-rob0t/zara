@@ -5,6 +5,7 @@ import ai.zara.app.auth.EnrollmentRepository
 import ai.zara.app.auth.EnrollmentState
 import ai.zara.app.auth.JeroMqCurveKeyCodec
 import ai.zara.app.runtime.AndroidTextSessionController
+import ai.zara.app.runtime.AudioOutputFormat
 import ai.zara.app.runtime.ClientStateStore
 import ai.zara.app.runtime.ConnectedTextSession
 import ai.zara.app.runtime.JeroMqTextDealerFactory
@@ -18,7 +19,6 @@ import ai.zara.app.runtime.reduce
 import ai.zara.app.runtime.toRuntimeReadiness
 import ai.zara.app.voice.AndroidPcmOutput
 import ai.zara.app.voice.AndroidPcmRecorder
-import ai.zara.app.voice.AudioOutputFormat
 import ai.zara.app.voice.AuthenticatedVoiceIngress
 import ai.zara.app.voice.ManualVoiceCapture
 import ai.zara.app.voice.ManualVoiceSessionCoordinator
