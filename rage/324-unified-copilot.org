@@ -1,0 +1,45 @@
+#+title: RAGE #324 - Unified adaptive Copilot and screenshot CI
+#+startup: overview
+
+* Run identity
+- Consumed issue :: #324 - collapse Quick/Full Chat into one adaptive Copilot and add screenshot CI
+- Parent epic :: #323
+- Branch :: =rage/324-unified-copilot=
+- RAGE start commit :: =16b1eda8dd4a0b1e4a3dba7742787e8a75192347=
+- Started :: 2026-09-05
+
+* Problem boundary
+Replace Zara's normal dual Quick/Full desktop chat presentation with one process-owned adaptive Copilot surface, and establish deterministic screenshot artifacts early enough that subsequent UI work can be visually reviewed.
+
+This iteration does not create a second runtime, daemon protocol, conversation store, voice stack, Prolog path, or provider client.
+
+* Initial invariants
+- One durable =ConversationService= remains authoritative for desktop conversation state.
+- One normal process-owned desktop chat renderer after migration.
+- Compact and expanded layouts preserve the exact conversation ID, messages, draft, active turn, cancellation state, and context integration points.
+- Qt widgets remain clients of =QtRuntimeBridge=/runtime events; no direct Prolog/tool/provider reach-through.
+- Hiding or changing presentation mode does not define daemon lifetime.
+- Screenshot fixtures are deterministic and offline.
+- CI uploads rendered UI evidence even when behavioral assertions fail.
+
+* Research questions
+- Which Full Chat capabilities must be extracted before deleting the second top-level window?
+- Can one stable Qt top-level window support both compact and expanded behavior without unsafe window-flag churn?
+- What is the smallest refactor that removes manual Quick/Full synchronization rather than layering more state on top?
+- Which current tests encode obsolete two-window assumptions?
+- What rendering path gives stable screenshots in current Nix/CI: Qt offscreen, Xvfb, or both?
+- Which geometry/accessibility assertions can hard-gate before perceptual image comparison is stable?
+
+* Acceptance-to-test map (initial)
+- one canonical window :: controller test asserts only one chat top-level instance is constructed
+- mode transition preserves state :: Qt test preserves conversation ID, composer draft, messages, active turn
+- compact/expanded history :: Qt test selects another conversation in expanded mode without handoff
+- close/Escape compatibility :: existing hide behavior retained on canonical surface
+- minimum geometry :: composer/message viewport nonzero and non-overlapping at minimum supported size
+- long wrap :: deterministic long message does not widen window or clip outside viewport
+- screenshot evidence :: fixture test writes required PNGs plus manifest under =artifacts/ui/=
+- CI artifact transport :: existing =artifacts/= upload path includes UI fixture output
+
+* Research log
+** 2026-09-05 - queue consumption
+Issue #324 consumed from =master= at exact SHA =16b1eda8...= after #323 was created as the parent queue/design epic. Research PR #328 is not treated as implementation authority; this RAGE iteration must independently verify current source/tests and may disprove details.
