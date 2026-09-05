@@ -5,7 +5,8 @@ from __future__ import annotations
 import threading
 from typing import Annotated, Any, FrozenSet, Mapping, Optional
 
-from langchain_core.tools import InjectedToolArg
+from langchain_core.tools import BaseTool, InjectedToolArg
+from pydantic import PrivateAttr
 
 
 class ToolCancellation:
@@ -90,16 +91,68 @@ def inject_tool_cancellation(
     return injected
 
 
-async def execute_with_tool_cancellation(request: Any, execute: Any) -> Any:
-    """Execute one trusted cancellation-bearing request through ToolNode.
+def _plain_input_schema(tool: BaseTool) -> dict[str, Any]:
+    """Return the full tool schema without LangChain injection annotations.
 
-    ``ToolNode.awrap_tool_call`` receives the original tool call before its
-    canonical state/runtime injection step. Zara Core has already overwritten
-    any model-supplied ``cancellation`` value with its private read-only view,
-    so the registered tool can be executed directly. Keeping the original tool
-    preserves ToolNode validation, injected state/runtime handling, error
-    policy, and response normalization without a dynamic replacement tool.
+    The delegate is internal and never model-bound.  A plain JSON schema keeps
+    the trusted cancellation field present while preventing ToolNode from
+    treating it as another caller-supplied InjectedToolArg and stripping it a
+    second time.  The original tool still performs canonical argument
+    validation when the delegate forwards the call.
     """
+    schema = tool.get_input_schema()
+    if isinstance(schema, Mapping):
+        return dict(schema)
+    return schema.model_json_schema()
+
+
+class _CancellationBoundTool(BaseTool):
+    """One-invocation delegate that restores trusted cancellation."""
+
+    _tool: BaseTool = PrivateAttr()
+    _cancellation: ToolCancellation = PrivateAttr()
+
+    def __init__(self, tool: BaseTool, cancellation: ToolCancellation) -> None:
+        super().__init__(
+            name=tool.name,
+            description=tool.description,
+            args_schema=_plain_input_schema(tool),
+            return_direct=tool.return_direct,
+            response_format=tool.response_format,
+        )
+        self._tool = tool
+        self._cancellation = cancellation
+
+    def _run(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("cancellation-bound tool requires async invocation")
+
+    async def ainvoke(self, tool_call: Any, config: Any = None, **kwargs: Any) -> Any:
+        if not isinstance(tool_call, Mapping):
+            raise TypeError("cancellable tool invocation must be a mapping")
+        args = tool_call.get("args")
+        if not isinstance(args, Mapping):
+            raise TypeError("cancellable tool invocation args must be a mapping")
+
+        bound_call = dict(tool_call)
+        bound_args = dict(args)
+        bound_args["cancellation"] = self._cancellation
+        bound_call["args"] = bound_args
+        return await self._tool.ainvoke(bound_call, config, **kwargs)
+
+
+async def execute_with_tool_cancellation(request: Any, execute: Any) -> Any:
+    """Reattach trusted Core cancellation at ToolNode's final tool boundary.
+
+    ToolNode deliberately strips model/caller values for ``InjectedToolArg``.
+    Zara's wrapper therefore swaps in an invocation-local delegate whose plain
+    schema keeps the Core value intact through ToolNode's dynamic injection
+    pass.  The delegate then forwards once to the original registered tool,
+    which retains its normal LangChain validation and result behavior.
+    """
+    tool = request.tool
+    if tool is None:
+        return await execute(request)
+
     tool_call = request.tool_call
     if not isinstance(tool_call, Mapping):
         return await execute(request)
@@ -110,7 +163,8 @@ async def execute_with_tool_cancellation(request: Any, execute: Any) -> Any:
     if not isinstance(cancellation, ToolCancellation):
         return await execute(request)
 
-    return await execute(request)
+    bound_tool = _CancellationBoundTool(tool, cancellation)
+    return await execute(request.override(tool=bound_tool))
 
 
 __all__ = ["ToolCancellation", "ToolCancellationArg"]
