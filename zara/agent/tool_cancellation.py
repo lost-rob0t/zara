@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from contextvars import ContextVar
-from typing import Any, Mapping, Optional
+from typing import Any, Optional
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
@@ -61,18 +61,6 @@ def tool_supports_cancellation(tool: Any) -> bool:
     return marker
 
 
-def _tool_input(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> Any:
-    if kwargs:
-        if args:
-            raise TypeError("tool invocation cannot mix positional and keyword input")
-        return dict(kwargs)
-    if len(args) == 1:
-        return args[0]
-    if not args:
-        return {}
-    raise TypeError("tool invocation has unsupported positional input")
-
-
 def _has_native_async(tool: BaseTool) -> bool:
     if hasattr(tool, "coroutine"):
         return getattr(tool, "coroutine") is not None
@@ -82,12 +70,13 @@ def _has_native_async(tool: BaseTool) -> bool:
 def _invoke_sync(
     tool: BaseTool,
     tool_input: Any,
-    config: RunnableConfig,
+    config: Optional[RunnableConfig],
     cancellation: ToolCancellation,
+    kwargs: dict[str, Any],
 ) -> Any:
     binding = _ACTIVE_CANCELLATION.set(cancellation)
     try:
-        return tool.invoke(tool_input, config=config)
+        return tool.invoke(tool_input, config=config, **kwargs)
     finally:
         _ACTIVE_CANCELLATION.reset(binding)
 
@@ -95,18 +84,19 @@ def _invoke_sync(
 async def _invoke_async(
     tool: BaseTool,
     tool_input: Any,
-    config: RunnableConfig,
+    config: Optional[RunnableConfig],
     cancellation: ToolCancellation,
+    kwargs: dict[str, Any],
 ) -> Any:
     binding = _ACTIVE_CANCELLATION.set(cancellation)
     try:
-        return await tool.ainvoke(tool_input, config=config)
+        return await tool.ainvoke(tool_input, config=config, **kwargs)
     finally:
         _ACTIVE_CANCELLATION.reset(binding)
 
 
 class CancellationTransportTool(BaseTool):
-    """Core wrapper that owns cancellation inside the actual invocation."""
+    """Core wrapper that owns cancellation at the public invocation boundary."""
 
     _tool: BaseTool = PrivateAttr()
     _model_schema: Any = PrivateAttr()
@@ -133,40 +123,36 @@ class CancellationTransportTool(BaseTool):
     def original_tool(self) -> BaseTool:
         return self._tool
 
-    def _run(
+    def invoke(
         self,
-        *args: Any,
-        config: RunnableConfig,
+        input: Any,
+        config: Optional[RunnableConfig] = None,
         **kwargs: Any,
     ) -> Any:
         signal = _ToolCancellationSignal()
-        return _invoke_sync(
-            self._tool,
-            _tool_input(args, kwargs),
-            config,
-            signal.view,
-        )
+        return _invoke_sync(self._tool, input, config, signal.view, dict(kwargs))
 
-    async def _arun(
+    async def ainvoke(
         self,
-        *args: Any,
-        config: RunnableConfig,
+        input: Any,
+        config: Optional[RunnableConfig] = None,
         **kwargs: Any,
     ) -> Any:
         signal = _ToolCancellationSignal()
-        tool_input = _tool_input(args, kwargs)
+        call_kwargs = dict(kwargs)
         if _has_native_async(self._tool):
             execution = asyncio.create_task(
-                _invoke_async(self._tool, tool_input, config, signal.view)
+                _invoke_async(self._tool, input, config, signal.view, call_kwargs)
             )
         else:
             execution = asyncio.create_task(
                 asyncio.to_thread(
                     _invoke_sync,
                     self._tool,
-                    tool_input,
+                    input,
                     config,
                     signal.view,
+                    call_kwargs,
                 )
             )
 
@@ -180,6 +166,9 @@ class CancellationTransportTool(BaseTool):
             except asyncio.CancelledError:
                 pass
             raise
+
+    def _run(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("cancellation wrapper must execute through invoke()")
 
 
 def bind_tool_cancellation_transport(tool: Any) -> Any:
