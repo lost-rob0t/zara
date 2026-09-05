@@ -1,0 +1,27 @@
+#+title: RAGE #29 — streaming TTS provider recovery r10
+
+* Transaction
+- Consumed issue :: #29
+- Immutable RAGE start :: =ada24b73ab599d417dfbda6c864854c19b3426e3=
+- Branch :: =rage/29-streaming-tts-provider-recovery-r10=
+- Scope :: Zara Core only; zero =android/**= changes.
+
+* Prior iteration evidence
+- r9 exact head =5599cfa92e9f869fe95840b94811a92d8da5bfc3= passed Android and both shared-mic lanes but failed the Core test job.
+- The failure was isolated to =test_transient_engine_bootstrap_failure_recovers_on_next_turn=: the test emitted an =AssistantComplete= containing text without first emitting that text as =AssistantDelta=.
+- Canonical =TtsOutputBridge= intentionally synthesizes streamed =AssistantDelta= content and uses =AssistantComplete= only to flush the accumulated remainder/sentinel. Existing daemon tests prove that contract.
+- Therefore the r9 production design was not falsified; its recovery fixture was malformed. r10 corrects the fixture to exercise the canonical streamed event sequence and recovers the bounded production change onto current master.
+
+* Selected design
+- Move engine-bootstrap failure state from the bridge lifetime to the exact =_TurnAudio= state.
+- One failed turn attempts engine construction at most once, even across multiple phrases.
+- A later distinct turn may retry engine construction and recover without daemon restart.
+- Once engine construction succeeds, the shared engine cache remains unchanged.
+
+* Invariants
+- provider bootstrap failure never fabricates audio success;
+- same-turn phrase storms do not hammer construction;
+- failure state is isolated by turn;
+- later turns can recover;
+- provider API, ZARA/1 wire shapes, phrase ordering, playback ownership, cancellation, and Android implementation remain unchanged;
+- exact-head full Core tests, =nix flake check=, packaged Zara, Android compatibility, both shared-mic lanes, reviews and unresolved threads are required before merge.
