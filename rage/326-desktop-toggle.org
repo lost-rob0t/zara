@@ -17,6 +17,23 @@
 - Preserve the current explicit quit lifecycle.
 - Build toward =zara --toggle-desktop= through one bounded per-user local-control boundary, not remote daemon semantics.
 
+** Deterministic RED
+- Test-only head :: d6e78031fbfc0bf7c9b1f9a78998681c0b2cbd2f
+- CI :: #1409 / run 33971298399
+- Result :: Core =Run all tests= failed exactly on the new tray-toggle contract; Android compatibility and both shared-mic lanes passed. Flake/package were correctly skipped after Core RED.
+- Root cause :: =DesktopController= wires =tray.quick_requested= to =show_quick_copilot()= even though =QuickCopilotWindow.toggle_visibility()= already implements the required one-instance visible/hidden behavior.
+
+** Selected first-slice repair
+- Keep =show_quick_copilot()= as the explicit summon/show operation used by startup and other callers.
+- Add one controller-owned =toggle_quick_copilot()= command and wire only primary tray activation to it.
+- Reuse =QuickCopilotWindow.toggle_visibility()= so show still normalizes minimized state, recovers geometry, raises/activates and focuses the composer; hiding preserves the same process/window.
+- Fallback surfaces keep their existing toggle behavior. No new window, runtime, protocol message or ownership path.
+
+** Remaining #326 acceptance after first slice
+- Bounded per-user local desktop-control owner/IPC and required =zara --toggle-desktop=.
+- Stale socket/owner recovery, duplicate-start race, endpoint permission/ownership checks, malformed/oversized command rejection and bounded timeouts.
+- Existing-owner show/hide/toggle integration and no-owner exactly-one canonical daemon-backed desktop start.
+
 ** Gate
 - Deterministic desktop-controller RED/TDD first.
 - Full repository-native tests, flake, package and exact-head CI before merge.
