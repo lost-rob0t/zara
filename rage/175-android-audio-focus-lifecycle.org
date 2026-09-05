@@ -4,10 +4,11 @@
 - Issue :: #175
 - Scope :: Android-only residual voice lifecycle after canonical B1/B2/B3 and #196 UI-closed Assistant runtime.
 - Base :: canonical master =03143a3cd4990734e3f9afaf63462c8b03108337=.
-- Concurrency :: intentionally avoids #174 action-registry files while #375 exact-head CI runs.
+- PR :: #381.
+- Concurrency :: intentionally avoids #174 action-registry/AppSession files while #375 exact-head CI runs.
 
 * Audit
-#175 remains open after B1 manual PTT, B2 streamed transcript/audio and B3 local barge-in landed. The B3 RAGE plan named Android audio-focus ownership, but its production diff contains playback interrupt/cancel behavior and no =AudioManager= focus adapter. Current =AndroidPcmOutput= uses =USAGE_ASSISTANT= but directly starts/stops =AudioTrack= without requesting/releasing audio focus or reacting to system focus loss. Therefore audio-focus loss remains a real acceptance gap, not backlog bookkeeping.
+#175 remains open after B1 manual PTT, B2 streamed transcript/audio and B3 local barge-in landed. The B3 RAGE plan named Android audio-focus ownership, but its production diff contains playback interrupt/cancel behavior and no =AudioManager= focus adapter. Current canonical =AndroidPcmOutput= uses =USAGE_ASSISTANT= but directly starts/stops =AudioTrack= without requesting/releasing audio focus or reacting to system focus loss. Therefore audio-focus loss remains a real acceptance gap, not backlog bookkeeping.
 
 The separate residuals for wake mode, Bluetooth/headset route changes and background/foreground service behavior remain outside this first lifecycle slice until their platform contracts are individually bounded.
 
@@ -15,18 +16,31 @@ The separate residuals for wake mode, Bluetooth/headset route changes and backgr
 - Audio focus is owned exclusively by the Android playback edge, never Core/server.
 - Playback must not start unless assistant audio focus is granted.
 - Permanent/transient focus loss stops local playback through the same single playback owner; it does not fabricate server cancellation or start a second runtime.
-- Focus is released exactly once when playback stops/closes, including failed AudioTrack startup.
+- Focus is released exactly once when playback stops/closes, including failed speaker startup.
 - Focus callbacks are serialized into a small typed adapter boundary; raw Android constants do not leak into reducer/protocol state.
-- No activity/context leak: use application context / AudioManager service only.
-- No #174 files are modified in this parallel slice.
+- Android uses application context + AudioManager and public =AudioFocusRequest= only.
+- Delayed focus gain is rejected. On any loss Android abandons the framework request immediately; Zara does not auto-resume stale server audio on a later focus gain.
+- No #174 files are modified in this parallel slice. Production =AndroidAppSession= wiring waits for #174 canonical/recovery rather than creating a merge conflict or duplicate audio owner.
 
-* TDD order
-1. RED pure =AudioFocusController= state contract: granted/denied, loss callback, idempotent abandon.
-2. GREEN pure controller + platform boundary.
-3. RED Android platform adapter contract/source gate if deterministic JVM coverage cannot instantiate framework AudioManager.
-4. Wire focus ownership into =AndroidPcmOutput= without changing canonical stream/reducer/socket ownership.
-5. Test start denial, focus loss -> stop, failed AudioTrack start -> abandon, normal stop/close -> abandon once.
-6. Android + full repository/Nix/package/shared-mic exact-head gate after recovery onto canonical master.
+* TDD / implementation evidence
+- =05005e6b5dec1ac62f81969cf0e84730d0036dd3= RED :: explicit focus grant/deny/loss/idempotent release ownership.
+- =96589e8cb9998647b1451dab7deaf5bed731ad83= GREEN :: pure =AudioFocusController= and typed platform boundary.
+- =45b23661f2b3109e8a415aafd878bc4ef31c2164= Android =AudioFocusRequest= adapter with assistant speech attributes and no delayed grant.
+- =8932eca947138a88f11f53bd2483a7a956b3d597= RED :: playback must refuse denied focus, abandon on failed start/normal completion and interrupt on system focus loss.
+- =445c45f6076afb6416130b5adebe31099c764f39= GREEN :: =VoicePlaybackController= owns focus alongside its one =PcmOutput= lifecycle.
+- =8a9a969d611e156dc238938df4b721bffcc074a1= adversarial correction :: abandon framework focus on transient/permanent loss so a later platform gain cannot resurrect stale output.
+
+* Adversarial review
+- Focus denial happens before =PcmOutput.start=; no speaker state is fabricated.
+- Speaker startup failure releases a previously granted focus request.
+- Local focus loss clears playback state through the existing =interrupt= path, so late chunks remain stale/rejected.
+- Focus release is idempotent in the pure owner and paired with output completion/interrupt/close.
+- Framework loss callback abandons the request before notifying playback; no automatic resume path exists.
+- Focus handling does not send an upstream turn cancel by itself: system focus loss is a local playback policy event, whereas user barge-in remains the explicit upstream cancellation path from B3.
+
+* Gate
+- Current partial branch is allowed to compile/gate but remains draft because AppSession production wiring is intentionally deferred until #174 lands.
+- After #174 canonical: recover exact master, wire =AndroidAudioFocusPlatform -> AudioFocusController -> VoicePlaybackController= in the existing =VoiceStreamSinkActor= playback factory, then rerun focused Android/full repository/Nix/package/shared-mic exact-head gates.
 
 * Status
-RESEARCH/AUDIT RECORDED. Next: deterministic RED pure focus-owner state tests.
+IMPLEMENTATION SUBSTRATE GREEN BY CONSTRUCTION; production wiring pending #174 canonical to avoid file ownership conflict. PR #381 remains draft.
