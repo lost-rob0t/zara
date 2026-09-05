@@ -16,8 +16,8 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from .. import command_gate
-from ..python_skills import python_skills
 from ..latency import LatencyTrace
+from ..python_skills import python_skills
 from ..wake_words import WAKE_WORDS, find_wake_span
 from .clarification import (
     ClarificationCoordinator,
@@ -47,6 +47,11 @@ PENDING_DIALOGUE_TEMPLATES: dict[str, DialogueTemplate] = {
 GREETING_RESPONSE = "Yes?"
 CONVERSATION_ENDED_RESPONSE = "Conversation ended"
 CLARIFICATION_FAILED_RESPONSE = "I couldn't complete that."
+_REGISTERED_APP_QUERY = (
+    "(kb_device_providers:app_mapping(Name, _); "
+    "kb_device_providers:direct_app(Name))"
+)
+_REGISTERED_APP_LIMIT = 256
 
 
 @dataclass(frozen=True)
@@ -105,6 +110,13 @@ class PrologFirstRouter:
         )
         if clarification_reply is not None:
             return clarification_reply
+
+        open_candidate = command_gate.open_target_candidate(stripped)
+        if open_candidate is not None:
+            verb, target = open_candidate
+            match = await self._registered_target_match(target)
+            if match.status == "rewrite" and match.canonical is not None:
+                stripped = f"{verb} {match.canonical}"
 
         if not command_gate.looks_like_command(stripped):
             recovered = await self._recover_target_only(stripped)
@@ -186,22 +198,59 @@ class PrologFirstRouter:
         remainder = f"{raw_text[:start]} {raw_text[end:]}"
         return " ".join(remainder.split()).strip(" \t\r\n,.:;!?-")
 
-    async def _recover_target_only(self, text: str) -> Optional[str]:
-        target = command_gate.target_only_candidate(text)
-        if target is None:
-            return None
-
+    async def _exact_app_mapping(self, target: str) -> bool:
         def _lookup():
             return self.prolog.get_app_mapping(target)
 
         try:
-            mapping = await self._run_blocking(_lookup)
+            return await self._run_blocking(_lookup) is not None
         except Exception as error:
-            logger.warning("Target-only command lookup failed: %s", error)
+            logger.warning("Exact app target lookup failed: %s", error)
+            return False
+
+    async def _registered_target_match(
+        self,
+        target: str,
+    ) -> command_gate.RegisteredTargetMatch:
+        if await self._exact_app_mapping(target):
+            return command_gate.RegisteredTargetMatch("exact", target.casefold(), 0)
+
+        def _query_registered():
+            return self.prolog.query_all(
+                _REGISTERED_APP_QUERY,
+                max_solutions=_REGISTERED_APP_LIMIT,
+            )
+
+        try:
+            rows = await self._run_blocking(_query_registered)
+        except Exception as error:
+            logger.warning("Registered app target discovery failed: %s", error)
+            return command_gate.RegisteredTargetMatch("no_match")
+
+        names: list[str] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            value = row.get("Name")
+            if isinstance(value, bytes):
+                try:
+                    value = value.decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+            if not isinstance(value, str):
+                value = getattr(value, "value", None)
+            if isinstance(value, str):
+                names.append(value)
+        return command_gate.match_registered_target(target, names)
+
+    async def _recover_target_only(self, text: str) -> Optional[str]:
+        target = command_gate.target_only_candidate(text)
+        if target is None:
             return None
-        if mapping is None:
+        match = await self._registered_target_match(target)
+        if match.status not in {"exact", "rewrite"} or match.canonical is None:
             return None
-        return f"open {target}"
+        return f"open {match.canonical}"
 
     async def _clarification_reply(self, text: str, conversation: str, _record):
         session = self.clarifications.session_for(self.principal_id, conversation)
