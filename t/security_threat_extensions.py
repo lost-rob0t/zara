@@ -17,7 +17,7 @@ EXTRA_THREATS = (
             "t/test_json_limits.py::test_untrusted_json_nesting_accepts_exact_boundary_and_rejects_next_level",
             "t/test_security_threat_json_depth.py::test_admin_recursive_json_exhaustion_is_a_closed_admin_error",
             "t/test_security_threat_json_depth.py::test_persisted_recursive_json_exhaustion_is_a_closed_state_error",
-            "t/test_security_threat_protocol_depth.py::test_recursive_protocol_body_is_rejected_and_gateway_remains_healthy",
+            "t/test_security_threat_protocol_depth.py::test_authenticated_recursive_json_attack_does_not_kill_gateway",
         ),
     },
     {
