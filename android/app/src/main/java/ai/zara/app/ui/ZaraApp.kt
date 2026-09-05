@@ -3,6 +3,7 @@ package ai.zara.app.ui
 import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.RuntimeState
 import ai.zara.app.runtime.ServerConnection
+import ai.zara.app.voice.ManualVoiceState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -26,6 +27,7 @@ import androidx.compose.ui.unit.dp
 
 enum class AppSurface(val label: String) {
     Chat("Chat"),
+    Voice("Voice"),
     Connection("Connection"),
     Settings("Settings"),
     Diagnostics("Diagnostics"),
@@ -45,10 +47,16 @@ fun ZaraApp(
     lastTurn: RenderedTextTurn?,
     operationError: String?,
     operationBusy: Boolean,
+    microphonePermissionGranted: Boolean,
+    voiceState: ManualVoiceState,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
     onConnect: (String) -> Unit,
     onSendText: (String) -> Unit,
+    onRequestMicrophonePermission: () -> Unit,
+    onStartVoice: () -> Unit,
+    onStopVoice: () -> Unit,
+    onCancelVoice: () -> Unit,
 ) {
     var selected by rememberSaveable { mutableStateOf(AppSurface.Chat) }
     MaterialTheme {
@@ -73,6 +81,18 @@ fun ZaraApp(
                     operationError = operationError,
                     operationBusy = operationBusy,
                     onSendText = onSendText,
+                    padding = padding,
+                )
+                AppSurface.Voice -> VoiceSurface(
+                    state = runtimeState,
+                    microphonePermissionGranted = microphonePermissionGranted,
+                    voiceState = voiceState,
+                    operationError = operationError,
+                    operationBusy = operationBusy,
+                    onRequestMicrophonePermission = onRequestMicrophonePermission,
+                    onStartVoice = onStartVoice,
+                    onStopVoice = onStopVoice,
+                    onCancelVoice = onCancelVoice,
                     padding = padding,
                 )
                 AppSurface.Connection -> ConnectionSurface(
@@ -145,6 +165,51 @@ private fun ChatSurface(
         } else {
             Text("Chat unavailable until an authenticated Zara session is connected.")
         }
+    }
+}
+
+@Composable
+private fun VoiceSurface(
+    state: RuntimeState,
+    microphonePermissionGranted: Boolean,
+    voiceState: ManualVoiceState,
+    operationError: String?,
+    operationBusy: Boolean,
+    onRequestMicrophonePermission: () -> Unit,
+    onStartVoice: () -> Unit,
+    onStopVoice: () -> Unit,
+    onCancelVoice: () -> Unit,
+    padding: PaddingValues,
+) {
+    val capturing = voiceState is ManualVoiceState.Capturing
+    SurfaceColumn(padding) {
+        Text("Voice", style = MaterialTheme.typography.headlineMedium)
+        Text("connection: ${connectionLabel(state.server)}")
+        Text(if (capturing) "microphone: streaming to Zara" else "microphone: idle")
+        Text("Manual voice uses the same authenticated Zara session as Chat. The server owns STT, assistant routing, tools, and TTS.")
+        if (!microphonePermissionGranted) {
+            Text("Microphone permission is required before any audio stream can open.")
+            Button(
+                onClick = onRequestMicrophonePermission,
+                enabled = !operationBusy && !capturing,
+            ) {
+                Text("Grant microphone permission")
+            }
+        } else if (!canStartManualVoice(state, microphonePermissionGranted) && !capturing) {
+            Text("Voice unavailable until an authenticated Zara session is connected.")
+        } else if (capturing) {
+            Button(onClick = onStopVoice, enabled = !operationBusy) {
+                Text("Stop & send")
+            }
+            Button(onClick = onCancelVoice, enabled = !operationBusy) {
+                Text("Cancel")
+            }
+        } else {
+            Button(onClick = onStartVoice, enabled = !operationBusy) {
+                Text("Start talking")
+            }
+        }
+        operationError?.let { Text("Error: $it") }
     }
 }
 
@@ -273,6 +338,15 @@ private fun SurfaceColumn(
 
 internal fun canRequestConnect(connection: ServerConnection): Boolean =
     connection is ServerConnection.Disconnected || connection is ServerConnection.OfflineDegraded
+
+internal fun canStartManualVoice(
+    state: RuntimeState,
+    microphonePermissionGranted: Boolean,
+): Boolean =
+    microphonePermissionGranted &&
+        state.enrollment == EnrollmentReadiness.Ready &&
+        state.server is ServerConnection.Connected &&
+        state.sessionId != null
 
 internal fun connectionLabel(connection: ServerConnection): String = when (connection) {
     ServerConnection.Disconnected -> "disconnected"

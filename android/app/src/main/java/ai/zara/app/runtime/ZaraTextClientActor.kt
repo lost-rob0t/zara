@@ -1,5 +1,10 @@
 package ai.zara.app.runtime
 
+import ai.zara.app.voice.VoiceCaptureContext
+import ai.zara.app.voice.VoiceCommandClient
+import ai.zara.app.voice.VoiceServerReply
+import ai.zara.app.voice.ZaraVoiceAckCodec
+import ai.zara.app.voice.ZaraVoiceCodec
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -38,7 +43,7 @@ class ZaraTextClientActor(
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-android-text-client").apply { isDaemon = true }
     },
-) : TextSessionClient {
+) : TextSessionClient, VoiceCommandClient {
     private var dealer: TextDealer? = null
     private var session: ConnectedTextSession? = null
     private val correlations = RequestCorrelations(limit = 256)
@@ -219,6 +224,56 @@ class ZaraTextClientActor(
         }
     }
 
+    override fun startVoice(context: VoiceCaptureContext): CompletableFuture<Unit> =
+        voiceCommand(context, expectedType = "audio.input.started", expectedSequence = null) { requestId, timestamp ->
+            ZaraVoiceCodec.encodeStart(
+                requestId = requestId,
+                sessionId = context.sessionId,
+                conversationId = context.conversationId,
+                streamId = context.streamId,
+                timestampNs = timestamp,
+            )
+        }
+
+    override fun sendVoiceChunk(
+        context: VoiceCaptureContext,
+        sequence: Long,
+        pcm: ByteArray,
+    ): CompletableFuture<Unit> =
+        voiceCommand(context, expectedType = "audio.input.accepted", expectedSequence = sequence) { requestId, timestamp ->
+            ZaraVoiceCodec.encodeChunk(
+                requestId = requestId,
+                sessionId = context.sessionId,
+                conversationId = context.conversationId,
+                streamId = context.streamId,
+                sequence = sequence,
+                timestampNs = timestamp,
+                pcm = pcm,
+            )
+        }
+
+    override fun commitVoice(context: VoiceCaptureContext): CompletableFuture<Unit> =
+        voiceCommand(context, expectedType = "audio.input.committed", expectedSequence = null) { requestId, timestamp ->
+            ZaraVoiceCodec.encodeCommit(
+                requestId = requestId,
+                sessionId = context.sessionId,
+                conversationId = context.conversationId,
+                streamId = context.streamId,
+                timestampNs = timestamp,
+            )
+        }
+
+    override fun cancelVoice(context: VoiceCaptureContext): CompletableFuture<Unit> =
+        voiceCommand(context, expectedType = "audio.input.cancelled", expectedSequence = null) { requestId, timestamp ->
+            ZaraVoiceCodec.encodeCancel(
+                requestId = requestId,
+                sessionId = context.sessionId,
+                conversationId = context.conversationId,
+                streamId = context.streamId,
+                timestampNs = timestamp,
+            )
+        }
+
     override fun disconnect(): CompletableFuture<Unit> = submit {
         session = null
         correlations.clear()
@@ -234,6 +289,49 @@ class ZaraTextClientActor(
             closed = true
             executor.shutdownNow()
         }
+    }
+
+    private fun voiceCommand(
+        context: VoiceCaptureContext,
+        expectedType: String,
+        expectedSequence: Long?,
+        frames: (requestId: String, timestampNs: Long) -> List<ByteArray>,
+    ): CompletableFuture<Unit> = submit {
+        val current = session ?: throw StaleTextSessionException("voice client is not connected")
+        if (current.sessionId != context.sessionId) {
+            throw StaleTextSessionException("voice request belongs to a stale session")
+        }
+        val active = dealer ?: throw StaleTextSessionException("voice dealer is unavailable")
+        val requestId = nextRequestId()
+        active.send(frames(requestId, nextTimestamp()))
+        val responseFrames = active.receive(requestTimeoutMillis)
+            ?: throw TextRequestTimeoutException("ZARA/1 voice acknowledgement timed out")
+        when (val reply = ZaraVoiceAckCodec.decode(responseFrames)) {
+            is VoiceServerReply.ProtocolError -> {
+                if (reply.replyTo != null && reply.replyTo != requestId) {
+                    throw ZaraWireException("voice error reply correlation mismatch")
+                }
+                if (reply.sessionId != null && reply.sessionId != current.sessionId) {
+                    throw ZaraWireException("voice error session is stale")
+                }
+                throw ZaraWireException("voice command failed: ${reply.code}")
+            }
+            is VoiceServerReply.Acknowledged -> {
+                if (reply.type != expectedType) throw ZaraWireException("unexpected voice acknowledgement type")
+                if (reply.replyTo != requestId) throw ZaraWireException("voice reply correlation mismatch")
+                if (reply.sessionId != current.sessionId) throw ZaraWireException("voice acknowledgement session is stale")
+                if (reply.streamId != context.streamId) throw ZaraWireException("voice acknowledgement stream is stale")
+                if (reply.sequence != expectedSequence) throw ZaraWireException("voice acknowledgement sequence mismatch")
+                if (
+                    context.conversationId != null &&
+                    reply.conversationId != null &&
+                    reply.conversationId != context.conversationId
+                ) {
+                    throw ZaraWireException("voice acknowledgement conversation is stale")
+                }
+            }
+        }
+        Unit
     }
 
     private fun replaceDealer(profile: ServerProfile) {

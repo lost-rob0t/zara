@@ -1,6 +1,7 @@
 package ai.zara.app.ui
 
 import ai.zara.app.runtime.EnrollmentReadiness
+import ai.zara.app.runtime.RuntimeState
 import ai.zara.app.runtime.ServerConnection
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -41,5 +42,28 @@ class ZaraAppProjectionTest {
         assertFalse(canRequestConnect(ServerConnection.Connecting(4)))
         assertFalse(canRequestConnect(ServerConnection.Connected(4)))
         assertFalse(canRequestConnect(ServerConnection.Reconnecting(5, 2)))
+    }
+
+    @Test
+    fun manualVoiceRequiresPermissionAndCanonicalAuthenticatedSession() {
+        val connected = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Ready,
+            server = ServerConnection.Connected(4),
+            sessionId = "session-1",
+        )
+        assertTrue(canStartManualVoice(connected, microphonePermissionGranted = true))
+        assertFalse(canStartManualVoice(connected, microphonePermissionGranted = false))
+        assertFalse(
+            canStartManualVoice(
+                connected.copy(sessionId = null),
+                microphonePermissionGranted = true,
+            )
+        )
+        assertFalse(
+            canStartManualVoice(
+                connected.copy(server = ServerConnection.Reconnecting(5, 1), sessionId = null),
+                microphonePermissionGranted = true,
+            )
+        )
     }
 }

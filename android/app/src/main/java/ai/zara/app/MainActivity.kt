@@ -2,12 +2,16 @@ package ai.zara.app
 
 import ai.zara.app.ui.RenderedTextTurn
 import ai.zara.app.ui.ZaraApp
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
     private lateinit var appSession: AndroidAppSession
@@ -21,6 +25,15 @@ class MainActivity : ComponentActivity() {
         var lastTurn by mutableStateOf<RenderedTextTurn?>(null)
         var operationError by mutableStateOf<String?>(null)
         var operationBusy by mutableStateOf(false)
+        var microphonePermissionGranted by mutableStateOf(hasMicrophonePermission())
+        var voiceState by mutableStateOf(appSession.voiceState())
+
+        val microphonePermission = registerForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { granted ->
+            microphonePermissionGranted = granted
+            if (!granted) operationError = "Microphone permission denied"
+        }
 
         appSession.setStateObserver { state ->
             runOnUiThread { runtimeState = state }
@@ -34,6 +47,8 @@ class MainActivity : ComponentActivity() {
                 lastTurn = lastTurn,
                 operationError = operationError,
                 operationBusy = operationBusy,
+                microphonePermissionGranted = microphonePermissionGranted,
+                voiceState = voiceState,
                 onCreateIdentity = {
                     operationError = null
                     try {
@@ -89,6 +104,43 @@ class MainActivity : ComponentActivity() {
                         operationError = rootMessage(error)
                     }
                 },
+                onRequestMicrophonePermission = {
+                    operationError = null
+                    microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                },
+                onStartVoice = {
+                    operationError = null
+                    operationBusy = true
+                    appSession.pressToTalk(microphonePermissionGranted).whenComplete { _, error ->
+                        runOnUiThread {
+                            operationBusy = false
+                            operationError = error?.let(::rootMessage)
+                            voiceState = appSession.voiceState()
+                        }
+                    }
+                },
+                onStopVoice = {
+                    operationError = null
+                    operationBusy = true
+                    appSession.releasePushToTalk().whenComplete { _, error ->
+                        runOnUiThread {
+                            operationBusy = false
+                            operationError = error?.let(::rootMessage)
+                            voiceState = appSession.voiceState()
+                        }
+                    }
+                },
+                onCancelVoice = {
+                    operationError = null
+                    operationBusy = true
+                    appSession.cancelPushToTalk().whenComplete { _, error ->
+                        runOnUiThread {
+                            operationBusy = false
+                            operationError = error?.let(::rootMessage)
+                            voiceState = appSession.voiceState()
+                        }
+                    }
+                },
             )
         }
     }
@@ -97,6 +149,10 @@ class MainActivity : ComponentActivity() {
         if (::appSession.isInitialized) appSession.close()
         super.onDestroy()
     }
+
+    private fun hasMicrophonePermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
 
     private fun rootMessage(error: Throwable): String {
         var current = error

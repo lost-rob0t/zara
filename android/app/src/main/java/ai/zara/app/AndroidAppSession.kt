@@ -16,14 +16,27 @@ import ai.zara.app.runtime.TextTurnResult
 import ai.zara.app.runtime.ZaraTextClientActor
 import ai.zara.app.runtime.reduce
 import ai.zara.app.runtime.toRuntimeReadiness
+import ai.zara.app.voice.AndroidPcmRecorder
+import ai.zara.app.voice.AuthenticatedVoiceIngress
+import ai.zara.app.voice.ManualVoiceCapture
+import ai.zara.app.voice.ManualVoiceSessionCoordinator
+import ai.zara.app.voice.ManualVoiceState
+import ai.zara.app.voice.PushToTalkController
 import android.content.Context
 import java.io.File
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 class AndroidAppSession(context: Context) : AutoCloseable {
     private val enrollment: EnrollmentRepository = AndroidEnrollmentRepository.create(context)
     private val stateStore = ClientStateStore(File(context.noBackupFilesDir, "zara/client-state.bin"))
+    private val actor: ZaraTextClientActor
     private val controller: AndroidTextSessionController
+    private val voice: ManualVoiceSessionCoordinator
+    private val voiceExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "zara-android-voice-control").apply { isDaemon = true }
+    }
 
     init {
         val restored = stateStore.load()
@@ -32,11 +45,19 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             initial,
             RuntimeEvent.EnrollmentObserved(enrollment.state().toRuntimeReadiness()),
         )
-        val actor = ZaraTextClientActor(JeroMqTextDealerFactory(enrollment))
+        actor = ZaraTextClientActor(JeroMqTextDealerFactory(enrollment))
         controller = AndroidTextSessionController(initial, actor)
+        voice = ManualVoiceSessionCoordinator(
+            PushToTalkController(
+                capture = ManualVoiceCapture(AuthenticatedVoiceIngress(actor)),
+                recorder = AndroidPcmRecorder(),
+            )
+        )
     }
 
     fun state(): RuntimeState = controller.state()
+
+    fun voiceState(): ManualVoiceState = voice.state()
 
     fun setStateObserver(observer: ((RuntimeState) -> Unit)?) {
         controller.setStateObserver(observer)
@@ -84,11 +105,44 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         return future
     }
 
+    fun pressToTalk(permissionGranted: Boolean): CompletableFuture<Unit> =
+        submitVoiceControl {
+            voice.press(state(), permissionGranted)
+        }
+
+    fun releasePushToTalk(): CompletableFuture<Unit> =
+        submitVoiceControl {
+            voice.release()
+        }
+
+    fun cancelPushToTalk(): CompletableFuture<Unit> =
+        submitVoiceControl {
+            voice.cancel()
+        }
+
     private fun refreshEnrollment() {
         controller.observeEnrollment(enrollment.state().toRuntimeReadiness())
     }
 
+    private fun submitVoiceControl(block: () -> Unit): CompletableFuture<Unit> {
+        val future = CompletableFuture<Unit>()
+        voiceExecutor.execute {
+            try {
+                block()
+                future.complete(Unit)
+            } catch (error: Throwable) {
+                future.completeExceptionally(error)
+            }
+        }
+        return future
+    }
+
     override fun close() {
-        controller.close()
+        try {
+            voice.close()
+        } finally {
+            voiceExecutor.shutdownNow()
+            controller.close()
+        }
     }
 }
