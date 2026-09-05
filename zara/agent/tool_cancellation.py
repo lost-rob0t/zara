@@ -68,7 +68,7 @@ def inject_tool_cancellation(
     """Inject Core cancellation only for a tool's hidden cancellation input.
 
     The full LangChain input schema retains injected arguments while
-    ``tool_call_schema`` is the model-facing schema.  Requiring the field to
+    ``tool_call_schema`` is the model-facing schema. Requiring the field to
     exist only in the former makes opt-in explicit and prevents Core from
     inventing arguments for ordinary tools.
     """
@@ -88,6 +88,57 @@ def inject_tool_cancellation(
     injected_args["cancellation"] = cancellation
     injected["args"] = injected_args
     return injected
+
+
+class _CancellationBoundTool:
+    """One-invocation delegate that restores Core cancellation at invocation."""
+
+    __slots__ = ("_tool", "_cancellation", "name")
+
+    def __init__(self, tool: Any, cancellation: ToolCancellation) -> None:
+        self._tool = tool
+        self._cancellation = cancellation
+        self.name = tool.name
+
+    async def ainvoke(self, tool_call: Any, config: Any = None, **kwargs: Any) -> Any:
+        if not isinstance(tool_call, Mapping):
+            raise TypeError("cancellable tool invocation must be a mapping")
+        args = tool_call.get("args")
+        if not isinstance(args, Mapping):
+            raise TypeError("cancellable tool invocation args must be a mapping")
+
+        bound_call = dict(tool_call)
+        bound_args = dict(args)
+        bound_args["cancellation"] = self._cancellation
+        bound_call["args"] = bound_args
+        return await self._tool.ainvoke(bound_call, config, **kwargs)
+
+
+async def execute_with_tool_cancellation(request: Any, execute: Any) -> Any:
+    """Reattach trusted Core cancellation after ToolNode strips injected args.
+
+    The gated graph node overwrites any model value with a Core-owned
+    ``ToolCancellation`` before entering ToolNode. ToolNode's wrapper sees that
+    trusted value, binds it to a one-invocation delegate, and then calls the
+    canonical ToolNode executor exactly once. ToolNode still owns validation,
+    injected state/runtime handling, error policy, and response normalization.
+    """
+    tool = request.tool
+    if tool is None:
+        return await execute(request)
+
+    tool_call = request.tool_call
+    if not isinstance(tool_call, Mapping):
+        return await execute(request)
+    args = tool_call.get("args")
+    if not isinstance(args, Mapping):
+        return await execute(request)
+    cancellation = args.get("cancellation")
+    if not isinstance(cancellation, ToolCancellation):
+        return await execute(request)
+
+    bound_tool = _CancellationBoundTool(tool, cancellation)
+    return await execute(request.override(tool=bound_tool))
 
 
 __all__ = ["ToolCancellation", "ToolCancellationArg"]
