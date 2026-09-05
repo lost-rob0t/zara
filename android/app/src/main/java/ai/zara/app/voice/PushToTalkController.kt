@@ -56,6 +56,11 @@ class PushToTalkController(
         if (stopFailure != null) throw stopFailure
     }
 
+    fun onMicrophonePermissionChanged(granted: Boolean) {
+        if (granted || capture.state() !is ManualVoiceState.Capturing) return
+        cancel()
+    }
+
     override fun close() {
         if (capture.state() is ManualVoiceState.Capturing) {
             cancel()
