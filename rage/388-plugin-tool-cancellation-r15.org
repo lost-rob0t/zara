@@ -1,0 +1,65 @@
+#+title: RAGE #388 r15 — invocation-local plugin cancellation
+
+* RAGE start
+- Consumed issue: #388 — Plugin API: propagate canonical cancellation to running service tools
+- Immutable start SHA: 83890b69962364c11a281680febe8b1659f95fd6
+- Branch: rage/388-plugin-tool-cancellation-r15
+- Scope: Zara Core only; zero =android/**= changes.
+
+* Prior falsification evidence
+r4 through r14 established that cancellation transport which depends on LangGraph/LangChain injecting or preserving a hidden plugin function argument does not reliably reach the plugin body on Zara's pinned stack. r14 / PR #458 failed exact-head CI #1631 with four focused body-entry failures and two unrelated registry-test regressions. Do not revive its schema/argument transport.
+
+* Research — iteration r15
+** Current Core boundary
+=create_tools_node= already owns the post-approval, current-registry-binding, per-tool-call boundary and still dispatches through one LangGraph =ToolNode=. This remains the authority for queue/start/terminal events.
+
+** Upstream behavior relevant to the failure
+LangChain =BaseTool= injects runtime =RunnableConfig= into the tool implementation's internal =_run/_arun= method separately from model tool arguments. This is a different path from injected model/function arguments. Existing upstream defects around =InjectedState=, =ToolRuntime=, dynamic tools and directly injected arguments reinforce that r15 must not depend on ToolNode rewriting an extra plugin input field.
+
+** Selected architecture
+- Plugins opt into cooperative cancellation through explicit tool metadata, not schema introspection.
+- Core wraps an opted-in =BaseTool= once at registry binding.
+- The wrapper preserves the original public name/model-facing schema and delegates to the original tool.
+- For each approved/current invocation, Core creates one private cancellation signal and places only its read-only view in a private =RunnableConfig= key.
+- The registered wrapper receives that config in its own =_run/_arun=. Only there, inside the actual sync worker thread or async task, it binds the read-only view into a private =ContextVar= for the duration of the original tool call.
+- Plugin code observes the token through a public =current_tool_cancellation()= helper. It does not accept a model/tool-call argument.
+- On turn cancellation, Core sets the signal before cancelling the owned ToolNode task. The existing =ToolCancelled(reason="turn cancelled")= event remains terminal authority.
+
+This deliberately uses =ContextVar= only *inside* the execution worker/task. r5/r6 used it outside ToolNode and were falsified because that context did not reliably reach plugin execution.
+
+** Rejected alternatives
+- =InjectedState= / =InjectedToolArg= / schema transport: falsified by r7-r14 and pinned-stack validation/injection behavior.
+- Mutable token stored on a shared tool instance: rejects exact-invocation concurrency isolation.
+- Plugin-specific cancel command/side channel: creates a second control plane.
+- Directly calling plugin functions from Core: bypasses canonical BaseTool/ToolNode execution semantics.
+- Per-invocation ToolNode replacement: duplicates executor construction and has prior dynamic-tool failure evidence.
+
+* Invariants
+- Approval and current registry binding are checked before token creation/execution.
+- Exactly one signal per exact tool invocation.
+- Model arguments cannot provide, suppress, or retarget cancellation state.
+- Concurrent invocations never share cancellation state.
+- Sync and async plugin bodies can observe the token after body entry.
+- Signal is set before cancellation propagates into owned async work.
+- Unloaded/rejected tools never execute or receive a token.
+- Non-opted-in tools remain byte-for-byte model-input compatible.
+- One canonical ToolNode path; no second executor/runtime/approval channel.
+
+* Acceptance mapped to tests
+- Explicit opt-in is model-schema neutral and non-opted tools are untouched.
+- Sync plugin body reaches entry, sees =ToolCancellation=, and observes signal before side effect.
+- Async plugin body reaches entry and sees signal set before =CancelledError=.
+- Concurrent invocations have distinct token identities and cancellation isolation.
+- Rejection/unload never enter plugin body.
+- User/model arguments cannot spoof cancellation because no cancellation argument exists.
+- Calling =current_tool_cancellation()= outside an opted-in invocation fails explicitly.
+- Existing ordinary tool/approval/todo tests remain green.
+
+* Exact gate
+#+begin_src sh
+nix develop -c pytest t/test_plugin_tool_cancellation.py
+nix develop -c bash scripts/test-all.sh
+nix flake check
+nix build
+#+end_src
+Then exact candidate SHA GitHub Actions must be green across Core, package/Nix, Android compatibility, and shared-mic lanes before merge.
