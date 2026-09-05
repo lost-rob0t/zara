@@ -49,6 +49,7 @@ Then run full repository-native gates: scripts/test-all.sh, nix flake check, pac
 ** Implementation
 - 14508e6f89c03cd8be9db96b0fe38334de3be98a adds the per-invocation delegation wrapper.
 - 79ff7d4f723a962f9d4ffb8473d4698a7559ca0e binds that wrapper to the one canonical ToolNode.
+- d4f6e1d7cac0d8976a1f01d2f67b688611dceee9 is a two-parent recovery commit whose second parent is exact canonical master 28f8afea91f8e3f389d9a28df6fe8089f56f86f4. The master delta was verified as five sibling-owned Android/RAGE files with zero Core overlap; their exact canonical blobs were preserved unchanged.
 
 ** Gate
-Pending exact-head CI. Do not merge until every required lane is green and the candidate is recovered onto exact canonical master with review threads clear.
+The next CI head after this append is the exact-master candidate. Do not merge until every required lane is green and review threads are clear. Re-read canonical master immediately before merge and recover again if it moves.
