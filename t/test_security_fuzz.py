@@ -79,6 +79,14 @@ def _invalid_curve_key(public_key: bytes, rng: random.Random) -> str | bytes:
     return " " + key
 
 
+def _invalid_json_curve_key(public_key: bytes, rng: random.Random) -> str:
+    """Return only JSON-native invalid key forms for persisted-record fuzzing."""
+    malformed = _invalid_curve_key(public_key, rng)
+    if isinstance(malformed, bytes):
+        return "☃" + public_key[1:].decode("ascii")
+    return malformed
+
+
 def _invalid_device_id(rng: random.Random) -> str:
     mutation = rng.randrange(6)
     if mutation == 0:
@@ -231,7 +239,7 @@ def test_persisted_client_record_mutation_fuzz_fails_closed(tmp_path: Path, seed
         }
         mutation = rng.randrange(9)
         if mutation == 0:
-            record["public_key"] = _invalid_curve_key(_valid_curve_key(rng), rng)
+            record["public_key"] = _invalid_json_curve_key(_valid_curve_key(rng), rng)
         elif mutation == 1:
             record["principal_id"] = rng.choice([None, 7, [], {}])
         elif mutation == 2:
