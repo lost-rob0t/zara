@@ -200,7 +200,7 @@ class AndroidTextSessionController(
                         runtimeState,
                         RuntimeEvent.ConnectionFailed(
                             generation,
-                            error?.message ?: "connection failed",
+                            ConnectionFailureReason.summarize(error),
                         ),
                     )
                     scheduleNext = runtimeState.server is ServerConnection.Reconnecting
