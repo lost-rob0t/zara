@@ -55,3 +55,34 @@ Android #173 cannot prove authentication against stock =zara-server= if secure c
 
 * Iteration 1
 - Status :: DESIGN RECORDED; next action is RED production-wiring tests.
+
+* Iteration 2 - live authorization authority
+** Reviewer finding
+- Exact #331 head =83e4f4828a3c2928ae95aede3943f5d4439bb44d= creates the secure gateway from one =SecurityRegistry= loaded at daemon startup.
+- =--security-enroll-key= and =--security-revoke-device= run in a separate owner CLI process and instantiate a different =PersistentSecurityState= / registry. They update =clients.json= only, so the running ZAP/gateway registry never changes.
+- This violates #329's no-restart revocation/enrollment contract and leaves disk persistence and live authorization as two independent truths.
+- Exact-head CI #1004 also exposed a separate deterministic persistence defect: initial =CurveServerConfig= keys are =bytes= while reloaded keys are =str=.
+
+** RED
+- Test-first commit :: =7c62117ecc55c488771b5496be84bd0b75bcb74b=.
+- New oracle :: =test_owner_security_management_mutates_running_registry_without_reload= starts the secure production server with no enrolled client, invokes the normal owner security-management path after startup, requires that client to complete a real CURVE + ZARA/1 =hello.ok= on the same daemon, then revokes it and requires the existing connection's next message to receive =authentication_required= without restart.
+- Source proof of RED :: current management constructs a separate state/registry and cannot mutate =ZaraServer._security_registry=, so the post-start client cannot authenticate.
+
+** Adversarial design review
+Rejected:
+- filesystem polling/watchers or periodic =clients.json= reload: creates delayed/reload-based authority and contradicts the requested live-registry contract;
+- restart-after-enrollment: violates #329 acceptance and makes mobile enrollment operationally brittle;
+- unauthenticated remote self-enrollment: expands the attack surface and bypasses owner authority;
+- model/tool-controlled raw admin requests on the remote TCP listener: capability visibility must not become enrollment authority.
+
+Selected:
+- one bounded owner-private Unix control socket owned by the same =zara-server= process and located under the mode-0700 security directory;
+- Linux peer UID validation plus mode-0600 socket permissions;
+- versioned, bounded JSON operations only: =enroll=, =revoke=, =list=; no arbitrary callable/shell/eval surface;
+- the control handler receives the exact =SecurityRegistry= object already used by =RegistryAuthenticator= and =SecureZaraZmqGateway=, so mutations become visible immediately to ZAP and per-message authorization;
+- persistence remains durable evidence/state for restart, but never becomes the live authorization mechanism;
+- management CLI uses the live control endpoint whenever it exists; a stale/unreachable endpoint fails closed rather than silently editing disk underneath a running authority;
+- pre-start enrollment/revocation remains available when no live control endpoint exists.
+
+** Gate note
+- Current =master= advanced to =8e247fd4cb6ffe1f3258bfb4f115a3339208e8c1= via the merged Copilot/visual-CI research transaction while this branch was active. Reconcile current master before merge and rerun every exact-head gate.
