@@ -67,6 +67,29 @@ class ZaraTextClientActor(
             val hello = response as? TextServerMessage.HelloOk
                 ?: throw ZaraWireException("expected hello.ok")
             if (hello.replyTo != requestId) throw ZaraWireException("hello reply correlation mismatch")
+
+            val capabilityRequestId = nextRequestId()
+            active.send(
+                ZaraCapabilityCodec.encodeSnapshot(
+                    requestId = capabilityRequestId,
+                    sessionId = hello.sessionId,
+                    capabilities = emptySet(),
+                    timestampNs = nextTimestamp(),
+                )
+            )
+            val capabilityFrames = active.receive(requestTimeoutMillis)
+                ?: throw TextRequestTimeoutException("ZARA/1 capability negotiation timed out")
+            val capabilityAck = ZaraCapabilityCodec.decodeSnapshotOk(capabilityFrames)
+            if (capabilityAck.replyTo != capabilityRequestId) {
+                throw ZaraWireException("capability snapshot reply correlation mismatch")
+            }
+            if (capabilityAck.sessionId != hello.sessionId) {
+                throw ZaraWireException("capability snapshot session is stale")
+            }
+            if (capabilityAck.capabilities.isNotEmpty()) {
+                throw ZaraWireException("server acknowledged unadvertised device capabilities")
+            }
+
             val connected = ConnectedTextSession(generation, hello.sessionId)
             session = connected
             connected
