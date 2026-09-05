@@ -1,0 +1,29 @@
+#+title: RAGE #203 — Android audio-route lifecycle
+
+* Start
+- Issue: #203
+- Immutable start SHA: =03143a3cd4990734e3f9afaf63462c8b03108337=
+- Ownership: Android-only. No Core files or protocol changes.
+- Active neighboring transactions at start: #375 owns =AndroidAppSession.kt= for #174; #381 owns audio-focus/playback files for #175.
+
+* Deterministic RED
+Commit =bb5dfbcbbdaf42cfbdd0ecc5101c0cbfd171f5c5= specifies that an output-route change is observable exactly once, interrupts the old route, duplicate snapshots do not duplicate interruption, and late callbacks after stop are ignored.
+
+* Analysis / design
+Android #203 requires Bluetooth/headset route changes while keeping Android as the sole speaker owner. The safe dependency-free slice is a lifecycle monitor plus a pure controller. It does not yet wire production playback because doing so would overlap #375/#381.
+
+Invariants:
+- Android public =AudioManager=/=AudioDeviceCallback= APIs only.
+- Route state is local platform state; no second assistant/runtime.
+- A changed output route invalidates the old playback route immediately; identical snapshots are idempotent.
+- Stop removes the platform callback and late callbacks cannot resurrect state.
+- No device names, addresses, audio, credentials, or private payloads enter diagnostics.
+- Output devices are reduced to bounded kinds: built-in, wired, Bluetooth, USB, other.
+
+* Implementation
+- =AudioRouteController= owns lifecycle, deduplication, current snapshot and typed interruption callback.
+- =AndroidAudioRoutePlatform= observes output devices through =AudioDeviceCallback= and classifies only coarse route kinds.
+- Production =AndroidAppSession= wiring is intentionally deferred until #174 lands and #381 can be integrated without branch collision.
+
+* Verification
+Pending exact-head GitHub Android/full-repository gates. Hardware-specific One UI routing remains supplemental under #206.
