@@ -8,7 +8,7 @@
 - Scope :: Zara Core only; no =android/**= production changes.
 
 * Recovery reason
-- PR #330 proved the intended RED contract at test-only head =46d471c9dabea6827f90b0ed6eb9f88d05085= in CI #997.
+- PR #330 proved the intended RED contract at test-only head =46d471c9dabea6827f90d80b0ed6eb9f88d05085= in CI #997.
 - Its later head =1727d7b258a846ccf8ebf8cafc5a85411d9e9ef7= is not mergeable on current master and its PrologEngine commit carries a large stale-region rewrite unrelated to the bounded vocabulary method.
 - Do not merge or force-rebase that collateral. Preserve the RED evidence and recover only the narrow behavior on current canonical master.
 
