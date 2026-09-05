@@ -21,6 +21,7 @@ data class RuntimeState(
     val server: ServerConnection,
     val assistantRole: AssistantRole,
     val enrollment: EnrollmentReadiness = EnrollmentReadiness.Unenrolled,
+    val configuredProfile: ServerProfile? = null,
     val generation: Long = 0,
     val sessionId: String? = null,
     val selectedConversationId: String? = null,
@@ -36,12 +37,16 @@ data class RuntimeState(
             RuntimeState(ServerConnection.Disconnected, AssistantRole.NotYetAssessed)
 
         fun fromRestored(restored: RestorableClientState): RuntimeState =
-            initial().copy(selectedConversationId = restored.selectedConversationId)
+            initial().copy(
+                configuredProfile = restored.profile,
+                selectedConversationId = restored.selectedConversationId,
+            )
     }
 }
 
 sealed interface RuntimeEvent {
     data object ConnectRequested : RuntimeEvent
+    data class ServerConfigured(val profile: ServerProfile) : RuntimeEvent
     data class HelloAccepted(val generation: Long, val sessionId: String) : RuntimeEvent
     data class ConnectionLost(val generation: Long, val reason: String) : RuntimeEvent
     data class ConnectionFailed(val generation: Long, val reason: String) : RuntimeEvent
@@ -67,6 +72,8 @@ fun reduce(state: RuntimeState, event: RuntimeEvent): RuntimeState = when (event
         }
         else -> state
     }
+
+    is RuntimeEvent.ServerConfigured -> state.copy(configuredProfile = event.profile)
 
     is RuntimeEvent.HelloAccepted -> {
         if (event.generation != state.generation || event.sessionId.isBlank()) {
