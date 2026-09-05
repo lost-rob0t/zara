@@ -1,6 +1,7 @@
 package ai.zara.app.voice
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -49,15 +50,35 @@ class AudioRouteControllerTest {
         assertEquals(null, controller.current())
     }
 
+    @Test
+    fun `failed platform start rolls back controller lifecycle`() {
+        val platform = FakeAudioRoutePlatform(AudioRouteSnapshot(setOf(AudioRouteKind.BuiltIn)))
+        platform.failStart = true
+        val controller = AudioRouteController(
+            platform = platform,
+            onChanged = {},
+            onRouteInterrupted = { _, _ -> },
+        )
+
+        assertThrows(IllegalStateException::class.java) { controller.start() }
+        assertEquals(null, controller.current())
+
+        platform.failStart = false
+        controller.start()
+        assertEquals(AudioRouteSnapshot(setOf(AudioRouteKind.BuiltIn)), controller.current())
+    }
+
     private class FakeAudioRoutePlatform(initial: AudioRouteSnapshot) : AudioRoutePlatform {
         private var snapshot = initial
         private var listener: ((AudioRouteSnapshot) -> Unit)? = null
         var stopped = false
             private set
+        var failStart = false
 
         override fun snapshot(): AudioRouteSnapshot = snapshot
 
         override fun start(onChanged: (AudioRouteSnapshot) -> Unit) {
+            check(!failStart) { "synthetic route monitor failure" }
             check(listener == null)
             listener = onChanged
         }
