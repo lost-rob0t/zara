@@ -1,0 +1,23 @@
+:PROPERTIES:
+:ID:       zara-rage-203-android-voice-session-invalidation-r4
+:END:
+#+title: RAGE #203 — invalidate Android capture with its authenticated session r4
+#+status: ACTIVE
+
+* Consumption
+- Issue :: #203
+- Canonical base :: 83890b69962364c11a281680febe8b1659f95fd6
+- Source :: clean Android-only recovery after #459 became canonical.
+- Scope :: Android voice lifecycle only. No Core/protocol/plugin changes.
+
+* Design
+- Manual capture is bound to the exact authenticated connection generation and session id that authorized it.
+- Disconnect/reconnect, generation replacement, or authenticated session replacement cancels physical recording exactly once through the existing PushToTalkController owner.
+- Canonical runtime publication invalidates stale capture before any external UI observer sees the new state.
+- Permission revocation and host-stop continue through the same cancellation owner.
+- No second runtime/capture state machine.
+
+* Gate
+- Coordinator tests cover connection loss, replacement generation/session, duplicate invalidation, permission revocation, host stop, and normal commit.
+- Wiring contract requires stale-capture invalidation before UI state publication.
+- Exact-current-head Android/full-Nix/package/shared-mic CI is required before promotion.
