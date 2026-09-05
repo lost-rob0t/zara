@@ -4,6 +4,7 @@ import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.RuntimeState
 import ai.zara.app.runtime.ServerConnection
 import ai.zara.app.voice.ManualVoiceState
+import ai.zara.app.voice.VoiceStreamState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -49,6 +50,8 @@ fun ZaraApp(
     operationBusy: Boolean,
     microphonePermissionGranted: Boolean,
     voiceState: ManualVoiceState,
+    voiceStreamState: VoiceStreamState?,
+    voiceStreamFailure: String?,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
     onConnect: (String) -> Unit,
@@ -87,6 +90,8 @@ fun ZaraApp(
                     state = runtimeState,
                     microphonePermissionGranted = microphonePermissionGranted,
                     voiceState = voiceState,
+                    voiceStreamState = voiceStreamState,
+                    voiceStreamFailure = voiceStreamFailure,
                     operationError = operationError,
                     operationBusy = operationBusy,
                     onRequestMicrophonePermission = onRequestMicrophonePermission,
@@ -114,6 +119,8 @@ fun ZaraApp(
                 AppSurface.Diagnostics -> DiagnosticsSurface(
                     state = runtimeState,
                     sourceSha = sourceSha,
+                    voiceStreamState = voiceStreamState,
+                    voiceStreamFailure = voiceStreamFailure,
                     operationError = operationError,
                     padding = padding,
                 )
@@ -173,6 +180,8 @@ private fun VoiceSurface(
     state: RuntimeState,
     microphonePermissionGranted: Boolean,
     voiceState: ManualVoiceState,
+    voiceStreamState: VoiceStreamState?,
+    voiceStreamFailure: String?,
     operationError: String?,
     operationBusy: Boolean,
     onRequestMicrophonePermission: () -> Unit,
@@ -187,6 +196,21 @@ private fun VoiceSurface(
         Text("connection: ${connectionLabel(state.server)}")
         Text(if (capturing) "microphone: streaming to Zara" else "microphone: idle")
         Text("Manual voice uses the same authenticated Zara session as Chat. The server owns STT, assistant routing, tools, and TTS.")
+        voiceStreamState?.let { stream ->
+            if (stream.transcriptStreamId != null) {
+                val label = if (stream.transcriptFinal) "transcript" else "transcript (live)"
+                Text("$label: ${stream.transcriptText}")
+            }
+            val audio = stream.audio
+            Text(
+                if (audio == null) {
+                    "speaker: idle"
+                } else {
+                    "speaker: Zara audio ${audio.sampleRate} Hz mono"
+                }
+            )
+        }
+        voiceStreamFailure?.let { Text("Voice stream error: $it") }
         if (!microphonePermissionGranted) {
             Text("Microphone permission is required before any audio stream can open.")
             Button(
@@ -305,6 +329,8 @@ private fun SettingsSurface(
 private fun DiagnosticsSurface(
     state: RuntimeState,
     sourceSha: String,
+    voiceStreamState: VoiceStreamState?,
+    voiceStreamFailure: String?,
     operationError: String?,
     padding: PaddingValues,
 ) {
@@ -316,6 +342,12 @@ private fun DiagnosticsSurface(
         Text("session: ${state.sessionId ?: "none"}")
         Text("conversation: ${state.selectedConversationId ?: "none"}")
         Text("enrollment: ${enrollmentLabel(state.enrollment)}")
+        voiceStreamState?.let { stream ->
+            Text("voice session: ${stream.sessionId}")
+            Text("voice transcript stream: ${stream.transcriptStreamId ?: "none"}")
+            Text("voice output stream: ${stream.audio?.streamId ?: "none"}")
+        }
+        voiceStreamFailure?.let { Text("voice stream error: $it") }
         operationError?.let { Text("last error: $it") }
     }
 }

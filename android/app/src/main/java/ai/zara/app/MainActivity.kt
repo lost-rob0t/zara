@@ -27,6 +27,8 @@ class MainActivity : ComponentActivity() {
         var operationBusy by mutableStateOf(false)
         var microphonePermissionGranted by mutableStateOf(hasMicrophonePermission())
         var voiceState by mutableStateOf(appSession.voiceState())
+        var voiceStreamState by mutableStateOf(appSession.voiceStreamState())
+        var voiceStreamFailure by mutableStateOf(appSession.voiceStreamFailure())
 
         val microphonePermission = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
@@ -37,6 +39,12 @@ class MainActivity : ComponentActivity() {
 
         appSession.setStateObserver { state ->
             runOnUiThread { runtimeState = state }
+        }
+        appSession.setVoiceStreamObserver { streamState, failure ->
+            runOnUiThread {
+                voiceStreamState = streamState
+                voiceStreamFailure = failure
+            }
         }
 
         setContent {
@@ -49,6 +57,8 @@ class MainActivity : ComponentActivity() {
                 operationBusy = operationBusy,
                 microphonePermissionGranted = microphonePermissionGranted,
                 voiceState = voiceState,
+                voiceStreamState = voiceStreamState,
+                voiceStreamFailure = voiceStreamFailure,
                 onCreateIdentity = {
                     operationError = null
                     try {

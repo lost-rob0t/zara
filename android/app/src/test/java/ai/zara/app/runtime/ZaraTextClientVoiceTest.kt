@@ -2,6 +2,7 @@ package ai.zara.app.runtime
 
 import ai.zara.app.voice.ManualVoiceCapture
 import ai.zara.app.voice.VoiceCaptureContext
+import ai.zara.app.voice.VoiceStreamEvent
 import java.util.ArrayDeque
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -41,6 +42,31 @@ class ZaraTextClientVoiceTest {
         assertEquals(3, dealer.sent[3].size)
         assertEquals(true, dealer.sent[3][2].contentEquals(pcm))
         assertEquals(true, dealer.sent[4][1].decodeToString().contains("\"type\":\"audio.input.commit\""))
+        client.close()
+    }
+
+    @Test fun `stream event arriving before command ack is dispatched and ack still completes`() {
+        val dealer = VoiceScriptDealer(
+            listOf(
+                server("{\"body\":{\"max_payload_bytes\":4194304,\"max_payload_frame_bytes\":1048576,\"max_payload_frames\":16,\"version\":1},\"id\":\"hello-ok\",\"payload_count\":0,\"reply_to\":\"hello-1\",\"session_id\":\"session-1\",\"timestamp_ns\":2,\"type\":\"hello.ok\"}"),
+                server("{\"body\":{\"capabilities\":[]},\"id\":\"caps-ok\",\"payload_count\":0,\"reply_to\":\"caps-1\",\"session_id\":\"session-1\",\"timestamp_ns\":3,\"type\":\"capability.snapshot.ok\"}"),
+                server("{\"body\":{\"text\":\"listening\"},\"conversation_id\":\"conversation-1\",\"id\":\"event-1\",\"payload_count\":0,\"seq\":0,\"session_id\":\"session-1\",\"stream_id\":\"mic-1\",\"timestamp_ns\":4,\"type\":\"voice.transcript.partial\"}"),
+                server("{\"id\":\"start-ok\",\"payload_count\":0,\"reply_to\":\"start-1\",\"session_id\":\"session-1\",\"stream_id\":\"mic-1\",\"timestamp_ns\":5,\"type\":\"audio.input.started\"}"),
+            )
+        )
+        val events = mutableListOf<VoiceStreamEvent>()
+        val client = ZaraTextClientActor(
+            dealerFactory = TextDealerFactory { dealer },
+            requestIds = sequenceOf("hello-1", "caps-1", "start-1").iterator(),
+            timestamps = sequenceOf(1L, 2L, 3L).iterator(),
+        )
+        client.setVoiceStreamObserver(events::add)
+        val session = client.connect(ServerProfile.create("tcp://zara.example:7731"), 1).get()
+
+        client.startVoice(VoiceCaptureContext(session.sessionId, "conversation-1", "mic-1")).get()
+
+        assertEquals(1, events.size)
+        assertEquals("listening", (events.single() as VoiceStreamEvent.Transcript).text)
         client.close()
     }
 

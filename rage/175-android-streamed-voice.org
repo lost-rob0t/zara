@@ -1,0 +1,78 @@
+#+title: RAGE #175 B2 — Android streamed voice
+
+* Transaction
+- Issue :: #175
+- PR :: #355
+- Scope :: Android-only streamed voice continuation; no second daemon, STT, assistant, TTS, or ZMQ owner.
+- Current base lineage :: B1 =rage/175-android-manual-voice= recovered through canonical master/Core #359.
+
+* Invariants
+- One authenticated ZARA/1 DEALER owned by =ZaraTextClientActor=.
+- Android owns microphone, playback, audio lifecycle, and UI projection only.
+- Zara daemon owns STT, assistant routing, tools, LLM, and TTS.
+- Voice events are session/turn/conversation/stream/sequence checked and malformed input fails closed.
+- PCM output is negotiated during canonical hello; no silent output downgrade.
+- Speaker work cannot block the socket actor; playback has one bounded serialized owner.
+- Compose renders reducer/runtime evidence only; no fake transcript or playback state.
+
+* Recovered substrate
+- Strict =ZaraVoiceHelloCodec= output-format negotiation.
+- Strict =ZaraVoiceStreamCodec= for transcript and binary output events.
+- =AndroidPcmOutput= / =VoicePlaybackController= / =VoiceStreamReducer=.
+- B2 was kept stacked on the B1/current-master lineage through recovery helpers #362 and #365.
+
+* RED / GREEN slices
+** Typed inbound multiplex
+- RED :: =ef8d5d964269147881d8e6096b2f74832719e00e= requires transcript events to coexist with command acknowledgements.
+- GREEN :: =8c5783daf4bd773a24be76e8e3f7b7289e5de25f= adds strict =ZaraVoiceInboundCodec= classification.
+
+** Transcript stream lifecycle
+- RED :: =c7a338ace71acc1b3736d727683cd3aae4ccd8ce= proves a completed transcript stream may restart sequence at zero while an active stream cannot silently change identity.
+- GREEN :: =681918ca5a0bef5b4e31fd789f4d64bcad43aaa5= resets sequence comparison only at the terminal stream boundary and rejects active stream/conversation replacement.
+
+** Playback ownership
+- RED :: =aa240bcba18f38b284b6eae433377324f836acbf= proves failed replacement must not leave fabricated active playback.
+- GREEN :: =a959d19c5222148316cb7ef57d39f2b5749334ba= clears ownership before replacement start and clears audio state on start failure.
+
+** Interleaved stream events before command reply
+- RED :: =7bebe54e2add0d5a96f235d250494e360ace29c3= requires a stream event arriving before =audio.input.started= acknowledgement to dispatch without consuming the acknowledgement.
+- GREEN :: =67f51700318aae4480dbb762f0118f70ea429e01= routes stream events while the same DEALER actor awaits the typed reply.
+
+** Post-commit event drain
+- RED :: =126b392b775e6324317428ec1d30f7581efff31e= requires final transcript and audio start/chunk/done to drain after =audio.input.committed=.
+- GREEN :: =a0fb8c69a2273df4020b55814f7eb49c49b0c829= adds a self-resubmitting post-commit receive pump on the existing single socket actor. No second ZMQ thread/socket is created.
+
+** Bounded playback actor
+- RED :: =fa12f1864198019387aae6f5af570ed7384a6a0b= requires serialized playback/reducer ownership and bounded backpressure.
+- GREEN :: =65669d17dec74a174cc2e458f76cb9b170ee708d= adds =VoiceStreamSinkActor= with one bounded mailbox and one playback owner.
+
+** Real Compose projection
+- =dcdac058ac94262d44a5e728eb6d0a3753afee1a= wires stream events into Android playback state.
+- =14f4a3f086a8b2d08268a47bf969f875b1cb1278= observes canonical stream state in =MainActivity=.
+- =82c8a62880faf6f613e204b1c73c632463b33a75= renders live/final transcript, speaker state, and stream errors in Voice/Diagnostics.
+
+** Event-flood bound
+- RED :: =e57ab143055b57e3b0c02b895f1b5edbacc3d2f4= proves an unbounded stream flood must not indefinitely displace a command acknowledgement.
+- GREEN :: =230a53b3a3f961ad2010bc66fc7c989fbf0da0c1= caps interleaved stream events before a typed reply at 256 and fails closed beyond the bound.
+
+** Live output negotiation
+- RED :: =46a5b082903c28e80cc78a663b73795b0f0298cb= proves the production Android actor must offer and remember canonical output PCM.
+- GREEN :: =2a8039168f77f16f4cf6353c2278702fb1fbe530= makes the voice-capable actor advertise ordered =audio_output_formats= and accept only a server-selected offered format.
+- =44a84f47518e1a712f72146ae10512dc5ae51a63= enables 24 kHz mono pcm_s16le negotiation from =AndroidAppSession=.
+- Compile-surface correction :: =9c322bfa877085fc38c24917d1a3f8549cb7faf4=, =0e4576c95341622b7f4957d95e8d67b9d5557c26=, =0a23c7df94a570f093b31f762889ca21cf7bc9c0= correct package ownership to =ai.zara.app.runtime=; no protocol change.
+
+** Asynchronous playback failure visibility
+- RED :: =7f90a2368a0b6348bbe12f2da5244200444a1d70= proves speaker failure may not disappear in an ignored future.
+- GREEN :: =945040a79474665387e291edaa1512fa40d38251= emits sink failures, including mailbox backpressure.
+- App projection :: =74d083af331b9f0c403b31e3b7d98b53a19e2a58= routes those failures to the existing Voice/Diagnostics error projection.
+
+* Gate state
+- B1 had a complete green run at =e2ec5efc85a0cbd04dcd99f60112a7c8edb5f259= including Android debug APK upload, repository tests, flake checks, package build, and both shared-mic lanes, then became stale when Core #359 advanced master.
+- B1 was recovered to =c080f25ab06c424e2cc8961759d5a01e53059741=; fresh exact-head CI is mandatory before B1 merge.
+- B2 exact-head CI is mandatory after the latest B2 head stabilizes. Earlier B2 runs are evidence only and do not authorize merge.
+
+* Next acceptance
+- Obtain exact-head GREEN for B1 and merge it only if master has not moved and review state is clear.
+- Obtain exact-head GREEN for this B2 transaction after B1 is canonical.
+- Prove live server transcript/TTS playback through the one authenticated session.
+- Continue #175 B3 with Android audio-focus/barge-in ownership; do not implement a second assistant or recorder.
