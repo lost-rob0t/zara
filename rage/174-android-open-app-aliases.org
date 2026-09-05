@@ -20,22 +20,24 @@
 ** Design
 - The server supplies a closed semantic app alias, never a package name, Intent, class, component or shell command.
 - Initial reviewed aliases are bounded in Android production code and map to fixed package candidates owned by the app.
-- Capability is advertised only if at least one reviewed alias resolves locally.
-- Known-but-unavailable alias returns typed =unavailable=; unknown aliases and raw package-like input return =invalid_arguments=.
+- Capability is advertised only if at least one reviewed alias resolves locally; visibility/probe errors withhold the capability rather than escaping into hello negotiation.
+- Known-but-unavailable alias returns typed =unavailable=; visibility security rejection returns =permission_denied=; unknown aliases and raw package-like input return =invalid_arguments=.
 - Launch success is returned only after Android accepts a resolved reviewed launch Intent; no optimistic/fake success.
 - Routine diagnostics do not record the requested alias or package target.
 - Initial reviewed aliases are =browser= and =youtube=. ReVanced/Vanced/provider preference remains a later provider-policy slice; this transaction does not hardcode one unofficial package as semantic truth.
 
-** Deterministic RED
-- =OpenAppAdapterTest= is committed before production support and requires availability-derived advertisement, case-normalized reviewed alias execution, raw package/unknown rejection, and unavailable semantics.
-- RED head :: 12c8945ec5b6aa2aa728c1598aa2bf95585018eb
-
-** Implementation
-- =69ec9b2ba20f6a9375f6c2c438f174642403331c= :: closed =OpenAppAdapter=; typed invalid/unavailable/permission/failure outcomes; no arbitrary package authority.
-- =998974b3c61232a109233aea0876d34796600d1b= :: Android launcher resolves only local reviewed candidate lists and starts only a locally constructed front-door Intent.
-- =7b6c205f2dcf0f93df862473f84de7b6e4462844= :: bounded package-visibility declarations for only the reviewed candidates.
-- AppSession registration is intentionally deferred while #407 owns the current AppSession/Assistant lifecycle surface; after #407 is canonical this branch must recover current master and wire =OpenAppAdapter(AndroidAppLauncher(context))= into the one existing =DeviceCapabilityRegistry= before merge.
+** Deterministic RED / GREEN
+- Initial RED :: 12c8945ec5b6aa2aa728c1598aa2bf95585018eb requires availability-derived advertisement, case-normalized reviewed alias execution, raw package/unknown rejection, and unavailable semantics.
+- Adapter GREEN :: 69ec9b2ba20f6a9375f6c2c438f174642403331c adds closed =OpenAppAdapter= with typed invalid/unavailable/permission/failure outcomes.
+- Platform GREEN :: 998974b3c61232a109233aea0876d34796600d1b adds an Android launcher over fixed local package candidates only.
+- Visibility GREEN :: 7b6c205f2dcf0f93df862473f84de7b6e4462844 adds bounded package visibility declarations for only reviewed candidates.
+- Failure semantics :: fcd0f7a8b24e0c8e5b1ebc55f2909b712dabf890 covers wrong typed args, platform security rejection and handler disappearance.
+- Wiring RED :: aa7db5f7275ca15c02ac4f30f370c5586bef77fa requires the one AppSession registry to register executable =open_app= beside =open_uri=.
+- Probe RED :: 93e14ba1198478537d1111f27594a1e11f88ad6d requires package visibility probe failure to withhold capability without aborting negotiation.
+- Probe GREEN :: 14a291dcadbd52ff7297636e011f29c291099d53 contains availability probe failures and preserves typed per-action outcomes.
+- Exact changed-file inspection proved #407 does not own =AndroidAppSession.kt=; there was no real collision.
+- Wiring GREEN :: 299f204e5cc0a2097c89cd620d7f39e2feedc2aa registers =OpenAppAdapter(AndroidAppLauncher(context))= in the existing one =DeviceCapabilityRegistry=.
 
 ** Gate
-- focused JVM device tests; Android unit/native/debug APK + secret inspection; full repository/Nix/package; both shared-mic lanes; exact-head review clearance before merge.
-- Exact CI #1494 started on =7b6c205f2dcf0f93df862473f84de7b6e4462844=. Both shared-mic lanes are GREEN; Android and full repository gates are still running at this evidence point.
+- Focused JVM device/source-contract tests; Android unit/native/debug APK + secret inspection; full repository/Nix/package; both shared-mic lanes; exact-head review clearance before merge.
+- Final exact-head CI must be rerun after this evidence commit; earlier partial gates are not merge evidence.
