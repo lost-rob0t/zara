@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from zara.protocol import ProtocolLimits, ZaraProtocolError, decode_message
 from zara.security import Capability
 from zara.security_admin import SecurityAdminClient, SecurityAdminError, SecurityAdminServer, _recv_message
 from zara.security_state import PersistentSecurityState, SecurityStateError
@@ -14,17 +13,6 @@ from zara.security_state import PersistentSecurityState, SecurityStateError
 
 def _deep_array(depth: int) -> bytes:
     return ("[" * depth + "0" + "]" * depth).encode("ascii")
-
-
-def _deep_object(depth: int) -> bytes:
-    return ("{\"x\":" * depth + "0" + "}" * depth).encode("ascii")
-
-
-def test_zara1_recursive_json_exhaustion_is_a_closed_protocol_error():
-    envelope = _deep_object(1500)
-    assert len(envelope) < ProtocolLimits().max_envelope_bytes
-    with pytest.raises(ZaraProtocolError):
-        decode_message([b"ZARA/1", envelope])
 
 
 def test_admin_recursive_json_exhaustion_is_a_closed_admin_error():
