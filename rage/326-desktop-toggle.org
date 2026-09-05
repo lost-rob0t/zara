@@ -29,11 +29,34 @@
 - Reuse =QuickCopilotWindow.toggle_visibility()= so show still normalizes minimized state, recovers geometry, raises/activates and focuses the composer; hiding preserves the same process/window.
 - Fallback surfaces keep their existing toggle behavior. No new window, runtime, protocol message or ownership path.
 
-** Remaining #326 acceptance after first slice
-- Bounded per-user local desktop-control owner/IPC and required =zara --toggle-desktop=.
-- Stale socket/owner recovery, duplicate-start race, endpoint permission/ownership checks, malformed/oversized command rejection and bounded timeouts.
-- Existing-owner show/hide/toggle integration and no-owner exactly-one canonical daemon-backed desktop start.
+* Iteration 2 — bounded local owner and CLI
+** Contract
+- Exactly one desktop process owns one local AF_UNIX control endpoint per canonical Zara runtime directory.
+- Closed commands are =toggle=, =show= and =hide= only. No arbitrary shell/eval, ZARA/1 visibility verb, second daemon, or remote listener.
+- The owner reserves the endpoint before starting its daemon-backed desktop client. A duplicate startup relays =show= to the winner and exits without creating another runtime/client.
+- Socket-server threads never mutate Qt widgets directly: validated commands cross onto the controller through a Qt signal.
+- =zara --toggle-desktop= toggles an existing owner and starts one visible canonical desktop if absent. =--show-desktop= is idempotent summon/start; =--hide-desktop= fails honestly if no owner exists.
+- Endpoint directory and socket remain current-UID owned and private. Stale same-user sockets may be reclaimed; a live owner is never unlinked by a losing process.
 
-** Gate
-- Deterministic desktop-controller RED/TDD first.
-- Full repository-native tests, flake, package and exact-head CI before merge.
+** Adversarial fixes
+- Duplicate-owner review found a TOCTOU cleanup bug where a losing server could unlink a winning owner's endpoint. Ownership is now explicit and unlink occurs only after this server successfully bound the endpoint.
+- CI #1417 / run 33972495977 at head =75bba4088e9aba98a6e0a7f0c7fbb4a59438d34b= proved Android and both shared-mic lanes green and ran 1976 Core tests; exactly five new desktop-control tests failed with =OSError: AF_UNIX path too long= under the intentionally long isolated CI runtime path. 1971 tests passed. Flake/package remained correctly gated after the Core failure.
+- The direct endpoint is now used only when its encoded path fits the Linux =sockaddr_un= budget. Longer canonical runtime paths deterministically map via BLAKE2s to a short =/tmp/zara-desktop-control-UID/<digest>.sock= endpoint.
+- The fallback directory is created/validated as current-UID =0700= and the socket is =0600=. Client and server both validate private endpoint-parent ownership before use; the mapping contains no secret and exposes no broader command surface.
+- Dedicated regression covers long-path determinism, owner-private fallback permissions, stale socket recovery, malformed/oversized input and live-owner preservation.
+
+** Useful commits in this iteration
+- 9c7372a452569dbed83a246ac3caa5b65ac3779b :: initial bounded local desktop control server.
+- 6ae5cb4c6e9f15ad50afc5280999e1e75bfdfa1c :: race-safe endpoint ownership.
+- 6bbb8d62128ebe470f3c98cef1095e4fcdb6bf88 :: duplicate-owner acceptance.
+- a0f78083c2696073874e22fda22c6471c2a14709 :: CLI/startup race RED.
+- f892a631def6473dc4e686bb9f1050ee3b3ad0dc :: controller Qt control dispatch while preserving cleanup.
+- 13c69cfea6da0749ea8ddea53586334efd785a90 :: reserve owner before client startup.
+- 75bba4088e9aba98a6e0a7f0c7fbb4a59438d34b :: typed desktop toggle/show/hide CLI.
+- e77924242ded113eb1d8570922a4a8c6bd5ba866 :: bounded long-path endpoint fallback.
+- c7510c075ed0b6564c4df088e095f18d25448449 :: long-path/private-parent regression coverage.
+
+** Current gate
+- Exact-head CI is authoritative after this evidence update.
+- Required before merge: =scripts/test-all.sh=, =nix flake check=, packaged Zara, Android compatibility, Arch and Ubuntu shared-mic, and clear exact-head review threads.
+- No failure is waived, skipped, xfailed or converted to a warning.
