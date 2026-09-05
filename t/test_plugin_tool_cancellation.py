@@ -55,6 +55,19 @@ def test_cancellation_context_fails_explicitly_outside_invocation():
         current_tool_cancellation()
 
 
+def test_malformed_cancellation_opt_in_fails_closed():
+    @tool("bad_marker")
+    def bad_marker() -> str:
+        """Never register with malformed cancellation policy."""
+        return "unexpected"
+
+    bad_marker.metadata = {"zara_supports_cancellation": "yes"}
+    registry = ToolRegistry()
+    with pytest.raises(ValueError, match="zara_supports_cancellation"):
+        registry.register_tool(bad_marker)
+    assert registry.get_tool("bad_marker") is None
+
+
 @pytest.mark.asyncio
 async def test_running_sync_tool_observes_canonical_turn_cancellation():
     entered = threading.Event()
@@ -247,14 +260,15 @@ async def test_unloaded_tool_never_receives_cancellation_context():
 
 @pytest.mark.asyncio
 async def test_model_arguments_cannot_spoof_cancellation_context():
-    received = None
+    called = False
 
     @_cancellable
     @tool("spoof_guard")
     def spoof_guard(value: str) -> str:
-        """Receive only Core-owned cancellation state."""
-        nonlocal received
-        received = current_tool_cancellation()
+        """Receive cancellation only through Core-owned invocation context."""
+        nonlocal called
+        called = True
+        current_tool_cancellation()
         return value
 
     registry = ToolRegistry()
@@ -270,6 +284,5 @@ async def test_model_arguments_cannot_spoof_cancellation_context():
         {},
     )
 
-    assert isinstance(received, ToolCancellation)
+    assert called is False
     assert result["messages"][0].status == "error"
-    assert received.cancelled is False
