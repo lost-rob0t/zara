@@ -70,6 +70,8 @@ class EnrolledKey:
 class SecurityRegistry:
     """Thread-safe live mapping from CURVE public keys to principals."""
 
+    _MAX_DEVICE_ID_BYTES = 128
+
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._by_public_key: dict[str, EnrolledKey] = {}
@@ -88,7 +90,7 @@ class SecurityRegistry:
         try:
             encoded = public_key.encode("ascii")
             decoded = z85.decode(encoded)
-        except (UnicodeEncodeError, ValueError) as error:
+        except (UnicodeEncodeError, ValueError, KeyError) as error:
             raise ValueError("CURVE public key must be valid Z85") from error
         if len(encoded) != 40 or len(decoded) != 32:
             raise ValueError("CURVE public key must encode exactly 32 bytes")
@@ -100,6 +102,11 @@ class SecurityRegistry:
             raise ValueError("device_id must be a non-empty string")
         if device_id != device_id.strip():
             raise ValueError("device_id must not contain leading or trailing whitespace")
+        encoded = device_id.encode("utf-8")
+        if len(encoded) > SecurityRegistry._MAX_DEVICE_ID_BYTES:
+            raise ValueError("device_id exceeds byte limit")
+        if any(ord(character) < 0x20 or ord(character) == 0x7F for character in device_id):
+            raise ValueError("device_id must not contain control characters")
         return device_id
 
     @staticmethod
@@ -116,8 +123,8 @@ class SecurityRegistry:
         return frozenset(result)
 
     @staticmethod
-    def _new_user_id(device_id: str, generation: int) -> str:
-        return f"zara:{device_id}:{generation}:{uuid.uuid4().hex}"
+    def _new_user_id(_device_id: str, generation: int) -> str:
+        return f"zara:{generation}:{uuid.uuid4().hex}"
 
     def enroll(
         self,
@@ -284,6 +291,23 @@ class QuotaManager:
             state = self._state(principal_id)
             state.connections = max(0, state.connections - 1)
 
+    def _consume_request_rate_locked(self, state: _PrincipalQuota, timestamp: float) -> None:
+        recent = state.recent_request_times
+        assert recent is not None
+        cutoff = timestamp - self._limits.request_window_seconds
+        while recent and recent[0] <= cutoff:
+            recent.popleft()
+        if len(recent) >= self._limits.requests_per_window:
+            raise QuotaExceeded("request rate quota exceeded")
+        recent.append(timestamp)
+
+    def consume_request_rate(self, principal_id: str, *, now: Optional[float] = None) -> None:
+        """Charge rate quota without occupying a concurrent runtime slot."""
+        principal_id = self._principal_id(principal_id)
+        timestamp = time.monotonic() if now is None else float(now)
+        with self._lock:
+            self._consume_request_rate_locked(self._state(principal_id), timestamp)
+
     def acquire_request(self, principal_id: str, *, now: Optional[float] = None) -> None:
         principal_id = self._principal_id(principal_id)
         timestamp = time.monotonic() if now is None else float(now)
@@ -291,14 +315,7 @@ class QuotaManager:
             state = self._state(principal_id)
             if state.requests >= self._limits.max_concurrent_requests:
                 raise QuotaExceeded("concurrent request quota exceeded")
-            recent = state.recent_request_times
-            assert recent is not None
-            cutoff = timestamp - self._limits.request_window_seconds
-            while recent and recent[0] <= cutoff:
-                recent.popleft()
-            if len(recent) >= self._limits.requests_per_window:
-                raise QuotaExceeded("request rate quota exceeded")
-            recent.append(timestamp)
+            self._consume_request_rate_locked(state, timestamp)
             state.requests += 1
 
     def release_request(self, principal_id: str) -> None:

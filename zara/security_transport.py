@@ -16,8 +16,30 @@ from zmq.utils import z85
 from zara.security import KeyNotActive, SecurityRegistry
 
 
+_MIN_SECURE_CURVE_LIBZMQ = (4, 3, 3)
+_ZAP_MAX_STRING_BYTES = 255
+
+
 class AuthenticationRequired(RuntimeError):
     pass
+
+
+def require_secure_curve_runtime() -> tuple[int, ...]:
+    """Reject libzmq runtimes that cannot safely provide CURVE/ZAP."""
+    version = tuple(int(part) for part in zmq.zmq_version_info())
+    if version < _MIN_SECURE_CURVE_LIBZMQ:
+        minimum = ".".join(str(part) for part in _MIN_SECURE_CURVE_LIBZMQ)
+        actual = ".".join(str(part) for part in version)
+        raise RuntimeError(
+            f"secure CURVE/ZAP requires libzmq >= {minimum}; found {actual}"
+        )
+    try:
+        curve_available = bool(zmq.has("curve"))
+    except (AttributeError, TypeError, ValueError, zmq.ZMQError):
+        curve_available = False
+    if not curve_available:
+        raise RuntimeError("secure CURVE/ZAP requires libzmq CURVE support")
+    return version
 
 
 def _curve_key(value: str | bytes, *, name: str) -> bytes:
@@ -33,11 +55,46 @@ def _curve_key(value: str | bytes, *, name: str) -> bytes:
 
     try:
         raw = z85.decode(encoded)
-    except ValueError as error:
+    except (ValueError, KeyError) as error:
         raise ValueError(f"{name} must be valid Z85") from error
     if len(encoded) != 40 or len(raw) != 32:
         raise ValueError(f"{name} must encode exactly 32 bytes")
     return encoded
+
+
+def _curve_pair(
+    public_key: str | bytes,
+    secret_key: str | bytes,
+    *,
+    prefix: str,
+) -> tuple[bytes, bytes]:
+    public = _curve_key(public_key, name=f"{prefix} public key")
+    secret = _curve_key(secret_key, name=f"{prefix} secret key")
+    try:
+        derived = zmq.curve_public(secret)
+    except (TypeError, ValueError, KeyError) as error:
+        raise ValueError(f"{prefix} secret key cannot derive a public key") from error
+    if isinstance(derived, str):
+        derived = derived.encode("ascii")
+    if derived != public:
+        raise ValueError(f"{prefix} CURVE public/secret key pair does not match")
+    return public, secret
+
+
+def _zap_string(name: str, value: object, *, allow_empty: bool = False) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be an ASCII string")
+    if not value and not allow_empty:
+        raise ValueError(f"{name} must be a non-empty ASCII string")
+    try:
+        encoded = value.encode("ascii")
+    except UnicodeEncodeError as error:
+        raise ValueError(f"{name} must be ASCII") from error
+    if len(encoded) > _ZAP_MAX_STRING_BYTES:
+        raise ValueError(f"{name} exceeds ZAP string limit")
+    if any(byte < 0x21 or byte > 0x7E for byte in encoded):
+        raise ValueError(f"{name} must be printable ASCII without whitespace")
+    return value
 
 
 @dataclass(frozen=True)
@@ -47,11 +104,9 @@ class CurveServerConfig:
     zap_domain: str = "zara"
 
     def __post_init__(self) -> None:
-        _curve_key(self.public_key, name="server public key")
-        _curve_key(self.secret_key, name="server secret key")
-        if not isinstance(self.zap_domain, str) or not self.zap_domain.strip():
-            raise ValueError("zap_domain must be a non-empty string")
-        if self.zap_domain != self.zap_domain.strip():
+        _curve_pair(self.public_key, self.secret_key, prefix="server")
+        domain = _zap_string("zap_domain", self.zap_domain)
+        if domain != domain.strip():
             raise ValueError("zap_domain must not contain surrounding whitespace")
 
 
@@ -62,8 +117,7 @@ class CurveClientConfig:
     server_public_key: str | bytes
 
     def __post_init__(self) -> None:
-        _curve_key(self.public_key, name="client public key")
-        _curve_key(self.secret_key, name="client secret key")
+        _curve_pair(self.public_key, self.secret_key, prefix="client")
         _curve_key(self.server_public_key, name="server public key")
 
 
@@ -85,7 +139,7 @@ class RegistryCredentialsProvider:
             try:
                 z85.decode(public_key)
                 return public_key.decode("ascii")
-            except (UnicodeDecodeError, ValueError) as error:
+            except (UnicodeDecodeError, ValueError, KeyError) as error:
                 raise KeyNotActive("client key is not active") from error
         raise KeyNotActive("client key is not active")
 
@@ -98,7 +152,11 @@ class RegistryCredentialsProvider:
 
     def user_id(self, raw_public_key: bytes) -> str:
         public_key = self._z85_public_key(raw_public_key)
-        return self._registry.resolve_public_key(public_key).user_id
+        user_id = self._registry.resolve_public_key(public_key).user_id
+        try:
+            return _zap_string("authenticated user id", user_id)
+        except ValueError as error:
+            raise KeyNotActive("client key is not active") from error
 
 
 class RegistryAuthenticator(ThreadAuthenticator):
@@ -111,13 +169,10 @@ class RegistryAuthenticator(ThreadAuthenticator):
         registry: SecurityRegistry,
         domain: str = "zara",
     ) -> None:
-        if not isinstance(domain, str) or not domain.strip():
-            raise ValueError("domain must be a non-empty string")
-        if domain != domain.strip():
-            raise ValueError("domain must not contain surrounding whitespace")
+        normalized_domain = _zap_string("domain", domain)
         super().__init__(context=context)
         self._provider = RegistryCredentialsProvider(registry)
-        self.configure_curve_callback(domain=domain, credentials_provider=self._provider)
+        self.configure_curve_callback(domain=normalized_domain, credentials_provider=self._provider)
 
     def curve_user_id(self, client_public_key: bytes) -> str:
         return self._provider.user_id(client_public_key)
@@ -126,17 +181,20 @@ class RegistryAuthenticator(ThreadAuthenticator):
 def configure_curve_server_socket(socket: zmq.Socket, config: CurveServerConfig) -> None:
     if not isinstance(config, CurveServerConfig):
         raise TypeError("config must be CurveServerConfig")
-    socket.curve_publickey = _curve_key(config.public_key, name="server public key")
-    socket.curve_secretkey = _curve_key(config.secret_key, name="server secret key")
+    require_secure_curve_runtime()
+    public, secret = _curve_pair(config.public_key, config.secret_key, prefix="server")
+    socket.curve_publickey = public
+    socket.curve_secretkey = secret
     socket.curve_server = True
-    socket.zap_domain = config.zap_domain.encode("utf-8")
+    socket.zap_domain = _zap_string("zap_domain", config.zap_domain).encode("ascii")
 
 
 def configure_curve_client_socket(socket: zmq.Socket, config: CurveClientConfig) -> None:
     if not isinstance(config, CurveClientConfig):
         raise TypeError("config must be CurveClientConfig")
-    socket.curve_publickey = _curve_key(config.public_key, name="client public key")
-    socket.curve_secretkey = _curve_key(config.secret_key, name="client secret key")
+    public, secret = _curve_pair(config.public_key, config.secret_key, prefix="client")
+    socket.curve_publickey = public
+    socket.curve_secretkey = secret
     socket.curve_serverkey = _curve_key(config.server_public_key, name="server public key")
 
 
@@ -148,12 +206,13 @@ def authenticated_user_id(frames: Iterable[object]) -> str:
             continue
         if isinstance(user_id, bytes):
             try:
-                user_id = user_id.decode("utf-8")
+                user_id = user_id.decode("ascii")
             except UnicodeDecodeError as error:
                 raise AuthenticationRequired("authenticated identity is missing") from error
-        if isinstance(user_id, str) and user_id:
-            return user_id
-        raise AuthenticationRequired("authenticated identity is missing")
+        try:
+            return _zap_string("authenticated user id", user_id)
+        except ValueError as error:
+            raise AuthenticationRequired("authenticated identity is missing") from error
     raise AuthenticationRequired("authenticated identity is missing")
 
 
@@ -166,4 +225,5 @@ __all__ = [
     "authenticated_user_id",
     "configure_curve_client_socket",
     "configure_curve_server_socket",
+    "require_secure_curve_runtime",
 ]
