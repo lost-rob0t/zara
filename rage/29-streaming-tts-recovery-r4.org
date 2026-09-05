@@ -1,0 +1,29 @@
+#+title: RAGE #29 — streaming TTS lifecycle recovery r4
+
+* Transaction
+- Consumed issue :: #29
+- Immutable RAGE start :: =d5f9a57e437cee72e2dfeae97ed5124727608085=
+- Branch :: =rage/29-streaming-tts-current-r4=
+- Scope :: Zara Core only; no =android/**= changes.
+
+* Recovery evidence
+- Prior exact candidate PR #370 head =a5c8e1b9168d5b22e04139bbdfcc79e195cfbca0= completed CI run #1306 successfully.
+- That candidate became stale when Android Assistant-role PR #369 advanced canonical master to this transaction start SHA.
+- The prior reviewed slice is intentionally tiny: successful TTS turn-state reclamation, identity-guarded stale-task safety, deterministic lifecycle tests, and a focused streaming-TTS script.
+- Reapply only that reviewed Core delta. Do not transplant an old tree or modify Android.
+
+* Invariants
+- One canonical TTS/runtime path.
+- Completed successful turns must not accumulate in =TtsOutputBridge._turns=.
+- Cleanup may remove only the exact state object whose task is ending; reused turn IDs must not let stale tasks delete replacement state.
+- Cancellation/error behavior remains canonical and no fake completion is emitted.
+- No protocol/provider/player ownership change.
+
+* Acceptance mapping
+- successful turn releases state -> =test_successful_turn_releases_completed_state=
+- repeated turns remain bounded -> =test_many_successful_turns_do_not_accumulate_state=
+- stale same-ID task cannot remove replacement -> =test_stale_task_cannot_remove_replacement_with_same_turn_id=
+- focused integration gate -> =scripts/test-streaming-tts.sh=
+
+* RAGE state
+- Research/design/TDD evidence from #370 remains prior art, but this recovery must receive fresh exact-head repository/Nix/package/Android/shared-mic verification before merge.
