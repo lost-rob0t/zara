@@ -6,6 +6,10 @@ import ai.zara.app.auth.AndroidEnrollmentRepository
 import ai.zara.app.auth.EnrollmentRepository
 import ai.zara.app.auth.EnrollmentState
 import ai.zara.app.auth.JeroMqCurveKeyCodec
+import ai.zara.app.device.AndroidUriLauncher
+import ai.zara.app.device.DeviceCapabilityRegistry
+import ai.zara.app.device.OpenUriAdapter
+import ai.zara.app.device.RegistryDeviceActionHandler
 import ai.zara.app.runtime.AndroidTextSessionController
 import ai.zara.app.runtime.AudioOutputFormat
 import ai.zara.app.runtime.ClientStateStore
@@ -59,9 +63,18 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             initial,
             RuntimeEvent.EnrollmentObserved(enrollment.state().toRuntimeReadiness()),
         )
+        val deviceActionHandler = RegistryDeviceActionHandler(
+            DeviceCapabilityRegistry(
+                listOf(
+                    OpenUriAdapter(AndroidUriLauncher(context)),
+                )
+            )
+        )
         actor = ZaraTextClientActor(
             dealerFactory = JeroMqTextDealerFactory(enrollment),
             audioOutputFormats = listOf(AudioOutputFormat.pcmS16leMono(24_000)),
+            deviceCapabilities = deviceActionHandler::availableCapabilities,
+            deviceActionHandler = deviceActionHandler,
         )
         controller = AndroidTextSessionController(initial, actor)
         assistantRolePlatform = AndroidAssistantRolePlatform(context.applicationContext)

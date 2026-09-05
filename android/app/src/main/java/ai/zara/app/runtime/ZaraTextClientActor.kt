@@ -1,5 +1,7 @@
 package ai.zara.app.runtime
 
+import ai.zara.app.device.DeviceActionErrorCode
+import ai.zara.app.device.DeviceActionResult
 import ai.zara.app.voice.VoiceCaptureContext
 import ai.zara.app.voice.VoiceCommandClient
 import ai.zara.app.voice.VoiceInboundMessage
@@ -45,14 +47,19 @@ class ZaraTextClientActor(
         Thread(runnable, "zara-android-text-client").apply { isDaemon = true }
     },
     private val audioOutputFormats: List<AudioOutputFormat> = emptyList(),
+    private val deviceCapabilities: () -> Set<DeviceCapability> = { emptySet() },
+    private val deviceActionHandler: DeviceActionHandler? = null,
+    private val epochNanoseconds: () -> Long = { System.currentTimeMillis() * 1_000_000L },
 ) : TextSessionClient, VoiceCommandClient {
     companion object {
         private const val MAX_INTERLEAVED_VOICE_EVENTS = 256
+        private const val MAX_TERMINAL_DEVICE_ACTIONS = 256
     }
 
     private var dealer: TextDealer? = null
     private var session: ConnectedTextSession? = null
     private val correlations = RequestCorrelations(limit = 256)
+    private val terminalDeviceActions = linkedSetOf<String>()
     private var voiceStreamObserver: ((VoiceStreamEvent) -> Unit)? = null
     private var voiceStreamFailureObserver: ((Throwable) -> Unit)? = null
     private var voicePumpActive = false
@@ -85,6 +92,7 @@ class ZaraTextClientActor(
             require(generation > 0) { "generation must be positive" }
             replaceDealer(profile)
             correlations.clear()
+            terminalDeviceActions.clear()
             session = null
             val requestId = nextRequestId()
             val active = requireNotNull(dealer)
@@ -118,12 +126,16 @@ class ZaraTextClientActor(
                 hello.sessionId
             }
 
+            val advertisedCapabilities = deviceCapabilities()
+            if (advertisedCapabilities.isNotEmpty() && deviceActionHandler == null) {
+                throw ZaraWireException("executable device capabilities require an action handler")
+            }
             val capabilityRequestId = nextRequestId()
             active.send(
                 ZaraCapabilityCodec.encodeSnapshot(
                     requestId = capabilityRequestId,
                     sessionId = helloSessionId,
-                    capabilities = emptySet(),
+                    capabilities = advertisedCapabilities,
                     timestampNs = nextTimestamp(),
                 )
             )
@@ -136,8 +148,8 @@ class ZaraTextClientActor(
             if (capabilityAck.sessionId != helloSessionId) {
                 throw ZaraWireException("capability snapshot session is stale")
             }
-            if (capabilityAck.capabilities.isNotEmpty()) {
-                throw ZaraWireException("server acknowledged unadvertised device capabilities")
+            if (capabilityAck.capabilities != advertisedCapabilities) {
+                throw ZaraWireException("server capability acknowledgement differs from advertisement")
             }
 
             val connected = ConnectedTextSession(generation, helloSessionId)
@@ -324,6 +336,7 @@ class ZaraTextClientActor(
         voicePumpActive = false
         session = null
         correlations.clear()
+        terminalDeviceActions.clear()
         selectedAudioOutputFormat = null
         dealer?.close()
         dealer = null
@@ -387,6 +400,7 @@ class ZaraTextClientActor(
         while (true) {
             val frames = active.receive(requestTimeoutMillis)
                 ?: throw TextRequestTimeoutException("ZARA/1 voice acknowledgement timed out")
+            if (handleDeviceServerMessage(active, frames)) continue
             when (val inbound = ZaraVoiceInboundCodec.decode(frames)) {
                 is VoiceInboundMessage.Stream -> {
                     if (interleavedEvents >= MAX_INTERLEAVED_VOICE_EVENTS) {
@@ -413,7 +427,7 @@ class ZaraTextClientActor(
             val frames = active.receive(25)
             if (frames == null) {
                 Thread.sleep(10)
-            } else {
+            } else if (!handleDeviceServerMessage(active, frames)) {
                 when (val inbound = ZaraVoiceInboundCodec.decode(frames)) {
                     is VoiceInboundMessage.Stream -> dispatchVoiceStream(inbound.event)
                     is VoiceInboundMessage.Reply ->
@@ -466,8 +480,88 @@ class ZaraTextClientActor(
                 dispatchVoiceStream(voiceEvent)
                 continue
             } catch (_: ZaraWireException) {
+                if (handleDeviceServerMessage(active, frames)) continue
                 return ZaraTextCodec.decode(frames)
             }
+        }
+    }
+
+    private fun handleDeviceServerMessage(
+        active: TextDealer,
+        frames: List<ByteArray>,
+    ): Boolean {
+        val message = try {
+            ZaraDeviceActionCodec.decodeServerMessage(frames)
+        } catch (_: ZaraWireException) {
+            return false
+        }
+        val current = session ?: throw StaleTextSessionException("device action arrived without a live session")
+        if (message.sessionId != current.sessionId) {
+            throw StaleTextSessionException("device action belongs to a stale session")
+        }
+        val handler = deviceActionHandler
+            ?: throw ZaraWireException("server sent a device action without an advertised handler")
+        when (message) {
+            is DeviceServerMessage.Request -> {
+                if (message.capability !in deviceCapabilities()) {
+                    throw ZaraWireException("server requested an unadvertised device capability")
+                }
+                if (message.deadlineNs <= epochNanoseconds()) {
+                    throw ZaraWireException("device action deadline expired before acceptance")
+                }
+                if (message.actionId in terminalDeviceActions) {
+                    throw ZaraWireException("duplicate terminal device action")
+                }
+                active.send(
+                    ZaraDeviceActionCodec.encodeAccepted(
+                        requestId = nextRequestId(),
+                        sessionId = current.sessionId,
+                        actionId = message.actionId,
+                        timestampNs = nextTimestamp(),
+                    )
+                )
+                val result = try {
+                    handler.execute(message)
+                } catch (_: SecurityException) {
+                    DeviceActionResult.Error(DeviceActionErrorCode.PermissionDenied)
+                } catch (_: Throwable) {
+                    DeviceActionResult.Error(DeviceActionErrorCode.Failed)
+                }
+                when (result) {
+                    DeviceActionResult.Completed -> active.send(
+                        ZaraDeviceActionCodec.encodeCompleted(
+                            requestId = nextRequestId(),
+                            sessionId = current.sessionId,
+                            actionId = message.actionId,
+                            timestampNs = nextTimestamp(),
+                        )
+                    )
+                    is DeviceActionResult.Error -> active.send(
+                        ZaraDeviceActionCodec.encodeError(
+                            requestId = nextRequestId(),
+                            sessionId = current.sessionId,
+                            actionId = message.actionId,
+                            code = result.code,
+                            message = result.message,
+                            timestampNs = nextTimestamp(),
+                        )
+                    )
+                }
+                rememberTerminalDeviceAction(message.actionId)
+            }
+            is DeviceServerMessage.Cancel -> {
+                handler.cancel(message)
+                rememberTerminalDeviceAction(message.actionId)
+            }
+        }
+        return true
+    }
+
+    private fun rememberTerminalDeviceAction(actionId: String) {
+        terminalDeviceActions += actionId
+        while (terminalDeviceActions.size > MAX_TERMINAL_DEVICE_ACTIONS) {
+            val oldest = terminalDeviceActions.firstOrNull() ?: return
+            terminalDeviceActions.remove(oldest)
         }
     }
 
