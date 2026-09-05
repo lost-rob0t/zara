@@ -1,0 +1,41 @@
+:PROPERTIES:
+:ID:       zara-rage-388-plugin-tool-cancellation
+:END:
+#+title: RAGE #388 — canonical cancellation for running service-plugin tools
+#+status: ACTIVE
+
+* Iteration 3 — canonical ToolNode boundary
+** Consumption
+- Issue :: #388
+- Immutable start :: 3676fc7e452eab409305f62a826b9f0b1f9841d4
+- Branch :: rage/388-plugin-tool-cancellation-r3
+- Scope :: Zara Core only. No =android/**=. No plugin-specific execution manager, cancellation command, process-id registry, or second approval path.
+
+** Preserved failed evidence
+- Iteration 1 / PR #389 exact head =1052078c06069cae33f665c8d6273cc2d7578324= failed CI #1410 because a synchronous service tool never entered the deterministic cancellation test window.
+- Iteration 2 / PR #391 exact head =04ba14ef6eccbe40d808c21834f398c5e8e0e56f= failed CI #1414 on the same assertion despite replacing LangChain's wrapper-level async fallback with an explicit worker. Android and both shared-mic lanes remained green; Core failed before flake/package.
+- Source trace after #1414 :: =create_tools_node= delegates each approved/available call to LangGraph =ToolNode.ainvoke=. For synchronous tools, ToolNode owns its own executor path and invokes =tool.invoke()=. Therefore a cancellation scope implemented only in a custom =BaseTool.ainvoke()= wrapper is not the canonical execution boundary and cannot satisfy the contract reliably.
+- Outcome :: wrapper architecture discarded, not patched again.
+
+** Research / selected architecture
+- Zara's existing =create_tools_node= already owns tool availability checks, approval composition, =ToolStarted=, canonical =ToolCancelled(reason="turn cancelled")=, failure, completion, and the single call into LangGraph ToolNode.
+- Bind one invocation-scoped Core cancellation ContextVar immediately around =tool_node.ainvoke=. LangGraph's synchronous executor receives the call context while async tools execute directly in it.
+- The scope owns a private =threading.Event=. Plugins receive only a read-only =ToolCancellation= view through =current_tool_cancellation()=. The model cannot supply, suppress, replace, or retarget it.
+- On =CancelledError=, =create_tools_node= signals the scope before publishing the existing terminal cancellation and re-raising. No second terminal authority is introduced.
+- The contract is generic at Zara's canonical tool boundary rather than plugin-specific execution machinery; service plugins consume it through the public plugin API.
+
+** Invariants
+- one cancellation signal per exact tool invocation;
+- concurrent calls cannot cancel one another;
+- cancellation never bypasses =ToolApprovalController= or availability checks because scope begins only at execution;
+- sync and async tools observe the same Core signal;
+- terminal outcome remains owned by =create_tools_node=;
+- plugin unload/registration identity remains untouched;
+- no new model-visible arguments or reusable IDs.
+
+** Gate
+- deterministic sync cancellation before side effects;
+- concurrent invocation isolation;
+- async cancellation sees signal before =CancelledError= handling;
+- approval rejection must not expose a running cancellation scope;
+- full =scripts/test-all.sh=, =nix flake check=, packaged Zara, Android compatibility, Arch/Ubuntu shared-mic, exact-head reviews/threads.
