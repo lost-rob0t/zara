@@ -16,7 +16,7 @@ class ZaraTextCodecTest {
     }
 
     @Test fun `capability snapshot is closed sorted and session bound`() {
-        val frames = ZaraTextCodec.encodeCapabilitySnapshot(
+        val frames = ZaraCapabilityCodec.encodeSnapshot(
             requestId = "caps-1",
             sessionId = "session-1",
             capabilities = setOf(DeviceCapability.OpenUri, DeviceCapability.OpenApp),
@@ -27,13 +27,13 @@ class ZaraTextCodecTest {
             frames[1].decodeToString(),
         )
 
-        val ack = ZaraTextCodec.decode(
+        val ack = ZaraCapabilityCodec.decodeSnapshotOk(
             frames(
                 "{\"body\":{\"capabilities\":[{\"id\":\"open_app\",\"version\":1},{\"id\":\"open_uri\",\"version\":1}]},\"id\":\"caps-ok\",\"payload_count\":0,\"reply_to\":\"caps-1\",\"session_id\":\"session-1\",\"timestamp_ns\":3,\"type\":\"capability.snapshot.ok\"}"
             )
         )
         assertEquals(
-            TextServerMessage.CapabilitySnapshotOk(
+            CapabilitySnapshotOk(
                 id = "caps-ok",
                 replyTo = "caps-1",
                 sessionId = "session-1",
@@ -51,7 +51,7 @@ class ZaraTextCodecTest {
             "[{\"id\":\"open_uri\",\"version\":1},{\"id\":\"open_uri\",\"version\":1}]",
         ).forEach { capabilities ->
             assertThrows(ZaraWireException::class.java) {
-                ZaraTextCodec.decode(
+                ZaraCapabilityCodec.decodeSnapshotOk(
                     frames(
                         "{\"body\":{\"capabilities\":$capabilities},\"id\":\"caps-ok\",\"payload_count\":0,\"reply_to\":\"caps-1\",\"session_id\":\"session-1\",\"timestamp_ns\":3,\"type\":\"capability.snapshot.ok\"}"
                     )
