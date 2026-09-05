@@ -38,7 +38,7 @@ class ZaraTextClientActor(
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-android-text-client").apply { isDaemon = true }
     },
-) : AutoCloseable {
+) : TextSessionClient {
     private var dealer: TextDealer? = null
     private var session: ConnectedTextSession? = null
     private val correlations = RequestCorrelations(limit = 256)
@@ -48,7 +48,10 @@ class ZaraTextClientActor(
         require(requestTimeoutMillis > 0) { "request timeout must be positive" }
     }
 
-    fun connect(profile: ServerProfile, generation: Long): CompletableFuture<ConnectedTextSession> =
+    override fun connect(
+        profile: ServerProfile,
+        generation: Long,
+    ): CompletableFuture<ConnectedTextSession> =
         submit {
             require(generation > 0) { "generation must be positive" }
             replaceDealer(profile)
@@ -69,7 +72,7 @@ class ZaraTextClientActor(
             connected
         }
 
-    fun submitText(
+    override fun submitText(
         generation: Long,
         sessionId: String,
         conversationId: String?,
@@ -153,7 +156,7 @@ class ZaraTextClientActor(
         }
     }
 
-    fun disconnect(): CompletableFuture<Unit> = submit {
+    override fun disconnect(): CompletableFuture<Unit> = submit {
         session = null
         correlations.clear()
         dealer?.close()
