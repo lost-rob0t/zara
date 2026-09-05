@@ -125,9 +125,15 @@ class AndroidTextSessionController(
     }
 
     fun observeEnrollment(readiness: EnrollmentReadiness) {
-        synchronized(lock) {
+        val shouldDisconnect = synchronized(lock) {
             if (closed) return
+            val wasActive = runtimeState.server !is ServerConnection.Disconnected
             runtimeState = reduce(runtimeState, RuntimeEvent.EnrollmentObserved(readiness))
+            wasActive && readiness != EnrollmentReadiness.Ready &&
+                runtimeState.server is ServerConnection.Disconnected
+        }
+        if (shouldDisconnect) {
+            client.disconnect()
         }
     }
 
