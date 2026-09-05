@@ -8,7 +8,8 @@ from langchain_core.tools import tool
 
 from zara.agent.graph import create_tools_node
 from zara.agent.tools.registry import ToolRegistry
-from zara.plugins.api import current_tool_cancellation
+from zara.plugins import current_tool_cancellation
+from zara.plugins.cancellation import bind_tool_cancellation
 from zara.runtime import events
 
 
@@ -29,7 +30,7 @@ async def test_running_sync_tool_observes_canonical_turn_cancellation():
         return "effect complete"
 
     registry = ToolRegistry()
-    registry.register_tool(cooperative_effect)
+    registry.register_tool(bind_tool_cancellation(cooperative_effect))
     published: list[events.RuntimeEvent] = []
     node = create_tools_node(registry, publisher=published.append)
     state = {
