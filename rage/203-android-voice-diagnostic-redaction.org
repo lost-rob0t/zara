@@ -12,7 +12,7 @@
 - Scope :: Android diagnostics only. No Core/protocol/plugin changes.
 
 ** Bug / source analysis
-- =AndroidAppSession.reportVoiceStreamFailure= currently exposes raw =Throwable.message= through =voiceStreamFailure()= and the Compose Diagnostics observer.
+- =AndroidAppSession.reportVoiceStreamFailure= exposed raw =Throwable.message= through =voiceStreamFailure()= and the Compose Diagnostics observer.
 - Voice/protocol errors may carry endpoint, frame, stream, path, provider, or library detail in their messages. Raw exception messages are therefore not a safe diagnostics boundary.
 - #203 explicitly requires redacted diagnostics, and the Android campaign invariant forbids private credentials/payloads in Compose state dumps.
 
@@ -21,12 +21,14 @@
 - Map canonical wire failures to =voice_protocol_error=, bounded playback queue failure to =voice_backpressure=, security failure to =voice_permission_denied=, and everything else to =voice_runtime_error=.
 - Unwrap causes with a hard depth bound and cycle guard.
 - Do not log or persist the original message.
-- Keep the summarizer pure and independent until #407 releases =AndroidAppSession.kt=; then recover current master and wire this one function into the existing observer.
+- Exact changed-file inspection proved #407 does not own =AndroidAppSession.kt=, so the wiring was safe to land without artificial serialization.
 
 ** Deterministic RED / GREEN
 - RED :: 3005d2511c659b27a13b9f94ce4feadc73511189 requires raw token/path/endpoint-bearing messages to disappear from diagnostics while preserving stable categories.
 - GREEN :: 8ee1cec0c90b4d56430ab93aba1478a257b884b1 adds bounded =VoiceDiagnosticFailure.summarize=.
+- RED wiring :: 58c7827f0ed99c7d615ea5ad391492fd55edc2ec requires AppSession to cross the redaction boundary.
+- GREEN wiring :: ea447db7a0cd63a41577e94e06aec3d8a4d70ee1 replaces raw exception messages with =VoiceDiagnosticFailure.summarize(error)= before Compose observation.
 
 ** Gate
-- Focused JVM tests first.
-- After #407 lands: recover exact current master, wire =AndroidAppSession.reportVoiceStreamFailure= to the redacted summary, add wiring contract/observer coverage, run =scripts/test-android.sh= plus full repository/Nix/package/shared-mic exact-head CI.
+- Focused JVM tests plus =scripts/test-android.sh= through the Android Actions gate.
+- Full repository/Nix/package and both shared-mic lanes must be exact-head green before promotion/merge.
