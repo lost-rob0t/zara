@@ -33,6 +33,7 @@ python -m pytest -q -o faulthandler_timeout=15 \
   t/test_daemon_security_gateway.py \
   t/test_daemon_security_policy.py \
   t/test_security_threat_model.py \
+  t/test_security_threat_dependency.py \
   t/test_security_threat_transport.py \
   t/test_security_threat_gateway.py \
   t/test_security_threat_management.py \
