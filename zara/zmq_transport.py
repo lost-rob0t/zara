@@ -101,6 +101,12 @@ class DeviceActionResult:
     outcome: str
 
 
+class DeviceActionHandle(concurrent.futures.Future):
+    def __init__(self, action_id: str) -> None:
+        super().__init__()
+        self.action_id = action_id
+
+
 def _normalize_audio_output_format(value: object) -> dict[str, object]:
     if not isinstance(value, dict) or set(value) != _AUDIO_OUTPUT_FORMAT_KEYS:
         raise ValueError("audio output format requires codec, sample_rate and channels")
@@ -254,7 +260,7 @@ class _DeviceActionPending:
     principal_id: str
     session_id: str
     capability: str
-    future: concurrent.futures.Future
+    future: DeviceActionHandle
     accepted: bool = False
 
 
@@ -474,7 +480,11 @@ class ZaraZmqGateway:
         deadline_ns: int,
         idempotency: str = "at_most_once",
         trace_id: Optional[str] = None,
-    ) -> concurrent.futures.Future:
+    ) -> DeviceActionHandle:
+        if type(deadline_ns) is not int:
+            raise TypeError("deadline_ns must be an integer")
+        if deadline_ns <= _now_ns():
+            raise ValueError("device action deadline has expired")
         action_id = _message_id()
         message = ProtocolMessage(
             type="device.action.request",
@@ -492,7 +502,7 @@ class ZaraZmqGateway:
             },
         )
         encode_message(message, limits=self._limits)
-        future: concurrent.futures.Future = concurrent.futures.Future()
+        future = DeviceActionHandle(action_id)
         with self._lock:
             match = self._route_for_session_locked(principal_id, session_id)
             if match is None:
@@ -615,6 +625,18 @@ class ZaraZmqGateway:
                 return
             if message.type == "device.action.accepted":
                 pending.accepted = True
+                return
+            if not pending.accepted:
+                self._send(
+                    socket,
+                    route,
+                    _protocol_error(
+                        reply_to=message.id,
+                        code="action_not_accepted",
+                        message="device action has not been accepted",
+                        retryable=False,
+                    ),
+                )
                 return
             self._device_actions.pop(action_id, None)
 
@@ -2115,6 +2137,7 @@ __all__ = [
     "ClientBackpressureError",
     "ClientDisconnected",
     "ClientNotReady",
+    "DeviceActionHandle",
     "ProtocolRemoteError",
     "TransportConfig",
     "ZaraZmqGateway",
