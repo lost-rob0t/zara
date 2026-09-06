@@ -1,0 +1,16 @@
+* RAGE #178 r2 — bound Android inbound audio payload memory
+
+- Consumed issue :: #178
+- Exact immutable start :: =5f17f167850c87fe04ca30a525819b2d2a11ae98=
+- Recovered from :: PR #509 / head =c49db4b00b66c0bc9279274bffc2687c3f3eeb48=
+- Scope :: Android voice codec/test/evidence only.
+
+** Recovery
+#505 advanced canonical master after the first RED/GREEN candidate began gating. Re-establish the same test-first proof on exact current master; stale-base CI is not reused.
+
+** RED / GREEN
+- RED =c094b72000e1c36c680aea70a0e3cf4659a62b39=: exactly 1 MiB accepted, 1 MiB + 2 bytes must fail.
+- GREEN =7512b86cf0c196655009961f5d373028937e349f=: reject oversized =audio.output.chunk= before PCM copy/playback.
+
+** Acceptance
+No truncation or alternate decoder; <=1 MiB whole pcm_s16le remains accepted; larger payload fails closed. Fresh exact-head Android/full repository CI required before promotion/merge.
