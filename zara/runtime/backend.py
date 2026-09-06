@@ -466,7 +466,7 @@ class AgentRuntimeBackend(RuntimeBackend):
         *,
         config=None,
         router=None,
-        semantic_first: bool = False,
+        semantic_first: bool = True,
     ) -> None:
         if manager_factory is not None:
             self._delegate: RuntimeBackend = LangGraphRuntimeBackend(
@@ -529,9 +529,9 @@ class AgentRuntimeBackend(RuntimeBackend):
     ) -> int:
         return self._delegate.register_agent_loop_advice(
             kind,
-            owner,
-            priority,
-            callback,
+            owner=owner,
+            priority=priority,
+            callback=callback,
         )
 
     def unregister_agent_loop_advice(self, registration_id: int) -> bool:
