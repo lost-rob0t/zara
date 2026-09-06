@@ -53,6 +53,7 @@ jobs:
       - name: Render deterministic Copilot screenshots
         env:
           QT_QPA_PLATFORM: offscreen
+          ZARA_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           nix develop -c python - <<'PY'
           import os
@@ -62,7 +63,7 @@ jobs:
 
           render_copilot_fixtures(
               Path(os.environ["ARTIFACT_DIR"]) / "ui",
-              source_commit=os.environ["GITHUB_SHA"],
+              source_commit=os.environ["ZARA_SOURCE_COMMIT"],
           )
           PY
 
