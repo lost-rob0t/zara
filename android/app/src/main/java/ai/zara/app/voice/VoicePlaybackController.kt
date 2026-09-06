@@ -81,12 +81,17 @@ class VoicePlaybackController(
     override fun close() {
         if (closed) return
         closed = true
-        if (outputActive) {
-            stopOutputAndReleaseFocus()
+        val stopFailure = if (outputActive) {
+            runCatching { stopOutputAndReleaseFocus() }.exceptionOrNull()
         } else {
-            audioFocus?.release()
+            runCatching { audioFocus?.release() }.exceptionOrNull()
         }
-        output.close()
+        val closeFailure = runCatching { output.close() }.exceptionOrNull()
+        if (stopFailure != null) {
+            if (closeFailure != null) stopFailure.addSuppressed(closeFailure)
+            throw stopFailure
+        }
+        if (closeFailure != null) throw closeFailure
     }
 
     private fun stopOutputAndReleaseFocus() {
