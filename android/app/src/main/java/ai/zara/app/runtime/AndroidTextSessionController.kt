@@ -92,21 +92,30 @@ class AndroidTextSessionController(
             )
         }
 
-        val future = client.submitText(
+        val clientFuture = client.submitText(
             generation = request.generation,
             sessionId = request.sessionId,
             conversationId = request.conversationId,
             text = text,
         )
-        future.whenComplete { result, error ->
+        val resultFuture = CompletableFuture<TextTurnResult>()
+        clientFuture.whenComplete { result, error ->
             if (error != null) {
                 if (rootCause(error) is TextRequestTimeoutException && requestIsCurrent(request)) {
                     connectionLost("text request timed out")
                 }
+                resultFuture.completeExceptionally(error)
                 return@whenComplete
             }
-            if (result == null) return@whenComplete
-            val changed = synchronized(lock) {
+            if (result == null) {
+                resultFuture.completeExceptionally(
+                    IllegalStateException("text client completed without a result"),
+                )
+                return@whenComplete
+            }
+
+            var changed = false
+            val accepted = synchronized(lock) {
                 val connected = runtimeState.server as? ServerConnection.Connected
                 if (
                     !closed &&
@@ -118,14 +127,24 @@ class AndroidTextSessionController(
                         selectedConversationId = result.conversationId
                             ?: runtimeState.selectedConversationId,
                     )
-                    runtimeState != previous
+                    changed = runtimeState != previous
+                    true
                 } else {
                     false
                 }
             }
+            if (!accepted) {
+                resultFuture.completeExceptionally(
+                    StaleTextSessionException(
+                        "text turn completed for superseded session ${request.sessionId}",
+                    ),
+                )
+                return@whenComplete
+            }
             if (changed) publishState()
+            resultFuture.complete(result)
         }
-        return future
+        return resultFuture
     }
 
     fun connectionLost(reason: String) {

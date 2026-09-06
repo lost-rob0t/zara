@@ -1,6 +1,7 @@
 package ai.zara.app.runtime
 
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutionException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -81,8 +82,14 @@ class AndroidTextSessionControllerTest {
         assertEquals(2L, controller.state().generation)
 
         client.turnFuture.complete(TextTurnResult("stale-conversation", "turn-1", "late", true))
-        future.get()
+        val error = try {
+            future.get()
+            throw AssertionError("stale text turn must fail closed")
+        } catch (error: ExecutionException) {
+            error.cause
+        }
 
+        assertTrue(error is StaleTextSessionException)
         assertEquals(null, controller.state().selectedConversationId)
         assertEquals(null, controller.state().sessionId)
         assertEquals(2L, controller.state().generation)
