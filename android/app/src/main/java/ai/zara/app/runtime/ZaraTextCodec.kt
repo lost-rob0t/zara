@@ -378,6 +378,7 @@ object ZaraTextCodec {
 
 private class StrictJsonParser(private val source: String) {
     private var index = 0
+    private var containerDepth = 0
 
     fun parseObject(): Map<String, Any?> {
         skipWhitespace()
@@ -404,35 +405,54 @@ private class StrictJsonParser(private val source: String) {
     }
 
     private fun parseObjectValue(): Map<String, Any?> {
-        expect('{')
-        val result = LinkedHashMap<String, Any?>()
-        skipWhitespace()
-        if (consume('}')) return result
-        while (true) {
-            skipWhitespace()
-            if (index >= source.length || source[index] != '"') fail("object key must be string")
-            val key = parseString()
-            if (result.containsKey(key)) fail("duplicate JSON key")
-            skipWhitespace()
-            expect(':')
-            result[key] = parseValue()
+        enterContainer()
+        try {
+            expect('{')
+            val result = LinkedHashMap<String, Any?>()
             skipWhitespace()
             if (consume('}')) return result
-            expect(',')
+            while (true) {
+                skipWhitespace()
+                if (index >= source.length || source[index] != '"') fail("object key must be string")
+                val key = parseString()
+                if (result.containsKey(key)) fail("duplicate JSON key")
+                skipWhitespace()
+                expect(':')
+                result[key] = parseValue()
+                skipWhitespace()
+                if (consume('}')) return result
+                expect(',')
+            }
+        } finally {
+            leaveContainer()
         }
     }
 
     private fun parseArray(): List<Any?> {
-        expect('[')
-        val result = ArrayList<Any?>()
-        skipWhitespace()
-        if (consume(']')) return result
-        while (true) {
-            result += parseValue()
+        enterContainer()
+        try {
+            expect('[')
+            val result = ArrayList<Any?>()
             skipWhitespace()
             if (consume(']')) return result
-            expect(',')
+            while (true) {
+                result += parseValue()
+                skipWhitespace()
+                if (consume(']')) return result
+                expect(',')
+            }
+        } finally {
+            leaveContainer()
         }
+    }
+
+    private fun enterContainer() {
+        if (containerDepth >= maxContainerDepth) fail("JSON nesting exceeds depth limit")
+        containerDepth += 1
+    }
+
+    private fun leaveContainer() {
+        containerDepth -= 1
     }
 
     private fun parseString(): String {
@@ -510,4 +530,8 @@ private class StrictJsonParser(private val source: String) {
     }
 
     private fun fail(message: String): Nothing = throw ZaraWireException(message)
+
+    private companion object {
+        const val maxContainerDepth = 64
+    }
 }

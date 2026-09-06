@@ -1,0 +1,36 @@
+* RAGE #178 r2 — bound hostile Android ZARA/1 JSON nesting
+
+- Consumed issue :: #178
+- Exact immutable start :: =b4f6297d70543be674fd2c6ef0769499eb77955d=
+- Recovered from :: PR #521 / RED head =68ab5b7953d4278209306fb726739c6052d3d6c2=
+- Scope :: Android wire decoder/tests only. No Core/server/plugin implementation.
+
+** Recovery
+PR #520 advanced canonical master while the initial RED branch was gating. Re-root the exact same adversarial proof on new canonical master; stale-base CI is not reusable.
+
+** Research
+The Android text decoder already caps each text envelope at 64 KiB and rejects malformed UTF-8, duplicate keys, unknown fields/types, and oversized text. The private strict JSON parser is recursively implemented with no explicit container-nesting budget, so byte-bounded hostile JSON can still consume stack depth independently of envelope size.
+
+** Design
+Keep the existing strict parser. Add a maximum of 64 nested JSON containers, counted before descending into each object/array. Reject the 65th container with =ZaraWireException= at the parser boundary. Do not add another parser, relax schemas, or change valid canonical envelopes.
+
+** TDD
+The prior RED commit proved current code reaches later schema validation instead of a nesting guard. Preserve that same deterministic test on this exact-current branch, then implement the smallest parser-depth accounting change and rerun focused + full gates.
+
+** RED — exact-current
+- RED head :: =115a5eea76dfe6de5f2cbf53dfd0925c3d19a4d8=
+- Actions :: CI #1747, run =34028553459=
+- Android gate :: deterministic RED, 283 tests / 1 failure: =ZaraTextCodecDepthTest > wire decoder rejects json nesting beyond bounded depth= at line 19.
+- Shared mic :: Ubuntu GREEN; Arch GREEN.
+- Repository test step :: GREEN before flake/package continuation.
+- Interpretation :: current decoder reaches later schema rejection instead of enforcing a parser nesting budget. No toolchain/build regression observed.
+
+** GREEN implementation
+- Parser commit :: =71a6e07887f11d2a1dd41b0ea4e5701eceb2d5dd=
+- Boundary-test commit :: =365b25a4358fd304e8f1af8a70b2b043a9074215=
+- Existing =StrictJsonParser= now owns one container-depth counter. Object and array entry fail before descending when 64 containers are already active, and =finally= restores depth on success or failure.
+- Boundary proof counts the root envelope object: 63 nested body arrays (64 total containers) pass the parser and reach ordinary body-schema rejection; 64 body arrays (65 total) fail specifically at the parser nesting boundary.
+- No schema fields, message types, wire sizes, Core runtime, or alternate parser changed.
+
+** Verification next
+Run the authoritative Android gate plus full repository/Nix/package and both shared-mic lanes on the final exact branch head. Merge only if all exact-head checks are green and review/discussion remains clear.
