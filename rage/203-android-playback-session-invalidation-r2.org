@@ -1,0 +1,15 @@
+* RAGE #203 / #178 r2 — invalidate stale Android playback on authenticated-session loss
+
+- Consumed issues :: #203, #178
+- Exact immutable start :: =457c8cc6e489e4a38bdf0bc4acd0b822a3f43b3a=
+- Recovered from :: PR #513 / head =16e8ed0ade85cad5fbf6bec5ec94927450790d92=
+- Scope :: Android runtime/voice lifecycle only. No Core/server/plugin implementation.
+
+** Recovery
+#510 advanced canonical master after the prior candidate began gating. Reapply only the disjoint playback/session fence on exact current master; stale-base CI is not reused.
+
+** Contract
+=VoiceStreamSinkActor.reset()= remains the single serialized playback teardown owner. Track only the currently authenticated Connected runtime session. When it disappears or changes, request reset before publishing replacement runtime state to UI observers. Same-session role-only changes do not reset playback.
+
+** Verification
+Fresh exact-head Android/full repository CI is required before promotion/merge.
