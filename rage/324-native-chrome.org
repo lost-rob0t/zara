@@ -15,3 +15,31 @@
 3. Add deterministic RED coverage before production changes.
 4. Implement the minimum canonical-Copilot-only change; keep legacy Quick compatibility where it is still directly tested.
 5. Run focused/full repository gates and exact-head GitHub Actions before merge.
+
+** Research
+- Canonical =CopilotWindow= still inherits the Quick header containing permanent =ZARA= brand text, provider/model text, and a separate full-width runtime rail.
+- The adaptive subclass already owns presentation policy, full durable history projection, natural conversation title, and compact/expanded geometry. The legacy Quick class should remain a compatibility implementation rather than becoming the policy owner for #324.
+- =DesktopStatus= is already one typed reducer with states =starting=, =idle=, =listening=, =thinking=, =tool-running=, =needs-input=, =ready=, =disconnected=, and =error=. No new UI state machine is needed.
+- The current status rail duplicates healthy state: =set_status= always renders a status label plus detail (defaulting to “Zara is ready.”). The same widgets can be reprojected instead of adding a second runtime indicator model.
+- Existing adaptive tests provide an offscreen deterministic QWidget harness and already prove single-renderer identity/history/geometry, making them the correct place for structural native-chrome assertions.
+
+** Design / adversarial review
+- Move the existing status lamp and short runtime-status label into the canonical Copilot header; this becomes the compact connection/runtime indicator and continues to be driven by the existing =DesktopStatus= reducer.
+- Hide the inherited =brand_label= on canonical Copilot. The durable conversation title remains the primary title.
+- Hide provider/model text in compact mode; allow it in expanded mode as secondary diagnostics rather than permanent compact chrome.
+- Hide the full-width status detail rail for ordinary states. Show it only for =starting=, =disconnected=, and =error=, so degraded/failure information remains explicit instead of being lost for aesthetics.
+- Keep tool/listening/thinking/needs-input/ready state in the compact header indicator; do not create another tool/voice lifecycle model.
+- Add accessible names to the moved runtime indicator widgets.
+- Do not change window flags, ConversationService, QtRuntimeBridge, runtime commands, protocol, or =android/**=.
+
+Rejected:
+- Deleting status widgets entirely: loses explicit degraded/error detail.
+- New bespoke “connection pill” state: duplicates the existing runtime reducer.
+- Editing =QuickCopilotWindow= globally: risks unrelated compatibility behavior; #324’s canonical adaptive subclass owns this presentation policy.
+- Hiding all status in healthy mode: violates #324’s request for a compact connection/runtime indicator.
+
+** Acceptance mapped to tests
+- Healthy compact: no duplicate brand, no provider/model text, no full-width rail; compact runtime indicator remains visible.
+- Expanded: provider metadata may be visible as secondary information while the same renderer/state persists.
+- Disconnected/error: full detail rail becomes visible and contains the reducer-provided detail.
+- Mode transitions do not create runtime traffic or change renderer identity (covered by existing tests).
