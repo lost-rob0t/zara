@@ -8,7 +8,6 @@ import pytest
 
 from zara.runtime.backend import (
     DETERMINISTIC_COMMAND_FAILED,
-    DETERMINISTIC_COMMAND_UNAVAILABLE,
     LangGraphRuntimeBackend,
 )
 from zara.runtime.intent_router import RouteDecision
@@ -54,19 +53,18 @@ class FakeRouter:
 
 
 @pytest.mark.asyncio
-async def test_command_never_reaches_llm_when_router_is_unavailable():
+async def test_routerless_agent_runtime_preserves_tool_capable_turns():
     manager = FakeManager()
     backend = LangGraphRuntimeBackend(lambda: manager, router=None)
     await backend.start()
 
     result = await backend.submit_turn(
-        "set a timer for 2 hours",
+        "run protected effect",
         turn_id="turn-1",
     )
 
-    assert result.response == DETERMINISTIC_COMMAND_UNAVAILABLE
-    assert result.metadata["route"] == "deterministic_unavailable"
-    assert manager.process_calls == []
+    assert result.response == "model response"
+    assert manager.process_calls == ["run protected effect"]
 
 
 @pytest.mark.asyncio
