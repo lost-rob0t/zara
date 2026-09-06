@@ -22,6 +22,7 @@
 - =DesktopStatus= is already one typed reducer with states =starting=, =idle=, =listening=, =thinking=, =tool-running=, =needs-input=, =ready=, =disconnected=, and =error=. No new UI state machine is needed.
 - The current status rail duplicates healthy state: =set_status= always renders a status label plus detail (defaulting to “Zara is ready.”). The same widgets can be reprojected instead of adding a second runtime indicator model.
 - Existing adaptive tests provide an offscreen deterministic QWidget harness and already prove single-renderer identity/history/geometry, making them the correct place for structural native-chrome assertions.
+- Last-green screenshot review confirms the structural debt visually: compact shows permanent =ZARA=, conversation title, =runtime default=, and a separate starting/status row; expanded carries the same duplicate chrome above a large history block. The present slice intentionally attacks duplicate healthy chrome first rather than mixing history-density changes into the same transaction.
 
 ** Design / adversarial review
 - Move the existing status lamp and short runtime-status label into the canonical Copilot header; this becomes the compact connection/runtime indicator and continues to be driven by the existing =DesktopStatus= reducer.
@@ -43,3 +44,8 @@ Rejected:
 - Expanded: provider metadata may be visible as secondary information while the same renderer/state persists.
 - Disconnected/error: full detail rail becomes visible and contains the reducer-provided detail.
 - Mode transitions do not create runtime traffic or change renderer identity (covered by existing tests).
+
+** RED evidence
+- RED commit: =dcda7e4d8e969d57ecbf1e2f98e2ed1247255d5b=.
+- CI #1854 failed in =scripts/test-all.sh= while Android, Arch shared-mic, and Ubuntu shared-mic gates passed.
+- JUnit failure is exactly =test_native_chrome_demotes_healthy_runtime_noise_without_hiding_failures=: =window.brand_label.isHidden()= was false. This is the intended pre-implementation failure; flake/build/screenshot stages were correctly skipped behind the Core RED gate.
