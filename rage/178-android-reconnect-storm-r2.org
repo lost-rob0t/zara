@@ -1,0 +1,23 @@
+* RAGE #178 r2 — Android reconnect-storm hardening
+
+- Consumed issue :: #178
+- Exact immutable start :: =9ac0e0c0b94f571d6cab69ec252bb69ac2db3420=
+- Scope :: Android-only reconnect-storm behavior and deterministic JVM coverage. No Core/protocol/plugin files.
+
+** Research
+- =AndroidTextSessionController.connectionLost= feeds every loss callback into the canonical reducer.
+- The reducer currently treats =ConnectionLost= while already =Reconnecting= as a failed retry, incrementing attempt/generation even when no reconnect attempt has actually run.
+- Repeated platform/network callbacks can therefore consume the bounded retry budget and enter =OfflineDegraded= without any failed connect operation.
+- Existing stale-connect protection already rejects late completions by generation; duplicate loss callbacks do not need to rotate generation to preserve isolation.
+
+** Design
+- Only an actual =Connected= session loss begins reconnect.
+- While already =Reconnecting=, duplicate =ConnectionLost= is idempotent: preserve generation, attempt, scheduled retry, and disconnect count.
+- Actual =ConnectionFailed= remains the sole path that advances a reconnect attempt after a scheduled connect has executed and failed.
+- Keep canonical reducer/state ownership; no parallel reconnect state machine.
+
+** Planned deterministic proof
+1. RED: repeated =connectionLost= callbacks during one reconnect window do not consume attempts or schedule duplicate retries.
+2. GREEN: make =ConnectionLost= idempotent while =Reconnecting=.
+3. Preserve stale completion rejection and actual failed-connect backoff coverage.
+4. Run exact-head Android/repository CI before merge.
