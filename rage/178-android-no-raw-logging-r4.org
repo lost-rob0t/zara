@@ -1,0 +1,15 @@
+* RAGE #178 r4 — Android raw-log sink exclusion
+
+- Consumed issue :: #178
+- Exact immutable start :: =4cd2f44eb76bb3f1f648cbbefddf57b4a6fb0b09=
+- Recovered from :: PR #500 / head =8303e21adc7d7a3958552ecd8e407cbcc16a3bd9=
+- Scope :: Android test/evidence only. No Core/server/plugin implementation.
+
+** Recovery
+#498 advanced canonical master after r3 completed green. This r4 transaction replays only the disjoint production-source logging invariant onto exact current master; stale-base CI is not reused.
+
+** Acceptance
+- direct Android/console/native raw logging sinks are absent from production Android source;
+- existing bounded/redacted diagnostics remain the reviewed path;
+- no production behavior changes;
+- fresh exact-head CI required before promotion/merge.
