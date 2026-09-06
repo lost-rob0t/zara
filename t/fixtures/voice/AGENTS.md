@@ -24,4 +24,4 @@ Human recordings are accumulated through the single long-lived branch:
 
 Use the first Emacs Lisp block in `voice-fixtures.org` to create/open the dedicated Git worktree at `~/git/worktrees/zara-voice-recordings`. It switches the Org buffer to the worktree copy and never changes the normal/master checkout.
 
-Use the Org blocks to add JSON cases, record/re-record WAVs, commit/push the branch, and fast-forward the branch to `origin/master` after recording PRs merge.
+Use the Org blocks to add JSON cases, record/re-record WAVs, run the corpus gate, commit/push the branch, and rebase the dedicated fixture branch onto `origin/master` when master moves. The rebase uses `--force-with-lease` only on `fixtures/voice-recordings`; it never rewrites or switches the normal checkout.
