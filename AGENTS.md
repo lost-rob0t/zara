@@ -6,6 +6,15 @@ This file guides agentic coding assistants working in this repo.
 - Applies to the entire repository.
 - Follow these instructions before adding new tooling or changing architecture.
 
+## Human voice fixture corpus
+- `voice-fixtures.org` is the single Emacs/Org recording workbench. Do not add a second recorder script or standalone `.el` recorder.
+- Human voice fixture definitions live as JSON under `t/fixtures/voice/cases/`; real recordings live under `t/fixtures/voice/recordings/`.
+- Every declared JSON case is a hard test obligation. `t/test_voice_fixture_manifest.py` must fail until its matching 16 kHz mono signed-16 PCM WAV exists and validates. Never weaken this with `pending`, optional fixtures, skips, xfails, generated silence, or placeholder audio.
+- When adding or materially changing dictation, wake/STT, voice commands, transcript normalization, barge-in, multi-turn voice dialogue, or voice E2E behavior, review the corpus and add/update representative JSON cases when human speech can catch regressions text-only tests cannot.
+- Creating the JSON before the recording is intentional RED. The human recording is part of acceptance.
+- Recordings are accumulated on the single persistent `fixtures/voice-recordings` branch. Use the first block in `voice-fixtures.org`; it creates/opens `~/git/worktrees/zara-voice-recordings` and switches the Org buffer to that worktree instead of changing the normal/master checkout.
+- Record only synthetic/test speech safe for the public repository. Never record credentials, private conversations, secrets, or incidental personal data.
+
 ## Environment
 - Prefer `nix` for all builds, tests, and dev shells.
 - Use the repo’s `flake.nix` for dependency setup.
@@ -125,7 +134,6 @@ Do not game coverage. Never weaken assertions, add meaningless execution-only te
 - Task tools are gated by `[tasks].enabled` (default false) and share the existing tool approval policy. See `wiki/long-horizon-tasks.org`.
 
 ## External service-plugin configuration
-
 - External service plugins own their private configuration under
   `$XDG_CONFIG_HOME/zarathushtra/plugins/<plugin-name>/` (falling back to
   `~/.config/zarathushtra/plugins/<plugin-name>/`). Do not move plugin-owned
@@ -258,6 +266,3 @@ Every iteration is ordered and evidence-driven:
 
 ## Additional Notes
 - Keep code consistent with existing style.
-- Favor minimal, targeted changes outside an approved RAGE design.
-- Ask before adding new files beyond what is requested, except RAGE logs/skills/design/test artifacts required by this protocol.
-- Follow repo conventions for notifications, logging, and config defaults.
