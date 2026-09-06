@@ -12,10 +12,19 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
+from .. import command_gate
 from ..latency import LatencyTrace
 from . import events
 
 logger = logging.getLogger(__name__)
+
+DETERMINISTIC_COMMAND_UNAVAILABLE = (
+    "I couldn't run that command because Zara's deterministic command router "
+    "is unavailable."
+)
+DETERMINISTIC_COMMAND_FAILED = (
+    "I couldn't complete that deterministic command. I did not send it to the LLM."
+)
 
 
 class UnsupportedRuntimeCommand(RuntimeError):
@@ -171,6 +180,18 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             )
 
         task_turn = conversation_history is not None or system_context is not None
+        command_like = command_gate.looks_like_command(text)
+
+        if not task_turn and self._router is None and command_like:
+            logger.error(
+                "Refusing LLM fallback for deterministic command because the "
+                "semantic router is unavailable: %r",
+                text,
+            )
+            return RuntimeTurnResult(
+                response=DETERMINISTIC_COMMAND_UNAVAILABLE,
+                metadata={"route": "deterministic_unavailable"},
+            )
 
         if self._router is not None and not task_turn:
             conversation_manager = self._manager.conversation_manager
@@ -193,6 +214,17 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             if decision.action == "respond":
                 await self._persist_turn(text, decision.response)
                 return RuntimeTurnResult(response=decision.response)
+            if decision.action == "delegate" and command_like:
+                logger.error(
+                    "Refusing LLM fallback after deterministic command routing "
+                    "did not complete: %r",
+                    text,
+                )
+                await self._persist_turn(text, DETERMINISTIC_COMMAND_FAILED)
+                return RuntimeTurnResult(
+                    response=DETERMINISTIC_COMMAND_FAILED,
+                    metadata={"route": "deterministic_failed"},
+                )
             if not in_conversation:
                 conversation_manager.enter_conversation()
                 conversation_manager.conversation_history.clear()

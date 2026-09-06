@@ -1,0 +1,64 @@
+#+title: RAGE #160 — semantic-first runtime / timer regression recovery
+
+* Run identity
+- Consumed issue :: #160 — make RuntimeHost own semantic command routing and remove duplicated LLM prompt authority.
+- Active branch :: =rage/160-semantic-first-runtime-r2=
+- Superseded empty branch :: =rage/160-semantic-first-runtime= (created from =c2d903f=; no changes; master advanced before implementation).
+- RAGE start commit :: =2a4cb38a820832e08ed3de200b0d53a3a5b6614b=
+- Trigger :: live operator regression on 2026-09-06:
+  =zara set a timer for 2 hours= printed an unrelated AMD STT routing notice, then reached the LLM, which refused because timer capability was not wired into that model session.
+
+* Research / observed root causes
+1. =zara/__main__.py= resolves STT provider/device/model immediately after argparse for every mode. A text-only CLI turn therefore emits the AMD/Vulkan STT notice even though no microphone/STT path is entered.
+2. =RuntimeSupervisor= supplies =PrologFirstRouter= to =AgentRuntimeBackend= when Prolog starts successfully, but =LangGraphRuntimeBackend.submit_turn= has no fail-closed policy for command-shaped input when the router is absent.
+3. =PrologFirstRouter= is intentionally allowed to return =delegate= for unresolved/error paths. The backend previously interpreted every delegate as permission to run =AgentManager.process_async=, including text that the command gate had already identified as deterministic command input.
+4. Timer parsing/execution itself already exists and is tested:
+   - =modules/intent_resolver.pl= parses =set a timer for 2 hours= to =timer [7200,'']=.
+   - =modules/commands.pl= dispatches timer to =alarm:start_timer/2=.
+   - =modules/alarm.pl= owns the SWI alarm scheduler and completion notification.
+   - =t/timers.pl= proves scheduling/completion through fakes.
+   Duplicating another timer scheduler here would be the wrong fix.
+5. #158's =TimerService= is not an immediate replacement for the legacy firing path: its documented scope records/due-tracks timers while firing delivery was explicitly deferred. The current regression must preserve the working alarm notification implementation until the typed service owns delivery.
+
+* Decisions
+- D1 :: Deterministic-first is enforced by runtime code, not by the LLM prompt.
+- D2 :: A missing semantic router or deterministic delegate/failure is *not* implicit permission to call the model for command-shaped input.
+- D3 :: Ordinary conversational text still delegates to the model.
+- D4 :: Do not add a second timer parser/scheduler. Complete timer commands continue through the existing Prolog resolver/executor/alarm implementation.
+- D5 :: STT initialization is lazy by mode. Only =--dictate= and =--wake= resolve STT provider/device/model; typed CLI commands, desktop, console, pets, and explicit agent mode do not emit STT routing notices merely because STT is configured.
+- D6 :: Preserve task-turn behavior (explicit =conversation_history= / =system_context=) because those calls are intentionally agent/task execution, not the ordinary user command ingress owned by this regression.
+
+* TDD matrix
+| Case | Required result |
+|------+-----------------|
+| router missing + =set a timer for 2 hours= | explicit deterministic-unavailable response; zero =process_async= calls |
+| router delegates timer command | explicit deterministic-failed response; zero =process_async= calls |
+| router executes timer | deterministic response; zero =process_async= calls |
+| conversational question delegates | exactly one model call |
+| typed CLI command with AMD STT default | no STT resolver call; no AMD/Vulkan notice |
+| voice-mode STT resolution on AMD | still routes to whisper.cpp/Vulkan and emits the notice |
+
+Tests:
+- =t/test_semantic_first_runtime.py=
+- =t/test_cli_semantic_modes.py=
+- existing =t/test_daemon_intent_router.py=
+- existing timer gate =t/timers.pl= / repository timer script
+- full repository/Nix/package/Actions gates
+
+* RED / GREEN evidence
+- RED by code audit at immutable start head:
+  - =LangGraphRuntimeBackend.submit_turn= falls directly into =AgentManager.process_async= when =self._router is None=.
+  - a router =delegate= likewise falls directly into the model path.
+  - =zara.__main__.main= invokes STT routing before mode dispatch.
+  These are the exact branches exercised by the new regression tests.
+- GREEN :: pending exact-head GitHub Actions. The automation sandbox cannot run the Nix test environment because direct GitHub DNS from the container is unavailable; do not claim local green.
+
+* Implementation
+- Runtime backend now gates command-shaped turns before model invocation:
+  - no router -> deterministic-unavailable response;
+  - router delegate/failure for command-shaped text -> deterministic-failed response;
+  - non-command conversational input remains model fallback.
+- CLI STT provider/device/model resolution moved behind the actual =--dictate= and =--wake= branches.
+
+* Acceptance / merge rule
+Do not merge based on this work log alone. Exact candidate head must pass the focused tests, existing timer tests, full repository/Nix/package gate, and exact-head GitHub Actions, and the PR must be mergeable with no unresolved blocking review.
