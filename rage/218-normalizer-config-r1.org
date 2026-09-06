@@ -1,0 +1,38 @@
+#+title: RAGE #218 — transcript-normalizer configuration r1
+
+* Transaction
+- Consumed issue :: #218
+- Immutable start :: =e1b86f17debe88f6d7190379b0ae3f1522d70b29=
+- Branch :: =rage/218-normalizer-config-r1=
+- Scope :: Zara Core config contract/tests only; zero =android/**= changes.
+
+* Dependency proof
+- #216 is canonical.
+- #217 merged as PR #477 at canonical commit =e1b86f17debe88f6d7190379b0ae3f1522d70b29= before this transaction started.
+- The stale issue example is intentionally not copied: landed S1-mini owns the =/v1/chat/completions= suffix, so configuration accepts an endpoint origin only; landed trained styling default is =semi-formal= rather than =balanced=.
+
+* First acceptance slice
+- Default backend remains =off= and failure policy remains =raw=.
+- =off|s1-mini= and =raw|fail-turn= are closed sets.
+- S1-mini runtime is exactly =openai-compatible=; selection never starts/downloads a daemon or model.
+- Endpoint is an absolute credential-free HTTP(S) origin. Embedded userinfo, =/v1= paths, query strings and fragments fail closed.
+- Endpoint locality is explicit for localhost/loopback versus remote hosts; RFC1918/LAN is not mislabeled as loopback-local.
+- Model is bounded non-empty text.
+- styling/structure/context values exactly match the landed #217 provider contract.
+- Timeout is finite and bounded to 50..30000 ms; booleans, NaN and infinities fail closed.
+- Configuration value objects are immutable and contain no transcript or secret fields.
+
+* Architecture
+This slice adds a pure validation/descriptor boundary only. It does not create a second configuration store: #218 integration must read the nested table from existing =ZaraConfig= and preserve its explicit =reload()= ownership. Runtime/provider construction and diagnostics are subsequent slices on the same transaction, after this contract is proven green.
+
+* Adversarial cases covered
+- Unknown backend/failure policy/runtime.
+- Stale =balanced= style and unsupported provider controls.
+- Credential-bearing endpoint URLs.
+- Accidental =/v1= double-suffix configuration.
+- Query/fragment secret leakage vectors.
+- NaN/+Inf/-Inf timeout values.
+- IPv4/IPv6 loopback versus remote/LAN locality classification.
+
+* Gate
+Focused config tests first, then repository-native =scripts/test-all.sh=, =nix flake check=, packaged Zara, Android compatibility/APK/native/secret, and both shared-mic lanes before any merge. No historical green substitutes for exact-head CI.
