@@ -1,0 +1,25 @@
+#+title: RAGE #178 Android voice JSON depth bound r2
+
+* Start
+- Issue: #178
+- Immutable recovery start: 23260e1598c85641effae3ec573ff66930cdc2f0
+- Prior transaction: PR #528 exact head c8b6d9e80c1ffd736bde07a6b73f96c8eff104e6
+- Scope: Android-only voice stream decoder hardening.
+
+* Recovery evidence
+- Prior RED proved the unbounded recursive parser defect; prior GREEN enforced 64 simultaneously nested JSON containers.
+- CI #1770 passed full repository tests, flake/package, Android unit/native/debug-APK/secret inspection, and both shared-mic distro lanes at the prior exact head.
+- Canonical master advanced through Android #530, so historical green is evidence only and cannot authorize a stale merge.
+- This recovery recreates the exact tested Android production/test blobs from current master with zero Core/server/plugin changes.
+
+* Design / adversarial review
+- Count objects and arrays uniformly; root object consumes one container.
+- Boundary 64 reaches ordinary schema rejection; boundary+1 fails specifically at parser nesting policy.
+- Preserve envelope/payload/token/text byte bounds and canonical voice ownership.
+- Depth accounting is finally-safe.
+
+* Gate
+- Focused JVM depth coverage.
+- scripts/test-android.sh including native Trealla, debug APK, and secret inspection.
+- Full repository/Nix/package and both shared-mic lanes.
+- Fresh exact-head GitHub Actions is authoritative before merge.
