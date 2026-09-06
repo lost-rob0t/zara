@@ -44,3 +44,11 @@ Fresh source reconciliation at the immutable start confirms the root defect stil
 - Full-chat entrypoints must switch the same object to =EXPANDED= and show it; they must not hand off/copy state or hide another window.
 - Any fan-out/close/status paths must identity-deduplicate the alias so one surface never receives an update or close twice.
 - No daemon, protocol, provider, conversation-store, or Android path changes are required for this slice.
+
+* Slice D — canonical full-conversation projection
+** Research / adversarial decision
+- Current =QuickCopilotWindow.sync_from_shared_state()= hard-caps rendered state to the newest six messages via =_MAX_VISIBLE_MESSAGES = 6=. After controller collapse this inherited cap becomes data-loss-at-the-view-layer for the one canonical renderer: older durable messages still exist but cannot be rendered in either compact or expanded mode.
+- The canonical =CopilotWindow= must project the complete selected durable conversation. Compactness is a geometry/scroll concern, never a reason to discard renderable conversation state.
+- Preserve the legacy =QuickCopilotWindow= cap for standalone compatibility while it exists; remove the cap only from the canonical adaptive surface so this slice stays focused and does not broaden legacy behavior.
+- RED must create more than six durable messages, sync the canonical Copilot, and prove every durable message has a live =MessageWidget=. The test also switches presentation modes to ensure expanded/compact mode does not change the projected message set.
+- No provider, daemon, protocol, persistence schema, Android, or runtime-command changes are required.
