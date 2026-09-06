@@ -1,0 +1,23 @@
+:PROPERTIES:
+:ID:       zara-rage-203-android-assistant-role-loss-wiring-r2
+:END:
+#+title: RAGE #203 — Assistant role-loss wiring recovery r2
+#+status: ACTIVE
+
+* Consumption
+- Issue :: #203
+- Immutable start :: 2f4bd28a9428a117f986f06b025d1a35abf5124a
+- Scope :: Android voice ownership wiring only. No Core/protocol/plugin changes.
+
+* Recovery
+- Prior #436 became stale across authenticated voice-session invalidation.
+- Recovery preserves #461's runtime-state observer and capture/session invalidation while replaying role-loss ownership wiring.
+
+* Invariant
+- Manual PTT and VoiceInteraction Assistant capture have distinct ownership.
+- Canonical RoleOutcome is reduced before AssistantRole reaches the voice guard.
+- Losing the system Assistant role cancels Assistant-owned capture only through the existing voice-control executor.
+- Role loss during startup fails the start rather than reporting false Listening success.
+
+* Gate
+- Exact-head Android/native/APK/secret + full repository/Nix/package + shared-mic CI required before merge.
