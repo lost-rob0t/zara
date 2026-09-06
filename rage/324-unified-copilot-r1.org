@@ -1,0 +1,10 @@
+#+title: RAGE #324 — unified adaptive Copilot + screenshot CI r1
+
+* Transaction
+- Consumed issue :: #324
+- Immutable RAGE start :: =9ac0e0c0b94f571d6cab69ec252bb69ac2db3420=
+- Branch :: =rage/324-unified-copilot-r1=
+- Scope :: Zara Core desktop/test/docs/CI only; zero =android/**= changes.
+
+* Status
+Research transaction opened while independent #217 exact-head gates run. No production design is presumed from the issue text; current desktop ownership, conversation projection, geometry persistence, screenshot tooling, and CI artifact behavior must be reconciled at this exact start SHA before RED tests are written.
