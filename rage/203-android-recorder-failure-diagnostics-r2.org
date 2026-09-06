@@ -1,0 +1,18 @@
+:PROPERTIES:
+:ID:       zara-rage-203-android-recorder-failure-diagnostics-r2
+:END:
+#+title: RAGE #203 — recorder failure diagnostics recovery r2
+#+status: ACTIVE
+
+* Consumption
+- Issue :: #203
+- Parent exact head :: 717939002740965dbd5a3326f0fef9997e9efd4f
+- Scope :: Android recorder diagnostic wiring only. No Core/protocol/plugin changes.
+
+* Invariant
+- Physical recorder failure remains fail-closed in PushToTalkController.
+- AndroidAppSession forwards the existing recorder-failure callback only into the existing redacted voice diagnostic boundary.
+- No second recorder owner or runtime state machine.
+
+* Gate
+- Stacked draft until Assistant role-loss wiring is canonical; then exact-head Android/full-Nix/package/shared-mic CI is authoritative.
