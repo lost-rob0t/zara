@@ -1,0 +1,25 @@
+#+title: RAGE #575 — stock ZARA/1 Android interop diagnostics
+
+* Iteration 1
+** Intake
+- Issue: #575.
+- Immutable start: =2da13cb08d15f268e355171ba56f0decde238126=.
+- Core/shared CI scope only: =scripts/test-android.sh= + Core contract test + this evidence.
+- Never modify =android/**= production or tests in this transaction.
+
+** RED evidence
+- #568 exact head =e44bf72298cba625585e82b31b0e99f4ac3c841d= failed the Android gate twice on the same stock-server text-turn timeout.
+- Both failures happened after semantic parity and native/APK build reached Gradle unit tests; =StockZaraServerInteropTest.actualJeroMqActorAuthenticatesAndCompletesTextTurnAgainstStockServer= raised =TextRequestTimeoutException=.
+- #568 itself changes only Copilot UI/test/evidence files, while immediately preceding #564 passed the same Android gate.
+- Current Android gate captures stock server output into a temporary =server.log=, but a Gradle failure exits under =set -e= and the EXIT cleanup deletes the temporary directory without emitting that log.
+
+** Design
+- Preserve the real stock server + JeroMQ test and all existing timeout/assertion semantics.
+- Do not retry, skip, xfail or inflate Android request budgets.
+- On Gradle gate failure, print the bounded stock server log to stderr before process cleanup, then return failure.
+- Keep success path unchanged and do not expose fixture secrets; server.log currently contains process/server diagnostics, while fixture key material is written to a separate owner-only fixture file.
+
+** Acceptance
+- Deterministic Core contract test proves the Gradle failure path emits the stock server log and exits non-zero.
+- Success path remains the same single Gradle invocation followed by fixture STOP/wait and APK secret inspection.
+- Full exact-head repository gates required before merge.
