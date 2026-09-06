@@ -1,0 +1,21 @@
+* RAGE #178 r3 — Android URI/Intent escape-surface proof
+
+- Consumed issue :: #178
+- Exact immutable start :: =93e6bc371c866eed9cc52b3169bf35a8d8dbb74c=
+- Recovered from :: PR #503 / head =878581bda9a8153fd1f01041d85a617a1a741930=
+- Scope :: Android test/evidence only. No Core/server/plugin implementation.
+
+** Recovery
+Core PR #504 advanced canonical master after r2. This r3 transaction replays only the disjoint URI/Intent escape-surface proof onto exact current master; stale-base CI is not reused.
+
+** Source analysis
+Canonical =AndroidUriLauncher= constructs a fresh local =ACTION_VIEW= intent from an =OpenUriPolicy=-normalized URI, adds =CATEGORY_BROWSABLE= and =FLAG_ACTIVITY_NEW_TASK=, and does not deserialize caller-controlled Intent objects.
+
+** Adversarial boundary
+The proof fails if production URI launching gains any direct arbitrary-intent escape surface such as =Intent.parseUri=, explicit component/class targeting, package forcing, or caller-controlled extras.
+
+** Acceptance
+- URI launcher remains fixed to =ACTION_VIEW= + normalized =Uri=;
+- =CATEGORY_BROWSABLE= and new-task launch semantics remain explicit;
+- arbitrary Intent deserialization/component/package/extra injection remains absent;
+- fresh exact-head CI is required before promotion/merge.
