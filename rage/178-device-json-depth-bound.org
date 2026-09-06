@@ -1,0 +1,25 @@
+:PROPERTIES:
+:ISSUE: 178
+:START_COMMIT: 20e7ce159009accad9a1aeded424f566835df355
+:END:
+#+title: RAGE #178 — bound Android device-action JSON nesting
+
+* Iteration 1
+** Consumed issue
+- GitHub issue :: #178
+- Immutable start :: =20e7ce159009accad9a1aeded424f566835df355=
+- Scope :: Android-only device-action wire decoder hardening.
+
+** Research
+The device-action decoder caps its envelope at 64 KiB and validates closed message/action schemas, but its independent recursive =DeviceJsonParser= has no explicit nesting budget. This leaves the same bounded-input/unbounded-stack-depth class already fixed for text parsing.
+
+** Architecture / design
+- Enforce a 64-container maximum, counting the root object.
+- Reject the 65th object/array before recursive descent.
+- Preserve all existing byte, UTF-8, field, action, target and result validation.
+- No Core/server/plugin changes.
+
+** Planned TDD
+1. Add exact 64/65 container boundary tests.
+2. Add the smallest parser-local depth accounting.
+3. Gate with exact-head Android and full repository CI before merge.
