@@ -34,6 +34,23 @@ class NativeTreallaSourceContractTest {
     }
 
     @Test
+    fun nativeAdapterFailsClosedInsteadOfSilentlyTruncatingSemanticResults() {
+        val source = projectFile("app/src/main/cpp/zara_trealla_jni.c")
+        assertTrue("native Trealla adapter source is required", source.isFile)
+
+        val text = source.readText()
+        assertTrue(text.contains("ZARA_MAX_SEMANTIC_RESULTS 256"))
+        assertTrue(
+            "native semantic adapter must detect a result beyond the bounded result set",
+            text.contains("result_overflow = pl_redo(query)"),
+        )
+        assertTrue(
+            "native semantic adapter must reject overflow instead of returning a truncated success",
+            text.contains("Trealla semantic result limit exceeded"),
+        )
+    }
+
+    @Test
     fun cmakeRequiresAnExplicitPinnedTreallaSourceTree() {
         val cmake = projectFile("app/src/main/cpp/CMakeLists.txt")
         assertTrue("native Trealla CMake contract is required", cmake.isFile)
