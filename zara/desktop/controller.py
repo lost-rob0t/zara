@@ -20,7 +20,7 @@ from zara.desktop.state import (
 )
 from zara.desktop.tray import ZaraTray
 from zara.desktop.theme import apply_desktop_theme
-from zara.desktop.windows import FullChatWindow, QuickCopilotWindow, SettingsWindow
+from zara.desktop.windows import CopilotPresentation, CopilotWindow, SettingsWindow
 from zara.runtime.commands import CommandReceipt, RestartRuntime
 
 
@@ -49,26 +49,20 @@ class DesktopController(QObject):
         self.host = client
         self.bridge = bridge
         self.tray = tray_factory()
-        self.quick_window: Optional[QuickCopilotWindow] = None
+        self.quick_window: Optional[CopilotWindow] = None
         self.settings_window: Optional[object] = None
         self._settings_factory = settings_factory or (lambda: SettingsWindow(get_config()))
 
         if window_factory is None:
             self.conversation_service = conversation_service or ConversationService(ConversationStore())
-            self.window = FullChatWindow(
+            self.window = CopilotWindow(
                 self.bridge,
                 self.conversation_service,
-                manage_runtime_events=False,
             )
-            self.quick_window = QuickCopilotWindow(
-                self.bridge,
-                self.conversation_service,
-                initial_conversation_id=self.window.current_conversation_id,
-            )
+            # Transitional API compatibility only: this is the exact same
+            # QWidget, not a second renderer or presentation path.
+            self.quick_window = self.window
             self.window.conversation_changed.connect(self._on_surface_conversation_changed)
-            self.quick_window.conversation_changed.connect(self._on_surface_conversation_changed)
-            self.quick_window.expand_requested.connect(self.expand_quick_to_full_chat)
-            self.quick_window.settings_requested.connect(self.open_settings)
         else:
             self.conversation_service = conversation_service
             self.window = window_factory()
@@ -127,7 +121,7 @@ class DesktopController(QObject):
         return self.client.start()
 
     def show_quick_copilot(self) -> None:
-        """Summon the one process-owned Quick Copilot instance."""
+        """Summon the one process-owned Copilot instance."""
         if self.quick_window is None:
             self.window.show_raised()
             return
@@ -142,7 +136,7 @@ class DesktopController(QObject):
         self.quick_window.hide()
 
     def toggle_quick_copilot(self) -> None:
-        """Toggle the one process-owned Quick Copilot instance."""
+        """Toggle the one process-owned Copilot instance."""
         if self.quick_window is None:
             self.window.toggle_visibility()
             return
@@ -165,14 +159,23 @@ class DesktopController(QObject):
         raise ValueError(f"unsupported desktop control command: {command!r}")
 
     def open_full_chat(self, conversation_id: Optional[str] = None) -> None:
-        """Show Full Chat, optionally selecting one durable conversation."""
+        """Expand the canonical Copilot, optionally selecting one conversation."""
+        if self.quick_window is self.window:
+            if conversation_id and conversation_id != self.window.current_conversation_id:
+                self.window.bind_conversation(conversation_id)
+            self.window.set_presentation(CopilotPresentation.EXPANDED)
+            self.window.show_raised()
+            return
         if conversation_id:
             self.window.open_conversation(conversation_id)
             return
         self.window.show_raised()
 
     def expand_quick_to_full_chat(self, conversation_id: Optional[str] = None) -> None:
-        """Handoff Quick Copilot to Full Chat without copying or resubmitting."""
+        """Expand the canonical Copilot without copying or resubmitting state."""
+        if self.quick_window is self.window:
+            self.open_full_chat(conversation_id)
+            return
         if self.quick_window is None:
             self.open_full_chat(conversation_id)
             return
@@ -225,6 +228,9 @@ class DesktopController(QObject):
     def _on_surface_conversation_changed(self, update) -> None:
         if self.conversation_service is None:
             return
+        if self.quick_window is self.window:
+            self.window.sync_from_shared_state()
+            return
         self.window.apply_conversation_update(update)
         if getattr(update, "metadata_changed", False) or getattr(update, "full_reload", False):
             self.window.refresh_history()
@@ -236,20 +242,25 @@ class DesktopController(QObject):
         if event is None:
             return
         self._set_status(reduce_runtime_event(self.status, event))
-        update = None
         if self.conversation_service is not None:
             update = self.conversation_service.apply_event(event)
-            self.window.apply_conversation_update(update)
-        if self.quick_window is not None:
-            self.quick_window.sync_from_shared_state(event)
+            if self.quick_window is self.window:
+                self.window.sync_from_shared_state(event)
+            else:
+                self.window.apply_conversation_update(update)
+                if self.quick_window is not None:
+                    self.quick_window.sync_from_shared_state(event)
 
     def _on_command_completed(self, receipt) -> None:
         update = None
         if self.conversation_service is not None and isinstance(receipt, CommandReceipt):
             update = self.conversation_service.bind_receipt(receipt)
-            self.window.handle_command_completed(receipt, update)
-        if self.quick_window is not None:
-            self.quick_window.handle_command_completed(receipt)
+            if self.quick_window is self.window:
+                self.window.handle_command_completed(receipt)
+            else:
+                self.window.handle_command_completed(receipt, update)
+                if self.quick_window is not None:
+                    self.quick_window.handle_command_completed(receipt)
         self._resync_conversation_surfaces()
 
         request_id = getattr(receipt, "request_id", None)
@@ -257,12 +268,14 @@ class DesktopController(QObject):
             self._restart_request_id = None
 
     def _on_command_failed(self, request_id: str, message: str) -> None:
-        update = None
         if self.conversation_service is not None:
             update = self.conversation_service.mark_command_failed(request_id, message)
-            self.window.handle_command_failed(request_id, message, update)
-        if self.quick_window is not None:
-            self.quick_window.handle_command_failed(request_id, message)
+            if self.quick_window is self.window:
+                self.window.handle_command_failed(request_id, message)
+            else:
+                self.window.handle_command_failed(request_id, message, update)
+                if self.quick_window is not None:
+                    self.quick_window.handle_command_failed(request_id, message)
         self._resync_conversation_surfaces()
 
         if request_id == self._restart_request_id:
@@ -277,6 +290,9 @@ class DesktopController(QObject):
     def _resync_conversation_surfaces(self) -> None:
         if self.conversation_service is None:
             return
+        if self.quick_window is self.window:
+            self.window.sync_from_shared_state()
+            return
         self.window.apply_conversation_update(None)
         if self.quick_window is not None:
             self.quick_window.sync_from_shared_state()
@@ -285,7 +301,7 @@ class DesktopController(QObject):
         self.status = status
         self.tray.set_status(status)
         self.window.set_status(status)
-        if self.quick_window is not None:
+        if self.quick_window is not None and self.quick_window is not self.window:
             self.quick_window.set_status(status)
 
     def _close_client(self) -> None:
@@ -304,7 +320,7 @@ class DesktopController(QObject):
         self.tray.hide()
         self.window.prepare_for_quit()
         self.window.close()
-        if self.quick_window is not None:
+        if self.quick_window is not None and self.quick_window is not self.window:
             self.quick_window.prepare_for_quit()
             self.quick_window.close()
         if self.settings_window is not None:
