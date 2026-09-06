@@ -1,0 +1,17 @@
+* RAGE #178 r3 — bound Android inbound audio payload memory
+
+- Consumed issue :: #178
+- Exact immutable start :: =457c8cc6e489e4a38bdf0bc4acd0b822a3f43b3a=
+- Recovered from :: PR #512 / head =32163f21cab74e6bf9fdd5791034d93924f662e8=
+- Scope :: Android voice codec/test/evidence only.
+
+** Recovery
+#510 advanced canonical master after the prior candidate started gating. Re-establish the same bounded audio payload contract on exact current master; stale-base CI is not reused.
+
+** Contract
+- Exactly 1 MiB pcm_s16le payload remains accepted.
+- 1 MiB + 2 bytes fails closed before PCM copy/playback.
+- No truncation, alternate decoder, or second playback path is introduced.
+
+** Verification
+Fresh exact-head Android/full repository CI is required before promotion/merge.
