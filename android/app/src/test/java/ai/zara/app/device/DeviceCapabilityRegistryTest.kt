@@ -23,6 +23,22 @@ class DeviceCapabilityRegistryTest {
     }
 
     @Test
+    fun `permission revoked after advertisement cannot execute stale capability`() {
+        val adapter = FakeAdapter(DeviceCapability.OpenUri, available = true)
+        val registry = DeviceCapabilityRegistry(listOf(adapter))
+
+        assertEquals(setOf(DeviceCapability.OpenUri), registry.availableCapabilities())
+        adapter.available = false
+
+        assertFalse(registry.canExecute(DeviceCapability.OpenUri))
+        assertEquals(emptySet<DeviceCapability>(), registry.availableCapabilities())
+        assertThrows(DeviceCapabilityUnavailableException::class.java) {
+            registry.execute(DeviceCapability.OpenUri, DeviceActionArguments.OpenUri("https://example.com"))
+        }
+        assertEquals(0, adapter.executionCount)
+    }
+
+    @Test
     fun `duplicate capability registration fails closed`() {
         assertThrows(IllegalArgumentException::class.java) {
             DeviceCapabilityRegistry(
@@ -47,11 +63,16 @@ class DeviceCapabilityRegistryTest {
 
     private class FakeAdapter(
         override val capability: DeviceCapability,
-        private val available: Boolean,
+        var available: Boolean,
     ) : DeviceCapabilityAdapter {
+        var executionCount = 0
+            private set
+
         override fun isAvailable(): Boolean = available
 
-        override fun execute(arguments: DeviceActionArguments): DeviceActionResult =
-            DeviceActionResult.Completed
+        override fun execute(arguments: DeviceActionArguments): DeviceActionResult {
+            executionCount += 1
+            return DeviceActionResult.Completed
+        }
     }
 }
