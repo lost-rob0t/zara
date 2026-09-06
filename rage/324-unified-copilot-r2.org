@@ -11,4 +11,14 @@ The stale r1 design transaction remains historical evidence only and was closed 
 
 Fresh source reconciliation at the immutable start confirms the root defect still exists: =DesktopController= constructs both =FullChatWindow= and =QuickCopilotWindow= over one =ConversationService=, projects runtime/conversation state into both, and performs Quick -> Full handoff through =expand_quick_to_full_chat=. No current Android transaction has handed Core a newer shared blocker that supersedes #324.
 
-Before implementation this iteration will re-check current window/test/CI surfaces, record the bounded design/adversarial review, then prove deterministic RED acceptance for the smallest single-renderer slice.
+* Slice A — adaptive presentation primitive
+** RED
+- Test-only head :: =38e550dfafd8e1a9a2f4533de2335825ec082606=
+- CI :: #1778
+- Result :: Core =Run all tests= failed on the new adaptive-Copilot contract before production existed. =nix flake check= and packaged Zara were correctly skipped after Core RED. Both Arch and Ubuntu shared-mic lanes passed.
+- Contract :: one canonical =CopilotWindow= exposes explicit =COMPACT|EXPANDED= presentation; repeated compact -> expanded -> compact preserves exact conversation id, draft text, message-widget identities and QWidget identity without submitting runtime commands.
+
+** GREEN implementation
+- =d4d75d46e74bab5fbcf178ea463bc720b81f5282= introduces =CopilotPresentation= and =CopilotWindow= as an in-place evolution seam over the existing Quick renderer. The legacy =Full Chat= button is disconnected from handoff behavior inside this canonical surface and toggles its own presentation instead.
+- =3ace55d7b9957b7a932e4201e371c28e2d697405= exports the canonical adaptive surface without switching =DesktopController= ownership yet.
+- This slice deliberately does not create a second renderer, runtime, conversation store, or Android path. Controller collapse, history parity, full-message projection/geometry and screenshot CI remain later RED/GREEN slices in this same #324 transaction; the PR must not merge before the issue-level first implementation slice includes screenshot evidence.
