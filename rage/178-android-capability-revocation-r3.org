@@ -1,0 +1,16 @@
+* RAGE #178 r3 — Android capability revocation after advertisement
+
+- Consumed issue :: #178
+- Exact immutable start :: =9de82e4f3b6691cdcdcbc57c302cdef17d864852=
+- Recovered from :: PR #486 / head =7a693d69dd0d1b3837e0d6febbfa2e098f3bb647=
+- Scope :: Android capability-registry adversarial proof only. No Core/protocol/plugin implementation.
+
+** Recovery
+#485 advanced canonical master after r2 began. This r3 transaction replays only the disjoint capability-registry proof onto exact current master; stale-base CI is not reused.
+
+** Acceptance
+- Advertise =open_uri= while its adapter is available.
+- Revoke local availability after advertisement.
+- The live registry stops advertising it, =canExecute= is false, and stale execution fails before the adapter execute path.
+- Production behavior remains unchanged.
+- Fresh exact-head CI is required before promotion/merge.
