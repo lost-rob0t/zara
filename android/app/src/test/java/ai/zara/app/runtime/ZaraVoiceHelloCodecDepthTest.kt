@@ -1,0 +1,35 @@
+package ai.zara.app.runtime
+
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class ZaraVoiceHelloCodecDepthTest {
+    @Test fun `voice hello JSON nesting is bounded at sixty four containers`() {
+        val boundary = assertThrows(ZaraWireException::class.java) {
+            ZaraVoiceHelloCodec.decodeHelloOk(server(nestedEnvelope(64)))
+        }
+        assertFalse(boundary.message.orEmpty().contains("nesting depth"))
+
+        val tooDeep = assertThrows(ZaraWireException::class.java) {
+            ZaraVoiceHelloCodec.decodeHelloOk(server(nestedEnvelope(65)))
+        }
+        assertTrue(tooDeep.message.orEmpty().contains("nesting depth"))
+    }
+
+    private fun nestedEnvelope(containers: Int): String {
+        require(containers >= 1)
+        val arrays = containers - 1
+        return buildString {
+            append("{\"extra\":")
+            repeat(arrays) { append('[') }
+            append("null")
+            repeat(arrays) { append(']') }
+            append('}')
+        }
+    }
+
+    private fun server(json: String): List<ByteArray> =
+        listOf("ZARA/1".encodeToByteArray(), json.encodeToByteArray())
+}
