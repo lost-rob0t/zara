@@ -1,0 +1,32 @@
+#+title: RAGE #217 — S1-mini transcript normalizer recovery r4
+
+* Transaction
+- Consumed issue :: #217
+- Immutable recovery base :: =9ac0e0c0b94f571d6cab69ec252bb69ac2db3420= after sibling-owned Android/release #473 advanced canonical master.
+- Branch :: =rage/217-s1-mini-normalizer-r4=
+- Scope :: Zara Core only; zero =android/**= changes.
+
+* Recovery authority
+- Prior r3 exact head :: =87c1bb6255fa4f29214cd8b40b1fe0677be88727=.
+- Prior r3 exact CI :: #1677 completed fully green: Core =scripts/test-all.sh=, =nix flake check=, packaged Zara, Android compatibility/APK/native/secret, and both shared-mic lanes.
+- Historical green is evidence only; it does not authorize merging this recovered head after canonical master moved.
+- Conflict audit :: compare from r3 base =a88ad71d5b81e83cf32e20bf26c6d592f947a4d2= to recovery base =9ac0e0c0b94f571d6cab69ec252bb69ac2db3420= is sibling Android/release work and RAGE evidence only; no recovered #217 Core path overlaps.
+
+* Blob equivalence
+The recovered implementation/test/gate blobs are byte-identical to the fully-green r3 candidate:
+- =zara/s1_mini_normalizer.py= :: =5b7b79065db791f36cf261451ae698b09da8c56d=
+- =t/test_s1_mini_normalizer.py= :: =e2d790907283b5e1207b032611bdd77947595469=
+- =t/test_s1_mini_numeric_bounds.py= :: =81cd69c1ef978dc4cd9346901f8b59c37bb7c65c=
+- =scripts/test-s1-mini-normalizer.sh= :: =1112ce3788f4d99acb7570950c94450f49b00c7f=
+- =scripts/test-all.sh= :: =dbead797ed52d4b85ce01d19ff7d5a6e20751072=
+
+* Architecture / acceptance retained
+- One local =S1MiniTranscriptNormalizer= behind the provider-neutral #216 service; no second runtime/coordinator.
+- Explicit local OpenAI-compatible endpoint only; no cloud fallback, model download, or discovery path.
+- Core-owned trained controls, deterministic request payload, thinking disabled, bounded output, English-only policy.
+- Typed unavailable/timeout/unsupported-language/invalid-output behavior; canonical cancellation is not swallowed.
+- Finite-positive numeric validation rejects NaN and +/-Infinity before request execution.
+- Model identity remains =superwhisper/s1-mini= and this adapter does not vendor or redistribute weights.
+
+* Gate
+Fresh exact-head authority is mandatory before merge: focused #217 gate, full =scripts/test-all.sh=, =nix flake check=, packaged Zara, Android compatibility/APK/native/secret, Arch and Ubuntu shared-mic, current canonical base, and zero unresolved review threads. Retire/recover again if either this head is red or canonical master advances before merge.
