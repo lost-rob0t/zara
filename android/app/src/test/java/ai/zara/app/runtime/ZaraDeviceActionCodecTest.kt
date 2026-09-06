@@ -63,6 +63,20 @@ class ZaraDeviceActionCodecTest {
     }
 
     @Test
+    fun `payload supplied principal and device targeting fail closed`() {
+        listOf(
+            """{"body":{"action_id":"a","args":{"uri":"https://example.com"},"capability":"open_uri","deadline_ns":9,"idempotency":"at_most_once","principal_id":"other-user"},"id":"r","payload_count":0,"session_id":"s","timestamp_ns":1,"type":"device.action.request"}""",
+            """{"body":{"action_id":"a","args":{"uri":"https://example.com"},"capability":"open_uri","deadline_ns":9,"device_id":"other-phone","idempotency":"at_most_once"},"id":"r","payload_count":0,"session_id":"s","timestamp_ns":1,"type":"device.action.request"}""",
+            """{"body":{"action_id":"a","args":{"uri":"https://example.com"},"capability":"open_uri","deadline_ns":9,"idempotency":"at_most_once"},"device_id":"other-phone","id":"r","payload_count":0,"session_id":"s","timestamp_ns":1,"type":"device.action.request"}""",
+            """{"body":{"action_id":"a","args":{"uri":"https://example.com"},"capability":"open_uri","deadline_ns":9,"idempotency":"at_most_once"},"id":"r","payload_count":0,"principal_id":"other-user","session_id":"s","timestamp_ns":1,"type":"device.action.request"}""",
+        ).forEach { envelope ->
+            assertThrows(ZaraWireException::class.java) {
+                ZaraDeviceActionCodec.decodeServerMessage(frames(envelope))
+            }
+        }
+    }
+
+    @Test
     fun `encodes accepted completed and typed error canonically`() {
         assertEquals(
             """{"body":{"action_id":"action-1"},"id":"accepted-1","payload_count":0,"session_id":"session-1","timestamp_ns":6,"type":"device.action.accepted"}""",
