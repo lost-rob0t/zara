@@ -29,7 +29,8 @@ timeout_ms = 1250
 """,
     )
 
-    selected = config.get_transcript_normalization_config()
+    selection = TranscriptNormalizationSelection.from_config(config)
+    selected = selection.configuration
     assert selected.backend == "s1-mini"
     assert selected.failure_policy == "fail-turn"
     assert selected.s1_mini.endpoint == "http://127.0.0.1:9000"
