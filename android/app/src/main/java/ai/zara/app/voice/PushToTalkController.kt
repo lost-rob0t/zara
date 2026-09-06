@@ -59,10 +59,17 @@ class PushToTalkController(
     }
 
     override fun close() {
-        if (capture.state() is ManualVoiceState.Capturing) {
-            cancel()
+        val cancelFailure = if (capture.state() is ManualVoiceState.Capturing) {
+            runCatching { cancel() }.exceptionOrNull()
+        } else {
+            null
         }
-        recorder.close()
+        val closeFailure = runCatching { recorder.close() }.exceptionOrNull()
+        if (cancelFailure != null) {
+            if (closeFailure != null) cancelFailure.addSuppressed(closeFailure)
+            throw cancelFailure
+        }
+        if (closeFailure != null) throw closeFailure
     }
 
     private fun handleRecorderFailure(error: Throwable) {
