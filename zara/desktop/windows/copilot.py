@@ -5,8 +5,18 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from PySide6.QtCore import QSettings, Signal
-from PySide6.QtWidgets import QWidget
+from PySide6.QtCore import QSettings, Qt, Signal
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from zara.desktop.conversation import ConversationService
 from zara.desktop.qt_bridge import QtRuntimeBridge
@@ -44,10 +54,41 @@ class CopilotWindow(QuickCopilotWindow):
         )
         self._presentation = CopilotPresentation.COMPACT
         self.setObjectName("zaraCopilot")
-        self.title_label.setText("Copilot")
+
+        self.history_panel = QWidget(self)
+        self.history_panel.setObjectName("zaraConversationHistoryPanel")
+        history_layout = QVBoxLayout(self.history_panel)
+        history_layout.setContentsMargins(0, 0, 0, 8)
+        history_layout.setSpacing(8)
+
+        history_header = QHBoxLayout()
+        history_label = QLabel("Conversations")
+        history_label.setObjectName("zaraSurfaceName")
+        self.rename_button = QPushButton("Rename")
+        self.rename_button.setObjectName("zaraSecondaryAction")
+        history_header.addWidget(history_label)
+        history_header.addStretch(1)
+        history_header.addWidget(self.rename_button)
+
+        self.search_edit = QLineEdit()
+        self.search_edit.setObjectName("zaraConversationSearch")
+        self.search_edit.setPlaceholderText("Search chats")
+        self.history_list = QListWidget()
+        self.history_list.setObjectName("zaraConversationHistory")
+
+        history_layout.addLayout(history_header)
+        history_layout.addWidget(self.search_edit)
+        history_layout.addWidget(self.history_list)
+        self.layout().insertWidget(1, self.history_panel)
+
+        self.search_edit.textChanged.connect(self.refresh_history)
+        self.history_list.itemActivated.connect(self._activate_history_item)
+        self.rename_button.clicked.connect(lambda _checked=False: self.rename_current())
 
         self.expand_button.clicked.disconnect()
         self.expand_button.clicked.connect(self.toggle_presentation)
+        self.refresh_history()
+        self._sync_conversation_title()
         self._apply_presentation()
 
     @property
@@ -71,6 +112,63 @@ class CopilotWindow(QuickCopilotWindow):
         )
         self.set_presentation(target)
 
+    def bind_conversation(self, conversation_id: str) -> None:
+        """Rebind the one renderer to durable state without runtime traffic."""
+        super().bind_conversation(conversation_id)
+        self._sync_conversation_title()
+        self.refresh_history()
+
+    def new_chat(self) -> None:
+        super().new_chat()
+        self._sync_conversation_title()
+        self.refresh_history()
+
+    def refresh_history(self, query: Optional[str] = None) -> None:
+        """Project durable conversation metadata into the expanded history list."""
+        if query is None:
+            query = self.search_edit.text()
+        records = self.conversations.list_conversations(query)
+        current_id = self.current_conversation_id
+
+        self.history_list.blockSignals(True)
+        self.history_list.clear()
+        for record in records:
+            item = QListWidgetItem(record.title)
+            item.setData(Qt.ItemDataRole.UserRole, record.id)
+            self.history_list.addItem(item)
+            if record.id == current_id:
+                self.history_list.setCurrentItem(item)
+        self.history_list.blockSignals(False)
+
+    def rename_current(self, title: Optional[str] = None) -> None:
+        """Rename the selected durable conversation through ConversationService."""
+        if title is None:
+            state = self.conversations.get_state(self.current_conversation_id)
+            title, accepted = QInputDialog.getText(
+                self,
+                "Rename chat",
+                "Title",
+                text=state.conversation.title,
+            )
+            if not accepted:
+                return
+        try:
+            update = self.conversations.rename_conversation(self.current_conversation_id, title)
+        except ValueError:
+            return
+        self._sync_conversation_title()
+        self.refresh_history()
+        self.conversation_changed.emit(update)
+
+    def _activate_history_item(self, item: QListWidgetItem) -> None:
+        conversation_id = item.data(Qt.ItemDataRole.UserRole)
+        if conversation_id:
+            self.bind_conversation(str(conversation_id))
+
+    def _sync_conversation_title(self) -> None:
+        state = self.conversations.get_state(self.current_conversation_id)
+        self.title_label.setText(state.conversation.title)
+
     def _project_messages(self, state):
         return state.messages
 
@@ -78,4 +176,7 @@ class CopilotWindow(QuickCopilotWindow):
         expanded = self._presentation is CopilotPresentation.EXPANDED
         self.setProperty("presentation", self._presentation.value)
         self.expand_button.setText("Compact" if expanded else "Expand")
+        self.history_panel.setVisible(expanded)
+        if expanded:
+            self.refresh_history()
         self.setWindowTitle("Zara — Copilot" if expanded else "Ask Zara")
