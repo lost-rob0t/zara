@@ -16,8 +16,16 @@
 - Actual =ConnectionFailed= remains the sole path that advances a reconnect attempt after a scheduled connect has executed and failed.
 - Keep canonical reducer/state ownership; no parallel reconnect state machine.
 
-** Planned deterministic proof
-1. RED: repeated =connectionLost= callbacks during one reconnect window do not consume attempts or schedule duplicate retries.
-2. GREEN: make =ConnectionLost= idempotent while =Reconnecting=.
-3. Preserve stale completion rejection and actual failed-connect backoff coverage.
-4. Run exact-head Android/repository CI before merge.
+** Deterministic proof
+- Test commit :: =b9f5f234078ae5ad38fe9a93bcb6f1cb234280b7=
+- Regression :: eight duplicate =connectionLost= callbacks during one reconnect window must leave state at =Reconnecting(2,1)=, keep one 250ms retry, one disconnect, and generation 2; the first actual connect failure must then advance to attempt 2 / generation 3.
+- First CI #1679 was superseded/cancelled by the GREEN push before completion and is not used as verification evidence.
+- Fix commit :: =b3e10f9b4364d9a6b4c918cdf7d1980ef44c5a2e=
+- Implementation :: =RuntimeEvent.ConnectionLost= is idempotent outside =Connected=; =ConnectionFailed= remains the retry-attempt advancement path.
+- Exact-head CI :: #1680 on =b3e10f9b4364d9a6b4c918cdf7d1980ef44c5a2e= is authoritative and must complete green before promotion/merge.
+
+** Acceptance
+- Duplicate network callbacks cannot burn reconnect budget or rotate generation.
+- Actual failed reconnects still advance bounded exponential backoff.
+- Stale generation/session checks remain canonical.
+- No Core/protocol/plugin changes.
