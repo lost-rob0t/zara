@@ -96,12 +96,36 @@ class NativeTreallaBridgeTest {
         assertFalse(bridge.isInitialized)
     }
 
+    @Test
+    fun repeatedInitEvaluateShutdownCyclesReleaseEveryNativeRuntime() {
+        val cycles = 512
+        val api = FakeNativeApi(results = arrayOf("frame(timer,1200)"))
+        var libraryLoads = 0
+        val bridge = NativeTreallaBridge(
+            libraryLoader = NativeLibraryLoader { libraryLoads += 1 },
+            nativeApi = api,
+        )
+
+        repeat(cycles) {
+            bridge.initialize("prolog/portable/semantic_core.pl")
+            assertEquals(listOf("frame(timer,1200)"), bridge.evaluate("semantic(timer)"))
+            bridge.shutdown()
+            assertFalse(bridge.isInitialized)
+        }
+
+        assertEquals(cycles, libraryLoads)
+        assertEquals(cycles, api.initializeCalls)
+        assertEquals(cycles, api.evaluateCalls)
+        assertEquals(cycles, api.shutdownCalls)
+    }
+
     private class FakeNativeApi(
         private val events: MutableList<String> = mutableListOf(),
         private val initializeResult: Boolean = true,
         private val results: Array<String> = emptyArray()
     ) : TreallaNativeApi {
         var initializeCalls = 0
+        var evaluateCalls = 0
         var shutdownCalls = 0
 
         override fun initialize(coreAssetPath: String): Boolean {
@@ -110,7 +134,10 @@ class NativeTreallaBridgeTest {
             return initializeResult
         }
 
-        override fun evaluate(query: String): Array<String> = results
+        override fun evaluate(query: String): Array<String> {
+            evaluateCalls += 1
+            return results
+        }
 
         override fun shutdown() {
             shutdownCalls += 1
