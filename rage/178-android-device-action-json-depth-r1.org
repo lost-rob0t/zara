@@ -13,12 +13,16 @@
 * Design / adversarial review
 - Apply one 64-container bound across objects and arrays; root object consumes one level.
 - Preserve typed capability/action validation, correlation, replay semantics, and all byte limits.
+- Depth accounting is parser-owned and finally-safe on failed recursive descent.
 - Do not alter Core's open replay-horizon contract (#492) or Core-owned transaction.
 
 * TDD map
 - RED: 64-container malformed request reaches ordinary schema rejection; 65 must fail specifically on nesting depth.
-- GREEN: parser-owned depth accounting around object/array recursion.
+- RED exact head =96d47aef736eb4923426f76996b2505bf388ec2e=: repository/Nix/package and both shared-mic lanes passed, while the Android gate failed the new nesting assertion as intended; debug APK upload still completed.
+- GREEN: =3d9e685d23642332e3eba4e4a2e27b3e671a6442= adds parser-owned depth accounting around object/array recursion.
 
 * Gate
 - Focused JVM depth test.
-- =scripts/test-android.sh= and exact-head repository CI.
+- =scripts/test-android.sh= including native Trealla, debug APK and secret inspection.
+- Full repository/Nix/package and both shared-mic lanes.
+- This branch predates current master after #530, so a green result is recovery evidence only; exact-current recovery is required before merge.
