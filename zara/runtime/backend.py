@@ -18,10 +18,6 @@ from . import events
 
 logger = logging.getLogger(__name__)
 
-DETERMINISTIC_COMMAND_UNAVAILABLE = (
-    "I couldn't run that command because Zara's deterministic command router "
-    "is unavailable."
-)
 DETERMINISTIC_COMMAND_FAILED = (
     "I couldn't complete that deterministic command. I did not send it to the LLM."
 )
@@ -182,17 +178,6 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         task_turn = conversation_history is not None or system_context is not None
         command_like = command_gate.looks_like_command(text)
 
-        if not task_turn and self._router is None and command_like:
-            logger.error(
-                "Refusing LLM fallback for deterministic command because the "
-                "semantic router is unavailable: %r",
-                text,
-            )
-            return RuntimeTurnResult(
-                response=DETERMINISTIC_COMMAND_UNAVAILABLE,
-                metadata={"route": "deterministic_unavailable"},
-            )
-
         if self._router is not None and not task_turn:
             conversation_manager = self._manager.conversation_manager
             in_conversation = bool(getattr(conversation_manager, "in_conversation", False))
@@ -238,131 +223,37 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             conversation_history=conversation_history,
             extra_system_context=system_context,
         )
-        raw_tool_results = result.get("tool_results", [])
+        if not isinstance(result, dict):
+            return RuntimeTurnResult(response=str(result))
         response = str(result.get("response", ""))
-        if not task_turn:
-            await self._persist_turn(text, response)
-        return RuntimeTurnResult(
-            response=response,
-            tool_results=tuple(
-                item if isinstance(item, dict) else {"result": item}
-                for item in raw_tool_results
-            ),
-        )
+        tool_results = result.get("tool_results") or []
+        normalized_tools = tuple(item for item in tool_results if isinstance(item, dict))
+        return RuntimeTurnResult(response=response, tool_results=normalized_tools)
 
     async def cancel_turn(self, turn_id: str) -> None:
-        if self._manager is not None:
-            cancel = getattr(self._manager, "cancel_turn", None)
-            if cancel is not None:
-                await cancel(turn_id)
-
-    def _memory_manager(self):
         if self._manager is None:
-            return None
-        return getattr(self._manager, "memory_manager", None)
-
-    async def _persist_turn(self, text: str, response: str) -> None:
-        memory = self._memory_manager()
-        if memory is None:
             return
-        try:
-            if self._memory_session is None:
-                self._memory_session = await asyncio.to_thread(memory.start_session)
-            await asyncio.to_thread(
-                memory.add_message, self._memory_session, "user", text
-            )
-            if response:
-                await asyncio.to_thread(
-                    memory.add_message, self._memory_session, "assistant", response
-                )
-        except Exception:
-            logger.warning("Memory persistence failed for daemon turn", exc_info=True)
-
-    async def _rotate_memory_session(self) -> None:
-        memory = self._memory_manager()
-        if memory is None:
+        cancel = getattr(self._manager, "cancel_turn", None)
+        if cancel is None:
             return
-        try:
-            session = self._memory_session
-            if session is not None:
-                await asyncio.to_thread(memory.summarise_session, session)
-            self._memory_session = await asyncio.to_thread(memory.start_session)
-        except Exception:
-            logger.warning(
-                "Memory session rotation failed on conversation end", exc_info=True
-            )
-
-    def _stream_publisher(self, turn_id: str, conversation_id: Optional[str]):
-        publisher = self._publisher
-        if publisher is None:
-            return None
-        from ..agent import stream_events
-
-        started = False
-
-        def publish(event) -> None:
-            nonlocal started
-            try:
-                if type(event) is stream_events.SentenceReady:
-                    if not started:
-                        started = True
-                        publisher(
-                            events.AssistantStarted(
-                                turn_id=turn_id,
-                                conversation_id=conversation_id,
-                                label="agent",
-                            )
-                        )
-                    publisher(
-                        events.AssistantDelta(
-                            turn_id=turn_id,
-                            conversation_id=conversation_id,
-                            label="agent",
-                            text=event.text,
-                        )
-                    )
-                elif type(event) is stream_events.Completed:
-                    publisher(
-                        events.AssistantComplete(
-                            turn_id=turn_id,
-                            conversation_id=conversation_id,
-                            label="agent",
-                            text=event.full_text,
-                        )
-                    )
-            except Exception:
-                logger.debug(
-                    "Assistant stream event publication failed for turn %s",
-                    turn_id,
-                    exc_info=True,
-                )
-
-        return publish
-
-    async def approve_tool(self, tool_run_id: str) -> None:
-        if self._manager is None:
-            raise RuntimeError("runtime backend is not started")
-        approve = getattr(self._manager, "approve_tool", None)
-        if approve is None:
-            raise UnsupportedRuntimeCommand("tool approval is not available in this runtime backend")
-        await approve(tool_run_id)
-
-    async def reject_tool(self, tool_run_id: str, reason: str = "") -> None:
-        if self._manager is None:
-            raise RuntimeError("runtime backend is not started")
-        reject = getattr(self._manager, "reject_tool", None)
-        if reject is None:
-            raise UnsupportedRuntimeCommand("tool rejection is not available in this runtime backend")
-        await reject(tool_run_id, reason)
+        result = cancel(turn_id)
+        if asyncio.iscoroutine(result):
+            await result
 
     def register_tools(self, tools) -> None:
         if self._manager is None:
             raise RuntimeError("runtime backend is not started")
-        self._manager.tool_registry.register_tools(list(tools))
+        register = getattr(self._manager, "register_tools", None)
+        if register is None:
+            raise UnsupportedRuntimeCommand("runtime manager cannot register tools")
+        register(tools)
 
     def unregister_tools(self, names) -> None:
-        if self._manager is not None:
-            self._manager.tool_registry.unregister_tools(list(names))
+        if self._manager is None:
+            return
+        unregister = getattr(self._manager, "unregister_tools", None)
+        if unregister is not None:
+            unregister(names)
 
     def register_agent_loop_advice(
         self,
@@ -373,25 +264,20 @@ class LangGraphRuntimeBackend(RuntimeBackend):
     ) -> int:
         if self._manager is None:
             raise RuntimeError("runtime backend is not started")
-        registry = getattr(self._manager, "agent_loop_advice", None)
-        if registry is None:
+        register = getattr(self._manager, "register_agent_loop_advice", None)
+        if register is None:
             raise UnsupportedRuntimeCommand(
-                "agent-loop advice is not available in this runtime backend"
+                "runtime manager cannot register agent-loop advice"
             )
-        return registry.register(
-            kind,
-            owner=owner,
-            priority=priority,
-            callback=callback,
-        )
+        return int(register(kind, owner, priority, callback))
 
     def unregister_agent_loop_advice(self, registration_id: int) -> bool:
         if self._manager is None:
             return False
-        registry = getattr(self._manager, "agent_loop_advice", None)
-        if registry is None:
+        unregister = getattr(self._manager, "unregister_agent_loop_advice", None)
+        if unregister is None:
             return False
-        return bool(registry.unregister(registration_id))
+        return bool(unregister(registration_id))
 
     def customization_diagnostics(self):
         if self._manager is None:
@@ -399,152 +285,103 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         diagnostics = getattr(self._manager, "customization_diagnostics", None)
         if diagnostics is None:
             raise UnsupportedRuntimeCommand(
-                "customization diagnostics are not available in this runtime backend"
+                "runtime manager cannot report customization diagnostics"
             )
         return diagnostics()
 
+    async def start_voice(self) -> None:
+        if self._manager is None:
+            raise RuntimeError("runtime backend is not started")
+        start = getattr(self._manager, "start_voice", None)
+        if start is None:
+            raise UnsupportedRuntimeCommand("voice start is not available")
+        result = start()
+        if asyncio.iscoroutine(result):
+            await result
+
+    async def stop_voice(self) -> None:
+        if self._manager is None:
+            return
+        stop = getattr(self._manager, "stop_voice", None)
+        if stop is None:
+            return
+        result = stop()
+        if asyncio.iscoroutine(result):
+            await result
+
+    async def mute_speech(self, enabled: bool) -> None:
+        if self._manager is None:
+            raise RuntimeError("runtime backend is not started")
+        mute = getattr(self._manager, "mute_speech", None)
+        if mute is None:
+            raise UnsupportedRuntimeCommand("speech mute is not available")
+        result = mute(enabled)
+        if asyncio.iscoroutine(result):
+            await result
+
+    async def approve_tool(self, tool_run_id: str) -> None:
+        if self._manager is None:
+            raise RuntimeError("runtime backend is not started")
+        approve = getattr(self._manager, "approve_tool", None)
+        if approve is None:
+            raise UnsupportedRuntimeCommand("tool approval is not available")
+        result = approve(tool_run_id)
+        if asyncio.iscoroutine(result):
+            await result
+
+    async def reject_tool(self, tool_run_id: str, reason: str = "") -> None:
+        if self._manager is None:
+            raise RuntimeError("runtime backend is not started")
+        reject = getattr(self._manager, "reject_tool", None)
+        if reject is None:
+            raise UnsupportedRuntimeCommand("tool rejection is not available")
+        result = reject(tool_run_id, reason)
+        if asyncio.iscoroutine(result):
+            await result
+
     async def stop(self) -> None:
+        if self._manager is None:
+            return
         manager = self._manager
         self._manager = None
-        if manager is None:
-            return
         shutdown = getattr(manager, "shutdown_async", None)
         if shutdown is not None:
             await shutdown()
-        else:
-            manager.exit_conversation()
 
+    def _stream_publisher(self, turn_id: str, conversation_id: Optional[str]):
+        if self._publisher is None:
+            return None
 
-def create_runtime_backend(config=None) -> RuntimeBackend:
-    """Create Zara's canonical conversational backend."""
-
-    if config is None:
-        from zara.config import get_config
-
-        config = get_config()
-
-    backend_name = str(config.get("agent", "backend", "langgraph")).strip().lower()
-    if backend_name != "langgraph":
-        raise ValueError(
-            f"Unsupported agent backend {backend_name!r}; choose 'langgraph'"
-        )
-
-    def manager_factory():
-        from zara.agent import AgentManager
-
-        return AgentManager(config=config)
-
-    return LangGraphRuntimeBackend(manager_factory)
-
-
-class AgentRuntimeBackend(RuntimeBackend):
-    """Backward-compatible facade over Zara's canonical LangGraph backend.
-
-    RuntimeHost historically constructed ``AgentRuntimeBackend`` directly. The
-    facade preserves that API while keeping backend construction in one place.
-    Supplying ``manager_factory`` explicitly remains supported for tests and
-    embedders.
-    """
-
-    def __init__(
-        self,
-        manager_factory: Optional[Callable[[], Any]] = None,
-        *,
-        config=None,
-        router=None,
-    ) -> None:
-        if manager_factory is not None:
-            self._delegate: RuntimeBackend = LangGraphRuntimeBackend(
-                manager_factory,
-                router=router,
+        def publish(delta: str) -> None:
+            self._publisher(
+                events.AssistantDelta(
+                    turn_id=turn_id,
+                    conversation_id=conversation_id,
+                    delta=str(delta),
+                )
             )
-        else:
-            self._delegate = create_runtime_backend(config)
 
-    @property
-    def principal_id(self) -> str:
-        return self._delegate.principal_id
+        return publish
 
-    def bind_event_publisher(self, publisher) -> None:
-        self._delegate.bind_event_publisher(publisher)
+    async def _persist_turn(self, user_text: str, assistant_text: str) -> None:
+        if self._manager is None:
+            return
+        memory = getattr(self._manager, "memory_manager", None)
+        if memory is None:
+            return
+        try:
+            session_id = await self._ensure_memory_session(memory)
+            await memory.add_message(session_id, "user", user_text)
+            await memory.add_message(session_id, "assistant", assistant_text)
+        except Exception as error:
+            logger.warning("Failed to persist deterministic turn: %s", error)
 
-    async def start(self) -> None:
-        await self._delegate.start()
+    async def _ensure_memory_session(self, memory) -> str:
+        if self._memory_session:
+            return self._memory_session
+        session = await memory.create_session()
+        self._memory_session = session.session_id
+        return self._memory_session
 
-    async def submit_turn(
-        self,
-        text: str,
-        *,
-        turn_id: str,
-        conversation_id: Optional[str] = None,
-        context_ids: tuple[str, ...] = (),
-        system_context: Optional[str] = None,
-        conversation_history: Optional[list] = None,
-        latency_trace: Optional[LatencyTrace] = None,
-    ) -> RuntimeTurnResult:
-        return await self._delegate.submit_turn(
-            text,
-            turn_id=turn_id,
-            conversation_id=conversation_id,
-            context_ids=context_ids,
-            system_context=system_context,
-            conversation_history=conversation_history,
-            latency_trace=latency_trace,
-        )
-
-    async def cancel_turn(self, turn_id: str) -> None:
-        await self._delegate.cancel_turn(turn_id)
-
-    def register_tools(self, tools) -> None:
-        self._delegate.register_tools(tools)
-
-    def unregister_tools(self, names) -> None:
-        self._delegate.unregister_tools(names)
-
-    def register_agent_loop_advice(
-        self,
-        kind: str,
-        owner: str,
-        priority: int,
-        callback: Callable[..., Any],
-    ) -> int:
-        return self._delegate.register_agent_loop_advice(
-            kind,
-            owner,
-            priority,
-            callback,
-        )
-
-    def unregister_agent_loop_advice(self, registration_id: int) -> bool:
-        return self._delegate.unregister_agent_loop_advice(registration_id)
-
-    def customization_diagnostics(self):
-        return self._delegate.customization_diagnostics()
-
-    async def start_voice(self) -> None:
-        await self._delegate.start_voice()
-
-    async def stop_voice(self) -> None:
-        await self._delegate.stop_voice()
-
-    async def mute_speech(self, enabled: bool) -> None:
-        await self._delegate.mute_speech(enabled)
-
-    async def approve_tool(self, tool_run_id: str) -> None:
-        await self._delegate.approve_tool(tool_run_id)
-
-    async def reject_tool(self, tool_run_id: str, reason: str = "") -> None:
-        await self._delegate.reject_tool(tool_run_id, reason)
-
-    async def stop(self) -> None:
-        await self._delegate.stop()
-
-
-__all__ = [
-    "AgentRuntimeBackend",
-    "LangGraphRuntimeBackend",
-    "RuntimeBackend",
-    "RuntimeTurnResult",
-    "UnsupportedRuntimeCommand",
-    "create_runtime_backend",
-]
+    async def _rotate_memory_session(self) -> None:
+        self._memory_session = None
