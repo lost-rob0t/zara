@@ -127,7 +127,7 @@ def dispose_controller(controller: DesktopController) -> None:
     controller.tray.hide()
     controller.window.prepare_for_quit()
     controller.window.close()
-    if controller.quick_window is not None:
+    if controller.quick_window is not None and controller.quick_window is not controller.window:
         controller.quick_window.prepare_for_quit()
         controller.quick_window.close()
         controller.quick_window.deleteLater()
@@ -212,7 +212,7 @@ def test_quick_copilot_exposes_signal_cabin_visual_hierarchy(tmp_path):
     quick = controller.quick_window
     assert quick is not None
     try:
-        assert quick.objectName() == "zaraQuickCopilot"
+        assert quick.objectName() == "zaraCopilot"
         assert quick.header_frame.objectName() == "zaraQuickHeader"
         assert quick.status_frame.objectName() == "zaraRuntimeRail"
         assert quick.status_lamp.objectName() == "zaraStatusLamp"
@@ -243,16 +243,13 @@ def test_quick_send_action_tracks_meaningful_composer_text(tmp_path):
         dispose_controller(controller)
 
 
-def test_handoff_preserves_exact_shared_state_without_resubmit_or_duplication(tmp_path):
+def test_expansion_preserves_exact_shared_state_without_resubmit_or_duplication(tmp_path):
     qt_app, controller, bridge, _, service, database = make_controller(tmp_path)
     quick = controller.quick_window
     assert quick is not None
     try:
-        quick_id = quick.current_conversation_id
-        other = service.create_conversation("Other history")
-        controller.window.load_conversation(other.conversation.id)
-        assert controller.window.current_conversation_id == other.conversation.id
-        assert quick.current_conversation_id == quick_id
+        assert controller.window is quick
+        conversation_id = quick.current_conversation_id
 
         quick.composer.setPlainText("stream this")
         quick.submit_current_text()
@@ -266,14 +263,14 @@ def test_handoff_preserves_exact_shared_state_without_resubmit_or_duplication(tm
         emit(
             bridge,
             events.AssistantStarted(
-                conversation_id=quick_id,
+                conversation_id=conversation_id,
                 turn_id="turn-shared",
             ),
         )
         emit(
             bridge,
             events.AssistantDelta(
-                conversation_id=quick_id,
+                conversation_id=conversation_id,
                 turn_id="turn-shared",
                 text="partial ",
             ),
@@ -281,13 +278,13 @@ def test_handoff_preserves_exact_shared_state_without_resubmit_or_duplication(tm
         emit(
             bridge,
             events.AssistantDelta(
-                conversation_id=quick_id,
+                conversation_id=conversation_id,
                 turn_id="turn-shared",
                 text="response",
             ),
         )
 
-        state = service.get_state(quick_id)
+        state = service.get_state(conversation_id)
         assistant = state.latest_message(role=MessageRole.ASSISTANT, turn_id="turn-shared")
         assert assistant is not None
         assert assistant.content == "partial response"
@@ -300,17 +297,17 @@ def test_handoff_preserves_exact_shared_state_without_resubmit_or_duplication(tm
         controller.expand_quick_to_full_chat()
         qt_app.processEvents()
 
-        assert controller.window.current_conversation_id == quick_id
-        assert quick.current_conversation_id == quick_id
+        assert controller.window is quick
+        assert controller.window.current_conversation_id == conversation_id
         assert len(service.list_conversations()) == conversation_count
         assert len(bridge.commands) == command_count
-        assert service.get_state(quick_id).active_turn_id == "turn-shared"
+        assert service.get_state(conversation_id).active_turn_id == "turn-shared"
         assert controller.window.message_widgets[assistant.id].message.content == "partial response"
 
         emit(
             bridge,
             events.ToolStarted(
-                conversation_id=quick_id,
+                conversation_id=conversation_id,
                 turn_id="turn-shared",
                 tool_run_id="tool-1",
                 tool_name="search",
@@ -322,23 +319,21 @@ def test_handoff_preserves_exact_shared_state_without_resubmit_or_duplication(tm
         assert len(tool_messages) == 1
         assert tool_messages[0].content == "search: running"
         assert tool_messages[0].id in quick.message_widgets
-        assert tool_messages[0].id in controller.window.message_widgets
 
         emit(
             bridge,
             events.ProviderChanged(
-                conversation_id=quick_id,
+                conversation_id=conversation_id,
                 provider="openrouter",
                 model="test-model",
             ),
         )
         assert "openrouter" in quick.provider_label.text()
-        assert "openrouter" in controller.window.provider_label.text()
 
         emit(
             bridge,
             events.AssistantComplete(
-                conversation_id=quick_id,
+                conversation_id=conversation_id,
                 turn_id="turn-shared",
                 text="partial response",
             ),
@@ -346,7 +341,7 @@ def test_handoff_preserves_exact_shared_state_without_resubmit_or_duplication(tm
         emit(
             bridge,
             events.AgentCompleted(
-                conversation_id=quick_id,
+                conversation_id=conversation_id,
                 turn_id="turn-shared",
             ),
         )
@@ -359,14 +354,15 @@ def test_handoff_preserves_exact_shared_state_without_resubmit_or_duplication(tm
         assert len(assistant_rows) == 1
         assert assistant_rows[0].content == "partial response"
 
-        reloaded = ConversationService(ConversationStore(database)).get_state(quick_id)
+        reloaded = ConversationService(ConversationStore(database)).get_state(conversation_id)
         assert [message.content for message in reloaded.messages] == [
             message.content for message in state.messages
         ]
 
-        controller.window.load_conversation(other.conversation.id)
+        other = service.create_conversation("Other history")
+        controller.open_full_chat(other.conversation.id)
         assert controller.window.current_conversation_id == other.conversation.id
-        assert quick.current_conversation_id == quick_id
+        assert quick.current_conversation_id == other.conversation.id
     finally:
         dispose_controller(controller)
 
@@ -491,9 +487,10 @@ def test_quick_new_chat_is_durable_and_reopen_keeps_binding(tmp_path):
         qt_app.processEvents()
         assert quick.current_conversation_id == created_id
 
-        full_only = service.create_conversation("Full only")
-        controller.window.load_conversation(full_only.conversation.id)
-        assert quick.current_conversation_id == created_id
+        other = service.create_conversation("Other history")
+        controller.open_full_chat(other.conversation.id)
+        assert quick.current_conversation_id == other.conversation.id
+        assert controller.window.current_conversation_id == other.conversation.id
     finally:
         dispose_controller(controller)
 

@@ -310,7 +310,7 @@ class QuickCopilotWindow(QWidget):
 
     def sync_from_shared_state(self, _event: object = None) -> None:
         state = self.conversations.get_state(self.current_conversation_id)
-        visible = state.messages[-_MAX_VISIBLE_MESSAGES:]
+        visible = self._project_messages(state)
         visible_ids = tuple(message.id for message in visible)
         if visible_ids != self._rendered_message_ids:
             self._rebuild_messages(visible)
@@ -405,6 +405,9 @@ class QuickCopilotWindow(QWidget):
         if history:
             return history[0].id
         return self.conversations.create_conversation().conversation.id
+
+    def _project_messages(self, state):
+        return state.messages[-_MAX_VISIBLE_MESSAGES:]
 
     def _rebuild_messages(self, messages) -> None:
         while self.message_layout.count():
