@@ -1,0 +1,16 @@
+* RAGE #178 r2 — Android auth revocation adversarial coverage
+
+- Consumed issue :: #178
+- Exact immutable start :: =2fca33b9caa288df8a0cc61bf582379333de1ede=
+- Recovered from :: PR #482 / head =33840db3a28d7e041fdb457fc4cb26f4beed89e4=
+- Scope :: Android auth adversarial coverage only. No Core/protocol/plugin implementation.
+
+** Recovery
+#481 advanced canonical master after r1 began. The auth slice is disjoint from the reconnect reducer change, but stale-base CI is not reusable for promotion. This r2 transaction replays only the intended auth proof onto exact current master.
+
+** Acceptance
+- Deleting the wrapped credential after Ready yields =Unenrolled= and rejects socket auth before any CURVE option mutation.
+- Deleting the pinned server key after Ready yields =AwaitingServerPin= with the same client public identity and rejects socket auth before mutation.
+- Corrupting the stored pin after Ready yields =Corrupt= and rejects socket auth before mutation.
+- Production behavior remains unchanged.
+- Fresh exact-head CI is required before promotion/merge.
