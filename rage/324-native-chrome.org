@@ -1,0 +1,17 @@
+#+title: RAGE #324 — native Copilot chrome
+
+* Iteration 1
+** Intake
+- Consumed issue: #324
+- Immutable start commit: =2da13cb08d15f268e355171ba56f0decde238126=
+- Scope: native layout/chrome acceptance slice on the one canonical adaptive Copilot.
+- Ownership: Core-only. Do not modify =android/**=.
+- Preconditions: #564 independent compact/expanded geometry is canonical at the start commit.
+- Invariants: one QWidget renderer, one ConversationService authority, no runtime/protocol fork, no direct tool/Prolog/provider calls from Qt.
+
+** Planned order
+1. Audit current canonical Copilot/Quick widget tree, status reduction, adaptive tests and screenshot fixtures.
+2. Derive the smallest native-chrome slice from #324 acceptance criteria and adversarially check degraded/error visibility and accessibility.
+3. Add deterministic RED coverage before production changes.
+4. Implement the minimum canonical-Copilot-only change; keep legacy Quick compatibility where it is still directly tested.
+5. Run focused/full repository gates and exact-head GitHub Actions before merge.
