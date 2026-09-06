@@ -1,0 +1,15 @@
+* RAGE #178 r2 — Android principal/device target injection proof
+
+- Consumed issue :: #178
+- Exact immutable start :: =ceae9662a2462991c8b964eac33bb31e32d0ab39=
+- Recovered from :: PR #491 / head =29c931f5f4e453574c0cd86e47c02a2c5d6becea=
+- Scope :: Android ZARA/1 device-action adversarial proof only. No Core/protocol/plugin implementation.
+
+** Recovery
+#490 advanced canonical master after r1 began. This r2 branch replays only the disjoint codec acceptance proof onto exact current master; stale-base CI is not reused.
+
+** Acceptance
+- payload-supplied =principal_id= targeting fails closed;
+- payload-supplied =device_id= targeting fails closed;
+- authenticated session remains the only Android action routing identity admitted by this payload schema;
+- fresh exact-head CI required before promotion/merge.
