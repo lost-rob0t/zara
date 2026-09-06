@@ -233,26 +233,100 @@ def main():
     )
 
     mode_group = parser.add_mutually_exclusive_group()
-    mode_group.add_argument("--desktop", action="store_true", help="Start the native desktop Copilot")
-    mode_group.add_argument("--toggle-desktop", action="store_true", help="Toggle the one running desktop Copilot, starting it if absent")
-    mode_group.add_argument("--show-desktop", action="store_true", help="Show/focus the one desktop Copilot, starting it if absent")
-    mode_group.add_argument("--hide-desktop", action="store_true", help="Hide the running desktop Copilot")
-    mode_group.add_argument("--console", action="store_true", help="Start interactive console (REPL)")
-    mode_group.add_argument("--voice", action="store_true", help="Single voice command mode")
-    mode_group.add_argument("--dictate", action="store_true", help="Continuous dictation mode")
-    mode_group.add_argument("--wake", action="store_true", help="Wake word listener mode")
-    mode_group.add_argument("--agent", action="store_true", help="Direct conversation mode with agent")
+    mode_group.add_argument(
+        "--desktop",
+        action="store_true",
+        help="Start the native desktop Copilot"
+    )
+    mode_group.add_argument(
+        "--toggle-desktop",
+        action="store_true",
+        help="Toggle the one running desktop Copilot, starting it if absent"
+    )
+    mode_group.add_argument(
+        "--show-desktop",
+        action="store_true",
+        help="Show/focus the one desktop Copilot, starting it if absent"
+    )
+    mode_group.add_argument(
+        "--hide-desktop",
+        action="store_true",
+        help="Hide the running desktop Copilot"
+    )
+    mode_group.add_argument(
+        "--console",
+        action="store_true",
+        help="Start interactive console (REPL)"
+    )
+    mode_group.add_argument(
+        "--voice",
+        action="store_true",
+        help="Single voice command mode"
+    )
+    mode_group.add_argument(
+        "--dictate",
+        action="store_true",
+        help="Continuous dictation mode"
+    )
+    mode_group.add_argument(
+        "--wake",
+        action="store_true",
+        help="Wake word listener mode"
+    )
+    mode_group.add_argument(
+        "--agent",
+        action="store_true",
+        help="Direct conversation mode with agent"
+    )
 
     client_group = parser.add_mutually_exclusive_group()
-    client_group.add_argument("--connect", metavar="ENDPOINT", help="Send a text command through an existing Zara daemon endpoint")
-    client_group.add_argument("--standalone", action="store_true", help="Use the private in-process compatibility path for a text command")
+    client_group.add_argument(
+        "--connect",
+        metavar="ENDPOINT",
+        help="Send a text command through an existing Zara daemon endpoint"
+    )
+    client_group.add_argument(
+        "--standalone",
+        action="store_true",
+        help="Use the private in-process compatibility path for a text command"
+    )
 
-    parser.add_argument("--pets", action="store_true", help="Launch the desktop pet overlay (companion flag; use with --wake)")
-    parser.add_argument("--pets-settings", action="store_true", help="Open the Pets settings dialog")
-    parser.add_argument("command", nargs="*", help="Text command to execute")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
-    parser.add_argument("--stt-provider", default=default_stt_provider, choices=STT_PROVIDERS, help=f"Speech-to-text provider (default: {default_stt_provider})")
-    parser.add_argument("--model", "--mode", dest="model", default=default_stt_model, help=f"STT model name, local model directory, or GGML model file (default: {default_stt_model})")
+    parser.add_argument(
+        "--pets",
+        action="store_true",
+        help="Launch the desktop pet overlay (companion flag; use with --wake)"
+    )
+    parser.add_argument(
+        "--pets-settings",
+        action="store_true",
+        help="Open the Pets settings dialog"
+    )
+
+    parser.add_argument(
+        "command",
+        nargs="*",
+        help="Text command to execute"
+    )
+
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable verbose logging"
+    )
+
+    parser.add_argument(
+        "--stt-provider",
+        default=default_stt_provider,
+        choices=STT_PROVIDERS,
+        help=f"Speech-to-text provider (default: {default_stt_provider})"
+    )
+    parser.add_argument(
+        "--model",
+        "--mode",
+        dest="model",
+        default=default_stt_model,
+        help=f"STT model name, local model directory, or GGML model file (default: {default_stt_model})"
+    )
     parser.add_argument(
         "--device",
         default=default_stt_device,
@@ -263,28 +337,46 @@ def main():
             "whisper.cpp Vulkan backend for AMD GPUs"
         )
     )
-    parser.add_argument("--threads", type=int, help="Number of local STT inference threads")
-    parser.add_argument("--workers", type=int, default=2, help="Number of parallel transcription workers (default: 2)")
-    parser.add_argument("--stop-phrases", help='Stop phrases for dictation (comma-separated, e.g. "end voice,stop voice")')
+    parser.add_argument(
+        "--threads",
+        type=int,
+        help="Number of local STT inference threads"
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=2,
+        help="Number of parallel transcription workers (default: 2)"
+    )
+    parser.add_argument(
+        "--stop-phrases",
+        help='Stop phrases for dictation (comma-separated, e.g. "end voice,stop voice")'
+    )
 
     args = parser.parse_args()
 
     if args.desktop:
         from .desktop.app import main as desktop_main
         sys.exit(desktop_main([sys.argv[0]]))
+
     elif args.toggle_desktop:
         sys.exit(_run_desktop_control("toggle"))
+
     elif args.show_desktop:
         sys.exit(_run_desktop_control("show"))
+
     elif args.hide_desktop:
         sys.exit(_run_desktop_control("hide"))
+
     elif args.console:
         from .console import main as console_main
         sys.exit(console_main())
+
     elif args.voice:
         print("Error: Voice mode is not currently implemented.", file=sys.stderr)
         print("Use --dictate for continuous voice input instead.", file=sys.stderr)
         sys.exit(1)
+
     elif args.dictate:
         stt_provider, stt_device, stt_model = _resolve_stt_runtime(args)
         from .config import get_config
@@ -292,13 +384,19 @@ def main():
             stop_phrases = args.stop_phrases.split(",")
         else:
             stop_phrases = get_config().get_section("dictate").get("stop_phrases")
+
         if needs_whisper_cpp_files(stt_provider):
             stt_model = resolve_local_stt_model(stt_provider, stt_model)
+
+        # dictate.py still exposes the historical faster-whisper device API,
+        # where every GPU is represented as `cuda`. The whisper.cpp adapter
+        # translates that compatibility token back to Vulkan internally.
         dictate_device = (
             "cuda"
             if stt_provider == "whisper-cpp" and stt_device == "vulkan"
             else stt_device
         )
+
         with backend_compat(stt_provider):
             from .dictate import main as dictate_main
             sys.exit(dictate_main(
@@ -308,34 +406,54 @@ def main():
                 workers=args.workers,
                 stop_phrases=stop_phrases
             ))
+
     elif args.wake:
         stt_provider, stt_device, stt_model = _resolve_stt_runtime(args)
         stt_model = resolve_local_stt_model(stt_provider, stt_model)
+
         with backend_compat(stt_provider):
             from .wake import main as wake_main
             try:
-                exit_code = wake_main(model=stt_model, device=stt_device, with_pets=args.pets)
+                exit_code = wake_main(
+                    model=stt_model,
+                    device=stt_device,
+                    with_pets=args.pets,
+                )
             except (RuntimeError, ValueError) as error:
                 if stt_device not in {"cuda", "vulkan"} or not is_gpu_initialization_error(error):
                     raise
-                print(f"GPU transcription unavailable ({error}); falling back to CPU.", file=sys.stderr)
-                exit_code = wake_main(model=stt_model, device="cpu", with_pets=args.pets)
+                print(
+                    f"GPU transcription unavailable ({error}); falling back to CPU.",
+                    file=sys.stderr,
+                )
+                exit_code = wake_main(
+                    model=stt_model,
+                    device="cpu",
+                    with_pets=args.pets,
+                )
         sys.exit(exit_code)
+
     elif args.agent:
         from .agent_cli import main as agent_main
         sys.exit(agent_main())
+
     elif args.pets_settings:
         from .pets.cli import main_settings
         sys.exit(main_settings())
+
     elif args.pets:
         from .pets.cli import main_overlay
         sys.exit(main_overlay())
+
     elif args.command:
         command_text = " ".join(args.command)
+
         if not args.standalone:
             endpoint = args.connect or _default_daemon_endpoint()
             sys.exit(_run_connected_text(endpoint, command_text))
+
         from .console import ZaraConsole
+
         try:
             console = ZaraConsole()
             success = console.execute_command(command_text)
@@ -343,6 +461,7 @@ def main():
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
+
     else:
         parser.print_help()
         sys.exit(1)
