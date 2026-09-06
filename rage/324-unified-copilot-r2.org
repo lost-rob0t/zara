@@ -69,3 +69,11 @@ Fresh source reconciliation at the immutable start confirms the root defect stil
 - The CI test job now invokes =render_copilot_fixtures(Path(os.environ["ARTIFACT_DIR"]) / "ui", source_commit=os.environ["GITHUB_SHA"])= under =QT_QPA_PLATFORM=offscreen= after package build and before the existing always-run artifact upload.
 - No =android/**=, daemon, protocol, provider, microphone, persistence schema, or runtime-command path is changed by this slice.
 - Exact-head full CI result :: pending at this commit; do not merge or mark this slice complete until the exact candidate passes the full repository-native gate.
+
+* Slice G — independent compact/expanded geometry
+** Research / adversarial decision
+- The canonical Copilot still inherits =QuickCopilotWindow='s single =desktop/quick-copilot/geometry= setting. That means compact and expanded presentations overwrite the same rectangle even though #324 explicitly requires independent geometry.
+- Presentation is already a single QWidget state transition, so geometry ownership belongs on =CopilotWindow= as presentation-specific settings keys; do not add a second window or change native window flags.
+- On a mode transition, save the departing presentation rectangle before changing presentation, then recover the arriving presentation rectangle through the existing =recover_quick_geometry= screen-clamping helper. If the arriving mode has never been saved, retain a bounded sensible current/default geometry rather than inventing another geometry service.
+- Hide/close must persist the geometry for the currently active presentation. Legacy standalone =QuickCopilotWindow= keeps its existing single key.
+- RED must prove compact and expanded rectangles survive repeated transitions independently using isolated =QSettings=. No daemon, protocol, Android, conversation, provider, or runtime-command changes are required.
