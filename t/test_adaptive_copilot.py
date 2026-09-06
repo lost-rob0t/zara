@@ -101,3 +101,31 @@ def test_repeated_presentation_transition_keeps_same_widget_instance(tmp_path):
         assert id(window) == identity
     finally:
         dispose(window)
+
+
+def test_canonical_copilot_projects_complete_conversation_in_both_modes(tmp_path):
+    qt_app, _, service, window = make_window(tmp_path)
+    try:
+        conversation_id = window.current_conversation_id
+        expected_ids = []
+        for index in range(9):
+            message, _ = service.add_user_message(
+                conversation_id,
+                f"message {index}",
+                request_id=f"adaptive-message-{index}",
+            )
+            expected_ids.append(message.id)
+
+        window.sync_from_shared_state()
+        qt_app.processEvents()
+        assert list(window.message_widgets) == expected_ids
+
+        window.set_presentation(CopilotPresentation.EXPANDED)
+        qt_app.processEvents()
+        assert list(window.message_widgets) == expected_ids
+
+        window.set_presentation(CopilotPresentation.COMPACT)
+        qt_app.processEvents()
+        assert list(window.message_widgets) == expected_ids
+    finally:
+        dispose(window)
