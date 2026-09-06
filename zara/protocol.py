@@ -655,10 +655,20 @@ def _validate_device_envelope(message: ProtocolMessage) -> None:
         body = _validate_device_common(message)
         if message.reply_to is not None:
             raise ProtocolValidationError("device.action.request does not accept reply_to")
-        required = {"action_id", "capability", "args", "deadline_ns", "idempotency"}
+        required = {
+            "action_id",
+            "action_seq",
+            "capability",
+            "args",
+            "deadline_ns",
+            "idempotency",
+        }
         if set(body) != required:
             raise ProtocolValidationError("device.action.request body has invalid fields")
         _validate_ascii_token("action_id", body["action_id"], max_bytes=128)
+        action_seq = body["action_seq"]
+        if type(action_seq) is not int or action_seq <= 0:
+            raise ProtocolValidationError("device action action_seq must be positive")
         capability = _validate_device_capability_id(body["capability"])
         _validate_device_action_args(capability, body["args"])
         deadline_ns = body["deadline_ns"]

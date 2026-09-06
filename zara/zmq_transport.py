@@ -227,6 +227,7 @@ class _RouteState:
     audio_output: bool = False
     audio_inputs: dict[str, _AudioInputState] = field(default_factory=dict)
     capabilities: frozenset[str] = frozenset()
+    next_action_seq: int = 1
 
 
 @dataclass(frozen=True)
@@ -486,22 +487,6 @@ class ZaraZmqGateway:
         if deadline_ns <= _now_ns():
             raise ValueError("device action deadline has expired")
         action_id = _message_id()
-        message = ProtocolMessage(
-            type="device.action.request",
-            id=_message_id(),
-            session_id=session_id,
-            trace_id=trace_id,
-            timestamp_ns=_now_ns(),
-            payload_count=0,
-            body={
-                "action_id": action_id,
-                "capability": capability,
-                "args": dict(args),
-                "deadline_ns": deadline_ns,
-                "idempotency": idempotency,
-            },
-        )
-        encode_message(message, limits=self._limits)
         future = DeviceActionHandle(action_id)
         with self._lock:
             match = self._route_for_session_locked(principal_id, session_id)
@@ -512,6 +497,25 @@ class ZaraZmqGateway:
                 raise DeviceCapabilityUnavailable(f"device capability is unavailable: {capability}")
             if len(self._device_actions) >= self._config.pending_request_limit:
                 raise ClientBackpressureError("too many device actions are pending")
+            action_seq = state.next_action_seq
+            message = ProtocolMessage(
+                type="device.action.request",
+                id=_message_id(),
+                session_id=session_id,
+                trace_id=trace_id,
+                timestamp_ns=_now_ns(),
+                payload_count=0,
+                body={
+                    "action_id": action_id,
+                    "action_seq": action_seq,
+                    "capability": capability,
+                    "args": dict(args),
+                    "deadline_ns": deadline_ns,
+                    "idempotency": idempotency,
+                },
+            )
+            encode_message(message, limits=self._limits)
+            state.next_action_seq += 1
             self._device_actions[action_id] = _DeviceActionPending(
                 route=route,
                 principal_id=principal_id,
