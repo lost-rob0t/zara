@@ -1,0 +1,58 @@
+#+title: RAGE #324 — unified adaptive Copilot research/design r2
+
+* Exact-current reconciliation
+Research is against immutable start =c2d903fd5cf08e2d28e006cec021309142bf6834=.
+
+- =DesktopController= still imports and constructs both =FullChatWindow= and =QuickCopilotWindow= over the same =ConversationService=.
+- Controller still projects conversation/runtime/command state into both renderers and implements =expand_quick_to_full_chat= as a handoff that opens Full Chat and hides Quick.
+- =QuickCopilotWindow= still owns its own message-widget map, composer/action/cancellation request state and still truncates the canonical projection with =_MAX_VISIBLE_MESSAGES = 6=.
+- The current handoff regression tests explicitly prove the old dual-window behavior, including one local user message rendering into both windows and cancellation state being projected across the handoff. Those tests must be replaced by single-renderer continuity assertions rather than preserved as architecture.
+- Current desktop runtime ownership is already client-facing (=ZaraClient= + =QtRuntimeBridge=); #324 must not regress that boundary or introduce another runtime.
+- Current README/research already describe the dual Quick/Full split as historical/design-ready debt, so implementation is aligned with documented direction rather than inventing a new UX target.
+- Sibling Android transactions remain confined to =android/**= and no newer shared Core handoff supersedes #324 after #492 merged.
+
+* Root defect
+One durable conversation authority is being rendered by two independently stateful QWidget trees. Synchronizing those trees harder would preserve duplicate composer/message/cancellation ownership and the handoff race surface.
+
+* Selected architecture
+1. Introduce one canonical =CopilotWindow= and explicit presentation state =COMPACT|EXPANDED=.
+2. Evolve the existing Quick renderer in place first because it already owns summon/focus/close-to-hide behavior and the desktop tray path. Do not spawn an expanded proxy.
+3. Compact and expanded modes share the exact same conversation id, message widgets, composer, pending submit id and cancellation state. Presentation switching changes layout/panel visibility/geometry only.
+4. Migrate history/search/rename/new-chat behavior from =FullChatWindow= into an expanded panel before controller retirement of Full Chat.
+5. Remove the six-message projection cap from the canonical renderer; compact mode may scroll but not discard conversation presentation state.
+6. Once parity is present, =DesktopController= owns exactly one normal chat top-level and both legacy tray Quick/full signals target that same instance during compatibility migration.
+7. Preserve =ConversationService= and =QtRuntimeBridge= as authorities; presentation mode never enters durable conversation storage.
+8. Persist compact and expanded geometry independently using the existing QSettings pattern.
+9. Add deterministic fake-state screenshot rendering below =ARTIFACT_DIR/ui= with the issue-required inventory and =manifest.json=. Structural geometry/state assertions gate CI; PNG byte equality does not.
+
+* Adversarial review
+- A hidden second renderer is still a second renderer and is rejected.
+- Rebuilding message widgets on every mode switch risks draft/cancel/selection continuity and is rejected; mode transitions must retain widget identity.
+- Native window-flag churn can recreate Qt native windows; keep top-level flags stable unless a deterministic test proves otherwise.
+- History migration cannot create a second conversation selection authority.
+- Fake screenshot fixtures must use isolated temporary conversation storage and deterministic content; never user XDG state, real daemon/provider/mic/tray data, timestamps, secrets, or credentials.
+- Legacy handoff tests are expected to become RED/obsolete as the architecture changes; do not preserve them by adding compatibility duplication.
+
+* TDD slices
+** Slice A — adaptive presentation primitive
+RED before production:
+- canonical =CopilotWindow= exists with explicit compact/expanded state;
+- compact -> expanded -> compact preserves exact conversation id, composer draft and existing message-widget identities;
+- repeated transitions remain one QWidget instance and do not submit runtime commands.
+
+GREEN implementation is deliberately bounded: presentation state and geometry/layout seam only. It does not yet switch controller ownership.
+
+** Slice B — history parity
+RED then migrate search/history/rename/new-chat into the same expanded window and prove selection continuity.
+
+** Slice C — controller collapse
+RED then make default =DesktopController= construct exactly one =CopilotWindow=; legacy Quick/full tray signals target it; remove handoff/dual projection.
+
+** Slice D — full-message projection + lifecycle/geometry
+RED then remove =_MAX_VISIBLE_MESSAGES=, prove independent geometry, minimum viewport/composer bounds, close-to-hide, explicit quit, long-content bounds and repeated-mode no-leak behavior.
+
+** Slice E — deterministic screenshot CI
+RED required fixture inventory + manifest, then fake-state renderer and artifact wiring. Cover empty/short/long-wrap/stream/error/disconnected/tool/voice/expanded/history/minimum states.
+
+* Verification
+Every slice uses focused RED/GREEN first. Completion requires =scripts/test-all.sh=, =nix flake check=, packaged Zara, Android compatibility and both shared-mic lanes at exact head; no older SHA authorizes merge.
