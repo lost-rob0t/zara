@@ -141,6 +141,7 @@ object ZaraCapabilityCodec {
 
 private class CapabilityJsonParser(private val source: String) {
     private var index = 0
+    private var containerDepth = 0
 
     fun parseObject(): Map<String, Any?> {
         skipWhitespace()
@@ -167,34 +168,44 @@ private class CapabilityJsonParser(private val source: String) {
     }
 
     private fun parseObjectValue(): Map<String, Any?> {
-        expect('{')
-        skipWhitespace()
-        val result = linkedMapOf<String, Any?>()
-        if (consume('}')) return result
-        while (true) {
+        enterContainer()
+        try {
+            expect('{')
             skipWhitespace()
-            if (index >= source.length || source[index] != '"') fail("object key must be string")
-            val key = parseString()
-            if (result.containsKey(key)) fail("duplicate JSON key")
-            skipWhitespace()
-            expect(':')
-            result[key] = parseValue()
-            skipWhitespace()
+            val result = linkedMapOf<String, Any?>()
             if (consume('}')) return result
-            expect(',')
+            while (true) {
+                skipWhitespace()
+                if (index >= source.length || source[index] != '"') fail("object key must be string")
+                val key = parseString()
+                if (result.containsKey(key)) fail("duplicate JSON key")
+                skipWhitespace()
+                expect(':')
+                result[key] = parseValue()
+                skipWhitespace()
+                if (consume('}')) return result
+                expect(',')
+            }
+        } finally {
+            exitContainer()
         }
     }
 
     private fun parseArray(): List<Any?> {
-        expect('[')
-        skipWhitespace()
-        val result = mutableListOf<Any?>()
-        if (consume(']')) return result
-        while (true) {
-            result += parseValue()
+        enterContainer()
+        try {
+            expect('[')
             skipWhitespace()
+            val result = mutableListOf<Any?>()
             if (consume(']')) return result
-            expect(',')
+            while (true) {
+                result += parseValue()
+                skipWhitespace()
+                if (consume(']')) return result
+                expect(',')
+            }
+        } finally {
+            exitContainer()
         }
     }
 
@@ -278,5 +289,19 @@ private class CapabilityJsonParser(private val source: String) {
         return false
     }
 
+    private fun enterContainer() {
+        if (containerDepth >= maxContainerDepth) fail("JSON nesting exceeds depth limit")
+        containerDepth += 1
+    }
+
+    private fun exitContainer() {
+        check(containerDepth > 0)
+        containerDepth -= 1
+    }
+
     private fun fail(message: String): Nothing = throw ZaraWireException(message)
+
+    private companion object {
+        const val maxContainerDepth = 64
+    }
 }
