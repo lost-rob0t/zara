@@ -1,0 +1,24 @@
+#+title: RAGE #178 Android voice hello JSON depth bound r1
+
+* Start
+- Issue: #178
+- Immutable start: f8ba7eb9f891eddb54de71390dd942567a8866fd
+- Scope: Android-only voice hello decoder hardening.
+
+* Research
+- =ZaraVoiceHelloCodec.decodeHelloOk= bounds envelope/token fields and validates the closed hello.ok schema.
+- Its private recursive =VoiceHelloJsonParser= has no container nesting bound.
+- Canonical Android text and capability decoders use a 64-container JSON policy; voice hello must not remain an unbounded recursive exception.
+
+* Design / adversarial review
+- Bound objects and arrays together at 64 simultaneously nested containers; root object consumes one level.
+- Preserve hello.ok schema and all existing byte/type validation.
+- No Core/server/plugin or transport contract changes.
+
+* TDD map
+- RED: 64-container malformed hello reaches ordinary schema validation; 65-container input must instead fail specifically on nesting depth.
+- GREEN: parser-owned depth accounting around object/array recursive descent.
+
+* Gate
+- Focused JVM depth test.
+- =scripts/test-android.sh= and exact-head repository CI.
