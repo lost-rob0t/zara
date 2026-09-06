@@ -69,3 +69,18 @@ Fresh source reconciliation at the immutable start confirms the root defect stil
 - The CI test job now invokes =render_copilot_fixtures(Path(os.environ["ARTIFACT_DIR"]) / "ui", source_commit=os.environ["GITHUB_SHA"])= under =QT_QPA_PLATFORM=offscreen= after package build and before the existing always-run artifact upload.
 - No =android/**=, daemon, protocol, provider, microphone, persistence schema, or runtime-command path is changed by this slice.
 - Exact-head full CI result :: pending at this commit; do not merge or mark this slice complete until the exact candidate passes the full repository-native gate.
+
+* Slice F — expanded durable history/search/rename parity
+** Research / adversarial decision
+- The removed Full Chat window owns no independent durable history authority: its search/list/select/rename behavior is a Qt projection over the existing =ConversationService=. Reuse that service from the one canonical =CopilotWindow= rather than resurrecting =FullChatWindow= or copying conversation state.
+- History controls belong to expanded presentation and must disappear in compact presentation without changing the selected durable conversation.
+- Selecting history is a local view-state rebind to an existing durable conversation and must submit zero runtime commands. New chat and message submission keep using existing canonical paths.
+- Rename must mutate through =ConversationService.rename_conversation/2= so desktop and other clients continue to observe the same durable title authority.
+
+* Slice E2 — screenshot artifact provenance correction
+** Research / adversarial finding
+- CI #1827 did publish all 13 required PNGs plus =ui/manifest.json=, so artifact production itself is real.
+- The uploaded manifest records =758cf1bb5a268a601224520bd6d955af85ac6804= as =source_commit=, while the reviewed PR candidate head is =01e45f6ec7b1eb24a283917f0820431f8d4e3ed5=. =758cf1bb...= is GitHub's synthetic pull-request merge commit, not the candidate branch head.
+- For exact-head review evidence, manifest provenance must identify the candidate source head on pull requests and ordinary =github.sha= on non-PR runs. The existing structural test only checks that the string =GITHUB_SHA= appears, so it cannot detect this provenance substitution.
+- Fix the workflow environment rather than modifying the deterministic renderer: expose a dedicated source-commit value from =github.event.pull_request.head.sha || github.sha= and pass that exact value to =render_copilot_fixtures=. Keep the runner's checkout/merge SHA semantics separate from artifact source provenance.
+- RED must assert the workflow names the PR head SHA fallback expression and passes that dedicated value into the renderer. No =android/**=, runtime, daemon, provider, or UI rendering behavior changes are required.
