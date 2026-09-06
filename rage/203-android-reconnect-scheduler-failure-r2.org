@@ -1,0 +1,22 @@
+:PROPERTIES:
+:ID:       zara-rage-203-android-reconnect-scheduler-failure-r2
+:END:
+#+title: RAGE #203 — reconnect scheduler fail-closed recovery r2
+#+status: ACTIVE
+
+* Consumption
+- Issue :: #203
+- Immutable start :: 2f4bd28a9428a117f986f06b025d1a35abf5124a
+- Scope :: Android runtime/reconnect lifecycle only. No Core/protocol/plugin changes.
+
+* Recovery
+- Prior #462 exact head was green but became non-mergeable after authenticated capture invalidation landed.
+- #461 touched AndroidAppSession/manual voice only; this slice touches AndroidTextSessionController/RuntimeState and is replayed cleanly from exact current master.
+
+* Invariant
+- Reconnecting must never be observable when no retry is actually scheduled.
+- Scheduler rejection routes through the canonical reducer and fails closed with a fixed redacted reason.
+- Stale generation failure cannot degrade a newer authenticated session.
+
+* Gate
+- Exact-head Android/native/APK/secret + full repository/Nix/package + shared-mic CI is authoritative before merge.
