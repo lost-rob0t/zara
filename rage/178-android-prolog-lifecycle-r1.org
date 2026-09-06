@@ -1,0 +1,23 @@
+* RAGE #178 r1 — Android embedded-Prolog lifecycle stress proof
+
+- Consumed issue :: #178
+- Exact immutable start :: =77c1c1ac12b159e4e2b8ccc2a87fee53dfb6ec9e=
+- Scope :: Android Trealla wrapper/test evidence only. No Core/server/plugin behavior.
+
+** Research
+#178 requires repeated embedded-Prolog init/query/teardown and bounded resource behavior. Canonical JNI code already serializes one global Trealla runtime, destroys a failed consult allocation, calls =pl_done= for live queries and =pl_destroy= on shutdown. Existing JVM coverage proves one close is idempotent but did not stress repeated reuse of the bridge lifecycle.
+
+** Design / adversarial review
+Add a deterministic 512-cycle bridge test using the existing fake native API. Every cycle must initialize, evaluate, shutdown, clear the initialized state, and account for exactly one native shutdown. This catches wrapper-state/resource-owner regressions without pretending JVM fakes measure native RSS.
+
+Native memory/thread growth still requires a native/process profile; this slice is one bounded ownership proof, not completion of the whole #178 resource matrix.
+
+** TDD note
+Acceptance-coverage only: canonical behavior is expected to pass, so no production RED patch is appropriate. Fresh exact-head CI is mandatory.
+
+** Acceptance
+- 512 init/evaluate/shutdown cycles complete deterministically;
+- initialize/evaluate/shutdown call counts match exactly;
+- no cycle leaves the bridge marked initialized;
+- no production behavior changes;
+- exact-head Android/repository gates green before merge.
