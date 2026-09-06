@@ -77,6 +77,31 @@ class VoicePlaybackControllerTest {
         )
     }
 
+    @Test fun `failed PCM write stops output and clears active stream`() {
+        val sink = RecordingPcmOutput(failOnWrite = true)
+        val controller = VoicePlaybackController(sink, "session-1")
+        controller.accept(
+            VoiceStreamEvent.AudioStarted("session-1", "turn-3", "speaker-3", 24_000, 1)
+        )
+
+        assertThrows(IllegalStateException::class.java) {
+            controller.accept(
+                VoiceStreamEvent.AudioChunk(
+                    "session-1",
+                    "turn-3",
+                    "speaker-3",
+                    0,
+                    byteArrayOf(1, 0),
+                )
+            )
+        }
+
+        assertEquals(null, controller.state().audio)
+        assertEquals(listOf("start:24000:1", "write:2", "stop"), sink.calls)
+        controller.close()
+        assertEquals(listOf("start:24000:1", "write:2", "stop", "close"), sink.calls)
+    }
+
     @Test fun `barge in returns interrupted turn stops speaker immediately and rejects late chunk`() {
         val sink = RecordingPcmOutput()
         val controller = VoicePlaybackController(sink, "session-1")
@@ -139,6 +164,7 @@ class VoicePlaybackControllerTest {
 
 private class RecordingPcmOutput(
     private val failOnStartNumber: Int? = null,
+    private val failOnWrite: Boolean = false,
 ) : PcmOutput {
     val calls = mutableListOf<String>()
     private var startCount = 0
@@ -151,6 +177,7 @@ private class RecordingPcmOutput(
 
     override fun write(pcm: ByteArray) {
         calls += "write:${pcm.size}"
+        if (failOnWrite) throw IllegalStateException("write failed")
     }
 
     override fun stop() {
