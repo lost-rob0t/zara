@@ -22,3 +22,25 @@ Fresh source reconciliation at the immutable start confirms the root defect stil
 - =d4d75d46e74bab5fbcf178ea463bc720b81f5282= introduces =CopilotPresentation= and =CopilotWindow= as an in-place evolution seam over the existing Quick renderer. The legacy =Full Chat= button is disconnected from handoff behavior inside this canonical surface and toggles its own presentation instead.
 - =3ace55d7b9957b7a932e4201e371c28e2d697405= exports the canonical adaptive surface without switching =DesktopController= ownership yet.
 - This slice deliberately does not create a second renderer, runtime, conversation store, or Android path. Controller collapse, history parity, full-message projection/geometry and screenshot CI remain later RED/GREEN slices in this same #324 transaction; the PR must not merge before the issue-level first implementation slice includes screenshot evidence.
+
+* Slice B — deterministic screenshot fixture harness
+** RED
+- Test-only head :: =a8641c410407a79cdb8d8dff35f4d041b3c0eb94=
+- CI :: #1783
+- Result :: Core failed because =zara.desktop.ui_fixtures= did not exist. The RED requires the exact 13 #324 fixture names, positive rendered dimensions, PNG signatures, theme/source-commit/path manifest evidence, and isolation from the caller's XDG data directory.
+- Both shared-mic lanes remained green; this was a bounded Core UI harness failure, not an Android/runtime regression.
+
+** GREEN implementation
+- Implementation :: =8ff01894a15b2f032b1975b6ec01fd8f11eae445=
+- =zara/desktop/ui_fixtures.py= renders the closed 13-state matrix with =QWidget.grab()= against temporary conversation databases and explicit temporary =QSettings= files. It does not connect to a daemon/provider, microphone, network, tray, or user-owned XDG state.
+- CI :: #1785 on exact head =8ff01894a15b2f032b1975b6ec01fd8f11eae445=
+- Result :: fully GREEN: =scripts/test-all.sh=, =nix flake check=, packaged Zara, Android unit/native/Trealla/debug-APK/secret compatibility, and both Arch/Ubuntu shared-mic lanes all passed.
+- Remaining acceptance gap :: the harness can write =artifacts/ui= when called, but current CI does not yet invoke it. A later RED/GREEN slice in this same issue must add an always-run deterministic render step so the existing artifact uploader actually publishes the PNGs and manifest.
+
+* Slice C — collapse process ownership to one Copilot renderer
+** Research / adversarial decision
+- The duplication boundary is =DesktopController=, not =ConversationService= or the daemon/client protocol. Current normal construction owns two QWidget renderers and fans status/conversation/runtime updates into both.
+- The bounded migration is one process-owned =CopilotWindow= with =quick_window= retained temporarily only as an object-identity compatibility alias to =window=. This preserves callers/tests while removing the duplicate renderer.
+- Full-chat entrypoints must switch the same object to =EXPANDED= and show it; they must not hand off/copy state or hide another window.
+- Any fan-out/close/status paths must identity-deduplicate the alias so one surface never receives an update or close twice.
+- No daemon, protocol, provider, conversation-store, or Android path changes are required for this slice.
