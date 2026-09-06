@@ -71,7 +71,11 @@ async def test_routerless_agent_runtime_preserves_tool_capable_turns():
 async def test_command_never_reaches_llm_after_deterministic_failure():
     manager = FakeManager()
     router = FakeRouter(RouteDecision("delegate"), [])
-    backend = LangGraphRuntimeBackend(lambda: manager, router=router)
+    backend = LangGraphRuntimeBackend(
+        lambda: manager,
+        router=router,
+        semantic_first=True,
+    )
     await backend.start()
 
     result = await backend.submit_turn(
@@ -92,7 +96,11 @@ async def test_successful_timer_route_returns_without_llm():
         RouteDecision("respond", "Executed: timer [7200, '']"),
         [],
     )
-    backend = LangGraphRuntimeBackend(lambda: manager, router=router)
+    backend = LangGraphRuntimeBackend(
+        lambda: manager,
+        router=router,
+        semantic_first=True,
+    )
     await backend.start()
 
     result = await backend.submit_turn(
@@ -109,7 +117,11 @@ async def test_successful_timer_route_returns_without_llm():
 async def test_conversational_text_still_uses_llm_fallback():
     manager = FakeManager()
     router = FakeRouter(RouteDecision("delegate"), [])
-    backend = LangGraphRuntimeBackend(lambda: manager, router=router)
+    backend = LangGraphRuntimeBackend(
+        lambda: manager,
+        router=router,
+        semantic_first=True,
+    )
     await backend.start()
 
     result = await backend.submit_turn(
