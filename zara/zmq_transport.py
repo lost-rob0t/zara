@@ -1378,7 +1378,8 @@ class ZaraZmqGateway:
                 [route, *encode_message(message, payloads=payloads, limits=self._limits)],
                 flags=zmq.NOBLOCK,
             )
-        except (zmq.Again, zmq.ZMQError):
+        except (zmq.Again, zmq.ZMQError) as error:
+            logger.warning("outbound send failed: %s", type(error).__name__)
             self._drop_route(route)
 
     def close(self, timeout: Optional[float] = None) -> None:

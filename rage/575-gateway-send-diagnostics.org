@@ -1,0 +1,31 @@
+#+title: RAGE #575 — preserve bounded gateway send-failure diagnostics
+
+* RAGE start
+- Consumed issue: #575 — intermittent stock secure ZaraServer/JeroMQ text-turn timeout.
+- Immutable start SHA: =bea53760a6c1e91bb0671a509985498d760a49d5=.
+- Original RED branch: =rage/575-gateway-send-diagnostics=.
+- Exact-current recovery base: =e6c90b274d285444520bd8372efe396c5f4cf24f=.
+- Recovery branch: =rage/575-gateway-send-diagnostics-current=.
+- Core-only scope: =zara/zmq_transport.py=, one focused Core test, and this evidence. Zero =android/**=.
+
+* Evidence
+- The stock interop timeout presents to Android as a generic receive timeout; historical evidence does not identify whether acceptance or a later runtime event was lost.
+- The gateway owner thread sends protocol replies/events through =ZaraZmqGateway._send=.
+- =_send= uses =zmq.NOBLOCK= and currently catches =zmq.Again= / =zmq.ZMQError= by dropping the route with no log entry.
+- Therefore a transient or hard outbound send failure can intentionally disconnect the route while leaving the stock-server log silent, defeating #578's preserved server-log diagnostics.
+
+* Selected slice
+- Preserve the existing fail-closed route-drop behavior exactly; this transaction does not change backpressure/retry semantics.
+- Before dropping the route, emit one bounded warning containing only the exception class.
+- Never log the route identity, protocol message, payload, endpoint, key material, or exception string.
+
+* RED acceptance
+- A fake ROUTER socket raises =zmq.Again= from =send_multipart=.
+- =_send= still drops that exact route once.
+- A warning is emitted identifying only =Again= as the outbound failure class.
+- The test uses a deliberately sensitive-looking route token and asserts that token does not appear in logs.
+- Original RED CI: #1870 failed as expected on =0012a57d52ee7c81c40964a3df261449f5c69813=.
+
+* GREEN acceptance
+- Same behavior for the existing =zmq.Again= / =zmq.ZMQError= catch path, with no retry or timeout changes.
+- Full exact-head repository gates required before merge.
