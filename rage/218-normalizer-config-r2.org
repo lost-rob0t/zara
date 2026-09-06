@@ -1,0 +1,53 @@
+#+title: RAGE #218 — transcript-normalizer configuration r2
+
+* Transaction
+- Consumed issue :: #218
+- Immutable start :: =e1b86f17debe88f6d7190379b0ae3f1522d70b29=
+- Branch :: =rage/218-normalizer-config-r2=
+- Scope :: Zara Core config contract/tests only; zero =android/**= changes.
+
+* Prior iteration evidence
+- r1 / PR #479 was retired unmerged even though exact-head CI had started.
+- Reason: production code was committed before its deterministic tests, violating =AGENTS.md= and =skills/rage/SKILL.md= RED-first ordering. r1 may inform research but cannot be recovered as an implementation candidate.
+
+* Dependency / source research
+- #216 is canonical.
+- #217 merged as PR #477 at this exact start commit before #218 was consumed.
+- Existing =ZaraConfig= remains the single XDG TOML authority and owns explicit =reload()= semantics; #218 must not add a watcher or second settings store.
+- Landed =S1MiniTranscriptNormalizer= accepts an endpoint origin and appends =/v1/chat/completions= itself.
+- Landed trained controls are styling =casual|semi-casual|semi-formal|formal=, structure =prose|lists=, context =general|email=; therefore the issue's older =balanced= and =base_url=...=/v1= example is stale.
+
+* Selected first slice
+Add a pure immutable configuration descriptor/validator that can later be wired into existing =ZaraConfig= without creating another persistence authority.
+
+Invariants:
+- default normalization stays =off=;
+- backend and failure policy are closed sets;
+- S1-mini runtime is exactly =openai-compatible=;
+- configured endpoint is an absolute credential-free HTTP(S) origin, never a URL containing the provider-owned =/v1= suffix, userinfo, query, or fragment;
+- localhost/IP loopback locality is explicit; RFC1918/LAN is not mislabeled loopback-local;
+- model and provider controls are bounded/closed;
+- timeout rejects booleans, non-finite values, and values outside 50..30000 ms;
+- configuration objects contain no transcript bodies or secret-bearing fields.
+
+Rejected alternatives:
+- second desktop/settings store :: duplicates ZaraConfig authority;
+- implicit Ollama model start/download :: hidden lifecycle/network side effect;
+- accept =/v1= and repair provider URL later :: creates ambiguous/double-suffix behavior;
+- treat RFC1918 as local :: masks a network privacy boundary;
+- live watcher in this slice :: existing explicit reload/reconstruction semantics are safer and already owned.
+
+* Acceptance -> tests before production
+1. Defaults are off/raw/auto and loopback-local.
+2. Valid S1-mini config projects exact landed provider values.
+3. Unknown backend/failure/runtime fail closed.
+4. Credentials/path/query/fragment/non-HTTP endpoint forms fail closed.
+5. IPv4/IPv6 localhost versus remote/LAN locality is deterministic.
+6. Timeout boundary rejects 49, 30001, <=0, bool, NaN and infinities.
+7. Stale/unsupported styling, structure and context fail closed.
+
+* RED gate
+Commit deterministic tests before production code. Because this automation environment has no checked-out repository/Nix shell, use exact-head GitHub Actions as the executable RED witness. Do not add production implementation until the test job fails for the expected missing =zara.transcript_normalization_config= module.
+
+* Final gate
+After GREEN implementation: focused tests, =scripts/test-all.sh=, =nix flake check=, packaged Zara, Android compatibility/APK/native/secret, and both shared-mic lanes at exact candidate head. Historical CI never authorizes merge.
