@@ -1,0 +1,38 @@
+name: RAGE 575 apply green
+
+on:
+  push:
+    branches:
+      - rage/575-gateway-send-diagnostics-current
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[rage-575-green]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rage/575-gateway-send-diagnostics-current
+          fetch-depth: 0
+      - name: Apply bounded gateway diagnostic
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('zara/zmq_transport.py')
+          text = path.read_text()
+          before = '''        except (zmq.Again, zmq.ZMQError):\n            self._drop_route(route)\n'''
+          after = '''        except (zmq.Again, zmq.ZMQError) as error:\n            logger.warning("outbound send failed: %s", type(error).__name__)\n            self._drop_route(route)\n'''
+          if text.count(before) != 1:
+              raise SystemExit(f'expected exactly one gateway send catch, found {text.count(before)}')
+          path.write_text(text.replace(before, after))
+          PY
+          rm .github/workflows/rage-575-apply-green.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add zara/zmq_transport.py .github/workflows/rage-575-apply-green.yml
+          git commit -m 'fix: expose bounded gateway send failure [rage-575-green]'
+          git push origin HEAD:rage/575-gateway-send-diagnostics-current
