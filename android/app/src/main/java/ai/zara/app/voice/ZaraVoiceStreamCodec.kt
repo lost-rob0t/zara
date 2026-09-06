@@ -222,6 +222,7 @@ object ZaraVoiceStreamCodec {
 
 private class VoiceStreamJsonParser(private val source: String) {
     private var index = 0
+    private var containerDepth = 0
 
     fun parseObject(): Map<String, Any?> {
         skipWhitespace()
@@ -236,14 +237,24 @@ private class VoiceStreamJsonParser(private val source: String) {
         skipWhitespace()
         if (index >= source.length) fail("unexpected end of JSON")
         return when (source[index]) {
-            '{' -> parseObjectValue()
-            '[' -> parseArray()
+            '{' -> inContainer { parseObjectValue() }
+            '[' -> inContainer { parseArray() }
             '"' -> parseString()
             't' -> parseLiteral("true", true)
             'f' -> parseLiteral("false", false)
             'n' -> parseLiteral("null", null)
             '-', in '0'..'9' -> parseInteger()
             else -> fail("invalid JSON value")
+        }
+    }
+
+    private fun <T> inContainer(parse: () -> T): T {
+        if (containerDepth >= maxContainerDepth) fail("JSON nesting depth exceeds limit")
+        containerDepth += 1
+        return try {
+            parse()
+        } finally {
+            containerDepth -= 1
         }
     }
 
@@ -356,4 +367,8 @@ private class VoiceStreamJsonParser(private val source: String) {
     }
 
     private fun fail(message: String): Nothing = throw ZaraWireException(message)
+
+    private companion object {
+        const val maxContainerDepth = 64
+    }
 }
