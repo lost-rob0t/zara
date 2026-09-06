@@ -1,0 +1,24 @@
+* RAGE #178 — bound Android inbound audio payload memory
+
+- Consumed issue :: #178
+- Exact immutable start :: =93e6bc371c866eed9cc52b3169bf35a8d8dbb74c=
+- Scope :: Android voice codec/test/evidence only. No Core/server/plugin implementation.
+
+** Analyze
+Canonical =ZaraVoiceStreamCodec= bounded the JSON envelope and validated PCM alignment, but accepted an arbitrarily large =audio.output.chunk= payload and then copied it. That left an authenticated malformed/oversized wire frame able to force unbounded per-message Android heap pressure before the playback actor's queue/backpressure policy could help.
+
+** Design / adversarial review
+Keep the existing one voice decoder/playback owner. Add an absolute Android client ceiling at the decode boundary, before copying payload bytes. One MiB matches the established ZARA/1 default/max-frame profile used by Android hello fixtures while still allowing large PCM chunks; negotiated/server limits may be tighter, but cannot relax this local safety ceiling.
+
+Rejected: relying only on playback backpressure (too late, payload already allocated/copied); silently truncating PCM (would fabricate audio); adding a second transport/frame parser.
+
+** TDD
+RED commit =2a70083bd7a8ea0e527896da48f672cd32eea5d3= adds a boundary test: exactly 1 MiB accepted, 1 MiB + 2 bytes rejected. Canonical pre-fix code has no upper-size check, so the oversize assertion is intentionally red against the immutable start.
+
+GREEN commit =57d3f335edabd868c191ce010271ae6440ea520f= adds the one-MiB fail-closed check before =pcm.copyOf()=.
+
+** Acceptance
+- <= 1 MiB whole pcm_s16le payload remains accepted;
+- > 1 MiB payload fails closed with =ZaraWireException= before copy/playback;
+- no truncation, alternate decoder, or Core/protocol change;
+- fresh exact-head Android/full repository CI required before promotion/merge.
