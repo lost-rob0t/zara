@@ -5,7 +5,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QRect, QSettings, Signal
 from PySide6.QtWidgets import QApplication
 
 from zara.database import DatabaseManager
@@ -37,13 +37,13 @@ class FakeBridge(QObject):
         return future
 
 
-def make_window(tmp_path):
+def make_window(tmp_path, *, settings: QSettings | None = None):
     qt_app = app()
     bridge = FakeBridge()
     service = ConversationService(
         ConversationStore(DatabaseManager(tmp_path / "adaptive-copilot.db"))
     )
-    window = CopilotWindow(bridge, service)  # type: ignore[arg-type]
+    window = CopilotWindow(bridge, service, settings=settings)  # type: ignore[arg-type]
     qt_app.processEvents()
     return qt_app, bridge, service, window
 
@@ -127,5 +127,33 @@ def test_canonical_copilot_projects_complete_conversation_in_both_modes(tmp_path
         window.set_presentation(CopilotPresentation.COMPACT)
         qt_app.processEvents()
         assert list(window.message_widgets) == expected_ids
+    finally:
+        dispose(window)
+
+
+def test_compact_and_expanded_geometry_are_saved_and_restored_independently(tmp_path):
+    settings = QSettings(str(tmp_path / "copilot.ini"), QSettings.Format.IniFormat)
+    qt_app, _, _, window = make_window(tmp_path, settings=settings)
+    try:
+        compact = QRect(24, 28, 520, 360)
+        expanded = QRect(42, 46, 720, 520)
+
+        window.setGeometry(compact)
+        window.set_presentation(CopilotPresentation.EXPANDED)
+        qt_app.processEvents()
+
+        window.setGeometry(expanded)
+        window.set_presentation(CopilotPresentation.COMPACT)
+        qt_app.processEvents()
+        assert window.geometry() == compact
+
+        window.set_presentation(CopilotPresentation.EXPANDED)
+        qt_app.processEvents()
+        assert window.geometry() == expanded
+
+        compact_saved = settings.value("desktop/copilot/compact-geometry")
+        expanded_saved = settings.value("desktop/copilot/expanded-geometry")
+        assert compact_saved == compact
+        assert expanded_saved == expanded
     finally:
         dispose(window)
