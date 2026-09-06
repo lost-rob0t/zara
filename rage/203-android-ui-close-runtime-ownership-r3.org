@@ -1,0 +1,8 @@
+* RAGE #203 / #178 r3 — app-scoped assistant runtime survives UI destruction
+
+- Consumed issues :: #203, #178
+- Exact immutable start :: =457c8cc6e489e4a38bdf0bc4acd0b822a3f43b3a=
+- Recovered from :: PR #511 / head =d6d21ddac1e06b1deff5ed4368c62e925b7bbf33=
+- Scope :: Android regression/evidence only.
+
+#510 advanced canonical master after the prior proof completed. Reapply only the disjoint ownership contract: Application owns the shared AndroidAppSession; MainActivity and VoiceInteractionSession resolve it; activity destruction detaches observers without closing/disconnecting the process-scoped runtime. Fresh exact-head CI is required.
