@@ -1,0 +1,36 @@
+#+title: RAGE #178 — Android adversarial release matrix
+
+* Iteration 1
+:PROPERTIES:
+:START_SHA: a88ad71d5b81e83cf32e20bf26c6d592f947a4d2
+:ISSUE: 178
+:END:
+
+** Research
+- Canonical Android gate already composes shared semantic parity, pinned Trealla native build, stock ZaraServer interoperability, all debug JVM tests, debug APK assembly, and APK secret-marker inspection.
+- Recent #203 slices already cover authenticated-session capture invalidation, stale playback invalidation, Assistant role loss, cross-process state-store isolation, reconnect scheduler rejection, audio-route rollback failures, bounded UI/voice diagnostic redaction, and asynchronous recorder failure propagation.
+- #178 therefore should compose existing authoritative gates instead of inventing a second Android test runner. Hardware claims remain owned by #179/#206.
+
+** Design
+Add one non-interactive release entrypoint that:
+1. records exact source SHA and dirty-tree status before execution;
+2. runs the authoritative Android gate unchanged;
+3. emits a machine-readable evidence manifest identifying deterministic coverage and explicitly pending hardware-only cases;
+4. fails if the APK or manifest cannot be associated with the exact source SHA.
+
+Rejected: duplicating individual Gradle test filters. The complete debug JVM suite is already authoritative and duplication would drift.
+Rejected: claiming Samsung hardware PASS from CI. Hardware remains explicit PENDING.
+
+Invariants:
+- no secret-bearing diagnostic output;
+- no skipped/xfail/false-green path around scripts/test-android.sh;
+- exact source SHA is evidence, not inferred from artifact naming;
+- hardware-only cases can never be marked PASS by this script.
+
+** TDD / harness note
+This slice creates the release harness itself, so ordinary behavior-first RED is not applicable. The acceptance test is the script's fail-closed contract: it delegates to the existing authoritative gate and only writes PASS evidence after that command succeeds.
+
+** Verification
+- focused: nix develop .#android -c bash scripts/test-android-release.sh
+- authoritative Android: transitively scripts/test-android.sh
+- full repo/Nix and exact-head GitHub Actions remain required before merge.
