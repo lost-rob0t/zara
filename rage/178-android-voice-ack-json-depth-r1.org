@@ -1,0 +1,24 @@
+#+title: RAGE #178 Android voice acknowledgement JSON depth bound r1
+
+* Start
+- Issue: #178
+- Immutable start: f8ba7eb9f891eddb54de71390dd942567a8866fd
+- Scope: Android-only voice acknowledgement decoder hardening.
+
+* Research
+- =ZaraVoiceAckCodec.decode= bounds the envelope and validates a closed acknowledgement/error schema.
+- Its private recursive =VoiceJsonParser= has no container nesting bound.
+- Adjacent Android text/capability decoders enforce a 64-container JSON policy.
+
+* Design / adversarial review
+- Apply the same 64-container policy to objects and arrays; root object consumes one level.
+- Preserve acknowledgement schema, correlation, byte limits, and protocol.error behavior.
+- No Core/server/plugin changes.
+
+* TDD map
+- RED: 64 nested containers reach normal schema rejection; 65 must fail specifically on nesting depth.
+- GREEN: parser-owned container depth accounting around recursive object/array descent.
+
+* Gate
+- Focused JVM depth test.
+- =scripts/test-android.sh= and exact-head repository CI.
