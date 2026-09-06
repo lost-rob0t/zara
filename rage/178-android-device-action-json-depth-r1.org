@@ -1,0 +1,24 @@
+#+title: RAGE #178 Android device action JSON depth bound r1
+
+* Start
+- Issue: #178
+- Immutable start: f8ba7eb9f891eddb54de71390dd942567a8866fd
+- Scope: Android-only typed device-action decoder hardening.
+
+* Research
+- =ZaraDeviceActionCodec.decodeServerMessage= has a 64 KiB envelope bound and a closed typed device action schema.
+- Its private recursive =DeviceJsonParser= has no container nesting bound.
+- Android text/capability decoders use a 64-container JSON policy; typed side-effect requests should not retain an unbounded recursive parser.
+
+* Design / adversarial review
+- Apply one 64-container bound across objects and arrays; root object consumes one level.
+- Preserve typed capability/action validation, correlation, replay semantics, and all byte limits.
+- Do not alter Core's open replay-horizon contract (#492) or Core-owned transaction.
+
+* TDD map
+- RED: 64-container malformed request reaches ordinary schema rejection; 65 must fail specifically on nesting depth.
+- GREEN: parser-owned depth accounting around object/array recursion.
+
+* Gate
+- Focused JVM depth test.
+- =scripts/test-android.sh= and exact-head repository CI.
