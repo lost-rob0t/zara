@@ -129,3 +129,47 @@ def test_canonical_copilot_projects_complete_conversation_in_both_modes(tmp_path
         assert list(window.message_widgets) == expected_ids
     finally:
         dispose(window)
+
+
+def test_expanded_history_search_selection_and_rename_use_same_renderer(tmp_path):
+    qt_app, bridge, service, window = make_window(tmp_path)
+    try:
+        original_id = window.current_conversation_id
+        service.rename_conversation(original_id, "Original chat")
+        target = service.create_conversation(title="Target history chat")
+        service.add_user_message(
+            target.conversation.id,
+            "history target message",
+            request_id="history-target-message",
+        )
+
+        assert window.presentation is CopilotPresentation.COMPACT
+        assert window.history_panel.isHidden()
+
+        identity = id(window)
+        window.set_presentation(CopilotPresentation.EXPANDED)
+        window.refresh_history("Target history")
+        qt_app.processEvents()
+
+        assert not window.history_panel.isHidden()
+        assert window.history_list.count() == 1
+        item = window.history_list.item(0)
+        assert item.text() == "Target history chat"
+        window.history_list.itemActivated.emit(item)
+        qt_app.processEvents()
+
+        assert id(window) == identity
+        assert window.current_conversation_id == target.conversation.id
+        assert bridge.commands == []
+
+        window.rename_current("Renamed in Copilot")
+        qt_app.processEvents()
+        assert service.get_state(target.conversation.id).conversation.title == "Renamed in Copilot"
+        assert window.title_label.text() == "Renamed in Copilot"
+
+        window.set_presentation(CopilotPresentation.COMPACT)
+        qt_app.processEvents()
+        assert window.history_panel.isHidden()
+        assert window.current_conversation_id == target.conversation.id
+    finally:
+        dispose(window)
