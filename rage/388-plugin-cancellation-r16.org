@@ -1,0 +1,22 @@
+#+title: RAGE #388 r16 — isolate canonical ToolNode dispatch before cancellation transport
+
+* RAGE start
+- Consumed issue: #388 — Plugin API: propagate canonical cancellation to running service tools
+- Immutable start SHA: =2da13cb08d15f268e355171ba56f0decde238126=
+- Branch: =rage/388-plugin-cancellation-r16=
+- Scope: Zara Core only; zero =android/**= changes.
+
+* Prior exact-head evidence
+- r15 / PR #463 is retired unmerged. CI #1647 failed exactly three cancellation acceptance tests while Android and both shared-mic lanes passed.
+- All three failures time out before plugin-body entry: sync =entered= never sets, async =entered= never sets, and concurrent first invocation never enters.
+- r15's direct =test_registered_wrapper_reaches_original_body= passed. Therefore the public cancellation wrapper itself can reach the original BaseTool body when invoked directly.
+- The distinguishing boundary is canonical =create_tools_node= -> LangGraph =ToolNode.ainvoke=, not cancellation signal ordering.
+
+* Research constraint
+Do not select another cancellation transport yet. First characterize the exact pinned ToolNode dispatch behavior with no cancellation semantics:
+1. prove whether ToolNode calls a registered BaseTool's public =ainvoke= override or bypasses it for internal =_run/_arun= dispatch;
+2. prove the exact input shape received by that public/internal boundary;
+3. compare direct registered-tool invocation against one-call ToolNode invocation;
+4. keep approval, registry identity and runtime event logic out of this characterization so the result isolates LangGraph/LangChain dispatch itself.
+
+If ToolNode bypasses public =ainvoke=, r15's failure is explained and r16 can design around the actual canonical dispatch seam without reviving ContextVar/InjectedState/schema-argument designs already falsified in r5-r15. If ToolNode does call public =ainvoke=, the next research step must isolate input/config/schema handling inside that call before changing cancellation semantics.
