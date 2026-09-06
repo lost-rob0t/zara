@@ -50,6 +50,22 @@ jobs:
       - name: Build packaged Zara
         run: nix build
 
+      - name: Render deterministic Copilot screenshots
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          nix develop -c python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from zara.desktop.ui_fixtures import render_copilot_fixtures
+
+          render_copilot_fixtures(
+              Path(os.environ["ARTIFACT_DIR"]) / "ui",
+              source_commit=os.environ["GITHUB_SHA"],
+          )
+          PY
+
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
