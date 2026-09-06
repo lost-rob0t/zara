@@ -1,0 +1,36 @@
+#+title: RAGE #216 — provider-neutral transcript normalization contract r1
+
+* Transaction
+- Consumed issue :: #216
+- Immutable start :: =2f4bd28a9428a117f986f06b025d1a35abf5124a=
+- Branch :: =rage/216-transcript-normalization-contract-r1=
+- Scope :: Zara Core only; zero =android/**= changes.
+
+* RED / acceptance
+The first commit =4a18df2a76b49a2419aafabaa210540d1aa37499= adds the focused contract tests before the implementation module exists. The tests specify byte-preserving =off= behavior, registry duplicate/unknown handling, bounded input/output, typed timeout/unavailable/unsupported-language outcomes, stale-turn rejection before and after provider execution, and explicit caller-owned raw/fail-turn policy.
+
+* Architecture
+- One post-STT provider-neutral service; this slice does not create a second voice coordinator or STT path.
+- =IdentityTranscriptNormalizer= is the canonical =off= backend and performs no text transformation.
+- Providers are selected through a bounded registry rather than coordinator =if/elif= growth.
+- The normalizer receives only final transcript text plus language/turn/trace correlation. It receives no tools, RuntimeHost, plugin registry or execution authority.
+- Provider output is re-projected into Core-owned typed status/model/version fields and bounded before use.
+- A caller-supplied current-turn predicate fences stale work before and after provider execution.
+- Failure fallback is explicit above the provider via =select_normalized_text=; providers cannot silently choose raw fallback or increase authority.
+- No transcript body is logged or persisted by this module.
+
+* Adversarial review
+- oversized input never enters a provider;
+- empty/non-text/oversized provider output is invalid;
+- unknown backend is typed unavailable;
+- provider timeout is typed and bounded;
+- a turn made stale during provider work cannot return usable normalized text;
+- unsupported language remains an explicit status rather than an implicit rewrite;
+- provider-supplied backend/model metadata cannot replace the registry-owned provider identity;
+- normalizer output remains untrusted user text and has no action authority.
+
+* Deferred integration
+Issue #219 owns wiring this seam after canonical final-transcript acceptance and before semantic routing/dictation output. This r1 does not mutate voice routing, conversation persistence, or Android production. Cancellation of provider-native inference beyond stale-turn fencing remains provider/backend integration work and must preserve the canonical voice/turn cancellation path.
+
+* Merge gates
+Focused tests, full =scripts/test-all.sh=, =nix flake check=, packaged Zara, Android compatibility, both shared-mic lanes, exact-current-head CI, and zero unresolved review threads.
