@@ -1,0 +1,11 @@
+{
+  "schema": "zara.voice-fixture.v1",
+  "id": "dictation-long-content",
+  "phrase": "The goal of this paragraph is to test longer form dictation, natural pauses, punctuation, and whether Zara preserves the order of words across multiple clauses.",
+  "audio": "dictation-long-content.wav",
+  "seconds": 12,
+  "sample_rate_hz": 16000,
+  "channels": 1,
+  "expected_transcript": "The goal of this paragraph is to test longer form dictation, natural pauses, punctuation, and whether Zara preserves the order of words across multiple clauses.",
+  "tags": ["dictation", "content-generation", "long-form", "human-speech"]
+}
