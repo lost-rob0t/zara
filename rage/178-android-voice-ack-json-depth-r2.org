@@ -1,0 +1,24 @@
+#+title: RAGE #178 Android voice acknowledgement JSON depth bound r2
+
+* Start
+- Issue: #178
+- Immutable recovery start: 23260e1598c85641effae3ec573ff66930cdc2f0
+- Prior transaction: PR #531 at 37799d44f2596fcaa0f54734852d28699ad0bccd
+- Scope: Android-only voice acknowledgement decoder hardening.
+
+* Recovery evidence
+- Prior RED/GREEN transaction established the 64-container boundary and passed the full repository, flake/package, Android unit/native/debug-APK/secret, and Ubuntu shared-mic gates.
+- Prior exact-head CI #1769 was not promotable because the independent Arch shared-mic concurrent-capture probe failed.
+- Canonical master then advanced through Android PR #530, so prior CI is historical evidence only.
+- This recovery starts from exact current master and recreates the tested Android production/test blobs without Core/server/plugin changes.
+
+* Design / adversarial review
+- Keep the shared 64-container JSON policy: the root object consumes one level; nested objects and arrays share one parser-owned budget.
+- Preserve acknowledgement schema, correlation, byte limits, and protocol.error behavior.
+- Depth accounting is finally-safe so failed nested parses cannot poison a later parse instance.
+
+* Gate
+- Focused JVM depth boundary test.
+- scripts/test-android.sh including native Trealla, debug APK, and secret inspection.
+- Full repository/Nix/package and both shared-mic lanes.
+- Fresh exact-head GitHub Actions is authoritative before merge.
