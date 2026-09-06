@@ -1,0 +1,18 @@
+#+title: RAGE #218 — transcript normalizer config/status r1
+
+* Transaction
+- Consumed issue :: #218
+- Immutable RAGE start :: =e1b86f17debe88f6d7190379b0ae3f1522d70b29=
+- Branch :: =rage/218-normalizer-config-status-r1=
+- Scope :: Zara Core config/normalization/diagnostics/tests/docs only; zero =android/**= changes.
+
+* Dependency proof
+- #216 provider-neutral transcript normalization contract is canonical.
+- #217 local S1-mini provider merged immediately before this transaction as canonical master =e1b86f17debe88f6d7190379b0ae3f1522d70b29=.
+
+* Initial constraints carried into research
+- =ZaraConfig= remains the single XDG TOML authority; no second settings store or watcher.
+- Existing explicit =ZaraConfig.reload()= is the default lifecycle boundary unless runtime ownership proves a safe live provider swap.
+- #217 accepts an endpoint origin and appends =/v1/chat/completions=; #218 must not blindly persist the stale issue example ending in =/v1=.
+- #217 supports =semi-formal=, not the stale =balanced= style example.
+- Diagnostics must never expose transcript text, credentials, endpoint userinfo, or secret-looking values.
