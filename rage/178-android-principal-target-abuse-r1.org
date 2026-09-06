@@ -1,0 +1,22 @@
+* RAGE #178 r1 — Android principal/device target injection proof
+
+- Consumed issue :: #178
+- Exact immutable start :: =77c1c1ac12b159e4e2b8ccc2a87fee53dfb6ec9e=
+- Scope :: Android ZARA/1 device-action adversarial proof only. No Core/protocol/plugin implementation.
+
+** Research
+The canonical device-action codec already rejects unknown envelope/body fields and binds actions to the authenticated live session. The #178 matrix explicitly requires wrong target principal/device/session coverage, but Android only had explicit stale-session actor coverage. Payload-supplied =principal_id= or =device_id= targeting was an undocumented proof gap even though current closed-schema behavior should reject it.
+
+Malformed/oversized text envelopes and URI/intent scheme abuse already have dedicated Android tests, so duplicating those would add little value.
+
+** Design / adversarial cases
+Add deterministic codec-level cases for =principal_id= and =device_id= injected both into the action body and top-level envelope. All must throw =ZaraWireException= before any actor/adapter execution can occur. Do not add new target fields or a second authorization path.
+
+** TDD note
+This is acceptance-coverage only: no production behavior is changed. The current closed schema is expected to satisfy the new proof immediately, so a RED production cycle is not applicable. Fresh exact-head CI remains mandatory.
+
+** Acceptance
+- payload-supplied principal targeting is rejected;
+- payload-supplied device targeting is rejected;
+- authenticated session remains the only Android action routing identity present in the payload schema;
+- full exact-head CI green before merge.
