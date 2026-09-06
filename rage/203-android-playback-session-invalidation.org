@@ -1,0 +1,22 @@
+* RAGE #203 / #178 — invalidate stale Android playback on authenticated-session loss
+
+- Consumed issues :: #203, #178
+- Exact immutable start :: =5f17f167850c87fe04ca30a525819b2d2a11ae98=
+- Scope :: Android runtime/voice lifecycle only. No Core/server/plugin implementation.
+
+** Analyze
+=VoiceStreamSinkActor.reset()= already owns serialized playback teardown, but =AndroidAppSession.observeRuntimeState= only forwarded runtime changes to microphone capture. On daemon/network loss, =RuntimeState= clears =sessionId= while active speaker playback could remain owned by the old authenticated session.
+
+** Threat / design
+Stale TTS from a dead/replaced authenticated session must be invalidated through the existing single playback owner. Track only the currently Connected runtime session. When it disappears or changes, request =voiceStreamSink.reset()= before publishing the new runtime state to UI observers. Do not add a second audio owner or invent resume semantics.
+
+** TDD
+- RED =81400685ef5be3e2cfadfa97a7b5afce6c38f867=: contract requires session-loss playback reset before runtime publication.
+- GREEN =e65db32da19dc01a6e4b55ad6baf5300b844d4a8=: app session fences playback to the authenticated Connected session and resets stale playback on loss/replacement.
+
+** Acceptance
+- role-only state changes in the same connected session do not reset playback;
+- leaving/replacing the authenticated session invalidates old playback through =VoiceStreamSinkActor=;
+- runtime UI publication follows invalidation request;
+- no false resumed turn after reconnect;
+- fresh exact-head CI required before promotion/merge.
