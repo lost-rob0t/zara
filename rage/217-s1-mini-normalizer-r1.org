@@ -17,6 +17,14 @@
 - Empty output contradiction :: upstream treats filler-only empty output as valid, but Zara issue #217 explicitly requires typed handling of empty output. r1 therefore classifies empty as =invalid_output= and leaves raw/fail-turn policy above the provider; this is deliberate Zara policy rather than silently changing #216 semantics.
 - Dependencies :: Zara already carries =httpx>=0.25= in =setup.py= and Nix owns Python dependencies, so no dependency addition is needed.
 
+* Upstream license acceptance
+- Authoritative model card :: https://huggingface.co/superwhisper/s1-mini
+- Declared license :: =s1-mini-license=; upstream describes it as Apache-2.0 plus an additional naming clause.
+- Naming obligation :: integrations must continue to identify the model as =S1-mini= by =Superwhisper= with that capitalization.
+- Redistribution obligations :: if Zara later bundles or redistributes weights, retain the applicable license/attribution notices and satisfy Apache-2.0 redistribution/change-notice requirements plus the S1-mini naming clause.
+- r1 scope :: this adapter does not download, vendor, bundle, or redistribute model weights. It calls one explicitly configured local OpenAI-compatible endpoint. The default model identifier remains =superwhisper/s1-mini= and this evidence records the upstream name/author rather than relabeling the model.
+- Release gate :: any future packaged-weight/download slice must re-review the then-current upstream license before shipping; this adapter alone is not authorization to redistribute weights.
+
 * Architecture / design
 - One =S1MiniTranscriptNormalizer= implementing the existing #216 provider shape; no coordinator/runtime changes.
 - Endpoint is explicit and required. The adapter sends to exactly that configured endpoint and has no fallback endpoint, provider discovery, model download, or cloud path.
@@ -26,7 +34,7 @@
 - Map connection/HTTP model absence to =unavailable=; HTTP timeout to =timeout=; unsupported language, malformed/empty/reasoning/wrapper/oversized/pathologically-expanded output to typed #216 statuses.
 - Do not catch caller =CancelledError= inside the HTTP adapter: canonical task/turn cancellation must remain authoritative. #216 stale-turn fencing supplies typed cancelled results where results are still representable.
 - Reject explicit =<think>=/reasoning payloads and obvious response wrappers instead of allowing an explanation/summary to become user text.
-- Enforce absolute output bound plus configurable expansion ratio.
+- Enforce absolute output bound plus configurable expansion ratio; numeric timeout/ratio configuration must be finite and positive so NaN/Infinity cannot escape validation or explode during bound calculation.
 
 * Acceptance -> tests
 - exact request/system/control/thinking-off/temperature/model -> fake endpoint payload assertion;
@@ -34,6 +42,7 @@
 - English-only policy -> unsupported language without endpoint entry;
 - server unavailable/model missing/timeout -> typed #216 statuses through service;
 - empty/non-text/malformed/think/wrapper/oversized/expanded output -> =invalid_output=;
+- non-finite =max_expansion_ratio= and =request_timeout= -> deterministic constructor rejection for NaN and +/-Infinity;
 - representative fixture responses for fillers, correction, repetition, punctuation, numbers, dates/times, currency, email, lists and already-clean input -> plain bounded text projection;
 - stale/cancelled turn -> #216 fences before provider entry;
 - focused non-interactive script -> composed into =scripts/test-all.sh=.
