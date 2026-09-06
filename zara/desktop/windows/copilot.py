@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from PySide6.QtCore import QSettings, Signal
+from PySide6.QtCore import QRect, QSettings, Signal
 from PySide6.QtWidgets import QWidget
 
 from zara.desktop.conversation import ConversationService
@@ -18,6 +18,12 @@ class CopilotPresentation(str, Enum):
 
     COMPACT = "compact"
     EXPANDED = "expanded"
+
+
+_GEOMETRY_KEYS = {
+    CopilotPresentation.COMPACT: "desktop/copilot/compact-geometry",
+    CopilotPresentation.EXPANDED: "desktop/copilot/expanded-geometry",
+}
 
 
 class CopilotWindow(QuickCopilotWindow):
@@ -60,7 +66,9 @@ class CopilotWindow(QuickCopilotWindow):
             raise TypeError("presentation must be a CopilotPresentation")
         if presentation is self._presentation:
             return
+        self._save_geometry()
         self._presentation = presentation
+        self._recover_geometry()
         self._apply_presentation()
 
     def toggle_presentation(self) -> None:
@@ -73,6 +81,17 @@ class CopilotWindow(QuickCopilotWindow):
 
     def _project_messages(self, state):
         return state.messages
+
+    def _saved_geometry(self) -> Optional[QRect]:
+        value = self._settings.value(_GEOMETRY_KEYS[self._presentation])
+        if isinstance(value, QRect) and value.isValid():
+            return QRect(value)
+        return None
+
+    def _save_geometry(self) -> None:
+        geometry = self.geometry()
+        if geometry.isValid():
+            self._settings.setValue(_GEOMETRY_KEYS[self._presentation], geometry)
 
     def _apply_presentation(self) -> None:
         expanded = self._presentation is CopilotPresentation.EXPANDED
