@@ -59,7 +59,11 @@ def test_presentation_transition_preserves_one_renderer_state(tmp_path):
     qt_app, bridge, service, window = make_window(tmp_path)
     try:
         conversation_id = window.current_conversation_id
-        service.add_user_message(conversation_id, "existing message")
+        service.add_user_message(
+            conversation_id,
+            "existing message",
+            request_id="adaptive-existing-message",
+        )
         window.sync_from_shared_state()
         qt_app.processEvents()
         message_widgets = window.message_widgets
