@@ -1,0 +1,18 @@
+* RAGE #178 r2 — bound hostile Android ZARA/1 JSON nesting
+
+- Consumed issue :: #178
+- Exact immutable start :: =b4f6297d70543be674fd2c6ef0769499eb77955d=
+- Recovered from :: PR #521 / RED head =68ab5b7953d4278209306fb726739c6052d3d6c2=
+- Scope :: Android wire decoder/tests only. No Core/server/plugin implementation.
+
+** Recovery
+PR #520 advanced canonical master while the initial RED branch was gating. Re-root the exact same adversarial proof on new canonical master; stale-base CI is not reusable.
+
+** Research
+The Android text decoder already caps each text envelope at 64 KiB and rejects malformed UTF-8, duplicate keys, unknown fields/types, and oversized text. The private strict JSON parser is recursively implemented with no explicit container-nesting budget, so byte-bounded hostile JSON can still consume stack depth independently of envelope size.
+
+** Design
+Keep the existing strict parser. Add a maximum of 64 nested JSON containers, counted before descending into each object/array. Reject the 65th container with =ZaraWireException= at the parser boundary. Do not add another parser, relax schemas, or change valid canonical envelopes.
+
+** TDD
+The prior RED commit proved current code reaches later schema validation instead of a nesting guard. Preserve that same deterministic test on this exact-current branch, then implement the smallest parser-depth accounting change and rerun focused + full gates.
