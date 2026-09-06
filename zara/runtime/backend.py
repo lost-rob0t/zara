@@ -123,11 +123,13 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         manager_factory: Optional[Callable[[], Any]] = None,
         *,
         router=None,
+        semantic_first: bool = False,
     ) -> None:
         self._manager_factory = manager_factory
         self._manager = None
         self._publisher = None
         self._router = router
+        self._semantic_first = bool(semantic_first)
         self._memory_session: Optional[str] = None
 
     @property
@@ -182,7 +184,12 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         task_turn = conversation_history is not None or system_context is not None
         command_like = command_gate.looks_like_command(text)
 
-        if not task_turn and self._router is None and command_like:
+        if (
+            self._semantic_first
+            and not task_turn
+            and self._router is None
+            and command_like
+        ):
             logger.error(
                 "Refusing LLM fallback for deterministic command because the "
                 "semantic router is unavailable: %r",
@@ -214,7 +221,11 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             if decision.action == "respond":
                 await self._persist_turn(text, decision.response)
                 return RuntimeTurnResult(response=decision.response)
-            if decision.action == "delegate" and command_like:
+            if (
+                self._semantic_first
+                and decision.action == "delegate"
+                and command_like
+            ):
                 logger.error(
                     "Refusing LLM fallback after deterministic command routing "
                     "did not complete: %r",
@@ -415,7 +426,7 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             manager.exit_conversation()
 
 
-def create_runtime_backend(config=None) -> RuntimeBackend:
+def create_runtime_backend(config=None, *, semantic_first: bool = False) -> RuntimeBackend:
     """Create Zara's canonical conversational backend."""
 
     if config is None:
@@ -434,7 +445,10 @@ def create_runtime_backend(config=None) -> RuntimeBackend:
 
         return AgentManager(config=config)
 
-    return LangGraphRuntimeBackend(manager_factory)
+    return LangGraphRuntimeBackend(
+        manager_factory,
+        semantic_first=semantic_first,
+    )
 
 
 class AgentRuntimeBackend(RuntimeBackend):
@@ -452,14 +466,19 @@ class AgentRuntimeBackend(RuntimeBackend):
         *,
         config=None,
         router=None,
+        semantic_first: bool = False,
     ) -> None:
         if manager_factory is not None:
             self._delegate: RuntimeBackend = LangGraphRuntimeBackend(
                 manager_factory,
                 router=router,
+                semantic_first=semantic_first,
             )
         else:
-            self._delegate = create_runtime_backend(config)
+            self._delegate = create_runtime_backend(
+                config,
+                semantic_first=semantic_first,
+            )
 
     @property
     def principal_id(self) -> str:
