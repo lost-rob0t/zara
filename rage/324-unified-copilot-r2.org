@@ -69,3 +69,11 @@ Fresh source reconciliation at the immutable start confirms the root defect stil
 - The CI test job now invokes =render_copilot_fixtures(Path(os.environ["ARTIFACT_DIR"]) / "ui", source_commit=os.environ["GITHUB_SHA"])= under =QT_QPA_PLATFORM=offscreen= after package build and before the existing always-run artifact upload.
 - No =android/**=, daemon, protocol, provider, microphone, persistence schema, or runtime-command path is changed by this slice.
 - Exact-head full CI result :: pending at this commit; do not merge or mark this slice complete until the exact candidate passes the full repository-native gate.
+
+* Slice F — expanded conversation-management parity
+** Research / adversarial decision
+- Issue #324 explicitly requires history/conversation-management functionality from =windows/chat.py= to survive the one-renderer collapse, and structurally gates history selection in expanded mode.
+- The existing authority is already =ConversationService=: =FullChatWindow= merely projects =list_conversations(query)=, =rename_conversation=, conversation creation, and conversation selection into Qt controls. Copying a second conversation model or resurrecting =FullChatWindow= would violate the issue.
+- The smallest generic migration is to give the canonical =CopilotWindow= one history-management projection that is hidden in compact presentation and visible in expanded presentation. Selection must rebind the same renderer through the existing shared service; rename/search/new-chat must call the same service APIs.
+- Preserve compact chat/composer state and runtime bridge ownership. No daemon, protocol, Android, provider, or persistence-schema changes are required.
+- RED criteria :: expanded mode exposes history/search/rename controls; search projects matching durable conversations; activating a history record changes =current_conversation_id= on the same QWidget; rename updates durable metadata and the natural title; compact mode hides the history-management projection.
