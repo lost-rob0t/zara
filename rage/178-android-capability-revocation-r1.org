@@ -1,0 +1,17 @@
+* RAGE #178 r1 — Android capability revocation after advertisement
+
+- Consumed issue :: #178
+- Exact immutable start :: =e1b86f17debe88f6d7190379b0ae3f1522d70b29=
+- Scope :: Android capability-registry adversarial proof only. No Core/protocol/plugin implementation.
+
+** Research
+- =DeviceCapabilityRegistry.availableCapabilities()= computes availability live from registered adapters.
+- =requireAdapter()/execute()= re-check adapter availability before returning/executing an adapter.
+- Existing registry tests cover initially available/unavailable and unregistered capabilities, but not permission/availability loss after a capability was previously advertised.
+
+** Design / acceptance
+- Start with =open_uri= available and observe it in the advertised snapshot.
+- Revoke local availability after that snapshot.
+- The live registry must immediately stop advertising it, =canExecute= must return false, and a stale server action must fail with =DeviceCapabilityUnavailableException= without entering the adapter's execute path.
+- Production behavior is unchanged; this closes the explicit #178 "capability permission revoked after advertisement" proof gap.
+- Fresh exact-head CI is required before promotion/merge.
