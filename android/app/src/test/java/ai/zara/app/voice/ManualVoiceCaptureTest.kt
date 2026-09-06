@@ -70,6 +70,27 @@ class ManualVoiceCaptureTest {
         }
         assertEquals(listOf("start:stream-1", "cancel:stream-1"), sink.events)
     }
+
+    @Test
+    fun terminalIngressFailuresStillClearLocalCaptureState() {
+        val context = VoiceCaptureContext("session-1", null, "stream-1")
+
+        val commitCapture = ManualVoiceCapture(FailingTerminalVoiceIngress(failCommit = true))
+        commitCapture.begin(context, permissionGranted = true, connected = true)
+        val commitFailure = assertThrows(IllegalStateException::class.java) {
+            commitCapture.commit()
+        }
+        assertEquals("commit transport failed", commitFailure.message)
+        assertEquals(ManualVoiceState.Idle, commitCapture.state())
+
+        val cancelCapture = ManualVoiceCapture(FailingTerminalVoiceIngress(failCancel = true))
+        cancelCapture.begin(context, permissionGranted = true, connected = true)
+        val cancelFailure = assertThrows(IllegalStateException::class.java) {
+            cancelCapture.cancel()
+        }
+        assertEquals("cancel transport failed", cancelFailure.message)
+        assertEquals(ManualVoiceState.Idle, cancelCapture.state())
+    }
 }
 
 private class RecordingVoiceIngress : VoiceIngress {
@@ -89,5 +110,22 @@ private class RecordingVoiceIngress : VoiceIngress {
 
     override fun cancel(context: VoiceCaptureContext) {
         events += "cancel:${context.streamId}"
+    }
+}
+
+private class FailingTerminalVoiceIngress(
+    private val failCommit: Boolean = false,
+    private val failCancel: Boolean = false,
+) : VoiceIngress {
+    override fun start(context: VoiceCaptureContext) = Unit
+
+    override fun chunk(context: VoiceCaptureContext, sequence: Long, pcm: ByteArray) = Unit
+
+    override fun commit(context: VoiceCaptureContext) {
+        if (failCommit) throw IllegalStateException("commit transport failed")
+    }
+
+    override fun cancel(context: VoiceCaptureContext) {
+        if (failCancel) throw IllegalStateException("cancel transport failed")
     }
 }
