@@ -23,6 +23,7 @@ import ai.zara.app.runtime.JeroMqTextDealerFactory
 import ai.zara.app.runtime.RestorableClientState
 import ai.zara.app.runtime.RuntimeEvent
 import ai.zara.app.runtime.RuntimeState
+import ai.zara.app.runtime.ServerConnection
 import ai.zara.app.runtime.ServerProfile
 import ai.zara.app.runtime.TextTurnResult
 import ai.zara.app.runtime.ZaraTextClientActor
@@ -67,6 +68,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     @Volatile private var latestAudioRoute: AudioRouteSnapshot? = null
     @Volatile private var voiceStreamObserver: ((VoiceStreamState?, String?) -> Unit)? = null
     @Volatile private var runtimeStateObserver: ((RuntimeState) -> Unit)? = null
+    @Volatile private var playbackRuntimeSessionId: String? = null
     private val voiceExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-android-voice-control").apply { isDaemon = true }
     }
@@ -276,6 +278,18 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     }
 
     private fun observeRuntimeState(state: RuntimeState) {
+        val authenticatedSessionId = state.sessionId.takeIf { state.server is ServerConnection.Connected }
+        val staleSessionId = playbackRuntimeSessionId
+        if (authenticatedSessionId != staleSessionId) {
+            playbackRuntimeSessionId = authenticatedSessionId
+            if (staleSessionId != null) {
+                try {
+                    voiceStreamSink.reset()
+                } catch (error: Throwable) {
+                    reportVoiceStreamFailure(error)
+                }
+            }
+        }
         try {
             voice.onRuntimeStateChanged(state)
         } catch (error: Throwable) {
