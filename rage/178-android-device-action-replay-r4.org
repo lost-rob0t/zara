@@ -1,0 +1,15 @@
+* RAGE #178 r4 — Android stale/replayed device actions
+
+- Consumed issue :: #178
+- Exact immutable start :: =77c1c1ac12b159e4e2b8ccc2a87fee53dfb6ec9e=
+- Recovered from :: PR #489 / head =dd609e6a5e2b2375fe163b5354e4e9e4c38705ad=
+- Scope :: Android ZARA/1 device-action adversarial proof only. No Core/protocol/plugin implementation.
+
+** Recovery
+#488 advanced canonical master after r3 began. This r4 transaction replays only the disjoint actor proof onto exact current master; stale-base CI is not reused.
+
+** Acceptance
+- A device action carrying a stale session id fails before handler execution or action acknowledgement.
+- A second request with the same terminal action id executes the adapter exactly once and fails before a second accepted/result acknowledgement.
+- Existing actor session fencing and bounded terminal-action ownership remain authoritative; no parallel replay state.
+- Fresh exact-head CI is required before promotion/merge.
