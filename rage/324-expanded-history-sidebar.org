@@ -1,0 +1,40 @@
+#+title: RAGE #324 — expanded history sidebar
+
+* Iteration 1
+** Intake
+- Consumed issue: #324.
+- Immutable slice start: =e44bf72298cba625585e82b31b0e99f4ac3c841d=, stacked only while #568 exact-head verification completes.
+- Scope: reduce the visually observed expanded-mode history obstruction without changing conversation/runtime authority.
+- Ownership: Core desktop only; never modify =android/**=.
+- Invariants: one process-owned =CopilotWindow=, one =ConversationService=, same =QtRuntimeBridge=, no renderer/state handoff, no copied conversation state.
+
+** Research
+- Deterministic #568 screenshots were inspected directly from CI =regression-artifacts=.
+- The expanded/history fixtures show the full history browser stacked vertically above the chat viewport. It consumes a large fraction of useful conversation height before any message content is rendered.
+- Canonical =CopilotWindow= currently implements that literally with =self.layout().insertWidget(1, self.history_panel)= into the inherited vertical root layout.
+- Compact fixtures also show header density, but that is already being reduced by #568; mixing control-icon styling into this structural transaction would blur acceptance.
+
+** Design / adversarial review
+- Expanded mode should place durable conversation history beside the chat viewport, not above it.
+- Keep header/runtime/error surfaces outside the content split.
+- Use a native horizontal body layout with a bounded history sidebar and a chat column containing the existing message viewport plus the existing bottom composer.
+- Compact mode hides the history sidebar; the chat column then consumes the body width unchanged.
+- Reparent existing widgets only. Do not create another message renderer, composer, store, bridge, or conversation selection path.
+- History activation/rename/search continue to call the already-landed =ConversationService= methods.
+- Do not modify message semantics, tool/voice/runtime commands, daemon protocol, or Android.
+
+Rejected:
+- Keep vertical stacking but shrink history height: still steals conversation height and scales badly.
+- Overlay/floating history drawer: adds visibility/focus state and native-window complexity not required by #324.
+- Second full-chat window/sidebar model: violates the single-renderer architecture.
+
+** Acceptance mapped to tests
+- In expanded mode at a deterministic useful size, history and message viewport overlap vertically and history is positioned left of the message viewport.
+- History width is bounded so the conversation viewport remains useful.
+- Composer remains below the message viewport in the same chat column and visible.
+- Compact mode hides history and keeps the same message/composer widget identities.
+- Existing state continuity/history-selection/geometry tests remain authoritative for semantic continuity.
+
+** Gate
+- Focused deterministic Qt structural RED/GREEN first.
+- Full =scripts/test-all.sh=, =nix flake check=, packaged Zara, screenshot render and Android/shared-mic compatibility through exact-head Actions before merge.
