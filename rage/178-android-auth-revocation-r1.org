@@ -1,0 +1,17 @@
+* RAGE #178 r1 — Android auth revocation adversarial coverage
+
+- Consumed issue :: #178
+- Exact immutable start :: =e1b86f17debe88f6d7190379b0ae3f1522d70b29=
+- Scope :: Android auth adversarial coverage only. No Core/protocol/plugin implementation.
+
+** Research
+- =EnrollmentRepository.state()= derives readiness from both wrapped client credential and pinned server key on every observation.
+- =EnrollmentRepository.configure()= reloads both inputs before mutating the socket and already fails closed when either is missing/corrupt.
+- Existing tests cover initial enrollment and pin immutability, but not post-Ready revocation/corruption.
+
+** Design / acceptance
+- Deleting the wrapped credential after Ready must yield =Unenrolled= and reject socket auth without setting any CURVE option.
+- Deleting the pinned server key after Ready must yield =AwaitingServerPin= with the same public client identity and reject socket auth without mutation.
+- Corrupting the stored pin after Ready must yield =Corrupt= and reject socket auth without mutation.
+- This is proof-only coverage of existing intended fail-closed behavior; production logic is unchanged.
+- Fresh exact-head CI is required before promotion/merge.
