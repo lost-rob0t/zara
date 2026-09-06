@@ -1,0 +1,25 @@
+#+title: RAGE #178 Android voice JSON depth bound r1
+
+* Start
+- Issue: #178
+- Immutable start: 20e7ce159009accad9a1aeded424f566835df355
+- Scope: Android-only voice stream decoder hardening.
+
+* Research
+- =ZaraVoiceStreamCodec= enforces envelope/payload/token/text byte bounds and rejects duplicate/unknown fields.
+- Its private =VoiceStreamJsonParser= recursively parses objects/arrays with no nesting bound.
+- Android text/capability decoders already use a 64-container policy; voice must not leave an equivalent recursive parser unbounded.
+
+* Design / adversarial review
+- Enforce one parser-owned maximum of 64 simultaneously nested JSON containers.
+- Count objects and arrays uniformly; root object consumes one level.
+- Accept exactly the boundary and reject boundary+1 before recursive descent can grow without policy bound.
+- Do not alter ZARA/1 schema, Core/server behavior, payload limits, or voice ownership.
+
+* TDD map
+- RED: voice envelope with 64 nested containers is accepted far enough to fail only on ordinary schema validation, while 65 nested containers must fail specifically on nesting depth.
+- GREEN: thread depth through parser value/object/array recursion and reject when the next container exceeds 64.
+
+* Gate
+- Focused JVM test for =ZaraVoiceStreamCodecTest=.
+- =scripts/test-android.sh= and repository CI at exact candidate head.
