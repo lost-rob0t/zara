@@ -1,0 +1,16 @@
+* RAGE #178 r2 — Android embedded-Prolog lifecycle stress proof
+
+- Consumed issue :: #178
+- Exact immutable start :: =ceae9662a2462991c8b964eac33bb31e32d0ab39=
+- Recovered from :: PR #493 / head =5e7bb314f1c786607c9864172a01e6a5ee7bf64d=
+- Scope :: Android Trealla wrapper/test evidence only. No Core/server/plugin behavior.
+
+** Recovery
+#490 advanced canonical master after r1 began. This r2 transaction replays only the disjoint Trealla lifecycle stress proof onto exact current master; stale-base CI is not reused.
+
+** Acceptance
+- 512 deterministic initialize/evaluate/shutdown cycles complete;
+- initialize/evaluate/shutdown accounting matches exactly;
+- no cycle leaves the bridge marked initialized;
+- this is wrapper ownership evidence, not a native RSS-growth claim;
+- fresh exact-head CI is required before promotion/merge.
