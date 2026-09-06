@@ -38,5 +38,10 @@
 - stale/cancelled turn -> #216 fences before provider entry;
 - focused non-interactive script -> composed into =scripts/test-all.sh=.
 
+* RED
+- Test-only head :: =f28351015264f56653373c0bb5249257a1fc2029=
+- CI :: #1662
+- Result :: expected Core =Run all tests= failure before flake/package, with both shared-mic lanes green. No =zara.s1_mini_normalizer= implementation existed at this head; the focused #217 acceptance gate was therefore red by construction before production code.
+
 * Gate
 Focused deterministic fake-endpoint acceptance, focused non-interactive backend script, full =scripts/test-all.sh=, =nix flake check=, packaged Zara, Android compatibility, both shared-mic lanes, exact-current-head CI, and zero unresolved review threads.
