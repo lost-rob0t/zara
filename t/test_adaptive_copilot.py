@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication
 
 from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationService, ConversationStore
+from zara.desktop.state import DesktopRuntimeState, DesktopStatus
 from zara.desktop.windows import CopilotPresentation, CopilotWindow
 
 
@@ -199,5 +200,34 @@ def test_compact_and_expanded_geometry_are_saved_and_restored_independently(tmp_
         expanded_saved = settings.value("desktop/copilot/expanded-geometry")
         assert compact_saved == compact
         assert expanded_saved == expanded
+    finally:
+        dispose(window)
+
+
+def test_native_chrome_demotes_healthy_runtime_noise_without_hiding_failures(tmp_path):
+    qt_app, _, _, window = make_window(tmp_path)
+    try:
+        window.set_status(DesktopStatus(DesktopRuntimeState.IDLE, "Zara is ready"))
+        qt_app.processEvents()
+
+        assert window.brand_label.isHidden()
+        assert window.provider_label.isHidden()
+        assert window.status_frame.isHidden()
+        assert not window.status_lamp.isHidden()
+        assert not window.runtime_status_label.isHidden()
+        assert window.status_lamp.accessibleName() == "Runtime status indicator"
+        assert window.runtime_status_label.accessibleName() == "Runtime status"
+
+        window.set_presentation(CopilotPresentation.EXPANDED)
+        qt_app.processEvents()
+        assert not window.provider_label.isHidden()
+        assert window.status_frame.isHidden()
+
+        window.set_status(
+            DesktopStatus(DesktopRuntimeState.DISCONNECTED, "Daemon unavailable")
+        )
+        qt_app.processEvents()
+        assert not window.status_frame.isHidden()
+        assert window.runtime_detail_label.text() == "Daemon unavailable"
     finally:
         dispose(window)
