@@ -1,0 +1,16 @@
+* RAGE #178 r3 — Android reconnect-storm recovery
+
+- Consumed issue :: #178
+- Exact immutable start :: =e1b86f17debe88f6d7190379b0ae3f1522d70b29=
+- Recovered from :: PR #475 / exact green head =8389422e9ec3f5ab4435b95ce3392188f8f269d0= / CI #1682
+- Scope :: Android reducer + deterministic JVM regression only. No Core/protocol/plugin implementation.
+
+** Reconciliation
+Core #477 advanced master from =9ac0e0c0b94f571d6cab69ec252bb69ac2db3420= to =e1b86f17debe88f6d7190379b0ae3f1522d70b29= while #475 gated. The intervening files are disjoint from this Android slice, but stale green evidence is not reused for merge.
+
+** Acceptance
+- Duplicate =ConnectionLost= callbacks while already reconnecting are idempotent.
+- Eight duplicate loss callbacks preserve generation 2 / attempt 1 / one 250ms retry / one disconnect.
+- The first real failed reconnect advances to generation 3 / attempt 2 / 500ms backoff.
+- Existing stale-generation isolation remains authoritative.
+- Fresh exact-head CI on this recovery branch is required before promotion/merge.

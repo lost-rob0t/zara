@@ -97,8 +97,6 @@ fun reduce(state: RuntimeState, event: RuntimeEvent): RuntimeState = when (event
         } else {
             when (state.server) {
                 is ServerConnection.Connected -> beginReconnect(state, 1, event.reason)
-                is ServerConnection.Reconnecting ->
-                    failReconnect(state, state.server.attempt, event.reason)
                 else -> state
             }
         }
