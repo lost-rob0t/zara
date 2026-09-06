@@ -1,0 +1,26 @@
+:PROPERTIES:
+:ISSUE: 178
+:START_COMMIT: 20e7ce159009accad9a1aeded424f566835df355
+:END:
+#+title: RAGE #178 — bound Android capability JSON nesting
+
+* Iteration 1
+** Consumed issue
+- GitHub issue :: #178
+- Immutable start :: =20e7ce159009accad9a1aeded424f566835df355=
+- Scope :: Android-only capability wire decoder hardening.
+
+** Research
+The typed text decoder already rejects envelopes over 64 KiB and now bounds nested JSON containers. The independent =CapabilityJsonParser= in =android/app/src/main/java/ai/zara/app/runtime/ZaraCapabilityCodec.kt= has the same 64 KiB envelope bound and strict duplicate/field validation, but its recursive object/array parser has no explicit nesting budget. A byte-bounded hostile capability reply can therefore still spend stack depth disproportionately before schema rejection.
+
+** Architecture / design
+- Apply the same closed 64-container nesting budget used by the text decoder.
+- Count every object/array container, including the root object.
+- Permit exactly 64 nested containers and reject the 65th with =ZaraWireException= before descending further.
+- Preserve existing envelope-size, UTF-8, duplicate-key, exact-field and capability-count checks.
+- No shared/Core/server/plugin changes.
+
+** Planned TDD
+1. Add deterministic capability decoder boundary tests proving depth 64 reaches ordinary schema rejection rather than depth rejection, while depth 65 fails specifically for nesting.
+2. Make the smallest parser-only production change.
+3. Run the Android gate and repository CI at exact candidate head; inspect APK/parity artifacts before merge.
