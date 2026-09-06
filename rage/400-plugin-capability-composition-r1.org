@@ -1,0 +1,40 @@
+#+title: RAGE #400 — canonical plugin capability composition r1
+
+* Transaction
+- Consumed issue :: #400
+- Immutable RAGE start :: =bff04e48423fb4a9a935a8b69d980df33c701878=
+- Branch :: =rage/400-plugin-capability-composition-r1=
+- Scope :: Zara Core only; zero =android/**= changes.
+
+* Problem
+Service plugins currently receive =PluginRuntime= but can only dispatch runtime commands, subscribe to events, start managed workers and register advice. Cross-plugin composition would otherwise require direct imports, raw registry access, or duplicated domain implementations.
+
+* Contract analysis
+- Tool identity and approval metadata are already canonical in =AgentManager.tool_registry=; composition must not create a second registry.
+- Human approval is already canonical in =AgentManager.approval_controller=; composition must not invent a second approval channel.
+- =create_tools_node= already owns exact tool availability, LangChain execution, terminal tool events, and cancellation behavior. Composition should reuse that execution boundary rather than invoke =BaseTool= directly.
+- =PluginManager= owns service-plugin lifecycle and therefore is the correct owner for capability provenance/generation and stale-handle invalidation.
+- =PluginRuntime= is service-plugin scoped and can expose immutable handles/results only; never raw plugin instances, registries, approval controllers or mutable tools.
+
+* Selected direction
+1. Add an immutable capability descriptor/handle containing opaque Core identity, public tool name, owner plugin and generation; lookup only returns capabilities from currently RUNNING service-plugin records.
+2. PluginManager owns generation and resolution. Stop/failure/reload invalidates prior handles before tool unregistration completes; stale handles fail closed.
+3. Invocation crosses a Core callback into the canonical principal runtime backend. The backend resolves the current canonical tool by identity/name, runs the same approval controller when required, then executes through the same =create_tools_node= boundary used by model-selected tools.
+4. Structured dict-like arguments/results only; bounded names, arguments/results/errors and timeout. No =BaseTool= or plugin object escapes Core.
+5. Exact invocation gets its own tool_run_id/turn correlation and will consume #388 cooperative cancellation once that contract lands; until then #400 implementation must not claim bounded cancellation complete.
+
+* Adversarial cases
+- duplicate semantic/tool names across loaded plugins -> ambiguous lookup fails closed;
+- capability disappears between lookup and invoke -> stale/unavailable error, no Python call;
+- owner stops/reloads -> generation mismatch rejects old handle;
+- caller attempts self-recursive capability invocation -> bounded recursion/depth or explicit self-call rejection;
+- target requires approval -> no invocation before canonical approval decision;
+- caller cannot forge owner/generation/approval metadata to downgrade target policy;
+- timeout/cancel cannot report success after target is cancelled;
+- target failure is bounded and does not leak secrets/tracebacks/private objects.
+
+* Dependency
+- #388 is the canonical cooperative cancellation seam for running tools. r1 design/research may proceed in parallel, but final invocation acceptance must use the landed #388 contract rather than duplicate cancellation machinery.
+
+* Merge gates
+Deterministic RED/TDD, focused capability tests, full =scripts/test-all.sh=, =nix flake check=, packaged Zara, Android compatibility, both shared-mic lanes, exact-current-head CI, reviews and unresolved threads.

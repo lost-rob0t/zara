@@ -6,16 +6,18 @@ import asyncio
 import enum
 import inspect
 import logging
+import secrets
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Sequence
+from typing import Callable, Iterable, Mapping, Optional, Sequence
 
 from langchain_core.tools import BaseTool
 
 from zara.runtime import events
 
 from .api import PLUGIN_API_VERSION, PluginMetadata, PluginRuntime, RuntimeStatus
+from .capabilities import PluginCapability, PluginCapabilityUnavailable
 from .loader import iter_plugin_files, load_plugin_module
 
 logger = logging.getLogger(__name__)
@@ -52,6 +54,7 @@ class _PluginRecord:
     start_called: bool = False
     stop_called: bool = False
     tool_names: tuple[str, ...] = ()
+    capability_tokens: dict[str, str] = field(default_factory=dict)
 
 
 def _bounded_error(error: object) -> str:
@@ -78,6 +81,7 @@ class PluginManager:
         max_workers: int = 8,
         advice_registrar=None,
         advice_unregistrar=None,
+        capability_invoker=None,
     ) -> None:
         builtin_path = Path(__file__).resolve().parent / "builtin"
         discovered_paths = [builtin_path]
@@ -91,6 +95,7 @@ class PluginManager:
         self._tool_unregistrar = tool_unregistrar
         self._advice_registrar = advice_registrar
         self._advice_unregistrar = advice_unregistrar
+        self._capability_invoker = capability_invoker
         self._publisher = publisher
         self._lifecycle_timeout = max(0.1, float(lifecycle_timeout))
         self._event_queue_size = event_queue_size
@@ -228,6 +233,8 @@ class PluginManager:
             worker_join_timeout=self._lifecycle_timeout,
             advice_registrar=self._advice_registrar,
             advice_unregistrar=self._advice_unregistrar,
+            capability_resolver=self._resolve_capability,
+            capability_invoker=self._invoke_capability,
         )
         record.runtime = runtime
 
@@ -243,6 +250,9 @@ class PluginManager:
             if tools:
                 self._tool_registrar(tools)
                 record.tool_names = tuple(tool.name for tool in tools)
+                record.capability_tokens = {
+                    tool.name: secrets.token_urlsafe(24) for tool in tools
+                }
 
             start_method = getattr(record.instance, "start", None)
             if not callable(start_method):
@@ -291,6 +301,64 @@ class PluginManager:
             elif preserve_failure and previous_failure and not record.error:
                 record.error = previous_failure
 
+    def _resolve_capability(self, requester: str, name: str) -> PluginCapability:
+        with self._lock:
+            matches = [
+                record
+                for record in self._records
+                if record.state is PluginState.RUNNING
+                and name in record.capability_tokens
+            ]
+            if not matches:
+                raise PluginCapabilityUnavailable(
+                    f"plugin capability {name!r} is unavailable"
+                )
+            if len(matches) != 1:
+                raise PluginCapabilityUnavailable(
+                    f"plugin capability {name!r} is ambiguous"
+                )
+            record = matches[0]
+            if record.metadata.name == requester:
+                raise PluginCapabilityUnavailable(
+                    "plugins may not resolve their own capability through composition"
+                )
+            return PluginCapability(
+                name=name,
+                owner=record.metadata.name,
+                _requester=requester,
+                _token=record.capability_tokens[name],
+            )
+
+    def _invoke_capability(
+        self,
+        requester: str,
+        capability: PluginCapability,
+        arguments: Mapping[str, object],
+        timeout: float,
+    ):
+        with self._lock:
+            record = next(
+                (
+                    item
+                    for item in self._records
+                    if item.metadata.name == capability.owner
+                ),
+                None,
+            )
+            valid = (
+                record is not None
+                and record.state is PluginState.RUNNING
+                and record.metadata.name != requester
+                and capability._requester == requester
+                and record.capability_tokens.get(capability.name) == capability._token
+            )
+            invoker = self._capability_invoker
+        if not valid:
+            raise PluginCapabilityUnavailable("plugin capability handle is stale")
+        if invoker is None:
+            raise PluginCapabilityUnavailable("plugin capability invocation is not available")
+        return invoker(requester, capability.name, arguments, timeout)
+
     async def _call_plugin(self, method, *args):
         if inspect.iscoroutinefunction(method):
             operation = method(*args)
@@ -302,9 +370,10 @@ class PluginManager:
         await self._call_plugin(method, *args)
 
     def _remove_tools(self, record: _PluginRecord) -> None:
-        if not record.tool_names:
-            return
         names = record.tool_names
+        record.capability_tokens.clear()
+        if not names:
+            return
         record.tool_names = ()
         try:
             self._tool_unregistrar(names)
