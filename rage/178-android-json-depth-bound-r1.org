@@ -1,0 +1,23 @@
+* RAGE #178 r1 — bound hostile Android ZARA/1 JSON nesting
+
+- Consumed issue :: #178
+- Exact immutable start :: =98360054f80dda5b93669c7a44ba268ae52c0927=
+- Scope :: Android wire decoder/tests only. No Core/server/plugin implementation.
+
+** Research
+The Android text decoder already caps the envelope at 64 KiB, rejects malformed UTF-8, duplicate keys, unknown fields/types, and oversized text fields. Its private strict JSON parser is nevertheless recursively implemented with no explicit nesting-depth budget. A hostile but byte-bounded envelope can therefore spend stack depth independently of byte size.
+
+** Design
+Keep the existing strict parser and add one explicit maximum JSON container nesting depth. Count each object/array container entry, reject before descending beyond the bound, and always restore depth on exit/failure. Do not add another parser or change accepted ZARA/1 schemas.
+
+Selected bound: 64 nested containers. This is far beyond any valid Android ZARA/1 envelope shape while keeping adversarial stack use deterministic and bounded.
+
+** TDD map
+1. RED: 64 nested arrays inside an otherwise-invalid body must reach ordinary schema rejection without a depth error; 65 must fail specifically at the parser depth boundary.
+2. GREEN: add bounded container-depth accounting in =StrictJsonParser=.
+3. Evaluate with focused JVM tests, =scripts/test-android.sh=, full repository/Nix/build gates, then exact-head Actions.
+
+** Invariants
+- Envelope byte cap remains 64 KiB.
+- Depth failure is a =ZaraWireException=, never a VM stack overflow.
+- No relaxed schema, malformed-input swallowing, or alternate runtime/parser.
