@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from zara.desktop.conversation import ConversationService
 from zara.desktop.qt_bridge import QtRuntimeBridge
+from zara.desktop.state import DesktopRuntimeState, DesktopStatus
 from zara.desktop.windows.quick import QuickCopilotWindow
 
 
@@ -34,6 +35,14 @@ _GEOMETRY_KEYS = {
     CopilotPresentation.COMPACT: "desktop/copilot/compact-geometry",
     CopilotPresentation.EXPANDED: "desktop/copilot/expanded-geometry",
 }
+
+_DETAIL_RUNTIME_STATES = frozenset(
+    {
+        DesktopRuntimeState.STARTING,
+        DesktopRuntimeState.DISCONNECTED,
+        DesktopRuntimeState.ERROR,
+    }
+)
 
 
 class CopilotWindow(QuickCopilotWindow):
@@ -60,6 +69,17 @@ class CopilotWindow(QuickCopilotWindow):
         )
         self._presentation = CopilotPresentation.COMPACT
         self.setObjectName("zaraCopilot")
+
+        header_layout = self.header_frame.layout()
+        status_layout = self.status_frame.layout()
+        assert isinstance(header_layout, QHBoxLayout)
+        assert isinstance(status_layout, QHBoxLayout)
+        status_layout.removeWidget(self.status_lamp)
+        status_layout.removeWidget(self.runtime_status_label)
+        header_layout.insertWidget(2, self.status_lamp)
+        header_layout.insertWidget(3, self.runtime_status_label)
+        self.status_lamp.setAccessibleName("Runtime status indicator")
+        self.runtime_status_label.setAccessibleName("Runtime status")
 
         self.history_panel = QWidget(self)
         self.history_panel.setObjectName("zaraConversationHistoryPanel")
@@ -131,6 +151,11 @@ class CopilotWindow(QuickCopilotWindow):
         self._sync_conversation_title()
         self.refresh_history()
 
+    def set_status(self, status: DesktopStatus) -> None:
+        super().set_status(status)
+        if hasattr(self, "_presentation"):
+            self._sync_native_chrome()
+
     def refresh_history(self, query: Optional[str] = None) -> None:
         """Project durable conversation metadata into the expanded history list."""
         if query is None:
@@ -177,6 +202,14 @@ class CopilotWindow(QuickCopilotWindow):
         state = self.conversations.get_state(self.current_conversation_id)
         self.title_label.setText(state.conversation.title)
 
+    def _sync_native_chrome(self) -> None:
+        expanded = self._presentation is CopilotPresentation.EXPANDED
+        self.brand_label.hide()
+        self.provider_label.setVisible(expanded)
+        self.status_lamp.show()
+        self.runtime_status_label.show()
+        self.status_frame.setVisible(self._status.state in _DETAIL_RUNTIME_STATES)
+
     def _project_messages(self, state):
         return state.messages
 
@@ -199,3 +232,4 @@ class CopilotWindow(QuickCopilotWindow):
         if expanded:
             self.refresh_history()
         self.setWindowTitle("Zara — Copilot" if expanded else "Ask Zara")
+        self._sync_native_chrome()
