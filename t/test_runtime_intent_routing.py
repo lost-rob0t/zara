@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from t.test_daemon_intent_router import FakeProlog, build_router
-from zara.runtime.backend import AgentRuntimeBackend
+from zara.runtime.backend import (
+    AgentRuntimeBackend,
+    DETERMINISTIC_COMMAND_UNAVAILABLE,
+)
 
 
 def build_manager(in_conversation: bool = False) -> MagicMock:
@@ -107,12 +110,13 @@ async def test_router_state_follows_conversation_mode():
 
 
 @pytest.mark.asyncio
-async def test_router_skipped_when_absent():
+async def test_command_fails_closed_when_semantic_router_is_absent():
     manager = build_manager()
     backend = AgentRuntimeBackend(lambda: manager)
     await backend.start()
 
     result = await backend.submit_turn("open firefox", turn_id="turn-0007")
 
-    assert result.response == "agent reply"
-    manager.process_async.assert_awaited_once()
+    assert result.response == DETERMINISTIC_COMMAND_UNAVAILABLE
+    assert result.metadata["route"] == "deterministic_unavailable"
+    manager.process_async.assert_not_awaited()

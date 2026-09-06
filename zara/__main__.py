@@ -90,6 +90,19 @@ def resolve_local_stt_model(provider: str, model: str) -> str:
     return model
 
 
+def _resolve_stt_runtime(args):
+    """Resolve STT only for modes that actually consume microphone audio."""
+    stt_provider = normalize_provider(args.stt_provider)
+    stt_device = normalize_stt_device(args.device, provider=stt_provider)
+    stt_provider, amd_notice = route_stt_provider_for_amd_device(
+        stt_provider, stt_device
+    )
+    if amd_notice is not None:
+        print(f"Notice: {amd_notice} (--device {args.device}).", file=sys.stderr)
+    stt_model = resolve_model_for_provider(stt_provider, args.model)
+    return stt_provider, stt_device, stt_model
+
+
 def _wait_for_daemon_turn(subscription, turn_id: str) -> str:
     from .runtime import events
 
@@ -341,12 +354,6 @@ def main():
     )
 
     args = parser.parse_args()
-    stt_provider = normalize_provider(args.stt_provider)
-    stt_device = normalize_stt_device(args.device, provider=stt_provider)
-    stt_provider, amd_notice = route_stt_provider_for_amd_device(stt_provider, stt_device)
-    if amd_notice is not None:
-        print(f"Notice: {amd_notice} (--device {args.device}).", file=sys.stderr)
-    stt_model = resolve_model_for_provider(stt_provider, args.model)
 
     if args.desktop:
         from .desktop.app import main as desktop_main
@@ -371,6 +378,7 @@ def main():
         sys.exit(1)
 
     elif args.dictate:
+        stt_provider, stt_device, stt_model = _resolve_stt_runtime(args)
         from .config import get_config
         if args.stop_phrases:
             stop_phrases = args.stop_phrases.split(",")
@@ -400,6 +408,7 @@ def main():
             ))
 
     elif args.wake:
+        stt_provider, stt_device, stt_model = _resolve_stt_runtime(args)
         stt_model = resolve_local_stt_model(stt_provider, stt_model)
 
         with backend_compat(stt_provider):
