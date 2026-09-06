@@ -1,0 +1,11 @@
+{
+  "schema": "zara.voice-fixture.v1",
+  "id": "dictation-basic-prose",
+  "phrase": "This is a test of Zara dictation.",
+  "audio": "dictation-basic-prose.wav",
+  "seconds": 5,
+  "sample_rate_hz": 16000,
+  "channels": 1,
+  "expected_transcript": "This is a test of Zara dictation.",
+  "tags": ["dictation", "content-generation", "human-speech"]
+}
