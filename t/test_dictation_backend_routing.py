@@ -24,15 +24,6 @@ def test_vulkan_loader_uses_whisper_cpp_without_faster_whisper(monkeypatch):
     calls = {}
     sentinel = object()
 
-    class FakeWhisperCppModel:
-        def __init__(self, *args, **kwargs):
-            calls["args"] = args
-            calls["kwargs"] = kwargs
-
-        def __new__(cls, *args, **kwargs):
-            instance = super().__new__(cls)
-            return instance
-
     def fake_model(*args, **kwargs):
         calls["args"] = args
         calls["kwargs"] = kwargs
@@ -73,3 +64,51 @@ def test_cpu_loader_fails_explicitly_when_faster_whisper_is_unavailable(monkeypa
             cpu_threads=4,
             workers=1,
         )
+
+
+def test_main_reports_actual_vulkan_backend_for_legacy_ggml_route(monkeypatch, tmp_path):
+    logs = []
+    loaded = []
+
+    monkeypatch.setattr(dictate, "PIDFILE", str(tmp_path / "dictation.pid"))
+    monkeypatch.setattr(dictate, "LOGFILE", str(tmp_path / "dictation.log"))
+    monkeypatch.setattr(dictate, "log", logs.append)
+    monkeypatch.setattr(dictate, "_get_input_sample_rate", lambda: 16000.0)
+    monkeypatch.setattr(dictate, "write_pid", lambda: None)
+    monkeypatch.setattr(dictate, "remove_pid", lambda: None)
+    monkeypatch.setattr(
+        dictate,
+        "_load_whisper_model",
+        lambda *args: loaded.append(args) or object(),
+    )
+
+    class FakeThread:
+        def __init__(self, target, args, daemon):
+            self.stop = args[-1]
+
+        def start(self):
+            self.stop.set()
+
+        def join(self):
+            pass
+
+    class FakeExecutor:
+        def __init__(self, max_workers):
+            pass
+
+        def shutdown(self, wait, cancel_futures):
+            pass
+
+    monkeypatch.setattr(dictate, "Thread", FakeThread)
+    monkeypatch.setattr(dictate, "ThreadPoolExecutor", FakeExecutor)
+
+    assert dictate.main(
+        model_name="/models/ggml-large-v3.bin",
+        device="cuda",
+        threads=8,
+        workers=2,
+    ) == 0
+
+    assert loaded[0][1] == "vulkan"
+    assert any("Using whisper.cpp Vulkan STT" in message for message in logs)
+    assert any("on vulkan" in message for message in logs)
