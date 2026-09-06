@@ -60,7 +60,11 @@ fi
 chmod 600 "$interop_fixture"
 export ZARA_STOCK_FIXTURE="$interop_fixture"
 
-gradle --no-daemon testDebugUnitTest assembleDebug
+if ! gradle --no-daemon testDebugUnitTest assembleDebug; then
+  cat "$interop_log" >&2
+  echo "stock ZaraServer Android interop gate failed" >&2
+  exit 1
+fi
 
 printf 'STOP\n' >&9
 wait "$interop_pid"
