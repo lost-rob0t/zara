@@ -5,7 +5,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, QRect, QSettings, Signal
+from PySide6.QtCore import QObject, QPoint, QRect, QSettings, Signal
 from PySide6.QtWidgets import QApplication
 
 from zara.database import DatabaseManager
@@ -229,5 +229,32 @@ def test_native_chrome_demotes_healthy_runtime_noise_without_hiding_failures(tmp
         qt_app.processEvents()
         assert not window.status_frame.isHidden()
         assert window.runtime_detail_label.text() == "Daemon unavailable"
+    finally:
+        dispose(window)
+
+
+def test_expanded_history_is_sidebar_beside_chat_without_stealing_viewport_height(tmp_path):
+    qt_app, _, _, window = make_window(tmp_path)
+    try:
+        window.set_presentation(CopilotPresentation.EXPANDED)
+        window.resize(960, 700)
+        window.show()
+        qt_app.processEvents()
+
+        def window_rect(widget) -> QRect:
+            origin = widget.mapTo(window, QPoint(0, 0))
+            return QRect(origin, widget.size())
+
+        history_rect = window_rect(window.history_panel)
+        message_rect = window_rect(window.message_scroll)
+        composer_rect = window_rect(window.composer_shell)
+
+        assert history_rect.right() < message_rect.left()
+        assert history_rect.top() <= message_rect.bottom()
+        assert message_rect.top() <= history_rect.bottom()
+        assert history_rect.width() <= 320
+        assert message_rect.width() > history_rect.width()
+        assert composer_rect.left() == message_rect.left()
+        assert composer_rect.top() > message_rect.top()
     finally:
         dispose(window)
