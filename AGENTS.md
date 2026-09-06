@@ -134,6 +134,7 @@ Do not game coverage. Never weaken assertions, add meaningless execution-only te
 - Task tools are gated by `[tasks].enabled` (default false) and share the existing tool approval policy. See `wiki/long-horizon-tasks.org`.
 
 ## External service-plugin configuration
+
 - External service plugins own their private configuration under
   `$XDG_CONFIG_HOME/zarathushtra/plugins/<plugin-name>/` (falling back to
   `~/.config/zarathushtra/plugins/<plugin-name>/`). Do not move plugin-owned
@@ -266,3 +267,6 @@ Every iteration is ordered and evidence-driven:
 
 ## Additional Notes
 - Keep code consistent with existing style.
+- Favor minimal, targeted changes outside an approved RAGE design.
+- Ask before adding new files beyond what is requested, except RAGE logs/skills/design/test artifacts required by this protocol.
+- Follow repo conventions for notifications, logging, and config defaults.
