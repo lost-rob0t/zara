@@ -1,0 +1,16 @@
+* RAGE #178 — daemon restart must fail stale Android text turns
+
+- Consumed issue :: #178
+- Exact immutable start :: =b4f6297d70543be674fd2c6ef0769499eb77955d=
+- Scope :: Android text-session controller/tests only. No Core/server/plugin implementation.
+
+** Research
+The controller already fences durable state mutation by connection generation/session. However =submitText= returns the raw client future. After connection loss/reconnect, a late successful completion from the dead session is therefore still observable by its caller even though the reducer refuses to mutate. =AndroidAppSession.submitText= also attaches persistence to that returned future, so stale success could escape the reducer boundary into UI/persistence.
+
+** Required invariant
+A turn authorized by generation/session N must never complete successfully to Android callers once N is no longer the authenticated Connected session. Late completion must fail closed with =StaleTextSessionException= and must not mutate durable conversation state.
+
+** TDD
+1. RED: begin turn on session-1, lose connection, reconnect as session-2, then complete the old client future successfully. Caller must receive stale-session failure, not the late assistant result.
+2. GREEN: return a generation/session-fenced controller future while preserving timeout-driven reconnect semantics and canonical reducer state.
+3. Exact Android/full repository CI before merge.
