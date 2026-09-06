@@ -43,7 +43,14 @@ class VoicePlaybackController(
             is VoiceStreamEvent.AudioChunk -> {
                 val next = reduceVoiceStream(state, event)
                 check(outputActive) { "audio output is not active" }
-                output.write(event.pcm.copyOf())
+                try {
+                    output.write(event.pcm.copyOf())
+                } catch (error: Throwable) {
+                    val cleanupError = runCatching { stopOutputAndReleaseFocus() }.exceptionOrNull()
+                    state = clearAudioState()
+                    if (cleanupError != null) error.addSuppressed(cleanupError)
+                    throw error
+                }
                 state = next
             }
             is VoiceStreamEvent.AudioDone -> {
