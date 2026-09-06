@@ -77,6 +77,74 @@ class ZaraTextClientDeviceActionTest {
         }
     }
 
+    @Test
+    fun `stale session device action fails before handler or acknowledgement`() {
+        val dealer = DeviceActionDealer(
+            listOf(
+                helloOk(),
+                capabilityOk(),
+                turnAccepted(),
+                actionRequest(deadlineNs = 9_999_999_999, sessionId = "stale-session"),
+            )
+        )
+        val handler = RecordingDeviceActionHandler()
+        val client = ZaraTextClientActor(
+            dealerFactory = TextDealerFactory { dealer },
+            requestIds = listOf("hello-1", "caps-1", "turn-1").iterator(),
+            timestamps = listOf(1L, 2L, 3L).iterator(),
+            deviceCapabilities = handler::availableCapabilities,
+            deviceActionHandler = handler,
+            epochNanoseconds = { 1L },
+        )
+
+        try {
+            client.connect(ServerProfile.create("tcp://127.0.0.1:5555"), 1).get(1, TimeUnit.SECONDS)
+            val error = assertThrows(ExecutionException::class.java) {
+                client.submitText(1, "session-1", null, "open it").get(1, TimeUnit.SECONDS)
+            }
+            assertTrue(error.cause is StaleTextSessionException)
+            assertEquals(emptyList<String>(), handler.executed)
+            assertEquals(3, dealer.sent.size)
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `duplicate terminal device action executes once and rejects replay before acknowledgement`() {
+        val dealer = DeviceActionDealer(
+            listOf(
+                helloOk(),
+                capabilityOk(),
+                turnAccepted(),
+                actionRequest(deadlineNs = 9_999_999_999),
+                actionRequest(deadlineNs = 9_999_999_999),
+            )
+        )
+        val handler = RecordingDeviceActionHandler()
+        val client = ZaraTextClientActor(
+            dealerFactory = TextDealerFactory { dealer },
+            requestIds = listOf("hello-1", "caps-1", "turn-1", "accepted-1", "result-1").iterator(),
+            timestamps = listOf(1L, 2L, 3L, 4L, 5L).iterator(),
+            deviceCapabilities = handler::availableCapabilities,
+            deviceActionHandler = handler,
+            epochNanoseconds = { 1L },
+        )
+
+        try {
+            client.connect(ServerProfile.create("tcp://127.0.0.1:5555"), 1).get(1, TimeUnit.SECONDS)
+            assertThrows(ExecutionException::class.java) {
+                client.submitText(1, "session-1", null, "open it").get(1, TimeUnit.SECONDS)
+            }
+            assertEquals(listOf("action-1"), handler.executed)
+            assertEquals(5, dealer.sent.size)
+            assertTrue(dealer.envelope(3).contains("\"type\":\"device.action.accepted\""))
+            assertTrue(dealer.envelope(4).contains("\"type\":\"device.action.result\""))
+        } finally {
+            client.close()
+        }
+    }
+
     private class RecordingDeviceActionHandler : DeviceActionHandler {
         val executed = mutableListOf<String>()
 
@@ -122,8 +190,11 @@ class ZaraTextClientDeviceActionTest {
             """{"body":{},"conversation_id":"conversation-1","id":"turn-ok","payload_count":0,"reply_to":"turn-1","session_id":"session-1","timestamp_ns":3,"turn_id":"turn-id","type":"turn.accepted"}"""
         )
 
-        private fun actionRequest(deadlineNs: Long) = frame(
-            """{"body":{"action_id":"action-1","args":{"uri":"https://example.com"},"capability":"open_uri","deadline_ns":$deadlineNs,"idempotency":"at_most_once"},"id":"action-request","payload_count":0,"session_id":"session-1","timestamp_ns":4,"trace_id":"trace-1","type":"device.action.request"}"""
+        private fun actionRequest(
+            deadlineNs: Long,
+            sessionId: String = "session-1",
+        ) = frame(
+            """{"body":{"action_id":"action-1","args":{"uri":"https://example.com"},"capability":"open_uri","deadline_ns":$deadlineNs,"idempotency":"at_most_once"},"id":"action-request","payload_count":0,"session_id":"$sessionId","timestamp_ns":4,"trace_id":"trace-1","type":"device.action.request"}"""
         )
 
         private fun assistantCompleted() = frame(
