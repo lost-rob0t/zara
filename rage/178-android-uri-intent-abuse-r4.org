@@ -1,0 +1,14 @@
+* RAGE #178 r4 — Android URI/Intent escape-surface recovery
+
+- Consumed issue :: #178
+- Exact immutable start :: =5f17f167850c87fe04ca30a525819b2d2a11ae98=
+- Recovered from :: PR #506 / head =09a29665fe226e650f80dcef81562de670ad7fd9=
+- Scope :: Android test/evidence only. No Core/server/plugin implementation.
+
+** Recovery
+Android #505 advanced canonical master after r3 began gating. This transaction replays only the disjoint URI/Intent source contract onto exact current master; stale-base CI is not reused.
+
+** Acceptance
+- launcher remains normalized ACTION_VIEW + CATEGORY_BROWSABLE + NEW_TASK;
+- arbitrary Intent deserialization, explicit component/package targeting and caller extras remain absent;
+- fresh exact-head CI required before promotion/merge.
