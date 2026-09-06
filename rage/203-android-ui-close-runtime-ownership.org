@@ -1,0 +1,20 @@
+* RAGE #203 / #178 — app-scoped assistant runtime survives ordinary UI destruction
+
+- Consumed issues :: #203 lifecycle hardening; contributes to #178 lifecycle release matrix
+- Exact immutable start :: =93e6bc371c866eed9cc52b3169bf35a8d8dbb74c=
+- Scope :: Android regression/evidence only. No Core/server/plugin implementation.
+
+** Source analysis
+- =ZaraApplication= owns the lazy process-scoped =AndroidAppSession=.
+- =MainActivity= resolves that application-owned session; it does not construct a second runtime.
+- =ZaraVoiceInteractionSession= resolves the same application-owned session through =applicationContext=.
+- Activity =onDestroy= detaches UI observers and does not close/disconnect the shared runtime.
+
+** Adversarial decision
+The ordinary Compose activity must be disposable. Closing/recreating it must not destroy the assistant runtime that the system VoiceInteraction surface needs while the ordinary UI is absent. Lock this ownership relationship down as a deterministic source contract; hardware/One UI invocation remains #206.
+
+** Acceptance
+- both ordinary UI and VoiceInteractionSession resolve the one application-owned session;
+- Activity destruction detaches observers only;
+- Activity destruction cannot close/disconnect the shared assistant runtime;
+- fresh exact-head CI required before promotion/merge.
