@@ -1,0 +1,11 @@
+#+title: RAGE #217 — S1-mini transcript normalizer recovery r3
+
+* Transaction
+- Recovery base :: =a88ad71d5b81e83cf32e20bf26c6d592f947a4d2= after sibling-owned Android #471 merged.
+- Recovered implementation commit :: =19727fb0ee2d6ea751f39d2aeb0e2441e67b12d9=.
+- Prior r2 exact head :: =72b3699ae2a06fef3278b8b596bea6148abdb09c=.
+- Prior r2 CI :: #1674 completed with Core/Nix/package and both shared-mic lanes green; Android gate had one stock-server text-turn timeout.
+- Prior fully-green candidate :: =6c212e79eff38ddcfa9ebc6ca400cc089f9c9073=, CI #1671.
+- Recovery invariant :: the six #217 paths are recovered onto current master without changing =android/**=; Android #471 remains canonical and untouched.
+- Conflict audit :: changes from the r2 base to current master are Android-only plus Android RAGE evidence and do not overlap any recovered #217 path.
+- Gate :: fresh exact-head CI on r3 is authoritative before merge. No previous green run authorizes this SHA.
