@@ -71,6 +71,9 @@ class CopilotWindow(QuickCopilotWindow):
         )
         self.set_presentation(target)
 
+    def _project_messages(self, state):
+        return state.messages
+
     def _apply_presentation(self) -> None:
         expanded = self._presentation is CopilotPresentation.EXPANDED
         self.setProperty("presentation", self._presentation.value)
