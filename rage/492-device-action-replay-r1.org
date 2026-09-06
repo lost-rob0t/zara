@@ -1,0 +1,34 @@
+#+title: RAGE #492 r1 — bounded device-action replay contract
+#+property: exact_start_sha 93e6bc371c866eed9cc52b3169bf35a8d8dbb74c
+
+* Scope
+Core-only shared ZARA/1 contract. No =android/**= changes. Android keeps execution/cache ownership; Core defines the replay evidence and semantics.
+
+* Source findings
+- Device action requests currently carry an opaque =action_id= but no ordering/replay evidence.
+- Core pending state is bounded and terminal actions are removed.
+- Existing session fencing already rejects stale authenticated sessions and remains the replay epoch boundary.
+
+* Selected contract
+- =DEVICE_ACTION_REPLAY_WINDOW = 256=.
+- Core issues a positive monotonic =action_seq= per authenticated session, starting at 1.
+- Opaque =action_id= remains correlation only; =action_seq= is replay evidence.
+- A sequence greater than the receiver high-water mark is fresh and advances the high-water mark.
+- A sequence at or below high-water but greater than =high_water - 256= is a duplicate/stale replay and must not execute again.
+- A sequence =<= high_water - 256= is replay-expired and must fail closed, never become fresh after cache eviction.
+- A new authenticated =session_id= is a new replay epoch. Existing stale-session fencing rejects prior-epoch traffic.
+- Reconnect preserving the same authenticated session must preserve the receiver high-water state; session rotation resets it.
+- Sequence values must be positive integers. Boolean/zero/negative/non-integer evidence is invalid.
+
+* RED acceptance matrix
+1. First sequence is fresh.
+2. Strictly increasing sequence is fresh and advances high-water.
+3. Immediate replay is duplicate.
+4. Replay at the retained-window edge is duplicate.
+5. Replay just outside the horizon is expired.
+6. Large forward gaps are fresh; later lower values remain replay/stale rather than reopening execution.
+7. Zero, negative, boolean, and non-integer sequence values fail closed.
+8. Window and high-water configuration reject invalid values.
+
+* Slice boundary
+This transaction first makes the replay semantics executable as a tiny pure Core contract. Follow-up wiring must add =action_seq= to the closed =device.action.request= schema and have the canonical gateway issue it per authenticated session. No parallel action runtime or Android-specific replay protocol is permitted.
