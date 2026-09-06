@@ -17,12 +17,15 @@ class AndroidTextSessionControllerTest {
             reconnectScheduler = scheduler,
         )
         val profile = ServerProfile.create("tcp://127.0.0.1:5555")
+
         val future = controller.connect(profile)
+
         assertEquals(profile, controller.state().configuredProfile)
         assertEquals(1L, client.connectGenerations.single())
         assertTrue(controller.state().server is ServerConnection.Connecting)
         client.completeConnect(0, ConnectedTextSession(1, "session-1"))
         future.get()
+
         val state = controller.state()
         assertEquals(ServerConnection.Connected(1), state.server)
         assertEquals("session-1", state.sessionId)
@@ -33,12 +36,15 @@ class AndroidTextSessionControllerTest {
     fun successful_text_turn_updates_only_durable_conversation_state() {
         val client = FakeTextSessionClient()
         val controller = connectedController(client)
+
         val future = controller.submitText("hello")
+
         assertEquals("hello", client.lastText)
         assertEquals(1L, client.lastGeneration)
         assertEquals("session-1", client.lastSessionId)
         client.turnFuture.complete(TextTurnResult("conversation-2", "turn-1", "hi", true))
         assertEquals("hi", future.get().text)
+
         assertEquals("conversation-2", controller.state().selectedConversationId)
         assertEquals("session-1", controller.state().sessionId)
     }
@@ -48,9 +54,14 @@ class AndroidTextSessionControllerTest {
         val client = FakeTextSessionClient()
         val scheduler = FakeReconnectScheduler()
         val controller = connectedController(client, scheduler)
+
         val future = controller.submitText("hello")
         client.turnFuture.completeExceptionally(TextRequestTimeoutException("timed out"))
-        try { future.get() } catch (_: Exception) { }
+        try {
+            future.get()
+        } catch (_: Exception) {
+        }
+
         assertEquals(ServerConnection.Reconnecting(2, 1), controller.state().server)
         assertEquals(2L, controller.state().generation)
         assertEquals(null, controller.state().sessionId)
@@ -64,11 +75,14 @@ class AndroidTextSessionControllerTest {
         val scheduler = FakeReconnectScheduler()
         val controller = connectedController(client, scheduler)
         val future = controller.submitText("hello")
+
         controller.connectionLost("network")
         assertTrue(controller.state().server is ServerConnection.Reconnecting)
         assertEquals(2L, controller.state().generation)
+
         client.turnFuture.complete(TextTurnResult("stale-conversation", "turn-1", "late", true))
         future.get()
+
         assertEquals(null, controller.state().selectedConversationId)
         assertEquals(null, controller.state().sessionId)
         assertEquals(2L, controller.state().generation)
@@ -79,13 +93,17 @@ class AndroidTextSessionControllerTest {
         val client = FakeTextSessionClient()
         val scheduler = FakeReconnectScheduler()
         val controller = connectedController(client, scheduler)
+
         controller.connectionLost("network")
+
         assertEquals(ServerConnection.Reconnecting(2, 1), controller.state().server)
         assertEquals(listOf(250L), scheduler.delays)
         assertEquals(1, client.disconnectCalls)
+
         scheduler.runNext()
         assertEquals(listOf(1L, 2L), client.connectGenerations)
         client.completeConnect(1, ConnectedTextSession(2, "session-2"))
+
         assertEquals(ServerConnection.Connected(2), controller.state().server)
         assertEquals("session-2", controller.state().sessionId)
     }
@@ -95,11 +113,14 @@ class AndroidTextSessionControllerTest {
         val client = FakeTextSessionClient()
         val scheduler = FakeReconnectScheduler()
         val controller = connectedController(client, scheduler)
+
         controller.connectionLost("network")
         scheduler.runNext()
         client.failConnect(1, ZaraWireException("still offline"))
+
         assertEquals(ServerConnection.Reconnecting(3, 2), controller.state().server)
         assertEquals(listOf(250L, 500L), scheduler.delays)
+
         scheduler.runNext()
         assertEquals(listOf(1L, 2L, 3L), client.connectGenerations)
     }
@@ -109,15 +130,21 @@ class AndroidTextSessionControllerTest {
         val client = FakeTextSessionClient()
         val scheduler = FakeReconnectScheduler()
         val controller = connectedController(client, scheduler)
+
         controller.connectionLost("network")
-        repeat(8) { controller.connectionLost("duplicate-network-callback") }
+        repeat(8) {
+            controller.connectionLost("duplicate-network-callback")
+        }
+
         assertEquals(ServerConnection.Reconnecting(2, 1), controller.state().server)
         assertEquals(2L, controller.state().generation)
         assertEquals(listOf(250L), scheduler.delays)
         assertEquals(1, client.disconnectCalls)
+
         scheduler.runNext()
         assertEquals(listOf(1L, 2L), client.connectGenerations)
         client.failConnect(1, ZaraWireException("actual reconnect failed"))
+
         assertEquals(ServerConnection.Reconnecting(3, 2), controller.state().server)
         assertEquals(listOf(250L, 500L), scheduler.delays)
         assertEquals(2, client.disconnectCalls)
@@ -128,7 +155,9 @@ class AndroidTextSessionControllerTest {
         val client = FakeTextSessionClient()
         val scheduler = FakeReconnectScheduler()
         val controller = connectedController(client, scheduler)
+
         controller.observeEnrollment(EnrollmentReadiness.Unenrolled)
+
         assertEquals(EnrollmentReadiness.Unenrolled, controller.state().enrollment)
         assertEquals(ServerConnection.Disconnected, controller.state().server)
         assertEquals(2L, controller.state().generation)
@@ -141,7 +170,9 @@ class AndroidTextSessionControllerTest {
     fun assistant_role_observation_uses_runtime_reducer_without_touching_connection() {
         val client = FakeTextSessionClient()
         val controller = connectedController(client)
+
         controller.observeAssistantRole(RoleOutcome.HELD)
+
         assertEquals(AssistantRole.Held, controller.state().assistantRole)
         assertEquals(ServerConnection.Connected(1), controller.state().server)
         assertEquals("session-1", controller.state().sessionId)
@@ -157,9 +188,15 @@ class AndroidTextSessionControllerTest {
             reconnectScheduler = scheduler,
         )
         val profile = ServerProfile.create("tcp://127.0.0.1:5555")
+
         val future = controller.connect(profile)
         client.failConnect(0, ZaraWireException("offline"))
-        try { future.get() } catch (_: Exception) { }
+
+        try {
+            future.get()
+        } catch (_: Exception) {
+        }
+
         val state = controller.state()
         assertEquals(ServerConnection.Reconnecting(2, 1), state.server)
         assertEquals(null, state.sessionId)
@@ -191,32 +228,52 @@ private class FakeTextSessionClient : TextSessionClient {
     var lastGeneration: Long? = null
     var lastSessionId: String? = null
     var lastText: String? = null
+
     override fun connect(profile: ServerProfile, generation: Long): CompletableFuture<ConnectedTextSession> {
         connectGenerations += generation
         return CompletableFuture<ConnectedTextSession>().also(connectFutures::add)
     }
-    fun completeConnect(index: Int, session: ConnectedTextSession) { connectFutures[index].complete(session) }
-    fun failConnect(index: Int, error: Throwable) { connectFutures[index].completeExceptionally(error) }
-    override fun submitText(generation: Long, sessionId: String, conversationId: String?, text: String): CompletableFuture<TextTurnResult> {
+
+    fun completeConnect(index: Int, session: ConnectedTextSession) {
+        connectFutures[index].complete(session)
+    }
+
+    fun failConnect(index: Int, error: Throwable) {
+        connectFutures[index].completeExceptionally(error)
+    }
+
+    override fun submitText(
+        generation: Long,
+        sessionId: String,
+        conversationId: String?,
+        text: String,
+    ): CompletableFuture<TextTurnResult> {
         lastGeneration = generation
         lastSessionId = sessionId
         lastText = text
         return turnFuture
     }
+
     override fun disconnect(): CompletableFuture<Unit> {
         disconnectCalls += 1
         return CompletableFuture.completedFuture(Unit)
     }
+
     override fun close() = Unit
 }
 
 private class FakeReconnectScheduler : ReconnectScheduler {
     val delays = mutableListOf<Long>()
     private val tasks = ArrayDeque<() -> Unit>()
+
     override fun schedule(delayMillis: Long, task: () -> Unit) {
         delays += delayMillis
         tasks.addLast(task)
     }
-    fun runNext() { tasks.removeFirst().invoke() }
+
+    fun runNext() {
+        tasks.removeFirst().invoke()
+    }
+
     override fun close() = Unit
 }
