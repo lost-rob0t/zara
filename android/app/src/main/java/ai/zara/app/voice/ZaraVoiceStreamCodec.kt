@@ -44,6 +44,7 @@ sealed interface VoiceStreamEvent {
 object ZaraVoiceStreamCodec {
     private val marker = "ZARA/1".encodeToByteArray()
     private const val maxEnvelopeBytes = 64 * 1024
+    private const val maxAudioPayloadBytes = 1024 * 1024
     private const val maxTokenBytes = 128
     private const val maxTextBytes = 1024 * 1024
     private val envelopeKeys = setOf(
@@ -118,6 +119,9 @@ object ZaraVoiceStreamCodec {
                     throw ZaraWireException("unsupported audio output content type")
                 }
                 val pcm = frames[2]
+                if (pcm.size > maxAudioPayloadBytes) {
+                    throw ZaraWireException("audio output payload exceeds byte limit")
+                }
                 if (pcm.isEmpty() || pcm.size % 2 != 0) {
                     throw ZaraWireException("audio output payload must contain whole pcm_s16le samples")
                 }
