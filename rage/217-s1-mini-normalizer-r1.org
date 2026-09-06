@@ -54,3 +54,12 @@
 
 * Gate
 Focused deterministic fake-endpoint acceptance, focused non-interactive backend script, full =scripts/test-all.sh=, =nix flake check=, packaged Zara, Android compatibility, both shared-mic lanes, exact-current-head CI, and zero unresolved review threads.
+
+* Recovery r2
+- Recovery base :: =c4a3afba72a63f4b1e3a39058a3dc1172cfcb64a= after Android-only #470 merged.
+- Prior exact candidate :: =6c212e79eff38ddcfa9ebc6ca400cc089f9c9073=.
+- Prior exact CI :: #1671 completed success.
+- Recovered implementation commit :: =77d36ea00be2311c4af9d818d7513530a61497ee=.
+- Recovery invariant :: the five implementation/test/gate blobs are byte-identical to the prior green candidate; only this append-only RAGE evidence changes.
+- Android ownership :: zero =android/**= changes; #470 remains canonical and untouched.
+- Required gate :: fresh exact-head CI on r2 before merge; prior #1671 is evidence, not merge authority for the recovered SHA.
