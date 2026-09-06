@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Signal
 from PySide6.QtWidgets import QWidget
 
 from zara.desktop.conversation import ConversationService
@@ -22,6 +22,8 @@ class CopilotPresentation(str, Enum):
 
 class CopilotWindow(QuickCopilotWindow):
     """One chat renderer that changes presentation without copying state."""
+
+    restart_requested = Signal()
 
     def __init__(
         self,
@@ -43,8 +45,6 @@ class CopilotWindow(QuickCopilotWindow):
         self.setObjectName("zaraCopilot")
         self.title_label.setText("Copilot")
 
-        # The adaptive renderer owns expansion itself. Remove Quick's legacy
-        # handoff signal path so this window can never spawn/copy into Full Chat.
         self.expand_button.clicked.disconnect()
         self.expand_button.clicked.connect(self.toggle_presentation)
         self._apply_presentation()
