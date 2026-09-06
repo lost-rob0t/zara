@@ -1,0 +1,84 @@
+#+title: RAGE #324 — unified adaptive Copilot research/design r1
+
+* Exact-source reconciliation
+Research is against immutable start =9ac0e0c0b94f571d6cab69ec252bb69ac2db3420=, not the older research baseline.
+
+- =DesktopController= still constructs two normal chat top-levels: =FullChatWindow= and =QuickCopilotWindow= over the same =ConversationService=.
+- Runtime/conversation events are manually projected into both surfaces. Quick expansion still calls =expand_quick_to_full_chat=, selects the same durable conversation in Full Chat, then hides Quick.
+- =QuickCopilotWindow= remains a partial renderer: it truncates presentation to =_MAX_VISIBLE_MESSAGES = 6=, owns its own message-widget map, composer, cancellation/request IDs, provider label, runtime rail, geometry key, and permanent Full chat action.
+- =FullChatWindow= independently owns another message renderer/composer/cancellation state plus the conversation history sidebar and rename/search behavior.
+- Tray primary Quick activation is already wired to =toggle_quick_copilot= at this start SHA, so the older research statement that primary activation only shows Quick is stale and must not be reimplemented.
+- Existing close-to-hide semantics already exist in both surfaces and should be preserved rather than redesigned.
+- Existing CI already uploads =artifacts/=; #324 needs a deterministic renderer/manifest, not a second artifact transport.
+
+* Root defect
+The current architecture has one durable conversation authority but two UI state machines. This is more than duplicate chrome: each surface separately owns message widgets, composer/action state, cancellation request tracking, command-error presentation and synchronization. Keeping both while merely renaming Quick would preserve the exact split #324 is meant to remove.
+
+* Selected architecture
+1. Make one adaptive =CopilotWindow= the only normal process-owned chat renderer. Prefer evolving/extracting from the current Quick surface because it already owns summon/focus/geometry behavior, but import history/search/rename capability from Full Chat before retirement.
+2. One =ConversationService= remains authoritative. One window owns one current conversation ID, one message-widget map, one composer/action state and one cancellation projection.
+3. Add an explicit presentation enum =COMPACT|EXPANDED=. Visibility remains QWidget show/hide, not a third mode.
+4. Compact and expanded use the same message container/composer widgets. Mode changes alter layout/panel visibility and geometry only; they must not rebuild/copy message state or create another top-level chat window.
+5. Preserve stable top-level window flags unless a focused Qt test proves a required transition. Do not churn Tool/always-on-top flags during every mode switch by default because native recreation can lose visibility/focus.
+6. Persist independent compact/expanded geometry keys through the existing QSettings ownership pattern.
+7. Retain Settings as a separate secondary workspace; diagnostics may remain a secondary action. #324 removes duplicated chat presentation, not all desktop windows.
+8. Remove =_MAX_VISIBLE_MESSAGES= truncation from the canonical surface. Compact mode may scroll to the latest content but must retain/render the same conversation state as expanded mode.
+9. Screenshot fixtures construct one Copilot against fake ConversationService/bridge/runtime state and render deterministic states to =ARTIFACT_DIR/ui=. No daemon/provider/mic/tray/network/wall-clock dependency.
+10. Manifest records fixture name, logical state, dimensions, theme, source SHA and relative PNG path. Structural assertions are the gate; PNG bytes are review evidence, not initial golden equality.
+
+* Rejected alternatives
+- Keep Quick + Full and synchronize harder :: rejected; preserves duplicate renderer/composer/cancellation ownership and handoff.
+- Make Full Chat canonical and spawn a transient compact proxy :: rejected; still creates two renderers and message projection semantics.
+- Put chat mode/state in =ConversationService= :: rejected; compact/expanded/visibility are presentation state and must not pollute durable conversation authority.
+- Add screenshot-only CI before consolidation :: rejected as the final shape; it would bless the duplicated architecture. The first implementation slice should generate fixtures against the new single renderer.
+- Byte-exact PNG gating immediately :: rejected; font/raster differences are too brittle. Gate geometry/state invariants and always publish screenshots.
+
+* Invariants / adversarial review
+- Exactly one normal chat top-level created by default controller construction.
+- No second message/composer renderer is kept hidden for expanded mode.
+- Conversation ID, rendered message identities, draft text and active cancellation state survive repeated compact<->expanded transitions.
+- Selecting history in expanded mode changes the same canonical window; collapsing does not switch conversation.
+- Minimum compact size cannot hide/overlap the composer or reduce the message viewport to zero.
+- Long message/runtime/error content cannot widen the top-level beyond its requested geometry.
+- Mode switching is idempotent and cannot create QWidget/top-level leaks.
+- Close/Escape hides without destroying conversation/UI state; process quit still explicitly closes owned surfaces.
+- Screenshot fixtures must not persist fake state into the normal user ConversationStore/XDG paths.
+- Screenshot/manifest output contains no secrets, transcript from real users, provider credentials or nondeterministic timestamps.
+
+* RED/TDD map
+A. Controller ownership RED
+- default =DesktopController= creates exactly one chat top-level and no =quick_window= + =window= duality.
+- tray Quick/full compatibility signals both target the same adaptive window during migration.
+
+B. Presentation continuity RED
+- compact -> expanded -> compact keeps exact conversation ID and draft text.
+- message widget identities/content survive transition without a second renderer/copy.
+- repeated transitions keep one top-level and one signal submission path.
+
+C. History migration RED
+- expanded mode exposes search/history/rename/new-chat from current Full Chat behavior.
+- selecting history updates the same window; compact retains selected conversation.
+
+D. Geometry/lifecycle RED
+- independent compact/expanded QSettings geometry round-trip.
+- close/Escape hide; explicit prepare-for-quit closes.
+- minimum supported geometry keeps composer visible, message viewport positive and key children non-overlapping.
+
+E. Visual fixture RED
+- deterministic fake states emit all required PNG names plus bounded =manifest.json= below =ARTIFACT_DIR/ui=.
+- fixture rendering works without daemon/network/provider/microphone/system tray.
+- long-wrap, error/disconnected, streaming, tool running/approval, voice listening/partial, expanded/history and smallest states are represented.
+
+F. Repository integration
+- focused desktop/Copilot tests first; then =scripts/test-all.sh=, =nix flake check=, packaged Zara, screenshot artifact inspection, Android compatibility and both shared-mic lanes at exact head.
+
+* Smallest useful vertical slice
+First implementation should not attempt every visual refinement. The smallest architecture-complete slice is:
+1. introduce/adapt one =CopilotWindow= with compact/expanded state;
+2. move history/search/rename into its expanded panel;
+3. change default controller construction to own only it;
+4. preserve one composer/message/cancel path across transitions;
+5. add compact/expanded continuity + one-top-level structural RED/GREEN tests;
+6. add deterministic screenshot harness and required fixture inventory/manifest, initially using the existing widgets/styles where necessary;
+7. remove normal Full Chat handoff/=_MAX_VISIBLE_MESSAGES= projection once tests prove parity.
+Visual tightening can then iterate on the one renderer without preserving the old architecture.
