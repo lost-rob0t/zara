@@ -24,6 +24,7 @@ class CopilotWindow(QuickCopilotWindow):
     """One chat renderer that changes presentation without copying state."""
 
     restart_requested = Signal()
+    diagnostics_requested = Signal()
 
     def __init__(
         self,
