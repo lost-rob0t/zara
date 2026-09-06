@@ -1,0 +1,10 @@
+#+title: RAGE #217 — local S1-mini transcript normalizer r1
+
+* Transaction
+- Consumed issue :: #217
+- Immutable start :: =f34084ecacec9ef39f3b421ec1a1e772b46ca652=
+- Branch :: =rage/217-s1-mini-normalizer-r1=
+- Scope :: Zara Core only; zero =android/**= changes.
+
+* Gate
+Focused deterministic fake-endpoint acceptance, focused non-interactive backend script, full =scripts/test-all.sh=, =nix flake check=, packaged Zara, Android compatibility, both shared-mic lanes, exact-current-head CI, and zero unresolved review threads.
