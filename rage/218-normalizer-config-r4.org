@@ -1,0 +1,43 @@
+#+title: RAGE #218 — transcript-normalizer configuration r4
+
+* Transaction
+- Consumed issue :: #218
+- Immutable start :: =4cd2f44eb76bb3f1f648cbbefddf57b4a6fb0b09=
+- Branch :: =rage/218-normalizer-config-r4=
+- Scope :: Zara Core config/selection/status contract only; zero =android/**= changes.
+
+* Recovery evidence
+- r3 exact head =456e7d419780d94bec8b66f299ead14ccea2609f= completed CI #1713 fully green.
+- r3 became stale because canonical master advanced through Android-only #498.
+- Compare from r3 base =fd91a74e05e28371d903d44256d10c8a29ba5134= to this immutable start contains only =android/app/src/test/java/ai/zara/app/prolog/NativeTreallaBridgeTest.kt= and =rage/178-android-prolog-lifecycle-r3.org=; no #218 Core path overlaps.
+- r4 recreates the exact r3 acceptance-test and production descriptor blobs on current master. Historical green is evidence only.
+
+* Adversarial acceptance review
+The recovered descriptor alone did not satisfy the full #218 selection/status acceptance: it was not connected to Zara's existing configuration authority and did not expose an honest privacy/status projection. The iteration therefore remained open rather than treating descriptor-only green as completion.
+
+** RED witness
+- Exact head :: =31e665b7edb865a8cc45698af6b1ec616dabeaf1=
+- CI :: #1719
+- Result :: Core regression gate failed during collection because =zara.transcript_normalization_selection= intentionally did not exist. Both shared-mic lanes passed; flake/package correctly remained behind the failed Core gate.
+- Regression artifact digest :: =sha256:983124cd4006d91ab994eaa4ee275f28a877ef01418cc096de1eb3d1d6eac0b0=
+
+** Implementation
+- Selection reads =[voice.transcript_normalization]= through the existing =ZaraConfig.get(section,key,default)= authority; it creates no second store, watcher, or reload path.
+- =off= selects the existing identity backend. =s1-mini= registers the landed S1-mini provider into the existing provider-neutral =TranscriptNormalizationService=.
+- Configured S1-mini starts =degraded= rather than falsely claiming readiness before a result has been observed.
+- Successful results project =ready=; unavailable projects =unavailable=; other typed failures project =degraded= with only the bounded status enum value.
+- Diagnostics contain backend/model/locality/status/reload semantics only. They never retain or expose transcript text, credentials, request payloads, or result objects.
+- Normalizer configuration changes are explicitly =restart-required= for the selected runtime instance; no hidden live-reload mechanism is introduced.
+
+* Preserved invariants
+- Existing =ZaraConfig= remains the single XDG TOML authority; no second settings store or watcher.
+- Default normalization remains =off= with =raw= failure policy.
+- Backend is closed to =off|s1-mini= and S1-mini runtime to =openai-compatible=.
+- Provider endpoint is an absolute credential-free HTTP(S) origin; provider-owned =/v1= suffix, path, query, fragment and userinfo fail closed.
+- Locality means localhost/IP loopback only; RFC1918/LAN remains remote for privacy posture.
+- S1-mini controls match the landed provider contract: styling =casual|semi-casual|semi-formal|formal=, structure =prose|lists=, context =general|email=.
+- Timeout rejects booleans, non-finite values and values outside 50..30000 ms.
+- No secrets, transcript contents, model lifecycle side effects, or =android/**= implementation.
+
+* Gate
+Fresh exact-head CI must pass Core =scripts/test-all.sh= -> =nix flake check= -> package, Android compatibility/APK/native/secret, and both shared-mic lanes before merge. Expected-head protection is mandatory.
