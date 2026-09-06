@@ -11,6 +11,7 @@
 #   2. Prolog module load and resolver corpus
 #   3. Focused ZARA/1 protocol/transport gate
 #   4. Runtime tool-approval security gate
+#   4b. S1-mini transcript normalizer gate
 #   5. Full pytest suite (with JUnit XML output)
 #   6. Config/process/file-tool security scripts
 #   7. Deterministic latency budgets
@@ -28,17 +29,9 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-# --- Isolated environment -------------------------------------------------
-# Every sub-test gets a clean HOME, XDG_CONFIG_HOME, XDG_RUNTIME_DIR, and
-# ZARA_DICTATION_* paths so no user data leaks in and no test pollutes the
-# user's real config.
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"; rm -rf "$repo_root/t/fixtures/audio"' EXIT
 
-# Packaging/Nix phases invoke nested `nix` commands. Nix resolves its own
-# configuration relative to XDG_CONFIG_HOME, which this gate redirects, so
-# carry the ambient nix configuration through NIX_CONFIG (read by nix
-# regardless of XDG state) to keep experimental features enabled.
 AMBIENT_NIX_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/nix/nix.conf"
 if [ -f "$AMBIENT_NIX_CONF" ]; then
   export NIX_CONFIG="$(cat "$AMBIENT_NIX_CONF")
@@ -58,7 +51,6 @@ export PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}"
 
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR" "$XDG_DATA_HOME"
 
-# --- Artifact directory --------------------------------------------------
 export ARTIFACT_DIR="${ARTIFACT_DIR:-$TEST_ROOT/artifacts}"
 mkdir -p "$ARTIFACT_DIR"
 
@@ -74,9 +66,6 @@ run_phase() {
   echo ""
   echo "=== Phase $PHASE_COUNT: $name ==="
 
-  # Do not invoke phase functions directly in an `if` condition. Bash disables
-  # errexit for commands executed inside such functions, which can turn a
-  # failing middle command into a false-green phase if a later command passes.
   set +e
   (
     set -e
@@ -98,7 +87,6 @@ run_phase() {
   exit "$status"
 }
 
-# --- Phase 1: Python compile/import checks --------------------------------
 phase_python_compile() {
   python -m compileall -q zara scripts
   python -c "import zara.wake; import zara.dictate; import zara.console; import zara.agent_cli; import zara.client; import zara.server; import zara.__main__"
@@ -106,66 +94,54 @@ phase_python_compile() {
   python -m zara --help 2>&1 | grep -q "Zarathustra Voice Assistant"
   python -m zara.server --help 2>&1 | grep -q "zara-server"
 }
-
 run_phase "Python compile/import checks" phase_python_compile
 
-# --- Phase 1b: Generate deterministic audio fixtures ----------------------
 phase_generate_fixtures() {
   python "$repo_root/scripts/generate-audio-fixtures.py" "$repo_root/t/fixtures/audio" >/dev/null
   python "$repo_root/scripts/generate-pet-fixtures.py" "$TEST_ROOT/pet-fixtures" >/dev/null
 }
-
 run_phase "Generate audio fixtures" phase_generate_fixtures
 
-# --- Phase 2: Prolog module load and resolver corpus ----------------------
 phase_prolog_load() {
   swipl -q -g "consult('main.pl'), halt" -t "halt(1)" 2>&1
 }
-
 run_phase "Prolog module load" phase_prolog_load
 
 phase_resolver_corpus() {
   bash "$repo_root/scripts/test-intents.sh"
 }
-
 run_phase "Prolog resolver corpus" phase_resolver_corpus
 
-# --- Phase 2b: Capability plan selection gate (issue #157) -----------------
 phase_capability_plans() {
   bash "$repo_root/scripts/test-capability-plans.sh"
 }
-
 run_phase "Capability plan selection" phase_capability_plans
 
-# --- Phase 2c: Server api_service provider gate (issue #158) ---------------
 phase_api_service() {
   bash "$repo_root/scripts/test-api-service.sh"
 }
-
 run_phase "Server api_service providers" phase_api_service
 
-# --- Phase 3: Focused ZARA/1 protocol/transport gate ----------------------
 phase_zara1_protocol() {
   bash "$repo_root/scripts/test-zara1-protocol.sh"
 }
-
 run_phase "ZARA/1 protocol and transport" phase_zara1_protocol
 
-# --- Phase 4: Runtime tool-approval gate ---------------------------------
 phase_runtime_tool_approvals() {
   bash "$repo_root/scripts/test-runtime-tool-approvals.sh"
 }
-
 run_phase "Runtime tool approvals" phase_runtime_tool_approvals
 
-# --- Phase 5: Full pytest suite -------------------------------------------
+phase_s1_mini_normalizer() {
+  bash "$repo_root/scripts/test-s1-mini-normalizer.sh"
+}
+run_phase "S1-mini transcript normalizer" phase_s1_mini_normalizer
+
 phase_pytest() {
   python -m pytest -q -o faulthandler_timeout=15 --junit-xml="$ARTIFACT_DIR/junit.xml" t/
 }
-
 run_phase "Pytest suite" phase_pytest
 
-# --- Phase 6: Config/process/file-tool security scripts -------------------
 phase_security_scripts() {
   local security_scripts=(
     scripts/test-config.sh
@@ -194,26 +170,20 @@ phase_security_scripts() {
     bash "$repo_root/$script"
   done
 }
-
 run_phase "Config/process/file-tool security scripts" phase_security_scripts
 
-# --- Phase 7: Deterministic latency budgets -------------------------------
 phase_latency() {
   bash "$repo_root/scripts/test-latency-metrics.sh"
 }
-
 run_phase "Deterministic latency budgets" phase_latency
 
-# --- Phase 8: Packaging/Nix checks ----------------------------------------
 phase_packaging() {
   bash "$repo_root/scripts/test-packaging.sh"
   bash "$repo_root/scripts/test-canonical-paths.sh"
   bash "$repo_root/scripts/test-entrypoints.sh"
 }
-
 run_phase "Packaging/Nix checks" phase_packaging
 
-# --- Summary --------------------------------------------------------------
 echo ""
 echo "=== Regression Gate Summary ==="
 echo "Phases run:    $PHASE_COUNT"
