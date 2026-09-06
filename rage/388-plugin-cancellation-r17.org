@@ -1,0 +1,28 @@
+#+title: RAGE #388 r17 — characterize whole ToolCall forwarding through the canonical ToolNode
+
+* RAGE start
+- Consumed issue: #388 — Plugin API: propagate canonical cancellation to running service tools.
+- Immutable start SHA: =bea53760a6c1e91bb0671a509985498d760a49d5=.
+- Branch: =rage/388-toolnode-forwarding-r17=.
+- Scope: Zara Core characterization only; zero =android/**= changes and zero production cancellation semantics.
+
+* Prior evidence
+- r15 / PR #463 proved its cancellation wrapper can reach the original BaseTool when invoked directly with ordinary args, but exact-head CI #1647 failed three canonical ToolNode acceptance tests before plugin-body entry.
+- r16 / merged PR #569 proved pinned LangGraph ToolNode invokes the exact registered BaseTool object's public =ainvoke= and passes a whole typed ToolCall mapping with =name=, =args= and =id=.
+- Therefore the remaining uncharacterized r15 boundary is whether a public wrapper can forward that whole ToolCall unchanged to the original sync BaseTool from =asyncio.to_thread=, which is the same non-cancellation dispatch shape r15 used.
+
+* Selected characterization
+- Define a test-local BaseTool wrapper only.
+- Preserve the original name, args schema and model-facing tool-call schema.
+- Override public =ainvoke=, record the exact ToolNode input, then forward the input unchanged to the original tool's public =invoke= inside =asyncio.to_thread=.
+- Keep approval, registry mutation, ContextVar state, cancellation signalling and terminal events out of this test so one dispatch hypothesis is isolated.
+
+* Acceptance
+- ToolNode invokes the wrapper once with the whole ToolCall mapping.
+- The wrapper forwards that mapping unchanged and the original sync tool body executes.
+- The resulting ToolMessage keeps the expected call result.
+- If this fails, r15's pre-body failures are explained at the forwarding/input boundary.
+- If this passes, whole-ToolCall forwarding and =to_thread= are eliminated as causes; the next slice must isolate r15's cancellation-context/shield/task ownership behavior rather than invent a new transport.
+
+* Gate
+- Focused characterization plus full exact-head repository gates are required before this evidence can become canonical.
