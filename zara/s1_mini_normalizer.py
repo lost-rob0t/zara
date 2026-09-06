@@ -64,15 +64,17 @@ class S1MiniTranscriptNormalizer:
             max_expansion_ratio, (int, float)
         ):
             raise TypeError("max_expansion_ratio must be numeric")
-        if float(max_expansion_ratio) <= 0:
-            raise ValueError("max_expansion_ratio must be positive")
+        expansion_ratio = float(max_expansion_ratio)
+        if not math.isfinite(expansion_ratio) or expansion_ratio <= 0:
+            raise ValueError("max_expansion_ratio must be finite and positive")
         if isinstance(request_timeout, bool) or not isinstance(request_timeout, (int, float)):
             raise TypeError("request_timeout must be numeric")
-        if float(request_timeout) <= 0:
-            raise ValueError("request_timeout must be positive")
+        timeout = float(request_timeout)
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("request_timeout must be finite and positive")
         self.max_output_chars = max_output_chars
-        self.max_expansion_ratio = float(max_expansion_ratio)
-        self.request_timeout = float(request_timeout)
+        self.max_expansion_ratio = expansion_ratio
+        self.request_timeout = timeout
         self._client = client
 
     @staticmethod
