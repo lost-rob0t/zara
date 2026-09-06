@@ -1,0 +1,30 @@
+#+title: RAGE #216 — provider-neutral transcript normalization contract r2
+
+* Transaction
+- Consumed issue :: #216
+- Immutable start :: =61f0f7977bc5ce8bd7bd9c4dd795ffb37600bf58=
+- Recovered from :: PR #466 exact-head-green candidate =5a4e8dfa95ebc1872bfd7394330afeb3d7996296=
+- Branch :: =rage/216-transcript-normalization-contract-r2=
+- Scope :: Zara Core only; zero =android/**= changes.
+
+* Recovery evidence
+PR #466 CI run #1652 completed green, with no review submissions or unresolved review threads. Canonical master advanced through Android-only #464 before merge, so r1 was not merged stale. r2 recreates the same Core contract directly on exact current master.
+
+* Acceptance
+The focused contract covers byte-preserving =off= behavior, registry duplicate/unknown handling, bounded input/output, typed timeout/unavailable/unsupported-language outcomes, stale-turn rejection before and after provider execution, and explicit caller-owned raw/fail-turn policy.
+
+* Architecture
+- One post-STT provider-neutral service; no second voice coordinator or STT path.
+- =IdentityTranscriptNormalizer= is the canonical =off= backend and performs no text transformation.
+- Providers are selected through a bounded registry rather than coordinator =if/elif= growth.
+- The normalizer receives only final transcript text plus language/turn/trace correlation. It receives no tools, RuntimeHost, plugin registry or execution authority.
+- Provider output is re-projected into Core-owned typed status/model/version fields and bounded before use.
+- A caller-supplied current-turn predicate fences stale work before and after provider execution.
+- Failure fallback is explicit above the provider via =select_normalized_text=.
+- No transcript body is logged or persisted by this module.
+
+* Deferred integration
+Issue #219 owns placement after canonical final-transcript acceptance and before semantic routing/dictation. #217 owns the S1-mini provider. This slice remains generic and Android-neutral.
+
+* Merge gates
+Focused tests, full =scripts/test-all.sh=, =nix flake check=, packaged Zara, Android compatibility, both shared-mic lanes, exact-current-head CI, and zero unresolved review threads.
