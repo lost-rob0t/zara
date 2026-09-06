@@ -52,3 +52,20 @@ Fresh source reconciliation at the immutable start confirms the root defect stil
 - Preserve the legacy =QuickCopilotWindow= cap for standalone compatibility while it exists; remove the cap only from the canonical adaptive surface so this slice stays focused and does not broaden legacy behavior.
 - RED must create more than six durable messages, sync the canonical Copilot, and prove every durable message has a live =MessageWidget=. The test also switches presentation modes to ensure expanded/compact mode does not change the projected message set.
 - No provider, daemon, protocol, persistence schema, Android, or runtime-command changes are required.
+
+* Slice E — exact-head screenshot artifact production
+** Research / boundary
+- The deterministic renderer already owns the closed 13-state visual matrix and writes PNGs plus =manifest.json= without daemon/provider/microphone/network or user XDG state.
+- CI already owns the artifact transport through the always-run =Upload test artifacts= step, but the workflow never invokes the renderer. The missing boundary is therefore one explicit offscreen render step, not another renderer, screenshot framework, or artifact store.
+- The CI invocation must stamp the caller-provided exact =GITHUB_SHA= into the manifest and write under =$ARTIFACT_DIR/ui= before artifact upload.
+
+** RED
+- Test-only head :: =e26d36a62dbc458d601a5a94b4b882108da16922=
+- CI :: #1825
+- Result :: Core =Run all tests= failed because the workflow did not contain the deterministic render invocation. =nix flake check= and packaged Zara were correctly skipped. Arch and Ubuntu shared-mic lanes both passed.
+
+** GREEN implementation
+- Implementation :: =ba1c796ccef9ef38ac01107b5ca393d173a78238=
+- The CI test job now invokes =render_copilot_fixtures(Path(os.environ["ARTIFACT_DIR"]) / "ui", source_commit=os.environ["GITHUB_SHA"])= under =QT_QPA_PLATFORM=offscreen= after package build and before the existing always-run artifact upload.
+- No =android/**=, daemon, protocol, provider, microphone, persistence schema, or runtime-command path is changed by this slice.
+- Exact-head full CI result :: pending at this commit; do not merge or mark this slice complete until the exact candidate passes the full repository-native gate.
