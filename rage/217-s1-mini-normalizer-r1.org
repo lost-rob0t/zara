@@ -6,5 +6,37 @@
 - Branch :: =rage/217-s1-mini-normalizer-r1=
 - Scope :: Zara Core only; zero =android/**= changes.
 
+* Research
+- Upstream model :: =superwhisper/s1-mini= release v1, English-only, Qwen3-0.6B-derived single-purpose transcript normalizer.
+- Serving :: upstream documents OpenAI-compatible vLLM/SGLang requests and llama.cpp/Ollama/LM Studio-compatible GGUF deployments.
+- Required prompt shape :: exact upstream system prompt plus one control line = [Styling: ...] [Structure: ...] [Context: ...] = followed by raw transcript.
+- Trained values :: styling =casual|semi-casual|semi-formal|formal=; structure =prose|lists=; context =general|email=.
+- Thinking :: Qwen thinking must be disabled; compatible OpenAI requests carry =chat_template_kwargs.enable_thinking=false=. Upstream warns omission commonly produces blank output.
+- Decoding :: deterministic/greedy; send temperature 0 and no streaming.
+- Input scale :: upstream recommends roughly <=1000 input tokens and bounded output close to input size.
+- Empty output contradiction :: upstream treats filler-only empty output as valid, but Zara issue #217 explicitly requires typed handling of empty output. r1 therefore classifies empty as =invalid_output= and leaves raw/fail-turn policy above the provider; this is deliberate Zara policy rather than silently changing #216 semantics.
+- Dependencies :: Zara already carries =httpx>=0.25= in =setup.py= and Nix owns Python dependencies, so no dependency addition is needed.
+
+* Architecture / design
+- One =S1MiniTranscriptNormalizer= implementing the existing #216 provider shape; no coordinator/runtime changes.
+- Endpoint is explicit and required. The adapter sends to exactly that configured endpoint and has no fallback endpoint, provider discovery, model download, or cloud path.
+- Model identity remains configurable, defaulting to =superwhisper/s1-mini=; version metadata defaults to =v1=.
+- Prompt/control construction is Core-owned from validated enum-like configuration. Transcript text is only user-message payload and cannot alter system/control fields.
+- Use =httpx.AsyncClient=; tests inject =httpx.MockTransport= so default CI has no network/model dependency.
+- Map connection/HTTP model absence to =unavailable=; HTTP timeout to =timeout=; unsupported language, malformed/empty/reasoning/wrapper/oversized/pathologically-expanded output to typed #216 statuses.
+- Do not catch caller =CancelledError= inside the HTTP adapter: canonical task/turn cancellation must remain authoritative. #216 stale-turn fencing supplies typed cancelled results where results are still representable.
+- Reject explicit =<think>=/reasoning payloads and obvious response wrappers instead of allowing an explanation/summary to become user text.
+- Enforce absolute output bound plus configurable expansion ratio.
+
+* Acceptance -> tests
+- exact request/system/control/thinking-off/temperature/model -> fake endpoint payload assertion;
+- endpoint/model configuration and no fallback -> one recorded request only;
+- English-only policy -> unsupported language without endpoint entry;
+- server unavailable/model missing/timeout -> typed #216 statuses through service;
+- empty/non-text/malformed/think/wrapper/oversized/expanded output -> =invalid_output=;
+- representative fixture responses for fillers, correction, repetition, punctuation, numbers, dates/times, currency, email, lists and already-clean input -> plain bounded text projection;
+- stale/cancelled turn -> #216 fences before provider entry;
+- focused non-interactive script -> composed into =scripts/test-all.sh=.
+
 * Gate
 Focused deterministic fake-endpoint acceptance, focused non-interactive backend script, full =scripts/test-all.sh=, =nix flake check=, packaged Zara, Android compatibility, both shared-mic lanes, exact-current-head CI, and zero unresolved review threads.
