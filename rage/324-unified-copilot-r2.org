@@ -1,0 +1,14 @@
+#+title: RAGE #324 — unified adaptive Copilot + screenshot CI r2
+
+* Transaction
+- Consumed issue :: #324
+- Immutable RAGE start :: =c2d903fd5cf08e2d28e006cec021309142bf6834=
+- Branch :: =rage/324-unified-copilot-r2=
+- Scope :: Zara Core desktop/test/docs/CI only; zero =android/**= changes.
+
+* Iteration 2
+The stale r1 design transaction remains historical evidence only and was closed unmerged. This iteration starts from exact canonical master after Core #492 merged.
+
+Fresh source reconciliation at the immutable start confirms the root defect still exists: =DesktopController= constructs both =FullChatWindow= and =QuickCopilotWindow= over one =ConversationService=, projects runtime/conversation state into both, and performs Quick -> Full handoff through =expand_quick_to_full_chat=. No current Android transaction has handed Core a newer shared blocker that supersedes #324.
+
+Before implementation this iteration will re-check current window/test/CI surfaces, record the bounded design/adversarial review, then prove deterministic RED acceptance for the smallest single-renderer slice.
