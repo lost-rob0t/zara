@@ -1,6 +1,8 @@
 import json
+import math
 import re
 import wave
+from array import array
 from pathlib import Path
 
 import pytest
@@ -109,4 +111,23 @@ def test_voice_fixture_recording_format(path, case):
         duration = frame_count / wav.getframerate()
         assert duration <= case["seconds"] + 1.0, (
             f"{recording}: duration {duration:.2f}s exceeds declared capture window"
+        )
+
+        samples = array("h")
+        samples.frombytes(wav.readframes(frame_count))
+        assert samples, f"{recording}: recording contains no PCM samples"
+        scale = 32768.0
+        peak = max(abs(sample) for sample in samples) / scale
+        rms = math.sqrt(
+            sum((sample / scale) ** 2 for sample in samples) / len(samples)
+        )
+        assert peak >= 0.003, (
+            f"{recording}: peak {peak:.6f} is effectively silence; record real speech"
+        )
+        assert rms >= 0.0005, (
+            f"{recording}: RMS {rms:.6f} is effectively silence; record real speech"
+        )
+        clipped = sum(abs(sample) >= 32760 for sample in samples) / len(samples)
+        assert clipped < 0.02, (
+            f"{recording}: {clipped:.1%} clipped samples; re-record at a lower level"
         )
