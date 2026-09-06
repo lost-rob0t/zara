@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import tool
+from langgraph.graph import MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
 
@@ -28,8 +29,13 @@ async def test_toolnode_uses_registered_tool_public_ainvoke(monkeypatch):
 
     monkeypatch.setattr(tool_type, "ainvoke", traced_ainvoke)
 
-    node = ToolNode([dispatch_probe])
-    output = await node.ainvoke(
+    graph = StateGraph(MessagesState)
+    graph.add_node("tools", ToolNode([dispatch_probe]))
+    graph.set_entry_point("tools")
+    graph.set_finish_point("tools")
+    app = graph.compile()
+
+    output = await app.ainvoke(
         {
             "messages": [
                 AIMessage(
@@ -55,6 +61,5 @@ async def test_toolnode_uses_registered_tool_public_ainvoke(monkeypatch):
     assert public_inputs[0]["id"] == "dispatch-probe-1"
 
     messages = output["messages"]
-    assert len(messages) == 1
-    assert isinstance(messages[0], ToolMessage)
-    assert messages[0].content == "ok"
+    assert isinstance(messages[-1], ToolMessage)
+    assert messages[-1].content == "ok"
