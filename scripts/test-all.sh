@@ -11,6 +11,7 @@
 #   2. Prolog module load and resolver corpus
 #   3. Focused ZARA/1 protocol/transport gate
 #   4. Runtime tool-approval security gate
+#   4b. S1-mini transcript normalizer gate
 #   5. Full pytest suite (with JUnit XML output)
 #   6. Config/process/file-tool security scripts
 #   7. Deterministic latency budgets
@@ -157,6 +158,13 @@ phase_runtime_tool_approvals() {
 }
 
 run_phase "Runtime tool approvals" phase_runtime_tool_approvals
+
+# --- Phase 4b: Local S1-mini normalizer gate (issue #217) -----------------
+phase_s1_mini_normalizer() {
+  bash "$repo_root/scripts/test-s1-mini-normalizer.sh"
+}
+
+run_phase "S1-mini transcript normalizer" phase_s1_mini_normalizer
 
 # --- Phase 5: Full pytest suite -------------------------------------------
 phase_pytest() {
