@@ -63,6 +63,7 @@ class CopilotWindow(QuickCopilotWindow):
 
         self.history_panel = QWidget(self)
         self.history_panel.setObjectName("zaraConversationHistoryPanel")
+        self.history_panel.setMaximumWidth(320)
         history_layout = QVBoxLayout(self.history_panel)
         history_layout.setContentsMargins(0, 0, 0, 8)
         history_layout.setSpacing(8)
@@ -85,7 +86,31 @@ class CopilotWindow(QuickCopilotWindow):
         history_layout.addLayout(history_header)
         history_layout.addWidget(self.search_edit)
         history_layout.addWidget(self.history_list)
-        self.layout().insertWidget(1, self.history_panel)
+
+        root_layout = self.layout()
+        self.chat_column = QWidget(self)
+        self.chat_column.setObjectName("zaraCopilotChatColumn")
+        chat_layout = QVBoxLayout(self.chat_column)
+        chat_layout.setContentsMargins(0, 0, 0, 0)
+        chat_layout.setSpacing(root_layout.spacing())
+        for widget in (
+            self.status_frame,
+            self.command_error_label,
+            self.message_scroll,
+            self.composer_shell,
+        ):
+            root_layout.removeWidget(widget)
+            chat_layout.addWidget(widget)
+        chat_layout.setStretchFactor(self.message_scroll, 1)
+
+        self.copilot_body = QWidget(self)
+        self.copilot_body.setObjectName("zaraCopilotBody")
+        body_layout = QHBoxLayout(self.copilot_body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(root_layout.spacing())
+        body_layout.addWidget(self.history_panel)
+        body_layout.addWidget(self.chat_column, 1)
+        root_layout.addWidget(self.copilot_body, 1)
 
         self.search_edit.textChanged.connect(self.refresh_history)
         self.history_list.itemActivated.connect(self._activate_history_item)

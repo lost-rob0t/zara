@@ -1,0 +1,49 @@
+#+title: RAGE #324 — expanded history sidebar recovery r2
+
+* Iteration 2
+** Intake
+- Consumed issue: #324.
+- Immutable slice start: =89e67acae248960e80314de02fcd368c84d1b298=.
+- Recovery source: draft PR #574 / head =ce3daf67dd6a477d30adb227a25795c1f75a666f= was intentionally RED and stacked on obsolete base =rage/324-native-chrome-r1=.
+- Scope: recover only the proven expanded-history structural acceptance onto exact current master, then implement the smallest single-renderer sidebar layout.
+- Ownership: Zara Core only; never modify =android/**=.
+- Invariants: one =CopilotWindow=, one durable =ConversationService=, one =QtRuntimeBridge=, no second renderer/store/runtime/protocol path.
+
+** Research
+- Current =CopilotWindow= still creates =history_panel= and inserts it directly into the inherited vertical root layout with =self.layout().insertWidget(1, self.history_panel)=.
+- The inherited =QuickCopilotWindow= root is =header -> status -> error -> message_scroll -> composer_shell=, so inserting history at index 1 necessarily stacks the full history browser above the chat viewport.
+- The prior deterministic RED in #574 expresses the desired geometry without changing semantic/runtime behavior: history left of message viewport, vertical overlap, width <= 320, useful message width, composer aligned under message viewport.
+- Current #324 remains P0 and open; recovering its already-consumed transaction takes precedence over starting another Core issue.
+
+** Design / adversarial review
+- Preserve the existing header at the root.
+- Build one body widget with a horizontal layout: bounded existing =history_panel= on the left, and one chat column on the right.
+- Move the existing status/error/message/composer widgets into the chat column. Reparent/move existing widgets only; do not instantiate replacements.
+- Compact presentation hides only =history_panel=; the existing chat column consumes the body width.
+- Expanded presentation shows the same history widget with a bounded maximum width of 320 px.
+- History activation/search/rename and conversation binding remain unchanged.
+
+Rejected:
+- Fixed-height stacked history: still steals vertical chat space.
+- Overlay/drawer: adds focus/visibility state not required by this acceptance slice.
+- A second expanded renderer/window: violates #324 and the one-runtime invariant.
+
+** Acceptance mapped to tests
+- Expanded mode: history is strictly left of the message viewport and vertically overlaps it.
+- History width is <= 320 and message viewport remains wider.
+- Composer shares the message viewport's left edge and remains below it.
+- Existing compact/expanded identity, history-selection, geometry, conversation and runtime tests remain authoritative.
+
+** Gate
+- Recover the deterministic #574 RED test first, with no production change in that commit.
+- Exact-head Actions must demonstrate expected RED.
+- Implement the minimum layout change in a later commit.
+- Then require focused test + full =scripts/test-all.sh=, =nix flake check=, =nix build= and exact-head Actions before merge.
+
+** RED evidence
+- Exact RED head: =07a0c5eb04f27f8f8ed8657d5f6c6d6cba6db313=.
+- Actions run =34078388899=, Core test job =101608861078=.
+- Repository-native gate reached the full pytest phase with =2112 passed= and exactly one failure: =test_expanded_history_is_sidebar_beside_chat_without_stealing_viewport_height=.
+- Measured expanded geometry proves the stacking defect: history =QRect(18, 62, 924, 260)= while message viewport =QRect(18, 376, 924, 198)=; therefore history right =941= is not left of message left =18=.
+- Protocol/transport, runtime approvals, transcript normalizer, and both shared-mic lanes remained green before/alongside the expected structural RED.
+- This is the intended deterministic failure. Production implementation is now authorized for this iteration.
