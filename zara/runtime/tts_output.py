@@ -122,6 +122,8 @@ class TtsOutputBridge:
 
     async def _wait_for_tasks(self, timeout: float) -> None:
         if not self._tasks:
+            if timeout > 0:
+                await asyncio.sleep(timeout)
             return
         done, pending = await asyncio.wait(
             list(self._tasks), timeout=timeout
