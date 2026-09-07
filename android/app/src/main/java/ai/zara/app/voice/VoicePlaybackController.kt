@@ -43,7 +43,14 @@ class VoicePlaybackController(
             is VoiceStreamEvent.AudioChunk -> {
                 val next = reduceVoiceStream(state, event)
                 check(outputActive) { "audio output is not active" }
-                output.write(event.pcm.copyOf())
+                try {
+                    output.write(event.pcm.copyOf())
+                } catch (error: Throwable) {
+                    val cleanupError = runCatching { stopOutputAndReleaseFocus() }.exceptionOrNull()
+                    state = clearAudioState()
+                    if (cleanupError != null) error.addSuppressed(cleanupError)
+                    throw error
+                }
                 state = next
             }
             is VoiceStreamEvent.AudioDone -> {
@@ -74,12 +81,17 @@ class VoicePlaybackController(
     override fun close() {
         if (closed) return
         closed = true
-        if (outputActive) {
-            stopOutputAndReleaseFocus()
+        val stopFailure = if (outputActive) {
+            runCatching { stopOutputAndReleaseFocus() }.exceptionOrNull()
         } else {
-            audioFocus?.release()
+            runCatching { audioFocus?.release() }.exceptionOrNull()
         }
-        output.close()
+        val closeFailure = runCatching { output.close() }.exceptionOrNull()
+        if (stopFailure != null) {
+            if (closeFailure != null) stopFailure.addSuppressed(closeFailure)
+            throw stopFailure
+        }
+        if (closeFailure != null) throw closeFailure
     }
 
     private fun stopOutputAndReleaseFocus() {
