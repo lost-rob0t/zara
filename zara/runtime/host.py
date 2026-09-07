@@ -520,6 +520,7 @@ class RuntimeHost:
             )
             plugin_config = config.get_plugin_runtime_config()
             backend = self._require_backend()
+            principal_id = backend.principal_id
             manager = PluginManager(
                 paths,
                 configuration_provider=config.get_plugin_config,
@@ -534,6 +535,12 @@ class RuntimeHost:
                 max_workers=plugin_config["max_managed_workers"],
                 advice_registrar=backend.register_agent_loop_advice,
                 advice_unregistrar=backend.unregister_agent_loop_advice,
+                capability_approval_provider=backend.requires_composed_tool_approval,
+                capability_invoker=lambda name, request: backend.invoke_composed_tool(
+                    principal_id,
+                    name,
+                    request,
+                ),
             )
             self._plugin_manager = manager
             self._last_plugin_diagnostics = ()
