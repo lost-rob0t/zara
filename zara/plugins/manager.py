@@ -241,6 +241,10 @@ class PluginManager:
         invoker = self._capability_invoker
         if approval_provider is None or invoker is None:
             raise RuntimeError("plugin capability composition is not available")
+
+        # Keep lifecycle ownership across validation, policy re-resolution, and
+        # execution. Stop/unload must not invalidate either participant after an
+        # invocation has been accepted but before its canonical tool call returns.
         with self._lock:
             caller_record = next(
                 (
@@ -264,18 +268,18 @@ class PluginManager:
                 ),
                 None,
             )
-        if caller_record is None:
-            raise RuntimeError("calling plugin is not running")
-        if target is None:
-            raise RuntimeError("capability handle is stale or unavailable")
-        requires_approval = bool(approval_provider(handle.capability))
-        if requires_approval != handle.requires_approval:
-            raise RuntimeError("capability policy changed; resolve a fresh handle")
-        if requires_approval:
-            raise PermissionError(
-                "capability requires canonical interactive approval and cannot be invoked directly"
-            )
-        return invoker(handle.capability, request)
+            if caller_record is None:
+                raise RuntimeError("calling plugin is not running")
+            if target is None:
+                raise RuntimeError("capability handle is stale or unavailable")
+            requires_approval = bool(approval_provider(handle.capability))
+            if requires_approval != handle.requires_approval:
+                raise RuntimeError("capability policy changed; resolve a fresh handle")
+            if requires_approval:
+                raise PermissionError(
+                    "capability requires canonical interactive approval and cannot be invoked directly"
+                )
+            return invoker(handle.capability, request)
 
     async def _start_record(self, record: _PluginRecord) -> None:
         with self._lock:
