@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 import weakref
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from typing import Optional, Sequence
 
@@ -265,6 +265,12 @@ class _DeviceActionPending:
     accepted: bool = False
 
 
+@dataclass(frozen=True)
+class _GatewayOutbound:
+    message: ProtocolMessage
+    payloads: tuple[bytes, ...] = ()
+
+
 class ZaraZmqGateway:
     """ROUTER owner loop bridging ZARA/1 requests to RuntimeSupervisor."""
 
@@ -298,7 +304,7 @@ class ZaraZmqGateway:
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._started: concurrent.futures.Future = concurrent.futures.Future()
-        self._route_outbound: OrderedDict[bytes, queue.Queue[ProtocolMessage]] = OrderedDict()
+        self._route_outbound: OrderedDict[bytes, deque[_GatewayOutbound]] = OrderedDict()
         self._routes: dict[bytes, _RouteState] = {}
         self._turn_routes: dict[tuple[str, str], bytes] = {}
         self._approval_owners: dict[tuple[str, str], _ApprovalOwner] = {}
@@ -438,19 +444,25 @@ class ZaraZmqGateway:
             state = self._drop_route_locked(route)
         self._cancel_audio_inputs(state)
 
-    def _enqueue_outbound(self, route: bytes, message: ProtocolMessage) -> bool:
+    def _enqueue_outbound(
+        self,
+        route: bytes,
+        message: ProtocolMessage,
+        payloads: Sequence[bytes] = (),
+    ) -> bool:
         dropped_state = None
+        item = _GatewayOutbound(message=message, payloads=tuple(payloads))
         with self._lock:
             if route not in self._routes:
                 return False
             outbound = self._route_outbound.get(route)
             if outbound is None:
-                outbound = queue.Queue(maxsize=self._config.event_queue_size)
+                outbound = deque()
                 self._route_outbound[route] = outbound
-            try:
-                outbound.put_nowait(message)
-            except queue.Full:
+            if len(outbound) >= self._config.event_queue_size:
                 dropped_state = self._drop_route_locked(route)
+            else:
+                outbound.append(item)
         if dropped_state is not None:
             self._cancel_audio_inputs(dropped_state)
             return False
@@ -1356,14 +1368,24 @@ class ZaraZmqGateway:
                 route = next(iter(self._route_outbound))
                 outbound = self._route_outbound[route]
                 self._route_outbound.move_to_end(route)
-                try:
-                    message = outbound.get_nowait()
-                except queue.Empty:
+                if not outbound:
                     self._route_outbound.pop(route, None)
                     continue
-                if outbound.empty():
-                    self._route_outbound.pop(route, None)
-            self._send(socket, route, message)
+                item = outbound[0]
+            if not self._send(
+                socket,
+                route,
+                item.message,
+                item.payloads,
+                queue_on_again=False,
+            ):
+                return
+            with self._lock:
+                current = self._route_outbound.get(route)
+                if current is outbound and outbound and outbound[0] is item:
+                    outbound.popleft()
+                    if not outbound:
+                        self._route_outbound.pop(route, None)
             sent += 1
 
     def _send(
@@ -1372,15 +1394,24 @@ class ZaraZmqGateway:
         route: bytes,
         message: ProtocolMessage,
         payloads: Sequence[bytes] = (),
-    ) -> None:
+        *,
+        queue_on_again: bool = True,
+    ) -> bool:
         try:
             socket.send_multipart(
                 [route, *encode_message(message, payloads=payloads, limits=self._limits)],
                 flags=zmq.NOBLOCK,
             )
-        except (zmq.Again, zmq.ZMQError) as error:
+        except zmq.Again as error:
+            logger.warning("outbound send failed: %s", type(error).__name__)
+            if queue_on_again:
+                self._enqueue_outbound(route, message, payloads)
+            return False
+        except zmq.ZMQError as error:
             logger.warning("outbound send failed: %s", type(error).__name__)
             self._drop_route(route)
+            return False
+        return True
 
     def close(self, timeout: Optional[float] = None) -> None:
         with self._lock:

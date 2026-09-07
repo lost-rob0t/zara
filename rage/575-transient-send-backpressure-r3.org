@@ -1,0 +1,39 @@
+#+title: RAGE #575 r3 — transient ROUTER backpressure
+
+* Start
+- Consumed issue: #575 — P1 stock ZARA/1 Android interop determinism.
+- Immutable start commit: =461eed70d1fd0efc26d90091b5171c973cba3c69=.
+- Scope: Core shared ZARA/1 transport only. No =android/**= production changes.
+
+* Research
+- The stock Android interop failure occurs after authenticated connection and manifests as a text request timeout.
+- Starting =ZaraZmqGateway._send= caught =zmq.Again= together with permanent =zmq.ZMQError= and dropped the route for either class.
+- Starting =_drain_outbound= removed a queued message before attempting its nonblocking ROUTER write, so transient backpressure could discard the exact pending reply before delivery.
+- The existing diagnostic test encoded the older assumption that =Again= means route death. That contract conflicts with ZeroMQ nonblocking backpressure semantics and with #575's deterministic text-turn requirement.
+- Existing per-route outbound queues were already bounded by =event_queue_size=; the fix preserves that bound rather than adding retry loops or timeout inflation.
+
+* Design
+- Treat =zmq.Again= as transient send backpressure, not proof that the routing identity is gone.
+- Preserve the exact pending reply and route; a later owner-loop drain retries it.
+- Store payload frames with the queued envelope so voice/audio events are not corrupted by the same recovery path.
+- Keep route-local FIFO ordering and exactly-once removal after a successful write.
+- Keep permanent/unroutable =zmq.ZMQError= fail-closed by dropping the route.
+- Keep bounded secret-safe diagnostics: log only the exception class, never route identities, protocol IDs, payloads, endpoints, or key material.
+- No sleeps, retry-until-green loops, timeout increases, second runtime, or Android-specific protocol path.
+
+* Acceptance mapping
+- Transient =Again= preserves route and pending =turn.accepted=: =t/test_zmq_transient_backpressure.py=.
+- Transient =Again= preserves payload bytes and FIFO order across later drain: =t/test_zmq_transient_backpressure.py=.
+- Existing diagnostics are updated so =Again= remains secret-safe without requiring route destruction: =t/test_zmq_send_diagnostics.py=.
+- Permanent =ZMQError= remains fail-closed and secret-safe: =t/test_zmq_send_diagnostics.py=.
+- Final gate: focused tests, =scripts/test-all.sh=, =nix flake check=, package/build gates, Android stock interop/APK gate, and exact-head GitHub Actions.
+
+* TDD evidence
+- RED commit =2574d0251d15c8fd6485eafa2b7e163d881a18ec=: transient =Again= must preserve and later deliver the exact =turn.accepted=.
+- RED/guard commit =9756f083e2ef553d295e7e0c7060b7330ada6422=: remove the stale =Again => route drop= expectation while pinning permanent =ZMQError= fail-closed behavior and secret-safe logs.
+- GREEN commit =c939aa8cd1fbbce49215fddd6d3af01ea32f4836=: bounded payload-carrying per-route deque; peek-before-send; =Again= defers without route destruction; permanent =ZMQError= drops route.
+- Coverage commit =9ebb31c96c5ff3fc0fdfefee3bcecc330016590a=: payload preservation and FIFO order across transient backpressure.
+
+* Current state
+- Production GREEN is committed on PR #610.
+- Exact-head repository/Android CI remains the merge authority.
