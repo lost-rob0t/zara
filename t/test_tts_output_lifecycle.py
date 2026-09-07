@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import wave
 
@@ -59,6 +60,21 @@ async def _complete_turn(bridge: TtsOutputBridge, turn_id: str) -> None:
     )
     await bridge.wait_for_idle()
     await bridge._wait_for_tasks(timeout=0.1)
+
+
+@pytest.mark.asyncio
+async def test_idle_wait_yields_instead_of_busy_spinning(monkeypatch):
+    bridge = _bridge()
+    sleeps = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    await bridge._wait_for_tasks(timeout=0.05)
+
+    assert sleeps == [0.05]
 
 
 @pytest.mark.asyncio
