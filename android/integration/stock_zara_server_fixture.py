@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 from pathlib import Path
+from unittest import mock
 
 import zmq
 
@@ -17,6 +18,7 @@ from zara.runtime.commands import CommandReceipt
 from zara.security import Capability
 from zara.security_state import PersistentSecurityState
 from zara.server import ServerState, ZaraServer
+from zara.voice_runtime import RuntimeVoiceIngress
 from zara.zmq_transport import TransportConfig
 
 
@@ -128,6 +130,27 @@ class _Supervisor:
         return True
 
 
+class _NoopStreamingTranscriber:
+    def start_turn(self, stream_id: str) -> None:
+        del stream_id
+
+    def feed(self, pcm) -> list[object]:
+        del pcm
+        return []
+
+    def commit(self, stream_id: str) -> list[object]:
+        del stream_id
+        return []
+
+    def cancel(self, stream_id: str) -> None:
+        del stream_id
+
+
+def _fixture_transcriber_factory(self, **context):
+    del self, context
+    return _NoopStreamingTranscriber()
+
+
 def _tcp_endpoint() -> str:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
@@ -187,7 +210,12 @@ def main() -> int:
             ),
             shutdown_timeout=1.0,
         )
-        server.start()
+        with mock.patch.object(
+            RuntimeVoiceIngress,
+            "_default_transcriber_factory",
+            _fixture_transcriber_factory,
+        ):
+            server.start()
         try:
             _write_fixture(
                 fixture_file,
