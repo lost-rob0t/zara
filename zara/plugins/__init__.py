@@ -8,6 +8,7 @@ from .api import (
     RuntimeStatus,
     ServicePlugin,
 )
+from .cancellation import tool_cancellation_requested
 from .manager import PluginDiagnostic, PluginManager, PluginState
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "PluginState",
     "RuntimeStatus",
     "ServicePlugin",
+    "tool_cancellation_requested",
 ]
