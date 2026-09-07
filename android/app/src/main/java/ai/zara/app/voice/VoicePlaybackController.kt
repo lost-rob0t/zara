@@ -37,8 +37,9 @@ class VoicePlaybackController(
                 try {
                     output.start(event.sampleRate, event.channels)
                 } catch (error: Throwable) {
-                    audioFocus?.release()
+                    val focusFailure = runCatching { audioFocus?.release() }.exceptionOrNull()
                     state = clearAudioState()
+                    if (focusFailure != null) error.addSuppressed(focusFailure)
                     throw error
                 }
                 outputActive = true
