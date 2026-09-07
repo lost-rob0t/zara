@@ -10,30 +10,39 @@
 - The canonical agent loop already owns cancellation. =create_tools_node= invokes each approved tool through the existing LangGraph =ToolNode= and maps =asyncio.CancelledError= to =ToolCancelled= before re-raising.
 - =run_conversation_loop= owns graph/checkpointer lifetime and propagates turn cancellation; approval cancellation already raises =asyncio.CancelledError=.
 - Service plugins expose ordinary LangChain =BaseTool= values through =ServicePlugin.tools()=. =PluginRuntime= intentionally has no second execution/control plane.
-- Gap: a running service tool has no internal, invocation-scoped cancellation signal. A plugin such as =zara-shell= can only observe generic task cancellation, so it cannot consume one stable Core contract for cooperative child-resource teardown distinct from timeout.
+- Gap: a running service tool has no supported Core API for distinguishing canonical tool-task cancellation from ordinary timeout/failure while performing cooperative cleanup.
 
-** Design
+** Initial design
 - Preserve the existing =ToolNode= and task cancellation path as execution authority.
-- Add a Core-owned immutable invocation context available only while the exact tool invocation is running. It carries bounded identity metadata and a cancellation signal not supplied through model/tool arguments.
-- Scope is principal + turn + tool-run. No reusable process id, arbitrary target, raw callback, or plugin-created cancellation manager.
-- When the parent tool node is cancelled, Core marks the signal cancelled before propagating cancellation into the child invocation, allowing tool cleanup code to distinguish canonical cancellation from timeout/failure.
-- Context must be absent outside tool execution and must not leak between concurrent invocations.
-- Approval and tool availability checks remain before invocation. Existing =ToolCancelled= remains the terminal runtime event.
+- Initial RED explored a separate invocation context carrying principal/turn/tool-run identity plus an event.
+
+** Adversarial simplification
+- The exact running asyncio task is already the cancellation scope selected by Core after principal, turn, approval, and tool-run routing are complete.
+- Exposing those identities again to plugin code adds coupling and a second identity-bearing surface without improving cancellation authority.
+- Python =Task.cancelling()= is task-local, read-only to the consumer, and distinguishable from a completed =asyncio.timeout()= path.
+- Therefore the smaller contract is one public =tool_cancellation_requested()= helper for async service-tool cleanup. It reports only whether the current tool task is under canonical cancellation. It exposes no token, principal, process id, target, callback, or cancellation mutation method.
+- Concurrent invocations remain isolated by asyncio task ownership. Existing =ToolCancelled= remains the runtime terminal event and the existing =ToolNode= remains execution authority.
 
 ** Rejected alternatives
 - Plugin-specific =shell.cancel=: second control plane and reusable external identifier.
-- Adding a model-visible =cancel_token= tool argument: lets untrusted model input retarget/suppress control semantics.
-- Directly invoking =BaseTool= outside =ToolNode=: forks canonical tool execution behavior.
+- Model-visible cancellation token: lets untrusted tool arguments participate in control semantics.
+- New principal/turn/tool-run context: unnecessary identity exposure for the required cooperative teardown signal.
+- Direct =BaseTool= execution outside =ToolNode=: forks canonical execution behavior.
 
-** RED acceptance
-- A service tool can read its exact immutable invocation identity from Core context.
-- Concurrent tool calls receive distinct contexts.
-- Canonical task cancellation sets the scoped signal before the tool's cancellation cleanup runs.
-- Context is cleared after success, failure, and cancellation.
-- Existing approval policy and =ToolCancelled= event behavior remain intact.
+** RED / GREEN acceptance
+- Before cancellation, a running tool observes false.
+- During its =CancelledError= cleanup, the cancelled invocation observes true.
+- Cancelling one concurrent invocation does not mark another invocation cancelled.
+- A tool-local timeout is not reported as canonical cancellation.
+- Existing approval, registry, =ToolNode= and =ToolCancelled= behavior remain unchanged.
+
+** Evidence
+- RED head =51ca33107f366c27859cc5cb269753d64d202ca7= established the missing Core surface.
+- The initial identity-context implementation was deliberately removed after adversarial review selected the smaller task-local contract.
+- Candidate implementation exports only =zara.plugins.tool_cancellation_requested= and does not modify =android/**=.
 
 ** Gate
-- Focused cancellation/context tests first.
+- Focused cancellation tests.
 - =nix develop -c bash scripts/test-all.sh=
 - =nix flake check=
 - =nix build=
