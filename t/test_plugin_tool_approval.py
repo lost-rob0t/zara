@@ -73,6 +73,59 @@ def test_malformed_approval_marker_fails_registration_closed():
     assert registry.requires_approval("plugin_mutate") is False
 
 
+def test_composed_tool_execution_uses_canonical_registry_and_structured_request():
+    registry = ToolRegistry(config=_Config())
+    seen = []
+
+    def invoke(value: str) -> str:
+        seen.append(value)
+        return f"ok:{value}"
+
+    registry.register_tool(
+        StructuredTool.from_function(
+            invoke,
+            name="plugin_read",
+            description="composition contract test tool",
+        )
+    )
+
+    result = registry.invoke_composed_tool("plugin_read", {"value": "status"})
+
+    assert result == "ok:status"
+    assert seen == ["status"]
+
+
+def test_composed_tool_execution_fails_closed_for_missing_or_approval_required_tool():
+    registry = ToolRegistry(config=_Config(required=("plugin_mutate",)))
+    calls = []
+
+    def mutate(value: str) -> str:
+        calls.append(value)
+        return value
+
+    registry.register_tool(
+        StructuredTool.from_function(
+            mutate,
+            name="plugin_mutate",
+            description="composition approval test tool",
+        )
+    )
+
+    with pytest.raises(LookupError, match="tool is unavailable"):
+        registry.invoke_composed_tool("missing_tool", {})
+    with pytest.raises(PermissionError, match="requires canonical interactive approval"):
+        registry.invoke_composed_tool("plugin_mutate", {"value": "danger"})
+
+    assert calls == []
+
+
+def test_composed_tool_execution_rejects_non_mapping_request_before_tool_lookup():
+    registry = ToolRegistry(config=_Config())
+
+    with pytest.raises(TypeError, match="mapping"):
+        registry.invoke_composed_tool("missing_tool", [])
+
+
 def _write_plugin(path, approval_marker):
     path.write_text(
         textwrap.dedent(
