@@ -1,0 +1,41 @@
+#+title: RAGE #575 — distinguish transient ROUTER backpressure from route loss
+
+* Iteration 1
+** Start
+- Consumed issue :: #575 — P1 make stock ZARA/1 Android interop gate deterministic and diagnosable.
+- Immutable start commit :: b1c5218d823304b950e95b3bcea94482162ad264
+- Scope :: Zara Core ZARA/1 transport only; zero =android/**= production changes.
+
+** Existing evidence
+- Canonical #578 preserves the stock ZaraServer log when the real Android interop gate fails.
+- Canonical #585 reports bounded =ZaraZmqGateway._send()= failures and intentionally kept the existing fail-closed route drop.
+- The stock fixture publishes runtime events only after the Android peer has decoded =turn.accepted=, so the next failure can distinguish acceptance delivery from later event delivery.
+- Current =_send()= uses =zmq.NOBLOCK= and drops the complete route for both =zmq.Again= and other =zmq.ZMQError= failures.
+
+** Research
+- ZeroMQ ROUTER sockets with =ZMQ_ROUTER_MANDATORY= report an unroutable routing identity as a host-unreachable error rather than silently dropping it.
+- A nonblocking send may also fail because the outgoing queue has no capacity. That is transport backpressure, not proof that the authenticated route disappeared.
+- Therefore treating =EAGAIN= as route death conflates two different failure classes and can turn transient send pressure into deterministic session destruction.
+
+Sources:
+- ZeroMQ Guide, ROUTER Error Handling: https://zguide.zeromq.org/docs/chapter3/
+- ZeroMQ CLIENT/SERVER RFC queue semantics: https://rfc.zeromq.org/spec/47/
+
+** Design boundary
+- First characterize only the text/reply path needed by the stock Android text-turn gate.
+- A transient =zmq.Again= must not call the route-destruction path.
+- The unsent reply must remain pending for a later gateway-owner drain rather than being reported as sent.
+- A later successful socket write must deliver the same protocol reply exactly once and clear the pending item.
+- Unroutable/permanent =ZMQError= behavior remains fail-closed until separately characterized.
+- Keep the queue bounded by the existing =event_queue_size= contract; no retry loop and no timeout inflation.
+- Binary/audio payload preservation is a required follow-up before generalizing any queue representation used by runtime audio events.
+
+** TDD acceptance
+1. Live route + first send raising =zmq.Again= does not drop the route.
+2. The exact protocol reply remains queued.
+3. A later outbound drain sends it once and empties the pending queue.
+4. No Android production changes, retries-until-green, sleeps, or request-timeout changes.
+
+** Gate
+- Focused RED/GREEN for the new transport characterization.
+- Then =nix develop -c bash scripts/test-all.sh=, =nix flake check=, =nix build=, real stock Android interop, shared-mic lanes, and exact-head GitHub Actions before merge.
