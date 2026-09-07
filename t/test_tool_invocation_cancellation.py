@@ -74,6 +74,8 @@ async def test_running_tool_observes_canonical_cancellation_during_cleanup():
 @pytest.mark.asyncio
 async def test_cancelling_one_tool_invocation_does_not_mark_another_cancelled():
     entered = {"a": asyncio.Event(), "b": asyncio.Event()}
+    inspect_b = asyncio.Event()
+    b_inspected = asyncio.Event()
     release_b = asyncio.Event()
     observed = {}
 
@@ -83,6 +85,9 @@ async def test_cancelling_one_tool_invocation_does_not_mark_another_cancelled():
         try:
             if value == "a":
                 await asyncio.Event().wait()
+            await inspect_b.wait()
+            observed["b-after-a-cancel"] = tool_cancellation_requested()
+            b_inspected.set()
             await release_b.wait()
             return value
         except asyncio.CancelledError:
@@ -108,7 +113,8 @@ async def test_cancelling_one_tool_invocation_does_not_mark_another_cancelled():
     with pytest.raises(asyncio.CancelledError):
         await first
 
-    observed["b-after-a-cancel"] = tool_cancellation_requested()
+    inspect_b.set()
+    await asyncio.wait_for(b_inspected.wait(), timeout=1.0)
     release_b.set()
     await second
 
