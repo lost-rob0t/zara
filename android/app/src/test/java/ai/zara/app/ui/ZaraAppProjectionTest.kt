@@ -99,4 +99,51 @@ class ZaraAppProjectionTest {
             )
         )
     }
+
+    @Test
+    fun frozenDrawerRouteInventoryReplacesBottomNavigation() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val expected = listOf(
+            "Chat", "Logic", "Voice", "Projects", "Remote", "Scheduled",
+            "Plugins", "Themes", "Diagnostics", "Settings", "About",
+        )
+        var cursor = -1
+        expected.forEach { label ->
+            val next = source.indexOf("\"$label\"", cursor + 1)
+            assertTrue("missing or out-of-order drawer route: $label", next > cursor)
+            cursor = next
+        }
+        assertTrue(source.contains("ModalNavigationDrawer"))
+        assertFalse(source.contains("NavigationBarItem"))
+    }
+
+    @Test
+    fun outrunShellUsesSemanticTokensAndCompactComposer() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+
+        assertTrue(source.contains("data class ZaraSemanticTokens"))
+        assertTrue(source.contains("accentMagenta"))
+        assertTrue(source.contains("accentCyan"))
+        assertTrue(source.contains("ambientGlow"))
+        assertTrue(source.contains("CompactComposer"))
+        assertTrue(source.contains("ZaraSigil"))
+    }
+
+    @Test
+    fun settingsDoesNotDumpLongAssistantSetupTextByDefault() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val settings = source.substringAfter("private fun SettingsSurface(")
+            .substringBefore("private fun DiagnosticsSurface(")
+
+        assertTrue(settings.contains("showAssistantHelp"))
+        assertTrue(settings.contains("SelectionContainer"))
+    }
+
+    @Test
+    fun androidHostDoesNotRenderPlatformLightActionBarOverComposeShell() {
+        val manifest = File("src/main/AndroidManifest.xml").readText()
+
+        assertFalse(manifest.contains("Theme.DeviceDefault.Light"))
+        assertTrue(manifest.contains("Theme.DeviceDefault.NoActionBar"))
+    }
 }
