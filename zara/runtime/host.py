@@ -494,6 +494,7 @@ class RuntimeHost:
                 turn_id,
                 exc_info=True,
             )
+        self._cancel_plugin_capability_turn(turn_id)
         backend = self._backend
         if backend is not None:
             try:
@@ -504,6 +505,19 @@ class RuntimeHost:
                     turn_id,
                     exc_info=True,
                 )
+
+    def _cancel_plugin_capability_turn(self, turn_id: str) -> None:
+        manager = self._plugin_manager
+        if manager is None:
+            return
+        try:
+            manager.cancel_capability_turn(turn_id)
+        except Exception:
+            logger.warning(
+                "Plugin capability cancellation hook failed for turn %s",
+                turn_id,
+                exc_info=True,
+            )
 
     async def _start_plugins(self) -> None:
         if not self._manage_plugins:
@@ -773,6 +787,7 @@ class RuntimeHost:
         task = self._turn_tasks.get(command.turn_id)
         if task is not None and not task.done():
             task.cancel()
+        self._cancel_plugin_capability_turn(command.turn_id)
         if not reply.was_already_cancelled:
             self._publisher(
                 events.TurnCancelled(
