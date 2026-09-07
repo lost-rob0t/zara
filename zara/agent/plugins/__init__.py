@@ -10,6 +10,7 @@ from zara.plugins import (
     PluginState,
     RuntimeStatus,
     ServicePlugin,
+    tool_cancellation_requested,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "PluginState",
     "RuntimeStatus",
     "ServicePlugin",
+    "tool_cancellation_requested",
 ]
