@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 from pathlib import Path
+from unittest import mock
 
 import zmq
 
@@ -17,6 +18,7 @@ from zara.runtime.commands import CommandReceipt
 from zara.security import Capability
 from zara.security_state import PersistentSecurityState
 from zara.server import ServerState, ZaraServer
+from zara.voice_runtime import RuntimeVoiceIngress
 from zara.zmq_transport import TransportConfig
 
 
@@ -99,12 +101,8 @@ class _Supervisor:
         receipt = CommandReceipt(request_id=command.request_id, turn_id=turn_id)
 
         def publish() -> None:
-            self.bus.publish(
-                events.TurnStarted(turn_id=turn_id, conversation_id=conversation_id)
-            )
-            self.bus.publish(
-                events.AssistantStarted(turn_id=turn_id, conversation_id=conversation_id)
-            )
+            self.bus.publish(events.TurnStarted(turn_id=turn_id, conversation_id=conversation_id))
+            self.bus.publish(events.AssistantStarted(turn_id=turn_id, conversation_id=conversation_id))
             self.bus.publish(
                 events.AssistantComplete(
                     turn_id=turn_id,
@@ -126,6 +124,27 @@ class _Supervisor:
     def shutdown(self) -> bool:
         self.state = ServerState.STOPPED
         return True
+
+
+class _NoopStreamingTranscriber:
+    def start_turn(self, stream_id: str) -> None:
+        del stream_id
+
+    def feed(self, pcm) -> list[object]:
+        del pcm
+        return []
+
+    def commit(self, stream_id: str) -> list[object]:
+        del stream_id
+        return []
+
+    def cancel(self, stream_id: str) -> None:
+        del stream_id
+
+
+def _fixture_transcriber_factory(self, **context):
+    del self, context
+    return _NoopStreamingTranscriber()
 
 
 def _tcp_endpoint() -> str:
@@ -170,25 +189,32 @@ def main() -> int:
             principal=PrincipalContext.local_owner(),
             capabilities={Capability.SESSION_BASIC, Capability.TURN_SUBMIT},
         )
-        server = ZaraServer(
-            supervisor=_Supervisor(barrier),
-            endpoint=endpoint,
-            security_state=state,
-            gateway_transport_config=TransportConfig(
-                sndhwm=8,
-                rcvhwm=8,
-                heartbeat_interval_ms=100,
-                heartbeat_timeout_ms=500,
-                linger_ms=0,
-                request_timeout=2.0,
-                poll_interval_ms=5,
-                event_queue_size=16,
-                pending_request_limit=16,
-            ),
-            shutdown_timeout=1.0,
+        transcriber_patch = mock.patch.object(
+            RuntimeVoiceIngress,
+            "_default_transcriber_factory",
+            _fixture_transcriber_factory,
         )
-        server.start()
+        transcriber_patch.start()
+        server = None
         try:
+            server = ZaraServer(
+                supervisor=_Supervisor(barrier),
+                endpoint=endpoint,
+                security_state=state,
+                gateway_transport_config=TransportConfig(
+                    sndhwm=8,
+                    rcvhwm=8,
+                    heartbeat_interval_ms=100,
+                    heartbeat_timeout_ms=500,
+                    linger_ms=0,
+                    request_timeout=2.0,
+                    poll_interval_ms=5,
+                    event_queue_size=16,
+                    pending_request_limit=16,
+                ),
+                shutdown_timeout=1.0,
+            )
+            server.start()
             _write_fixture(
                 fixture_file,
                 {
@@ -206,7 +232,9 @@ def main() -> int:
                     break
         finally:
             barrier.close()
-            server.stop()
+            if server is not None:
+                server.stop()
+            transcriber_patch.stop()
 
     return 0
 
