@@ -1,0 +1,35 @@
+#+title: RAGE #587 — GGML dictation Vulkan routing without alias drift
+
+* RAGE start
+- Consumed issue: #587 — Dictation: route GGML whisper.cpp models to Vulkan without changing internal device compatibility.
+- Immutable start SHA: =e6c90b274d285444520bd8372efe396c5f4cf24f=.
+- Branch: =rage/587-dictation-ggml-vulkan-r1=.
+- Scope: Zara Core dictation only; zero =android/**=.
+
+* Research
+- PR #577 identified a real mismatch: the CLI may resolve a whisper.cpp GGML =.bin= model while the historical dictation compatibility API still carries =cuda=.
+- #577 CI #1867 is deterministic RED because it changes =amd|rocm|hip= normalization from =cuda= to =vulkan=; #250 explicitly preserved that internal compatibility token and =t/test_dictation.py= enforces it.
+- Current =_load_whisper_model= is faster-whisper-only and the module exits at import time when faster-whisper is unavailable, so a valid whisper.cpp Vulkan path cannot stand alone.
+- =zara.whisper_cpp.WhisperCppModel= is already the canonical whisper.cpp adapter; no new backend/runtime is required.
+
+* Design
+- Preserve =amd|rocm|hip -> cuda= exactly.
+- Accept explicit =vulkan= as a first-class dictation device.
+- Add one small backend-selection seam: normalized =cuda= plus a GGML =.bin= model selects =vulkan=; ordinary CUDA remains =cuda=.
+- =_load_whisper_model= constructs =WhisperCppModel(... device="vulkan")= only for the Vulkan backend. CPU/CUDA stay on faster-whisper.
+- Make faster-whisper import optional at module import; raise an explicit runtime error only when CPU/CUDA loading actually needs it.
+- Main logs the selected backend and does not run CUDA fallback logic for the Vulkan path.
+
+* Rejected alternatives
+- Reclassifying AMD aliases as =vulkan=: violates #250 and existing callers/tests.
+- Monkey-patching faster-whisper to wrap whisper.cpp: duplicates/obscures backend ownership.
+- Adding another STT runtime: violates one-runtime direction and is unnecessary.
+
+* Acceptance mapped to tests
+- Existing alias test remains green unchanged.
+- Explicit =vulkan= normalizes to =vulkan=.
+- GGML =.bin= + legacy =cuda= selects Vulkan.
+- Non-GGML =cuda= stays CUDA/faster-whisper.
+- Vulkan load constructs canonical =WhisperCppModel= even when =WhisperModel= is unavailable.
+- CPU/CUDA missing faster-whisper fails explicitly at load time rather than module import.
+- Focused RED before production change; then focused GREEN, full =scripts/test-all.sh=, =nix flake check=, package, exact-head CI, Android compatibility, shared-mic lanes.
