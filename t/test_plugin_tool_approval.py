@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import textwrap
+import threading
 
 import pytest
 from langchain_core.tools import StructuredTool
@@ -160,7 +162,13 @@ def _write_plugin(path, approval_marker):
     )
 
 
-def _manager(tmp_path, registry):
+def _manager(
+    tmp_path,
+    registry,
+    *,
+    capability_approval_provider=None,
+    capability_invoker=None,
+):
     bus = RuntimeEventBus()
     return PluginManager(
         (tmp_path,),
@@ -172,6 +180,8 @@ def _manager(tmp_path, registry):
         tool_unregistrar=registry.unregister_tools,
         publisher=lambda _event: None,
         lifecycle_timeout=1.0,
+        capability_approval_provider=capability_approval_provider,
+        capability_invoker=capability_invoker,
     )
 
 
@@ -206,3 +216,45 @@ async def test_service_plugin_malformed_approval_marker_fails_startup_closed(tmp
     assert "must be true or false" in diagnostic.error
     assert registry.get_tool("plugin_mutate") is None
     assert registry.requires_approval("plugin_mutate") is False
+
+
+@pytest.mark.asyncio
+async def test_inflight_composed_invocation_fences_provider_unload(tmp_path):
+    _write_plugin(tmp_path / "approval_plugin.py", False)
+    registry = ToolRegistry(config=_Config())
+    invocation_started = threading.Event()
+    release_invocation = threading.Event()
+
+    def invoke(_name, _request):
+        invocation_started.set()
+        assert release_invocation.wait(timeout=1.0)
+        return {"status": "ok"}
+
+    manager = _manager(
+        tmp_path,
+        registry,
+        capability_approval_provider=lambda _name: False,
+        capability_invoker=invoke,
+    )
+    await manager.start()
+    handle = manager._resolve_capability("plugin_mutate")
+    assert handle is not None
+
+    invocation = asyncio.create_task(
+        asyncio.to_thread(
+            manager._invoke_capability,
+            "approval-test",
+            handle,
+            {"value": "status"},
+        )
+    )
+    assert await asyncio.to_thread(invocation_started.wait, 1.0)
+
+    stopping = asyncio.create_task(manager.stop())
+    await asyncio.sleep(0.05)
+    assert not stopping.done(), "provider unload overtook an accepted composed invocation"
+
+    release_invocation.set()
+    assert await invocation == {"status": "ok"}
+    await stopping
+    assert registry.get_tool("plugin_mutate") is None
