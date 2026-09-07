@@ -1,0 +1,40 @@
+#+title: RAGE #388 — Canonical service-tool cancellation
+
+* Iteration 1
+:PROPERTIES:
+:ISSUE: 388
+:START_SHA: b09b6e6fcc2225118fe80f0a038bedad6f5df80e
+:END:
+
+** Research
+- The canonical agent loop already owns cancellation. =create_tools_node= invokes each approved tool through the existing LangGraph =ToolNode= and maps =asyncio.CancelledError= to =ToolCancelled= before re-raising.
+- =run_conversation_loop= owns graph/checkpointer lifetime and propagates turn cancellation; approval cancellation already raises =asyncio.CancelledError=.
+- Service plugins expose ordinary LangChain =BaseTool= values through =ServicePlugin.tools()=. =PluginRuntime= intentionally has no second execution/control plane.
+- Gap: a running service tool has no internal, invocation-scoped cancellation signal. A plugin such as =zara-shell= can only observe generic task cancellation, so it cannot consume one stable Core contract for cooperative child-resource teardown distinct from timeout.
+
+** Design
+- Preserve the existing =ToolNode= and task cancellation path as execution authority.
+- Add a Core-owned immutable invocation context available only while the exact tool invocation is running. It carries bounded identity metadata and a cancellation signal not supplied through model/tool arguments.
+- Scope is principal + turn + tool-run. No reusable process id, arbitrary target, raw callback, or plugin-created cancellation manager.
+- When the parent tool node is cancelled, Core marks the signal cancelled before propagating cancellation into the child invocation, allowing tool cleanup code to distinguish canonical cancellation from timeout/failure.
+- Context must be absent outside tool execution and must not leak between concurrent invocations.
+- Approval and tool availability checks remain before invocation. Existing =ToolCancelled= remains the terminal runtime event.
+
+** Rejected alternatives
+- Plugin-specific =shell.cancel=: second control plane and reusable external identifier.
+- Adding a model-visible =cancel_token= tool argument: lets untrusted model input retarget/suppress control semantics.
+- Directly invoking =BaseTool= outside =ToolNode=: forks canonical tool execution behavior.
+
+** RED acceptance
+- A service tool can read its exact immutable invocation identity from Core context.
+- Concurrent tool calls receive distinct contexts.
+- Canonical task cancellation sets the scoped signal before the tool's cancellation cleanup runs.
+- Context is cleared after success, failure, and cancellation.
+- Existing approval policy and =ToolCancelled= event behavior remain intact.
+
+** Gate
+- Focused cancellation/context tests first.
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- exact-head GitHub Actions before merge.
