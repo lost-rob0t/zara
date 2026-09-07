@@ -1,0 +1,56 @@
+name: Release v0.1.0-alpha
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/release-v0.1.0-alpha.yml
+
+permissions:
+  contents: write
+
+jobs:
+  android-alpha-release:
+    name: build and publish Android alpha
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Run Android release gate
+        run: nix develop ./android -c bash scripts/test-android.sh
+
+      - name: Prepare APK and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp android/app/build/outputs/apk/debug/app-debug.apk dist/zara-v0.1.0-alpha.apk
+          sha256sum dist/zara-v0.1.0-alpha.apk > dist/zara-v0.1.0-alpha.apk.sha256
+
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v0.1.0-alpha
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          gh release create "$TAG" \
+            dist/zara-v0.1.0-alpha.apk \
+            dist/zara-v0.1.0-alpha.apk.sha256 \
+            --target "$GITHUB_SHA" \
+            --title "Zara v0.1.0-alpha" \
+            --prerelease \
+            --notes "Android alpha preview of Zara. This is a debug-signed APK intended for direct sideloading/testing, not a production Play Store build. Requires Android 10 (API 29) or newer. The release asset is zara-v0.1.0-alpha.apk; verify it with the accompanying SHA-256 file. Source commit: $GITHUB_SHA"
