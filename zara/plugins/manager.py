@@ -53,6 +53,7 @@ class _PluginRecord:
     stop_called: bool = False
     tool_names: tuple[str, ...] = ()
     generation: int = 0
+    active_invocations: int = 0
 
 
 def _bounded_error(error: object) -> str:
@@ -107,6 +108,7 @@ class PluginManager:
         self._stopped = False
         self._next_generation = 1
         self._lock = threading.RLock()
+        self._invocation_condition = threading.Condition(self._lock)
 
     def diagnostics(self) -> tuple[PluginDiagnostic, ...]:
         with self._lock:
@@ -226,8 +228,14 @@ class PluginManager:
         if approval_provider is None:
             return None
         with self._lock:
+            if self._stopped:
+                return None
             for record in self._records:
-                if record.state is PluginState.RUNNING and capability in record.tool_names:
+                if (
+                    record.state is PluginState.RUNNING
+                    and not record.stop_called
+                    and capability in record.tool_names
+                ):
                     return CapabilityHandle(
                         plugin_name=record.metadata.name,
                         capability=capability,
@@ -242,16 +250,19 @@ class PluginManager:
         if approval_provider is None or invoker is None:
             raise RuntimeError("plugin capability composition is not available")
 
-        # Keep lifecycle ownership across validation, policy re-resolution, and
-        # execution. Stop/unload must not invalidate either participant after an
-        # invocation has been accepted but before its canonical tool call returns.
-        with self._lock:
+        caller_record = None
+        target = None
+        leased_records: tuple[_PluginRecord, ...] = ()
+        with self._invocation_condition:
+            if self._stopped:
+                raise RuntimeError("plugin manager is stopping")
             caller_record = next(
                 (
                     record
                     for record in self._records
                     if record.metadata.name == caller
                     and record.state is PluginState.RUNNING
+                    and not record.stop_called
                     and record.runtime is not None
                     and not record.runtime.closed
                 ),
@@ -263,6 +274,7 @@ class PluginManager:
                     for record in self._records
                     if record.metadata.name == handle.plugin_name
                     and record.state is PluginState.RUNNING
+                    and not record.stop_called
                     and record.generation == handle.generation
                     and handle.capability in record.tool_names
                 ),
@@ -279,7 +291,18 @@ class PluginManager:
                 raise PermissionError(
                     "capability requires canonical interactive approval and cannot be invoked directly"
                 )
+
+            leased_records = (caller_record,) if caller_record is target else (caller_record, target)
+            for record in leased_records:
+                record.active_invocations += 1
+
+        try:
             return invoker(handle.capability, request)
+        finally:
+            with self._invocation_condition:
+                for record in leased_records:
+                    record.active_invocations -= 1
+                self._invocation_condition.notify_all()
 
     async def _start_record(self, record: _PluginRecord) -> None:
         with self._lock:
@@ -336,12 +359,23 @@ class PluginManager:
         *,
         preserve_failure: bool = False,
     ) -> None:
-        if record.stop_called or not record.start_called:
+        with self._invocation_condition:
+            if record.stop_called or not record.start_called:
+                already_stopped = True
+            else:
+                record.stop_called = True
+                already_stopped = False
+
+        if already_stopped:
             if record.runtime is not None:
                 record.runtime._shutdown()
             self._remove_tools(record)
             return
-        record.stop_called = True
+
+        # Do not block the runtime/event-loop thread while an accepted synchronous
+        # capability call owns this record. New invocations are rejected once
+        # stop_called is set; the existing lease drains on a worker thread.
+        await asyncio.to_thread(self._wait_for_record_invocations, record)
         previous_failure = record.error
 
         stop_method = getattr(record.instance, "stop", None)
@@ -361,6 +395,11 @@ class PluginManager:
                 record.error = ""
             elif preserve_failure and previous_failure and not record.error:
                 record.error = previous_failure
+
+    def _wait_for_record_invocations(self, record: _PluginRecord) -> None:
+        with self._invocation_condition:
+            while record.active_invocations:
+                self._invocation_condition.wait()
 
     async def _call_plugin(self, method, *args):
         if inspect.iscoroutinefunction(method):
