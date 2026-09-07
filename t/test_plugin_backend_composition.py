@@ -135,4 +135,8 @@ async def test_runtime_host_injects_backend_owned_composition_hooks(monkeypatch)
     await host._start_plugins()
 
     assert captured["capability_approval_provider"] is backend.requires_composed_tool_approval
-    assert captured["capability_invoker"] is backend.invoke_composed_tool
+    assert captured["capability_invoker"]("safe", {"value": 1}) == (
+        "principal-a",
+        "safe",
+        {"value": 1},
+    )
