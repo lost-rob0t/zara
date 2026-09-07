@@ -58,6 +58,16 @@ class RuntimeStatus:
     thread_id: Optional[int]
 
 
+@dataclass(frozen=True)
+class CapabilityHandle:
+    """Opaque Core-owned reference to one loaded plugin capability generation."""
+
+    plugin_name: str
+    capability: str
+    generation: int
+    requires_approval: bool
+
+
 class ServicePlugin(ABC):
     """Lifecycle contract returned by a plugin module's ``create_plugin``."""
 
@@ -130,6 +140,8 @@ class PluginRuntime:
         worker_join_timeout: float = 5.0,
         advice_registrar: Optional[Callable[[str, str, int, Callable[..., Any]], int]] = None,
         advice_unregistrar: Optional[Callable[[int], bool]] = None,
+        capability_resolver: Optional[Callable[[str], Optional[CapabilityHandle]]] = None,
+        capability_invoker: Optional[Callable[[str, CapabilityHandle, Mapping[str, Any]], Any]] = None,
     ) -> None:
         self._plugin_name = plugin_name
         self._configuration = MappingProxyType(copy.deepcopy(dict(configuration)))
@@ -142,6 +154,8 @@ class PluginRuntime:
         self._worker_join_timeout = worker_join_timeout
         self._advice_registrar = advice_registrar
         self._advice_unregistrar = advice_unregistrar
+        self._capability_resolver = capability_resolver
+        self._capability_invoker = capability_invoker
         self._advice_registration_ids: list[int] = []
         self._subscriptions: set[bridge.RuntimeEventSubscription] = set()
         self._workers: dict[str, ManagedWorker] = {}
@@ -164,6 +178,39 @@ class PluginRuntime:
     def closed(self) -> bool:
         with self._lock:
             return self._closed
+
+    def resolve_capability(self, capability: str) -> CapabilityHandle:
+        if not isinstance(capability, str) or not capability or len(capability) > 128:
+            raise ValueError("capability name must contain 1 to 128 characters")
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("plugin runtime is closed")
+            resolver = self._capability_resolver
+        if resolver is None:
+            raise RuntimeError("plugin capability composition is not available")
+        handle = resolver(capability)
+        if handle is None:
+            raise LookupError("capability is unavailable")
+        if not isinstance(handle, CapabilityHandle):
+            raise RuntimeError("Core returned an invalid capability handle")
+        return handle
+
+    def invoke_capability(
+        self,
+        handle: CapabilityHandle,
+        request: Mapping[str, Any],
+    ) -> Any:
+        if not isinstance(handle, CapabilityHandle):
+            raise TypeError("handle must be a CapabilityHandle")
+        if not isinstance(request, Mapping):
+            raise TypeError("capability request must be a mapping")
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("plugin runtime is closed")
+            invoker = self._capability_invoker
+        if invoker is None:
+            raise RuntimeError("plugin capability composition is not available")
+        return invoker(self._plugin_name, handle, copy.deepcopy(dict(request)))
 
     def dispatch(self, command: RuntimeCommand) -> concurrent.futures.Future:
         if not isinstance(command, RuntimeCommand):
@@ -299,6 +346,7 @@ class PluginRuntime:
 
 
 __all__ = [
+    "CapabilityHandle",
     "DEFAULT_EVENT_QUEUE_SIZE",
     "MAX_EVENT_QUEUE_SIZE",
     "MAX_SUBSCRIPTIONS_PER_PLUGIN",
