@@ -1,49 +1,44 @@
 #+title: RAGE #388 — Canonical service-tool cancellation
 
-* Iteration 1
+* Iteration 17
 :PROPERTIES:
 :ISSUE: 388
 :START_SHA: b09b6e6fcc2225118fe80f0a038bedad6f5df80e
+:END_SHA: 465ee3dc329f44121864e6c2e0f974a6ba2f7a22
+:CI: 1961
+:OUTCOME: FALSIFIED
 :END:
 
 ** Research
 - The canonical agent loop already owns cancellation. =create_tools_node= invokes each approved tool through the existing LangGraph =ToolNode= and maps =asyncio.CancelledError= to =ToolCancelled= before re-raising.
 - =run_conversation_loop= owns graph/checkpointer lifetime and propagates turn cancellation; approval cancellation already raises =asyncio.CancelledError=.
 - Service plugins expose ordinary LangChain =BaseTool= values through =ServicePlugin.tools()=. =PluginRuntime= intentionally has no second execution/control plane.
-- Gap: a running service tool has no supported Core API for distinguishing canonical tool-task cancellation from ordinary timeout/failure while performing cooperative cleanup.
+- Complete issue history matters here: prior r5/r6 ContextVar transports and later injected-state variants were already falsified. Canonical r16/#569 then proved the compiled =StateGraph(MessagesState)= + =ToolNode= path invokes the exact registered tool object's public =ainvoke= with the typed tool-call mapping (=name=, =args=, =id=) and reaches the plugin body.
 
-** Initial design
-- Preserve the existing =ToolNode= and task cancellation path as execution authority.
-- Initial RED explored a separate invocation context carrying principal/turn/tool-run identity plus an event.
+** Candidate explored
+- A smaller task-local helper, =zara.plugins.tool_cancellation_requested()=, reads =asyncio.current_task().cancelling()=.
+- This is attractive for native async tools because it exposes no model-visible token, reusable process id, principal identity, callback, or second cancellation control plane.
+- Async cleanup, timeout distinction, and sibling-task isolation were covered deterministically.
 
-** Adversarial simplification
-- The exact running asyncio task is already the cancellation scope selected by Core after principal, turn, approval, and tool-run routing are complete.
-- Exposing those identities again to plugin code adds coupling and a second identity-bearing surface without improving cancellation authority.
-- Python =Task.cancelling()= is task-local, read-only to the consumer, and distinguishable from a completed =asyncio.timeout()= path.
-- Therefore the smaller contract is one public =tool_cancellation_requested()= helper for async service-tool cleanup. It reports only whether the current tool task is under canonical cancellation. It exposes no token, principal, process id, target, callback, or cancellation mutation method.
-- Concurrent invocations remain isolated by asyncio task ownership. Existing =ToolCancelled= remains the runtime terminal event and the existing =ToolNode= remains execution authority.
+** Adversarial correction
+- #388 explicitly has a synchronous consumer class: a service tool may own child resources from a sync body and must observe cancellation before releasing them.
+- A task-local asyncio signal cannot cross into the worker thread used for synchronous LangChain tool execution.
+- Added a deterministic sync acceptance that enters the real sync service-tool body, cancels the canonical ToolNode task, and requires the running sync body to observe cancellation before exit.
 
-** Rejected alternatives
-- Plugin-specific =shell.cancel=: second control plane and reusable external identifier.
-- Model-visible cancellation token: lets untrusted tool arguments participate in control semantics.
-- New principal/turn/tool-run context: unnecessary identity exposure for the required cooperative teardown signal.
-- Direct =BaseTool= execution outside =ToolNode=: forks canonical execution behavior.
+** Exact-head evidence
+- Candidate =465ee3dc329f44121864e6c2e0f974a6ba2f7a22= ran CI #1961.
+- Android skeleton gate: PASS, including unit/native Trealla/debug APK/secret inspection.
+- Shared mic / Arch: PASS.
+- Shared mic / Ubuntu: PASS.
+- Core =Run all tests=: FAIL. Flake/package/screenshot gates correctly skipped after Core failure.
+- Therefore this task-local helper is not a valid #388 implementation and must not merge.
 
-** RED / GREEN acceptance
-- Before cancellation, a running tool observes false.
-- During its =CancelledError= cleanup, the cancelled invocation observes true.
-- Cancelling one concurrent invocation does not mark another invocation cancelled.
-- A tool-local timeout is not reported as canonical cancellation.
-- Existing approval, registry, =ToolNode= and =ToolCancelled= behavior remain unchanged.
+** Retired design
+- Do not recover the asyncio-task-local helper as the canonical cancellation transport.
+- Do not reintroduce the previously falsified ContextVar/InjectedState variants.
 
-** Evidence
-- RED head =51ca33107f366c27859cc5cb269753d64d202ca7= established the missing Core surface.
-- The initial identity-context implementation was deliberately removed after adversarial review selected the smaller task-local contract.
-- Candidate implementation exports only =zara.plugins.tool_cancellation_requested= and does not modify =android/**=.
-
-** Gate
-- Focused cancellation tests.
-- =nix develop -c bash scripts/test-all.sh=
-- =nix flake check=
-- =nix build=
-- exact-head GitHub Actions before merge.
+** Next constrained design
+- Reuse r16's proven exact dispatch seam: a Core-owned registered-tool public =ainvoke= wrapper receives the whole typed ToolCall, including exact call id, from the one canonical ToolNode.
+- The wrapper must create one private cancellation signal per invocation, propagate it to both sync and async plugin bodies without model-visible arguments, set it before child cancellation/teardown, preserve approval/current-binding/unload semantics, and retain one terminal =ToolCancelled= authority.
+- Acceptance must include sync signal-before-side-effect, async signal-before-=CancelledError=, concurrent call-id isolation, rejection/no-execution, unload/no-execution, spoof resistance, and timeout != canonical cancellation.
+- Zero =android/**= changes.
