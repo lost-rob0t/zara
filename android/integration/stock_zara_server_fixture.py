@@ -210,13 +210,14 @@ def main() -> int:
             ),
             shutdown_timeout=1.0,
         )
-        with mock.patch.object(
+        transcriber_patch = mock.patch.object(
             RuntimeVoiceIngress,
             "_default_transcriber_factory",
             _fixture_transcriber_factory,
-        ):
-            server.start()
+        )
+        transcriber_patch.start()
         try:
+            server.start()
             _write_fixture(
                 fixture_file,
                 {
@@ -235,6 +236,7 @@ def main() -> int:
         finally:
             barrier.close()
             server.stop()
+            transcriber_patch.stop()
 
     return 0
 
