@@ -39,3 +39,11 @@ Rejected:
 - Exact-head Actions must demonstrate expected RED.
 - Implement the minimum layout change in a later commit.
 - Then require focused test + full =scripts/test-all.sh=, =nix flake check=, =nix build= and exact-head Actions before merge.
+
+** RED evidence
+- Exact RED head: =07a0c5eb04f27f8f8ed8657d5f6c6d6cba6db313=.
+- Actions run =34078388899=, Core test job =101608861078=.
+- Repository-native gate reached the full pytest phase with =2112 passed= and exactly one failure: =test_expanded_history_is_sidebar_beside_chat_without_stealing_viewport_height=.
+- Measured expanded geometry proves the stacking defect: history =QRect(18, 62, 924, 260)= while message viewport =QRect(18, 376, 924, 198)=; therefore history right =941= is not left of message left =18=.
+- Protocol/transport, runtime approvals, transcript normalizer, and both shared-mic lanes remained green before/alongside the expected structural RED.
+- This is the intended deterministic failure. Production implementation is now authorized for this iteration.
