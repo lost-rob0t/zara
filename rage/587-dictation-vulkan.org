@@ -1,0 +1,46 @@
+#+title: RAGE #587 — Dictation GGML/Vulkan backend selection
+
+* Iteration 1
+
+** Start
+- Consumed issue :: #587
+- Immutable start commit :: 6d8fa68a63218bc14934bac75b23fb3a996963ba
+- Scope :: Zara Core only; no =android/**= changes.
+
+** Research
+- =zara/__main__.py= routes AMD/ROCm/HIP/Vulkan local STT to provider =whisper-cpp= and resolves a local GGML =.bin= model.
+- Dictation intentionally converts =whisper-cpp + vulkan= back to the historical internal =cuda= compatibility token before entering =zara.dictate=.
+- =zara/whisper_cpp.py= explicitly translates that historical =cuda= token back to Vulkan; its server command only adds =--no-gpu= for CPU.
+- =zara/stt_backends.py= =backend_compat(provider)= temporarily exposes provider adapters through the historical =faster_whisper.WhisperModel= surface.
+- PR #577 correctly targeted misleading/brittle dictation backend selection, but changed =amd|rocm|hip= normalization itself from the established =cuda= compatibility contract to =vulkan= and deterministically failed existing Core coverage.
+- The safe seam is therefore model/backend selection inside =zara.dictate=: preserve the incoming compatibility token, recognize an already-resolved GGML =.bin= model, and instantiate =WhisperCppModel= on actual Vulkan explicitly.
+
+** Design
+- Preserve =_normalize_device(amd|rocm|hip) -> cuda=.
+- Permit explicit =vulkan= without changing historical aliases.
+- Add a small provider-neutral selection seam returning backend, actual model device, and compute marker.
+- =GGML .bin + cuda/vulkan -> whisper_cpp, vulkan, vulkan=.
+- Ordinary CUDA model -> existing faster-whisper =cuda/float16= path and existing int8/CPU fallback behavior.
+- Do not require faster-whisper to import successfully when the selected backend is whisper.cpp/Vulkan.
+- Log the actual model backend/device so a Vulkan run no longer prints a misleading =Loading ... on cuda= line.
+- Do not change ZeroMQ, Android, voice transport, Prolog routing, or microphone ownership.
+
+** TDD
+- RED commit :: 0c78f02d82883acec679a1f4a7f16808543214cf
+- RED contract covers:
+  1. historical AMD aliases remain =cuda=;
+  2. explicit =vulkan= input is accepted;
+  3. GGML + legacy =cuda= selects whisper.cpp/Vulkan;
+  4. non-GGML CUDA remains faster-whisper;
+  5. missing faster-whisper cannot block the Vulkan loader;
+  6. selecting faster-whisper without the dependency fails explicitly;
+  7. =main()= reports and loads the actual Vulkan backend.
+- GREEN implementation commit :: 571fd4a868a90e0040ca7abaa7455e3a280503ed
+
+** Verification
+- Focused/exact-head CI transaction :: PR #593 / CI run #1890.
+- Required final gate :: =scripts/test-all.sh=, =nix flake check=, packaged Zara, Android compatibility, Arch shared-mic, Ubuntu shared-mic.
+- Merge authority :: exact current head only; no stale-green recovery without rerunning gates.
+
+** Outcome
+Pending exact-head CI. If green, merge #593 with expected-head protection, verify canonical master, close #587 and retire #577 unmerged.
