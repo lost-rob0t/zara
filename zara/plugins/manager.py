@@ -56,6 +56,14 @@ class _PluginRecord:
     active_invocations: int = 0
 
 
+@dataclass
+class _CapabilityInvocation:
+    caller: _PluginRecord
+    target: _PluginRecord
+    turn_id: Optional[str]
+    cancelled: bool = False
+
+
 def _bounded_error(error: object) -> str:
     rendered = " ".join(str(error).split())
     return rendered[:MAX_ERROR_LENGTH]
@@ -107,6 +115,8 @@ class PluginManager:
         self._started = False
         self._stopped = False
         self._next_generation = 1
+        self._next_invocation_id = 1
+        self._active_capability_invocations: dict[int, _CapabilityInvocation] = {}
         self._lock = threading.RLock()
         self._invocation_condition = threading.Condition(self._lock)
 
@@ -223,36 +233,101 @@ class PluginManager:
         for record in reversed(tuple(self._records)):
             await self._stop_record(record)
 
-    def _resolve_capability(self, capability: str) -> Optional[CapabilityHandle]:
+    def _authorize_capability(self, caller: str, capability: str) -> None:
+        target = next(
+            (
+                record
+                for record in self._records
+                if capability in record.tool_names
+                and record.state is PluginState.RUNNING
+                and not record.stop_called
+            ),
+            None,
+        )
+        if target is not None and target.metadata.name == caller:
+            return
+        configuration = self._configuration_provider(caller)
+        allowed = configuration.get("compose_capabilities", ())
+        if not isinstance(allowed, (list, tuple)) or any(
+            not isinstance(item, str) or not item for item in allowed
+        ):
+            raise PermissionError("calling plugin has invalid compose_capabilities policy")
+        if capability not in allowed:
+            raise PermissionError(
+                f"calling plugin {caller!r} is not authorized for capability {capability!r}"
+            )
+
+    def _resolve_capability(
+        self,
+        caller_or_capability: str,
+        capability: Optional[str] = None,
+    ) -> Optional[CapabilityHandle]:
         approval_provider = self._capability_approval_provider
         if approval_provider is None:
             return None
+        caller = None if capability is None else caller_or_capability
+        capability_name = caller_or_capability if capability is None else capability
         with self._lock:
             if self._stopped:
                 return None
+            if caller is not None:
+                caller_record = next(
+                    (
+                        record
+                        for record in self._records
+                        if record.metadata.name == caller
+                        and record.state is PluginState.RUNNING
+                        and not record.stop_called
+                        and record.runtime is not None
+                        and not record.runtime.closed
+                    ),
+                    None,
+                )
+                if caller_record is None:
+                    raise RuntimeError("calling plugin is not running")
+                self._authorize_capability(caller, capability_name)
             for record in self._records:
                 if (
                     record.state is PluginState.RUNNING
                     and not record.stop_called
-                    and capability in record.tool_names
+                    and capability_name in record.tool_names
                 ):
                     return CapabilityHandle(
                         plugin_name=record.metadata.name,
-                        capability=capability,
+                        capability=capability_name,
                         generation=record.generation,
-                        requires_approval=bool(approval_provider(capability)),
+                        requires_approval=bool(approval_provider(capability_name)),
                     )
         return None
 
-    def _invoke_capability(self, caller: str, handle: CapabilityHandle, request: dict):
+    def cancel_capability_turn(self, turn_id: str) -> None:
+        if not isinstance(turn_id, str) or not turn_id:
+            raise ValueError("turn_id must be a non-empty string")
+        with self._invocation_condition:
+            for invocation in self._active_capability_invocations.values():
+                if invocation.turn_id == turn_id:
+                    invocation.cancelled = True
+
+    def _invoke_capability(
+        self,
+        caller: str,
+        handle: CapabilityHandle,
+        request: dict,
+        *,
+        turn_id: Optional[str] = None,
+    ):
         approval_provider = self._capability_approval_provider
         invoker = self._capability_invoker
         if approval_provider is None or invoker is None:
             raise RuntimeError("plugin capability composition is not available")
+        if turn_id is not None and (not isinstance(turn_id, str) or not turn_id):
+            raise ValueError("turn_id must be a non-empty string when provided")
 
         caller_record = None
         target = None
         leased_records: tuple[_PluginRecord, ...] = ()
+        invocation_id = 0
+        invocation: Optional[_CapabilityInvocation] = None
         with self._invocation_condition:
             if self._stopped:
                 raise RuntimeError("plugin manager is stopping")
@@ -284,6 +359,7 @@ class PluginManager:
                 raise RuntimeError("calling plugin is not running")
             if target is None:
                 raise RuntimeError("capability handle is stale or unavailable")
+            self._authorize_capability(caller, handle.capability)
             requires_approval = bool(approval_provider(handle.capability))
             if requires_approval != handle.requires_approval:
                 raise RuntimeError("capability policy changed; resolve a fresh handle")
@@ -295,11 +371,24 @@ class PluginManager:
             leased_records = (caller_record,) if caller_record is target else (caller_record, target)
             for record in leased_records:
                 record.active_invocations += 1
+            invocation_id = self._next_invocation_id
+            self._next_invocation_id += 1
+            invocation = _CapabilityInvocation(
+                caller=caller_record,
+                target=target,
+                turn_id=turn_id,
+            )
+            self._active_capability_invocations[invocation_id] = invocation
 
         try:
-            return invoker(handle.capability, request)
+            result = invoker(handle.capability, request)
+            with self._invocation_condition:
+                if invocation.cancelled:
+                    raise RuntimeError("composed invocation was cancelled or became stale")
+            return result
         finally:
             with self._invocation_condition:
+                self._active_capability_invocations.pop(invocation_id, None)
                 for record in leased_records:
                     record.active_invocations -= 1
                 self._invocation_condition.notify_all()
@@ -320,7 +409,9 @@ class PluginManager:
             worker_join_timeout=self._lifecycle_timeout,
             advice_registrar=self._advice_registrar,
             advice_unregistrar=self._advice_unregistrar,
-            capability_resolver=self._resolve_capability,
+            capability_resolver=lambda capability, caller=record.metadata.name: self._resolve_capability(
+                caller, capability
+            ),
             capability_invoker=self._invoke_capability,
         )
         record.runtime = runtime
@@ -365,6 +456,9 @@ class PluginManager:
             else:
                 record.stop_called = True
                 already_stopped = False
+                for invocation in self._active_capability_invocations.values():
+                    if invocation.caller is record or invocation.target is record:
+                        invocation.cancelled = True
 
         if already_stopped:
             if record.runtime is not None:
