@@ -55,10 +55,13 @@ class VoicePlaybackController(
             }
             is VoiceStreamEvent.AudioDone -> {
                 val next = reduceVoiceStream(state, event)
-                if (outputActive) {
-                    stopOutputAndReleaseFocus()
+                val stopFailure = if (outputActive) {
+                    runCatching { stopOutputAndReleaseFocus() }.exceptionOrNull()
+                } else {
+                    null
                 }
                 state = next
+                if (stopFailure != null) throw stopFailure
             }
             is VoiceStreamEvent.Transcript -> {
                 state = reduceVoiceStream(state, event)
@@ -69,12 +72,13 @@ class VoicePlaybackController(
     fun interrupt(): ActiveAudioOutput? {
         check(!closed) { "voice playback is closed" }
         val interrupted = state.audio ?: return null
-        if (outputActive) {
-            stopOutputAndReleaseFocus()
+        val stopFailure = if (outputActive) {
+            runCatching { stopOutputAndReleaseFocus() }.exceptionOrNull()
         } else {
-            audioFocus?.release()
+            runCatching { audioFocus?.release() }.exceptionOrNull()
         }
         state = clearAudioState()
+        if (stopFailure != null) throw stopFailure
         return interrupted
     }
 
