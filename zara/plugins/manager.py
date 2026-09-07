@@ -456,9 +456,6 @@ class PluginManager:
             else:
                 record.stop_called = True
                 already_stopped = False
-                for invocation in self._active_capability_invocations.values():
-                    if invocation.caller is record or invocation.target is record:
-                        invocation.cancelled = True
 
         if already_stopped:
             if record.runtime is not None:
