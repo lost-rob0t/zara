@@ -96,6 +96,7 @@ class VoicePlaybackController(
             runCatching { audioFocus?.release() }.exceptionOrNull()
         }
         val closeFailure = runCatching { output.close() }.exceptionOrNull()
+        state = clearAudioState()
         if (stopFailure != null) {
             if (closeFailure != null) stopFailure.addSuppressed(closeFailure)
             throw stopFailure
