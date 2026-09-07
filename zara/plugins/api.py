@@ -141,7 +141,7 @@ class PluginRuntime:
         advice_registrar: Optional[Callable[[str, str, int, Callable[..., Any]], int]] = None,
         advice_unregistrar: Optional[Callable[[int], bool]] = None,
         capability_resolver: Optional[Callable[[str], Optional[CapabilityHandle]]] = None,
-        capability_invoker: Optional[Callable[[str, CapabilityHandle, Mapping[str, Any]], Any]] = None,
+        capability_invoker: Optional[Callable[..., Any]] = None,
     ) -> None:
         self._plugin_name = plugin_name
         self._configuration = MappingProxyType(copy.deepcopy(dict(configuration)))
@@ -199,18 +199,30 @@ class PluginRuntime:
         self,
         handle: CapabilityHandle,
         request: Mapping[str, Any],
+        *,
+        turn_id: Optional[str] = None,
     ) -> Any:
         if not isinstance(handle, CapabilityHandle):
             raise TypeError("handle must be a CapabilityHandle")
         if not isinstance(request, Mapping):
             raise TypeError("capability request must be a mapping")
+        if turn_id is not None and (not isinstance(turn_id, str) or not turn_id):
+            raise ValueError("turn_id must be a non-empty string when provided")
         with self._lock:
             if self._closed:
                 raise RuntimeError("plugin runtime is closed")
             invoker = self._capability_invoker
         if invoker is None:
             raise RuntimeError("plugin capability composition is not available")
-        return invoker(self._plugin_name, handle, copy.deepcopy(dict(request)))
+        structured_request = copy.deepcopy(dict(request))
+        if turn_id is None:
+            return invoker(self._plugin_name, handle, structured_request)
+        return invoker(
+            self._plugin_name,
+            handle,
+            structured_request,
+            turn_id=turn_id,
+        )
 
     def dispatch(self, command: RuntimeCommand) -> concurrent.futures.Future:
         if not isinstance(command, RuntimeCommand):
