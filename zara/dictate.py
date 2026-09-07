@@ -26,8 +26,10 @@ from zara.audio import resolve_input_sample_rate, resample_audio
 try:
     from faster_whisper import WhisperModel
 except Exception as e:
-    print("ERROR: faster-whisper not installed. Run: pip install faster-whisper", file=sys.stderr)
-    sys.exit(1)
+    WhisperModel = None
+    _FASTER_WHISPER_IMPORT_ERROR = e
+else:
+    _FASTER_WHISPER_IMPORT_ERROR = None
 
 PIDFILE = os.getenv("ZARA_DICTATION_PIDFILE", "/tmp/zara_dictation.pid")
 LOGFILE = os.getenv("ZARA_DICTATION_LOGFILE", "/tmp/zara_dictation.log")
@@ -58,9 +60,19 @@ def _normalize_device(device: str) -> str:
     normalized = str(device).strip().lower()
     if normalized == "cpu":
         return "cpu"
+    if normalized == "vulkan":
+        return "vulkan"
     if normalized == "cuda" or normalized in _GPU_DEVICE_ALIASES:
         return "cuda"
     raise ValueError(f"Unsupported transcription device: {device!r}")
+
+
+def _select_model_backend(model_name: str, device: str) -> tuple[str, str, str]:
+    normalized_model = str(model_name).strip().lower()
+    if normalized_model.endswith(".bin") and device in {"cuda", "vulkan"}:
+        return "whisper_cpp", "vulkan", "vulkan"
+    compute_type = "float16" if device == "cuda" else "int8"
+    return "faster_whisper", device, compute_type
 
 
 def write_pid():
@@ -334,6 +346,21 @@ def _load_whisper_model(
     cpu_threads: int,
     workers: int,
 ):
+    if device == "vulkan":
+        from zara.whisper_cpp import WhisperCppModel
+
+        return WhisperCppModel(
+            model_name,
+            device="vulkan",
+            cpu_threads=cpu_threads,
+            num_workers=workers,
+        )
+
+    if WhisperModel is None:
+        raise RuntimeError(
+            "faster-whisper is required for CPU/CUDA dictation"
+        ) from _FASTER_WHISPER_IMPORT_ERROR
+
     return WhisperModel(
         model_name,
         device=device,
@@ -364,28 +391,35 @@ def main(model_name="small", device="cpu", threads=None, workers=2, stop_phrases
         _get_input_sample_rate()
 
         device = _normalize_device(device)
+        backend, model_device, compute = _select_model_backend(model_name, device)
         workers = max(1, int(workers))
         if threads is None:
             threads = int(os.getenv("ZARA_THREADS", os.cpu_count() or 1))
         threads = max(1, int(threads))
-        cpu_threads = max(1, threads // workers) if device == "cpu" else threads
-        log(
-            f"Using {threads} total Whisper CPU threads, "
-            f"{workers} parallel model workers ({cpu_threads} CPU threads/worker)"
-        )
+        cpu_threads = max(1, threads // workers) if model_device == "cpu" else threads
 
-        compute = "float16" if device == "cuda" else "int8"
-        log(f"Loading Whisper model '{model_name}' on {device} ({compute=})")
+        if backend == "whisper_cpp":
+            log(
+                f"Using whisper.cpp Vulkan STT with {threads} host threads, "
+                f"{workers} transcription workers"
+            )
+        else:
+            log(
+                f"Using {threads} total Whisper CPU threads, "
+                f"{workers} parallel model workers ({cpu_threads} CPU threads/worker)"
+            )
+
+        log(f"Loading Whisper model '{model_name}' on {model_device} ({compute=})")
         try:
             model = _load_whisper_model(
                 model_name,
-                device,
+                model_device,
                 compute,
                 cpu_threads,
                 workers,
             )
         except Exception as error:
-            if device != "cuda":
+            if model_device != "cuda":
                 raise
             log(f"GPU load failed with compute_type={compute}: {error}")
             log("Retrying GPU with compute_type='int8'")
