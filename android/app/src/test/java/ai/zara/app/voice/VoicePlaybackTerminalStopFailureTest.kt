@@ -36,6 +36,23 @@ class VoicePlaybackTerminalStopFailureTest {
         assertEquals(listOf("start", "stop"), output.calls)
     }
 
+    @Test
+    fun replacementStopFailureDoesNotLeaveSupersededAudioActive() {
+        val output = TerminalStopFailingOutput()
+        val controller = VoicePlaybackController(output, "session-1")
+        controller.accept(started())
+
+        val error = assertThrows(IllegalStateException::class.java) {
+            controller.accept(
+                VoiceStreamEvent.AudioStarted("session-1", "turn-2", "speaker-2", 24_000, 1),
+            )
+        }
+
+        assertEquals("speaker stop failed", error.message)
+        assertNull(controller.state().audio)
+        assertEquals(listOf("start", "stop"), output.calls)
+    }
+
     private fun started() =
         VoiceStreamEvent.AudioStarted("session-1", "turn-1", "speaker-1", 24_000, 1)
 }
