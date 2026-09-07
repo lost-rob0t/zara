@@ -24,8 +24,7 @@ class PushToTalkController(
                 ::handleRecorderFailure,
             )
         } catch (error: Throwable) {
-            capture.cancelIfActive()
-            throw error
+            cancelCapturePreserving(error)
         }
     }
 
@@ -36,8 +35,7 @@ class PushToTalkController(
         try {
             recorder.stop()
         } catch (error: Throwable) {
-            capture.cancelIfActive()
-            throw error
+            cancelCapturePreserving(error)
         }
         capture.commit()
     }
@@ -46,14 +44,13 @@ class PushToTalkController(
         check(capture.state() is ManualVoiceState.Capturing) {
             "push-to-talk capture is not active"
         }
-        var stopFailure: Throwable? = null
-        try {
-            recorder.stop()
-        } catch (error: Throwable) {
-            stopFailure = error
+        val stopFailure = runCatching { recorder.stop() }.exceptionOrNull()
+        val cancelFailure = runCatching { capture.cancelIfActive() }.exceptionOrNull()
+        if (stopFailure != null) {
+            if (cancelFailure != null) stopFailure.addSuppressed(cancelFailure)
+            throw stopFailure
         }
-        capture.cancelIfActive()
-        if (stopFailure != null) throw stopFailure
+        if (cancelFailure != null) throw cancelFailure
     }
 
     fun onMicrophonePermissionChanged(granted: Boolean) {
@@ -62,14 +59,28 @@ class PushToTalkController(
     }
 
     override fun close() {
-        if (capture.state() is ManualVoiceState.Capturing) {
-            cancel()
+        val cancelFailure = if (capture.state() is ManualVoiceState.Capturing) {
+            runCatching { cancel() }.exceptionOrNull()
+        } else {
+            null
         }
-        recorder.close()
+        val closeFailure = runCatching { recorder.close() }.exceptionOrNull()
+        if (cancelFailure != null) {
+            if (closeFailure != null) cancelFailure.addSuppressed(closeFailure)
+            throw cancelFailure
+        }
+        if (closeFailure != null) throw closeFailure
     }
 
     private fun handleRecorderFailure(error: Throwable) {
-        capture.cancelIfActive()
+        val cleanupFailure = runCatching { capture.cancelIfActive() }.exceptionOrNull()
+        if (cleanupFailure != null) error.addSuppressed(cleanupFailure)
         onRecorderFailure(error)
+    }
+
+    private fun cancelCapturePreserving(error: Throwable): Nothing {
+        val cleanupFailure = runCatching { capture.cancelIfActive() }.exceptionOrNull()
+        if (cleanupFailure != null) error.addSuppressed(cleanupFailure)
+        throw error
     }
 }

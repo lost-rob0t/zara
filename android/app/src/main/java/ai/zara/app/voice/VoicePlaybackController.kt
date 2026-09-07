@@ -24,7 +24,11 @@ class VoicePlaybackController(
             is VoiceStreamEvent.AudioStarted -> {
                 val next = reduceVoiceStream(state, event)
                 if (outputActive) {
-                    stopOutputAndReleaseFocus()
+                    val stopFailure = runCatching { stopOutputAndReleaseFocus() }.exceptionOrNull()
+                    if (stopFailure != null) {
+                        state = clearAudioState()
+                        throw stopFailure
+                    }
                 }
                 if (audioFocus?.acquire() == false) {
                     state = clearAudioState()
@@ -33,8 +37,9 @@ class VoicePlaybackController(
                 try {
                     output.start(event.sampleRate, event.channels)
                 } catch (error: Throwable) {
-                    audioFocus?.release()
+                    val focusFailure = runCatching { audioFocus?.release() }.exceptionOrNull()
                     state = clearAudioState()
+                    if (focusFailure != null) error.addSuppressed(focusFailure)
                     throw error
                 }
                 outputActive = true
@@ -43,15 +48,25 @@ class VoicePlaybackController(
             is VoiceStreamEvent.AudioChunk -> {
                 val next = reduceVoiceStream(state, event)
                 check(outputActive) { "audio output is not active" }
-                output.write(event.pcm.copyOf())
+                try {
+                    output.write(event.pcm.copyOf())
+                } catch (error: Throwable) {
+                    val cleanupError = runCatching { stopOutputAndReleaseFocus() }.exceptionOrNull()
+                    state = clearAudioState()
+                    if (cleanupError != null) error.addSuppressed(cleanupError)
+                    throw error
+                }
                 state = next
             }
             is VoiceStreamEvent.AudioDone -> {
                 val next = reduceVoiceStream(state, event)
-                if (outputActive) {
-                    stopOutputAndReleaseFocus()
+                val stopFailure = if (outputActive) {
+                    runCatching { stopOutputAndReleaseFocus() }.exceptionOrNull()
+                } else {
+                    null
                 }
                 state = next
+                if (stopFailure != null) throw stopFailure
             }
             is VoiceStreamEvent.Transcript -> {
                 state = reduceVoiceStream(state, event)
@@ -62,24 +77,31 @@ class VoicePlaybackController(
     fun interrupt(): ActiveAudioOutput? {
         check(!closed) { "voice playback is closed" }
         val interrupted = state.audio ?: return null
-        if (outputActive) {
-            stopOutputAndReleaseFocus()
+        val stopFailure = if (outputActive) {
+            runCatching { stopOutputAndReleaseFocus() }.exceptionOrNull()
         } else {
-            audioFocus?.release()
+            runCatching { audioFocus?.release() }.exceptionOrNull()
         }
         state = clearAudioState()
+        if (stopFailure != null) throw stopFailure
         return interrupted
     }
 
     override fun close() {
         if (closed) return
         closed = true
-        if (outputActive) {
-            stopOutputAndReleaseFocus()
+        val stopFailure = if (outputActive) {
+            runCatching { stopOutputAndReleaseFocus() }.exceptionOrNull()
         } else {
-            audioFocus?.release()
+            runCatching { audioFocus?.release() }.exceptionOrNull()
         }
-        output.close()
+        val closeFailure = runCatching { output.close() }.exceptionOrNull()
+        state = clearAudioState()
+        if (stopFailure != null) {
+            if (closeFailure != null) stopFailure.addSuppressed(closeFailure)
+            throw stopFailure
+        }
+        if (closeFailure != null) throw closeFailure
     }
 
     private fun stopOutputAndReleaseFocus() {
