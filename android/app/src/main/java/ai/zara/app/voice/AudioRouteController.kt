@@ -24,11 +24,12 @@ class AudioRouteController(
     private val lock = Any()
     private var starting = false
     private var started = false
+    private var stopping = false
     private var current: AudioRouteSnapshot? = null
 
     fun start() {
         synchronized(lock) {
-            check(!starting && !started) { "audio route controller already started" }
+            check(!starting && !started && !stopping) { "audio route controller already started" }
             starting = true
         }
 
@@ -59,12 +60,25 @@ class AudioRouteController(
     fun stop() {
         val shouldStop = synchronized(lock) {
             if (!starting && !started) return@synchronized false
-            starting = false
-            started = false
-            current = null
+            check(!stopping) { "audio route controller stop already active" }
+            stopping = true
             true
         }
-        if (shouldStop) platform.stop()
+        if (!shouldStop) return
+
+        try {
+            platform.stop()
+        } catch (failure: Throwable) {
+            synchronized(lock) { stopping = false }
+            throw failure
+        }
+
+        synchronized(lock) {
+            starting = false
+            started = false
+            stopping = false
+            current = null
+        }
     }
 
     fun current(): AudioRouteSnapshot? = synchronized(lock) { current }
