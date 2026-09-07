@@ -44,7 +44,7 @@ class VoiceStreamSinkActor(
                     stateObserver?.invoke(state)
                     future.complete(state)
                 } catch (error: Throwable) {
-                    failureObserver?.invoke(error)
+                    publishFailureState(error)
                     future.completeExceptionally(error)
                 }
             }
@@ -67,7 +67,7 @@ class VoiceStreamSinkActor(
                     if (owner != null) stateObserver?.invoke(owner.state())
                     future.complete(interrupted)
                 } catch (error: Throwable) {
-                    failureObserver?.invoke(error)
+                    publishFailureState(error)
                     future.completeExceptionally(error)
                 }
             }
@@ -110,6 +110,16 @@ class VoiceStreamSinkActor(
         playback = replacement
         sessionId = eventSessionId
         return replacement
+    }
+
+    private fun publishFailureState(error: Throwable) {
+        val owner = playback
+        if (owner != null) {
+            val stateFailure = runCatching { stateObserver?.invoke(owner.state()) }.exceptionOrNull()
+            if (stateFailure != null && stateFailure !== error) error.addSuppressed(stateFailure)
+        }
+        val observerFailure = runCatching { failureObserver?.invoke(error) }.exceptionOrNull()
+        if (observerFailure != null && observerFailure !== error) error.addSuppressed(observerFailure)
     }
 
     private fun detachPlayback(): VoicePlaybackController? {
