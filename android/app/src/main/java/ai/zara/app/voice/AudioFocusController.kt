@@ -15,13 +15,26 @@ class AudioFocusController(
     private val onLoss: (AudioFocusLoss) -> Unit,
 ) {
     private val lock = Any()
+    private var acquiring = false
     private var held = false
 
     fun acquire(): Boolean = synchronized(lock) {
         if (held) return@synchronized true
-        if (!platform.request(::handleLoss)) return@synchronized false
-        held = true
-        true
+        check(!acquiring) { "Android audio focus acquisition already active" }
+        acquiring = true
+        try {
+            val granted = platform.request(::handleLoss)
+            if (!granted || !acquiring) {
+                acquiring = false
+                return@synchronized false
+            }
+            acquiring = false
+            held = true
+            true
+        } catch (error: Throwable) {
+            acquiring = false
+            throw error
+        }
     }
 
     fun release() {
@@ -37,6 +50,10 @@ class AudioFocusController(
 
     private fun handleLoss(loss: AudioFocusLoss) {
         val notify = synchronized(lock) {
+            if (acquiring) {
+                acquiring = false
+                return@synchronized false
+            }
             if (!held) return@synchronized false
             held = false
             true
