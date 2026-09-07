@@ -93,6 +93,29 @@ class AudioRouteControllerTest {
         assertEquals(AudioRouteSnapshot(setOf(AudioRouteKind.BuiltIn)), controller.current())
     }
 
+    @Test
+    fun `failed platform stop preserves route ownership and remains retryable`() {
+        val route = AudioRouteSnapshot(setOf(AudioRouteKind.Bluetooth))
+        val platform = FakeAudioRoutePlatform(route)
+        val controller = AudioRouteController(
+            platform = platform,
+            onChanged = {},
+            onRouteInterrupted = { _, _ -> },
+        )
+        controller.start()
+        platform.failStop = true
+
+        val failure = assertThrows(IllegalStateException::class.java) { controller.stop() }
+
+        assertEquals("synthetic route rollback failure", failure.message)
+        assertEquals(route, controller.current())
+
+        platform.failStop = false
+        controller.stop()
+        assertTrue(platform.stopped)
+        assertEquals(null, controller.current())
+    }
+
     private class FakeAudioRoutePlatform(initial: AudioRouteSnapshot) : AudioRoutePlatform {
         private var snapshot = initial
         private var listener: ((AudioRouteSnapshot) -> Unit)? = null
