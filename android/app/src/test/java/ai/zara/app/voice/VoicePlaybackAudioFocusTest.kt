@@ -53,6 +53,32 @@ class VoicePlaybackAudioFocusTest {
     }
 
     @Test
+    fun `failed PCM write stops output and abandons focus`() {
+        val sink = FocusRecordingOutput(failWrite = true)
+        val platform = PlaybackFocusPlatform(granted = true)
+        val focus = AudioFocusController(platform) { }
+        val controller = VoicePlaybackController(sink, "session-1", focus)
+        controller.accept(started())
+
+        assertThrows(IllegalStateException::class.java) {
+            controller.accept(
+                VoiceStreamEvent.AudioChunk(
+                    "session-1",
+                    "turn-1",
+                    "speaker-1",
+                    0,
+                    byteArrayOf(1, 0),
+                )
+            )
+        }
+
+        assertFalse(focus.isHeld())
+        assertEquals(1, platform.abandons)
+        assertEquals(listOf("start", "write", "stop"), sink.calls)
+        assertEquals(null, controller.state().audio)
+    }
+
+    @Test
     fun `system focus loss interrupts the single playback owner`() {
         val sink = FocusRecordingOutput()
         val platform = PlaybackFocusPlatform(granted = true)
@@ -104,7 +130,10 @@ class VoicePlaybackAudioFocusTest {
         }
     }
 
-    private class FocusRecordingOutput(private val failStart: Boolean = false) : PcmOutput {
+    private class FocusRecordingOutput(
+        private val failStart: Boolean = false,
+        private val failWrite: Boolean = false,
+    ) : PcmOutput {
         val calls = mutableListOf<String>()
 
         override fun start(sampleRate: Int, channels: Int) {
@@ -112,7 +141,10 @@ class VoicePlaybackAudioFocusTest {
             calls += "start"
         }
 
-        override fun write(pcm: ByteArray) = Unit
+        override fun write(pcm: ByteArray) {
+            calls += "write"
+            if (failWrite) throw IllegalStateException("speaker write failed")
+        }
 
         override fun stop() {
             calls += "stop"
