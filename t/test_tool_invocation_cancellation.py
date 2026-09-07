@@ -1,4 +1,6 @@
 import asyncio
+import threading
+import time
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -30,7 +32,47 @@ def _state(tool_name: str, tool_run_id: str, value: str):
 
 
 @pytest.mark.asyncio
-async def test_running_tool_observes_canonical_cancellation_during_cleanup():
+async def test_running_sync_tool_observes_canonical_cancellation_before_exit():
+    entered = threading.Event()
+    observed_cancel = threading.Event()
+
+    def long_running_sync(value: str) -> str:
+        assert tool_cancellation_requested() is False
+        entered.set()
+        deadline = time.monotonic() + 0.75
+        while time.monotonic() < deadline:
+            if tool_cancellation_requested():
+                observed_cancel.set()
+                break
+            time.sleep(0.005)
+        return value
+
+    tool = StructuredTool.from_function(
+        func=long_running_sync,
+        name="long_running_sync",
+        description="Wait for canonical cancellation from a sync service tool.",
+    )
+    registry = ToolRegistry()
+    registry.register_tool(tool)
+    node = create_tools_node(registry)
+
+    task = asyncio.create_task(
+        node(
+            _state("long_running_sync", "sync-run-1", "sync"),
+            {"configurable": {"thread_id": "sync-thread"}},
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 1.0)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert await asyncio.to_thread(observed_cancel.wait, 0.8)
+
+
+@pytest.mark.asyncio
+async def test_running_async_tool_observes_canonical_cancellation_during_cleanup():
     entered = asyncio.Event()
     cleanup = asyncio.Event()
     observed = {}
