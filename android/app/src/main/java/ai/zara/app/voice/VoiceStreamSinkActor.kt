@@ -48,10 +48,8 @@ class VoiceStreamSinkActor(
                     future.completeExceptionally(error)
                 }
             }
-        } catch (error: RejectedExecutionException) {
-            val failure = VoiceStreamBackpressureException("voice stream mailbox is full")
-            failureObserver?.invoke(failure)
-            throw failure
+        } catch (_: RejectedExecutionException) {
+            throwBackpressure()
         }
         return future
     }
@@ -71,10 +69,8 @@ class VoiceStreamSinkActor(
                     future.completeExceptionally(error)
                 }
             }
-        } catch (error: RejectedExecutionException) {
-            val failure = VoiceStreamBackpressureException("voice stream mailbox is full")
-            failureObserver?.invoke(failure)
-            throw failure
+        } catch (_: RejectedExecutionException) {
+            throwBackpressure()
         }
         return future
     }
@@ -89,14 +85,12 @@ class VoiceStreamSinkActor(
                     owner?.close()
                     future.complete(Unit)
                 } catch (error: Throwable) {
-                    failureObserver?.invoke(error)
+                    notifyFailure(error)
                     future.completeExceptionally(error)
                 }
             }
-        } catch (error: RejectedExecutionException) {
-            val failure = VoiceStreamBackpressureException("voice stream mailbox is full")
-            failureObserver?.invoke(failure)
-            throw failure
+        } catch (_: RejectedExecutionException) {
+            throwBackpressure()
         }
         return future
     }
@@ -118,8 +112,18 @@ class VoiceStreamSinkActor(
             val stateFailure = runCatching { stateObserver?.invoke(owner.state()) }.exceptionOrNull()
             if (stateFailure != null && stateFailure !== error) error.addSuppressed(stateFailure)
         }
+        notifyFailure(error)
+    }
+
+    private fun notifyFailure(error: Throwable) {
         val observerFailure = runCatching { failureObserver?.invoke(error) }.exceptionOrNull()
         if (observerFailure != null && observerFailure !== error) error.addSuppressed(observerFailure)
+    }
+
+    private fun throwBackpressure(): Nothing {
+        val failure = VoiceStreamBackpressureException("voice stream mailbox is full")
+        notifyFailure(failure)
+        throw failure
     }
 
     private fun detachPlayback(): VoicePlaybackController? {
@@ -140,7 +144,7 @@ class VoiceStreamSinkActor(
                     owner?.close()
                     future.complete(Unit)
                 } catch (error: Throwable) {
-                    failureObserver?.invoke(error)
+                    notifyFailure(error)
                     future.completeExceptionally(error)
                 }
             }
