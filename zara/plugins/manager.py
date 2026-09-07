@@ -15,7 +15,7 @@ from langchain_core.tools import BaseTool
 
 from zara.runtime import events
 
-from .api import PLUGIN_API_VERSION, PluginMetadata, PluginRuntime, RuntimeStatus
+from .api import CapabilityHandle, PLUGIN_API_VERSION, PluginMetadata, PluginRuntime, RuntimeStatus
 from .loader import iter_plugin_files, load_plugin_module
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,7 @@ class _PluginRecord:
     start_called: bool = False
     stop_called: bool = False
     tool_names: tuple[str, ...] = ()
+    generation: int = 0
 
 
 def _bounded_error(error: object) -> str:
@@ -78,6 +79,8 @@ class PluginManager:
         max_workers: int = 8,
         advice_registrar=None,
         advice_unregistrar=None,
+        capability_approval_provider=None,
+        capability_invoker=None,
     ) -> None:
         builtin_path = Path(__file__).resolve().parent / "builtin"
         discovered_paths = [builtin_path]
@@ -91,6 +94,8 @@ class PluginManager:
         self._tool_unregistrar = tool_unregistrar
         self._advice_registrar = advice_registrar
         self._advice_unregistrar = advice_unregistrar
+        self._capability_approval_provider = capability_approval_provider
+        self._capability_invoker = capability_invoker
         self._publisher = publisher
         self._lifecycle_timeout = max(0.1, float(lifecycle_timeout))
         self._event_queue_size = event_queue_size
@@ -100,6 +105,7 @@ class PluginManager:
         self._discovered = False
         self._started = False
         self._stopped = False
+        self._next_generation = 1
         self._lock = threading.RLock()
 
     def diagnostics(self) -> tuple[PluginDiagnostic, ...]:
@@ -215,7 +221,66 @@ class PluginManager:
         for record in reversed(tuple(self._records)):
             await self._stop_record(record)
 
+    def _resolve_capability(self, capability: str) -> Optional[CapabilityHandle]:
+        approval_provider = self._capability_approval_provider
+        if approval_provider is None:
+            return None
+        with self._lock:
+            for record in self._records:
+                if record.state is PluginState.RUNNING and capability in record.tool_names:
+                    return CapabilityHandle(
+                        plugin_name=record.metadata.name,
+                        capability=capability,
+                        generation=record.generation,
+                        requires_approval=bool(approval_provider(capability)),
+                    )
+        return None
+
+    def _invoke_capability(self, caller: str, handle: CapabilityHandle, request: dict):
+        approval_provider = self._capability_approval_provider
+        invoker = self._capability_invoker
+        if approval_provider is None or invoker is None:
+            raise RuntimeError("plugin capability composition is not available")
+        with self._lock:
+            caller_record = next(
+                (
+                    record
+                    for record in self._records
+                    if record.metadata.name == caller
+                    and record.state is PluginState.RUNNING
+                    and record.runtime is not None
+                    and not record.runtime.closed
+                ),
+                None,
+            )
+            target = next(
+                (
+                    record
+                    for record in self._records
+                    if record.metadata.name == handle.plugin_name
+                    and record.state is PluginState.RUNNING
+                    and record.generation == handle.generation
+                    and handle.capability in record.tool_names
+                ),
+                None,
+            )
+        if caller_record is None:
+            raise RuntimeError("calling plugin is not running")
+        if target is None:
+            raise RuntimeError("capability handle is stale or unavailable")
+        requires_approval = bool(approval_provider(handle.capability))
+        if requires_approval != handle.requires_approval:
+            raise RuntimeError("capability policy changed; resolve a fresh handle")
+        if requires_approval:
+            raise PermissionError(
+                "capability requires canonical interactive approval and cannot be invoked directly"
+            )
+        return invoker(handle.capability, request)
+
     async def _start_record(self, record: _PluginRecord) -> None:
+        with self._lock:
+            record.generation = self._next_generation
+            self._next_generation += 1
         runtime = PluginRuntime(
             plugin_name=record.metadata.name,
             configuration=self._configuration_provider(record.metadata.name),
@@ -228,6 +293,8 @@ class PluginManager:
             worker_join_timeout=self._lifecycle_timeout,
             advice_registrar=self._advice_registrar,
             advice_unregistrar=self._advice_unregistrar,
+            capability_resolver=self._resolve_capability,
+            capability_invoker=self._invoke_capability,
         )
         record.runtime = runtime
 
