@@ -17,6 +17,7 @@ class VoiceStreamSinkActor(
     private val executor: ThreadPoolExecutor
     private var playback: VoicePlaybackController? = null
     private var sessionId: String? = null
+    @Volatile private var actorThread: Thread? = null
     @Volatile private var closed = false
 
     init {
@@ -27,7 +28,12 @@ class VoiceStreamSinkActor(
             0L,
             TimeUnit.MILLISECONDS,
             ArrayBlockingQueue(capacity),
-            { runnable -> Thread(runnable, "zara-android-voice-stream").apply { isDaemon = true } },
+            { runnable ->
+                Thread(runnable, "zara-android-voice-stream").apply {
+                    isDaemon = true
+                    actorThread = this
+                }
+            },
             ThreadPoolExecutor.AbortPolicy(),
         )
     }
@@ -136,6 +142,14 @@ class VoiceStreamSinkActor(
     override fun close() {
         if (closed) return
         closed = true
+        if (Thread.currentThread() === actorThread) {
+            try {
+                detachPlayback()?.close()
+            } finally {
+                executor.shutdown()
+            }
+            return
+        }
         val future = CompletableFuture<Unit>()
         try {
             executor.execute {
