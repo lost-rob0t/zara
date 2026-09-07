@@ -24,7 +24,11 @@ class VoicePlaybackController(
             is VoiceStreamEvent.AudioStarted -> {
                 val next = reduceVoiceStream(state, event)
                 if (outputActive) {
-                    stopOutputAndReleaseFocus()
+                    val stopFailure = runCatching { stopOutputAndReleaseFocus() }.exceptionOrNull()
+                    if (stopFailure != null) {
+                        state = clearAudioState()
+                        throw stopFailure
+                    }
                 }
                 if (audioFocus?.acquire() == false) {
                     state = clearAudioState()
