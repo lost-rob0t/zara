@@ -199,15 +199,11 @@ class PluginRuntime:
         self,
         handle: CapabilityHandle,
         request: Mapping[str, Any],
-        *,
-        turn_id: Optional[str] = None,
     ) -> Any:
         if not isinstance(handle, CapabilityHandle):
             raise TypeError("handle must be a CapabilityHandle")
         if not isinstance(request, Mapping):
             raise TypeError("capability request must be a mapping")
-        if turn_id is not None and (not isinstance(turn_id, str) or not turn_id):
-            raise ValueError("turn_id must be a non-empty string when provided")
         with self._lock:
             if self._closed:
                 raise RuntimeError("plugin runtime is closed")
@@ -215,14 +211,7 @@ class PluginRuntime:
         if invoker is None:
             raise RuntimeError("plugin capability composition is not available")
         structured_request = copy.deepcopy(dict(request))
-        if turn_id is None:
-            return invoker(self._plugin_name, handle, structured_request)
-        return invoker(
-            self._plugin_name,
-            handle,
-            structured_request,
-            turn_id=turn_id,
-        )
+        return invoker(self._plugin_name, handle, structured_request)
 
     def dispatch(self, command: RuntimeCommand) -> concurrent.futures.Future:
         if not isinstance(command, RuntimeCommand):
@@ -328,40 +317,33 @@ class PluginRuntime:
             self._closed = True
             subscriptions = tuple(self._subscriptions)
             workers = tuple(self._workers.values())
-            advice_registration_ids = tuple(self._advice_registration_ids)
-            advice_unregistrar = self._advice_unregistrar
+            advice_ids = tuple(self._advice_registration_ids)
             self._subscriptions.clear()
             self._workers.clear()
             self._advice_registration_ids.clear()
-
-        if advice_unregistrar is not None:
-            for registration_id in advice_registration_ids:
-                try:
-                    advice_unregistrar(registration_id)
-                except Exception as error:
-                    self._failure_callback(
-                        f"failed to unregister agent-loop advice {registration_id}: {error}"
-                    )
 
         for subscription in subscriptions:
             subscription.close()
         for worker in workers:
             worker.request_stop()
-
-        deadline = time.monotonic() + self._worker_join_timeout
         for worker in workers:
-            worker.join(timeout=max(0.0, deadline - time.monotonic()))
-            if worker.is_alive:
-                self._failure_callback(
-                    f"managed worker {worker.name!r} did not stop before the deadline"
-                )
+            worker.join(timeout=self._worker_join_timeout)
+        unregistrar = self._advice_unregistrar
+        if unregistrar is not None:
+            for registration_id in advice_ids:
+                try:
+                    unregistrar(registration_id)
+                except Exception as error:
+                    self._failure_callback(
+                        f"failed to unregister agent-loop advice {registration_id}: {error}"
+                    )
+        alive = [worker.name for worker in workers if worker.is_alive]
+        if alive:
+            self._failure_callback(f"managed workers did not stop: {', '.join(alive)}")
 
 
 __all__ = [
     "CapabilityHandle",
-    "DEFAULT_EVENT_QUEUE_SIZE",
-    "MAX_EVENT_QUEUE_SIZE",
-    "MAX_SUBSCRIPTIONS_PER_PLUGIN",
     "ManagedWorker",
     "PLUGIN_API_VERSION",
     "PluginMetadata",
