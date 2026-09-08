@@ -78,6 +78,7 @@ class Device:
         self.screenshots.append({"state": name, "file": path.name, "sha256": hashlib.sha256(data).hexdigest()})
 
     def start(self) -> None:
+        self.adb("shell", "am", "force-stop", "ai.zara.app")
         self.adb("shell", "am", "start", "-W", "-n", "ai.zara.app/.MainActivity")
         self.await_label("Chat")
 
@@ -109,9 +110,11 @@ def main() -> None:
             device.reveal(route)
         device.tap("Themes")
         device.await_label("Appearance")
+        time.sleep(0.8)
         device.capture("theme-selector")
         for theme in ("StarIntel", "Light", "Terminal", "Midnight", "Outrun", "System"):
             device.tap(theme)
+            time.sleep(0.6)
             device.capture(f"theme-{theme.lower()}")
         result["passed"] = True
     except BaseException as error:

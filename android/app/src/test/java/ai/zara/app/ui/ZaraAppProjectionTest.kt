@@ -232,5 +232,16 @@ class ZaraAppProjectionTest {
 
         assertTrue(drawer.contains("verticalScroll(rememberScrollState())"))
     }
+
+    @Test
+    fun systemBarIconContrastFollowsResolvedThemeDarkness() {
+        val source = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+
+        assertTrue(source.contains("enableEdgeToEdge"))
+        assertTrue(source.contains("SystemBarStyle"))
+        assertTrue(source.contains("resolvedSystemBarDark"))
+        assertTrue(source.contains("ZaraTheme.System -> systemDark"))
+        assertTrue(source.contains("ZaraTheme.Light -> false"))
+    }
 }
 
