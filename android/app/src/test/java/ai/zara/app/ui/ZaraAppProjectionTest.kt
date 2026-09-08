@@ -173,4 +173,45 @@ class ZaraAppProjectionTest {
         }
     }
 
+    @Test
+    fun themesSurfaceRendersAppearancePreviewCardsForAllFrozenThemes() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val themes = source.substringAfter("private fun ThemesSurface(")
+            .substringBefore("private fun GatedSurface(")
+
+        assertTrue(themes.contains("\"Appearance\""))
+        assertTrue(themes.contains("ZaraTheme.entries"))
+        assertTrue(themes.contains("themeTokens(theme"))
+        ZaraTheme.entries.forEach { theme ->
+            assertTrue("preview card missing selection for ${theme.name}", themes.contains("onSelectTheme"))
+        }
+        assertTrue(source.contains("AppSurface.Themes -> ThemesSurface("))
+    }
+
+    @Test
+    fun activeShellResolvesTokensFromSelectionInsteadOfHardcodedOutrun() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val shell = source.substringAfter("fun ZaraApp(")
+            .substringBefore("private fun ZaraTopBar(")
+
+        assertTrue(shell.contains("themeTokens("))
+        assertTrue(shell.contains("isSystemInDarkTheme()"))
+        assertTrue(shell.contains("LocalZaraTokens provides"))
+        assertTrue(shell.contains("selectedTheme"))
+
+        val sectionCard = source.substringAfter("private fun SectionCard(")
+            .substringBefore("private fun KeyValueRow(")
+        assertFalse(sectionCard.contains("OutrunTokens"))
+        assertTrue(sectionCard.contains("LocalZaraTokens"))
+    }
+
+    @Test
+    fun hostRestoresThemePreferenceAcrossProcessRecreation() {
+        val source = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+
+        assertTrue(source.contains("ThemePreferenceStore"))
+        assertTrue(source.contains("selectedTheme"))
+        assertTrue(source.contains("onSelectTheme"))
+    }
 }
+

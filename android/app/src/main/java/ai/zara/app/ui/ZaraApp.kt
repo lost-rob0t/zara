@@ -8,6 +8,8 @@ import ai.zara.app.voice.ManualVoiceState
 import ai.zara.app.voice.VoiceStreamState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -41,10 +44,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,7 +71,7 @@ enum class AppSurface(val label: String, val gatedIssue: String? = null) {
     Remote("Remote"),
     Scheduled("Scheduled", "#654"),
     Plugins("Plugins", "#655"),
-    Themes("Themes", "#656"),
+    Themes("Themes"),
     Diagnostics("Diagnostics"),
     Settings("Settings"),
     About("About"),
@@ -161,18 +166,20 @@ fun themeTokens(theme: ZaraTheme, systemDark: Boolean, reducedGlow: Boolean): Za
     return if (reducedGlow) tokens.copy(ambientGlow = Color.Transparent) else tokens
 }
 
-private val OutrunColorScheme = darkColorScheme(
-    primary = OutrunTokens.primary,
-    secondary = OutrunTokens.secondary,
-    background = OutrunTokens.background,
-    surface = OutrunTokens.surface,
-    surfaceVariant = OutrunTokens.surfaceElevated,
+val LocalZaraTokens = staticCompositionLocalOf { OutrunTokens }
+
+private fun tokensColorScheme(tokens: ZaraSemanticTokens) = darkColorScheme(
+    primary = tokens.primary,
+    secondary = tokens.secondary,
+    background = tokens.background,
+    surface = tokens.surface,
+    surfaceVariant = tokens.surfaceElevated,
     onPrimary = Color(0xFF160018),
     onSecondary = Color(0xFF00161A),
-    onBackground = OutrunTokens.text,
-    onSurface = OutrunTokens.text,
-    onSurfaceVariant = OutrunTokens.textMuted,
-    error = OutrunTokens.error,
+    onBackground = tokens.text,
+    onSurface = tokens.text,
+    onSurfaceVariant = tokens.textMuted,
+    error = tokens.error,
 )
 
 data class RenderedTextTurn(
@@ -193,6 +200,8 @@ fun ZaraApp(
     voiceState: ManualVoiceState,
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
+    selectedTheme: ZaraTheme,
+    onSelectTheme: (ZaraTheme) -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
     onConnect: (String) -> Unit,
@@ -206,86 +215,93 @@ fun ZaraApp(
     var selected by rememberSaveable { mutableStateOf(AppSurface.Chat) }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    val tokens = OutrunTokens
+    val systemDark = isSystemInDarkTheme()
+    val tokens = themeTokens(selectedTheme, systemDark, reducedGlow = false)
 
-    MaterialTheme(colorScheme = OutrunColorScheme) {
-        ModalNavigationDrawer(
-            drawerState = drawerState,
-            drawerContent = {
-                ZaraDrawer(
-                    selected = selected,
-                    state = runtimeState,
-                    onSelect = { destination ->
-                        selected = destination
-                        scope.launch { drawerState.close() }
-                    },
-                )
-            },
-        ) {
-            Scaffold(
-                containerColor = tokens.background,
-                topBar = {
-                    ZaraTopBar(
+    CompositionLocalProvider(LocalZaraTokens provides tokens) {
+        MaterialTheme(colorScheme = tokensColorScheme(tokens)) {
+            ModalNavigationDrawer(
+                drawerState = drawerState,
+                drawerContent = {
+                    ZaraDrawer(
                         selected = selected,
                         state = runtimeState,
-                        onMenu = { scope.launch { drawerState.open() } },
+                        onSelect = { destination ->
+                            selected = destination
+                            scope.launch { drawerState.close() }
+                        },
                     )
                 },
-            ) { padding ->
-                when (selected) {
-                    AppSurface.Chat -> ChatSurface(
-                        state = runtimeState,
-                        lastTurn = lastTurn,
-                        operationError = operationError,
-                        operationBusy = operationBusy,
-                        onSendText = onSendText,
-                        padding = padding,
-                    )
-                    AppSurface.Logic -> GatedSurface(selected, padding)
-                    AppSurface.Voice -> VoiceSurface(
-                        state = runtimeState,
-                        microphonePermissionGranted = microphonePermissionGranted,
-                        voiceState = voiceState,
-                        voiceStreamState = voiceStreamState,
-                        voiceStreamFailure = voiceStreamFailure,
-                        operationError = operationError,
-                        operationBusy = operationBusy,
-                        onRequestMicrophonePermission = onRequestMicrophonePermission,
-                        onStartVoice = onStartVoice,
-                        onStopVoice = onStopVoice,
-                        onCancelVoice = onCancelVoice,
-                        padding = padding,
-                    )
-                    AppSurface.Projects -> GatedSurface(selected, padding)
-                    AppSurface.Remote -> ConnectionSurface(
-                        state = runtimeState,
-                        operationError = operationError,
-                        operationBusy = operationBusy,
-                        onConnect = onConnect,
-                        padding = padding,
-                    )
-                    AppSurface.Scheduled -> GatedSurface(selected, padding)
-                    AppSurface.Plugins -> GatedSurface(selected, padding)
-                    AppSurface.Themes -> GatedSurface(selected, padding)
-                    AppSurface.Diagnostics -> DiagnosticsSurface(
-                        state = runtimeState,
-                        sourceSha = sourceSha,
-                        voiceStreamState = voiceStreamState,
-                        voiceStreamFailure = voiceStreamFailure,
-                        operationError = operationError,
-                        padding = padding,
-                    )
-                    AppSurface.Settings -> SettingsSurface(
-                        state = runtimeState,
-                        enrollmentPublicKey = enrollmentPublicKey,
-                        operationError = operationError,
-                        operationBusy = operationBusy,
-                        onCreateIdentity = onCreateIdentity,
-                        onPinServer = onPinServer,
-                        onRequestAssistantRole = onRequestAssistantRole,
-                        padding = padding,
-                    )
-                    AppSurface.About -> AboutSurface(sourceSha, padding)
+            ) {
+                Scaffold(
+                    containerColor = tokens.background,
+                    topBar = {
+                        ZaraTopBar(
+                            selected = selected,
+                            state = runtimeState,
+                            onMenu = { scope.launch { drawerState.open() } },
+                        )
+                    },
+                ) { padding ->
+                    when (selected) {
+                        AppSurface.Chat -> ChatSurface(
+                            state = runtimeState,
+                            lastTurn = lastTurn,
+                            operationError = operationError,
+                            operationBusy = operationBusy,
+                            onSendText = onSendText,
+                            padding = padding,
+                        )
+                        AppSurface.Logic -> GatedSurface(selected, padding)
+                        AppSurface.Voice -> VoiceSurface(
+                            state = runtimeState,
+                            microphonePermissionGranted = microphonePermissionGranted,
+                            voiceState = voiceState,
+                            voiceStreamState = voiceStreamState,
+                            voiceStreamFailure = voiceStreamFailure,
+                            operationError = operationError,
+                            operationBusy = operationBusy,
+                            onRequestMicrophonePermission = onRequestMicrophonePermission,
+                            onStartVoice = onStartVoice,
+                            onStopVoice = onStopVoice,
+                            onCancelVoice = onCancelVoice,
+                            padding = padding,
+                        )
+                        AppSurface.Projects -> GatedSurface(selected, padding)
+                        AppSurface.Remote -> ConnectionSurface(
+                            state = runtimeState,
+                            operationError = operationError,
+                            operationBusy = operationBusy,
+                            onConnect = onConnect,
+                            padding = padding,
+                        )
+                        AppSurface.Scheduled -> GatedSurface(selected, padding)
+                        AppSurface.Plugins -> GatedSurface(selected, padding)
+                        AppSurface.Themes -> ThemesSurface(
+                            selected = selectedTheme,
+                            onSelectTheme = onSelectTheme,
+                            padding = padding,
+                        )
+                        AppSurface.Diagnostics -> DiagnosticsSurface(
+                            state = runtimeState,
+                            sourceSha = sourceSha,
+                            voiceStreamState = voiceStreamState,
+                            voiceStreamFailure = voiceStreamFailure,
+                            operationError = operationError,
+                            padding = padding,
+                        )
+                        AppSurface.Settings -> SettingsSurface(
+                            state = runtimeState,
+                            enrollmentPublicKey = enrollmentPublicKey,
+                            operationError = operationError,
+                            operationBusy = operationBusy,
+                            onCreateIdentity = onCreateIdentity,
+                            onPinServer = onPinServer,
+                            onRequestAssistantRole = onRequestAssistantRole,
+                            padding = padding,
+                        )
+                        AppSurface.About -> AboutSurface(sourceSha, padding)
+                    }
                 }
             }
         }
@@ -298,7 +314,7 @@ private fun ZaraTopBar(
     state: RuntimeState,
     onMenu: () -> Unit,
 ) {
-    val tokens = OutrunTokens
+    val tokens = LocalZaraTokens.current
     Surface(
         color = tokens.background,
         border = BorderStroke(1.dp, tokens.border),
@@ -319,7 +335,7 @@ private fun ZaraTopBar(
                 color = tokens.textMuted,
                 style = MaterialTheme.typography.labelLarge,
             )
-            StatusDot(connectionAccent(state.server))
+            StatusDot(connectionAccent(tokens, state.server))
             Spacer(Modifier.size(8.dp))
             ZaraSigil(size = 34.dp)
         }
@@ -332,7 +348,7 @@ private fun ZaraDrawer(
     state: RuntimeState,
     onSelect: (AppSurface) -> Unit,
 ) {
-    val tokens = OutrunTokens
+    val tokens = LocalZaraTokens.current
     ModalDrawerSheet(
         modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 360.dp),
         drawerContainerColor = tokens.surfaceElevated,
@@ -352,7 +368,7 @@ private fun ZaraDrawer(
                     Text("SYMBOLIC INTELLIGENCE", color = tokens.text, fontWeight = FontWeight.SemiBold)
                     Text("ON YOUR TERMS", color = tokens.textMuted, style = MaterialTheme.typography.labelSmall)
                 }
-                StatusDot(connectionAccent(state.server))
+                StatusDot(connectionAccent(tokens, state.server))
             }
 
             Spacer(Modifier.size(8.dp))
@@ -395,7 +411,7 @@ private fun ZaraDrawer(
                     modifier = Modifier.padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    StatusDot(connectionAccent(state.server))
+                    StatusDot(connectionAccent(tokens, state.server))
                     Text(
                         connectionLabel(state.server),
                         modifier = Modifier.padding(start = 10.dp),
@@ -410,7 +426,7 @@ private fun ZaraDrawer(
 
 @Composable
 private fun DrawerDividerLabel(label: String) {
-    val tokens = OutrunTokens
+    val tokens = LocalZaraTokens.current
     Text(
         label,
         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
@@ -423,7 +439,7 @@ private fun DrawerDividerLabel(label: String) {
 
 @Composable
 private fun DrawerHistoryRow(title: String, detail: String) {
-    val tokens = OutrunTokens
+    val tokens = LocalZaraTokens.current
     Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp)) {
         Text(title, color = tokens.textMuted, style = MaterialTheme.typography.bodySmall)
         Text(detail, color = tokens.borderActive, style = MaterialTheme.typography.labelSmall)
@@ -442,7 +458,7 @@ private fun ChatSurface(
     var input by rememberSaveable { mutableStateOf("") }
     val ready = state.server is ServerConnection.Connected &&
         state.enrollment == EnrollmentReadiness.Ready
-    val tokens = OutrunTokens
+    val tokens = LocalZaraTokens.current
 
     Column(
         modifier = Modifier
@@ -530,7 +546,7 @@ private fun CompactComposer(
     operationBusy: Boolean,
     onSend: () -> Unit,
 ) {
-    val tokens = OutrunTokens
+    val tokens = LocalZaraTokens.current
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
@@ -558,7 +574,7 @@ private fun CompactComposer(
 
 @Composable
 private fun UserMessage(text: String) {
-    val tokens = OutrunTokens
+    val tokens = LocalZaraTokens.current
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         Surface(
             color = tokens.surfaceElevated,
@@ -573,7 +589,7 @@ private fun UserMessage(text: String) {
 
 @Composable
 private fun AssistantMessage(text: String, success: Boolean) {
-    val tokens = OutrunTokens
+    val tokens = LocalZaraTokens.current
     Surface(
         color = tokens.surface,
         border = BorderStroke(1.dp, if (success) tokens.border else tokens.error),
@@ -613,7 +629,7 @@ private fun VoiceSurface(
     padding: PaddingValues,
 ) {
     val capturing = voiceState is ManualVoiceState.Capturing
-    val tokens = OutrunTokens
+    val tokens = LocalZaraTokens.current
     ScreenBody(padding) {
         ScreenTitle("Voice", "Authenticated capture and playback")
         SectionCard("RUNTIME") {
@@ -709,7 +725,7 @@ private fun SettingsSurface(
 ) {
     var serverPin by rememberSaveable { mutableStateOf("") }
     var showAssistantHelp by rememberSaveable { mutableStateOf(false) }
-    val tokens = OutrunTokens
+    val tokens = LocalZaraTokens.current
 
     ScreenBody(padding) {
         ScreenTitle("Settings", "Identity, assistant role and enrollment")
@@ -824,13 +840,95 @@ private fun DiagnosticsSurface(
 }
 
 @Composable
+private fun ThemesSurface(
+    selected: ZaraTheme,
+    onSelectTheme: (ZaraTheme) -> Unit,
+    padding: PaddingValues,
+) {
+    val systemDark = isSystemInDarkTheme()
+    ScreenBody(padding) {
+        ScreenTitle("Themes", "Appearance")
+        SectionCard("Appearance") {
+            ZaraTheme.entries.forEach { theme ->
+                ThemePreviewCard(
+                    theme = theme,
+                    selected = theme == selected,
+                    systemDark = systemDark,
+                    onClick = { onSelectTheme(theme) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThemePreviewCard(
+    theme: ZaraTheme,
+    selected: Boolean,
+    systemDark: Boolean,
+    onClick: () -> Unit,
+) {
+    val tokens = LocalZaraTokens.current
+    val palette = themeTokens(theme, systemDark, reducedGlow = false)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick,
+        color = palette.surface,
+        border = BorderStroke(
+            width = if (selected) 2.dp else 1.dp,
+            color = if (selected) palette.borderActive else tokens.border,
+        ),
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                listOf(
+                    palette.background,
+                    palette.primary,
+                    palette.accentMagenta,
+                    palette.accentCyan,
+                    palette.text,
+                ).forEach { swatch ->
+                    Box(
+                        modifier = Modifier
+                            .size(16.dp)
+                            .background(swatch, MaterialTheme.shapes.extraSmall)
+                    )
+                }
+            }
+            Text(
+                theme.name,
+                color = palette.text,
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            if (selected) {
+                Text(
+                    "ACTIVE",
+                    color = palette.borderActive,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.5.sp,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun GatedSurface(surface: AppSurface, padding: PaddingValues) {
+    val tokens = LocalZaraTokens.current
     ScreenBody(padding) {
         ScreenTitle(surface.label, "Product surface")
         SectionCard("NOT YET WIRED") {
             Text(
                 "This route is intentionally visible but disabled until ${surface.gatedIssue ?: "its implementation issue"}. No fake backend is running behind it.",
-                color = OutrunTokens.textMuted,
+                color = tokens.textMuted,
             )
         }
     }
@@ -867,18 +965,19 @@ private fun ScreenBody(
 
 @Composable
 private fun ScreenTitle(title: String, subtitle: String) {
-    Text(title, color = OutrunTokens.text, style = MaterialTheme.typography.headlineSmall)
+    val tokens = LocalZaraTokens.current
+    Text(title, color = tokens.text, style = MaterialTheme.typography.headlineSmall)
     Text(
         subtitle,
         modifier = Modifier.padding(top = 2.dp),
-        color = OutrunTokens.textMuted,
+        color = tokens.textMuted,
         style = MaterialTheme.typography.bodySmall,
     )
 }
 
 @Composable
 private fun SectionCard(title: String, content: @Composable () -> Unit) {
-    val tokens = OutrunTokens
+    val tokens = LocalZaraTokens.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = tokens.surface,
@@ -903,7 +1002,7 @@ private fun SectionCard(title: String, content: @Composable () -> Unit) {
 
 @Composable
 private fun KeyValueRow(label: String, value: String) {
-    val tokens = OutrunTokens
+    val tokens = LocalZaraTokens.current
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         Text(
             label,
@@ -926,7 +1025,7 @@ private fun KeyValueRow(label: String, value: String) {
 
 @Composable
 private fun StatusPill(label: String) {
-    val tokens = OutrunTokens
+    val tokens = LocalZaraTokens.current
     Surface(
         color = tokens.surface,
         border = BorderStroke(1.dp, tokens.border),
@@ -945,11 +1044,12 @@ private fun StatusPill(label: String) {
 
 @Composable
 private fun PrimaryAction(label: String, enabled: Boolean, onClick: () -> Unit) {
+    val tokens = LocalZaraTokens.current
     Button(
         onClick = onClick,
         enabled = enabled,
         colors = ButtonDefaults.buttonColors(
-            containerColor = OutrunTokens.primary,
+            containerColor = tokens.primary,
             contentColor = Color(0xFF160018),
         ),
     ) {
@@ -959,25 +1059,28 @@ private fun PrimaryAction(label: String, enabled: Boolean, onClick: () -> Unit) 
 
 @Composable
 private fun SecondaryAction(label: String, enabled: Boolean, onClick: () -> Unit) {
+    val tokens = LocalZaraTokens.current
     TextButton(onClick = onClick, enabled = enabled) {
-        Text(label, color = OutrunTokens.secondary)
+        Text(label, color = tokens.secondary)
     }
 }
 
 @Composable
 private fun MutedNotice(text: String) {
-    Text(text, color = OutrunTokens.textMuted, style = MaterialTheme.typography.bodySmall)
+    val tokens = LocalZaraTokens.current
+    Text(text, color = tokens.textMuted, style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable
 private fun ErrorBanner(text: String) {
+    val tokens = LocalZaraTokens.current
     Surface(
         modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
-        color = OutrunTokens.surface,
-        border = BorderStroke(1.dp, OutrunTokens.error),
+        color = tokens.surface,
+        border = BorderStroke(1.dp, tokens.error),
         shape = MaterialTheme.shapes.medium,
     ) {
-        Text(text, modifier = Modifier.padding(12.dp), color = OutrunTokens.error)
+        Text(text, modifier = Modifier.padding(12.dp), color = tokens.error)
     }
 }
 
@@ -990,7 +1093,7 @@ private fun StatusDot(color: Color) {
 
 @Composable
 private fun ZaraSigil(size: Dp) {
-    val tokens = OutrunTokens
+    val tokens = LocalZaraTokens.current
     Canvas(Modifier.size(size)) {
         val center = Offset(this.size.width / 2f, this.size.height / 2f)
         val stroke = this.size.minDimension * 0.028f
@@ -1027,26 +1130,29 @@ private fun ZaraSigil(size: Dp) {
 }
 
 @Composable
-private fun fieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedTextColor = OutrunTokens.text,
-    unfocusedTextColor = OutrunTokens.text,
-    disabledTextColor = OutrunTokens.textMuted,
-    focusedBorderColor = OutrunTokens.borderActive,
-    unfocusedBorderColor = OutrunTokens.border,
-    disabledBorderColor = OutrunTokens.border,
-    focusedLabelColor = OutrunTokens.secondary,
-    unfocusedLabelColor = OutrunTokens.textMuted,
-    cursorColor = OutrunTokens.secondary,
-    focusedContainerColor = OutrunTokens.surfaceInput,
-    unfocusedContainerColor = OutrunTokens.surfaceInput,
-    disabledContainerColor = OutrunTokens.surfaceInput,
-)
+private fun fieldColors() = run {
+    val tokens = LocalZaraTokens.current
+    OutlinedTextFieldDefaults.colors(
+        focusedTextColor = tokens.text,
+        unfocusedTextColor = tokens.text,
+        disabledTextColor = tokens.textMuted,
+        focusedBorderColor = tokens.borderActive,
+        unfocusedBorderColor = tokens.border,
+        disabledBorderColor = tokens.border,
+        focusedLabelColor = tokens.secondary,
+        unfocusedLabelColor = tokens.textMuted,
+        cursorColor = tokens.secondary,
+        focusedContainerColor = tokens.surfaceInput,
+        unfocusedContainerColor = tokens.surfaceInput,
+        disabledContainerColor = tokens.surfaceInput,
+    )
+}
 
-private fun connectionAccent(connection: ServerConnection): Color = when (connection) {
-    is ServerConnection.Connected -> OutrunTokens.success
-    is ServerConnection.Connecting, is ServerConnection.Reconnecting -> OutrunTokens.warning
-    is ServerConnection.OfflineDegraded -> OutrunTokens.warning
-    ServerConnection.Disconnected -> OutrunTokens.textMuted
+private fun connectionAccent(tokens: ZaraSemanticTokens, connection: ServerConnection): Color = when (connection) {
+    is ServerConnection.Connected -> tokens.success
+    is ServerConnection.Connecting, is ServerConnection.Reconnecting -> tokens.warning
+    is ServerConnection.OfflineDegraded -> tokens.warning
+    ServerConnection.Disconnected -> tokens.textMuted
 }
 
 internal fun canRequestConnect(connection: ServerConnection): Boolean =

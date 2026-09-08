@@ -1,8 +1,10 @@
 package ai.zara.app
 
 import ai.zara.app.ui.RenderedTextTurn
+import ai.zara.app.ui.ThemePreferenceStore
 import ai.zara.app.ui.UiOperationFailure
 import ai.zara.app.ui.ZaraApp
+import ai.zara.app.ui.ZaraTheme
 import ai.zara.app.voice.ManualVoiceState
 import android.Manifest
 import android.content.pm.PackageManager
@@ -14,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     private lateinit var appSession: AndroidAppSession
@@ -33,6 +36,8 @@ class MainActivity : ComponentActivity() {
         var operationBusy by mutableStateOf(false)
         var voiceStreamState by mutableStateOf(appSession.voiceStreamState())
         var voiceStreamFailure by mutableStateOf(appSession.voiceStreamFailure())
+        val themePreferenceStore = ThemePreferenceStore(File(filesDir, "theme.bin"))
+        var selectedTheme by mutableStateOf(themePreferenceStore.load())
 
         val microphonePermission = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
@@ -74,6 +79,11 @@ class MainActivity : ComponentActivity() {
                 voiceState = voiceState,
                 voiceStreamState = voiceStreamState,
                 voiceStreamFailure = voiceStreamFailure,
+                selectedTheme = selectedTheme,
+                onSelectTheme = { theme ->
+                    selectedTheme = theme
+                    themePreferenceStore.save(theme)
+                },
                 onCreateIdentity = {
                     operationError = null
                     try {
