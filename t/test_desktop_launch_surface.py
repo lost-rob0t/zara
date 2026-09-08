@@ -28,17 +28,23 @@ class FakeApp:
 
 def test_default_desktop_client_uses_canonical_daemon_endpoint(monkeypatch):
     expected_client = object()
+    config = object()
     seen = {}
+
+    def fake_endpoint(active_config=None):
+        seen["resolver_config"] = active_config
+        return "tcp://127.0.0.1:7731"
 
     monkeypatch.setattr(
         desktop_app,
         "_default_daemon_endpoint",
-        lambda: "tcp://127.0.0.1:7731",
+        fake_endpoint,
         raising=False,
     )
 
-    def fake_create_daemon_client(endpoint):
+    def fake_create_daemon_client(endpoint, *, config=None):
         seen["endpoint"] = endpoint
+        seen["client_config"] = config
         return expected_client
 
     monkeypatch.setattr(
@@ -53,10 +59,14 @@ def test_default_desktop_client_uses_canonical_daemon_endpoint(monkeypatch):
         lambda: pytest.fail("normal desktop startup must not create a private runtime"),
     )
 
-    client = desktop_app._default_desktop_client()
+    client = desktop_app._default_desktop_client(config)
 
     assert client is expected_client
-    assert seen == {"endpoint": "tcp://127.0.0.1:7731"}
+    assert seen == {
+        "resolver_config": config,
+        "endpoint": "tcp://127.0.0.1:7731",
+        "client_config": config,
+    }
 
 
 def test_explicit_desktop_start_summons_quick_once(monkeypatch):
