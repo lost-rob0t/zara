@@ -5,6 +5,7 @@ import pytest
 from zara.actors import TurnCancelledReply
 from zara.runtime.commands import CancelTurn
 from zara.runtime.host import RuntimeHost
+from zara.runtime.turn_context import TurnCapabilityLease
 
 
 class _Backend:
@@ -30,6 +31,8 @@ async def test_cancel_turn_invalidates_plugin_composition_context() -> None:
     host = RuntimeHost(lambda: backend, publisher=lambda _event: None)
     host._backend = backend
     host._plugin_manager = manager
+    lease = TurnCapabilityLease("turn-1")
+    host._turn_capability_leases["turn-1"] = lease
 
     async def coordinator_ask(_message):
         return TurnCancelledReply(turn_id="turn-1", was_already_cancelled=False)
@@ -39,6 +42,7 @@ async def test_cancel_turn_invalidates_plugin_composition_context() -> None:
     receipt = await host._cancel_turn(CancelTurn(turn_id="turn-1"))
 
     assert receipt.turn_id == "turn-1"
+    assert not lease.active
     assert backend.cancelled == ["turn-1"]
     assert manager.cancelled == ["turn-1"]
 
@@ -50,6 +54,8 @@ async def test_task_turn_cancellation_invalidates_plugin_composition_context() -
     host = RuntimeHost(lambda: backend, publisher=lambda _event: None)
     host._backend = backend
     host._plugin_manager = manager
+    lease = TurnCapabilityLease("task-turn-1")
+    host._turn_capability_leases["task-turn-1"] = lease
 
     async def coordinator_ask(_message):
         return object()
@@ -58,5 +64,6 @@ async def test_task_turn_cancellation_invalidates_plugin_composition_context() -
 
     await host._cancel_task_turn("task-turn-1")
 
+    assert not lease.active
     assert backend.cancelled == ["task-turn-1"]
     assert manager.cancelled == ["task-turn-1"]
