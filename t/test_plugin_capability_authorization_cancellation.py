@@ -151,3 +151,39 @@ async def test_turn_cancellation_fences_inflight_composed_result(tmp_path):
         await invocation
 
     await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_turn_cancellation_before_registration_fails_closed(tmp_path):
+    _write_plugin(tmp_path / "consumer.py", name="consumer")
+    _write_plugin(tmp_path / "provider.py", name="provider", tool_name="provider.read")
+    registry = ToolRegistry()
+    underlying_calls = 0
+
+    def invoke(_name, _request):
+        nonlocal underlying_calls
+        underlying_calls += 1
+        return {"status": "should-not-run"}
+
+    manager = _manager(
+        tmp_path,
+        registry,
+        allowed=("provider.read",),
+        invoker=invoke,
+    )
+    await manager.start()
+    handle = manager._resolve_capability("consumer", "provider.read")
+    assert handle is not None
+
+    manager.cancel_capability_turn("turn-1")
+
+    with pytest.raises(RuntimeError, match="cancelled|stale"):
+        manager._invoke_capability(
+            "consumer",
+            handle,
+            {"value": "status"},
+            turn_id="turn-1",
+        )
+
+    assert underlying_calls == 0
+    await manager.stop()
