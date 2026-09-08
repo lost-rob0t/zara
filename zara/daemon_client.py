@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from zara.config import ZaraConfig, get_config
 from zara.security_transport import CurveClientConfig
 from zara.server import ServerLease, default_zmq_endpoint
-from zara.zmq_transport import ZmqZaraClient
+
+if TYPE_CHECKING:
+    from zara.zmq_transport import ZmqZaraClient
 
 
 DAEMON_ENDPOINT_ENV = "ZARA_DAEMON_ENDPOINT"
@@ -32,10 +34,10 @@ def resolve_daemon_endpoint(
 ) -> str:
     """Resolve one client endpoint with explicit/configured/local precedence.
 
-    Explicit CLI/API selection wins.  The environment override is next so a
+    Explicit CLI/API selection wins. The environment override is next so a
     service manager or Home Manager profile can select the deployment endpoint
-    without owning the user's mutable config.toml.  ``[daemon].endpoint`` is
-    the normal persistent user setting.  Empty values retain Zara's private
+    without owning the user's mutable config.toml. ``[daemon].endpoint`` is
+    the normal persistent user setting. Empty values retain Zara's private
     owner-local IPC default.
     """
     if explicit is not None:
@@ -65,11 +67,10 @@ def curve_client_config(config: Optional[ZaraConfig] = None) -> Optional[CurveCl
         or section.get("curve_server_public_key")
     )
 
-    values = tuple(str(value).strip() if value is not None else "" for value in (
-        public_key,
-        secret_key,
-        server_public_key,
-    ))
+    values = tuple(
+        str(value).strip() if value is not None else ""
+        for value in (public_key, secret_key, server_public_key)
+    )
     if not any(values):
         return None
     if not all(values):
@@ -89,13 +90,22 @@ def create_daemon_client(
     *,
     config: Optional[ZaraConfig] = None,
     **kwargs,
-) -> ZmqZaraClient:
+) -> "ZmqZaraClient":
     """Construct the canonical configured ZARA/1 client."""
     if "curve_client" in kwargs:
         raise TypeError("curve_client is owned by Zara daemon client configuration")
+
+    # Resolve the concrete transport at call time. Besides keeping this module
+    # focused on policy, this preserves Zara's long-standing transport injection
+    # seam used by tests and embedders.
+    from zara.zmq_transport import ZmqZaraClient
+
+    curve_client = curve_client_config(config)
+    if curve_client is not None:
+        kwargs["curve_client"] = curve_client
+
     return ZmqZaraClient(
         resolve_daemon_endpoint(config, explicit=endpoint),
-        curve_client=curve_client_config(config),
         **kwargs,
     )
 
