@@ -101,7 +101,9 @@ def test_create_daemon_client_uses_resolved_endpoint_and_curve(monkeypatch):
             seen["endpoint"] = endpoint
             seen.update(kwargs)
 
-    monkeypatch.setattr(daemon_client, "ZmqZaraClient", FakeClient)
+    import zara.zmq_transport as transport_module
+
+    monkeypatch.setattr(transport_module, "ZmqZaraClient", FakeClient)
 
     client = daemon_client.create_daemon_client(
         "tcp://127.0.0.1:7731",
@@ -115,3 +117,24 @@ def test_create_daemon_client_uses_resolved_endpoint_and_curve(monkeypatch):
         "curve_client": expected_curve,
         "voice_output": "speaker",
     }
+
+
+def test_create_daemon_client_omits_curve_kwarg_when_unconfigured(monkeypatch):
+    clear_daemon_env(monkeypatch)
+    seen = []
+
+    class LegacyStyleClient:
+        def __init__(self, endpoint):
+            seen.append(endpoint)
+
+    import zara.zmq_transport as transport_module
+
+    monkeypatch.setattr(transport_module, "ZmqZaraClient", LegacyStyleClient)
+
+    client = daemon_client.create_daemon_client(
+        "ipc:///tmp/zara.sock",
+        config=FakeConfig(),
+    )
+
+    assert isinstance(client, LegacyStyleClient)
+    assert seen == ["ipc:///tmp/zara.sock"]
