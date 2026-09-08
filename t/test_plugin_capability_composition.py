@@ -53,6 +53,14 @@ def test_invoke_preserves_core_handle_and_structured_request():
     assert seen == [("consumer", handle, {"query": "status"})]
 
 
+def test_plugin_cannot_supply_turn_correlation():
+    handle = CapabilityHandle("provider", "provider.read", 3, False)
+    runtime = _runtime(resolver=lambda _name: handle, invoker=lambda *_args: None)
+
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        runtime.invoke_capability(handle, {}, turn_id="forged-turn")
+
+
 def test_closed_runtime_cannot_resolve_or_invoke_capabilities():
     handle = CapabilityHandle("provider", "provider.read", 1, False)
     runtime = _runtime(resolver=lambda _name: handle, invoker=lambda *_args: {})
