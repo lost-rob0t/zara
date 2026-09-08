@@ -10,6 +10,7 @@ from langchain_core.tools import StructuredTool
 from zara.agent.tools.registry import ToolRegistry
 from zara.plugins import PluginManager, PluginState, RuntimeStatus
 from zara.runtime.bridge import RuntimeEventBus
+from zara.runtime.turn_context import TurnCapabilityLease, bind_turn_capability_lease
 
 
 class _Config:
@@ -239,15 +240,17 @@ async def test_inflight_composed_invocation_fences_provider_unload(tmp_path):
     await manager.start()
     handle = manager._resolve_capability("plugin_mutate")
     assert handle is not None
+    lease = TurnCapabilityLease("turn-unload-test")
 
-    invocation = asyncio.create_task(
-        asyncio.to_thread(
-            manager._invoke_capability,
-            "approval-test",
-            handle,
-            {"value": "status"},
-        )
-    )
+    def invoke_bound():
+        with bind_turn_capability_lease(lease):
+            return manager._invoke_capability(
+                "approval-test",
+                handle,
+                {"value": "status"},
+            )
+
+    invocation = asyncio.create_task(asyncio.to_thread(invoke_bound))
     assert await asyncio.to_thread(invocation_started.wait, 1.0)
 
     stopping = asyncio.create_task(manager.stop())
