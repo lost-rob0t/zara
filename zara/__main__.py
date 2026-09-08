@@ -135,14 +135,14 @@ def _wait_for_daemon_turn(subscription, turn_id: str) -> str:
 
 
 def _run_connected_text(endpoint: str, command_text: str) -> int:
+    from .daemon_client import create_daemon_client
     from .runtime.commands import SubmitTurn
-    from .zmq_transport import ZmqZaraClient
 
     client = None
     subscription = None
     exit_code = 0
     try:
-        client = ZmqZaraClient(endpoint)
+        client = create_daemon_client(endpoint)
         client.start().result()
         # Subscribe before submit so an immediately-completing daemon turn
         # cannot publish its terminal event before this CLI is listening.
@@ -173,10 +173,10 @@ def _run_connected_text(endpoint: str, command_text: str) -> int:
 
 
 def _default_daemon_endpoint() -> str:
-    """Resolve the same owner-private IPC endpoint used by ``zara-server``."""
-    from .server import ServerLease, default_zmq_endpoint
+    """Resolve Zara's configured daemon endpoint, falling back to private IPC."""
+    from .daemon_client import resolve_daemon_endpoint
 
-    return default_zmq_endpoint(ServerLease()._runtime_dir())
+    return resolve_daemon_endpoint()
 
 
 def _desktop_control_runtime_dir() -> Path:
