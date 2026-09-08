@@ -14,6 +14,7 @@ from typing import Callable, Iterable, Optional, Sequence
 from langchain_core.tools import BaseTool
 
 from zara.runtime import events
+from zara.runtime.turn_context import TurnCapabilityLease, current_turn_capability_lease
 
 from .api import CapabilityHandle, PLUGIN_API_VERSION, PluginMetadata, PluginRuntime, RuntimeStatus
 from .loader import iter_plugin_files, load_plugin_module
@@ -60,7 +61,7 @@ class _PluginRecord:
 class _CapabilityInvocation:
     caller: _PluginRecord
     target: _PluginRecord
-    turn_id: Optional[str]
+    lease: Optional[TurnCapabilityLease]
     cancelled: bool = False
 
 
@@ -305,7 +306,8 @@ class PluginManager:
             raise ValueError("turn_id must be a non-empty string")
         with self._invocation_condition:
             for invocation in self._active_capability_invocations.values():
-                if invocation.turn_id == turn_id:
+                lease = invocation.lease
+                if lease is not None and lease.turn_id == turn_id:
                     invocation.cancelled = True
 
     def _invoke_capability(
@@ -313,77 +315,87 @@ class PluginManager:
         caller: str,
         handle: CapabilityHandle,
         request: dict,
-        *,
-        turn_id: Optional[str] = None,
     ):
         approval_provider = self._capability_approval_provider
         invoker = self._capability_invoker
         if approval_provider is None or invoker is None:
             raise RuntimeError("plugin capability composition is not available")
-        if turn_id is not None and (not isinstance(turn_id, str) or not turn_id):
-            raise ValueError("turn_id must be a non-empty string when provided")
 
+        lease = current_turn_capability_lease()
         caller_record = None
         target = None
         leased_records: tuple[_PluginRecord, ...] = ()
         invocation_id = 0
         invocation: Optional[_CapabilityInvocation] = None
-        with self._invocation_condition:
-            if self._stopped:
-                raise RuntimeError("plugin manager is stopping")
-            caller_record = next(
-                (
-                    record
-                    for record in self._records
-                    if record.metadata.name == caller
-                    and record.state is PluginState.RUNNING
-                    and not record.stop_called
-                    and record.runtime is not None
-                    and not record.runtime.closed
-                ),
-                None,
-            )
-            target = next(
-                (
-                    record
-                    for record in self._records
-                    if record.metadata.name == handle.plugin_name
-                    and record.state is PluginState.RUNNING
-                    and not record.stop_called
-                    and record.generation == handle.generation
-                    and handle.capability in record.tool_names
-                ),
-                None,
-            )
-            if caller_record is None:
-                raise RuntimeError("calling plugin is not running")
-            if target is None:
-                raise RuntimeError("capability handle is stale or unavailable")
-            self._authorize_capability(caller, handle.capability)
-            requires_approval = bool(approval_provider(handle.capability))
-            if requires_approval != handle.requires_approval:
-                raise RuntimeError("capability policy changed; resolve a fresh handle")
-            if requires_approval:
-                raise PermissionError(
-                    "capability requires canonical interactive approval and cannot be invoked directly"
-                )
 
-            leased_records = (caller_record,) if caller_record is target else (caller_record, target)
-            for record in leased_records:
-                record.active_invocations += 1
-            invocation_id = self._next_invocation_id
-            self._next_invocation_id += 1
-            invocation = _CapabilityInvocation(
-                caller=caller_record,
-                target=target,
-                turn_id=turn_id,
-            )
-            self._active_capability_invocations[invocation_id] = invocation
+        def register_invocation() -> None:
+            nonlocal caller_record, target, leased_records, invocation_id, invocation
+            with self._invocation_condition:
+                if self._stopped:
+                    raise RuntimeError("plugin manager is stopping")
+                caller_record = next(
+                    (
+                        record
+                        for record in self._records
+                        if record.metadata.name == caller
+                        and record.state is PluginState.RUNNING
+                        and not record.stop_called
+                        and record.runtime is not None
+                        and not record.runtime.closed
+                    ),
+                    None,
+                )
+                target = next(
+                    (
+                        record
+                        for record in self._records
+                        if record.metadata.name == handle.plugin_name
+                        and record.state is PluginState.RUNNING
+                        and not record.stop_called
+                        and record.generation == handle.generation
+                        and handle.capability in record.tool_names
+                    ),
+                    None,
+                )
+                if caller_record is None:
+                    raise RuntimeError("calling plugin is not running")
+                if target is None:
+                    raise RuntimeError("capability handle is stale or unavailable")
+                self._authorize_capability(caller, handle.capability)
+                requires_approval = bool(approval_provider(handle.capability))
+                if requires_approval != handle.requires_approval:
+                    raise RuntimeError("capability policy changed; resolve a fresh handle")
+                if requires_approval:
+                    raise PermissionError(
+                        "capability requires canonical interactive approval and cannot be invoked directly"
+                    )
+
+                leased_records = (
+                    (caller_record,) if caller_record is target else (caller_record, target)
+                )
+                for record in leased_records:
+                    record.active_invocations += 1
+                invocation_id = self._next_invocation_id
+                self._next_invocation_id += 1
+                invocation = _CapabilityInvocation(
+                    caller=caller_record,
+                    target=target,
+                    lease=lease,
+                )
+                self._active_capability_invocations[invocation_id] = invocation
+
+        if lease is None:
+            register_invocation()
+        else:
+            with lease.registration():
+                register_invocation()
 
         try:
             result = invoker(handle.capability, request)
+            if lease is not None and not lease.active:
+                raise RuntimeError("composed invocation was cancelled or became stale")
             with self._invocation_condition:
-                if invocation.cancelled:
+                if invocation is not None and invocation.cancelled:
                     raise RuntimeError("composed invocation was cancelled or became stale")
             return result
         finally:
