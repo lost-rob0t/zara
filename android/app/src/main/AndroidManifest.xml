@@ -15,7 +15,7 @@
     <application
         android:name=".ZaraApplication"
         android:label="Zara"
-        android:theme="@android:style/Theme.DeviceDefault.Light"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
         android:allowBackup="false">
 
         <activity

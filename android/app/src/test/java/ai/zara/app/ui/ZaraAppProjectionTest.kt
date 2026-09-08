@@ -99,4 +99,148 @@ class ZaraAppProjectionTest {
             )
         )
     }
+
+    @Test
+    fun frozenDrawerRouteInventoryReplacesBottomNavigation() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val expected = listOf(
+            "Chat", "Logic", "Voice", "Projects", "Remote", "Scheduled",
+            "Plugins", "Themes", "Diagnostics", "Settings", "About",
+        )
+        var cursor = -1
+        expected.forEach { label ->
+            val next = source.indexOf("\"$label\"", cursor + 1)
+            assertTrue("missing or out-of-order drawer route: $label", next > cursor)
+            cursor = next
+        }
+        assertTrue(source.contains("ModalNavigationDrawer"))
+        assertFalse(source.contains("NavigationBarItem"))
+    }
+
+    @Test
+    fun outrunShellUsesSemanticTokensAndCompactComposer() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+
+        assertTrue(source.contains("data class ZaraSemanticTokens"))
+        assertTrue(source.contains("accentMagenta"))
+        assertTrue(source.contains("accentCyan"))
+        assertTrue(source.contains("ambientGlow"))
+        assertTrue(source.contains("CompactComposer"))
+        assertTrue(source.contains("ZaraSigil"))
+    }
+
+    @Test
+    fun settingsDoesNotDumpLongAssistantSetupTextByDefault() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val settings = source.substringAfter("private fun SettingsSurface(")
+            .substringBefore("private fun DiagnosticsSurface(")
+
+        assertTrue(settings.contains("showAssistantHelp"))
+        assertTrue(settings.contains("SelectionContainer"))
+    }
+
+    @Test
+    fun androidHostDoesNotRenderPlatformLightActionBarOverComposeShell() {
+        val manifest = File("src/main/AndroidManifest.xml").readText()
+
+        assertFalse(manifest.contains("Theme.DeviceDefault.Light"))
+        assertTrue(manifest.contains("Theme.DeviceDefault.NoActionBar"))
+    }
+    @Test
+    fun allFrozenThemesResolveThroughOneSemanticHierarchy() {
+        assertEquals(listOf("Outrun", "StarIntel", "Midnight", "Terminal", "Light", "System"),
+            ZaraTheme.entries.map { it.name })
+        ZaraTheme.entries.forEach { theme ->
+            val tokens = themeTokens(theme, systemDark = true, reducedGlow = false)
+            assertTrue(tokens.text != tokens.background)
+            assertTrue(tokens.textMuted != tokens.surface)
+            assertTrue(tokens.success != tokens.error)
+            assertTrue(tokens.focus != tokens.background)
+        }
+        assertEquals(themeTokens(ZaraTheme.Outrun, true, false), themeTokens(ZaraTheme.System, true, false))
+        assertEquals(themeTokens(ZaraTheme.Light, false, false), themeTokens(ZaraTheme.System, false, false))
+    }
+
+    @Test
+    fun reducedGlowPreservesFocusAndSelectionContrast() {
+        ZaraTheme.entries.forEach { theme ->
+            val normal = themeTokens(theme, true, false)
+            val reduced = themeTokens(theme, true, true)
+            assertEquals(androidx.compose.ui.graphics.Color.Transparent, reduced.ambientGlow)
+            assertEquals(normal.focus, reduced.focus)
+            assertEquals(normal.borderActive, reduced.borderActive)
+            assertEquals(normal.text, reduced.text)
+        }
+    }
+
+    @Test
+    fun themesSurfaceRendersAppearancePreviewCardsForAllFrozenThemes() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val themes = source.substringAfter("private fun ThemesSurface(")
+            .substringBefore("private fun GatedSurface(")
+
+        assertTrue(themes.contains("\"Appearance\""))
+        assertTrue(themes.contains("ZaraTheme.entries"))
+        assertTrue(themes.contains("themeTokens(theme"))
+        ZaraTheme.entries.forEach { theme ->
+            assertTrue("preview card missing selection for ${theme.name}", themes.contains("onSelectTheme"))
+        }
+        assertTrue(source.contains("AppSurface.Themes -> ThemesSurface("))
+    }
+
+    @Test
+    fun activeShellResolvesTokensFromSelectionInsteadOfHardcodedOutrun() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val shell = source.substringAfter("fun ZaraApp(")
+            .substringBefore("private fun ZaraTopBar(")
+
+        assertTrue(shell.contains("themeTokens("))
+        assertTrue(shell.contains("isSystemInDarkTheme()"))
+        assertTrue(shell.contains("LocalZaraTokens provides"))
+        assertTrue(shell.contains("selectedTheme"))
+
+        val sectionCard = source.substringAfter("private fun SectionCard(")
+            .substringBefore("private fun KeyValueRow(")
+        assertFalse(sectionCard.contains("OutrunTokens"))
+        assertTrue(sectionCard.contains("LocalZaraTokens"))
+    }
+
+    @Test
+    fun hostRestoresThemePreferenceAcrossProcessRecreation() {
+        val source = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+
+        assertTrue(source.contains("ThemePreferenceStore"))
+        assertTrue(source.contains("selectedTheme"))
+        assertTrue(source.contains("onSelectTheme"))
+    }
+
+    @Test
+    fun shellHonorsSystemBarsInsteadOfDrawingUnderTheStatusBar() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val topBar = source.substringAfter("private fun ZaraTopBar(")
+            .substringBefore("private fun ZaraDrawer(")
+
+        assertTrue(topBar.contains("WindowInsets.statusBars"))
+        assertTrue(topBar.contains("windowInsetsPadding"))
+    }
+
+    @Test
+    fun drawerNavigationScrollsSoEveryRouteStaysReachable() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val drawer = source.substringAfter("private fun ZaraDrawer(")
+            .substringBefore("private fun DrawerDividerLabel(")
+
+        assertTrue(drawer.contains("verticalScroll(rememberScrollState())"))
+    }
+
+    @Test
+    fun systemBarIconContrastFollowsResolvedThemeDarkness() {
+        val source = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+
+        assertTrue(source.contains("enableEdgeToEdge"))
+        assertTrue(source.contains("SystemBarStyle"))
+        assertTrue(source.contains("resolvedSystemBarDark"))
+        assertTrue(source.contains("ZaraTheme.System -> systemDark"))
+        assertTrue(source.contains("ZaraTheme.Light -> false"))
+    }
 }
