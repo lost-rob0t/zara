@@ -26,9 +26,9 @@ _CONTROLLER_ATTR = "_zara_desktop_controller"
 _CONTROL_ATTR = "_zara_desktop_control_server"
 
 
-def _default_daemon_endpoint() -> str:
+def _default_daemon_endpoint(config: Optional[ZaraConfig] = None) -> str:
     """Resolve Zara's configured daemon endpoint, falling back to private IPC."""
-    return resolve_daemon_endpoint()
+    return resolve_daemon_endpoint(config)
 
 
 def _desktop_control_runtime_dir() -> Path:
@@ -36,9 +36,9 @@ def _desktop_control_runtime_dir() -> Path:
     return ServerLease()._runtime_dir()
 
 
-def _default_desktop_client() -> ZaraClient:
+def _default_desktop_client(config: Optional[ZaraConfig] = None) -> ZaraClient:
     """Construct the canonical configured daemon-backed desktop client."""
-    return create_daemon_client(_default_daemon_endpoint())
+    return create_daemon_client(_default_daemon_endpoint(config), config=config)
 
 
 def create_application(
@@ -75,7 +75,7 @@ def create_application(
     # ZaraClient, so transport selection remains outside Qt surfaces.
     service = client if client is not None else host
     if service is None:
-        service = _default_desktop_client()
+        service = _default_desktop_client(active_config)
     bridge = QtRuntimeBridge(service, parent=app)
     controller = DesktopController(app, service, bridge)
     setattr(app, _CONTROLLER_ATTR, controller)
