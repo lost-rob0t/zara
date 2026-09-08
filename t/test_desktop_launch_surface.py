@@ -33,15 +33,20 @@ def test_default_desktop_client_uses_canonical_daemon_endpoint(monkeypatch):
     monkeypatch.setattr(
         desktop_app,
         "_default_daemon_endpoint",
-        lambda: "ipc:///run/user/test/zara.sock",
+        lambda: "tcp://127.0.0.1:7731",
         raising=False,
     )
 
-    def fake_zmq_client(endpoint):
+    def fake_create_daemon_client(endpoint):
         seen["endpoint"] = endpoint
         return expected_client
 
-    monkeypatch.setattr(desktop_app, "ZmqZaraClient", fake_zmq_client, raising=False)
+    monkeypatch.setattr(
+        desktop_app,
+        "create_daemon_client",
+        fake_create_daemon_client,
+        raising=False,
+    )
     monkeypatch.setattr(
         desktop_app,
         "InProcessZaraClient",
@@ -51,7 +56,7 @@ def test_default_desktop_client_uses_canonical_daemon_endpoint(monkeypatch):
     client = desktop_app._default_desktop_client()
 
     assert client is expected_client
-    assert seen == {"endpoint": "ipc:///run/user/test/zara.sock"}
+    assert seen == {"endpoint": "tcp://127.0.0.1:7731"}
 
 
 def test_explicit_desktop_start_summons_quick_once(monkeypatch):
