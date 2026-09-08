@@ -103,7 +103,7 @@ def main() -> None:
         device.start()
         device.capture("empty-shell")
         device.tap("☰")
-        device.await_label("SYMBOLIC INTELLIGENCE")
+        device.await_label("Logic")
         device.capture("drawer-open")
         for route in ("Chat", "Logic", "Voice", "Projects", "Remote", "Scheduled", "Plugins", "Themes", "Diagnostics", "Settings", "About"):
             device.reveal(route)

@@ -213,5 +213,24 @@ class ZaraAppProjectionTest {
         assertTrue(source.contains("selectedTheme"))
         assertTrue(source.contains("onSelectTheme"))
     }
+
+    @Test
+    fun shellHonorsSystemBarsInsteadOfDrawingUnderTheStatusBar() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val topBar = source.substringAfter("private fun ZaraTopBar(")
+            .substringBefore("private fun ZaraDrawer(")
+
+        assertTrue(topBar.contains("WindowInsets.statusBars"))
+        assertTrue(topBar.contains("windowInsetsPadding"))
+    }
+
+    @Test
+    fun drawerNavigationScrollsSoEveryRouteStaysReachable() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val drawer = source.substringAfter("private fun ZaraDrawer(")
+            .substringBefore("private fun DrawerDividerLabel(")
+
+        assertTrue(drawer.contains("verticalScroll(rememberScrollState())"))
+    }
 }
 
