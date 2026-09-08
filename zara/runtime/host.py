@@ -39,6 +39,7 @@ from .commands import (
     StopVoice,
     SubmitTurn,
 )
+from .turn_context import TurnCapabilityLease, bind_turn_capability_lease
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,7 @@ class RuntimeHost:
         self._backend: Optional[RuntimeBackend] = None
         self._coordinator = None
         self._turn_tasks: dict[str, asyncio.Task] = {}
+        self._turn_capability_leases: dict[str, TurnCapabilityLease] = {}
         self._clarifications = ClarificationCoordinator()
         self._plugin_manager: Optional[PluginManager] = None
         self._last_plugin_diagnostics: tuple[PluginDiagnostic, ...] = ()
@@ -275,6 +277,7 @@ class RuntimeHost:
                 task.cancel()
             if pending:
                 loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            self._invalidate_all_turn_capability_leases()
             loop.close()
             with self._state_lock:
                 self._loop = None
@@ -470,19 +473,27 @@ class RuntimeHost:
     async def _task_submit_turn(
         self, text, *, turn_id, conversation_id, system_context, latency_trace
     ):
-        return await self._require_backend().submit_turn(
-            text,
-            turn_id=turn_id,
-            conversation_id=conversation_id,
-            system_context=system_context,
-            conversation_history=[],
-            latency_trace=latency_trace,
-        )
+        lease = self._turn_capability_leases.get(turn_id)
+        if lease is None:
+            raise RuntimeHostError(f"task turn capability lease is unavailable: {turn_id!r}")
+        try:
+            with bind_turn_capability_lease(lease):
+                return await self._require_backend().submit_turn(
+                    text,
+                    turn_id=turn_id,
+                    conversation_id=conversation_id,
+                    system_context=system_context,
+                    conversation_history=[],
+                    latency_trace=latency_trace,
+                )
+        finally:
+            self._release_turn_capability_lease(turn_id, lease)
 
     async def _allocate_task_turn_id(self) -> str:
         reply = await self._coordinator_ask(StartTurn())
         if not isinstance(reply, TurnStartedReply):
             raise RuntimeHostError(f"unexpected turn coordinator reply: {reply!r}")
+        self._new_turn_capability_lease(reply.turn_id)
         return reply.turn_id
 
     async def _cancel_task_turn(self, turn_id: str) -> None:
@@ -494,6 +505,7 @@ class RuntimeHost:
                 turn_id,
                 exc_info=True,
             )
+        self._invalidate_turn_capability_lease(turn_id)
         self._cancel_plugin_capability_turn(turn_id)
         backend = self._backend
         if backend is not None:
@@ -505,6 +517,33 @@ class RuntimeHost:
                     turn_id,
                     exc_info=True,
                 )
+
+    def _new_turn_capability_lease(self, turn_id: str) -> TurnCapabilityLease:
+        if turn_id in self._turn_capability_leases:
+            raise RuntimeHostError(f"duplicate active turn capability lease: {turn_id!r}")
+        lease = TurnCapabilityLease(turn_id)
+        self._turn_capability_leases[turn_id] = lease
+        return lease
+
+    def _invalidate_turn_capability_lease(self, turn_id: str) -> None:
+        lease = self._turn_capability_leases.get(turn_id)
+        if lease is not None:
+            lease.invalidate()
+
+    def _release_turn_capability_lease(
+        self,
+        turn_id: str,
+        lease: TurnCapabilityLease,
+    ) -> None:
+        lease.invalidate()
+        if self._turn_capability_leases.get(turn_id) is lease:
+            self._turn_capability_leases.pop(turn_id, None)
+
+    def _invalidate_all_turn_capability_leases(self) -> None:
+        leases = tuple(self._turn_capability_leases.values())
+        self._turn_capability_leases.clear()
+        for lease in leases:
+            lease.invalidate()
 
     def _cancel_plugin_capability_turn(self, turn_id: str) -> None:
         manager = self._plugin_manager
@@ -671,6 +710,7 @@ class RuntimeHost:
         if not isinstance(reply, TurnStartedReply):
             raise RuntimeHostError(f"unexpected turn coordinator reply: {reply!r}")
         turn_id = reply.turn_id
+        lease = self._new_turn_capability_lease(turn_id)
         self._publisher(
             events.TurnStarted(
                 turn_id=turn_id,
@@ -679,7 +719,7 @@ class RuntimeHost:
             )
         )
         task = asyncio.create_task(
-            self._run_turn(command, turn_id),
+            self._run_turn(command, turn_id, lease),
             name=f"zara-turn-{turn_id}",
         )
         self._turn_tasks[turn_id] = task
@@ -705,7 +745,12 @@ class RuntimeHost:
             sink=JSONLMetricsSink(metrics_path(latency_config)),
         )
 
-    async def _run_turn(self, command: SubmitTurn, turn_id: str) -> None:
+    async def _run_turn(
+        self,
+        command: SubmitTurn,
+        turn_id: str,
+        lease: TurnCapabilityLease,
+    ) -> None:
         backend = self._require_backend()
         self._publisher(
             events.AgentStarted(
@@ -716,13 +761,14 @@ class RuntimeHost:
         )
         latency_trace = self._build_turn_latency_trace(command)
         try:
-            result = await backend.submit_turn(
-                command.text,
-                turn_id=turn_id,
-                conversation_id=command.conversation_id,
-                context_ids=command.context_ids,
-                latency_trace=latency_trace,
-            )
+            with bind_turn_capability_lease(lease):
+                result = await backend.submit_turn(
+                    command.text,
+                    turn_id=turn_id,
+                    conversation_id=command.conversation_id,
+                    context_ids=command.context_ids,
+                    latency_trace=latency_trace,
+                )
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -737,6 +783,7 @@ class RuntimeHost:
                 )
             return
         finally:
+            self._release_turn_capability_lease(turn_id, lease)
             if latency_trace is not None:
                 latency_trace.flush()
 
@@ -784,6 +831,7 @@ class RuntimeHost:
         reply = await self._coordinator_ask(ActorCancelTurn(turn_id=command.turn_id))
         if not isinstance(reply, TurnCancelledReply):
             raise RuntimeHostError(f"unexpected turn cancellation reply: {reply!r}")
+        self._invalidate_turn_capability_lease(command.turn_id)
         task = self._turn_tasks.get(command.turn_id)
         if task is not None and not task.done():
             task.cancel()
@@ -818,6 +866,7 @@ class RuntimeHost:
             self._state = RuntimeHostState.STARTING
         await self._cancel_all_turns(reason="runtime restart")
         await self._stop_task_runner()
+        self._invalidate_all_turn_capability_leases()
         await self._stop_backend()
         if self._coordinator is not None:
             await self._coordinator_ask(Drain())
@@ -858,6 +907,7 @@ class RuntimeHost:
             self._state = RuntimeHostState.STOPPING
         await self._cancel_all_turns(reason="runtime shutdown")
         await self._stop_task_runner()
+        self._invalidate_all_turn_capability_leases()
         await self._stop_backend()
         self._clarifications.drop_all(reason=SessionCloseReason.SHUTDOWN)
         self._publisher(events.RuntimeStopped(reason=command.reason, label="runtime-host"))
@@ -878,6 +928,9 @@ class RuntimeHost:
 
     async def _cancel_all_turns(self, *, reason: str) -> None:
         turn_ids = tuple(self._turn_tasks)
+        for lease_turn_id in tuple(self._turn_capability_leases):
+            self._invalidate_turn_capability_lease(lease_turn_id)
+            self._cancel_plugin_capability_turn(lease_turn_id)
         for turn_id in turn_ids:
             try:
                 reply = await self._coordinator_ask(ActorCancelTurn(turn_id=turn_id))
