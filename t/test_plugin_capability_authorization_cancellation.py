@@ -10,6 +10,7 @@ from langchain_core.tools import StructuredTool
 from zara.agent.tools.registry import ToolRegistry
 from zara.plugins import PluginManager, RuntimeStatus
 from zara.runtime.bridge import RuntimeEventBus
+from zara.runtime.turn_context import TurnCapabilityLease, bind_turn_capability_lease
 
 
 def _write_plugin(path, *, name: str, tool_name: str | None = None):
@@ -132,19 +133,20 @@ async def test_turn_cancellation_fences_inflight_composed_result(tmp_path):
     await manager.start()
     handle = manager._resolve_capability("consumer", "provider.read")
     assert handle is not None
+    lease = TurnCapabilityLease("turn-1")
 
-    invocation = asyncio.create_task(
-        asyncio.to_thread(
-            manager._invoke_capability,
-            "consumer",
-            handle,
-            {"value": "status"},
-            turn_id="turn-1",
-        )
-    )
+    def invoke_bound():
+        with bind_turn_capability_lease(lease):
+            return manager._invoke_capability(
+                "consumer",
+                handle,
+                {"value": "status"},
+            )
+
+    invocation = asyncio.create_task(asyncio.to_thread(invoke_bound))
     assert await asyncio.to_thread(invocation_started.wait, 1.0)
 
-    manager.cancel_capability_turn("turn-1")
+    lease.invalidate()
     release_invocation.set()
 
     with pytest.raises(RuntimeError, match="cancelled|stale"):
@@ -174,16 +176,16 @@ async def test_turn_cancellation_before_registration_fails_closed(tmp_path):
     await manager.start()
     handle = manager._resolve_capability("consumer", "provider.read")
     assert handle is not None
+    lease = TurnCapabilityLease("turn-1")
+    lease.invalidate()
 
-    manager.cancel_capability_turn("turn-1")
-
-    with pytest.raises(RuntimeError, match="cancelled|stale"):
-        manager._invoke_capability(
-            "consumer",
-            handle,
-            {"value": "status"},
-            turn_id="turn-1",
-        )
+    with bind_turn_capability_lease(lease):
+        with pytest.raises(RuntimeError, match="cancelled|stale"):
+            manager._invoke_capability(
+                "consumer",
+                handle,
+                {"value": "status"},
+            )
 
     assert underlying_calls == 0
     await manager.stop()
