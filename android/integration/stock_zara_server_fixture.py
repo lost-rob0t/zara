@@ -173,6 +173,7 @@ def main() -> int:
         server = ZaraServer(
             supervisor=_Supervisor(barrier),
             endpoint=endpoint,
+            runtime_dir=Path(temporary) / "runtime",
             security_state=state,
             gateway_transport_config=TransportConfig(
                 sndhwm=8,
