@@ -244,4 +244,3 @@ class ZaraAppProjectionTest {
         assertTrue(source.contains("ZaraTheme.Light -> false"))
     }
 }
-
