@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextvars
 import threading
 from contextlib import contextmanager
-from typing import Iterator, Optional
+from typing import Iterator
 
 
 class TurnCapabilityLease:
@@ -36,8 +36,18 @@ class TurnCapabilityLease:
             yield
 
 
-_CURRENT_TURN_CAPABILITY_LEASE: contextvars.ContextVar[Optional[TurnCapabilityLease]] = (
-    contextvars.ContextVar("zara_current_turn_capability_lease", default=None)
+# Missing ContextVar state is security-significant: a plugin can cross a plain
+# thread/executor boundary that does not propagate contextvars. Represent that
+# state with one permanently stale Core-owned lease so composition fails closed
+# instead of silently becoming an uncorrelated/background invocation.
+_MISSING_TURN_CAPABILITY_LEASE = TurnCapabilityLease("__missing_turn_context__")
+_MISSING_TURN_CAPABILITY_LEASE.invalidate()
+
+_CURRENT_TURN_CAPABILITY_LEASE: contextvars.ContextVar[TurnCapabilityLease] = (
+    contextvars.ContextVar(
+        "zara_current_turn_capability_lease",
+        default=_MISSING_TURN_CAPABILITY_LEASE,
+    )
 )
 
 
@@ -52,7 +62,7 @@ def bind_turn_capability_lease(lease: TurnCapabilityLease) -> Iterator[None]:
         _CURRENT_TURN_CAPABILITY_LEASE.reset(token)
 
 
-def current_turn_capability_lease() -> Optional[TurnCapabilityLease]:
+def current_turn_capability_lease() -> TurnCapabilityLease:
     return _CURRENT_TURN_CAPABILITY_LEASE.get()
 
 
