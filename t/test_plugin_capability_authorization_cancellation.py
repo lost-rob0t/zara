@@ -229,6 +229,6 @@ async def test_turn_scoped_composition_fails_closed_when_plain_thread_loses_cont
     assert not worker.is_alive()
     assert len(outcome) == 1
     assert isinstance(outcome[0], RuntimeError)
-    assert "turn context" in str(outcome[0])
+    assert "turn capability context" in str(outcome[0])
     assert underlying_calls == 0
     await manager.stop()
