@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - 'v*'
+    paths:
+      - android/app/build.gradle.kts
+
+permissions:
+  contents: write
+
+jobs:
+  android-alpha-release:
+    name: build and publish Android alpha
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release version
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(sed -nE 's/^[[:space:]]*versionName = "([^"]+)".*/\1/p' android/app/build.gradle.kts)"
+          if [[ -z "$version" ]]; then
+            echo "Could not resolve Android versionName." >&2
+            exit 1
+          fi
+
+          tag="v${version}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "$tag" ]]; then
+            echo "Tag/version mismatch: ref=${GITHUB_REF_NAME}, app=${tag}" >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Run Android release gate
+        run: nix develop ./android -c bash scripts/test-android.sh
+
+      - name: Prepare APK and checksum
+        id: artifact
+        shell: bash
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          apk="dist/zara-${TAG}.apk"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$apk"
+          sha256sum "$apk" > "${apk}.sha256"
+          echo "apk=$apk" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          APK: ${{ steps.artifact.outputs.apk }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+
+          gh release create "$TAG" \
+            "$APK" \
+            "${APK}.sha256" \
+            --target "$GITHUB_SHA" \
+            --title "Zara $TAG" \
+            --prerelease \
+            --notes "Android alpha preview of Zara. This is a debug-signed APK intended for direct sideloading/testing, not a production Play Store build. Requires Android 10 (API 29) or newer. Verify the APK with the accompanying SHA-256 file. Source commit: $GITHUB_SHA"
