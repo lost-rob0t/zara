@@ -146,4 +146,31 @@ class ZaraAppProjectionTest {
         assertFalse(manifest.contains("Theme.DeviceDefault.Light"))
         assertTrue(manifest.contains("Theme.DeviceDefault.NoActionBar"))
     }
+    @Test
+    fun allFrozenThemesResolveThroughOneSemanticHierarchy() {
+        assertEquals(listOf("Outrun", "StarIntel", "Midnight", "Terminal", "Light", "System"),
+            ZaraTheme.entries.map { it.name })
+        ZaraTheme.entries.forEach { theme ->
+            val tokens = themeTokens(theme, systemDark = true, reducedGlow = false)
+            assertTrue(tokens.text != tokens.background)
+            assertTrue(tokens.textMuted != tokens.surface)
+            assertTrue(tokens.success != tokens.error)
+            assertTrue(tokens.focus != tokens.background)
+        }
+        assertEquals(themeTokens(ZaraTheme.Outrun, true, false), themeTokens(ZaraTheme.System, true, false))
+        assertEquals(themeTokens(ZaraTheme.Light, false, false), themeTokens(ZaraTheme.System, false, false))
+    }
+
+    @Test
+    fun reducedGlowPreservesFocusAndSelectionContrast() {
+        ZaraTheme.entries.forEach { theme ->
+            val normal = themeTokens(theme, true, false)
+            val reduced = themeTokens(theme, true, true)
+            assertEquals(androidx.compose.ui.graphics.Color.Transparent, reduced.ambientGlow)
+            assertEquals(normal.focus, reduced.focus)
+            assertEquals(normal.borderActive, reduced.borderActive)
+            assertEquals(normal.text, reduced.text)
+        }
+    }
+
 }
