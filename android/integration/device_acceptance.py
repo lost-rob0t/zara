@@ -37,7 +37,21 @@ class Device:
             None,
         )
 
+    def reveal(self, label: str) -> None:
+        size = self.adb("shell", "wm", "size")
+        width, height = map(int, re.findall(r"(\d+)x(\d+)", size)[-1])
+        for direction in (1, -1):
+            for _ in range(5):
+                if self.find(label) is not None:
+                    return
+                start, end = (height * 3 // 4, height // 3)
+                if direction < 0:
+                    start, end = end, start
+                self.adb("shell", "input", "swipe", str(width // 3), str(start), str(width // 3), str(end), "250")
+        raise AssertionError(f"Control is not reachable after scrolling: {label}")
+
     def tap(self, label: str) -> None:
+        self.reveal(label)
         node = self.find(label)
         if node is None:
             raise AssertionError(f"Control is not reachable: {label}")
@@ -80,18 +94,19 @@ def main() -> None:
     result = {"source_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
               "serial": args.serial, "passed": False, "screenshots": device.screenshots}
     try:
+        result["device"] = {
+            "api": device.adb("shell", "getprop", "ro.build.version.sdk").strip(),
+            "size": device.adb("shell", "wm", "size").strip(),
+            "density": device.adb("shell", "wm", "density").strip(),
+            "font_scale": device.adb("shell", "settings", "get", "system", "font_scale").strip(),
+        }
         device.start()
         device.capture("empty-shell")
         device.tap("☰")
         device.await_label("SYMBOLIC INTELLIGENCE")
         device.capture("drawer-open")
         for route in ("Chat", "Logic", "Voice", "Projects", "Remote", "Scheduled", "Plugins", "Themes", "Diagnostics", "Settings", "About"):
-            for _ in range(5):
-                if device.find(route) is not None:
-                    break
-                device.adb("shell", "input", "swipe", "180", "650", "180", "250", "300")
-            if device.find(route) is None:
-                raise AssertionError(f"Drawer route unreachable: {route}")
+            device.reveal(route)
         device.tap("Themes")
         device.await_label("Appearance")
         device.capture("theme-selector")
@@ -101,7 +116,10 @@ def main() -> None:
         result["passed"] = True
     except BaseException as error:
         result["failure"] = str(error)
-        device.capture("failure")
+        try:
+            device.capture("failure")
+        except Exception as capture_error:
+            result["capture_failure"] = str(capture_error)
         raise
     finally:
         (args.output / "manifest.json").write_text(json.dumps(result, indent=2) + "\n")
