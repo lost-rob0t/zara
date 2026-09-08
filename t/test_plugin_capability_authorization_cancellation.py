@@ -189,3 +189,46 @@ async def test_turn_cancellation_before_registration_fails_closed(tmp_path):
 
     assert underlying_calls == 0
     await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_turn_scoped_composition_fails_closed_when_plain_thread_loses_context(tmp_path):
+    _write_plugin(tmp_path / "consumer.py", name="consumer")
+    _write_plugin(tmp_path / "provider.py", name="provider", tool_name="provider.read")
+    registry = ToolRegistry()
+    underlying_calls = 0
+
+    def invoke(_name, _request):
+        nonlocal underlying_calls
+        underlying_calls += 1
+        return {"status": "escaped"}
+
+    manager = _manager(
+        tmp_path,
+        registry,
+        allowed=("provider.read",),
+        invoker=invoke,
+    )
+    await manager.start()
+    handle = manager._resolve_capability("consumer", "provider.read")
+    assert handle is not None
+    lease = TurnCapabilityLease("turn-1")
+    outcome = []
+
+    def invoke_without_propagated_context():
+        try:
+            manager._invoke_capability("consumer", handle, {"value": "status"})
+        except Exception as error:
+            outcome.append(error)
+
+    with bind_turn_capability_lease(lease):
+        worker = threading.Thread(target=invoke_without_propagated_context)
+        worker.start()
+        worker.join(timeout=1.0)
+
+    assert not worker.is_alive()
+    assert len(outcome) == 1
+    assert isinstance(outcome[0], RuntimeError)
+    assert "turn context" in str(outcome[0])
+    assert underlying_calls == 0
+    await manager.stop()
