@@ -230,9 +230,28 @@ read_user_terms(Stream, Path, Facts) :-
     ; validate_user_fact(Term, Module, Fact)
     -> Facts = [Module-Fact | Rest],
        read_user_terms(Stream, Path, Rest)
-    ; throw(error(domain_error(zarathushtra_user_config_fact, Term),
-                  context(Path, 'unsupported or invalid user configuration fact')))
+    ; user_fact_error_message(Term, Message),
+      throw(error(domain_error(zarathushtra_user_config_fact, Term),
+                  context(Path, Message)))
     ).
+
+user_fact_error_message(Term, Message) :-
+    ( hyphenated_subterm(Term)
+    -> format(atom(Message),
+              "unsupported or invalid user configuration fact; hyphenated names are not single atoms because - is an operator: quote them, e.g. direct_app('torbrowser-launcher')",
+              [])
+    ; Message = 'unsupported or invalid user configuration fact'
+    ).
+
+hyphenated_subterm(Term) :-
+    compound(Term),
+    Term =.. [_ | Args],
+    member(Arg, Args),
+    compound(Arg),
+    Arg =.. ['-', Left, Right],
+    atom(Left),
+    atom(Right),
+    !.
 
 replace_user_config(Facts) :-
     forall(retract(loaded_clause(Ref)), erase(Ref)),
