@@ -1,0 +1,53 @@
+#+title: RAGE #668 — actionable config-loader diagnostic for hyphenated surface atoms
+
+* Iteration 1
+- Start commit :: =f8394af0ba8cfd222d94a5c2bff1555d60161694= (master, 2026-09-10)
+- Consumed issue :: [[https://github.com/lost-rob0t/zara/issues/668][#668]] — one invalid user config fact silently disables the whole Prolog engine with an unusable diagnostic
+- Companion evidence issue :: #669 (silent turn-completion event loss; not consumed this iteration)
+
+** Research (pre-implementation)
+- Live incident: =zara hello= → =ZARA/1 handshake timed out=; daemon journal showed
+  =domain_error(zarathushtra_user_config_fact, direct_app(torbrowser-launcher))= raised from
+  =main.pl:14= initialization, so the principal Prolog engine never loaded.
+- Mechanism: SWI-Prolog parses unquoted =torbrowser-launcher= as =-(torbrowser, launcher)=
+  (infix =-=). =validate_user_fact(direct_app(Name), ...)= requires =atom(Name)=, validation
+  fails, =read_user_terms/3= throws.
+- Fail-closed on invalid facts is intentional: =rage/309-prolog-config-recovery-design.org=
+  requires =domain_error(zarathushtra_user_config_fact,...)= and
+  =t/prolog_config_recovery.pl= enforces it. The defect is diagnostic quality only.
+- Operator fix applied on the live system: quote the atom in
+  =~/.config/zarathushtra/config.pl= and the Home-Manager source; engine load verified restored
+  (=Loaded Prolog program= in journal after =systemctl --user restart=).
+
+** Design
+- Keep fail-closed semantics. Change only the error context message.
+- When the rejected term contains a compound argument shaped =atom-atom=, replace the generic
+  message with one that states the operator trap and shows the quoted form
+  (e.g. =direct_app('torbrowser-launcher')=).
+- Rejected: accepting hyphenated compounds as atoms (silent coercion creates false authority
+  and changes stored facts); weakening fail-closed to skip invalid facts (contradicts #309).
+- Scope: =modules/config_loader.pl= user-config path only; server-config reader unchanged
+  (different fact vocabulary, no reported incident).
+
+** Acceptance-to-test map
+- Hyphenated surface atom fails closed AND error context names quoting guidance ::
+  =t/prolog_config.pl:hyphenated_surface_atom_error_names_quoting_guidance=
+- Existing fail-closed recovery behavior unchanged :: =t/prolog_config_recovery.pl= suite.
+
+** TDD evidence
+- RED :: =nix develop -c bash scripts/test-prolog-config.sh= →
+  =hyphenated_surface_atom_error_names_quoting_guidance ... **FAILED= ; all other tests passed.
+- GREEN :: same command after the loader change → 16/16 + 5/5 recovery, exit 0.
+- Manual render check :: isolated =XDG_CONFIG_HOME= with =direct_app(torbrowser-launcher).=
+  prints: =(unsupported or invalid user configuration fact; hyphenated names are not single
+  atoms because - is an operator: quote them, e.g. direct_app('torbrowser-launcher'))=.
+
+** Gate
+- Focused :: =nix develop -c bash scripts/test-prolog-config.sh= — PASS (exit 0)
+- Full :: =nix develop --impure -c bash scripts/test-all.sh= — run in background; result recorded below when complete.
+- Nix :: =nix flake check --impure= — pending.
+- Note :: =--impure= is required so the flake picks up the repo =.env=; =.env= is gitignored and
+  must be copied into the worktree manually.
+
+** Outcome
+- Pending background gate.

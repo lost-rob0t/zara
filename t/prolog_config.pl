@@ -59,6 +59,16 @@ test(unsafe_declaration_is_rejected,
     write_config(Path, ':- initialization(shell("false")).\n'),
     config_loader:reload_user_config.
 
+test(hyphenated_surface_atom_error_names_quoting_guidance) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, 'direct_app(torbrowser-launcher).\n'),
+    catch(config_loader:reload_user_config, Error, true),
+    nonvar(Error),
+    Error = error(domain_error(zarathushtra_user_config_fact, _), context(_, Message)),
+    atom_string(Message, Text),
+    sub_string(Text, _, _, _, "quote"),
+    sub_string(Text, _, _, _, "hyphen").
+
 test(unsafe_command_string_is_rejected,
      [throws(error(domain_error(zarathushtra_user_config_fact, _), _))]) :-
     config_loader:user_config_path(Path),
