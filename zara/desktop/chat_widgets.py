@@ -24,6 +24,26 @@ from zara.desktop.conversation import MessageRecord, MessageRole, MessageStatus
 from zara.desktop.theme import refresh_dynamic_style
 
 _FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
+_MESSAGE_SURFACE_STYLESHEET = """
+QFrame#zaraMessage {
+    background: palette(alternate-base);
+    border: none;
+    border-radius: 14px;
+}
+
+QFrame#zaraMessage[messageRole="user"] {
+    background: palette(button);
+}
+
+QFrame#zaraMessage[messageRole="assistant"] {
+    background: palette(alternate-base);
+}
+
+QFrame#zaraMessage[messageRole="system"],
+QFrame#zaraMessage[messageRole="tool"] {
+    background: palette(base);
+}
+""".strip()
 
 
 class ChatComposer(QPlainTextEdit):
@@ -78,6 +98,7 @@ class MessageWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("zaraMessage")
         self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setStyleSheet(_MESSAGE_SURFACE_STYLESHEET)
         self._message = message
         self.code_copy_buttons: list[QPushButton] = []
         self.code_blocks: list[str] = []
@@ -101,7 +122,7 @@ class MessageWidget(QFrame):
         self.content_layout.setSpacing(6)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 9, 5, 11)
+        layout.setContentsMargins(14, 10, 14, 12)
         layout.setSpacing(7)
         layout.addLayout(header)
         layout.addWidget(self.content_widget)
