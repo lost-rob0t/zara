@@ -1,0 +1,30 @@
+#+title: Connection-guard tests — catching "client not connecting"
+
+* Motivation
+- The production incident (2026-09-10): CLI resolved the private IPC endpoint
+  while the daemon listened on tcp://0.0.0.0:7731; a credential-less client was
+  silently dropped at ZMTP level and only surfaced as "ZARA/1 handshake timed
+  out" after 30s. No test covered endpoint resolution or bounded failure.
+
+* Coverage added
+- t/test_daemon_connection_guards.py :: real TCP + CURVE/ZAP end-to-end: valid
+  handshake+submit+terminal event; unenrolled key, wrong server key, and dead
+  endpoint each fail BOUNDED with typed ClientDisconnected; reconnect preserves
+  terminal-event delivery for conversation-scoped turns.
+- t/test_client_connection_resolution.py :: endpoint resolution precedence
+  (explicit > env > config), resolved endpoint passed to the transport verbatim,
+  missing listener fails bounded with the handshake-timeout diagnostic, partial
+  CURVE credentials fail closed before connecting, canonical factory passes the
+  resolved endpoint to the transport.
+
+* Known gaps surfaced (not fixed here)
+- CURVE rejection vs dead endpoint are indistinguishable from the client side
+  (zara/daemon_client.py:60-79) — candidate follow-up for typed diagnostics.
+- create_daemon_client(config=...) kwarg collision shadows TransportConfig
+  (zara/daemon_client.py:88-92 vs zmq_transport.py:1487).
+- ZmqZaraClient stores unstripped endpoint on direct construction
+  (zara/zmq_transport.py:1493-1495).
+
+* Gate
+- Focused :: 10/10 (t/test_daemon_connection_guards.py + t/test_client_connection_resolution.py)
+- Full :: scripts/test-all.sh — result recorded when complete.
