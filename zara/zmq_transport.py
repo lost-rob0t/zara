@@ -140,8 +140,8 @@ class TransportConfig:
     sndhwm: int = 256
     rcvhwm: int = 256
     max_message_bytes: int = 5 * 1024 * 1024
-    heartbeat_interval_ms: int = 1_000
-    heartbeat_timeout_ms: int = 3_000
+    heartbeat_interval_ms: int = 10_000
+    heartbeat_timeout_ms: int = 30_000
     linger_ms: int = 0
     request_timeout: float = 5.0
     poll_interval_ms: int = 10
@@ -368,6 +368,10 @@ class ZaraZmqGateway:
         except BaseException as error:
             if not self._started.done():
                 self._started.set_exception(error)
+            else:
+                # A dead gateway loop must never be silent: every client of
+                # this principal would hang waiting for events (#669).
+                logger.exception("gateway loop terminated unexpectedly")
         finally:
             subscription = self._event_subscription
             self._event_subscription = None
@@ -421,6 +425,17 @@ class ZaraZmqGateway:
 
     def _drop_route_locked(self, route: bytes) -> Optional[_RouteState]:
         state = self._routes.pop(route, None)
+        orphaned_turns = [
+            turn_id
+            for _principal_id, turn_id in self._turn_routes
+            if self._turn_routes.get((_principal_id, turn_id)) == route
+        ]
+        if state is not None and orphaned_turns:
+            logger.warning(
+                "Dropping route with %d active turn(s): %s",
+                len(orphaned_turns),
+                sorted(orphaned_turns)[:8],
+            )
         self._route_outbound.pop(route, None)
         for turn_id, candidate in tuple(self._turn_routes.items()):
             if candidate == route:
@@ -450,7 +465,6 @@ class ZaraZmqGateway:
         message: ProtocolMessage,
         payloads: Sequence[bytes] = (),
     ) -> bool:
-        dropped_state = None
         item = _GatewayOutbound(message=message, payloads=tuple(payloads))
         with self._lock:
             if route not in self._routes:
@@ -460,12 +474,16 @@ class ZaraZmqGateway:
                 outbound = deque()
                 self._route_outbound[route] = outbound
             if len(outbound) >= self._config.event_queue_size:
-                dropped_state = self._drop_route_locked(route)
-            else:
-                outbound.append(item)
-        if dropped_state is not None:
-            self._cancel_audio_inputs(dropped_state)
-            return False
+                # Lossy per-queue: drop the oldest queued event so the route and
+                # its active turns survive. Dropping the route here orphaned
+                # every later event of in-flight turns and hung clients (#669).
+                dropped = outbound.popleft()
+                logger.warning(
+                    "Outbound queue full; dropping oldest %s (event_queue_size=%d)",
+                    dropped.message.type,
+                    self._config.event_queue_size,
+                )
+            outbound.append(item)
         return True
 
     def _route_for_session_locked(self, principal_id: str, session_id: str) -> tuple[bytes, _RouteState] | None:
@@ -1408,7 +1426,14 @@ class ZaraZmqGateway:
                 self._enqueue_outbound(route, message, payloads)
             return False
         except zmq.ZMQError as error:
-            logger.warning("outbound send failed: %s", type(error).__name__)
+            # Fail closed on permanent send errors (e.g. EHOSTUNREACH): the
+            # peer is provably unroutable. The drop is loud now (#669):
+            # _drop_route_locked warns when active turns are orphaned.
+            logger.warning(
+                "outbound send failed: %s errno=%s",
+                type(error).__name__,
+                getattr(error, "errno", "?"),
+            )
             self._drop_route(route)
             return False
         return True

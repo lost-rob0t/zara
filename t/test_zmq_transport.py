@@ -567,3 +567,100 @@ def test_owner_threads_are_dead_after_close_and_objects_can_restart(zmq_context,
     gateway.close(timeout=1.0)
     assert not client.is_alive
     assert not gateway.is_alive
+
+
+def test_outbound_queue_overflow_drops_oldest_message_not_the_route(zmq_context):
+    endpoint = unique_endpoint("overflow")
+    supervisor = FakeSupervisor()
+    principal = PrincipalContext("local-owner")
+    config = TransportConfig(event_queue_size=2, request_timeout=1.0)
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=supervisor,
+        principal=principal,
+        context=zmq_context,
+        config=config,
+    )
+    gateway.start().result(timeout=1.0)
+    try:
+        route = b"overflow-route"
+        state = transport._RouteState(
+            session_id="session-1",
+            principal_id=principal.principal_id,
+            ready=True,
+            audio_output=False,
+        )
+        gateway._routes[route] = state
+
+        def make(message_type):
+            return transport._GatewayOutbound(
+                message=ProtocolMessage(
+                    type=message_type,
+                    id=transport._message_id(),
+                    timestamp_ns=transport._now_ns(),
+                    payload_count=0,
+                    body={},
+                ),
+                payloads=(),
+            )
+
+        gateway._enqueue_outbound(route, make("first").message)
+        gateway._enqueue_outbound(route, make("second").message)
+        gateway._enqueue_outbound(route, make("third").message)
+
+        assert gateway._routes.get(route) is state
+        queued = gateway._route_outbound[route]
+        assert [item.message.type for item in queued] == ["second", "third"]
+    finally:
+        gateway.close(timeout=1.0)
+
+
+def test_permanent_send_error_drops_route_and_warns_about_orphaned_turns(zmq_context, caplog):
+    endpoint = unique_endpoint("send-error")
+    supervisor = FakeSupervisor()
+    principal = PrincipalContext("local-owner")
+    gateway = ZaraZmqGateway(
+        endpoint,
+        supervisor=supervisor,
+        principal=principal,
+        context=zmq_context,
+    )
+    route = b"permanent-error-route"
+    gateway._routes[route] = transport._RouteState(
+        session_id="session-1",
+        principal_id=principal.principal_id,
+        ready=True,
+        audio_output=False,
+    )
+    gateway._turn_routes[(principal.principal_id, "turn-orphaned")] = route
+
+    import logging as _logging
+
+    class StubSocket:
+        def send_multipart(self, frames, flags=0):
+            raise zmq.ZMQError(zmq.EHOSTUNREACH)
+
+    with caplog.at_level(_logging.WARNING, logger="zara.zmq_transport"):
+        message = ProtocolMessage(
+            type="turn.started",
+            id=transport._message_id(),
+            timestamp_ns=transport._now_ns(),
+            payload_count=0,
+            body={},
+        )
+        sent = gateway._send(StubSocket(), route, message)
+
+    assert sent is False
+    assert route not in gateway._routes
+    assert route not in gateway._route_outbound
+    assert "outbound send failed" in caplog.text
+    assert "ZMQError" in caplog.text
+    assert "active turn(s)" in caplog.text
+    assert "turn-orphaned" in caplog.text
+    assert route.decode("ascii") not in caplog.text
+
+
+def test_heartbeat_defaults_tolerate_loaded_hosts():
+    config = TransportConfig()
+    assert config.heartbeat_interval_ms >= 10_000
+    assert config.heartbeat_timeout_ms >= 30_000
