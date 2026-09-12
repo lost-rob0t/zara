@@ -57,6 +57,9 @@ private fun reduceTranscript(
     event: VoiceStreamEvent.Transcript,
 ): VoiceStreamState {
     val sameStream = state.transcriptStreamId == event.streamId
+    if (sameStream && state.transcriptFinal) {
+        throw StaleVoiceStreamException("voice transcript arrived after terminal transcript")
+    }
     if (!sameStream && state.transcriptStreamId != null && !state.transcriptFinal) {
         throw StaleVoiceStreamException("voice transcript stream changed before terminal transcript")
     }
