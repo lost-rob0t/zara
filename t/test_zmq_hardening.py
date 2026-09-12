@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pytest
 import zmq
@@ -129,6 +130,24 @@ def test_client_request_deadline_completes_future_instead_of_hanging_forever():
     with pytest.raises(ClientRequestTimeout):
         future.result(timeout=0.1)
     assert not client._pending
+    client.close(timeout=0.0)
+
+
+def test_idempotent_start_preserves_inflight_request_deadline():
+    client = _ready_client()
+    client._thread = SimpleNamespace(is_alive=lambda: True)
+    future = client.ping()
+    request_id = next(iter(client._pending))
+    deadline = client._request_deadlines[request_id]
+
+    started = client.start()
+
+    assert started.result(timeout=0.1) is True
+    assert client._request_deadlines[request_id] == deadline
+    client._fail_pending(RuntimeError("test cleanup"))
+    with pytest.raises(RuntimeError, match="test cleanup"):
+        future.result(timeout=0.1)
+    client._thread = None
     client.close(timeout=0.0)
 
 
