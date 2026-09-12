@@ -24,3 +24,4 @@ rootProject.name = "zara-android"
 include(":app")
 include(":shared-ui")
 include(":wear-app")
+include(":wear-voice")
