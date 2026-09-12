@@ -1,0 +1,56 @@
+#+title: RAGE #866 — Wear client shared foundation
+#+startup: overview
+
+* Iteration 1
+:PROPERTIES:
+:ISSUE:    #866
+:START_SHA: 336fddb9840a7699cc0316b107545a6990488319
+:BRANCH:   rage/866-wear-foundation
+:END:
+
+** Research
+- Consumed issue #866 at exact master =336fddb9840a7699cc0316b107545a6990488319=.
+- Read root =AGENTS.md=, =android/AGENTS.md=, =android/DESIGN.md=, the frozen Android visual reference, current Android Gradle/Nix gate, and the current semantic theme implementation in =ZaraApp.kt=.
+- The phone app currently owns =ZaraSemanticTokens=, =ZaraTheme=, and =themeTokens= inside the phone shell. That prevents a Wear client from consuming the exact same source without copy/paste drift.
+- Android's current Wear Compose guidance says Wear UI should use Wear-specific Material/Foundation rather than mobile Material components. Current official stable Wear Compose is 1.6.2; 1.7.0-rc01 exists but is not stable as of 2026-09-12.
+- The existing project already pins Compose BOM 2026.08.00, AGP 9.2.0, Kotlin 2.3.21, compileSdk 37, targetSdk 36, and a Nix-first Android toolchain. The Wear slice should extend that project instead of creating another build system.
+
+Primary references:
+- https://developer.android.com/training/wearables/compose
+- https://developer.android.com/jetpack/androidx/releases/wear-compose
+- https://developer.android.com/training/wearables/apps/standalone-apps
+
+** Architecture / design
+Decisions:
+1. Add one Android library module, =:shared-ui=, as the canonical source for Zara semantic theme tokens. Phone and Wear consume it.
+2. Move only domain-neutral theme values/types into that module. Keep mobile Material mapping and phone shell composition in =:app=.
+3. Add one installable =:wear-app= application module for the normal watch client. Zara Voice remains sibling issue #867 and Tiles/complications remain #868.
+4. The first Wear shell is intentionally bounded: native Wear Compose surface, exact shared Zara tokens, standalone watch manifest, honest connectivity placeholder. It does not invent a second transport/auth implementation in this iteration.
+5. The Wear source must not hard-code theme colors. Exact values come through =themeTokens= from =:shared-ui=.
+6. Keep the existing phone application id and behavior unchanged.
+
+Rejected:
+- Duplicating the token table into Wear: visual drift risk and violates #866.
+- Reusing mobile Material3 components on Wear: upstream guidance explicitly prefers Wear Compose components.
+- Building phone Internet forwarding: Wear networking must remain standalone-capable; provisioning/transport integration comes in later #866 slices.
+- Folding Zara Voice into the main Wear app: contradicts the explicit slot split and #867.
+
+** Acceptance mapped to tests
+- Shared source is registered and phone no longer defines a private copy -> =WearFoundationContractTest.sharedThemeSourceIsCanonicalAcrossPhoneAndWear=.
+- Wear package is an actual standalone watch application -> =WearFoundationContractTest.wearClientDeclaresStandaloneWatchContract=.
+- Wear shell consumes shared tokens and does not hard-code theme colors -> same contract test plus Wear module unit coverage.
+- Existing phone theme tests continue to validate all six built-ins and reduced-glow behavior after imports move.
+- Android gate must build/test all registered modules and inspect both produced APKs for secret markers.
+
+** RED plan
+Add structural contract tests before creating =:shared-ui= or =:wear-app=. Expected RED: missing module declarations/files and phone-private theme definitions still present.
+
+** Gate
+Focused:
+- =nix develop .#android -c bash scripts/test-android.sh=
+
+Full:
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+
+Exact-head GitHub Actions must be green before merge. This first PR is a bounded #866 slice and does not close #866.

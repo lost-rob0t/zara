@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Zara Android gate: semantic parity + JVM tests + stock secure-server interop + pinned native build + debug APK + secret inspection.
+# Zara Android/Wear gate: semantic parity + JVM tests + stock secure-server interop + pinned native build + phone/Wear debug APKs + secret inspection.
 # Run via: nix develop .#android -c bash scripts/test-android.sh
 set -euo pipefail
 
@@ -60,9 +60,14 @@ fi
 chmod 600 "$interop_fixture"
 export ZARA_STOCK_FIXTURE="$interop_fixture"
 
-if ! gradle --no-daemon testDebugUnitTest assembleDebug; then
+if ! gradle --no-daemon \
+  :app:testDebugUnitTest \
+  :shared-ui:testDebugUnitTest \
+  :wear-app:testDebugUnitTest \
+  :app:assembleDebug \
+  :wear-app:assembleDebug; then
   cat "$interop_log" >&2
-  echo "stock ZaraServer Android interop gate failed" >&2
+  echo "stock ZaraServer Android/Wear interop gate failed" >&2
   exit 1
 fi
 
@@ -71,12 +76,16 @@ wait "$interop_pid"
 interop_pid=""
 unset ZARA_STOCK_FIXTURE
 
-apk="app/build/outputs/apk/debug/app-debug.apk"
-test -f "$apk"
+phone_apk="app/build/outputs/apk/debug/app-debug.apk"
+wear_apk="wear-app/build/outputs/apk/debug/wear-app-debug.apk"
+test -f "$phone_apk"
+test -f "$wear_apk"
 
-if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET"; then
-  echo "APK secret-marker inspection FAILED: private/secret material found in $apk" >&2
-  exit 1
-fi
+for apk in "$phone_apk" "$wear_apk"; do
+  if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET"; then
+    echo "APK secret-marker inspection FAILED: private/secret material found in $apk" >&2
+    exit 1
+  fi
+done
 
-echo "android gate ok: $apk"
+echo "android/wear gate ok: $phone_apk $wear_apk"
