@@ -215,6 +215,10 @@ def main():
         from .mcp.cli import main as mcp_main
         sys.exit(mcp_main(sys.argv[2:], config=config))
 
+    if len(sys.argv) > 1 and sys.argv[1] == "pair":
+        from .pairing import main as pairing_main
+        sys.exit(pairing_main(sys.argv[2:], config=config))
+
     parser = argparse.ArgumentParser(
         prog="zara",
         description="Zarathustra Voice Assistant - Unified Interface",
@@ -222,6 +226,7 @@ def main():
                "  zara 'open firefox'           # Execute text command\n"
                "  zara --standalone 'hello'     # Explicit private local runtime\n"
                "  zara --connect ipc:///run/user/1000/zara.sock 'hello'\n"
+               "  zara pair                     # Pair Zara Android by QR\n"
                "  zara --desktop                # Native desktop / Quick Copilot\n"
                "  zara --toggle-desktop         # Toggle the existing desktop\n"
                "  zara --console                # Interactive REPL\n"
