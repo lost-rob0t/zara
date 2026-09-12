@@ -51,6 +51,7 @@ def test_pairing_uri_contains_only_public_bootstrap_material() -> None:
         bind_host="127.0.0.1",
     )
     try:
+        port = broker.address[1]
         uri = broker.pairing_uri(advertise_host="10.0.0.5")
     finally:
         broker.close()
@@ -62,7 +63,7 @@ def test_pairing_uri_contains_only_public_bootstrap_material() -> None:
     assert parsed.path == "/v1"
     assert query == {
         "broker_host": ["10.0.0.5"],
-        "broker_port": [str(broker.address[1])],
+        "broker_port": [str(port)],
         "endpoint": ["tcp://10.0.0.5:7731"],
         "server_key": [SERVER_KEY],
         "token": ["pairing-token"],
