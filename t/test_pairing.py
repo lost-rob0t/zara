@@ -173,11 +173,11 @@ def test_expired_pairing_cannot_be_claimed() -> None:
 
 
 def test_device_id_and_confirmation_code_are_stable_and_key_bound() -> None:
-    assert derive_device_id(CLIENT_KEY).startswith("android-")
-    assert derive_device_id(CLIENT_KEY) == derive_device_id(CLIENT_KEY)
+    assert derive_device_id(CLIENT_KEY) == "android-e26d2da3ab58"
     assert derive_device_id(CLIENT_KEY) != derive_device_id("c" * 40)
 
     code = verification_code("pairing-token", CLIENT_KEY)
+    assert code == "944040"
     assert len(code) == 6
     assert code.isdigit()
     assert code == verification_code("pairing-token", CLIENT_KEY)
