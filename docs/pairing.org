@@ -1,0 +1,78 @@
+#+title: Zara Android QR Pairing
+
+* Status
+
+QR pairing is the preferred bootstrap path for a Zara Android client connecting to an already-running secure TCP =zara-server=.
+
+The long-term transport remains ZARA/1 over CURVE/ZAP. Pairing only replaces the manual copy/paste enrollment ceremony.
+
+* Operator flow
+
+Start the secure Zara daemon with its normal persistent security state and reachable TCP endpoint. Then run:
+
+#+begin_src sh
+zara pair
+#+end_src
+
+=zara pair= resolves the configured =[daemon].endpoint= and security state, creates a short-lived single-use pairing broker, and displays a QR when =qrencode= is available. If the daemon endpoint uses a wildcard or loopback host, Zara derives a reachable local address; use =--advertise-host= when routing/VPN topology requires an explicit address.
+
+On Android, scan the QR with a scanner that opens the =zara://pair/v1= link. Zara opens directly, generates or reuses its Keystore-wrapped CURVE identity, and contacts the short-lived broker.
+
+Both Android and the terminal display the same six-digit verification code. Approve the terminal prompt only when the codes match. The server then enrolls the Android public key through the running daemon's owner-local security admin authority. Android pins the server public key from the scanned bootstrap and immediately connects to the authenticated ZARA/1 endpoint.
+
+* QR payload
+
+The version-1 QR URI contains only bootstrap material:
+
+- broker host and ephemeral broker port;
+- reachable ZARA/1 TCP endpoint;
+- daemon CURVE *public* key;
+- cryptographically random short-lived pairing token;
+- expiry time.
+
+It never contains the daemon CURVE secret or the Android private key.
+
+* Approval binding
+
+Android sends only its CURVE public key plus the ephemeral token. The device id is derived deterministically from the client public key.
+
+The verification code is derived from HMAC-SHA256 over the pairing token and client public key. A peer that races the token with a different key therefore produces a different code. Permanent enrollment happens only after the operator compares the code shown by Android with the code shown by =zara pair= and explicitly approves it.
+
+Wrong tokens do not consume a valid session. A valid claimed session is single-use and bounded by its expiry.
+
+* Configuration resolution
+
+=zara pair= resolves the security directory in this order:
+
+1. =--security-dir=;
+2. =ZARA_SECURITY_DIR=;
+3. =[daemon].security_dir=;
+4. =$XDG_STATE_HOME/zarathushtra/security=, falling back to =~/.local/state/zarathushtra/security=.
+
+The endpoint follows Zara's normal daemon-client precedence, with =--endpoint= as an explicit override.
+
+The pairing command requires the secure daemon's live owner-only security admin socket. It does not create a permanent unauthenticated enrollment listener.
+
+* Failure classes
+
+Android and the CLI distinguish at least:
+
+- invalid or expired pairing token;
+- malformed or incompatible pairing payload;
+- operator rejection;
+- live enrollment failure;
+- endpoint/server-pin mismatch;
+- network connection failure;
+- authenticated ZARA/1 connection failure after enrollment.
+
+* Expert recovery
+
+The existing low-level security commands remain available for diagnostics and repair. They are not the normal Android onboarding path:
+
+- =--security-init=;
+- =--security-show-public-key=;
+- =--security-enroll-key=;
+- =--security-list-clients=;
+- =--security-revoke-device=.
+
+Issue #666 remains the umbrella for the remaining fresh-server onboarding and device-level polish after this QR bootstrap slice.
