@@ -1,0 +1,51 @@
+#+title: RAGE #868 — Wear Tiles and complications
+#+startup: overview
+
+* Iteration 1
+:PROPERTIES:
+:ISSUE:    #868
+:START_SHA: 3ee772a88ee68d26ffb0735ba03f485acbea65eb
+:STACK_BASE: #871 / rage/866-wear-foundation
+:BRANCH:   rage/868-wear-surfaces
+:END:
+
+** Research
+Primary Android references checked on 2026-09-12:
+- Wear Tiles current stable API: =androidx.wear.tiles:tiles:1.6.2= and ProtoLayout =1.4.2=.
+- Complication APIs remain supported even though AndroidX watch-face rendering APIs are deprecated in favor of Watch Face Format; current watchface/complication artifacts are =1.3.0=.
+- Complication data sources use =SuspendingComplicationDataSourceService= and are protected by =com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER=.
+- Tile providers extend =TileService=, require =com.google.android.wearable.permission.BIND_TILE_PROVIDER=, and may use explicit launch actions for exported activities.
+- Tiles cannot render arbitrary Compose UI; they use ProtoLayout. Branding therefore comes from semantic color mapping and content hierarchy rather than custom fonts.
+
+References:
+- https://developer.android.com/training/wearables/tiles/get_started
+- https://developer.android.com/training/wearables/tiles/interactions
+- https://developer.android.com/training/wearables/complications/exposing-data
+- https://developer.android.com/jetpack/androidx/releases/wear-watchface
+
+** Scope for first slice
+Implement real provider plumbing in the full =:wear-app= module:
+1. Main Zara Tile provider with explicit Open Zara and Voice launch actions.
+2. Zara status complication that opens the full client.
+3. Zara voice complication that launches the dedicated =ai.zara.wear.voice.WearVoiceActivity= when installed.
+4. Honest status data only; until the shared #866 runtime exposes connection state to background providers, status must say Zara/Offline or Zara rather than inventing live connectivity.
+5. Static preview data must be representative and not claim a connected backend.
+
+** Stable launch contract
+- Full client component: package =ai.zara.wear=, class =ai.zara.wear.WearMainActivity=.
+- Voice component: package =ai.zara.wear.voice=, class =ai.zara.wear.voice.WearVoiceActivity=.
+- Voice action contract being consumed by sibling #867: =ai.zara.action.WEAR_VOICE=.
+
+The provider code should centralize these component values so Tile and complication implementations do not drift.
+
+** RED contract
+Before production provider code:
+- build catalog contains stable Tiles/ProtoLayout/watchface complication dependencies;
+- manifest declares Tile and both complication data-source services with the required bind permissions/actions;
+- source contains one central launch-contract object;
+- voice complication and Tile both target the dedicated Zara Voice component;
+- status complication targets the full Zara client;
+- providers contain no credentials or copied transport implementation.
+
+** Follow-on
+Once #866 exposes bounded shared state, replace static honest status with authenticated connection/session status and add update triggers. Quick Actions Tile configuration is a later #868 slice; this first slice establishes the provider and direct-launch contracts first.
