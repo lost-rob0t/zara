@@ -196,8 +196,13 @@ class HardenedZmqZaraClient(ZmqZaraClient):
         self._request_deadlines: dict[str, float] = {}
 
     def start(self) -> concurrent.futures.Future:
-        self._retry_outbound = None
-        self._request_deadlines.clear()
+        # Base start() is intentionally idempotent for READY/STARTING clients.
+        # Reset retry/deadline state only for a genuinely fresh owner loop;
+        # otherwise an innocent repeated start() can unbound in-flight requests.
+        if not self.is_alive:
+            self._retry_outbound = None
+            with self._pending_lock:
+                self._request_deadlines.clear()
         return super().start()
 
     def _request(self, message, kind, *, payloads=()):
