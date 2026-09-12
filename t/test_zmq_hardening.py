@@ -7,7 +7,7 @@ import pytest
 import zmq
 
 from zara.client import ZaraClientState
-from zara.protocol import ProtocolMessage, decode_message
+from zara.protocol import ProtocolLimits, ProtocolMessage, decode_message
 from zara.server import PrincipalContext
 from zara.zmq_hardening import (
     ClientRequestTimeout,
@@ -25,12 +25,19 @@ class _Supervisor:
 
 class _FrameSocket:
     def __init__(self, frames):
-        self.frames = frames
+        self.frames = list(frames)
         self.sent = []
+        self.recv_count = 0
 
-    def recv_multipart(self, *, copy=False):
+    def recv(self, *, copy=False):
         assert copy is False
-        return self.frames
+        frame = self.frames[self.recv_count]
+        self.recv_count += 1
+        return frame
+
+    def getsockopt(self, option):
+        assert option == zmq.RCVMORE
+        return int(self.recv_count < len(self.frames))
 
     def send_multipart(self, frames, *, flags=0):
         self.sent.append((frames, flags))
@@ -77,22 +84,57 @@ def test_hardened_defaults_match_protocol_frame_cap_and_low_latency_poll():
     assert config.linger_ms == 0
 
 
-def test_gateway_rejects_outer_multipart_frame_bomb_without_dying():
+def test_gateway_drains_outer_multipart_frame_bomb_without_retaining_it():
     gateway = HardenedZaraZmqGateway(
         "inproc://frame-bomb",
         supervisor=_Supervisor(),
         principal=PrincipalContext("hardening-test"),
     )
-    too_many = 1 + 2 + gateway._limits.max_payload_frames + 1
+    too_many = 1 + 2 + gateway._limits.max_payload_frames + 8
     socket = _FrameSocket([b"route", *([b"x"] * (too_many - 1))])
 
     gateway._receive(socket)
 
+    assert socket.recv_count == too_many
     assert len(socket.sent) == 1
     frames, flags = socket.sent[0]
     assert flags == zmq.NOBLOCK
     assert frames[0] == b"route"
     error = decode_message(frames[1:]).message
+    assert error.type == "protocol.error"
+    assert error.body["code"] == "invalid_message"
+    gateway.close(timeout=0.0)
+
+
+def test_gateway_rejects_aggregate_multipart_budget_before_decode():
+    limits = ProtocolLimits(
+        max_envelope_bytes=32,
+        max_payload_frames=4,
+        max_payload_frame_bytes=128,
+        max_payload_bytes=64,
+    )
+    gateway = HardenedZaraZmqGateway(
+        "inproc://byte-bomb",
+        supervisor=_Supervisor(),
+        principal=PrincipalContext("hardening-test"),
+        limits=limits,
+    )
+    socket = _FrameSocket(
+        [
+            b"route",
+            b"ZARA/1",
+            b"{}",
+            b"a" * 32,
+            b"b" * 32,
+            b"c" * 32,
+        ]
+    )
+
+    gateway._receive(socket)
+
+    assert socket.recv_count == len(socket.frames)
+    assert len(socket.sent) == 1
+    error = decode_message(socket.sent[0][0][1:]).message
     assert error.type == "protocol.error"
     assert error.body["code"] == "invalid_message"
     gateway.close(timeout=0.0)
