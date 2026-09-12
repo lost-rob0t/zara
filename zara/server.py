@@ -1,7 +1,7 @@
-"""Production Zara server facade with opt-in authenticated remote transport.
+"""Production Zara server facade with hardened local and authenticated transport.
 
 The process/runtime lifecycle remains in :mod:`zara.server_core`. Local IPC is
-still the default. A TCP listener is accepted only when an explicit persistent
+the default. A TCP listener is accepted only when an explicit persistent
 security state is supplied, and is always backed by CURVE/ZAP.
 """
 
@@ -55,7 +55,7 @@ class _ScalarSingleValueAction(argparse.Action):
 
 
 class ZaraServer(_core.ZaraServer):
-    """Zara service with secure opt-in TCP and unchanged local IPC defaults."""
+    """Zara service with hardened IPC and secure opt-in TCP."""
 
     def __init__(
         self,
@@ -144,7 +144,7 @@ class ZaraServer(_core.ZaraServer):
         from zara.runtime.tts_output import TtsOutputBridge
         from zara.security import Capability
         from zara.security_admin import SecurityAdminServer
-        from zara.security_gateway import SecureZaraZmqGateway
+        from zara.secure_zmq_hardening import HardenedSecureZaraZmqGateway
         from zara.voice_runtime import RuntimeVoiceIngress
 
         voice_ingress = RuntimeVoiceIngress(supervisor, principal=principal)
@@ -169,7 +169,7 @@ class ZaraServer(_core.ZaraServer):
         try:
             registry = self._security_state.load_registry()
             admin.bind_registry(registry)
-            gateway = SecureZaraZmqGateway(
+            gateway = HardenedSecureZaraZmqGateway(
                 endpoint,
                 supervisor=supervisor,
                 security_registry=registry,
