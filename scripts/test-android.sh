@@ -10,6 +10,7 @@ cd "$repo_root/android"
 : "${ANDROID_NDK_ROOT:?ANDROID_NDK_ROOT must be set by the pinned Android Nix toolchain}"
 : "${ZARA_TREALLA_SOURCE_DIR:?ZARA_TREALLA_SOURCE_DIR must be set by the pinned Android Nix toolchain}"
 
+bash "$repo_root/scripts/test-pair-android-qr.sh"
 bash "$repo_root/scripts/test-android-semantic-parity.sh"
 
 export ZARA_TREALLA_LIBRARY_ROOT="$PWD/app/build/trealla"
