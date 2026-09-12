@@ -152,7 +152,7 @@ jobs:
           su zara -s /bin/bash -c "cd '$GITHUB_WORKSPACE' && HOME=/home/zara RUNNER_TEMP=/tmp PATH='$GITHUB_WORKSPACE/.venv/bin':\$PATH bash scripts/test-linux-shared-audio.sh"
 
   android:
-    name: android skeleton gate
+    name: android + wear gate
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -163,7 +163,7 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v31
 
-      - name: Run Android gate (unit tests + native Trealla + debug APK + secret inspection)
+      - name: Run Android/Wear gate (unit tests + native Trealla + debug APKs + secret inspection)
         run: nix develop ./android -c bash scripts/test-android.sh
 
       - name: Upload Android parity diagnostics
@@ -174,10 +174,12 @@ jobs:
           path: android/app/build/reports/semantic-parity/
           if-no-files-found: warn
 
-      - name: Upload debug APK
+      - name: Upload phone and Wear debug APKs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: zara-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: zara-debug-apks
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/wear-app/build/outputs/apk/debug/wear-app-debug.apk
           if-no-files-found: warn

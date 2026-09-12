@@ -1,5 +1,6 @@
 package ai.zara.app.ui
 
+import ai.zara.ui.theme.ZaraTheme
 import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertEquals

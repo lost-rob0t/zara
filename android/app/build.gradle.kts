@@ -139,6 +139,7 @@ androidComponents {
 }
 
 dependencies {
+    implementation(project(":shared-ui"))
     implementation(platform(libs.compose.bom))
     implementation(libs.activity.compose)
     implementation(libs.compose.ui)
