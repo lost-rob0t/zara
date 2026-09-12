@@ -1,0 +1,11 @@
+{
+  "schema": "zara.voice-fixture.v1",
+  "id": "dictation-numbers-date",
+  "phrase": "Schedule the review for September sixth at seven thirty PM and budget two hundred forty dollars.",
+  "audio": "dictation-numbers-date.wav",
+  "seconds": 8,
+  "sample_rate_hz": 16000,
+  "channels": 1,
+  "expected_transcript": "Schedule the review for September sixth at seven thirty PM and budget two hundred forty dollars.",
+  "tags": ["dictation", "content-generation", "numbers", "dates", "human-speech"]
+}

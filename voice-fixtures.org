@@ -1,0 +1,454 @@
+#+title: Zara Voice Fixture Recording Workbench
+#+startup: content
+#+property: header-args:emacs-lisp :results silent
+
+* Contract
+
+This is the *single Org/Emacs recording control surface* for Zara's checked-in
+human speech corpus.
+
+- JSON source of truth: =t/fixtures/voice/cases/*.json=
+- Human WAV evidence: =t/fixtures/voice/recordings/*.wav=
+- Persistent branch: =fixtures/voice-recordings=
+- Dedicated worktree: =~/git/worktrees/zara-voice-recordings=
+- Format: 16 kHz, mono, signed 16-bit PCM WAV
+- Every JSON declaration is mandatory: normal tests stay RED until its real WAV
+  exists and passes the corpus validation gate.
+
+The JSON says what to speak. Do not copy case state into Org headings. Record
+only synthetic/public test speech; never credentials or private conversations.
+
+Microphone capture itself is PulseAudio/PipeWire/ALSA I/O. Vulkan is used later
+by Zara's local whisper.cpp STT path (for example =zara --dictate --device
+vulkan=); the corpus integrity gate intentionally does not require a GPU.
+
+* 1. Enter the persistent recording worktree
+
+Evaluate this block with =C-c C-c=. It never checks out another branch in the
+Zara checkout containing this buffer. It creates or reuses the dedicated Git
+worktree and then switches this Emacs buffer to the worktree copy of this Org
+file.
+
+#+begin_src emacs-lisp
+(require 'cl-lib)
+(require 'json)
+(require 'subr-x)
+
+(defconst zara-vf-branch "fixtures/voice-recordings")
+(defconst zara-vf-worktree
+  (expand-file-name "~/git/worktrees/zara-voice-recordings"))
+
+(defun zara-vf--git-root ()
+  (file-truename
+   (or (locate-dominating-file default-directory ".git")
+       (user-error "This buffer is not inside a Zara Git checkout"))))
+
+(defun zara-vf--git (root &rest args)
+  (with-temp-buffer
+    (let ((status (apply #'process-file "git" nil t nil "-C" root args)))
+      (unless (zerop status)
+        (error "git %s failed:\n%s" (string-join args " ") (buffer-string)))
+      (string-trim (buffer-string)))))
+
+(defun zara-vf--branch (root)
+  (zara-vf--git root "branch" "--show-current"))
+
+(defun zara-vf--assert-fixture-worktree (root)
+  (let ((actual (file-truename root))
+        (expected (file-truename zara-vf-worktree)))
+    (unless (file-equal-p actual expected)
+      (user-error "Refusing voice-fixture mutation outside %s (got %s)"
+                  expected actual))
+    (unless (string= (zara-vf--branch actual) zara-vf-branch)
+      (user-error "Refusing: %s is not on %s" actual zara-vf-branch))
+    actual))
+
+(defun zara-vf-open-worktree ()
+  (interactive)
+  (let* ((source (zara-vf--git-root))
+         (worktree (expand-file-name zara-vf-worktree)))
+    (zara-vf--git source "fetch" "origin")
+    (zara-vf--git source "worktree" "prune")
+    (if (file-directory-p worktree)
+        (progn
+          (unless (file-exists-p (expand-file-name ".git" worktree))
+            (user-error "Existing path is not a Git worktree: %s" worktree))
+          (zara-vf--assert-fixture-worktree worktree))
+      (let* ((local-ref (format "refs/heads/%s" zara-vf-branch))
+             (remote-ref (format "refs/remotes/origin/%s" zara-vf-branch))
+             (local-exists
+              (zerop (process-file "git" nil nil nil "-C" source
+                                   "show-ref" "--verify" local-ref)))
+             (remote-exists
+              (zerop (process-file "git" nil nil nil "-C" source
+                                   "show-ref" "--verify" remote-ref))))
+        (unless remote-exists
+          (user-error "origin/%s does not exist" zara-vf-branch))
+        (if local-exists
+            (zara-vf--git source "worktree" "add" worktree zara-vf-branch)
+          (zara-vf--git source "worktree" "add" "-b" zara-vf-branch
+                        worktree (format "origin/%s" zara-vf-branch)))
+        (zara-vf--assert-fixture-worktree worktree)))
+    (let ((target (expand-file-name "voice-fixtures.org" worktree)))
+      (unless (file-exists-p target)
+        (user-error "Missing worktree workbench: %s" target))
+      (find-file target)
+      (message "Voice fixtures worktree: %s" worktree))))
+
+(zara-vf-open-worktree)
+#+end_src
+
+* 2. Load recording helpers
+
+Evaluate this block in the worktree copy. It reads the JSON case files directly;
+there is no second manifest hidden in Lisp. Mutation helpers refuse to operate
+outside the dedicated worktree on =fixtures/voice-recordings=.
+
+#+begin_src emacs-lisp
+(require 'cl-lib)
+(require 'json)
+(require 'subr-x)
+
+(defconst zara-vf-branch "fixtures/voice-recordings")
+(defconst zara-vf-worktree
+  (expand-file-name "~/git/worktrees/zara-voice-recordings"))
+
+(unless (fboundp 'zara-vf--git)
+  (defun zara-vf--git (root &rest args)
+    (with-temp-buffer
+      (let ((status (apply #'process-file "git" nil t nil "-C" root args)))
+        (unless (zerop status)
+          (error "git %s failed:\n%s" (string-join args " ") (buffer-string)))
+        (string-trim (buffer-string))))))
+
+(unless (fboundp 'zara-vf--branch)
+  (defun zara-vf--branch (root)
+    (zara-vf--git root "branch" "--show-current")))
+
+(unless (fboundp 'zara-vf--assert-fixture-worktree)
+  (defun zara-vf--assert-fixture-worktree (root)
+    (let ((actual (file-truename root))
+          (expected (file-truename zara-vf-worktree)))
+      (unless (file-equal-p actual expected)
+        (user-error "Refusing voice-fixture mutation outside %s (got %s)"
+                    expected actual))
+      (unless (string= (zara-vf--branch actual) zara-vf-branch)
+        (user-error "Refusing: %s is not on %s" actual zara-vf-branch))
+      actual)))
+
+(defun zara-vf-root ()
+  (zara-vf--assert-fixture-worktree
+   (file-truename
+    (or (locate-dominating-file default-directory ".git")
+        (user-error "Open the worktree copy of voice-fixtures.org first")))))
+
+(defun zara-vf-cases-dir ()
+  (expand-file-name "t/fixtures/voice/cases" (zara-vf-root)))
+
+(defun zara-vf-recordings-dir ()
+  (expand-file-name "t/fixtures/voice/recordings" (zara-vf-root)))
+
+(defun zara-vf--read-json (path)
+  (with-temp-buffer
+    (insert-file-contents path)
+    (let ((json-object-type 'alist)
+          (json-array-type 'list)
+          (json-key-type 'symbol))
+      (json-read))))
+
+(defun zara-vf-cases ()
+  (let ((dir (zara-vf-cases-dir)))
+    (unless (file-directory-p dir)
+      (user-error "Missing voice fixture case directory: %s" dir))
+    (let ((paths (sort (directory-files dir t "\\.json\\'") #'string<)))
+      (unless paths
+        (user-error "Voice fixture corpus has no JSON cases"))
+      (mapcar (lambda (path) (cons path (zara-vf--read-json path))) paths))))
+
+(defun zara-vf--field (case key)
+  (alist-get key case))
+
+(defun zara-vf--safe-basename (value field)
+  (unless (and (stringp value)
+               (not (string-empty-p value))
+               (string= value (file-name-nondirectory value))
+               (not (member value '("." ".."))))
+    (user-error "Unsafe %s basename in fixture JSON: %S" field value))
+  value)
+
+(defun zara-vf--wav (case)
+  (let ((audio (zara-vf--safe-basename (zara-vf--field case 'audio) "audio")))
+    (expand-file-name audio (zara-vf-recordings-dir))))
+
+(defun zara-vf--case-by-id (id)
+  (let ((entry
+         (cl-find-if
+          (lambda (item) (string= id (zara-vf--field (cdr item) 'id)))
+          (zara-vf-cases))))
+    (or (cdr entry) (user-error "Unknown fixture: %s" id))))
+
+(defun zara-vf-missing ()
+  (cl-remove-if (lambda (entry) (file-exists-p (zara-vf--wav (cdr entry))))
+                (zara-vf-cases)))
+
+(defun zara-vf-status ()
+  (interactive)
+  (let* ((all (zara-vf-cases))
+         (missing (zara-vf-missing))
+         (ids (mapcar (lambda (entry) (zara-vf--field (cdr entry) 'id)) missing)))
+    (message "Voice fixtures: %d declared, %d recorded, %d missing%s"
+             (length all)
+             (- (length all) (length missing))
+             (length missing)
+             (if ids (format " — %s" (string-join ids ", ")) ""))))
+
+(defun zara-vf-new-case (id phrase expected seconds tags)
+  "Declare a new required human recording in JSON."
+  (interactive
+   (list (read-string "Fixture id (lowercase/kebab): ")
+         (read-string "Exactly what should I say? ")
+         (read-string "Expected transcript: ")
+         (read-number "Recording window (seconds): " 6)
+         (split-string (read-string "Tags (comma separated): ") "[, ]+" t)))
+  (zara-vf-root)
+  (unless (string-match-p "\\`[a-z0-9][a-z0-9._-]*\\'" id)
+    (user-error "Unsafe fixture id: %s" id))
+  (when (string-empty-p (string-trim phrase))
+    (user-error "Phrase cannot be empty"))
+  (when (string-empty-p (string-trim expected))
+    (user-error "Expected transcript cannot be empty"))
+  (unless (and (integerp seconds) (<= 1 seconds 60))
+    (user-error "Recording window must be an integer from 1 to 60 seconds"))
+  (unless tags
+    (user-error "At least one tag is required"))
+  (let* ((dir (zara-vf-cases-dir))
+         (path (expand-file-name (concat id ".json") dir))
+         (payload `((schema . "zara.voice-fixture.v1")
+                    (id . ,id)
+                    (phrase . ,phrase)
+                    (audio . ,(concat id ".wav"))
+                    (seconds . ,seconds)
+                    (sample_rate_hz . 16000)
+                    (channels . 1)
+                    (expected_transcript . ,expected)
+                    (tags . ,(vconcat (delete-dups tags))))))
+    (make-directory dir t)
+    (when (file-exists-p path)
+      (user-error "Case already exists: %s" path))
+    (with-temp-file path
+      (insert (json-encode payload))
+      (json-pretty-print-buffer)
+      (insert "\n"))
+    (find-file path)
+    (message "Declared %s; tests are RED until %s.wav is recorded" id id)))
+
+(defun zara-vf--record-command (output seconds)
+  "Prefer Zara's Pulse/parec source, then PipeWire, then ALSA."
+  (let ((pulse-source (getenv "ZARA_PULSE_SOURCE")))
+    (cond
+     ((and (executable-find "timeout") (executable-find "parec"))
+      (append (list "timeout" "--signal=INT" "--kill-after=2s"
+                    (number-to-string seconds) "parec")
+              (unless (string-empty-p (or pulse-source ""))
+                (list (concat "--device=" pulse-source)))
+              (list "--format=s16le" "--rate=16000" "--channels=1"
+                    "--file-format=wav" output)))
+     ((and (executable-find "timeout") (executable-find "pw-record"))
+      (list "timeout" "--signal=INT" "--kill-after=2s"
+            (number-to-string seconds) "pw-record"
+            "--rate" "16000" "--channels" "1" "--format" "s16" output))
+     ((executable-find "arecord")
+      (list "arecord" "-q" "-f" "S16_LE" "-r" "16000" "-c" "1"
+            "-d" (number-to-string seconds) output))
+     (t (user-error "Need parec, pw-record, or arecord in PATH")))))
+
+(defun zara-vf-record (id)
+  (interactive
+   (let ((ids (mapcar (lambda (entry) (zara-vf--field (cdr entry) 'id))
+                      (zara-vf-cases))))
+     (list (completing-read "Fixture: " ids nil t))))
+  (zara-vf-root)
+  (let* ((case (zara-vf--case-by-id id))
+         (phrase (zara-vf--field case 'phrase))
+         (seconds (zara-vf--field case 'seconds))
+         (output (zara-vf--wav case))
+         (partial (expand-file-name
+                   (format ".%s.part.wav" id)
+                   (file-name-directory output)))
+         (captured nil))
+    (unless (and (integerp seconds) (<= 1 seconds 60))
+      (user-error "Invalid recording window for %s: %S" id seconds))
+    (make-directory (file-name-directory output) t)
+    (when (and (file-exists-p output)
+               (not (yes-or-no-p (format "Overwrite %s? " output))))
+      (user-error "Cancelled"))
+    (when (file-exists-p partial)
+      (delete-file partial))
+    (unwind-protect
+        (progn
+          (message "GET READY — SAY: %s" phrase)
+          (sit-for 1.5)
+          (let* ((command (zara-vf--record-command partial seconds))
+                 (program (car command))
+                 (args (cdr command))
+                 (log-buffer (get-buffer-create "*zara-voice-recording*")))
+            (with-current-buffer log-buffer (erase-buffer))
+            (message "RECORDING %ss — %s" seconds phrase)
+            (let ((status (apply #'call-process program nil log-buffer t args)))
+              (unless (and (integerp status) (or (= status 0) (= status 124)))
+                (pop-to-buffer log-buffer)
+                (error "Recorder failed: %S" status))))
+          (unless (file-regular-p partial)
+            (error "Recorder produced no WAV: %s" partial))
+          (unless (> (file-attribute-size (file-attributes partial)) 44)
+            (error "Recorder produced an empty/invalid WAV: %s" partial))
+          ;; Replace only after capture succeeds, preserving any known-good WAV
+          ;; if the recorder crashes or is interrupted.
+          (rename-file partial output t)
+          (setq captured t)
+          (message "Recorded %s — run the selected-case gate next" output))
+      (when (and (not captured) (file-exists-p partial))
+        (delete-file partial)))))
+
+(defun zara-vf-record-next ()
+  (interactive)
+  (let ((missing (zara-vf-missing)))
+    (unless missing (user-error "All declared fixtures are recorded"))
+    (zara-vf-record (zara-vf--field (cdar missing) 'id))))
+
+(defun zara-vf--partial-recordings ()
+  (let ((dir (zara-vf-recordings-dir)))
+    (when (file-directory-p dir)
+      (directory-files dir t "\\.part\\.wav\\'"))))
+
+(defun zara-vf-sync-master ()
+  "Rebase only the dedicated fixture branch onto current origin/master."
+  (interactive)
+  (let* ((root (zara-vf-root))
+         (branch (zara-vf--branch root)))
+    (unless (string= branch zara-vf-branch)
+      (user-error "Refusing: this worktree is on %s, expected %s"
+                  branch zara-vf-branch))
+    (unless (string-empty-p (zara-vf--git root "status" "--porcelain"))
+      (user-error "Commit or revert fixture changes before syncing master"))
+    (zara-vf--git root "fetch" "origin")
+    (zara-vf--git root "rebase" "origin/master")
+    (zara-vf--git root "push" "--force-with-lease" "origin"
+                  (format "HEAD:%s" zara-vf-branch))
+    (message "Rebased %s onto origin/master" zara-vf-branch)))
+
+(defun zara-vf-commit-and-push (&optional message)
+  (interactive
+   (list (read-string "Commit message: " "test: add human voice fixtures")))
+  (let* ((root (zara-vf-root))
+         (branch (zara-vf--branch root))
+         (partials (zara-vf--partial-recordings)))
+    (unless (string= branch zara-vf-branch)
+      (user-error "Refusing: expected %s, got %s" zara-vf-branch branch))
+    (when partials
+      (user-error "Refusing to commit partial recordings: %s"
+                  (string-join partials ", ")))
+    (zara-vf--git root "diff" "--check")
+    (zara-vf--git root "add" "voice-fixtures.org" "t/fixtures/voice")
+    (if (string-empty-p (zara-vf--git root "status" "--porcelain"))
+        (message "No fixture changes")
+      (zara-vf--git root "commit" "-m" message)
+      (zara-vf--git root "push" "-u" "origin" zara-vf-branch)
+      (message "Pushed %s" zara-vf-branch))))
+
+(defun zara-vf--fixture-id-read (prompt)
+  (let ((ids (mapcar (lambda (entry) (zara-vf--field (cdr entry) 'id))
+                     (zara-vf-cases))))
+    (completing-read prompt ids nil t)))
+
+(defun zara-vf-run-case-gate (id)
+  "Validate one recording without requiring the rest of the corpus to exist yet."
+  (interactive (list (zara-vf--fixture-id-read "Validate fixture: ")))
+  (let* ((default-directory (zara-vf-root))
+         (node (format
+                "t/test_voice_fixture_manifest.py::test_voice_fixture_recording_format[%s]"
+                id)))
+    (compile (format "nix develop -c pytest -q %s" (shell-quote-argument node)))))
+
+(defun zara-vf-run-gate ()
+  (interactive)
+  (let ((default-directory (zara-vf-root)))
+    (compile "nix develop -c pytest -q t/test_voice_fixture_manifest.py")))
+
+(message "Zara voice fixture helpers loaded")
+#+end_src
+
+* 3. Recording loop
+
+Evaluate these with =C-c C-c=.
+
+If Zara uses a non-default Pulse source, set the same source before recording,
+for example =(setenv "ZARA_PULSE_SOURCE" "your-source-name")=. Leave it unset to
+use the system default.
+
+** See what is missing
+#+begin_src emacs-lisp
+(zara-vf-status)
+#+end_src
+
+** Record the next missing WAV
+#+begin_src emacs-lisp
+(zara-vf-record-next)
+#+end_src
+
+** Re-record/select a case
+#+begin_src emacs-lisp
+(call-interactively #'zara-vf-record)
+#+end_src
+
+** Validate one freshly recorded WAV
+
+This uses the stable fixture id as the pytest node id, so other intentionally
+missing recordings do not prevent validating the file you just captured.
+
+#+begin_src emacs-lisp
+(call-interactively #'zara-vf-run-case-gate)
+#+end_src
+
+** Add a new JSON recording obligation
+#+begin_src emacs-lisp
+(call-interactively #'zara-vf-new-case)
+#+end_src
+
+** Run the full local corpus gate
+#+begin_src emacs-lisp
+(zara-vf-run-gate)
+#+end_src
+
+** Commit and push this recording batch
+#+begin_src emacs-lisp
+(call-interactively #'zara-vf-commit-and-push)
+#+end_src
+
+** Rebase the persistent branch after master moves
+
+Run with a clean fixture worktree. This rebases only
+=fixtures/voice-recordings= and pushes with =--force-with-lease=. Your normal Zara
+checkout is untouched.
+
+#+begin_src emacs-lisp
+(zara-vf-sync-master)
+#+end_src
+
+* Policy for future feature/E2E tests
+
+1. Voice-applicable work adds or updates a JSON case when human speech can catch
+   a regression that text-only fixtures cannot.
+2. The JSON is committed first if RED evidence is desired; CI must remain RED
+   until the matching human WAV is committed.
+3. Real WAVs are recorded through this worktree/Org surface.
+4. The corpus gate rejects missing, silent, malformed, incorrectly formatted,
+   excessively clipped, orphaned, misnamed, or placeholder recordings.
+5. Feature/E2E tests may consume the same JSON/WAV pair; do not create a second
+   phrase manifest elsewhere.
+6. Recording writes through a temporary WAV and atomically replaces the target
+   only after capture succeeds, so a failed re-record does not destroy known-good
+   evidence.
+7. After a recording PR merges, the repository keeps the branch (GitHub branch
+   auto-deletion is disabled). Rebase it onto =origin/master= before the next
+   recording batch.

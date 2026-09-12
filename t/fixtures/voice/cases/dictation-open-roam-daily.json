@@ -1,0 +1,11 @@
+{
+  "schema": "zara.voice-fixture.v1",
+  "id": "dictation-open-roam-daily",
+  "phrase": "open roam daily",
+  "audio": "dictation-open-roam-daily.wav",
+  "seconds": 4,
+  "sample_rate_hz": 16000,
+  "channels": 1,
+  "expected_transcript": "open roam daily",
+  "tags": ["dictation", "voice-command", "org-roam", "human-speech"]
+}

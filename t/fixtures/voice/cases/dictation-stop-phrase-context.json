@@ -1,0 +1,11 @@
+{
+  "schema": "zara.voice-fixture.v1",
+  "id": "dictation-stop-phrase-context",
+  "phrase": "I am explaining the phrase stop voice without actually asking Zara to stop dictation.",
+  "audio": "dictation-stop-phrase-context.wav",
+  "seconds": 7,
+  "sample_rate_hz": 16000,
+  "channels": 1,
+  "expected_transcript": "I am explaining the phrase stop voice without actually asking Zara to stop dictation.",
+  "tags": ["dictation", "stop-phrase", "false-positive", "human-speech"]
+}
