@@ -9,6 +9,7 @@ multipart guards, and a lower-latency owner loop configuration.
 from __future__ import annotations
 
 import concurrent.futures
+import inspect
 import logging
 import queue
 import time
@@ -59,6 +60,25 @@ def hardened_transport_config() -> TransportConfig:
     )
 
 
+def _accepts_keyword(callable_, name: str) -> bool:
+    """Return whether *callable_* accepts a named keyword or arbitrary kwargs.
+
+    Zara intentionally keeps its gateway constructor injectable for tests and
+    embedders. A lazily imported hardened gateway can therefore inherit a test
+    double rather than the stock gateway. Do not break that seam merely to add
+    production-only transport configuration.
+    """
+
+    try:
+        parameters = inspect.signature(callable_).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD or parameter.name == name
+        for parameter in parameters
+    )
+
+
 class _PreloadedSocket:
     """Pass one validated outer multipart into the existing ZARA/1 parser."""
 
@@ -77,9 +97,13 @@ class HardenedZaraZmqGateway(ZaraZmqGateway):
     """Fail-closed ROUTER with bounded outer framing and no silent overflow."""
 
     def __init__(self, endpoint: str, **kwargs) -> None:
-        if kwargs.get("config") is None:
-            kwargs["config"] = hardened_transport_config()
-        super().__init__(endpoint, **kwargs)
+        parent_init = super().__init__
+        if _accepts_keyword(parent_init, "config"):
+            if kwargs.get("config") is None:
+                kwargs["config"] = hardened_transport_config()
+        else:
+            kwargs.pop("config", None)
+        parent_init(endpoint, **kwargs)
 
     def _receive(self, socket: zmq.Socket) -> None:
         raw_frames = socket.recv_multipart(copy=False)
