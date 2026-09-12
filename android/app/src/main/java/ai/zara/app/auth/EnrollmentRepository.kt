@@ -57,6 +57,22 @@ class EnrollmentRepository(
 
     fun createIdentityZ85(): String = JeroMqCurveKeyCodec.encode(createIdentity())
 
+    fun identityZ85OrCreate(): String {
+        return when (val existing = credentials.load()) {
+            CredentialLoadResult.Unenrolled -> createIdentityZ85()
+            is CredentialLoadResult.Corrupt ->
+                throw AuthenticationException("stored CURVE credential is corrupt: ${existing.reason}")
+            is CredentialLoadResult.Ready -> {
+                val credential = existing.credential
+                try {
+                    JeroMqCurveKeyCodec.encode(credential.publicKey)
+                } finally {
+                    credential.destroy()
+                }
+            }
+        }
+    }
+
     fun pinServer(publicKey: ByteArray) {
         val candidate = ServerPin(publicKey)
         when (val existing = serverPins.load()) {
