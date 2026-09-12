@@ -1,5 +1,6 @@
 package ai.zara.app
 
+import ai.zara.app.auth.PairingProgress
 import ai.zara.app.ui.RenderedTextTurn
 import ai.zara.app.ui.ThemePreferenceStore
 import ai.zara.app.ui.UiOperationFailure
@@ -7,6 +8,7 @@ import ai.zara.app.ui.ZaraApp
 import ai.zara.app.ui.ZaraTheme
 import ai.zara.app.voice.ManualVoiceState
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
@@ -16,6 +18,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -23,20 +28,30 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import java.io.File
 
+private data class PairingDialogState(
+    val title: String,
+    val message: String,
+    val terminal: Boolean = false,
+)
+
 class MainActivity : ComponentActivity() {
     private lateinit var appSession: AndroidAppSession
+    private lateinit var pairingCoordinator: AndroidPairingCoordinator
     private var microphonePermissionGranted by mutableStateOf(false)
     private var operationError by mutableStateOf<String?>(null)
     private var voiceState by mutableStateOf<ManualVoiceState>(ManualVoiceState.Idle)
+    private var enrollmentPublicKey by mutableStateOf<String?>(null)
+    private var pairingDialog by mutableStateOf<PairingDialogState?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         appSession = (application as ZaraApplication).appSession
+        pairingCoordinator = AndroidPairingCoordinator(applicationContext, appSession)
         microphonePermissionGranted = hasMicrophonePermission()
         voiceState = appSession.voiceState()
+        enrollmentPublicKey = appSession.enrollmentPublicKeyZ85()
 
         var runtimeState by mutableStateOf(appSession.state())
-        var enrollmentPublicKey by mutableStateOf(appSession.enrollmentPublicKeyZ85())
         var lastTurn by mutableStateOf<RenderedTextTurn?>(null)
         var operationBusy by mutableStateOf(false)
         var voiceStreamState by mutableStateOf(appSession.voiceStreamState())
@@ -206,7 +221,36 @@ class MainActivity : ComponentActivity() {
                     }
                 },
             )
+
+            pairingDialog?.let { dialog ->
+                AlertDialog(
+                    onDismissRequest = {
+                        if (dialog.terminal) pairingDialog = null
+                    },
+                    title = { Text(dialog.title) },
+                    text = { Text(dialog.message) },
+                    confirmButton = {
+                        if (dialog.terminal) {
+                            TextButton(onClick = { pairingDialog = null }) {
+                                Text("OK")
+                            }
+                        } else {
+                            TextButton(onClick = {}, enabled = false) {
+                                Text("WAITING")
+                            }
+                        }
+                    },
+                )
+            }
         }
+
+        handlePairingIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handlePairingIntent(intent)
     }
 
     override fun onResume() {
@@ -233,7 +277,55 @@ class MainActivity : ComponentActivity() {
             appSession.setStateObserver(null)
             appSession.setVoiceStreamObserver(null)
         }
+        if (::pairingCoordinator.isInitialized) pairingCoordinator.close()
         super.onDestroy()
+    }
+
+    private fun handlePairingIntent(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (!data.scheme.equals("zara", ignoreCase = true) ||
+            !data.host.equals("pair", ignoreCase = true) ||
+            data.path != "/v1"
+        ) {
+            return
+        }
+
+        operationError = null
+        pairingDialog = PairingDialogState(
+            title = "PAIR WITH ZARA",
+            message = "Contacting the trusted pairing broker…",
+        )
+        pairingCoordinator.pair(data.toString()) { progress ->
+            if (progress is PairingProgress.AwaitingApproval) {
+                runOnUiThread {
+                    pairingDialog = PairingDialogState(
+                        title = "VERIFY PAIRING",
+                        message =
+                            "${progress.verificationCode}\n\n" +
+                                "Confirm this same code in the zara pair terminal. " +
+                                "Device: ${progress.deviceId}",
+                    )
+                }
+            }
+        }.whenComplete { _, error ->
+            runOnUiThread {
+                enrollmentPublicKey = appSession.enrollmentPublicKeyZ85()
+                if (error != null) {
+                    operationError = UiOperationFailure.summarize(error)
+                    pairingDialog = PairingDialogState(
+                        title = "PAIRING FAILED",
+                        message = operationError ?: "Zara pairing failed",
+                        terminal = true,
+                    )
+                } else {
+                    pairingDialog = PairingDialogState(
+                        title = "PAIRED",
+                        message = "This device is enrolled and connected to Zara.",
+                        terminal = true,
+                    )
+                }
+            }
+        }
     }
 
     private fun reconcileMicrophonePermission(granted: Boolean) {
