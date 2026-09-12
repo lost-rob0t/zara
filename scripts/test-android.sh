@@ -64,8 +64,10 @@ if ! gradle --no-daemon \
   :app:testDebugUnitTest \
   :shared-ui:testDebugUnitTest \
   :wear-app:testDebugUnitTest \
+  :wear-voice:testDebugUnitTest \
   :app:assembleDebug \
-  :wear-app:assembleDebug; then
+  :wear-app:assembleDebug \
+  :wear-voice:assembleDebug; then
   cat "$interop_log" >&2
   echo "stock ZaraServer Android/Wear interop gate failed" >&2
   exit 1
@@ -78,14 +80,16 @@ unset ZARA_STOCK_FIXTURE
 
 phone_apk="app/build/outputs/apk/debug/app-debug.apk"
 wear_apk="wear-app/build/outputs/apk/debug/wear-app-debug.apk"
+voice_apk="wear-voice/build/outputs/apk/debug/wear-voice-debug.apk"
 test -f "$phone_apk"
 test -f "$wear_apk"
+test -f "$voice_apk"
 
-for apk in "$phone_apk" "$wear_apk"; do
+for apk in "$phone_apk" "$wear_apk" "$voice_apk"; do
   if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET"; then
     echo "APK secret-marker inspection FAILED: private/secret material found in $apk" >&2
     exit 1
   fi
 done
 
-echo "android/wear gate ok: $phone_apk $wear_apk"
+echo "android/wear gate ok: $phone_apk $wear_apk $voice_apk"

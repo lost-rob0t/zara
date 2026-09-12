@@ -1,0 +1,42 @@
+#+title: RAGE #867 — Dedicated Zara Voice Wear app
+#+startup: overview
+
+* Iteration 1
+:PROPERTIES:
+:ISSUE:    #867
+:START_SHA: 3ee772a88ee68d26ffb0735ba03f485acbea65eb
+:STACK_BASE: #871 / rage/866-wear-foundation
+:BRANCH:   rage/867-wear-voice
+:END:
+
+** Goal
+Create the second installable Wear OS application that exists only for instant Zara voice invocation. It is the Samsung Home-button double-press target and the direct destination for the voice Tile/complication.
+
+** Research at stack base
+- The current Android phone runtime already has a serious voice implementation under =android/app=: Android PCM recorder/output, audio focus, route tracking, authenticated voice ingress, push-to-talk coordinator, streamed transcript/audio sink, cancellation, and typed runtime/session state.
+- =AndroidAppSession= composes those pieces together with the same authenticated =ZaraTextClientActor= used for text sessions.
+- That implementation currently lives inside the phone application module. A second application module cannot safely copy it and must not fork enrollment/transport/audio semantics.
+- Therefore the first production boundary for #867 is a dedicated app shell plus a closed invocation contract; actual capture/backend wiring must consume a shared client/runtime module extracted by #866, rather than duplicating phone code.
+- Wear voice launch must remain explicit and bounded: launch -> permission/readiness -> capture -> submit -> streamed response/playback -> terminal/dismiss. No generic assistant shell, drawer, settings browser, or fake success state.
+
+** Decisions
+1. Separate application id: =ai.zara.wear.voice=.
+2. Canonical launch action: =ai.zara.action.WEAR_VOICE=, exported only by the Zara Voice launcher activity.
+3. The launcher activity is the normal launcher target so Samsung double-press can select it directly.
+4. Require =RECORD_AUDIO= and declare watch hardware. Do not request always-on microphone/background hotword behavior.
+5. Reuse exact shared Zara semantic tokens from =:shared-ui=.
+6. Do not copy =AndroidAppSession= or the phone =voice/= package into this app. The runtime dependency stays visibly blocked until #866 extracts the common authenticated client/audio seam.
+7. UI must represent that blocked/not-provisioned state honestly; it must never display LISTENING unless a real capture session owns the microphone.
+
+** Contract-first tests
+RED before production module:
+- settings registers =:wear-voice=;
+- manifest is a watch app with =RECORD_AUDIO=, =INTERNET=, and standalone metadata;
+- exported launcher accepts the canonical =ai.zara.action.WEAR_VOICE= action;
+- source imports the shared theme and contains no hard-coded Zara color table;
+- no copy of phone runtime classes appears under the Wear Voice source tree.
+
+** Follow-on after shell
+The next #866 shared-runtime slice must extract the minimum reusable pieces from the phone app (enrollment/state/transport + voice capture/playback composition) into an Android library that both phone and Wear apps consume. #867 then binds the launcher state machine to that shared runtime and adds cold/warm invocation, permission, audio-focus, cancellation, backend failure, and end-to-end daemon tests.
+
+This first stacked slice must not claim voice round-trip completion until that shared runtime exists.
