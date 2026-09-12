@@ -35,10 +35,10 @@ class PairingTest {
     @Test fun `qr payload rejects expired duplicate unknown and non tcp bootstrap data`() {
         val base = "zara://pair/v1?broker_host=host&broker_port=45231" +
             "&endpoint=${encode("tcp://host:7731")}" +
-            "&server_key=${encode(serverKey)}&token=abc&expires=2000"
+            "&server_key=${encode(serverKey)}&token=token-123&expires=2000"
 
         expectFailure { PairingPayload.parse(base, nowEpochSeconds = 2001) }
-        expectFailure { PairingPayload.parse("$base&token=other", nowEpochSeconds = 1900) }
+        expectFailure { PairingPayload.parse("$base&token=other-token", nowEpochSeconds = 1900) }
         expectFailure { PairingPayload.parse("$base&extra=nope", nowEpochSeconds = 1900) }
         expectFailure {
             PairingPayload.parse(
@@ -49,8 +49,9 @@ class PairingTest {
     }
 
     @Test fun `verification code and automatic device id match server contract`() {
-        assertEquals("android-" + sha256Prefix(clientKey), PairingProtocol.deriveDeviceId(clientKey))
+        assertEquals("android-e26d2da3ab58", PairingProtocol.deriveDeviceId(clientKey))
         val code = PairingProtocol.verificationCode("pairing-token", clientKey)
+        assertEquals("944040", code)
         assertEquals(6, code.length)
         assertTrue(code.all(Char::isDigit))
         assertEquals(code, PairingProtocol.verificationCode("pairing-token", clientKey))
@@ -89,12 +90,6 @@ class PairingTest {
             failed = true
         }
         assertTrue(failed)
-    }
-
-    private fun sha256Prefix(value: String): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-            .digest(value.toByteArray(StandardCharsets.US_ASCII))
-        return digest.take(6).joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 }
 
