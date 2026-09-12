@@ -15,6 +15,21 @@ require_tool() {
   command -v "$1" >/dev/null 2>&1 || fail "$1 is required for QR pairing"
 }
 
+render_qr() {
+  if command -v qrencode >/dev/null 2>&1; then
+    qrencode "$@"
+    return
+  fi
+
+  if command -v nix >/dev/null 2>&1; then
+    echo "qrencode is not in PATH; using nixpkgs#qrencode for this pairing attempt" >&2
+    nix shell nixpkgs#qrencode --command qrencode "$@"
+    return
+  fi
+
+  fail "qrencode is required for QR pairing (install it or run on a Nix system)"
+}
+
 validate_positive_integer() {
   local name="$1"
   local value="$2"
@@ -67,7 +82,6 @@ wait_for_connect_service() {
 }
 
 require_tool adb
-require_tool qrencode
 require_tool awk
 validate_positive_integer ZARA_ADB_QR_TIMEOUT "$qr_timeout"
 validate_positive_integer ZARA_ADB_CONNECT_TIMEOUT "$connect_discovery_timeout"
@@ -85,7 +99,7 @@ On the Android device:
 Scan this terminal QR. The generated pairing secret is fresh for this attempt.
 INSTRUCTIONS
 echo
-qrencode -t ANSIUTF8 -m 1 "$payload"
+render_qr -t ANSIUTF8 -m 1 "$payload"
 echo
 echo "Waiting up to ${qr_timeout}s for the device to advertise ${service_name}..."
 
