@@ -4,6 +4,8 @@ import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.RuntimeState
 import ai.zara.app.runtime.ServerConnection
+import ai.zara.ui.theme.ZaraTheme
+import ai.zara.ui.theme.themeTokens
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -118,13 +120,19 @@ class ZaraAppProjectionTest {
     }
 
     @Test
-    fun outrunShellUsesSemanticTokensAndCompactComposer() {
+    fun outrunShellUsesSharedSemanticTokensAndCompactComposer() {
         val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val sharedTheme = File(
+            "../shared-ui/src/main/java/ai/zara/ui/theme/ZaraTheme.kt"
+        ).readText()
 
-        assertTrue(source.contains("data class ZaraSemanticTokens"))
-        assertTrue(source.contains("accentMagenta"))
-        assertTrue(source.contains("accentCyan"))
-        assertTrue(source.contains("ambientGlow"))
+        assertTrue(source.contains("import ai.zara.ui.theme.ZaraSemanticTokens"))
+        assertTrue(source.contains("import ai.zara.ui.theme.ZaraTheme"))
+        assertTrue(source.contains("import ai.zara.ui.theme.themeTokens"))
+        assertTrue(sharedTheme.contains("data class ZaraSemanticTokens"))
+        assertTrue(sharedTheme.contains("accentMagenta"))
+        assertTrue(sharedTheme.contains("accentCyan"))
+        assertTrue(sharedTheme.contains("ambientGlow"))
         assertTrue(source.contains("CompactComposer"))
         assertTrue(source.contains("ZaraSigil"))
     }
@@ -146,6 +154,7 @@ class ZaraAppProjectionTest {
         assertFalse(manifest.contains("Theme.DeviceDefault.Light"))
         assertTrue(manifest.contains("Theme.DeviceDefault.NoActionBar"))
     }
+
     @Test
     fun allFrozenThemesResolveThroughOneSemanticHierarchy() {
         assertEquals(listOf("Outrun", "StarIntel", "Midnight", "Terminal", "Light", "System"),

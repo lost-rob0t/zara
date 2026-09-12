@@ -76,6 +76,23 @@ nix run .#zara-console
 nix run .#zara-dictate
 #+end_src
 
+Wake mode requires a running =zara-server=; it does not start a private daemon.
+Like the text CLI, wake resolves =ZARA_DAEMON_ENDPOINT= before
+=[daemon].endpoint=, falling back to the owner-private local IPC socket when
+neither is set. For authenticated TCP, =ZARA_DAEMON_CURVE_PUBLIC_KEY=,
+=ZARA_DAEMON_CURVE_SECRET_KEY=, and =ZARA_DAEMON_CURVE_SERVER_PUBLIC_KEY=
+override the corresponding =[daemon].curve_*= settings individually. Incomplete
+credentials fail before model loading or connection; they never downgrade to
+an unauthenticated client.
+
+A =ZARA/1 handshake timed out= error can mean an unavailable listener, a wrong
+endpoint, or rejected CURVE credentials. Check =systemctl --user status
+zara-server.service= and =journalctl --user -u zara-server.service= before
+changing timeout settings. If startup reports that another daemon owns the
+runtime lock, identify its holder with =lslocks= and stop the conflicting
+process intentionally. Do not delete a held lock file or bypass the security
+management offline check.
+
 Dictation stop phrases use the canonical table in =zara.dictate=. Configure
 phrases with =[dictate].stop_phrases=, =--stop-phrases=,
 =ZARA_STOP_PHRASE=, or =ZARA_STOP_PHRASES=. Matching ignores case, spacing, and
