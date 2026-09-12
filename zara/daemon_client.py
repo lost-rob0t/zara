@@ -98,13 +98,13 @@ def create_daemon_client(
     # Resolve the concrete transport at call time. Besides keeping this module
     # focused on policy, this preserves Zara's long-standing transport injection
     # seam used by tests and embedders.
-    from zara.zmq_transport import ZmqZaraClient
+    from zara.zmq_hardening import HardenedZmqZaraClient
 
     curve_client = curve_client_config(config)
     if curve_client is not None:
         kwargs["curve_client"] = curve_client
 
-    return ZmqZaraClient(
+    return HardenedZmqZaraClient(
         resolve_daemon_endpoint(config, explicit=endpoint),
         **kwargs,
     )

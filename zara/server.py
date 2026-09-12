@@ -1,7 +1,7 @@
-"""Production Zara server facade with opt-in authenticated remote transport.
+"""Production Zara server facade with hardened local and authenticated transport.
 
 The process/runtime lifecycle remains in :mod:`zara.server_core`. Local IPC is
-still the default. A TCP listener is accepted only when an explicit persistent
+the default. A TCP listener is accepted only when an explicit persistent
 security state is supplied, and is always backed by CURVE/ZAP.
 """
 
@@ -19,6 +19,8 @@ from typing import Optional
 
 from zara import server_core as _core
 from zara.principals import PrincipalContext
+from zara.zmq_transport import ZaraZmqGateway as _StockZaraZmqGateway
+from zara.zmq_hardening import HardenedZaraZmqGateway, hardened_transport_config
 
 GatewayFactory = _core.GatewayFactory
 HostFactory = _core.HostFactory
@@ -55,7 +57,7 @@ class _ScalarSingleValueAction(argparse.Action):
 
 
 class ZaraServer(_core.ZaraServer):
-    """Zara service with secure opt-in TCP and unchanged local IPC defaults."""
+    """Zara service with hardened IPC and secure opt-in TCP."""
 
     def __init__(
         self,
@@ -95,7 +97,7 @@ class ZaraServer(_core.ZaraServer):
             config=config,
         )
         self._security_state = security_state
-        self._gateway_transport_config = gateway_transport_config
+        self._gateway_transport_config = gateway_transport_config or hardened_transport_config()
         self._secure_tcp = secure_tcp
         self._security_registry = None
         self._security_admin = None
@@ -104,11 +106,42 @@ class ZaraServer(_core.ZaraServer):
 
     def _build_default_gateway(self, endpoint: str, *, supervisor, principal):
         if not endpoint.startswith("tcp://"):
-            return super()._build_default_gateway(
-                endpoint,
-                supervisor=supervisor,
-                principal=principal,
-            )
+            from zara import zmq_transport
+            from zara.runtime.tts_output import TtsOutputBridge
+            from zara.voice_runtime import RuntimeVoiceIngress
+
+            voice_ingress = RuntimeVoiceIngress(supervisor, principal=principal)
+            self._voice_ingress = voice_ingress
+
+            sample_rate = self._audio_output_sample_rate()
+            try:
+                self._tts_bridge = TtsOutputBridge(
+                    subscription=supervisor.subscribe(principal, maxsize=256),
+                    publish=lambda event: supervisor.publish(principal, event),
+                    engine_factory=self._build_tts_engine,
+                    sample_rate=sample_rate,
+                )
+            except AttributeError:
+                self._tts_bridge = None
+
+            # Preserve Zara's gateway injection seam exactly. Production uses
+            # the hardened stock gateway; tests/embedders that replace the
+            # canonical class still receive the legacy constructor contract.
+            gateway_type = zmq_transport.ZaraZmqGateway
+            gateway_kwargs = {
+                "supervisor": supervisor,
+                "principal": principal,
+                "voice_ingress": voice_ingress,
+                "audio_output_format": {
+                    "codec": "pcm_s16le",
+                    "sample_rate": sample_rate,
+                    "channels": 1,
+                },
+            }
+            if gateway_type is _StockZaraZmqGateway:
+                gateway_type = HardenedZaraZmqGateway
+                gateway_kwargs["config"] = self._gateway_transport_config
+            return gateway_type(endpoint, **gateway_kwargs)
 
         if self._security_state is None:
             raise ServerError("secure TCP listener has no security state")
@@ -116,7 +149,7 @@ class ZaraServer(_core.ZaraServer):
         from zara.runtime.tts_output import TtsOutputBridge
         from zara.security import Capability
         from zara.security_admin import SecurityAdminServer
-        from zara.security_gateway import SecureZaraZmqGateway
+        from zara.secure_zmq_hardening import HardenedSecureZaraZmqGateway
         from zara.voice_runtime import RuntimeVoiceIngress
 
         voice_ingress = RuntimeVoiceIngress(supervisor, principal=principal)
@@ -141,7 +174,7 @@ class ZaraServer(_core.ZaraServer):
         try:
             registry = self._security_state.load_registry()
             admin.bind_registry(registry)
-            gateway = SecureZaraZmqGateway(
+            gateway = HardenedSecureZaraZmqGateway(
                 endpoint,
                 supervisor=supervisor,
                 security_registry=registry,
