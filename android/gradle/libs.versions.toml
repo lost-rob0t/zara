@@ -5,6 +5,9 @@ composeBom = "2026.08.00"
 activityCompose = "1.12.0"
 wearCompose = "1.6.2"
 wearComposeMaterial3 = "1.5.0"
+wearTiles = "1.6.2"
+wearProtoLayout = "1.4.2"
+wearWatchface = "1.3.0"
 jeromq = "0.6.0"
 junit = "4.13.2"
 
@@ -16,6 +19,11 @@ compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling
 activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 wear-compose-foundation = { group = "androidx.wear.compose", name = "compose-foundation", version.ref = "wearCompose" }
 wear-compose-material3 = { group = "androidx.wear.compose", name = "compose-material3", version.ref = "wearComposeMaterial3" }
+wear-tiles = { group = "androidx.wear.tiles", name = "tiles", version.ref = "wearTiles" }
+wear-tiles-testing = { group = "androidx.wear.tiles", name = "tiles-testing", version.ref = "wearTiles" }
+wear-protolayout = { group = "androidx.wear.protolayout", name = "protolayout", version.ref = "wearProtoLayout" }
+wear-protolayout-material = { group = "androidx.wear.protolayout", name = "protolayout-material", version.ref = "wearProtoLayout" }
+wear-watchface-complications-data-source-ktx = { group = "androidx.wear.watchface", name = "watchface-complications-data-source-ktx", version.ref = "wearWatchface" }
 jeromq = { group = "org.zeromq", name = "jeromq", version.ref = "jeromq" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
