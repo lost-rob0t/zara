@@ -6,6 +6,7 @@ import concurrent.futures
 import socket as net_socket
 import threading
 import time
+from unittest.mock import patch
 
 import pytest
 import zmq
@@ -171,6 +172,46 @@ def wait_for(predicate, timeout: float = 2.0) -> bool:
             return True
         time.sleep(0.01)
     return predicate()
+
+
+def test_listener_connects_with_environment_only_credentials(harness, monkeypatch, tmp_path):
+    from zara.config import ZaraConfig
+    from zara.wake import WakeWordListener
+    from t.test_daemon_client_config import clear_daemon_env
+
+    clear_daemon_env(monkeypatch)
+    principal = PrincipalContext("user:wake", kind="authenticated")
+    public, secret = harness.enroll(principal, "wake-device")
+    monkeypatch.setenv("ZARA_DAEMON_ENDPOINT", harness.endpoint)
+    monkeypatch.setenv("ZARA_DAEMON_CURVE_PUBLIC_KEY", public)
+    monkeypatch.setenv("ZARA_DAEMON_CURVE_SECRET_KEY", secret)
+    monkeypatch.setenv("ZARA_DAEMON_CURVE_SERVER_PUBLIC_KEY", harness.server_public)
+    config = ZaraConfig(config_path=tmp_path / "config.toml")
+    config.get_section("daemon").clear()
+    config.get_section("daemon")["endpoint"] = "ipc:///unused-configured.sock"
+    with (
+        patch("zara.wake.get_config", return_value=config),
+        patch("zara.wake.resolve_input_sample_rate", return_value=(16000.0, None)),
+        patch("zara.wake.faster_whisper.WhisperModel"),
+        patch.object(WakeWordListener, "log"),
+        patch.object(WakeWordListener, "_init_ack_player"),
+    ):
+        listener = WakeWordListener(enable_tts=False)
+    try:
+        listener.daemon.connect()
+        listener.daemon.client.submit(
+            SubmitTurn(text="wake smoke test", conversation_id="wake-conversation")
+        ).result(timeout=2.0)
+        assert listener.daemon.client.state.value == "ready"
+        assert list(harness.supervisor.submitted) == [principal.principal_id]
+        assert [
+            command.text for command in harness.supervisor.submitted[principal.principal_id]
+        ] == ["wake smoke test"]
+        assert listener.daemon.audio_output_format["codec"] == "pcm_s16le"
+    finally:
+        listener.daemon.close()
+        listener.speaker.close()
+        listener.executor.shutdown(wait=True)
 
 
 def test_two_principals_receive_only_their_own_transcripts(harness):

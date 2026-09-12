@@ -35,6 +35,7 @@ from .streaming_stt import (
     VAD_SAMPLE_RATE,
 )
 from .config import get_config
+from .daemon_client import curve_client_config, resolve_daemon_endpoint
 from .notifications import send_notification_async
 from .audio import resolve_input_sample_rate, resample_audio
 from .latency import JSONLMetricsSink, LatencyTrace, metrics_path
@@ -112,8 +113,15 @@ class WakeWordListener:
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self._capture_stream = None
 
-        self.executor = ThreadPoolExecutor(max_workers=4)
         self.config = get_config()
+        try:
+            endpoint = resolve_daemon_endpoint(self.config)
+            curve_client = curve_client_config(self.config)
+        except ValueError as error:
+            raise WakeDaemonUnavailable(
+                f"Invalid Zara daemon configuration: {error}"
+            ) from error
+        self.executor = ThreadPoolExecutor(max_workers=4)
         latency_config = self.config.get_latency_config()
         self.latency_enabled = latency_config["enabled"]
         self.latency_sink = (
@@ -196,8 +204,8 @@ class WakeWordListener:
         self._active_stream_id: Optional[str] = None
         self.speaker = PcmStreamSpeaker()
         self.daemon = WakeDaemonClient(
-            endpoint=daemon_cfg.get("endpoint") or None,
-            curve_client=self._build_curve_client(daemon_cfg),
+            endpoint=endpoint,
+            curve_client=curve_client,
             voice_output=self.speaker,
         )
 
@@ -248,20 +256,6 @@ class WakeWordListener:
         self.log(
             "Wake spotting configured "
             f"(language={self.stt_language}, wake_beam={self.wake_beam_size})"
-        )
-
-    @staticmethod
-    def _build_curve_client(daemon_cfg: dict):
-        secret = daemon_cfg.get("curve_secret_key")
-        server_public = daemon_cfg.get("curve_server_public_key")
-        if not secret or not server_public:
-            return None
-        from zara.security_transport import CurveClientConfig
-
-        return CurveClientConfig(
-            public_key=str(daemon_cfg.get("curve_public_key", "")),
-            secret_key=str(secret),
-            server_public_key=str(server_public),
         )
 
     def _init_ack_player(self, wake_cfg: dict) -> None:
