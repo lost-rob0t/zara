@@ -17,6 +17,7 @@ class AudioFocusController(
     private val lock = Any()
     private var acquiring = false
     private var held = false
+    private var releasing = false
 
     fun acquire(): Boolean = synchronized(lock) {
         if (held) return@synchronized true
@@ -40,10 +41,23 @@ class AudioFocusController(
     fun release() {
         val abandon = synchronized(lock) {
             if (!held) return@synchronized false
-            held = false
+            check(!releasing) { "Android audio focus release already active" }
+            releasing = true
             true
         }
-        if (abandon) platform.abandon()
+        if (!abandon) return
+
+        try {
+            platform.abandon()
+        } catch (error: Throwable) {
+            synchronized(lock) { releasing = false }
+            throw error
+        }
+
+        synchronized(lock) {
+            held = false
+            releasing = false
+        }
     }
 
     fun isHeld(): Boolean = synchronized(lock) { held }
