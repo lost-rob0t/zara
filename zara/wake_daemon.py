@@ -234,7 +234,7 @@ class WakeDaemonClient:
 
     @property
     def audio_output_format(self):
-        return self.client.negotiated_audio_output_format
+        return self.client.audio_output_format
 
     def connect(self) -> None:
         try:

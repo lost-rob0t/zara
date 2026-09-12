@@ -18,7 +18,7 @@ class FakeZaraClient:
         self.lock = threading.Lock()
         self._bus = RuntimeEventBus()
         self.state = "READY"
-        self.negotiated_audio_output_format = {
+        self.audio_output_format = {
             "codec": "pcm_s16le",
             "sample_rate": 24000,
             "channels": 1,
@@ -224,3 +224,15 @@ def test_handshake_timeout_raises_unavailable():
 
     with pytest.raises(WakeDaemonUnavailable):
         client.connect()
+
+
+def test_audio_output_format_delegates_to_client_contract():
+    from zara.wake_daemon import WakeDaemonClient
+
+    daemon = WakeDaemonClient.__new__(WakeDaemonClient)
+    daemon._client = FakeZaraClient()
+    assert daemon.audio_output_format == {
+        "codec": "pcm_s16le",
+        "sample_rate": 24000,
+        "channels": 1,
+    }
