@@ -4,8 +4,8 @@ import ai.zara.app.ui.RenderedTextTurn
 import ai.zara.app.ui.ThemePreferenceStore
 import ai.zara.app.ui.UiOperationFailure
 import ai.zara.app.ui.ZaraApp
-import ai.zara.app.ui.ZaraTheme
 import ai.zara.app.voice.ManualVoiceState
+import ai.zara.ui.theme.ZaraTheme
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Color
