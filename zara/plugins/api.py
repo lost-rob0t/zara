@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import copy
+import json
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -15,6 +16,14 @@ from langchain_core.tools import BaseTool
 
 from zara.runtime import bridge
 from zara.runtime.commands import RuntimeCommand
+
+from .capabilities import (
+    MAX_CAPABILITY_ARGUMENT_BYTES,
+    MAX_CAPABILITY_NAME_LENGTH,
+    MAX_CAPABILITY_TIMEOUT_SECONDS,
+    PluginCapability,
+    PluginCapabilityUnavailable,
+)
 
 
 PLUGIN_API_VERSION = "1"
@@ -130,6 +139,13 @@ class PluginRuntime:
         worker_join_timeout: float = 5.0,
         advice_registrar: Optional[Callable[[str, str, int, Callable[..., Any]], int]] = None,
         advice_unregistrar: Optional[Callable[[int], bool]] = None,
+        capability_resolver: Optional[Callable[[str, str], PluginCapability]] = None,
+        capability_invoker: Optional[
+            Callable[
+                [str, PluginCapability, Mapping[str, Any], float],
+                concurrent.futures.Future,
+            ]
+        ] = None,
     ) -> None:
         self._plugin_name = plugin_name
         self._configuration = MappingProxyType(copy.deepcopy(dict(configuration)))
@@ -142,9 +158,12 @@ class PluginRuntime:
         self._worker_join_timeout = worker_join_timeout
         self._advice_registrar = advice_registrar
         self._advice_unregistrar = advice_unregistrar
+        self._capability_resolver = capability_resolver
+        self._capability_invoker = capability_invoker
         self._advice_registration_ids: list[int] = []
         self._subscriptions: set[bridge.RuntimeEventSubscription] = set()
         self._workers: dict[str, ManagedWorker] = {}
+        self._capability_futures: set[concurrent.futures.Future] = set()
         self._closed = False
         self._lock = threading.RLock()
 
@@ -176,6 +195,85 @@ class PluginRuntime:
                 future.set_exception(RuntimeError("plugin runtime is closed"))
                 return future
         return self._dispatcher(command)
+
+    def lookup_capability(self, name: str) -> PluginCapability:
+        if not isinstance(name, str) or not name or len(name) > MAX_CAPABILITY_NAME_LENGTH:
+            raise ValueError(
+                f"capability name must contain 1 to {MAX_CAPABILITY_NAME_LENGTH} characters"
+            )
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("plugin runtime is closed")
+            resolver = self._capability_resolver
+        if resolver is None:
+            raise PluginCapabilityUnavailable("plugin capability lookup is not available")
+        return resolver(self._plugin_name, name)
+
+    def invoke_capability(
+        self,
+        capability: PluginCapability,
+        arguments: Mapping[str, Any],
+        *,
+        timeout: float = 30.0,
+    ) -> concurrent.futures.Future:
+        if not isinstance(capability, PluginCapability):
+            return _failed_future(TypeError("capability must be a PluginCapability"))
+        if not isinstance(arguments, Mapping):
+            return _failed_future(TypeError("capability arguments must be a mapping"))
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+            return _failed_future(TypeError("capability timeout must be numeric"))
+        timeout_value = float(timeout)
+        if not 0 < timeout_value <= MAX_CAPABILITY_TIMEOUT_SECONDS:
+            return _failed_future(
+                ValueError(
+                    f"capability timeout must be between 0 and {MAX_CAPABILITY_TIMEOUT_SECONDS} seconds"
+                )
+            )
+        try:
+            copied_arguments = copy.deepcopy(dict(arguments))
+            encoded = json.dumps(
+                copied_arguments,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        except (TypeError, ValueError) as error:
+            return _failed_future(TypeError("capability arguments must be JSON-serializable"))
+        if len(encoded) > MAX_CAPABILITY_ARGUMENT_BYTES:
+            return _failed_future(ValueError("capability arguments exceed the size limit"))
+
+        with self._lock:
+            if self._closed:
+                return _failed_future(RuntimeError("plugin runtime is closed"))
+            invoker = self._capability_invoker
+        if invoker is None:
+            return _failed_future(
+                PluginCapabilityUnavailable("plugin capability invocation is not available")
+            )
+
+        try:
+            future = invoker(
+                self._plugin_name,
+                capability,
+                MappingProxyType(copied_arguments),
+                timeout_value,
+            )
+        except Exception as error:
+            return _failed_future(error)
+        if not isinstance(future, concurrent.futures.Future):
+            return _failed_future(RuntimeError("capability invoker returned an invalid future"))
+
+        with self._lock:
+            if self._closed:
+                future.cancel()
+                return _failed_future(RuntimeError("plugin runtime is closed"))
+            self._capability_futures.add(future)
+        future.add_done_callback(self._capability_done)
+        return future
+
+    def _capability_done(self, future: concurrent.futures.Future) -> None:
+        with self._lock:
+            self._capability_futures.discard(future)
 
     def subscribe(
         self,
@@ -269,11 +367,16 @@ class PluginRuntime:
             self._closed = True
             subscriptions = tuple(self._subscriptions)
             workers = tuple(self._workers.values())
+            capability_futures = tuple(self._capability_futures)
             advice_registration_ids = tuple(self._advice_registration_ids)
             advice_unregistrar = self._advice_unregistrar
             self._subscriptions.clear()
             self._workers.clear()
+            self._capability_futures.clear()
             self._advice_registration_ids.clear()
+
+        for future in capability_futures:
+            future.cancel()
 
         if advice_unregistrar is not None:
             for registration_id in advice_registration_ids:
@@ -296,6 +399,12 @@ class PluginRuntime:
                 self._failure_callback(
                     f"managed worker {worker.name!r} did not stop before the deadline"
                 )
+
+
+def _failed_future(error: BaseException) -> concurrent.futures.Future:
+    future: concurrent.futures.Future = concurrent.futures.Future()
+    future.set_exception(error)
+    return future
 
 
 __all__ = [
