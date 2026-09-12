@@ -17,7 +17,7 @@ from typing import Optional
 
 import zmq
 
-from zara.protocol import ProtocolMessage, encode_message
+from zara.protocol import PROTOCOL_MARKER, ProtocolMessage, encode_message
 from zara.zmq_transport import (
     TransportConfig,
     ZaraZmqGateway,
@@ -61,13 +61,7 @@ def hardened_transport_config() -> TransportConfig:
 
 
 def _accepts_keyword(callable_, name: str) -> bool:
-    """Return whether *callable_* accepts a named keyword or arbitrary kwargs.
-
-    Zara intentionally keeps its gateway constructor injectable for tests and
-    embedders. A lazily imported hardened gateway can therefore inherit a test
-    double rather than the stock gateway. Do not break that seam merely to add
-    production-only transport configuration.
-    """
+    """Return whether *callable_* accepts a named keyword or arbitrary kwargs."""
 
     try:
         parameters = inspect.signature(callable_).parameters.values()
@@ -77,6 +71,53 @@ def _accepts_keyword(callable_, name: str) -> bool:
         parameter.kind is inspect.Parameter.VAR_KEYWORD or parameter.name == name
         for parameter in parameters
     )
+
+
+def _outer_frame_limit(limits) -> int:
+    # route + protocol marker + envelope + bounded payload frames
+    return 1 + 2 + limits.max_payload_frames
+
+
+def _outer_byte_limit(limits) -> int:
+    # Routing ids are bounded by libzmq. The application budget then mirrors the
+    # protocol's strict marker/envelope/aggregate-payload ceilings.
+    return (
+        _MAX_ROUTING_ID_BYTES
+        + len(PROTOCOL_MARKER)
+        + limits.max_envelope_bytes
+        + limits.max_payload_bytes
+    )
+
+
+def _recv_bounded_multipart(
+    socket,
+    *,
+    max_frames: int,
+    max_bytes: int,
+):
+    """Receive one multipart without retaining bytes beyond hard protocol caps.
+
+    ``recv_multipart`` materializes every part before application code can count
+    it. A hostile peer can therefore turn a tiny-frame multipart into a memory
+    spike despite per-frame MAXMSGSIZE. Read parts incrementally instead: retain
+    only the bounded prefix, drain the rest so the ZMQ socket remains aligned,
+    and return ``overflow=True`` for fail-closed handling.
+    """
+
+    frames = []
+    total_bytes = 0
+    overflow = False
+    while True:
+        frame = socket.recv(copy=False)
+        frame_bytes = len(frame)
+        if not overflow and len(frames) < max_frames and total_bytes + frame_bytes <= max_bytes:
+            frames.append(frame)
+            total_bytes += frame_bytes
+        else:
+            overflow = True
+        if not socket.getsockopt(zmq.RCVMORE):
+            break
+    return frames, overflow
 
 
 class _PreloadedSocket:
@@ -106,38 +147,39 @@ class HardenedZaraZmqGateway(ZaraZmqGateway):
         parent_init(endpoint, **kwargs)
 
     def _receive(self, socket: zmq.Socket) -> None:
-        raw_frames = socket.recv_multipart(copy=False)
-        if len(raw_frames) < 2:
-            logger.warning("dropping ZARA/1 multipart without application frames")
+        raw_frames, overflow = _recv_bounded_multipart(
+            socket,
+            max_frames=_outer_frame_limit(self._limits),
+            max_bytes=_outer_byte_limit(self._limits),
+        )
+        if not raw_frames:
+            logger.warning("dropping empty ZARA/1 multipart")
             return
 
         route = bytes(raw_frames[0])
         if not route or len(route) > _MAX_ROUTING_ID_BYTES:
             logger.warning("dropping invalid ZMQ routing id (%d bytes)", len(route))
             return
-
-        # ROUTER route + marker + envelope + bounded application payload frames.
-        max_outer_frames = 1 + 2 + self._limits.max_payload_frames
-        if len(raw_frames) > max_outer_frames:
+        if overflow:
             self._send(
                 socket,
                 route,
                 _protocol_error(
                     reply_to=None,
                     code="invalid_message",
-                    message="protocol multipart exceeds frame limit",
+                    message="protocol multipart exceeds transport limits",
                     retryable=False,
                 ),
             )
+            return
+        if len(raw_frames) < 2:
+            logger.warning("dropping ZARA/1 multipart without application frames")
             return
 
         frames = [route, *(bytes(frame) for frame in raw_frames[1:])]
         try:
             super()._receive(_PreloadedSocket(socket, frames))
         except RecursionError:
-            # Deep JSON is malformed input, not permission to kill the owner
-            # actor. SecureZaraZmqGateway already applies the same fail-closed
-            # policy before authorization.
             self._send(
                 socket,
                 route,
@@ -155,13 +197,7 @@ class HardenedZaraZmqGateway(ZaraZmqGateway):
         message: ProtocolMessage,
         payloads=(),
     ) -> bool:
-        """Never silently corrupt an event stream when a route is saturated.
-
-        The legacy queue discarded the oldest event. Losing one delta/audio or
-        terminal event can make the consumer's state unknowably wrong. A full
-        route now fails closed: disconnect bookkeeping is explicit and clients
-        have request deadlines/reconnect semantics rather than an infinite hang.
-        """
+        """Never silently corrupt an event stream when a route is saturated."""
 
         with self._lock:
             outbound = self._route_outbound.get(route)
@@ -169,19 +205,15 @@ class HardenedZaraZmqGateway(ZaraZmqGateway):
                 return False
             overflow = outbound is not None and len(outbound) >= self._config.event_queue_size
             if not overflow:
-                # Keep the admission check and legacy append atomic. The lock is
-                # re-entrant, so concurrent producers cannot fill the queue in
-                # the gap and trigger the legacy drop-oldest path.
+                # Keep admission and append atomic. The lock is re-entrant, so a
+                # concurrent producer cannot trigger the legacy drop-oldest path.
                 return super()._enqueue_outbound(route, message, payloads)
 
-        if overflow:
-            logger.error(
-                "ZARA/1 route overflow; failing route instead of dropping %s",
-                message.type,
-            )
-            self._drop_route(route)
-            return False
-
+        logger.error(
+            "ZARA/1 route overflow; failing route instead of dropping %s",
+            message.type,
+        )
+        self._drop_route(route)
         return False
 
 
