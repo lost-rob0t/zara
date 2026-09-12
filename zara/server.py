@@ -19,6 +19,8 @@ from typing import Optional
 
 from zara import server_core as _core
 from zara.principals import PrincipalContext
+from zara.zmq_transport import ZaraZmqGateway as _StockZaraZmqGateway
+from zara.zmq_hardening import HardenedZaraZmqGateway, hardened_transport_config
 
 GatewayFactory = _core.GatewayFactory
 HostFactory = _core.HostFactory
@@ -95,11 +97,7 @@ class ZaraServer(_core.ZaraServer):
             config=config,
         )
         self._security_state = security_state
-        if gateway_transport_config is None:
-            from zara.zmq_hardening import hardened_transport_config
-
-            gateway_transport_config = hardened_transport_config()
-        self._gateway_transport_config = gateway_transport_config
+        self._gateway_transport_config = gateway_transport_config or hardened_transport_config()
         self._secure_tcp = secure_tcp
         self._security_registry = None
         self._security_admin = None
@@ -108,9 +106,9 @@ class ZaraServer(_core.ZaraServer):
 
     def _build_default_gateway(self, endpoint: str, *, supervisor, principal):
         if not endpoint.startswith("tcp://"):
+            from zara import zmq_transport
             from zara.runtime.tts_output import TtsOutputBridge
             from zara.voice_runtime import RuntimeVoiceIngress
-            from zara.zmq_hardening import HardenedZaraZmqGateway
 
             voice_ingress = RuntimeVoiceIngress(supervisor, principal=principal)
             self._voice_ingress = voice_ingress
@@ -125,18 +123,25 @@ class ZaraServer(_core.ZaraServer):
                 )
             except AttributeError:
                 self._tts_bridge = None
-            return HardenedZaraZmqGateway(
-                endpoint,
-                supervisor=supervisor,
-                principal=principal,
-                config=self._gateway_transport_config,
-                voice_ingress=voice_ingress,
-                audio_output_format={
+
+            # Preserve Zara's gateway injection seam exactly. Production uses
+            # the hardened stock gateway; tests/embedders that replace the
+            # canonical class still receive the legacy constructor contract.
+            gateway_type = zmq_transport.ZaraZmqGateway
+            gateway_kwargs = {
+                "supervisor": supervisor,
+                "principal": principal,
+                "voice_ingress": voice_ingress,
+                "audio_output_format": {
                     "codec": "pcm_s16le",
                     "sample_rate": sample_rate,
                     "channels": 1,
                 },
-            )
+            }
+            if gateway_type is _StockZaraZmqGateway:
+                gateway_type = HardenedZaraZmqGateway
+                gateway_kwargs["config"] = self._gateway_transport_config
+            return gateway_type(endpoint, **gateway_kwargs)
 
         if self._security_state is None:
             raise ServerError("secure TCP listener has no security state")
