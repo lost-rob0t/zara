@@ -39,5 +39,10 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.wear.compose.foundation)
     implementation(libs.wear.compose.material3)
+    implementation(libs.wear.tiles)
+    implementation(libs.wear.protolayout)
+    implementation(libs.wear.protolayout.material)
+    implementation(libs.wear.watchface.complications.data.source.ktx)
+    testImplementation(libs.wear.tiles.testing)
     testImplementation(libs.junit)
 }
