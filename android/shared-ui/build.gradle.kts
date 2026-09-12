@@ -19,4 +19,5 @@ android {
 dependencies {
     api(platform(libs.compose.bom))
     api(libs.compose.ui)
+    testImplementation(libs.junit)
 }
