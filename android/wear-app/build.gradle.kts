@@ -42,6 +42,7 @@ dependencies {
     implementation(libs.wear.tiles)
     implementation(libs.wear.protolayout)
     implementation(libs.wear.protolayout.material)
+    implementation(libs.wear.protolayout.material3)
     implementation(libs.wear.watchface.complications.data.source.ktx)
     testImplementation(libs.wear.tiles.testing)
     testImplementation(libs.junit)
