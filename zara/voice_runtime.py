@@ -105,16 +105,38 @@ class RuntimeVoiceIngress:
             self._thread.start()
 
     def _default_transcriber_factory(self, **_context):
+        from zara.__main__ import (
+            normalize_stt_device,
+            route_stt_provider_for_amd_device,
+        )
         from zara.config import get_config
+        from zara.stt_backends import model_class_for_provider, normalize_provider
         from zara.transcription import Transcriber
 
         settings = get_config().get_section("stt")
+        provider = normalize_provider(settings.get("provider", "faster-whisper"))
         model_name = str(settings.get("model", "small"))
-        device = str(settings.get("device", "cpu"))
+        device = normalize_stt_device(
+            str(settings.get("device", "cpu")),
+            provider=provider,
+        )
+        provider, _notice = route_stt_provider_for_amd_device(provider, device)
         threads = settings.get("threads")
         if self._default_model is None:
-            loader = Transcriber(model=model_name, device=device, threads=threads)
-            self._default_model = loader.model
+            if provider == "whisper-cpp":
+                from zara.whisper_cpp import resolve_whisper_cpp_model
+
+                model_path = resolve_whisper_cpp_model(model_name)
+                model_class = model_class_for_provider(provider)
+                self._default_model = model_class(
+                    model_path,
+                    device=device,
+                    cpu_threads=threads if threads is not None else 4,
+                    num_workers=1,
+                )
+            else:
+                loader = Transcriber(model=model_name, device=device, threads=threads)
+                self._default_model = loader.model
         return StreamingTranscriber(make_faster_whisper_transcriber(self._default_model))
 
     def start(
