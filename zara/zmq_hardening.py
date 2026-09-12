@@ -144,6 +144,11 @@ class HardenedZaraZmqGateway(ZaraZmqGateway):
             if route not in self._routes:
                 return False
             overflow = outbound is not None and len(outbound) >= self._config.event_queue_size
+            if not overflow:
+                # Keep the admission check and legacy append atomic. The lock is
+                # re-entrant, so concurrent producers cannot fill the queue in
+                # the gap and trigger the legacy drop-oldest path.
+                return super()._enqueue_outbound(route, message, payloads)
 
         if overflow:
             logger.error(
@@ -153,7 +158,7 @@ class HardenedZaraZmqGateway(ZaraZmqGateway):
             self._drop_route(route)
             return False
 
-        return super()._enqueue_outbound(route, message, payloads)
+        return False
 
 
 class HardenedZmqZaraClient(ZmqZaraClient):
@@ -172,13 +177,14 @@ class HardenedZmqZaraClient(ZmqZaraClient):
         return super().start()
 
     def _request(self, message, kind, *, payloads=()):
-        # Validate and serialize once at the caller boundary so malformed local
-        # input cannot poison the owner thread and fail unrelated requests.
+        # Validate at the caller boundary so malformed local input cannot poison
+        # the owner thread and fail unrelated requests.
         encode_message(message, payloads=payloads, limits=self._limits)
         future = super()._request(message, kind, payloads=payloads)
-        self._request_deadlines[message.id] = (
-            time.monotonic() + float(self._config.request_timeout)
-        )
+        with self._pending_lock:
+            self._request_deadlines[message.id] = (
+                time.monotonic() + float(self._config.request_timeout)
+            )
         return future
 
     def _expire_pending_requests(self) -> None:
