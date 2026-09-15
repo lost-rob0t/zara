@@ -22,6 +22,7 @@ _PULSE_ICON_NAME = "audio-input-microphone"
 _PULSE_MEDIA_ROLE = "phone"
 _PULSE_SIGNAL_THRESHOLD = 1e-5
 _PULSE_SILENCE_WARNING_SECONDS = 3.0
+_DEFAULT_CAPTURE_STALL_TIMEOUT = 5.0
 _PULSE_OUTPUT_STREAM_NAME = "Zarathushtra speech"
 _PULSE_OUTPUT_LATENCY_MSEC = 100
 _PACAT_STARTUP_PROBE_SECONDS = 0.08
@@ -94,6 +95,7 @@ class PulseInputStream:
         callback,
         blocksize: int = 0,
         diagnostic_callback: Optional[Callable[[str], None]] = None,
+        stall_timeout: Optional[float] = None,
         **_kwargs,
     ):
         if channels <= 0:
@@ -107,6 +109,7 @@ class PulseInputStream:
         self.process: Optional[subprocess.Popen] = None
         self.reader_thread: Optional[threading.Thread] = None
         self.stderr_thread: Optional[threading.Thread] = None
+        self.watchdog_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
         self.source: Optional[str] = None
         self.last_error: Optional[str] = None
@@ -114,10 +117,27 @@ class PulseInputStream:
         self.frames_received = 0
         self.peak = 0.0
         self.rms = 0.0
+        self.stall_timeout = self._resolve_stall_timeout(stall_timeout)
+        self.last_data_monotonic = time.monotonic()
         self._stderr_lines: deque[str] = deque(maxlen=20)
         self._started_at = 0.0
         self._signal_reported = False
         self._silence_reported = False
+
+    @staticmethod
+    def _resolve_stall_timeout(stall_timeout: Optional[float]) -> float:
+        if stall_timeout is not None:
+            parsed = float(stall_timeout)
+            return parsed if parsed > 0 else _DEFAULT_CAPTURE_STALL_TIMEOUT
+        raw = os.getenv("ZARA_CAPTURE_STALL_TIMEOUT", "").strip()
+        if raw:
+            try:
+                parsed = float(raw)
+                if parsed > 0:
+                    return parsed
+            except ValueError:
+                pass
+        return _DEFAULT_CAPTURE_STALL_TIMEOUT
 
     def _diagnostic(self, message: str) -> None:
         if self.diagnostic_callback is not None:
@@ -186,6 +206,7 @@ class PulseInputStream:
         self._signal_reported = False
         self._silence_reported = False
         self._started_at = time.monotonic()
+        self.last_data_monotonic = self._started_at
         self.process = subprocess.Popen(
             self._command(),
             stdout=subprocess.PIPE,
@@ -221,6 +242,12 @@ class PulseInputStream:
             daemon=True,
         )
         self.reader_thread.start()
+        self.watchdog_thread = threading.Thread(
+            target=self._watchdog_loop,
+            name="zara-pulse-watchdog",
+            daemon=True,
+        )
+        self.watchdog_thread.start()
         source = self.source or "@DEFAULT_SOURCE@"
         self._diagnostic(
             "Audio stream started "
@@ -267,8 +294,38 @@ class PulseInputStream:
             message = f"parec exited with {returncode}"
         if detail:
             message = f"{message}: {detail}"
-        self.last_error = message
+        if self.last_error is None:
+            self.last_error = message
         self._diagnostic(f"Audio capture failed: {message}")
+
+    def _watchdog_loop(self) -> None:
+        interval = max(0.05, min(1.0, self.stall_timeout / 4))
+        while not self.stop_event.is_set():
+            time.sleep(interval)
+            if self.stop_event.is_set():
+                return
+            process = self.process
+            if process is None or process.poll() is not None:
+                return
+            silent_for = time.monotonic() - self.last_data_monotonic
+            if silent_for < self.stall_timeout:
+                continue
+            detail = self._stderr_detail()
+            message = (
+                "capture stalled: no audio bytes for "
+                f"{silent_for:.1f}s (source='{self.source or '@DEFAULT_SOURCE@'}', "
+                f"stall_timeout={self.stall_timeout:.1f}s)"
+            )
+            if detail:
+                message = f"{message}: {detail}"
+            if self.last_error is None:
+                self.last_error = message
+            self._diagnostic(f"Audio capture failed: {message}")
+            try:
+                process.terminate()
+            except OSError:
+                pass
+            return
 
     def _reader_loop(self) -> None:
         process = self.process
@@ -290,6 +347,7 @@ class PulseInputStream:
                 self._report_runtime_failure(process)
                 return
 
+            self.last_data_monotonic = time.monotonic()
             self.bytes_received += len(raw)
             pending.extend(raw)
             complete_bytes = len(pending) - (len(pending) % frame_width)
@@ -324,6 +382,9 @@ class PulseInputStream:
         stderr_thread = self.stderr_thread
         if stderr_thread is not None and stderr_thread.is_alive():
             stderr_thread.join(timeout=1.0)
+        watchdog_thread = self.watchdog_thread
+        if watchdog_thread is not None and watchdog_thread.is_alive():
+            watchdog_thread.join(timeout=1.0)
         return self
 
     def close(self):
@@ -336,6 +397,7 @@ class PulseInputStream:
         self.process = None
         self.reader_thread = None
         self.stderr_thread = None
+        self.watchdog_thread = None
 
     def __enter__(self):
         return self.start()

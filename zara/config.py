@@ -65,6 +65,8 @@ silence_duration = 1.5
 first_speech_timeout = 5.0
 # Hard cap for a single utterance and buffered callback chunks
 max_utterance_duration = 30.0
+# Abandon an utterance when no microphone frames arrive for this long (#881)
+capture_stall_timeout = 5.0
 audio_queue_chunks = 32
 
 # Immediate acknowledgement (ZARA-025)
