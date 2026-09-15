@@ -5,7 +5,7 @@ from __future__ import annotations
 import concurrent.futures
 from typing import Callable, Optional
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal, Slot
 from PySide6.QtWidgets import QApplication
 
 from zara.client import ZaraClient
@@ -29,6 +29,7 @@ class DesktopController(QObject):
 
     diagnostics_requested = Signal()
     desktop_control_requested = Signal(str)
+    client_start_completed = Signal(object)
 
     def __init__(
         self,
@@ -69,7 +70,7 @@ class DesktopController(QObject):
 
         self.status = INITIAL_STATUS
 
-        self._started = False
+        self._start_future: Optional[concurrent.futures.Future] = None
         self._quitting = False
         self._finalized = False
         self._restart_request_id: Optional[str] = None
@@ -96,6 +97,9 @@ class DesktopController(QObject):
             window_settings_requested.connect(self.open_settings)
 
         self.desktop_control_requested.connect(self.apply_desktop_control)
+        self.client_start_completed.connect(
+            self._on_client_start_completed, Qt.ConnectionType.QueuedConnection
+        )
         self.bridge.runtime_event.connect(self._on_runtime_envelope)
         self.bridge.command_completed.connect(self._on_command_completed)
         self.bridge.command_failed.connect(self._on_command_failed)
@@ -109,16 +113,49 @@ class DesktopController(QObject):
 
     def start(self) -> concurrent.futures.Future:
         """Show a reachable desktop surface and start its Zara client."""
-        if self._started:
-            return self.client.start()
-        self._started = True
+        if self._start_future is not None:
+            return self._start_future
+        if self._quitting or self._finalized:
+            self._start_future = concurrent.futures.Future()
+            self._start_future.cancel()
+            return self._start_future
         self._set_status(INITIAL_STATUS)
 
         tray_available = self.tray.show_if_available()
         if not tray_available:
             self.window.show_raised()
 
-        return self.client.start()
+        try:
+            self._start_future = self.client.start()
+        except Exception as error:
+            self._start_future = concurrent.futures.Future()
+            self._start_future.set_exception(error)
+
+        def completed(done: concurrent.futures.Future) -> None:
+            if not self._quitting and not self._finalized:
+                self.client_start_completed.emit(done)
+
+        self._start_future.add_done_callback(completed)
+        return self._start_future
+
+    @Slot(object)
+    def _on_client_start_completed(self, future: concurrent.futures.Future) -> None:
+        if self._quitting or self._finalized:
+            return
+        try:
+            future.result()
+        except Exception as error:
+            reason = str(error) or "Client start cancelled"
+            self._set_status(
+                DesktopStatus(
+                    DesktopRuntimeState.DISCONNECTED,
+                    f"Cannot connect to Zara: {reason}. "
+                    "Check zara-server and desktop connection settings, then reopen Zara desktop.",
+                )
+            )
+            return
+        if self.status == INITIAL_STATUS and self._restart_request_id is None:
+            self._set_status(DesktopStatus(DesktopRuntimeState.IDLE, "Zara is ready"))
 
     def show_quick_copilot(self) -> None:
         """Summon the one process-owned Copilot instance."""
@@ -200,7 +237,7 @@ class DesktopController(QObject):
         apply_desktop_theme(self.app, theme_key)
 
     def restart_runtime(self) -> None:
-        if self._quitting or self._restart_request_id is not None:
+        if self._quitting or self._finalized or self._restart_request_id is not None:
             return
         command = RestartRuntime()
         self._restart_request_id = command.request_id
@@ -210,7 +247,10 @@ class DesktopController(QObject):
                 "Restarting Zara runtime…",
             )
         )
-        self.bridge.submit(command)
+        try:
+            self.bridge.submit(command)
+        except Exception as error:
+            self._on_command_failed(command.request_id, str(error))
 
     def show_diagnostics(self) -> None:
         """Expose a stable hook until the full diagnostics surface lands in #92."""
@@ -238,6 +278,8 @@ class DesktopController(QObject):
             self.quick_window.sync_from_shared_state()
 
     def _on_runtime_envelope(self, envelope) -> None:
+        if self._quitting or self._finalized:
+            return
         event = getattr(envelope, "event", None)
         if event is None:
             return
@@ -252,6 +294,8 @@ class DesktopController(QObject):
                     self.quick_window.sync_from_shared_state(event)
 
     def _on_command_completed(self, receipt) -> None:
+        if self._quitting or self._finalized:
+            return
         update = None
         if self.conversation_service is not None and isinstance(receipt, CommandReceipt):
             update = self.conversation_service.bind_receipt(receipt)
@@ -264,10 +308,14 @@ class DesktopController(QObject):
         self._resync_conversation_surfaces()
 
         request_id = getattr(receipt, "request_id", None)
-        if request_id == self._restart_request_id:
+        if self._restart_request_id is not None and request_id == self._restart_request_id:
             self._restart_request_id = None
+            if self.status.state is DesktopRuntimeState.STARTING:
+                self._set_status(DesktopStatus(DesktopRuntimeState.IDLE, "Zara is ready"))
 
     def _on_command_failed(self, request_id: str, message: str) -> None:
+        if self._quitting or self._finalized:
+            return
         if self.conversation_service is not None:
             update = self.conversation_service.mark_command_failed(request_id, message)
             if self.quick_window is self.window:

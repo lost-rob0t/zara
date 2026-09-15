@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import concurrent.futures
 import os
+import threading
 from types import SimpleNamespace
+
+import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -265,6 +268,119 @@ def test_controller_never_becomes_unreachable_without_a_tray():
         dispose_controller(controller)
 
 
+@pytest.mark.parametrize("outcome", ["success", "failure", "cancelled"])
+def test_client_start_completion_is_projected_on_qt_thread(outcome):
+    qt_app, controller, host, _, tray, window = make_controller()
+    future = concurrent.futures.Future()
+    host.start = lambda: future
+    updates = []
+    original = window.set_status
+
+    def record(status):
+        updates.append(threading.get_ident())
+        original(status)
+
+    window.set_status = record
+    try:
+        assert controller.start() is future
+        updates.clear()
+
+        def finish():
+            if outcome == "failure":
+                future.set_exception(RuntimeError("handshake required"))
+            elif outcome == "cancelled":
+                future.cancel()
+            else:
+                future.set_result(True)
+
+        worker = threading.Thread(target=finish)
+        worker.start()
+        worker.join()
+        assert updates == []
+        assert controller.status.state is DesktopRuntimeState.STARTING
+        qt_app.processEvents()
+        expected = DesktopRuntimeState.IDLE if outcome == "success" else DesktopRuntimeState.DISCONNECTED
+        assert controller.status.state is expected
+        assert updates == [threading.get_ident()]
+        assert tray.statuses[-1] == window.statuses[-1] == controller.status
+        if outcome != "success":
+            assert "zara-server" in controller.status.detail
+        if outcome == "failure":
+            assert "handshake required" in controller.status.detail
+    finally:
+        dispose_controller(controller)
+
+
+def test_start_is_idempotent_even_after_completion():
+    qt_app, controller, host, _, _, _ = make_controller()
+    try:
+        future = controller.start()
+        assert controller.start() is future
+        qt_app.processEvents()
+        assert controller.status.state is DesktopRuntimeState.IDLE
+        assert controller.start() is future
+        assert host.start_calls == 1
+    finally:
+        dispose_controller(controller)
+
+
+def test_synchronous_start_failure_is_projected():
+    qt_app, controller, host, _, _, _ = make_controller()
+
+    def fail():
+        raise RuntimeError("client cannot start from failed")
+
+    host.start = fail
+    try:
+        future = controller.start()
+        assert isinstance(future.exception(), RuntimeError)
+        qt_app.processEvents()
+        assert controller.status.state is DesktopRuntimeState.DISCONNECTED
+        assert "client cannot start" in controller.status.detail
+    finally:
+        dispose_controller(controller)
+
+
+@pytest.mark.parametrize("quit_method", ["request_quit", "_about_to_quit"])
+@pytest.mark.parametrize("complete_before_quit", [False, True])
+def test_late_start_completion_after_quit_is_ignored(quit_method, complete_before_quit):
+    qt_app, controller, host, _, tray, window = make_controller()
+    future = concurrent.futures.Future()
+    host.start = lambda: future
+    try:
+        controller.start()
+        if complete_before_quit:
+            worker = threading.Thread(target=lambda: future.set_result(True))
+            worker.start()
+            worker.join()
+        getattr(controller, quit_method)()
+        count = len(window.statuses)
+        if not complete_before_quit:
+            future.set_exception(RuntimeError("closed"))
+        qt_app.processEvents()
+        assert len(window.statuses) == len(tray.statuses) == count
+        assert controller.start() is future
+        assert host.close_calls == 1
+    finally:
+        dispose_controller(controller)
+
+
+@pytest.mark.parametrize("event", [events.AgentStarted(), events.RuntimeError(reason="provider failed")])
+def test_start_completion_preserves_newer_runtime_status(event):
+    qt_app, controller, host, bridge, _, _ = make_controller()
+    future = concurrent.futures.Future()
+    host.start = lambda: future
+    try:
+        controller.start()
+        bridge.runtime_event.emit(SimpleNamespace(event=event))
+        status = controller.status
+        future.set_result(True)
+        qt_app.processEvents()
+        assert controller.status == status
+    finally:
+        dispose_controller(controller)
+
+
 def test_runtime_events_update_tray_and_status_window_from_one_reducer():
     _, controller, _, bridge, tray, window = make_controller()
     try:
@@ -291,8 +407,82 @@ def test_restart_is_command_driven_and_duplicate_requests_are_suppressed():
         assert controller.status.state is DesktopRuntimeState.STARTING
 
         bridge.command_completed.emit(CommandReceipt(request_id=command.request_id))
+        assert controller.status.state is DesktopRuntimeState.IDLE
+        assert tray.statuses[-1] == controller.status
         tray.restart_requested.emit()
         assert len(bridge.commands) == 2
+    finally:
+        dispose_controller(controller)
+
+
+def test_synchronous_restart_failure_is_projected_and_allows_retry():
+    _, controller, _, bridge, _, _ = make_controller()
+    submit = bridge.submit
+
+    def fail(command):
+        raise RuntimeError("handshake required")
+
+    bridge.submit = fail
+    try:
+        controller.restart_runtime()
+        assert controller.status.state is DesktopRuntimeState.ERROR
+        assert "handshake required" in controller.status.detail
+        bridge.submit = submit
+        controller.restart_runtime()
+        assert len(bridge.commands) == 1
+    finally:
+        dispose_controller(controller)
+
+
+@pytest.mark.parametrize("event", [events.AgentStarted(), events.RuntimeError(reason="failed")])
+def test_restart_receipt_preserves_newer_status(event):
+    _, controller, _, bridge, _, _ = make_controller()
+    try:
+        controller.restart_runtime()
+        bridge.runtime_event.emit(SimpleNamespace(event=event))
+        status = controller.status
+        bridge.command_completed.emit(CommandReceipt(request_id=bridge.commands[-1].request_id))
+        assert controller.status == status
+    finally:
+        dispose_controller(controller)
+
+
+def test_pending_start_does_not_complete_restart_or_unrelated_receipt():
+    qt_app, controller, host, bridge, _, _ = make_controller()
+    future = concurrent.futures.Future()
+    host.start = lambda: future
+    try:
+        controller.start()
+        controller.restart_runtime()
+        status = controller.status
+        future.set_result(True)
+        qt_app.processEvents()
+        bridge.command_completed.emit(CommandReceipt(request_id="unrelated"))
+        assert controller.status == status
+        bridge.command_failed.emit(bridge.commands[-1].request_id, "restart unavailable")
+        assert controller.status == DesktopStatus(DesktopRuntimeState.ERROR, "restart unavailable")
+        controller.restart_runtime()
+        assert len(bridge.commands) == 2
+    finally:
+        dispose_controller(controller)
+
+
+@pytest.mark.parametrize("quit_method", ["request_quit", "_about_to_quit"])
+def test_quit_rejects_new_start_and_ignores_queued_runtime_updates(quit_method):
+    _, controller, host, bridge, tray, window = make_controller()
+    try:
+        controller.restart_runtime()
+        request_id = bridge.commands[-1].request_id
+        getattr(controller, quit_method)()
+        count = len(window.statuses)
+        assert controller.start().cancelled()
+        assert host.start_calls == 0
+        controller.restart_runtime()
+        bridge.command_completed.emit(CommandReceipt(request_id=request_id))
+        bridge.command_failed.emit(request_id, "closed")
+        bridge.runtime_event.emit(SimpleNamespace(event=events.RuntimeStarted()))
+        assert len(window.statuses) == len(tray.statuses) == count
+        assert len(bridge.commands) == 1
     finally:
         dispose_controller(controller)
 

@@ -93,6 +93,13 @@ runtime lock, identify its holder with =lslocks= and stop the conflicting
 process intentionally. Do not delete a held lock file or bypass the security
 management offline check.
 
+The desktop tray and Copilot leave =Starting Zara runtime…= when the client
+connection completes, including attachment to an already-running daemon.
+Connection failures show =disconnected= with the failure reason: check
+=zara-server= and the desktop connection settings, then reopen the desktop.
+Readiness confirms the client connection, not a provider health check. Quitting
+the desktop closes its client without stopping the shared daemon.
+
 Dictation stop phrases use the canonical table in =zara.dictate=. Configure
 phrases with =[dictate].stop_phrases=, =--stop-phrases=,
 =ZARA_STOP_PHRASE=, or =ZARA_STOP_PHRASES=. Matching ignores case, spacing, and
