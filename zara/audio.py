@@ -22,12 +22,20 @@ _PULSE_ICON_NAME = "audio-input-microphone"
 _PULSE_MEDIA_ROLE = "phone"
 _PULSE_SIGNAL_THRESHOLD = 1e-5
 _PULSE_SILENCE_WARNING_SECONDS = 3.0
+_PULSE_OUTPUT_STREAM_NAME = "Zarathushtra speech"
+_PULSE_OUTPUT_LATENCY_MSEC = 100
+_PACAT_STARTUP_PROBE_SECONDS = 0.08
 _ORIGINAL_INPUT_STREAM = sd.InputStream
 _SHARED_STREAM_INSTALLED = False
 
 
 def _prefer_shared_input() -> bool:
     value = os.getenv("ZARA_PREFER_SHARED_INPUT", "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def _prefer_shared_output() -> bool:
+    value = os.getenv("ZARA_PREFER_SHARED_OUTPUT", "1").strip().lower()
     return value not in {"0", "false", "no", "off"}
 
 
@@ -335,6 +343,208 @@ class PulseInputStream:
     def __exit__(self, _exc_type, _exc, _tb):
         self.close()
         return False
+
+
+class PulseOutputStream:
+    """sounddevice.OutputStream-compatible sink backed by PulseAudio's pacat.
+
+    The write-side mirror of :class:`PulseInputStream`: raw s16le mono PCM
+    goes to a ``pacat`` process so playback is routed by the Pulse/PipeWire
+    server instead of probing raw ALSA devices (#880). ``start`` is bounded
+    by a short startup probe; failures raise with the server's stderr detail
+    so callers can degrade gracefully.
+    """
+
+    def __init__(
+        self,
+        samplerate: float,
+        channels: int = 1,
+        diagnostic_callback: Optional[Callable[[str], None]] = None,
+        **_kwargs,
+    ):
+        if channels <= 0:
+            raise ValueError("channels must be positive")
+
+        self.samplerate = int(round(float(samplerate)))
+        self.channels = int(channels)
+        self.diagnostic_callback = diagnostic_callback
+        self.process: Optional[subprocess.Popen] = None
+        self.stderr_thread: Optional[threading.Thread] = None
+        self.stop_event = threading.Event()
+        self.source: Optional[str] = None
+        self.last_error: Optional[str] = None
+        self._stderr_lines: deque[str] = deque(maxlen=20)
+
+    def _diagnostic(self, message: str) -> None:
+        if self.diagnostic_callback is not None:
+            self.diagnostic_callback(message)
+            return
+        print(message, flush=True)
+
+    def _command(self) -> list[str]:
+        pacat = shutil.which("pacat")
+        if pacat is None:
+            raise RuntimeError("pacat disappeared after Pulse backend selection")
+
+        command = [
+            pacat,
+            f"--client-name={_PULSE_APPLICATION_NAME}",
+            f"--stream-name={_PULSE_OUTPUT_STREAM_NAME}",
+            "--format=s16le",
+            f"--rate={self.samplerate}",
+            f"--channels={self.channels}",
+            f"--latency-msec={_PULSE_OUTPUT_LATENCY_MSEC}",
+        ]
+        sink = os.getenv("ZARA_PULSE_SINK", "").strip()
+        if sink:
+            self.source = sink
+            command.append(f"--device={sink}")
+        return command
+
+    def _environment(self) -> dict[str, str]:
+        env = os.environ.copy()
+        env["PULSE_PROP_application.name"] = _PULSE_APPLICATION_NAME
+        env["PULSE_PROP_application.icon_name"] = _PULSE_ICON_NAME
+        env["PULSE_PROP_media.role"] = _PULSE_MEDIA_ROLE
+        return env
+
+    def _stderr_loop(self) -> None:
+        process = self.process
+        if process is None or process.stderr is None:
+            return
+        while not self.stop_event.is_set():
+            try:
+                raw = process.stderr.readline()
+            except (OSError, ValueError):
+                return
+            if not raw:
+                return
+            detail = raw.decode("utf-8", errors="replace").strip()
+            if detail:
+                self._stderr_lines.append(detail)
+
+    def _stderr_detail(self) -> str:
+        return " | ".join(self._stderr_lines).strip()
+
+    def start(self):
+        if self.process is not None:
+            return self
+
+        available, reason = _pulse_backend_status()
+        if not available:
+            raise RuntimeError(f"shared Pulse playback unavailable: {reason}")
+
+        self.stop_event.clear()
+        self.last_error = None
+        self._stderr_lines.clear()
+        process = subprocess.Popen(
+            self._command(),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            env=self._environment(),
+            bufsize=0,
+        )
+        self.process = process
+
+        self.stderr_thread = threading.Thread(
+            target=self._stderr_loop,
+            name="zara-pulse-playback-stderr",
+            daemon=True,
+        )
+        self.stderr_thread.start()
+
+        try:
+            self.process.wait(timeout=_PACAT_STARTUP_PROBE_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+        else:
+            thread = self.stderr_thread
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=0.1)
+            detail = self._stderr_detail()
+            self.process = None
+            raise RuntimeError(
+                f"pacat exited during startup with {self._exit_code_or_none(process)}: "
+                f"{detail or 'no error output'}"
+            )
+
+        sink = self.source or "@DEFAULT_SINK@"
+        self._diagnostic(
+            "Audio playback stream started "
+            f"(backend=Pulse/pacat, sink='{sink}', "
+            f"rate={self.samplerate}Hz, channels={self.channels})"
+        )
+        return self
+
+    @staticmethod
+    def _exit_code_or_none(process: subprocess.Popen) -> object:
+        return process.returncode
+
+    def write(self, block: bytes) -> None:
+        process = self.process
+        if process is None or process.stdin is None:
+            raise RuntimeError("pacat playback stream is not open")
+        try:
+            process.stdin.write(block)
+        except (BrokenPipeError, OSError, ValueError) as error:
+            self.last_error = f"pacat playback write failed: {error}"
+            raise
+
+    def stop(self):
+        self.stop_event.set()
+        process = self.process
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=1.0)
+
+        stderr_thread = self.stderr_thread
+        if stderr_thread is not None and stderr_thread.is_alive():
+            stderr_thread.join(timeout=1.0)
+        return self
+
+    def close(self):
+        self.stop()
+        if self.process is not None:
+            if self.process.stdin is not None:
+                self.process.stdin.close()
+            if self.process.stderr is not None:
+                self.process.stderr.close()
+        self.process = None
+        self.stderr_thread = None
+
+    def __enter__(self):
+        return self.start()
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        self.close()
+        return False
+
+
+def create_pulse_output_stream(
+    sample_rate: float,
+    channels: int = 1,
+    diagnostic_callback: Optional[Callable[[str], None]] = None,
+) -> Optional[PulseOutputStream]:
+    """Return a Pulse-rated output stream, or None when Pulse is unusable."""
+    if not sys.platform.startswith("linux"):
+        return None
+    if not _prefer_shared_output():
+        return None
+    if shutil.which("pacat") is None:
+        return None
+    available, _reason = _pulse_backend_status()
+    if not available:
+        return None
+    return PulseOutputStream(
+        samplerate=sample_rate,
+        channels=channels,
+        diagnostic_callback=diagnostic_callback,
+    )
 
 
 def _install_shared_input_stream() -> None:

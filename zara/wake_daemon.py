@@ -14,7 +14,10 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Callable, Optional
 
 import numpy as np
@@ -34,6 +37,26 @@ WAKE_AUDIO_OUTPUT_FORMATS = (
 )
 WAKE_FRAME_BYTES = 1024
 CONNECT_TIMEOUT = 10.0
+DEFAULT_OPEN_TIMEOUT = 2.0
+OPEN_FAILURE_LOG_INTERVAL = 30.0
+CHUNK_DROP_LOG_INTERVAL = 5.0
+
+
+def _default_output_stream_factory(sample_rate: int):
+    """Open playback through Pulse/PipeWire first; never probe raw ALSA."""
+    from zara.audio import create_pulse_output_stream
+
+    pulse_stream = create_pulse_output_stream(sample_rate, channels=1)
+    if pulse_stream is not None:
+        return pulse_stream
+
+    import sounddevice as sd
+
+    return sd.OutputStream(
+        samplerate=int(sample_rate),
+        channels=1,
+        dtype="int16",
+    )
 
 
 class WakeDaemonUnavailable(RuntimeError):
@@ -43,13 +66,30 @@ class WakeDaemonUnavailable(RuntimeError):
 class PcmStreamSpeaker:
     """Client-owned playback sink for daemon audio.output streams.
 
-    One persistent ``sd.OutputStream`` renders raw s16le mono PCM delivered
-    by ``audio.output.*`` events. ``cancel`` drops queued audio immediately
-    so barge-in stops playback within the interruption budget.
+    One persistent Pulse/PipeWire-routed stream renders raw s16le mono PCM
+    delivered by ``audio.output.*`` events. The stream open is time-bounded
+    and never raises out of the dispatch path: a failed open logs one
+    actionable warning, drops chunks for the affected turns, and retries on
+    the next turn start. ``cancel`` drops queued audio immediately so
+    barge-in stops playback within the interruption budget.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        stream_factory: Optional[Callable[[int], object]] = None,
+        open_timeout: float = DEFAULT_OPEN_TIMEOUT,
+    ) -> None:
         self._stream = None
+        self._stream_factory = stream_factory or _default_output_stream_factory
+        self._open_timeout = max(0.05, float(open_timeout))
+        self._open_pool = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="wake-speaker-open"
+        )
+        self.open_failures = 0
+        self.chunks_dropped = 0
+        self._last_open_failure_log = 0.0
+        self._last_drop_log = 0.0
         self._queue: "queue.Queue[Optional[np.ndarray]]" = queue.Queue()
         self._writer: Optional[threading.Thread] = None
         self._stop = threading.Event()
@@ -57,6 +97,7 @@ class PcmStreamSpeaker:
         self._drained = threading.Event()
         self._lock = threading.Lock()
         self._sample_rate: Optional[int] = None
+        self._open_generation = 0
         self._active_turns: set[str] = set()
         self.on_playback_started: Optional[Callable] = None
         self.on_playback_finished: Optional[Callable] = None
@@ -77,25 +118,66 @@ class PcmStreamSpeaker:
             )
             self._writer.start()
 
+    def _open_and_adopt(self, sample_rate: int, generation: int) -> None:
+        stream = self._stream_factory(int(sample_rate))
+        stream.start()
+        superseded: Optional[object] = None
+        with self._lock:
+            if generation == self._open_generation:
+                superseded = self._stream
+                self._stream = stream
+                self._sample_rate = int(sample_rate)
+            else:
+                superseded = stream
+        target = superseded
+        if target is not None:
+            try:
+                target.close()
+            except Exception:
+                logger.warning("Speaker stream replace failed", exc_info=True)
+
+    def _log_open_failure(self, sample_rate: int, detail: str) -> None:
+        self.open_failures += 1
+        now = time.monotonic()
+        if now - self._last_open_failure_log < OPEN_FAILURE_LOG_INTERVAL:
+            return
+        self._last_open_failure_log = now
+        logger.warning(
+            "Speaker stream open failed for %dHz after %s: %s; "
+            "playback stays silent until an open succeeds "
+            "(check PulseAudio/PipeWire sink availability)",
+            int(sample_rate),
+            f"{self._open_timeout:.1f}s",
+            detail,
+        )
+
     def _ensure_stream(self, sample_rate: int) -> None:
         with self._lock:
             if self._stream is not None and self._sample_rate == sample_rate:
                 return
-            if self._stream is not None:
-                try:
-                    self._stream.close()
-                except Exception:
-                    logger.warning("Speaker stream replace failed", exc_info=True)
-                self._stream = None
-            import sounddevice as sd
-
-            self._stream = sd.OutputStream(
-                samplerate=int(sample_rate),
-                channels=1,
-                dtype="int16",
+            generation = self._open_generation
+        try:
+            self._open_pool.submit(
+                self._open_and_adopt, int(sample_rate), generation
+            ).result(timeout=self._open_timeout)
+        except FutureTimeoutError:
+            with self._lock:
+                self._open_generation += 1
+            self._log_open_failure(
+                sample_rate, f"open exceeded {self._open_timeout:.1f}s"
             )
-            self._stream.start()
-            self._sample_rate = int(sample_rate)
+            return
+        except Exception as error:
+            with self._lock:
+                self._open_generation += 1
+            self._log_open_failure(
+                sample_rate, f"{type(error).__name__}: {error}"
+            )
+            return
+        with self._lock:
+            opened = self._stream is not None and self._sample_rate == int(sample_rate)
+        if opened:
+            self.open_failures = 0
 
     def _write_loop(self) -> None:
         while not self._stop.is_set():
@@ -132,6 +214,17 @@ class PcmStreamSpeaker:
 
     def chunk(self, payload=b"", *, turn_id=None, **kwargs) -> None:
         if turn_id is not None and str(turn_id) not in self._active_turns:
+            return
+        if self._stream is None:
+            self.chunks_dropped += 1
+            now = time.monotonic()
+            if now - self._last_drop_log >= CHUNK_DROP_LOG_INTERVAL:
+                self._last_drop_log = now
+                logger.warning(
+                    "Speaker stream unavailable; dropping audio chunk for turn %s "
+                    "(stream open failed; turn degrades silently)",
+                    turn_id or "<unknown>",
+                )
             return
         block = np.frombuffer(bytes(payload), dtype="<i2").reshape(-1, 1)
         self._queue.put(block)
@@ -171,6 +264,7 @@ class PcmStreamSpeaker:
         if writer is not None:
             writer.join(timeout=2.0)
             self._writer = None
+        self._open_pool.shutdown(wait=False, cancel_futures=True)
         with self._lock:
             if self._stream is not None:
                 try:
