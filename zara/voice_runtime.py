@@ -122,6 +122,11 @@ class RuntimeVoiceIngress:
         )
         provider, _notice = route_stt_provider_for_amd_device(provider, device)
         threads = settings.get("threads")
+        beam_size = settings.get("beam_size")
+        try:
+            beam_size = int(beam_size) if beam_size is not None else 1
+        except (TypeError, ValueError):
+            beam_size = 1
         if self._default_model is None:
             if provider == "whisper-cpp":
                 from zara.whisper_cpp import resolve_whisper_cpp_model
@@ -137,7 +142,12 @@ class RuntimeVoiceIngress:
             else:
                 loader = Transcriber(model=model_name, device=device, threads=threads)
                 self._default_model = loader.model
-        return StreamingTranscriber(make_faster_whisper_transcriber(self._default_model))
+        return StreamingTranscriber(
+            make_faster_whisper_transcriber(
+                self._default_model,
+                beam_size=beam_size,
+            )
+        )
 
     def start(
         self,

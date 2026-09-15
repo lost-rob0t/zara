@@ -406,6 +406,7 @@ def make_faster_whisper_transcriber(
     model: Any,
     sample_rate: int = VAD_SAMPLE_RATE,
     language: str = "en",
+    beam_size: int = 1,
 ) -> Callable[[np.ndarray], str]:
     """Create a transcribe function from a faster-whisper WhisperModel."""
 
@@ -419,7 +420,7 @@ def make_faster_whisper_transcriber(
         try:
             segments, _ = model.transcribe(
                 audio_float,
-                beam_size=1,
+                beam_size=beam_size,
                 vad_filter=True,
                 language=language,
                 no_speech_threshold=0.5,

@@ -1,0 +1,131 @@
+#+title: Design - #880/#881/#882 voice pipeline robustness
+
+* Problem boundary
+Three defects on one end-to-end voice path, fixed in one user-directed PR:
+- #880 :: client TTS playback opens raw ALSA (PortAudio) on the event-pump
+  thread with no timeout; under PipeWire the open fails/disturbs the card
+  and spoken responses never play.
+- #881 :: active-mode collection has no frame-level deadline once speech
+  starts (=deadline=None=), and the parec reader cannot detect a stalled
+  source; the listener wedges silently.
+- #882 :: daemon-side STT decode parameters are not configurable and no
+  measured model/decode comparison exists for short follow-ups.
+
+Out of scope: ack playback (works live), daemon TTS synthesis, respawn of
+capture processes inside =PulseInputStream=, switching the shipped default
+STT model without measurement support.
+
+* Selected architecture
+
+** #880 PcmStreamSpeaker bounded Pulse playback
+- =zara/audio.py= gains =PulseOutputStream=, the write-side mirror of
+  =PulseInputStream=: spawns =pacat --format=s16le --rate=N --channels=C
+  --client-name=Zarathushtra --stream-name=... --latency-msec=100= with the
+  same =PULSE_PROP= identity, bounded startup probe (=wait(0.08)= with
+  stderr detail on early exit), =write(bytes)= to stdin, terminate/kill in
+  =stop/close=.
+- New =create_pulse_output_stream(sample_rate, channels=1)= returns a
+  =PulseOutputStream= when the Pulse backend is reachable, else =None=.
+- =PcmStreamSpeaker(stream_factory=None, open_timeout=2.0)=:
+  - default factory: =create_pulse_output_stream=; =None= result falls back
+    to =sd.OutputStream= (non-Pulse platforms only — never the normal path
+    on the PipeWire desktop).
+  - =_ensure_stream= runs the factory+start on a one-shot executor with
+    =future.result(timeout=open_timeout)= — a bounded open. Timeout or
+    exception logs ONE actionable warning (rate, hint) and leaves
+    =_stream=None=; no raise escapes =start()=, so the dispatch path and
+    the pump stay live. An abandoned late stream is closed by a done-callback.
+  - =chunk()= queues only when =_stream= is not None; otherwise it counts
+    =chunks_dropped= and logs a throttled per-turn drop warning.
+- =zmq_transport._send= failure warnings now include =message=,
+  =stream_id=, =turn_id= from the dropped =ProtocolMessage= so daemon logs
+  identify which turn/stream was dropped.
+
+** #881 frame-level deadlines and capture-stall watchdog
+- =WakeWordListener= gains =capture_stall_timeout= (=[wake]
+  capture_stall_timeout=, default 5.0 s).
+- =collect_audio_until_silence= tracks =last_frame_at=; while
+  =speech_detected= the effective deadline passed to =_next_audio= is
+  =min(last_frame_at + capture_stall_timeout, utterance_start +
+  max_utterance_duration)=. Expiry while recording logs and returns the
+  existing =None= path with =collection_status= =capture_stall= (frames
+  starved) or =max_utterance_timeout= (frames flowing but VAD never ended).
+  First-speech behavior is unchanged.
+- =active_mode_async= logs a stall-specific line when
+  =collection_status == "capture_stall"= before returning to passive.
+- =PulseInputStream= gains a watchdog thread (=zara-pulse-watchdog=):
+  =last_data_monotonic= updated on every read; if no bytes for
+  =stall_timeout= (default 5.0 s, override via =ZARA_CAPTURE_STALL_TIMEOUT=,
+  consistent with existing =ZARA_*= audio env knobs) while the process is
+  alive, it sets =last_error= first-wins ("capture stalled: no audio for
+  Ns"), logs loud, and terminates the process so the reader exits via the
+  existing EOF path. =_report_runtime_failure= no longer overwrites an
+  existing =last_error=. Wake's =_raise_if_capture_failed= converts this
+  into a loud exit; systemd restart is the self-heal.
+- Ordering: the collection-level stall bound (5 s) and the reader watchdog
+  (5 s) fire in the same window; both paths are loud and bounded, and
+  whichever fires first wins the log.
+
+** #882 configurable daemon decode + measured comparison
+- =make_faster_whisper_transcriber(model, sample_rate, language,
+  beam_size=1=) forwards =beam_size= to =model.transcribe= (both backends
+  already accept it).
+- =RuntimeVoiceIngress._default_transcriber_factory= reads =[stt]
+  beam_size= (default 1, unchanged) and passes it through. Config comment
+  documents the knob.
+- =scripts/stt-phrase-benchmark.py=: deterministic harness that synthesizes
+  a short-follow-up phrase set (local qwen3-TTS endpoint, ffmpeg to
+  16 kHz mono s16le), runs the flake's Vulkan =whisper-cli= with
+  =ggml-base.en= and =ggml-small.en= at beam 1 and beam N, and reports
+  per-utterance WER (word Levenshtein), total RTF, and amdgpu fdinfo VRAM.
+  Results recorded in the RAGE log; a default-model change only lands if
+  the numbers justify it.
+
+* Invariants
+- Playback open is time-bounded; no unbounded native open may run on the
+  event-pump thread.
+- Chunks are never buffered for a stream that did not open.
+- Every await in the collection loop re-evaluates a wall-clock deadline;
+  the listener never parks without an exit path.
+- A stalled capture source always produces a loud log; silence is a bug.
+- Daemon send failures identify the dropped message.
+- =[stt]= defaults do not move without measurement evidence.
+
+* Failure analysis
+- pacat dies mid-stream → =write= raises =BrokenPipeError= inside the
+  writer thread → existing per-write warning; turn degrades; next =start=
+  reopens.
+- Open timeout leaves a stuck factory thread — bounded leak (daemon=True),
+  stream closed by done-callback if it completes late; never blocks the pump.
+- Watchdog false positive on a legitimately silent-but-alive parec is
+  impossible: parec streams silence frames continuously, so bytes flow
+  even in silence.
+- Watchdog races a concurrent =stop()=: stop_event is checked first; a
+  terminate during teardown is harmless (already terminating).
+- =beam_size > 1= raises decode cost on weak GPUs; knob is opt-in and
+  measured before any default change.
+
+* Compatibility
+- =PulseOutputStream= is additive; =PulseInputStream= signature changes are
+  kwarg-only (sd-external callers unaffected).
+- =PcmStreamSpeaker= gains optional ctor params; existing tests that stub
+  =_ensure_stream= keep working.
+- =collect_audio_until_silence= keeps its signature; new behavior only on
+  the previously unbounded paths.
+- =make_faster_whisper_transcriber= gains a defaulted kwarg; existing
+  callers unchanged.
+
+* Acceptance criteria → tests
+| Criterion (issue) | Test |
+| bounded open (#880a) | factory sleeps > open_timeout → =start()= returns, no stream, warning |
+| open failure does not raise/block dispatch (#880b) | raising factory → =start()= silent-fails; subsequent events still dispatched |
+| chunks queue only after successful open (#880c) | failed open → =chunk()= drops+counts; successful open → queues |
+| pacat symmetry | =PulseOutputStream= command/probe/write/stop unit tests |
+| daemon drop logging (#880) | =_send= warning carries type/stream_id/turn_id |
+| zero-frame deadline (#881) | empty queue → returns at first-speech deadline (existing path guarded) |
+| active-mode stall (#881) | speech then silence → =capture_stall= by bound |
+| utterance wall-clock (#881) | endless speech frames → =max_utterance_timeout= |
+| reader stall watchdog (#881) | blocked fake stdout → last_error set, process terminated, loud log |
+| watchdog respects stop (#881) | stop_event → no false stall |
+| decode plumbing (#882) | beam_size forwarded by transcriber factory; =['stt']= default 1 |
+| measurement (#882) | harness output recorded in RAGE log; WER/RTF/VRAM table |

@@ -1,0 +1,104 @@
+#+title: Research - #880/#881/#882 voice pipeline robustness (playback sink, capture stall, STT quality)
+
+* Sources
+- Issues :: #880 (playback sink), #881 (listener wedge), #882 (daemon STT quality).
+- Code :: =zara/wake_daemon.py= (PcmStreamSpeaker, WakeDaemonClient pump),
+  =zara/wake.py= (WakeWordListener collection loop), =zara/audio.py=
+  (PulseInputStream/parec capture, PortAudio fallbacks),
+  =zara/voice_runtime.py= (daemon-side transcriber factory),
+  =zara/streaming_stt.py= (=make_faster_whisper_transcriber=),
+  =zara/whisper_cpp.py= (model resolution, server binary),
+  =zara/zmq_transport.py= (=outbound send failed= warnings),
+  =zara/protocol.py= (=ProtocolMessage.type/stream_id/turn_id=).
+- Tests :: =t/test_wake_speaker.py=, =t/test_wake_lifecycle.py=,
+  =t/test_wake_fail_closed.py=, =t/test_audio_shared_input.py=,
+  =t/test_daemon_tts_output.py=.
+- Host evidence (live 2026-09-15, from the issues) :: PortAudio ALSA open
+  failures at TTS stream start; py-spy showing =zara-pulse-capture= blocked
+  in a blocking read with zero Python-side progress; daemon transcript
+  ='Barakaniarapization'= for "what did I say" (ggml-base.en, vulkan).
+- Host audit (this worktree box = the issue box) :: RX 5500 XT (amdgpu),
+  =~/.cache/zara/whisper.cpp= holds =ggml-base.en.bin=, =ggml-small.en.bin=,
+  =ggml-small.bin=; flake ships a Vulkan =whisper-cpp= build; PipeWire owns
+  the Scarlett Solo.
+
+* #880 findings
+- =PcmStreamSpeaker._ensure_stream= (wake_daemon.py:80) opens
+  =sd.OutputStream= through PortAudio's ALSA host API and calls =.start()=
+  inline, with no timeout. =start()= runs on the event-pump thread
+  (=WakeDaemonClient._dispatch=, wake_daemon.py:327), so an unbounded ALSA
+  open blocks delivery of every other runtime event (turn lifecycle,
+  cancellation) — matching the observed dead pump plus the native-only
+  thread in the py-spy dump.
+- Capture is the proven symmetric path: =PulseInputStream= (audio.py)
+  spawns =parec= with a bounded startup probe
+  (=process.wait(timeout=0.08)=, audio.py:197), a Pulse reachability check
+  (=_pulse_backend_status=), =PULSE_PROP= application identity, and a
+  device pin from the Pulse default source.
+- The failure path has no state: after a failed open the speaker keeps
+  =self._stream=None= but =chunk()= still queues blocks (wake_daemon.py:133),
+  silently buffering audio that can never play, and the next turn retries
+  the same unbounded open.
+- Daemon side, the =errno=113= drop is logged by =ZmqZaraClient._send=
+  (zmq_transport.py:1424/1433) with only the exception type; the message
+  object carries =type/stream_id/turn_id= which would identify the dropped
+  audio.output turn.
+
+* #881 findings
+- =WakeWordListener.collect_audio_until_silence= (wake.py:597) sets
+  =deadline=None= once =SpeechStarted= fires (wake.py:658). With =None=,
+  =_next_audio= (wake.py:535) loops forever on =audio_ready= timeouts and
+  never returns: a capture stall after speech begins parks the collection
+  loop with no log. Before speech, the deadline IS honored (=_next_audio=
+  computes a bounded =wait_for= and returns =None= at the deadline), which
+  is why passive mode recovered historically.
+- =_monitor_speech_during_llm= passes a fresh 0.2s deadline per iteration
+  and =continue=s forever — bounded per-frame, unbounded overall, but it
+  only runs after the utterance is already committed.
+- =PulseInputStream._reader_loop= (audio.py:265) does a blocking
+  =process.stdout.read(read_size)=. EOF (killed parec) is detected and sets
+  =last_error= (fail loud via =_raise_if_capture_failed=), but a *stalled*
+  source (PipeWire hang, USB hiccup — no EOF, no bytes) blocks the read
+  forever: no timeout, no watchdog, no error, no log. =last_error= is also
+  settable twice (reader EOF path overwrites), so first-failure-wins is not
+  currently guaranteed.
+- The wake main loop only re-checks =_raise_if_capture_failed= between
+  frames/at loop boundaries, so the reader is the only place that can
+  detect a silent stall.
+
+* #882 findings
+- Daemon-side STT model/config: =RuntimeVoiceIngress._default_transcriber_factory=
+  (voice_runtime.py:107) reads =[stt] provider/model/device/threads=; decode
+  parameters are hardcoded in =make_faster_whisper_transcriber=
+  (streaming_stt.py:405): =beam_size=1, vad_filter=True,
+  no_speech_threshold=0.5=, =condition_on_previous_text= unset. Both
+  backends already accept =beam_size= (stt_backends.py:170 keeps beam 1 as
+  default/no-op; whisper_cpp.py:298 forwards it to the server).
+- The user's daemon ran =base.en= (their config override; repo default is
+  =model="small"=) on the whisper.cpp vulkan path; =wake_beam=2= affects
+  only the listener's local wake spotting transcribe call.
+- Existing normalizer stack (=[voice.transcript_normalization]=, s1-mini
+  backend) is an LLM-cleanup service, not a WER fix; #882 acceptance asks
+  for measurement + config plumbing, not a new normalizer.
+- Measurement feasibility on this box: models are already cached
+  (=ggml-base.en.bin= 141 MiB, =ggml-small.en.bin= 465 MiB, plus
+  =ggml-small.bin=); the flake provides the Vulkan =whisper-cpp= binary;
+  amdgpu fdinfo can expose per-client VRAM; phrase audio can be synthesized
+  locally (the qwen3-TTS endpoint that produced the issue's ack audio runs
+  on this host, with ffmpeg for format conversion). No ROCm/PyTorch needed.
+
+* Challenged inherited design
+- "Patch =sd.OutputStream= monkeypatch style like capture" — rejected:
+  global monkeypatching of output would silently reroute unrelated
+  playback (console =AudioOutput.play= uses =sd.play=, unpatched by design)
+  and hide the boundary. The speaker owns an injectable factory instead.
+- "Respawn parec inside PulseInputStream on stall" — rejected for this
+  iteration: a respawn loop inside a fake-stream-adjacent component risks
+  callback reentrancy and unbounded restart cycles; the wake supervisor
+  already fails closed and systemd restarts the unit (observed recovery
+  path in #881). Watchdog = fail loud keeps the failure deterministic and
+  testable. Respawn remains a future enhancement.
+- "Switch default model to small.en" — premature before measurement; the
+  acceptance criteria explicitly keep the default unless the comparison
+  justifies it. Plumbing =beam_size= through =[stt]= is justified
+  regardless (it is the cheapest decode-quality lever).
