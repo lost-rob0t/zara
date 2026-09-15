@@ -104,3 +104,34 @@ whisper-cli Vulkan on RX 5500 XT, threads=4, 10 short follow-up phrases,
 ** Evaluate
 - Focused gates at each step; full =scripts/test-all.sh= and
   =nix flake check= recorded below at the candidate head.
+
+** Live end-to-end verification (this host, 2026-09-15 19:28-19:41)
+- Setup :: worktree listener ran =python -m zara --wake= against the live
+  daemon with process-local routing only (=ZARA_PULSE_SOURCE= for mic,
+  =ZARA_PULSE_SINK=zara-e2e2= for playback, virtual null-sink +
+  remap-source). The desktop default sink and the user's audio were never
+  re-routed after an initial mistake that was reverted immediately; the
+  systemd =zara-wake= unit was restored and is active.
+- Wake cycle :: normalized qwen3-TTS phrase played into the virtual mic;
+  listener logged =Passive transcript: 'Hey zara.'= -> =Wake word
+  detected= -> acknowledgement ='Okay'= / next turn ='Sure'= played.
+- #880 playback :: daemon audio.output opened the new sink live:
+  =Audio playback stream started (backend=Pulse/pacat, sink='zara-e2e2',
+  rate=24000Hz, channels=1)=. The sink monitor recording of the response,
+  transcribed, reads: ="It's currently 1.37 a.m. on September 15, 2026.
+  Could you clarify what you mean by..."= — spoken responses are audible.
+- Barge-in :: the in-flight turn turn-0005 was cancelled by the Turn
+  Coordinator when new speech arrived mid-response (daemon journal), and
+  the next utterance was handled as turn-0006.
+- #881 stall :: with the listener on the real Scarlett source, =parec=
+  was frozen with SIGSTOP (alive, no EOF, zero bytes). The watchdog fired
+  at 5.1s: =Audio capture failed: capture stalled: no audio bytes for 5.1s
+  (source='alsa_input.usb-Focusrite_Scarlett_Solo_USB-00.HiFi__Mic1__source',
+  stall_timeout=5.0s)=, the listener failed loud and exited instead of
+  wedging; the daemon journal shows the parallel wake/command turns
+  (='time is it.'= answered with the actual time).
+- STT on the loopback path :: daemon-side base.en transcribed VAD-trimmed
+  synthetic clips imperfectly (='Pezara'=, ="I'm not"=) while clean clips
+  measure WER 0.053 (base.en) / 0.033 (small.en) per the benchmark above;
+  the loopback mic==speaker echo also produced echo turns, which is a
+  test-harness artifact, not a production path.
