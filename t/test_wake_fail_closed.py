@@ -27,13 +27,14 @@ def test_connect_to_dead_endpoint_raises_unavailable_with_guidance():
 
 
 def test_reconnect_exhaustion_fails_closed(monkeypatch):
+    from zara.client import ZaraClientState
     from zara.wake_daemon import WakeDaemonClient
     from t.test_wake_daemon_client import FakeZaraClient
 
     class BrokenReconnectClient(FakeZaraClient):
         def __init__(self) -> None:
             super().__init__()
-            self.state = "FAILED"
+            self.state = ZaraClientState.FAILED
 
         def reconnect_with_backoff(self, **kwargs):
             raise ConnectionError("daemon still down")

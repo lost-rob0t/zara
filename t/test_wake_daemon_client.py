@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import threading
 
 import numpy as np
 import pytest
 
+from zara.client import ZaraClientState
 from zara.runtime import events
 from zara.runtime.bridge import RuntimeEventBus
 from zara.wake_daemon import WakeDaemonClient, WakeDaemonUnavailable, utterance_frames
@@ -17,7 +19,7 @@ class FakeZaraClient:
         self.calls: list[tuple] = []
         self.lock = threading.Lock()
         self._bus = RuntimeEventBus()
-        self.state = "READY"
+        self.state = ZaraClientState.READY
         self.audio_output_format = {
             "codec": "pcm_s16le",
             "sample_rate": 24000,
@@ -44,6 +46,7 @@ class FakeZaraClient:
         return future
 
     def subscribe(self, *, maxsize=0):
+        self._record("subscribe", maxsize=maxsize)
         return self._bus.subscribe(maxsize=maxsize)
 
     def start_audio_input(self, stream_id, *, trace_id=None):
@@ -236,3 +239,81 @@ def test_audio_output_format_delegates_to_client_contract():
         "sample_rate": 24000,
         "channels": 1,
     }
+
+
+def test_ensure_connected_ready_client_skips_reconnect():
+    fake = FakeZaraClient()
+
+    def reconnect_with_backoff(**kwargs):
+        fake._record("reconnect_with_backoff", **kwargs)
+        raise AssertionError("READY client must not reconnect")
+
+    fake.reconnect_with_backoff = reconnect_with_backoff
+    client = WakeDaemonClient(client=fake)
+
+    client.ensure_connected()
+
+    assert fake.calls == []
+
+
+def test_ensure_connected_waits_for_backoff_future_before_subscribing():
+    fake = FakeZaraClient()
+    fake.state = ZaraClientState.STOPPED
+    gate = concurrent.futures.Future()
+
+    def reconnect_with_backoff(**kwargs):
+        fake._record("reconnect_with_backoff", **kwargs)
+        return gate
+
+    fake.reconnect_with_backoff = reconnect_with_backoff
+    client = WakeDaemonClient(client=fake)
+    finished = threading.Event()
+
+    def call() -> None:
+        client.ensure_connected()
+        finished.set()
+
+    worker = threading.Thread(target=call, daemon=True)
+    worker.start()
+
+    assert not finished.wait(0.2), "ensure_connected must block on the backoff future"
+    assert not [call_entry for call_entry in fake.calls if call_entry[0] == "subscribe"]
+
+    fake.state = ZaraClientState.READY
+    gate.set_result(True)
+    assert finished.wait(5)
+
+    names = [call_entry[0] for call_entry in fake.calls]
+    assert "reconnect_with_backoff" in names
+    assert names.index("subscribe") > names.index("reconnect_with_backoff")
+
+
+def test_ensure_connected_surfaces_async_reconnect_failure_as_unavailable():
+    fake = FakeZaraClient()
+    fake.state = ZaraClientState.STOPPED
+    failed = concurrent.futures.Future()
+    failed.set_exception(ConnectionError("daemon still down"))
+
+    def reconnect_with_backoff(**kwargs):
+        return failed
+
+    fake.reconnect_with_backoff = reconnect_with_backoff
+    client = WakeDaemonClient(client=fake)
+
+    with pytest.raises(WakeDaemonUnavailable) as excinfo:
+        client.ensure_connected()
+    assert "reconnect" in str(excinfo.value)
+
+
+def test_ensure_connected_times_out_waiting_for_reconnect():
+    fake = FakeZaraClient()
+    fake.state = ZaraClientState.STOPPED
+
+    def reconnect_with_backoff(**kwargs):
+        return concurrent.futures.Future()
+
+    fake.reconnect_with_backoff = reconnect_with_backoff
+    client = WakeDaemonClient(client=fake, connect_timeout=0.2)
+
+    with pytest.raises(WakeDaemonUnavailable):
+        client.ensure_connected()

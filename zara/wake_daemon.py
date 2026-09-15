@@ -19,6 +19,7 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from zara.client import ZaraClientState
 from zara.runtime import events
 from zara.runtime.bridge import RuntimeEventSubscription
 from zara.runtime.commands import CancelTurn
@@ -266,10 +267,13 @@ class WakeDaemonClient:
             ) from error
 
     def ensure_connected(self, *, max_attempts: int = 4) -> None:
-        if self._client is not None and self._client.state == "READY":
+        if self._client is not None and self._client.state is ZaraClientState.READY:
             return
         try:
-            self.client.reconnect_with_backoff(max_attempts=max_attempts)
+            reconnect_future = self.client.reconnect_with_backoff(
+                max_attempts=max_attempts
+            )
+            reconnect_future.result(timeout=self._connect_timeout)
         except BaseException as error:
             raise WakeDaemonUnavailable(
                 f"Lost the Zara daemon and could not reconnect: {error}"
