@@ -41,7 +41,7 @@ class StreamChunk:
 
 def supports_streaming(provider: str) -> bool:
     """Return True if ``provider`` supports streaming synthesis."""
-    return provider in {"11labs", "edge"}
+    return provider in {"11labs", "edge", "qwen3"}
 
 
 class TTSEngine:
@@ -155,6 +155,11 @@ class TTSEngine:
 
         if self.provider == "edge":
             async for chunk in self._stream_edge(text):
+                yield chunk
+            return
+
+        if self.provider == "qwen3":
+            async for chunk in self._stream_qwen3(text):
                 yield chunk
             return
 
@@ -301,6 +306,47 @@ class TTSEngine:
                 first_chunk=first,
             )
             first = False
+
+    async def _stream_qwen3(self, text: str) -> AsyncIterator[StreamChunk]:
+        """Stream s16le 24 kHz mono PCM chunks from the OpenAI-compatible
+        server as they are generated. The client is closed when the
+        consumer stops early, including cancellation."""
+        client = Qwen3TTSClient(
+            self.qwen3_url,
+            total_timeout=self.total_timeout,
+            connect_timeout=self.connect_timeout,
+            read_timeout=self.read_timeout,
+        )
+        first = True
+        try:
+            async for audio in client.stream_speech(
+                text=text,
+                voice=self.qwen3_voice,
+            ):
+                yield StreamChunk(
+                    provider=self.provider,
+                    audio=audio,
+                    audio_format="pcm",
+                    first_chunk=first,
+                )
+                first = False
+        except asyncio.CancelledError:
+            yield StreamChunk(
+                provider=self.provider,
+                audio=b"",
+                audio_format="pcm",
+                error="Synthesis cancelled",
+            )
+            raise
+        except Exception as error:
+            yield StreamChunk(
+                provider=self.provider,
+                audio=b"",
+                audio_format="pcm",
+                error=str(error),
+            )
+        finally:
+            await client.close()
 
     async def _synthesize_local(self, text: str) -> tuple[bytes, str]:
         if self.local_engine == "piper":

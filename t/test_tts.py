@@ -240,24 +240,18 @@ async def test_empty_and_invalid_audio_fail_cleanly(monkeypatch, audio):
 
 
 @pytest.mark.asyncio
-async def test_qwen_upload_and_change_close_files(monkeypatch, tmp_path):
+async def test_qwen_register_voice_posts_registry_payload(monkeypatch, tmp_path):
+    import base64
+
     audio_path = tmp_path / "sample.wav"
     audio_path.write_bytes(wav_bytes())
-    files = []
-
-    class FormData:
-        def add_field(self, name, value, **kwargs):
-            if name == "file":
-                files.append(value)
+    client = Qwen3TTSClient()
 
     class Response:
         status = 200
 
         async def json(self):
             return {"ok": True}
-
-        async def read(self):
-            return wav_bytes()
 
     class RequestContext:
         async def __aenter__(self):
@@ -269,20 +263,23 @@ async def test_qwen_upload_and_change_close_files(monkeypatch, tmp_path):
     class Session:
         closed = False
 
-        def post(self, url, data):
+        def __init__(self):
+            self.calls = []
+
+        def post(self, url, json=None, **kwargs):
+            self.calls.append((url, json))
             return RequestContext()
 
         async def close(self):
             self.closed = True
 
-    monkeypatch.setattr(qwen_module.aiohttp, "FormData", FormData)
-    client = Qwen3TTSClient()
     session = Session()
     client.session = session
 
-    await client.upload_voice(str(audio_path), "voice")
-    await client.change_voice(str(audio_path), "voice")
-    await client.close()
+    await client.register_voice("zara", str(audio_path), "words spoken")
 
-    assert all(audio_file.closed for audio_file in files)
-    assert session.closed and client.session is None
+    url, body = session.calls[0]
+    assert url.endswith("/v1/audio/voices")
+    assert body["name"] == "zara"
+    assert body["ref_text"] == "words spoken"
+    assert base64.b64decode(body["wav_b64"]) == wav_bytes()
