@@ -135,3 +135,16 @@ whisper-cli Vulkan on RX 5500 XT, threads=4, 10 short follow-up phrases,
   measure WER 0.053 (base.en) / 0.033 (small.en) per the benchmark above;
   the loopback mic==speaker echo also produced echo turns, which is a
   test-harness artifact, not a production path.
+
+** Evaluate (exact-head gate at =4d393606=)
+- =nix develop -c bash scripts/test-all.sh= :: 13/13 phases passed.
+- =nix flake check= :: all checks passed (aarch64-linux evaluation omitted
+  per environment convention, matching #250 precedent).
+- Coverage inspection :: every reachable changed branch has a deterministic
+  test (bounded-open timeout/abandon paths, open-failure degradation, chunk
+  gating, late-stream adoption race, pulse output command/probe/write/stop,
+  send-failure identity logging, zero-frame/stall/utterance-cap deadline
+  paths, stall-vs-utterance binding, watchdog fire/stop/first-wins, beam
+  plumbing at factory and transcriber level). Live E2E covers the
+  integration surface the unit tests fake (Pulse routing, systemd failure
+  semantics, daemon round-trip).
