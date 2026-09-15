@@ -1,7 +1,13 @@
-"""Async Qwen3-TTS HTTP client."""
+"""Async client for the OpenAI-compatible Qwen3-TTS (qwentts.cpp) server.
 
+Endpoints: POST /v1/audio/speech (response_format "pcm" streams s16le
+24 kHz mono as it is generated, "wav" returns a one-shot RIFF file),
+GET/POST /v1/audio/voices, DELETE /v1/audio/voices/{name}, GET /health.
+"""
+
+import base64
 from pathlib import Path
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 import aiohttp
 
@@ -17,6 +23,11 @@ class Qwen3TTSClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = aiohttp.ClientTimeout(
             total=total_timeout,
+            connect=connect_timeout,
+            sock_read=read_timeout,
+        )
+        self.stream_timeout = aiohttp.ClientTimeout(
+            total=None,
             connect=connect_timeout,
             sock_read=read_timeout,
         )
@@ -39,79 +50,94 @@ class Qwen3TTSClient:
             await self.session.close()
             self.session = None
 
+    async def health(self) -> dict:
+        session = await self._ensure_session()
+        async with session.get(f"{self.base_url}/health") as response:
+            await self._raise_for_status(response)
+            return await response.json()
+
+    async def list_voices(self) -> list[str]:
+        session = await self._ensure_session()
+        async with session.get(f"{self.base_url}/v1/audio/voices") as response:
+            await self._raise_for_status(response)
+            payload = await response.json()
+        return [entry["name"] for entry in payload.get("voices", [])]
+
+    async def register_voice(
+        self,
+        name: str,
+        wav_file_path: str,
+        reference_text: str = "",
+    ) -> dict:
+        path = Path(wav_file_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"File not found: {wav_file_path}")
+
+        wav_b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+        body = {"name": name, "wav_b64": wav_b64}
+        if reference_text:
+            body["ref_text"] = reference_text
+
+        session = await self._ensure_session()
+        async with session.post(
+            f"{self.base_url}/v1/audio/voices", json=body
+        ) as response:
+            await self._raise_for_status(response)
+            return await response.json()
+
+    async def delete_voice(self, name: str) -> dict:
+        session = await self._ensure_session()
+        async with session.delete(
+            f"{self.base_url}/v1/audio/voices/{name}"
+        ) as response:
+            await self._raise_for_status(response)
+            return await response.json(content_type=None)
+
     async def synthesize_speech(
         self,
         text: str,
         voice: str = "zara",
         speed: float = 1.0,
     ) -> bytes:
-        return await self._get_audio(
-            "synthesize_speech/",
-            {"text": text, "voice": voice, "speed": speed},
-        )
-
-    async def base_tts(self, text: str, speed: float = 1.0) -> bytes:
-        return await self._get_audio(
-            "base_tts/",
-            {"text": text, "speed": speed},
-        )
-
-    async def _get_audio(self, endpoint: str, params: dict) -> bytes:
         session = await self._ensure_session()
-        async with session.get(f"{self.base_url}/{endpoint}", params=params) as response:
-            if response.status != 200:
-                detail = await response.text()
-                raise RuntimeError(f"Qwen3-TTS returned {response.status}: {detail}")
+        body = {
+            "input": text,
+            "voice": voice,
+            "response_format": "wav",
+        }
+        async with session.post(
+            f"{self.base_url}/v1/audio/speech", json=body, timeout=self.timeout
+        ) as response:
+            await self._raise_for_status(response)
             return await response.read()
 
-    async def upload_voice(self, audio_file_path: str, voice_label: str) -> dict:
-        path = Path(audio_file_path)
-        if not path.is_file():
-            return {"error": f"File not found: {audio_file_path}"}
-
-        session = await self._ensure_session()
-        data = aiohttp.FormData()
-        data.add_field("audio_file_label", voice_label)
-        with path.open("rb") as audio_file:
-            data.add_field(
-                "file",
-                audio_file,
-                filename=path.name,
-                content_type="audio/mpeg",
-            )
-            async with session.post(
-                f"{self.base_url}/upload_audio/", data=data
-            ) as response:
-                if response.status == 200:
-                    return await response.json()
-                detail = await response.text()
-                return {"error": f"{response.status} - {detail}"}
-
-    async def change_voice(
+    async def stream_speech(
         self,
-        audio_file_path: str,
-        reference_speaker: str,
-    ) -> bytes:
-        path = Path(audio_file_path)
-        if not path.is_file():
-            raise FileNotFoundError(f"File not found: {audio_file_path}")
+        text: str,
+        voice: str = "zara",
+        speed: float = 1.0,
+    ) -> AsyncIterator[bytes]:
+        """Yield s16le 24 kHz mono PCM chunks as the server generates them.
 
+        No total timeout: a long utterance may legitimately outlive the
+        buffered-request budget; only connect and per-read bounds apply.
+        """
         session = await self._ensure_session()
-        data = aiohttp.FormData()
-        data.add_field("reference_speaker", reference_speaker)
-        with path.open("rb") as audio_file:
-            data.add_field(
-                "file",
-                audio_file,
-                filename=path.name,
-                content_type="audio/wav",
-            )
-            async with session.post(
-                f"{self.base_url}/change_voice/", data=data
-            ) as response:
-                if response.status != 200:
-                    detail = await response.text()
-                    raise RuntimeError(
-                        f"Qwen3-TTS returned {response.status}: {detail}"
-                    )
-                return await response.read()
+        body = {
+            "input": text,
+            "voice": voice,
+            "response_format": "pcm",
+        }
+        async with session.post(
+            f"{self.base_url}/v1/audio/speech", json=body, timeout=self.stream_timeout
+        ) as response:
+            await self._raise_for_status(response)
+            async for chunk in response.content.iter_any():
+                if chunk:
+                    yield chunk
+
+    @staticmethod
+    async def _raise_for_status(response: aiohttp.ClientResponse) -> None:
+        if response.status != 200:
+            detail = await response.text()
+            raise RuntimeError(f"Qwen3-TTS returned {response.status}: {detail}")

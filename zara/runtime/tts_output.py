@@ -306,6 +306,8 @@ class TtsOutputBridge:
 
     def _decode_to_pcm(self, audio: bytes, audio_format: str) -> bytes:
         audio_format = (audio_format or "").lower()
+        if audio_format == "pcm":
+            return audio
         if audio_format == "wav":
             return _decode_wav(audio, self._sample_rate)
         if audio_format == "mp3":
