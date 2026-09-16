@@ -64,6 +64,7 @@ MAX_RECORDING_DURATION = 30.0
 DEFAULT_AUDIO_QUEUE_CHUNKS = 32
 TIMEOUT_ACTIVE = 5
 DEFAULT_RESPONSE_TIMEOUT = 30.0
+DEFAULT_CAPTURE_STALL_TIMEOUT = 5.0
 
 CLARIFICATION_PRINCIPAL = "local"
 CLARIFICATION_CONVERSATION = "voice"
@@ -156,6 +157,10 @@ class WakeWordListener:
         self.max_utterance_duration = self._positive_float(
             wake_cfg.get("max_utterance_duration", MAX_RECORDING_DURATION),
             MAX_RECORDING_DURATION,
+        )
+        self.capture_stall_timeout = self._positive_float(
+            wake_cfg.get("capture_stall_timeout", DEFAULT_CAPTURE_STALL_TIMEOUT),
+            DEFAULT_CAPTURE_STALL_TIMEOUT,
         )
         self.audio_queue_chunks = self._positive_int(
             wake_cfg.get("audio_queue_chunks", DEFAULT_AUDIO_QUEUE_CHUNKS),
@@ -623,18 +628,66 @@ class WakeWordListener:
         vad.start_turn(turn_id)
         pending = np.zeros(0, dtype=np.float32)
         speech_detected = False
+        utterance_deadline: Optional[float] = None
         max_peak = 0.0
         max_probability = 0.0
+        last_frame_at = self._clock()
         self.collection_status = "waiting_for_speech"
 
+        def _utterance_deadline_expired(now: float) -> bool:
+            return (
+                utterance_deadline is not None
+                and now >= utterance_deadline
+            )
+
         while not self._stopping():
-            data = await self._next_audio(None if speech_detected else deadline)
+            if speech_detected:
+                effective_deadline = min(
+                    last_frame_at + self.capture_stall_timeout,
+                    utterance_deadline
+                    if utterance_deadline is not None
+                    else last_frame_at + self.capture_stall_timeout,
+                )
+            else:
+                effective_deadline = deadline
+            data = await self._next_audio(effective_deadline)
             if data is None:
                 if self._stopping():
                     self.collection_status = "stopped"
                     return None
+                now = self._clock()
+                if speech_detected:
+                    stall_deadline = last_frame_at + self.capture_stall_timeout
+                    utterance_binds = (
+                        utterance_deadline is not None
+                        and now >= utterance_deadline
+                        and utterance_deadline <= stall_deadline
+                    )
+                    if utterance_binds:
+                        self.collection_status = "max_utterance_timeout"
+                        self.log(
+                            "Utterance deadline reached without VAD end; "
+                            "returning to listening"
+                        )
+                        return None
+                    self.collection_status = "capture_stall"
+                    self.log(
+                        "Capture stalled: no microphone frames for "
+                        f"{self.capture_stall_timeout:.1f}s during an utterance; "
+                        "abandoning collection"
+                    )
+                    return None
                 self.collection_status = "first_speech_timeout"
                 self._log_no_speech(max_peak, max_probability)
+                return None
+
+            last_frame_at = self._clock()
+            if speech_detected and _utterance_deadline_expired(last_frame_at):
+                self.collection_status = "max_utterance_timeout"
+                self.log(
+                    "Utterance deadline reached without VAD end; "
+                    "returning to listening"
+                )
                 return None
 
             mono = data[:, 0] if data.ndim > 1 else data
@@ -655,7 +708,7 @@ class WakeWordListener:
                     if isinstance(event, SpeechStarted):
                         speech_detected = True
                         self.collection_status = "recording"
-                        deadline = None
+                        utterance_deadline = self._clock() + self.max_utterance_duration
                         self.log("Speech detected (Silero VAD)")
                         if trace is not None:
                             trace.record("speech_start")
@@ -966,7 +1019,12 @@ class WakeWordListener:
             if utterance is None:
                 if self.collection_status == "stopped":
                     return
-                self.log("⏸️ No speech - returning to passive")
+                if self.collection_status == "capture_stall":
+                    self.log("⏸️ Capture stalled - returning to passive")
+                elif self.collection_status == "max_utterance_timeout":
+                    self.log("⏸️ Utterance cap reached - returning to passive")
+                else:
+                    self.log("⏸️ No speech - returning to passive")
                 self.transition_to("PASSIVE")
                 self._conversation_last_activity = 0.0
                 return

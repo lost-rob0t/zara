@@ -87,3 +87,32 @@ def test_permanent_outbound_error_remains_fail_closed_and_secret_safe(caplog):
     assert "ZMQError" in caplog.text
     assert sensitive_route.decode("ascii") not in caplog.text
     assert "permanent-send-diagnostic" not in caplog.text
+
+
+def test_audio_delivery_drop_names_turn_and_stream_without_secrets(caplog):
+    sensitive_route = b"secret-audio-route"
+    gateway = _gateway_with_live_route(sensitive_route)
+    gateway._drop_route = lambda _route: None
+
+    with caplog.at_level(logging.WARNING, logger="zara.zmq_transport"):
+        gateway._send(
+            _PermanentFailureSocket(),
+            sensitive_route,
+            ProtocolMessage(
+                type="audio.output.chunk",
+                id="secret-message-id",
+                timestamp_ns=1,
+                payload_count=1,
+                stream_id="tts-stream-7",
+                turn_id="turn-42",
+                seq=0,
+                content_type="audio/pcm;codec=pcm_s16le",
+            ),
+            payloads=(b"\x00\x00",),
+        )
+
+    assert "audio.output.chunk" in caplog.text
+    assert "tts-stream-7" in caplog.text
+    assert "turn-42" in caplog.text
+    assert sensitive_route.decode("ascii") not in caplog.text
+    assert "secret-message-id" not in caplog.text

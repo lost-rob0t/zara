@@ -75,6 +75,8 @@ def build_listener(queue_size=8, sample_rate=16000):
     listener._capture_stream = None
     listener.input_sample_rate = sample_rate
     listener.first_speech_timeout = 5.0
+    listener.capture_stall_timeout = 5.0
+    listener.max_utterance_duration = 30.0
     listener.silence_duration = 1.0
     listener.vad_config = VADConfig(
         min_speech_frames=1,

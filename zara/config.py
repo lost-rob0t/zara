@@ -65,6 +65,8 @@ silence_duration = 1.5
 first_speech_timeout = 5.0
 # Hard cap for a single utterance and buffered callback chunks
 max_utterance_duration = 30.0
+# Abandon an utterance when no microphone frames arrive for this long (#881)
+capture_stall_timeout = 5.0
 audio_queue_chunks = 32
 
 # Immediate acknowledgement (ZARA-025)
@@ -91,6 +93,8 @@ provider = "faster-whisper"  # or "whisper"
 model = "small"
 device = "cpu"  # or "cuda" (NVIDIA), "vulkan"/"amd"/"rocm"/"hip" (AMD via whisper.cpp)
 threads = 4
+# Decode beam width for daemon-side STT (1 = greedy; higher costs more GPU time)
+beam_size = 1
 # Streaming VAD (Silero) parameters — 512 samples = 32 ms at 16 kHz
 vad_threshold = 0.5
 min_speech_ms = 128        # ~4 chunks before speech_started

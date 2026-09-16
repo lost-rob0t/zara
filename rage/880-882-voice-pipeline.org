@@ -1,0 +1,150 @@
+* Run identity
+- Consumed issues :: #880, #881, #882 (user-directed combined iteration: "solve these issues in one pr on a worktree")
+- Branch :: =rage/880-882-voice-pipeline=
+- RAGE start commit :: =88b8db66df1e6a16b57d17e75bd1db9b89a93702=
+- Protocol :: repository Auto-RAGE (recorded convention).
+- Worktree :: =/home/unseen/git/worktrees/zarathushtra-rage-880-882-voice-pipeline=
+- Predecessor :: #879 merged as =88b8db66=; all three issues were filed live against this exact post-#879 state, and the start commit is that SHA.
+- Note :: RAGE policy is one consumed issue per iteration; the user explicitly directed a single PR for #880+#881+#882, which share one end-to-end voice path (playback sink, capture watchdog, STT quality). Each issue keeps its own research/design/TDD/gate evidence sections below and will be referenced in the PR.
+
+* Iteration 1 - 2026-09-15
+** Analyze / Research
+- Completed in =rage/880-882-voice-pipeline-research.org=.
+- Evidence: PortAudio ALSA open failures on the pump thread at TTS start
+  (#880), py-spy showing the main loop parked with zero frames arriving
+  after speech-start cleared the collection deadline (#881), and the
+  daemon-side base.en garble ='Barakarapization'= for "what did I say"
+  (#882). Host audit: RX 5500 XT on RADV Vulkan, cached ggml models,
+  flake Vulkan whisper-cpp, PipeWire owning the Scarlett Solo.
+
+** Architecture / Design
+- Completed in =rage/880-882-voice-pipeline-design.org=.
+- #880: =PulseOutputStream= (pacat) mirrors the parec capture path;
+  bounded open on a one-shot executor; failed opens degrade the turn and
+  drop chunks instead of queueing into a dead stream; daemon =_send=
+  failures name message/stream/turn.
+- #881: two wall-clock bounds during recording (frame-inactivity
+  =capture_stall_timeout= + utterance cap) so the loop can never park;
+  =PulseInputStream= watchdog fails loud on a silent parec.
+- #882: =[stt] beam_size= plumbed to =make_faster_whisper_transcriber=;
+  measurement harness =scripts/stt-phrase-benchmark.py=; default model
+  unchanged without measurement support.
+
+** Adversarial review
+- Open-adoption race: a done-callback closing a stream the main thread was
+  about to adopt was eliminated by moving adoption inside the pool task
+  under a generation counter; a timed-out open bumps the generation so the
+  late stream self-closes.
+- Watchdog false positives are impossible for a healthy parec: it streams
+  silence frames continuously, so bytes flow even in silence; the watchdog
+  only fires on true starvation.
+- First-failure-wins for =last_error= so the stall reason is not masked by
+  the subsequent EOF report from the terminated process.
+- Secrets: transport warnings keep route bytes and message ids out of logs
+  (existing #575 assertions still green); only type/stream_id/turn_id are
+  added.
+- The stall deadline and utterance deadline can expire in the same tick;
+  the expiry branch reports the binding (smaller) deadline to keep the
+  status honest.
+
+** Autonomous decision gate
+- ACCEPT. Tests-first realization authorized within the recorded design
+  for all three issues.
+
+** Realize / TDD
+- #880 RED :: =t/test_wake_speaker.py= new tests failed with
+  =TypeError: unexpected keyword argument 'stream_factory'=;
+  =t/test_pulse_output_stream.py= failed on the missing module; the zmq
+  drop-context test failed on missing log fields.
+- #880 GREEN :: =34fbf136=; 52 focused tests green (speaker, pulse output,
+  shared input, zmq transport). =test_cancel_drops_queued_audio_immediately=
+  was updated to attach a fake sink because it codified queueing without
+  an open stream, which is now a contract violation.
+- #881 RED :: =t/test_wake_capture_stall.py= hung in
+  =collect_audio_until_silence= — the wedge itself reproduced (deadline=None
+  spins forever after speech-start). A build_listener harness bug (bounded
+  queue put) was fixed in the test, not the production code.
+- #881 GREEN :: =46e5a610=; 34 tests green across capture-stall, lifecycle,
+  shared-input watchdog tests.
+- #882 RED :: =t/test_stt_beam_plumbing.py= 3 failed (missing beam_size
+  kwarg and factory forwarding).
+- #882 GREEN :: all focused STT suites green (46 passed, 2 skipped).
+- Implementation commit :: see below (#882).
+
+** #882 Measurement (clean TTS audio, qwen3-TTS phrases -> 16 kHz mono,
+whisper-cli Vulkan on RX 5500 XT, threads=4, 10 short follow-up phrases,
+~10.1s total audio; harness: =scripts/stt-phrase-benchmark.py=)
+| model    | beam | WER    | RTF   | peak VRAM |
+|----------+------+--------+-------+-----------|
+| base.en  |    1 | 0.053  | 0.266 | ~141 MiB  |
+| base.en  |    2 | 0.087  | 0.266 | ~141 MiB  |
+| base.en  |    3 | 0.053  | 0.306 | ~340 MiB  |
+| base.en  |    5 | 0.053  | 0.332 | ~352 MiB  |
+| small.en |    1 | 0.033  | 0.824 | ~719 MiB  |
+| small.en |    2 | 0.053  | 0.797 | ~773 MiB  |
+| small.en |    3 | 0.053  | 0.797 | ~791 MiB  |
+| small.en |    5 | 0.033  | 0.797 | ~827 MiB  |
+- Every configuration transcribed "what did I say" perfectly on clean
+  audio; base.en's residual errors ("Sit a timer", "mind me to call mom")
+  disappear at small.en beam=1.
+- Beam > 1 never beat beam 1 on this phrase set and costs VRAM/RTF; the
+  default =beam_size = 1= stays.
+- small.en beam=1 is the best measured configuration: WER 0.033 vs 0.053,
+  RTF 0.82 (still real-time for ~2s utterances), ~719 MiB VRAM. The
+  shipped default is already =model = "small"=; the live daemon's base.en
+  was a local config override, so no default change is warranted — the
+  measurement justifies the existing default and the user override should
+  move to small.en. VRAM headroom on the 8 GB card is acceptable, but the
+  user games on this box, so the daemon-side STT model remains
+  config-owned rather than a hard default switch.
+- Limitation recorded: phrase audio is synthesized (qwen3-TTS), not live
+  microphone captures with ack bleed; numbers are a clean-audio baseline.
+  The user declined a live mic recording for this iteration.
+
+** Evaluate
+- Focused gates at each step; full =scripts/test-all.sh= and
+  =nix flake check= recorded below at the candidate head.
+
+** Live end-to-end verification (this host, 2026-09-15 19:28-19:41)
+- Setup :: worktree listener ran =python -m zara --wake= against the live
+  daemon with process-local routing only (=ZARA_PULSE_SOURCE= for mic,
+  =ZARA_PULSE_SINK=zara-e2e2= for playback, virtual null-sink +
+  remap-source). The desktop default sink and the user's audio were never
+  re-routed after an initial mistake that was reverted immediately; the
+  systemd =zara-wake= unit was restored and is active.
+- Wake cycle :: normalized qwen3-TTS phrase played into the virtual mic;
+  listener logged =Passive transcript: 'Hey zara.'= -> =Wake word
+  detected= -> acknowledgement ='Okay'= / next turn ='Sure'= played.
+- #880 playback :: daemon audio.output opened the new sink live:
+  =Audio playback stream started (backend=Pulse/pacat, sink='zara-e2e2',
+  rate=24000Hz, channels=1)=. The sink monitor recording of the response,
+  transcribed, reads: ="It's currently 1.37 a.m. on September 15, 2026.
+  Could you clarify what you mean by..."= — spoken responses are audible.
+- Barge-in :: the in-flight turn turn-0005 was cancelled by the Turn
+  Coordinator when new speech arrived mid-response (daemon journal), and
+  the next utterance was handled as turn-0006.
+- #881 stall :: with the listener on the real Scarlett source, =parec=
+  was frozen with SIGSTOP (alive, no EOF, zero bytes). The watchdog fired
+  at 5.1s: =Audio capture failed: capture stalled: no audio bytes for 5.1s
+  (source='alsa_input.usb-Focusrite_Scarlett_Solo_USB-00.HiFi__Mic1__source',
+  stall_timeout=5.0s)=, the listener failed loud and exited instead of
+  wedging; the daemon journal shows the parallel wake/command turns
+  (='time is it.'= answered with the actual time).
+- STT on the loopback path :: daemon-side base.en transcribed VAD-trimmed
+  synthetic clips imperfectly (='Pezara'=, ="I'm not"=) while clean clips
+  measure WER 0.053 (base.en) / 0.033 (small.en) per the benchmark above;
+  the loopback mic==speaker echo also produced echo turns, which is a
+  test-harness artifact, not a production path.
+
+** Evaluate (exact-head gate at =4d393606=)
+- =nix develop -c bash scripts/test-all.sh= :: 13/13 phases passed.
+- =nix flake check= :: all checks passed (aarch64-linux evaluation omitted
+  per environment convention, matching #250 precedent).
+- Coverage inspection :: every reachable changed branch has a deterministic
+  test (bounded-open timeout/abandon paths, open-failure degradation, chunk
+  gating, late-stream adoption race, pulse output command/probe/write/stop,
+  send-failure identity logging, zero-frame/stall/utterance-cap deadline
+  paths, stall-vs-utterance binding, watchdog fire/stop/first-wins, beam
+  plumbing at factory and transcriber level). Live E2E covers the
+  integration surface the unit tests fake (Pulse routing, systemd failure
+  semantics, daemon round-trip).

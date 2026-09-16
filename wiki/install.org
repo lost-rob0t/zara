@@ -273,6 +273,18 @@ instantiating the config manager.
   caps continuous speech. =wake.max_utterance_duration= remains the fallback
   for configurations that do not set the STT cap. Conversation mode separately
   uses =agent.conversation_timeout= as its inactivity deadline.
+- Capture stalls fail loud: =wake.capture_stall_timeout= (default 5 s)
+  abandons an utterance when no microphone frames arrive, and the parec
+  reader watchdog terminates a silently stalled capture stream (override
+  with =ZARA_CAPTURE_STALL_TIMEOUT=) so the listener never wedges without a
+  log (#881).
+- Playback mirrors capture: daemon audio.output streams render through a
+  Pulse/PipeWire-rated =pacat= sink with a bounded open; a failed open logs
+  once and the turn degrades silently instead of blocking the event pump.
+  =ZARA_PULSE_SINK= pins the sink and =ZARA_PREFER_SHARED_OUTPUT=0= restores
+  PortAudio playback on non-Pulse systems (#880).
+- =stt.beam_size= (default 1) sets the daemon-side decode beam width; beam 1
+  measured best WER-per-cost on short follow-ups (#882).
 - A request spoken with the wake phrase, such as “Zara, what time is it?”, is
   routed immediately without waiting for a second utterance.
 

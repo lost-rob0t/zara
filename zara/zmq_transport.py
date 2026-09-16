@@ -1421,18 +1421,28 @@ class ZaraZmqGateway:
                 flags=zmq.NOBLOCK,
             )
         except zmq.Again as error:
-            logger.warning("outbound send failed: %s", type(error).__name__)
+            logger.warning(
+                "outbound send failed: %s message=%s stream_id=%s turn_id=%s",
+                type(error).__name__,
+                message.type,
+                message.stream_id,
+                message.turn_id,
+            )
             if queue_on_again:
                 self._enqueue_outbound(route, message, payloads)
             return False
         except zmq.ZMQError as error:
             # Fail closed on permanent send errors (e.g. EHOSTUNREACH): the
             # peer is provably unroutable. The drop is loud now (#669):
-            # _drop_route_locked warns when active turns are orphaned.
+            # _drop_route warns when active turns are orphaned, and the
+            # message/stream/turn identity names what was dropped (#880).
             logger.warning(
-                "outbound send failed: %s errno=%s",
+                "outbound send failed: %s errno=%s message=%s stream_id=%s turn_id=%s",
                 type(error).__name__,
                 getattr(error, "errno", "?"),
+                message.type,
+                message.stream_id,
+                message.turn_id,
             )
             self._drop_route(route)
             return False
