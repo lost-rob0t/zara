@@ -48,8 +48,23 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v31
 
+      - name: Load update-compatible Android signing key
+        shell: bash
+        env:
+          ZARA_ANDROID_DEBUG_KEYSTORE_B64: ${{ secrets.ZARA_ANDROID_DEBUG_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$ZARA_ANDROID_DEBUG_KEYSTORE_B64" ]]; then
+            echo "Zara Android signing secret is unavailable." >&2
+            exit 1
+          fi
+          keystore="$RUNNER_TEMP/zara-android-debug.keystore"
+          printf '%s' "$ZARA_ANDROID_DEBUG_KEYSTORE_B64" | base64 --decode > "$keystore"
+          chmod 600 "$keystore"
+          echo "ZARA_ANDROID_DEBUG_KEYSTORE=$keystore" >> "$GITHUB_ENV"
+
       - name: Run Android release gate
-        run: nix develop ./android -c bash scripts/test-android.sh
+        run: nix develop ./android -c bash scripts/test-android-release.sh
 
       - name: Prepare APK and checksum
         id: artifact
@@ -63,6 +78,11 @@ jobs:
           cp android/app/build/outputs/apk/debug/app-debug.apk "$apk"
           sha256sum "$apk" > "${apk}.sha256"
           echo "apk=$apk" >> "$GITHUB_OUTPUT"
+
+      - name: Verify update-compatible Android signing certificate
+        env:
+          APK: ${{ steps.artifact.outputs.apk }}
+        run: nix develop ./android -c bash scripts/check-android-apk-signer.sh "$APK"
 
       - name: Publish GitHub prerelease
         env:

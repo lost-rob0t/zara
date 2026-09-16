@@ -91,7 +91,7 @@ The separate Kotlin Android plugin is not used where AGP's built-in Kotlin path 
 Run the Android repository gate with:
 
 #+begin_src sh
-nix develop .#android -c bash scripts/test-android.sh
+nix develop ./android -c bash scripts/test-android.sh
 #+end_src
 
 The gate is intended to cover the JVM/unit/build path plus the APK secret-marker inspection used by the repository.
@@ -101,6 +101,15 @@ The debug APK is produced at the standard Gradle location:
 #+begin_example
 android/app/build/outputs/apk/debug/app-debug.apk
 #+end_example
+
+The versioned GitHub alpha release runs the Android release gate on =master=.
+It loads the update-compatible debug signing key from the
+=ZARA_ANDROID_DEBUG_KEYSTORE_B64= Actions secret, verifies the APK signing
+certificate before publication, and attaches the APK with its SHA-256 file.
+Advance =versionCode= and =versionName= together in
+=android/app/build.gradle.kts= to publish the next alpha. The release APK is
+still a sideloaded debug build; hardware and Assistant-role acceptance remain
+separate.
 
 A successful =assembleDebug= is necessary, but it is not acceptance for the whole Android assistant.
 
