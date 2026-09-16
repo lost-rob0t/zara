@@ -6,6 +6,7 @@ import java.security.MessageDigest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -181,6 +182,59 @@ class AuthenticationTest {
         assertTrue(loaded is ServerPinLoadResult.Ready)
         loaded as ServerPinLoadResult.Ready
         assertTrue(loaded.pin.matches(first))
+    }
+
+    @Test fun `explicit server repin preserves client identity and updates socket trust`() {
+        val directory = Files.createTempDirectory("zara-explicit-repin").toFile()
+        val publicKey = ByteArray(32) { (it + 5).toByte() }
+        val repository = EnrollmentRepository(
+            credentials = WrappedCredentialStore(
+                File(directory, "credential.bin"),
+                TaggedCipher(0x31),
+            ),
+            serverPins = ServerPinStore(File(directory, "server-pin.bin")),
+            generator = FixedGenerator(publicKey, ByteArray(32) { (it + 40).toByte() }),
+        )
+        val first = ByteArray(32) { (it + 70).toByte() }
+        val second = ByteArray(32) { (it + 100).toByte() }
+
+        assertNull(repository.pinnedServerPublicKeyZ85())
+        repository.createIdentity()
+        repository.pinServer(first)
+        assertEquals(JeroMqCurveKeyCodec.encode(first), repository.pinnedServerPublicKeyZ85())
+
+        repository.replaceServerPinZ85(JeroMqCurveKeyCodec.encode(second))
+
+        assertEquals(JeroMqCurveKeyCodec.encode(second), repository.pinnedServerPublicKeyZ85())
+        assertArrayEquals(publicKey, (repository.state() as EnrollmentState.Ready).publicKey)
+        val socket = RecordingCurveSocket()
+        repository.configure(socket)
+        assertArrayEquals(second, socket.serverKey)
+        assertArrayEquals(publicKey, socket.publicKey)
+        var rejected = false
+        try {
+            repository.pinServer(first)
+        } catch (_: AuthenticationException) {
+            rejected = true
+        }
+        assertTrue(rejected)
+    }
+
+    @Test fun `explicit server repin requires an existing trusted pin`() {
+        val directory = Files.createTempDirectory("zara-repin-missing").toFile()
+        val repository = EnrollmentRepository(
+            credentials = WrappedCredentialStore(File(directory, "credential.bin"), TaggedCipher(0x41)),
+            serverPins = ServerPinStore(File(directory, "server-pin.bin")),
+            generator = FixedGenerator(ByteArray(32) { 3 }, ByteArray(32) { 4 }),
+        )
+        var rejected = false
+        try {
+            repository.replaceServerPinZ85(JeroMqCurveKeyCodec.encode(ByteArray(32) { 5 }))
+        } catch (_: AuthenticationException) {
+            rejected = true
+        }
+        assertTrue(rejected)
+        assertNull(repository.pinnedServerPublicKeyZ85())
     }
 
     @Test fun `corrupt credential blocks identity replacement`() {

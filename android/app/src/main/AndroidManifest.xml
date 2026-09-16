@@ -14,7 +14,9 @@
 
     <application
         android:name=".ZaraApplication"
+        android:icon="@mipmap/ic_launcher"
         android:label="Zara"
+        android:roundIcon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
         android:allowBackup="false">
 

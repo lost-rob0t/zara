@@ -58,6 +58,7 @@ val androidNdkVersion = providers.environmentVariable("ZARA_ANDROID_NDK_VERSION"
     ?: error("ZARA_ANDROID_NDK_VERSION must be supplied by the pinned Android Nix toolchain")
 val treallaSourceDir = providers.environmentVariable("ZARA_TREALLA_SOURCE_DIR").orNull ?: ""
 val treallaLibraryRoot = providers.environmentVariable("ZARA_TREALLA_LIBRARY_ROOT").orNull ?: ""
+val debugSigningKeystore = providers.environmentVariable("ZARA_ANDROID_DEBUG_KEYSTORE").orNull
 val sourceSha = providers.environmentVariable("ZARA_SOURCE_SHA").orNull
     ?: githubPullRequestHeadSha()
     ?: providers.exec {
@@ -76,8 +77,8 @@ android {
         applicationId = "ai.zara.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.1.1-alpha"
+        versionCode = 3
+        versionName = "0.1.2-alpha"
         buildConfigField("String", "SOURCE_SHA", "\"$sourceSha\"")
 
         ndk {
@@ -97,6 +98,19 @@ android {
     buildFeatures {
         buildConfig = true
         compose = true
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            if (debugSigningKeystore != null) {
+                val keyFile = file(debugSigningKeystore)
+                require(keyFile.isFile) { "Zara Android debug signing keystore is missing" }
+                storeFile = keyFile
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
     buildTypes {

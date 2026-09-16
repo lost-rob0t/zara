@@ -37,6 +37,7 @@ class MainActivity : ComponentActivity() {
 
         var runtimeState by mutableStateOf(appSession.state())
         var enrollmentPublicKey by mutableStateOf(appSession.enrollmentPublicKeyZ85())
+        var pinnedServerPublicKey by mutableStateOf(appSession.pinnedServerPublicKeyZ85())
         var lastTurn by mutableStateOf<RenderedTextTurn?>(null)
         var operationBusy by mutableStateOf(false)
         var voiceStreamState by mutableStateOf(appSession.voiceStreamState())
@@ -91,6 +92,7 @@ class MainActivity : ComponentActivity() {
                 runtimeState = runtimeState,
                 sourceSha = BuildConfig.SOURCE_SHA,
                 enrollmentPublicKey = enrollmentPublicKey,
+                pinnedServerPublicKey = pinnedServerPublicKey,
                 lastTurn = lastTurn,
                 operationError = operationError,
                 operationBusy = operationBusy,
@@ -116,6 +118,16 @@ class MainActivity : ComponentActivity() {
                     try {
                         appSession.pinServer(publicKey)
                         enrollmentPublicKey = appSession.enrollmentPublicKeyZ85()
+                        pinnedServerPublicKey = appSession.pinnedServerPublicKeyZ85()
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onReplaceServerPin = { publicKey ->
+                    operationError = null
+                    try {
+                        appSession.replaceServerPin(publicKey)
+                        pinnedServerPublicKey = appSession.pinnedServerPublicKeyZ85()
                     } catch (error: Exception) {
                         operationError = UiOperationFailure.summarize(error)
                     }

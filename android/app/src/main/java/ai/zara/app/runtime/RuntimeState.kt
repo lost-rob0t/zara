@@ -46,6 +46,7 @@ data class RuntimeState(
 
 sealed interface RuntimeEvent {
     data object ConnectRequested : RuntimeEvent
+    data object ServerTrustChanged : RuntimeEvent
     data class ServerConfigured(val profile: ServerProfile) : RuntimeEvent
     data class HelloAccepted(val generation: Long, val sessionId: String) : RuntimeEvent
     data class ConnectionLost(val generation: Long, val reason: String) : RuntimeEvent
@@ -73,6 +74,13 @@ fun reduce(state: RuntimeState, event: RuntimeEvent): RuntimeState = when (event
         }
         else -> state
     }
+
+    RuntimeEvent.ServerTrustChanged -> state.copy(
+        server = ServerConnection.Disconnected,
+        generation = state.generation + 1,
+        sessionId = null,
+        selectedConversationId = null,
+    )
 
     is RuntimeEvent.ServerConfigured -> state.copy(configuredProfile = event.profile)
 

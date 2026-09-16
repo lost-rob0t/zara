@@ -112,6 +112,27 @@ class RuntimeStateTest {
         assertEquals("conversation-7", revoked.selectedConversationId)
     }
 
+    @Test fun `server trust change clears old server conversation and session`() {
+        val profile = ServerProfile.create("tcp://127.0.0.1:5555")
+        val connected = RuntimeState.initial().copy(
+            server = ServerConnection.Connected(4),
+            enrollment = EnrollmentReadiness.Ready,
+            configuredProfile = profile,
+            generation = 4,
+            sessionId = "old-session",
+            selectedConversationId = "old-conversation",
+        )
+
+        val changed = reduce(connected, RuntimeEvent.ServerTrustChanged)
+
+        assertEquals(ServerConnection.Disconnected, changed.server)
+        assertEquals(EnrollmentReadiness.Ready, changed.enrollment)
+        assertEquals(profile, changed.configuredProfile)
+        assertEquals(5L, changed.generation)
+        assertEquals(null, changed.sessionId)
+        assertEquals(null, changed.selectedConversationId)
+    }
+
     @Test fun `reconnect backoff is deterministic bounded and monotonic`() {
         assertEquals(250L, reconnectDelayMillis(1))
         assertEquals(500L, reconnectDelayMillis(2))

@@ -28,6 +28,7 @@ Default theme: **Outrun**.
 - no giant gradient/glass cards;
 - no permanent giant `ZARA` wordmark;
 - abstract sigil/avatar instead of portrait or mascot art;
+- launcher icon uses the same abstract sigil on the near-black Outrun ground;
 - dense enough to feel capable, sparse enough that chat stays dominant;
 - background ambience must never reduce text contrast or hit targets;
 - decorative symbolic material disappears once it competes with real conversation.
