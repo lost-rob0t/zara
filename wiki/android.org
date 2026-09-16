@@ -137,6 +137,18 @@ Merged/current foundations include:
 
 The important rule is *fail closed on server identity changes*. A changed server key is not silently accepted as "probably the same server."
 
+The phone needs an explicit authenticated TCP listener; the default Zara service
+listens only on owner-private local IPC. Start the service with
+=--remote-endpoint tcp://<LAN-IP>:6060 --security-dir <PRIVATE-DIR>= to keep
+local IPC available for the desktop and wake clients while enabling Android.
+Initialize the owner-private security directory with =zara-server
+--security-dir <PRIVATE-DIR> --security-init= while the service is stopped.
+Show its public key with =--security-show-public-key= and pin that key in the
+Android Settings screen. Enroll the phone's CLIENT PUBLIC KEY with
+=--security-enroll-key <Z85-KEY> --security-device-id <DEVICE-ID>=. The phone's
+"enrollment ready" label only confirms local identity and server pinning; it
+does not confirm server-side authorization or a live connection.
+
 Issue #173 remains reopened because the full client acceptance is larger than the merged auth primitives. Remaining/continuing work includes complete authenticated connect/hello behavior, reconnect, durable session/conversation continuity, stale-session rejection, and ordinary typed turn/event integration across lifecycle changes.
 
 * Runtime state

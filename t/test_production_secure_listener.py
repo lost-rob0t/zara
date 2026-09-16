@@ -16,7 +16,7 @@ from zara.runtime import bridge
 from zara.security import Capability, KeyNotActive
 from zara.security_state import PersistentSecurityState
 from zara.security_transport import CurveClientConfig, configure_curve_client_socket
-from zara.server import ServerState, ZaraServer
+from zara.server import ServerLease, ServerState, ZaraServer, default_zmq_endpoint
 from zara.zmq_transport import TransportConfig, apply_socket_options
 
 
@@ -66,6 +66,115 @@ def test_server_rejects_tcp_without_explicit_security_state():
         ZaraServer(endpoint="tcp://127.0.0.1:5555")
 
 
+def test_remote_endpoint_requires_tcp_and_security_state(tmp_path: Path):
+    with pytest.raises(ValueError, match="security"):
+        ZaraServer(remote_endpoint="tcp://127.0.0.1:5555")
+    state = PersistentSecurityState(tmp_path / "security")
+    with pytest.raises(ValueError, match="TCP"):
+        ZaraServer(remote_endpoint="ipc:///tmp/other.sock", security_state=state)
+
+
+def test_cli_requires_security_directory_for_remote_endpoint(capsys):
+    assert server_module.main(["--remote-endpoint", "tcp://127.0.0.1:6060"]) == 2
+    assert "remote endpoint requires --security-dir" in capsys.readouterr().err
+
+
+def test_server_serves_local_ipc_and_authenticated_tcp_together(
+    tmp_path: Path,
+    zmq_context: zmq.Context,
+):
+    state = PersistentSecurityState(tmp_path / "security")
+    server_curve = state.initialize()
+    client_public, client_secret = zmq.curve_keypair()
+    state.enroll_client(
+        client_public,
+        device_id="android-phone",
+        principal=PrincipalContext.local_owner(),
+        capabilities={Capability.SESSION_BASIC},
+    )
+    probe = zmq_context.socket(zmq.ROUTER)
+    port = probe.bind_to_random_port("tcp://127.0.0.1")
+    probe.close(0)
+    remote_endpoint = f"tcp://127.0.0.1:{port}"
+    runtime_dir = tmp_path / "runtime"
+    supervisor = FakeSupervisor()
+    server = ZaraServer(
+        supervisor=supervisor,
+        runtime_dir=runtime_dir,
+        remote_endpoint=remote_endpoint,
+        security_state=state,
+        gateway_transport_config=TransportConfig(linger_ms=0, poll_interval_ms=5),
+        shutdown_timeout=1.0,
+    )
+    assert server.start() is ServerState.READY
+    assert server.start() is ServerState.READY
+
+    local = zmq_context.socket(zmq.DEALER)
+    local.connect(default_zmq_endpoint(runtime_dir))
+    remote = zmq_context.socket(zmq.DEALER)
+    configure_curve_client_socket(
+        remote,
+        CurveClientConfig(
+            public_key=client_public,
+            secret_key=client_secret,
+            server_public_key=server_curve.public_key,
+        ),
+    )
+    remote.connect(remote_endpoint)
+    try:
+        for socket, request_id in ((local, "local-hello"), (remote, "remote-hello")):
+            socket.send_multipart(
+                encode_message(
+                    ProtocolMessage(
+                        type="hello",
+                        id=request_id,
+                        timestamp_ns=time.time_ns(),
+                        payload_count=0,
+                        body={"versions": [1]},
+                    )
+                )
+            )
+            response = receive(socket)
+            assert response.type == "hello.ok"
+            assert response.reply_to == request_id
+            assert response.session_id
+        assert server.supervisor is supervisor
+    finally:
+        local.close(0)
+        remote.close(0)
+        assert server.stop() is True
+
+
+def test_remote_bind_failure_releases_local_listener_and_lease(
+    tmp_path: Path,
+    zmq_context: zmq.Context,
+):
+    state = PersistentSecurityState(tmp_path / "security")
+    state.initialize()
+    blocker = zmq_context.socket(zmq.ROUTER)
+    port = blocker.bind_to_random_port("tcp://127.0.0.1")
+    runtime_dir = tmp_path / "runtime"
+    supervisor = FakeSupervisor()
+    server = ZaraServer(
+        supervisor=supervisor,
+        runtime_dir=runtime_dir,
+        remote_endpoint=f"tcp://127.0.0.1:{port}",
+        security_state=state,
+        gateway_transport_config=TransportConfig(linger_ms=0, poll_interval_ms=5),
+        shutdown_timeout=1.0,
+    )
+    try:
+        with pytest.raises(Exception):
+            server.start()
+        assert server.state is ServerState.STOPPED
+        assert supervisor.state is ServerState.STOPPED
+        lease = ServerLease(runtime_dir)
+        lease.acquire()
+        lease.release()
+    finally:
+        blocker.close(0)
+
+
 def test_security_state_initializes_stable_server_identity_with_private_permissions(tmp_path: Path):
     state = PersistentSecurityState(tmp_path / "security")
 
@@ -95,6 +204,7 @@ def test_security_admin_socket_remains_in_long_owner_private_security_directory(
     server = ZaraServer(
         supervisor=FakeSupervisor(),
         endpoint=f"tcp://127.0.0.1:{port}",
+        runtime_dir=tmp_path / "runtime",
         security_state=state,
         gateway_transport_config=TransportConfig(linger_ms=0, poll_interval_ms=5),
         shutdown_timeout=1.0,
@@ -158,6 +268,7 @@ def test_owner_security_management_mutates_running_registry_without_reload(
     server = ZaraServer(
         supervisor=FakeSupervisor(),
         endpoint=endpoint,
+        runtime_dir=tmp_path / "runtime",
         security_state=state,
         gateway_transport_config=config,
         shutdown_timeout=1.0,
@@ -265,6 +376,7 @@ def test_production_zara_server_secure_tcp_accepts_only_enrolled_curve_client(
     server = ZaraServer(
         supervisor=FakeSupervisor(),
         endpoint=endpoint,
+        runtime_dir=tmp_path / "runtime",
         security_state=state,
         gateway_transport_config=config,
         shutdown_timeout=1.0,

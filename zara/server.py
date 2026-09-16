@@ -64,6 +64,7 @@ class ZaraServer(_core.ZaraServer):
         lease: Optional[ServerLease] = None,
         runtime_dir: Optional[Path | str] = None,
         endpoint: Optional[str] = None,
+        remote_endpoint: Optional[str] = None,
         gateway_factory: Optional[GatewayFactory] = None,
         shutdown_timeout: float = 5.0,
         principal: Optional[PrincipalContext] = None,
@@ -72,6 +73,18 @@ class ZaraServer(_core.ZaraServer):
         gateway_transport_config=None,
     ) -> None:
         secure_tcp = isinstance(endpoint, str) and endpoint.startswith("tcp://")
+        if remote_endpoint is not None:
+            if not isinstance(remote_endpoint, str) or not remote_endpoint.startswith("tcp://"):
+                raise ValueError("remote endpoint must use TCP")
+            if secure_tcp:
+                raise ValueError("remote endpoint requires a local IPC primary endpoint")
+            if security_state is None:
+                raise ValueError("remote endpoint requires explicit security state")
+            if gateway_factory is not None:
+                raise ValueError("remote endpoint does not accept a custom gateway factory")
+            from zara.security import validate_listener_security
+
+            validate_listener_security(remote_endpoint, curve_enabled=True, zap_enabled=True)
         if secure_tcp:
             if security_state is None:
                 raise ValueError("TCP endpoint requires explicit security state")
@@ -97,6 +110,8 @@ class ZaraServer(_core.ZaraServer):
         self._security_state = security_state
         self._gateway_transport_config = gateway_transport_config
         self._secure_tcp = secure_tcp
+        self._remote_endpoint = remote_endpoint
+        self._remote_gateway = None
         self._security_registry = None
         self._security_admin = None
         if secure_tcp:
@@ -114,9 +129,6 @@ class ZaraServer(_core.ZaraServer):
             raise ServerError("secure TCP listener has no security state")
 
         from zara.runtime.tts_output import TtsOutputBridge
-        from zara.security import Capability
-        from zara.security_admin import SecurityAdminServer
-        from zara.security_gateway import SecureZaraZmqGateway
         from zara.voice_runtime import RuntimeVoiceIngress
 
         voice_ingress = RuntimeVoiceIngress(supervisor, principal=principal)
@@ -132,6 +144,17 @@ class ZaraServer(_core.ZaraServer):
             )
         except AttributeError:
             self._tts_bridge = None
+
+        return self._build_secure_gateway(
+            endpoint,
+            supervisor=supervisor,
+            voice_ingress=voice_ingress,
+        )
+
+    def _build_secure_gateway(self, endpoint: str, *, supervisor, voice_ingress):
+        from zara.security import Capability
+        from zara.security_admin import SecurityAdminServer
+        from zara.security_gateway import SecureZaraZmqGateway
 
         admin = SecurityAdminServer(
             self._security_state,
@@ -171,14 +194,38 @@ class ZaraServer(_core.ZaraServer):
 
     def start(self) -> ServerState:
         try:
-            return super().start()
+            state = super().start()
+            if self._remote_endpoint is not None and self._remote_gateway is None:
+                gateway = self._build_secure_gateway(
+                    self._remote_endpoint,
+                    supervisor=self._supervisor,
+                    voice_ingress=self._voice_ingress,
+                )
+                self._remote_gateway = gateway
+                gateway.start().result(timeout=self._shutdown_timeout)
+            return state
         except BaseException:
-            self._close_security_admin()
+            if self._remote_endpoint is not None and self.state in {
+                ServerState.READY,
+                ServerState.DEGRADED,
+            }:
+                self.stop()
+            else:
+                self._close_security_admin()
             raise
 
     def stop(self) -> bool:
+        remote_clean = True
+        remote = self._remote_gateway
+        self._remote_gateway = None
+        if remote is not None:
+            try:
+                remote.close(timeout=self._shutdown_timeout)
+            except BaseException:
+                logger.exception("Failed to stop remote ZARA/1 gateway cleanly")
+                remote_clean = False
         admin_clean = self._close_security_admin()
-        return super().stop() and admin_clean
+        return super().stop() and admin_clean and remote_clean
 
 
 def _parse_curve_public_key(value: str) -> str:
@@ -199,6 +246,10 @@ def _parser():
     parser.add_argument(
         "--security-dir",
         help="Owner-private directory containing daemon CURVE identity and enrolled clients",
+    )
+    parser.add_argument(
+        "--remote-endpoint",
+        help="Serve authenticated TCP alongside the default owner-private local IPC endpoint",
     )
     management = parser.add_mutually_exclusive_group()
     management.add_argument(
@@ -368,6 +419,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         if security_state is None:
             print("TCP endpoint requires --security-dir", file=sys.stderr)
             return 2
+    if args.remote_endpoint is not None and security_state is None:
+        print("remote endpoint requires --security-dir", file=sys.stderr)
+        return 2
 
     stop_event = threading.Event()
 
@@ -381,6 +435,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         server = ZaraServer(
             runtime_dir=args.runtime_dir,
             endpoint=args.endpoint,
+            remote_endpoint=args.remote_endpoint,
             shutdown_timeout=args.shutdown_timeout,
             security_state=security_state,
         )
