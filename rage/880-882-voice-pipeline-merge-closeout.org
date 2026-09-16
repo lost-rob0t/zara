@@ -1,0 +1,31 @@
+#+title: Merge closeout - #880/#881/#882 voice pipeline robustness
+
+* Run identity
+- Consumed issues :: #880, #881, #882 (user-directed combined iteration)
+- Branch :: =rage/880-882-voice-pipeline=
+- RAGE start commit :: =88b8db66df1e6a16b57d17e75bd1db9b89a93702=
+- PR :: #883
+- Squash merge commit :: =8bb909798047eb3558623bd139e610ede87c44f6=
+- Merged :: 2026-09-15, immediately after exact-head CI verification.
+
+* Exact-head gate (head =a7d180eb7f75744b7f704dada5e53241a0f7d703=)
+- Local :: =scripts/test-all.sh= 13/13 phases; =nix flake check= all checks.
+- CI (run 35037805255) :: =test= pass (12m30s), =android + wear gate= pass
+  (5m58s), =shared mic / Arch Linux= pass (32s), =shared mic / Ubuntu
+  24.04= pass (52s).
+- Mergeable state re-probed immediately before merge (MERGEABLE, OPEN,
+  head unchanged); merged as squash =8bb90979=.
+
+* Post-merge deployment note
+- The systemd =zara-wake= / =zara-server= units run store-built packages;
+  they keep the pre-fix behavior until rebuilt =nix build= and restarted
+  (=systemctl --user restart zara-wake zara-server=).
+- Live behavior change to expect on restart: playback routes through
+  pacat (#880), capture stalls fail loud instead of wedging (#881), and
+  =[stt] beam_size= is honored daemon-side (#882; the local =base.en=
+  override should move to =small.en= per the measured comparison).
+
+* Evidence index
+- Research :: =rage/880-882-voice-pipeline-research.org=
+- Design :: =rage/880-882-voice-pipeline-design.org=
+- Iteration + measurement + live E2E :: =rage/880-882-voice-pipeline.org=
