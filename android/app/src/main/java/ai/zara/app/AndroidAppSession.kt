@@ -184,6 +184,8 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         is EnrollmentState.Ready -> JeroMqCurveKeyCodec.encode(current.publicKey)
     }
 
+    fun pinnedServerPublicKeyZ85(): String? = enrollment.pinnedServerPublicKeyZ85()
+
     fun createIdentity(): String {
         val publicKey = enrollment.createIdentityZ85()
         refreshEnrollment()
@@ -193,6 +195,14 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     fun pinServer(publicKeyZ85: String) {
         enrollment.pinServerZ85(publicKeyZ85.trim())
         refreshEnrollment()
+    }
+
+    fun replaceServerPin(publicKeyZ85: String) {
+        state().configuredProfile?.let { profile ->
+            stateStore.save(RestorableClientState(profile = profile, selectedConversationId = null))
+        }
+        enrollment.replaceServerPinZ85(publicKeyZ85.trim())
+        controller.serverTrustChanged()
     }
 
     fun connect(endpoint: String): CompletableFuture<ConnectedTextSession> {

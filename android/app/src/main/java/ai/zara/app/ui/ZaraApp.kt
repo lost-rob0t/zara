@@ -112,6 +112,7 @@ fun ZaraApp(
     runtimeState: RuntimeState,
     sourceSha: String,
     enrollmentPublicKey: String?,
+    pinnedServerPublicKey: String?,
     lastTurn: RenderedTextTurn?,
     operationError: String?,
     operationBusy: Boolean,
@@ -123,6 +124,7 @@ fun ZaraApp(
     onSelectTheme: (ZaraTheme) -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
+    onReplaceServerPin: (String) -> Unit,
     onConnect: (String) -> Unit,
     onSendText: (String) -> Unit,
     onRequestMicrophonePermission: () -> Unit,
@@ -212,10 +214,12 @@ fun ZaraApp(
                         AppSurface.Settings -> SettingsSurface(
                             state = runtimeState,
                             enrollmentPublicKey = enrollmentPublicKey,
+                            pinnedServerPublicKey = pinnedServerPublicKey,
                             operationError = operationError,
                             operationBusy = operationBusy,
                             onCreateIdentity = onCreateIdentity,
                             onPinServer = onPinServer,
+                            onReplaceServerPin = onReplaceServerPin,
                             onRequestAssistantRole = onRequestAssistantRole,
                             padding = padding,
                         )
@@ -629,7 +633,12 @@ private fun ConnectionSurface(
                 onClick = { onConnect(endpoint) },
             )
         }
-        operationError?.let { ErrorBanner(it) }
+        operationError?.let { failure ->
+            ErrorBanner(failure)
+            if (failure == "server_hello_timeout") {
+                MutedNotice("The server did not accept the authenticated hello. Compare the saved server key in Settings and confirm this client key is enrolled.")
+            }
+        }
     }
 }
 
@@ -637,14 +646,18 @@ private fun ConnectionSurface(
 private fun SettingsSurface(
     state: RuntimeState,
     enrollmentPublicKey: String?,
+    pinnedServerPublicKey: String?,
     operationError: String?,
     operationBusy: Boolean,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
+    onReplaceServerPin: (String) -> Unit,
     onRequestAssistantRole: () -> Unit,
     padding: PaddingValues,
 ) {
     var serverPin by rememberSaveable { mutableStateOf("") }
+    var replacementServerPin by rememberSaveable { mutableStateOf("") }
+    var showServerPinReplacement by rememberSaveable { mutableStateOf(false) }
     var showAssistantHelp by rememberSaveable { mutableStateOf(false) }
     val tokens = LocalZaraTokens.current
 
@@ -710,8 +723,40 @@ private fun SettingsSurface(
                         serverPin.isNotBlank() && !operationBusy,
                     ) { onPinServer(serverPin) }
                 }
-                EnrollmentReadiness.Ready ->
+                EnrollmentReadiness.Ready -> {
                     MutedNotice("Client identity and server pin are ready. Server-side enrollment is still required.")
+                    pinnedServerPublicKey?.let { publicKey ->
+                        Text("SAVED SERVER PUBLIC KEY", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+                        SelectionContainer {
+                            Text(
+                                publicKey,
+                                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                                color = tokens.text,
+                                fontFamily = FontFamily.Monospace,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                    TextButton(onClick = { showServerPinReplacement = !showServerPinReplacement }) {
+                        Text(if (showServerPinReplacement) "Cancel server key change" else "Change trusted server key")
+                    }
+                    if (showServerPinReplacement) {
+                        MutedNotice("Verify the new key with your server. Changing trust disconnects the old session; reconnect from Remote afterward.")
+                        OutlinedTextField(
+                            value = replacementServerPin,
+                            onValueChange = { replacementServerPin = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("New server CURVE public key") },
+                            enabled = !operationBusy,
+                            singleLine = true,
+                            colors = fieldColors(),
+                        )
+                        PrimaryAction(
+                            "Replace trusted server key",
+                            replacementServerPin.length == 40 && !operationBusy,
+                        ) { onReplaceServerPin(replacementServerPin) }
+                    }
+                }
                 EnrollmentReadiness.Corrupt ->
                     ErrorBanner("Enrollment storage is corrupt; connection is disabled.")
             }

@@ -75,6 +75,19 @@ class EnrollmentRepository(
         pinServer(JeroMqCurveKeyCodec.decode(publicKey))
     }
 
+    fun pinnedServerPublicKeyZ85(): String? = when (val loaded = serverPins.load()) {
+        ServerPinLoadResult.Missing, is ServerPinLoadResult.Corrupt -> null
+        is ServerPinLoadResult.Ready -> JeroMqCurveKeyCodec.encode(loaded.pin.bytes())
+    }
+
+    fun replaceServerPinZ85(publicKey: String) {
+        val candidate = ServerPin(JeroMqCurveKeyCodec.decode(publicKey))
+        if (state() !is EnrollmentState.Ready) {
+            throw AuthenticationException("client identity and server pin must be ready before replacement")
+        }
+        serverPins.save(candidate)
+    }
+
     fun configure(socket: CurveSocketOptions) {
         val credential = when (val loaded = credentials.load()) {
             CredentialLoadResult.Unenrolled ->

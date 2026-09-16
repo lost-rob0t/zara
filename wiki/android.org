@@ -137,6 +137,14 @@ Merged/current foundations include:
 
 The important rule is *fail closed on server identity changes*. A changed server key is not silently accepted as "probably the same server."
 
+Settings shows the saved server public key after enrollment. If it differs
+from the running server's public key, "Change trusted server key" requires an
+explicit replacement key. It preserves the Android client identity but drops
+the old session and conversation; reconnect from Remote afterward. Remote
+shows =server_hello_timeout= for a hello timeout and
+=capability_negotiation_timeout= for a later capability timeout. These labels
+contain no credentials or raw exception messages.
+
 Issue #173 remains reopened because the full client acceptance is larger than the merged auth primitives. Remaining/continuing work includes complete authenticated connect/hello behavior, reconnect, durable session/conversation continuity, stale-session rejection, and ordinary typed turn/event integration across lifecycle changes.
 
 * Runtime state

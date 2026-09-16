@@ -180,6 +180,15 @@ class AndroidTextSessionController(
         }
     }
 
+    fun serverTrustChanged() {
+        synchronized(lock) {
+            check(!closed) { "Android text session controller is closed" }
+            runtimeState = reduce(runtimeState, RuntimeEvent.ServerTrustChanged)
+        }
+        publishState()
+        client.disconnect()
+    }
+
     fun observeAssistantRole(outcome: RoleOutcome) {
         synchronized(lock) {
             if (closed) return

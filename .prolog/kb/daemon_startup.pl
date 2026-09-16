@@ -1,6 +1,11 @@
 handshake_timeout_possible_cause(no_listener).
 handshake_timeout_possible_cause(wrong_endpoint).
 handshake_timeout_possible_cause(curve_rejection).
+android_connection_diagnostic(server_hello_timeout, hello_stage).
+android_connection_diagnostic(capability_negotiation_timeout, capability_stage).
+android_server_trust_change(explicit_user_action).
+android_server_trust_change(preserves_client_identity).
+android_server_trust_change(invalidates_session_and_conversation).
 startup_blocker(security_init, runtime_lease_held).
 diagnostic_command(runtime_lease_holder, lslocks).
 diagnostic_command(daemon_status, 'systemctl --user status zara-server.service').

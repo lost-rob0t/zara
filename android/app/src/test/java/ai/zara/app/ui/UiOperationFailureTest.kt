@@ -1,6 +1,10 @@
 package ai.zara.app.ui
 
+import ai.zara.app.auth.AuthenticationException
+import ai.zara.app.runtime.TextRequestTimeoutException
+import ai.zara.app.runtime.ZaraWireException
 import java.io.IOException
+import java.util.concurrent.CompletionException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
@@ -34,5 +38,33 @@ class UiOperationFailureTest {
         outer.initCause(inner)
 
         assertEquals("network_error", UiOperationFailure.summarize(outer))
+    }
+
+    @Test
+    fun `connection failures identify the handshake stage without exposing messages`() {
+        assertEquals(
+            "server_hello_timeout",
+            UiOperationFailure.summarize(
+                CompletionException(TextRequestTimeoutException("ZARA/1 voice hello timed out"))
+            ),
+        )
+        assertEquals(
+            "capability_negotiation_timeout",
+            UiOperationFailure.summarize(
+                TextRequestTimeoutException("ZARA/1 capability negotiation timed out")
+            ),
+        )
+        assertEquals(
+            "request_timeout",
+            UiOperationFailure.summarize(TextRequestTimeoutException("token=private")),
+        )
+        assertEquals(
+            "authentication_failed",
+            UiOperationFailure.summarize(AuthenticationException("secret=private")),
+        )
+        assertEquals(
+            "protocol_error",
+            UiOperationFailure.summarize(ZaraWireException("secret=private")),
+        )
     }
 }
