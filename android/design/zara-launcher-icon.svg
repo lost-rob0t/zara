@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>Zara launcher icon</title>
+  <rect width="108" height="108" fill="#02040B"/>
+  <circle cx="54" cy="54" r="21" fill="none" stroke="#775CFF" stroke-width="3.2"/>
+  <path d="M54 25.65v56.7" fill="none" stroke="#F000FF" stroke-width="3.2" stroke-linecap="round"/>
+  <path d="M33 54h42" fill="none" stroke="#00D7FF" stroke-width="2.1" stroke-linecap="round"/>
+  <circle cx="54" cy="25.65" r="3.4" fill="#F000FF"/>
+  <circle cx="54" cy="82.35" r="3.4" fill="#00D7FF"/>
+</svg>
