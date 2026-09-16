@@ -1,6 +1,6 @@
 ---
 name: "Zara Desktop — Signal Cabin"
-description: "A native semantic theme system where one visible route carries conversation and configuration."
+description: "A native semantic theme system for a modern adaptive conversation and configuration surface."
 colors:
   ground: "#0A1012"
   panel-deep: "#0D1518"
@@ -57,6 +57,7 @@ rounded:
   field: "10px"
   composer-action: "12px"
   composer: "15px"
+  bubble: "16px"
 spacing:
   trace: "4px"
   control: "8px"
@@ -137,12 +138,12 @@ components:
     rounded: "{rounded.field}"
     height: "72px"
     width: "112px"
-  route-transcript:
-    backgroundColor: "transparent"
+  message-bubble:
+    backgroundColor: "{colors.panel-lift}"
     textColor: "{colors.text}"
     typography: "{typography.body}"
-    rounded: "{rounded.none}"
-    padding: "9px 5px 11px 12px"
+    rounded: "{rounded.bubble}"
+    padding: "10px 14px 11px"
 ---
 
 # Design System: Zara Desktop — Signal Cabin
@@ -158,7 +159,7 @@ Conversation and configuration share one grammar. Quick Copilot, Full Chat, and 
 **Key Characteristics:**
 
 - One semantic component system across five complete themes.
-- Continuous route-divider transcripts and rail-based navigation.
+- Compact message bubbles and rail-based navigation without transcript dividers.
 - One platform-standard composer action that changes from send to stop.
 - Open native forms, a real source editor, and a guided managed-fact rail.
 
@@ -237,7 +238,7 @@ The system uses no shadows or gradients. Depth comes from the theme's ground and
 
 ## Shapes
 
-The form language is restrained and instrument-like: route messages stay square and open, navigation and buttons use a 9-pixel curve, fields and theme previews use 10 pixels, the 38-pixel composer action uses 12 pixels, and the composer bed alone uses the broad 15-pixel curve. The status lamp is an 8-pixel rounded square; controls never become pills or chat bubbles.
+The form language is restrained and instrument-like: navigation and buttons use a 9-pixel curve, fields and theme previews use 10 pixels, activity rows use 12 pixels, the composer uses 15 pixels, and human messages use 16-pixel bubbles with one tighter conversational corner. The status lamp remains an 8-pixel rounded square.
 
 ## Components
 
@@ -264,9 +265,9 @@ The composer owns one 38 × 38 control. At rest it uses Qt's platform-standard u
 
 Each preview is a 112 × 72 painted sample of its entire palette: theme ground, lifted panel, text label, and primary/active/danger lamps. Checked or keyboard-focused previews receive a two-pixel primary outline; previewing updates every open surface immediately, while persistence remains an explicit save action.
 
-### Route Transcript
+### Conversation Bubbles
 
-Messages remain one continuous trace. A strong-line spine holds the sequence, each turn starts with a line, user turns switch that line and role label to primary, and lifecycle telemetry changes between active, primary, and danger in place.
+Messages use compact, content-sized bubbles with no separator lines. User messages align right on the primary-deep surface; assistant messages align left on the lifted panel. System messages use the danger well only when they represent runtime failure. Tool events from built-in or external plugins use one generic activity bubble that accepts arbitrary tool names and reports waiting, running, completed, failed, or cancelled state without assuming a specific plugin.
 
 ### Source Editor & Managed Facts
 
@@ -281,6 +282,7 @@ The Prolog workspace places an allowlisted, no-wrap monospaced source editor bes
 - **Do** use Qt platform-standard icons for send and stop while keeping text labels in tooltips and accessibility metadata.
 - **Do** keep Settings as one category rail, one open task surface, and one truthful save/restart footer.
 - **Do** keep approved source and managed facts visibly connected to the real configuration path.
+- **Do** render plugin-provided tools through the same bounded activity-bubble contract as built-in tools.
 
 ### Don't:
 
@@ -288,4 +290,4 @@ The Prolog workspace places an allowlisted, no-wrap monospaced source editor bes
 - **Don't** add gradients, glass, ambient glow, drop shadows, or nested preference cards.
 - **Don't** use Unicode arrows, squares, or other text glyphs as UI icons.
 - **Don't** hide restart requirements, failed validation, restoration, or live-reload state behind generic success copy.
-- **Don't** break the continuous route transcript into generic assistant cards or bubbles.
+- **Don't** reintroduce full-width message dividers, permanent transcript spines, or oversized empty rows.

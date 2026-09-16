@@ -337,6 +337,7 @@ QWidget {{
 }}
 
 QWidget#zaraQuickCopilot,
+QWidget#zaraCopilot,
 QWidget#zaraFullChat,
 QWidget#zaraSettings,
 QWidget#zaraStatusWindow {{
@@ -349,7 +350,6 @@ QFrame#zaraQuickHeader,
 QFrame#zaraConversationHeader {{
     background: transparent;
     border: none;
-    border-bottom: 1px solid {colors["line"]};
 }}
 
 QLabel#zaraBrandName {{
@@ -379,8 +379,8 @@ QLabel#zaraTitle {{
 
 QFrame#zaraRuntimeRail {{
     background: {colors["panel"]};
-    border: 1px solid {colors["line"]};
-    border-radius: 10px;
+    border: none;
+    border-radius: 12px;
 }}
 
 QFrame#zaraStatusLamp {{
@@ -422,7 +422,12 @@ QLabel#zaraMessageError {{
 QWidget#zaraConversationSidebar {{
     background: {colors["panel_deep"]};
     border: none;
-    border-right: 1px solid {colors["line"]};
+}}
+
+QWidget#zaraConversationHistoryPanel {{
+    background: {colors["panel_deep"]};
+    border: none;
+    border-radius: 16px;
 }}
 
 QLineEdit,
@@ -506,24 +511,37 @@ QScrollArea#zaraConversationViewport > QWidget > QWidget {{
 QWidget#zaraMessageContainer {{
     background: transparent;
     border: none;
-    border-left: 1px solid {colors["line_strong"]};
 }}
 
 QFrame#zaraMessage {{
     background: transparent;
     border: none;
-    border-top: 1px solid {colors["line"]};
-    border-radius: 0;
 }}
 
-QFrame#zaraMessage[messageRole="user"] {{
-    background: transparent;
-    border-top-color: {colors["primary"]};
+QFrame#zaraMessageBubble {{
+    background: {colors["panel"]};
+    border: none;
+    border-radius: 16px;
 }}
 
-QFrame#zaraMessage[messageRole="system"],
-QFrame#zaraMessage[messageRole="tool"] {{
-    background: transparent;
+QFrame#zaraMessageBubble[messageRole="user"] {{
+    background: {colors["primary_deep"]};
+    border-bottom-right-radius: 6px;
+}}
+
+QFrame#zaraMessageBubble[messageRole="assistant"] {{
+    background: {colors["panel_lift"]};
+    border-bottom-left-radius: 6px;
+}}
+
+QFrame#zaraMessageBubble[messageRole="system"] {{
+    background: {colors["danger_deep"]};
+}}
+
+QFrame#zaraMessageBubble[messageKind="activity"] {{
+    background: {colors["panel_deep"]};
+    border: 1px solid {colors["line"]};
+    border-radius: 12px;
 }}
 
 QLabel#zaraMessageRole,
@@ -532,7 +550,7 @@ QLabel#zaraMessageStatus {{
     font-family: "Hack Nerd Font Mono";
     font-size: 11px;
     font-weight: 700;
-    letter-spacing: 1px;
+    letter-spacing: 0.5px;
 }}
 
 QLabel#zaraMessageStatus[messageStatus="streaming"],
@@ -540,7 +558,7 @@ QLabel#zaraMessageStatus[messageStatus="pending"] {{ color: {colors["active"]}; 
 QLabel#zaraMessageStatus[messageStatus="error"] {{ color: {colors["danger"]}; }}
 QLabel#zaraMessageStatus[messageStatus="complete"] {{ color: {colors["primary"]}; }}
 
-QFrame#zaraMessage[messageRole="user"] QLabel#zaraMessageRole {{ color: {colors["primary"]}; }}
+QFrame#zaraMessageBubble[messageRole="user"] QLabel#zaraMessageRole {{ color: {colors["primary"]}; }}
 
 QTextBrowser#zaraMessageBody,
 QTextBrowser#zaraMessageBody QWidget {{
@@ -548,6 +566,12 @@ QTextBrowser#zaraMessageBody QWidget {{
     border: none;
     border-radius: 0;
     padding: 0;
+}}
+
+QWidget#zaraMessageContent,
+QWidget#zaraMessageContent QWidget {{
+    background: transparent;
+    border: none;
 }}
 
 QFrame#zaraCodeBlock {{
@@ -566,9 +590,11 @@ QPlainTextEdit#zaraCodeEditor {{
 
 QFrame#zaraComposerShell {{
     background: {colors["panel_lift"]};
-    border: 1px solid {colors["line_strong"]};
-    border-radius: 15px;
+    border: 1px solid {colors["line"]};
+    border-radius: 20px;
 }}
+
+QFrame#zaraComposerShell:focus-within {{ border-color: {colors["primary"]}; }}
 
 QFrame#zaraComposerShell QPlainTextEdit {{
     background: transparent;
@@ -576,6 +602,20 @@ QFrame#zaraComposerShell QPlainTextEdit {{
     border-radius: 0;
     padding: 7px 8px;
 }}
+
+QFrame#zaraConversationEmptyState {{
+    background: transparent;
+    border: none;
+}}
+
+QLabel#zaraEmptyStateTitle {{
+    color: {colors["text"]};
+    font-family: "Nimbus Sans Narrow";
+    font-size: 26px;
+    font-weight: 700;
+}}
+
+QLabel#zaraEmptyStateDetail {{ color: {colors["text_muted"]}; }}
 
 QPushButton {{
     min-height: 34px;

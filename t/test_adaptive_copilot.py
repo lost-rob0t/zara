@@ -5,7 +5,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, QPoint, QRect, QSettings, Signal
+from PySide6.QtCore import QObject, QPoint, QRect, QSettings, Qt, Signal
 from PySide6.QtWidgets import QApplication
 
 from zara.database import DatabaseManager
@@ -171,6 +171,74 @@ def test_expanded_history_search_selection_and_rename_use_same_renderer(tmp_path
         qt_app.processEvents()
         assert window.history_panel.isHidden()
         assert window.current_conversation_id == target.conversation.id
+    finally:
+        dispose(window)
+
+
+def test_new_chat_immediately_clears_stale_messages_and_selects_new_history(tmp_path):
+    qt_app, bridge, service, window = make_window(tmp_path)
+    try:
+        previous_id = window.current_conversation_id
+        previous_message, _ = service.add_user_message(
+            previous_id,
+            "This must disappear immediately.",
+            request_id="stale-before-new-chat",
+        )
+        window.sync_from_shared_state()
+        assert previous_message.id in window.message_widgets
+
+        window.set_presentation(CopilotPresentation.EXPANDED)
+        assert window.new_chat_button.isHidden()
+        assert not window.sidebar_new_chat_button.isHidden()
+        window.sidebar_new_chat_button.click()
+        qt_app.processEvents()
+
+        assert window.current_conversation_id != previous_id
+        assert window.message_widgets == {}
+        assert not window.empty_state.isHidden()
+        assert window.title_label.text() == "New chat"
+        assert window.history_list.currentItem() is not None
+        assert window.history_list.currentItem().data(Qt.ItemDataRole.UserRole) == window.current_conversation_id
+        assert bridge.commands == []
+    finally:
+        dispose(window)
+
+
+def test_composer_starts_compact_and_grows_only_for_multiline_text(tmp_path):
+    qt_app, _, _, window = make_window(tmp_path)
+    try:
+        window.resize(680, 460)
+        window.show()
+        qt_app.processEvents()
+        compact_height = window.composer.height()
+
+        assert compact_height <= 56
+        window.composer.setPlainText("one\ntwo\nthree\nfour")
+        qt_app.processEvents()
+        assert compact_height < window.composer.height() <= window.composer.maximumHeight()
+    finally:
+        dispose(window)
+
+
+def test_short_messages_remain_compact_bubbles_without_large_blank_rows(tmp_path):
+    qt_app, _, service, window = make_window(tmp_path)
+    try:
+        conversation_id = window.current_conversation_id
+        for index, text in enumerate(("First short message", "Second short message")):
+            service.add_user_message(
+                conversation_id,
+                text,
+                request_id=f"compact-row-{index}",
+            )
+        window.sync_from_shared_state()
+        window.resize(680, 460)
+        window.show()
+        qt_app.processEvents()
+
+        widgets = list(window.message_widgets.values())
+        assert len(widgets) == 2
+        assert all(widget.bubble.objectName() == "zaraMessageBubble" for widget in widgets)
+        assert all(widget.height() < 96 for widget in widgets)
     finally:
         dispose(window)
 

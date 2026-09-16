@@ -175,7 +175,73 @@ def test_signal_cabin_stylesheet_covers_the_complete_copilot_surface():
     assert "#7C3AED" not in stylesheet.upper()
     assert "QWidget#zaraMessageContainer" in stylesheet
     assert "QTextBrowser#zaraMessageBody" in stylesheet
-    assert "QFrame#zaraMessage {\n    background: transparent;\n    border: none;" in stylesheet
+    assert "QFrame#zaraMessageBubble" in stylesheet
+    assert 'QFrame#zaraMessageBubble[messageRole="user"]' in stylesheet
+    assert 'QFrame#zaraMessageBubble[messageKind="activity"]' in stylesheet
+    message_rule = stylesheet.split("QFrame#zaraMessage {", 1)[1].split("}", 1)[0]
+    container_rule = stylesheet.split("QWidget#zaraMessageContainer {", 1)[1].split("}", 1)[0]
+    assert "border-top" not in message_rule
+    assert "border-left" not in container_rule
+
+
+def test_plugin_tool_messages_use_generic_activity_bubbles():
+    qt_app = app()
+    message = MessageWidget(
+        MessageRecord(
+            id="plugin-tool-message",
+            conversation_id="conversation-1",
+            sequence=1,
+            role=MessageRole.TOOL,
+            content="calendar.sync: running",
+            status=MessageStatus.STREAMING,
+            created_at="2026-09-15T00:00:00Z",
+            updated_at="2026-09-15T00:00:00Z",
+            tool_run_id="plugin-run-1",
+        )
+    )
+    try:
+        assert message.bubble.property("messageKind") == "activity"
+        assert message.role_label.text() == "calendar.sync"
+        assert message.status_label.text() == "Running"
+        assert "running" in message.body_text
+    finally:
+        message.deleteLater()
+        qt_app.processEvents()
+
+
+def test_message_labels_remain_readable_against_bubbles_in_every_theme():
+    qt_app = app()
+    original_palette = QPalette(qt_app.palette())
+    original_stylesheet = qt_app.styleSheet()
+    try:
+        for theme_key in THEME_REGISTRY:
+            apply_desktop_theme(qt_app, theme_key)
+            message = MessageWidget(
+                MessageRecord(
+                    id=f"message-{theme_key}",
+                    conversation_id="conversation-1",
+                    sequence=1,
+                    role=MessageRole.ASSISTANT,
+                    content="Readable assistant message",
+                    status=MessageStatus.STREAMING,
+                    created_at="2026-09-15T00:00:00Z",
+                    updated_at="2026-09-15T00:00:00Z",
+                )
+            )
+            message.show()
+            qt_app.processEvents()
+            assert (
+                contrast_ratio(
+                    message.role_label.palette().color(QPalette.ColorRole.WindowText),
+                    message.bubble.palette().color(QPalette.ColorRole.Window),
+                )
+                >= MIN_TEXT_CONTRAST
+            )
+            message.deleteLater()
+            qt_app.processEvents()
+    finally:
+        qt_app.setPalette(original_palette)
+        qt_app.setStyleSheet(original_stylesheet)
 
 
 def test_apply_desktop_theme_installs_selected_palette_and_stylesheet():
@@ -238,10 +304,11 @@ def test_chat_widgets_inherit_repaired_text_and_base_colors():
             >= MIN_TEXT_CONTRAST
         )
         message_palette = message.role_label.palette()
+        bubble_palette = message.bubble.palette()
         assert (
             contrast_ratio(
                 message_palette.color(QPalette.ColorRole.WindowText),
-                message_palette.color(QPalette.ColorRole.Window),
+                bubble_palette.color(QPalette.ColorRole.Window),
             )
             >= MIN_TEXT_CONTRAST
         )
