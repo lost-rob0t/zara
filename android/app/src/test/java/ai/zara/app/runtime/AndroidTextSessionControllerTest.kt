@@ -174,6 +174,43 @@ class AndroidTextSessionControllerTest {
     }
 
     @Test
+    fun changing_server_trust_invalidates_the_session_and_allows_a_fresh_connect() {
+        val client = FakeTextSessionClient()
+        val scheduler = FakeReconnectScheduler()
+        val controller = connectedController(client, scheduler)
+        val profile = controller.state().configuredProfile!!
+
+        controller.serverTrustChanged()
+
+        assertEquals(ServerConnection.Disconnected, controller.state().server)
+        assertEquals(EnrollmentReadiness.Ready, controller.state().enrollment)
+        assertEquals(null, controller.state().sessionId)
+        assertEquals(2L, controller.state().generation)
+        assertEquals(1, client.disconnectCalls)
+        val fresh = controller.connect(profile)
+        assertEquals(3L, client.connectGenerations.last())
+        client.completeConnect(1, ConnectedTextSession(3, "new-session"))
+        fresh.get()
+        assertEquals("new-session", controller.state().sessionId)
+    }
+
+    @Test
+    fun changing_server_trust_cancels_a_queued_reconnect() {
+        val client = FakeTextSessionClient()
+        val scheduler = FakeReconnectScheduler()
+        val controller = connectedController(client, scheduler)
+        controller.connectionLost("network")
+        assertEquals(ServerConnection.Reconnecting(2, 1), controller.state().server)
+
+        controller.serverTrustChanged()
+        scheduler.runNext()
+
+        assertEquals(ServerConnection.Disconnected, controller.state().server)
+        assertEquals(3L, controller.state().generation)
+        assertEquals(listOf(1L), client.connectGenerations)
+    }
+
+    @Test
     fun assistant_role_observation_uses_runtime_reducer_without_touching_connection() {
         val client = FakeTextSessionClient()
         val controller = connectedController(client)
