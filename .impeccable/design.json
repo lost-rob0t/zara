@@ -83,12 +83,12 @@
       "css": ".ds-theme-preview { width: 148px; height: 72px; padding: 9px 11px; color: #F2E9D8; background: #0A1012; border: 1px solid #3C5358; border-radius: 10px; text-align: left; font: 600 14px \"Adwaita Sans\", sans-serif; } .ds-theme-preview span { display: block; padding: 4px 8px; margin-bottom: 10px; background: #172226; border-radius: 6px; } .ds-theme-preview i { display: inline-block; width: 10px; height: 10px; margin-right: 10px; border-radius: 50%; background: #61D095; } .ds-theme-preview i:nth-of-type(2) { background: #E7B84B; } .ds-theme-preview i:nth-of-type(3) { background: #E6544D; } .ds-theme-preview:hover { border-color: #61D095; } .ds-theme-preview:focus-visible { outline: none; border: 2px solid #61D095; } .ds-theme-preview:active { background: #0D1518; }"
     },
     {
-      "name": "Route Transcript",
+      "name": "Conversation Bubbles",
       "kind": "custom",
-      "refersTo": "route-transcript",
-      "description": "Continuous conversation trace rather than message cards.",
-      "html": "<div class=\"ds-route\"><article class=\"ds-user\"><strong>You</strong><p>Show me the settings route.</p></article><article><strong>Zara</strong><em>Generating…</em><p>Five themes share one component system.</p></article></div>",
-      "css": ".ds-route { color: #F2E9D8; background: #0A1012; border-left: 1px solid #3C5358; padding-left: 10px; font: 400 14px \"Adwaita Sans\", sans-serif; } .ds-route article { position: relative; padding: 9px 5px 11px 12px; border-top: 1px solid #2A393E; } .ds-route article:hover { background: #0D1518; } .ds-route .ds-user { border-top-color: #61D095; } .ds-route strong, .ds-route em { color: #A8B7B3; font: 700 11px \"Hack Nerd Font Mono\", monospace; letter-spacing: 1px; } .ds-route .ds-user strong { color: #61D095; } .ds-route em { float: right; color: #E7B84B; } .ds-route p { margin: 8px 0 0; }"
+      "refersTo": "message-bubble",
+      "description": "Compact semantic bubbles for human messages and generic plugin activity.",
+      "html": "<div class=\"ds-chat\"><article class=\"ds-user\"><p>Show me the settings route.</p></article><article class=\"ds-assistant\"><strong>Zara</strong><p>Five themes share one component system.</p></article><article class=\"ds-activity\"><strong>calendar.sync</strong><em>Running</em></article></div>",
+      "css": ".ds-chat { display: flex; flex-direction: column; gap: 8px; color: #F2E9D8; background: #0A1012; font: 400 14px \"Adwaita Sans\", sans-serif; } .ds-chat article { max-width: 84%; padding: 10px 14px 11px; border: 0; border-radius: 16px; background: #172226; } .ds-chat .ds-user { align-self: end; max-width: 72%; background: #17382B; border-bottom-right-radius: 6px; } .ds-chat .ds-assistant { align-self: start; border-bottom-left-radius: 6px; } .ds-chat .ds-activity { align-self: start; border: 1px solid #2A393E; border-radius: 12px; background: #0D1518; } .ds-chat strong, .ds-chat em { color: #A8B7B3; font: 700 11px \"Hack Nerd Font Mono\", monospace; } .ds-chat em { margin-left: 24px; color: #E7B84B; } .ds-chat p { margin: 7px 0 0; }"
     },
     {
       "name": "Source Editor and Managed Facts",
@@ -104,7 +104,7 @@
     "overview": "Signal Cabin is Zara's native Linux operating shell: a precise route of status rails, open work fields, and grounded controls. Its charcoal enamel, warm type, and illuminated signals remain the default identity even as complete alternate themes reskin the same semantic component system.\n\nConversation and configuration share one grammar. Quick Copilot, Full Chat, and Settings expose real runtime or file state without generic AI-card chrome, decorative effects, or invented capability cues.",
     "keyCharacteristics": [
       "One semantic component system across five complete themes.",
-      "Continuous route-divider transcripts and rail-based navigation.",
+      "Compact message bubbles and rail-based navigation without transcript dividers.",
       "One platform-standard composer action that changes from send to stop.",
       "Open native forms, a real source editor, and a guided managed-fact rail."
     ],
@@ -118,14 +118,15 @@
       "Do preserve visible contrast, primary focus borders, and accessible control names in every palette.",
       "Do use Qt platform-standard icons for send and stop while keeping text labels in tooltips and accessibility metadata.",
       "Do keep Settings as one category rail, one open task surface, and one truthful save/restart footer.",
-      "Do keep approved source and managed facts visibly connected to the real configuration path."
+      "Do keep approved source and managed facts visibly connected to the real configuration path.",
+      "Do render plugin-provided tools through the same bounded activity-bubble contract as built-in tools."
     ],
     "donts": [
       "Don't recolor only the accent while leaving panels, lines, text, or state feedback from another theme.",
       "Don't add gradients, glass, ambient glow, drop shadows, or nested preference cards.",
       "Don't use Unicode arrows, squares, or other text glyphs as UI icons.",
       "Don't hide restart requirements, failed validation, restoration, or live-reload state behind generic success copy.",
-      "Don't break the continuous route transcript into generic assistant cards or bubbles."
+      "Don't reintroduce full-width message dividers, permanent transcript spines, or oversized empty rows."
     ]
   }
 }

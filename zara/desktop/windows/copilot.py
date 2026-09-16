@@ -63,10 +63,15 @@ class CopilotWindow(QuickCopilotWindow):
 
         self.history_panel = QWidget(self)
         self.history_panel.setObjectName("zaraConversationHistoryPanel")
-        self.history_panel.setMaximumWidth(320)
+        self.history_panel.setMinimumWidth(220)
+        self.history_panel.setMaximumWidth(280)
         history_layout = QVBoxLayout(self.history_panel)
-        history_layout.setContentsMargins(0, 0, 0, 8)
-        history_layout.setSpacing(8)
+        history_layout.setContentsMargins(12, 12, 12, 12)
+        history_layout.setSpacing(10)
+
+        self.sidebar_new_chat_button = QPushButton("New chat")
+        self.sidebar_new_chat_button.setObjectName("zaraPrimaryAction")
+        self.sidebar_new_chat_button.setAccessibleName("Start a new chat")
 
         history_header = QHBoxLayout()
         history_label = QLabel("Conversations")
@@ -82,7 +87,10 @@ class CopilotWindow(QuickCopilotWindow):
         self.search_edit.setPlaceholderText("Search chats")
         self.history_list = QListWidget()
         self.history_list.setObjectName("zaraConversationHistory")
+        self.history_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.history_list.setTextElideMode(Qt.TextElideMode.ElideRight)
 
+        history_layout.addWidget(self.sidebar_new_chat_button)
         history_layout.addLayout(history_header)
         history_layout.addWidget(self.search_edit)
         history_layout.addWidget(self.history_list)
@@ -94,7 +102,6 @@ class CopilotWindow(QuickCopilotWindow):
         chat_layout.setContentsMargins(0, 0, 0, 0)
         chat_layout.setSpacing(root_layout.spacing())
         for widget in (
-            self.status_frame,
             self.command_error_label,
             self.message_scroll,
             self.composer_shell,
@@ -115,6 +122,7 @@ class CopilotWindow(QuickCopilotWindow):
         self.search_edit.textChanged.connect(self.refresh_history)
         self.history_list.itemActivated.connect(self._activate_history_item)
         self.rename_button.clicked.connect(lambda _checked=False: self.rename_current())
+        self.sidebar_new_chat_button.clicked.connect(self.new_chat)
 
         self.expand_button.clicked.disconnect()
         self.expand_button.clicked.connect(self.toggle_presentation)
@@ -220,7 +228,10 @@ class CopilotWindow(QuickCopilotWindow):
         expanded = self._presentation is CopilotPresentation.EXPANDED
         self.setProperty("presentation", self._presentation.value)
         self.expand_button.setText("Compact" if expanded else "Expand")
+        self.expand_button.setToolTip("Use compact view" if expanded else "Use expanded view")
         self.history_panel.setVisible(expanded)
+        self.new_chat_button.setVisible(not expanded)
+        self._apply_header_density()
         if expanded:
             self.refresh_history()
         self.setWindowTitle("Zara — Copilot" if expanded else "Ask Zara")

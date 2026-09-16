@@ -4,7 +4,12 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtGui import QPalette
+from PySide6.QtWidgets import QApplication, QStyleFactory
 
 from zara.desktop.ui_fixtures import render_copilot_fixtures
 
@@ -65,3 +70,39 @@ def test_copilot_fixture_renderer_isolated_from_user_state(tmp_path, monkeypatch
 
     assert list(forbidden.iterdir()) == []
     assert set(path.name for path in output_dir.glob("*.png")) == REQUIRED_SCREENSHOTS
+
+
+def test_copilot_fixture_renderer_restores_application_theme_state(tmp_path):
+    qt_app = QApplication.instance() or QApplication([])
+    original_palette = QPalette(qt_app.palette())
+    caller_stylesheet = qt_app.styleSheet()
+    caller_theme = qt_app.property("zaraTheme")
+    original_stylesheet = "QWidget { color: #123456; }"
+    original_theme = "fixture-caller-theme"
+    qt_app.setStyleSheet("")
+    original_style_name = qt_app.style().objectName()
+    caller_style_name = next(
+        (name for name in QStyleFactory.keys() if name.casefold() != "fusion"),
+        None,
+    )
+    if caller_style_name is None:
+        pytest.skip("Qt provides no non-Fusion style for restoration testing")
+    qt_app.setStyle(caller_style_name)
+    caller_style_name = qt_app.style().objectName()
+    qt_app.setStyleSheet(original_stylesheet)
+    qt_app.setProperty("zaraTheme", original_theme)
+
+    try:
+        render_copilot_fixtures(tmp_path / "ui", source_commit="theme-isolation")
+
+        assert qt_app.palette() == original_palette
+        assert qt_app.styleSheet() == original_stylesheet
+        assert qt_app.property("zaraTheme") == original_theme
+        qt_app.setStyleSheet("")
+        assert qt_app.style().objectName() == caller_style_name
+        qt_app.setStyleSheet(original_stylesheet)
+    finally:
+        qt_app.setStyle(original_style_name)
+        qt_app.setPalette(original_palette)
+        qt_app.setStyleSheet(caller_stylesheet)
+        qt_app.setProperty("zaraTheme", caller_theme)

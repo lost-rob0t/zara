@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional, Sequence
 
 from PySide6.QtCore import QRect, QSettings, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QCursor, QHideEvent, QKeyEvent, QShowEvent
+from PySide6.QtGui import QCloseEvent, QCursor, QHideEvent, QKeyEvent, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -115,7 +115,7 @@ class QuickCopilotWindow(QWidget):
         self._allow_close = False
         self._conversation_id = self._resolve_initial_conversation(initial_conversation_id)
         self._message_widgets: dict[str, MessageWidget] = {}
-        self._rendered_message_ids: tuple[str, ...] = ()
+        self._rendered_message_ids: Optional[tuple[str, ...]] = None
         self._cancel_request_id: Optional[str] = None
         self._cancel_conversation_id: Optional[str] = None
         self._submit_request_id: Optional[str] = None
@@ -136,16 +136,21 @@ class QuickCopilotWindow(QWidget):
         self.provider_label.setObjectName("zaraQuickProvider")
         self.new_chat_button = QPushButton("New chat")
         self.new_chat_button.setObjectName("zaraSecondaryAction")
+        self.new_chat_button.setAccessibleName("Start a new chat")
+        self.new_chat_button.setToolTip("Start a new chat")
         self.expand_button = QPushButton("Full chat")
         self.expand_button.setObjectName("zaraSecondaryAction")
+        self.expand_button.setAccessibleName("Change conversation view")
         self.settings_button = QPushButton("Settings")
         self.settings_button.setObjectName("zaraSecondaryAction")
+        self.settings_button.setAccessibleName("Open settings")
+        self.settings_button.setToolTip("Settings")
 
         self.header_frame = QFrame()
         self.header_frame.setObjectName("zaraQuickHeader")
         header = QHBoxLayout(self.header_frame)
         header.setContentsMargins(0, 0, 0, 12)
-        header.setSpacing(10)
+        header.setSpacing(8)
         header.addWidget(self.brand_label)
         header.addWidget(self.title_label)
         header.addStretch(1)
@@ -166,22 +171,39 @@ class QuickCopilotWindow(QWidget):
 
         self.status_frame = QFrame()
         self.status_frame.setObjectName("zaraRuntimeRail")
+        self.status_frame.setAccessibleName("Zara runtime status")
         status_row = QHBoxLayout(self.status_frame)
-        status_row.setContentsMargins(12, 8, 12, 8)
-        status_row.setSpacing(10)
+        status_row.setContentsMargins(9, 5, 9, 5)
+        status_row.setSpacing(7)
         self.status_lamp = QFrame()
         self.status_lamp.setObjectName("zaraStatusLamp")
         self.status_lamp.setFixedSize(8, 8)
         status_row.addWidget(self.status_lamp)
         status_row.addWidget(self.runtime_status_label)
         status_row.addWidget(self.runtime_detail_label, 1)
+        header.insertWidget(3, self.status_frame)
 
         self.message_container = QWidget()
         self.message_container.setObjectName("zaraMessageContainer")
         self.message_layout = QVBoxLayout(self.message_container)
         self.message_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.message_layout.setContentsMargins(10, 4, 8, 4)
-        self.message_layout.setSpacing(10)
+        self.message_layout.setContentsMargins(10, 8, 8, 8)
+        self.message_layout.setSpacing(6)
+
+        self.empty_state = QFrame()
+        self.empty_state.setObjectName("zaraConversationEmptyState")
+        empty_layout = QVBoxLayout(self.empty_state)
+        empty_layout.setContentsMargins(24, 24, 24, 24)
+        empty_layout.setSpacing(6)
+        empty_title = QLabel("What can I help with?")
+        empty_title.setObjectName("zaraEmptyStateTitle")
+        empty_detail = QLabel("Start a conversation or choose one from your history.")
+        empty_detail.setObjectName("zaraEmptyStateDetail")
+        empty_detail.setWordWrap(True)
+        empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(empty_title)
+        empty_layout.addWidget(empty_detail)
 
         self.message_scroll = QScrollArea()
         self.message_scroll.setObjectName("zaraConversationViewport")
@@ -191,7 +213,7 @@ class QuickCopilotWindow(QWidget):
 
         self.composer = QuickComposer()
         self.composer.setPlaceholderText("Ask Zara…")
-        self.composer.setMinimumHeight(48)
+        self.composer.setMinimumHeight(32)
         self.composer.setMaximumHeight(80)
         self.setFocusProxy(self.composer)
         self.action_button = ComposerActionButton()
@@ -214,7 +236,6 @@ class QuickCopilotWindow(QWidget):
         layout.setContentsMargins(18, 16, 18, 18)
         layout.setSpacing(12)
         layout.addWidget(self.header_frame)
-        layout.addWidget(self.status_frame)
         layout.addWidget(self.command_error_label)
         layout.addWidget(self.message_scroll, 1)
         layout.addWidget(self.composer_shell)
@@ -229,6 +250,7 @@ class QuickCopilotWindow(QWidget):
 
         self.set_status(INITIAL_STATUS)
         self.sync_from_shared_state()
+        self._apply_header_density()
 
     @property
     def current_conversation_id(self) -> str:
@@ -246,7 +268,7 @@ class QuickCopilotWindow(QWidget):
         self.conversations.get_state(conversation_id)
         self._conversation_id = conversation_id
         self.command_error_label.hide()
-        self._rendered_message_ids = ()
+        self._rendered_message_ids = None
         self.sync_from_shared_state()
 
     def new_chat(self) -> None:
@@ -305,6 +327,8 @@ class QuickCopilotWindow(QWidget):
         self.runtime_status_label.setProperty("runtimeState", status.state.value)
         self.runtime_status_label.setText(status.state.value.replace("-", " ").title())
         self.runtime_detail_label.setText(status.detail or "Zara is ready.")
+        self.runtime_detail_label.setVisible(status.state.value in {"error", "disconnected"})
+        self.status_frame.setToolTip(status.detail or "Zara is ready.")
         refresh_dynamic_style(self.status_lamp)
         refresh_dynamic_style(self.runtime_status_label)
 
@@ -377,6 +401,10 @@ class QuickCopilotWindow(QWidget):
         super().showEvent(event)
         QTimer.singleShot(0, self._focus_composer)
 
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        self._apply_header_density()
+
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt API
         if event.key() == Qt.Key.Key_Escape:
             self.hide()
@@ -393,6 +421,13 @@ class QuickCopilotWindow(QWidget):
         self.raise_()
         self.activateWindow()
         self.composer.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+
+    def _apply_header_density(self) -> None:
+        narrow = self.width() < 560
+        self.brand_label.setVisible(not narrow)
+        self.runtime_status_label.setVisible(not narrow)
+        self.new_chat_button.setText("New" if narrow else "New chat")
+        self.settings_button.setText("..." if narrow else "Settings")
 
     def _request_expand(self) -> None:
         self.expand_requested.emit(self.current_conversation_id)
@@ -413,10 +448,19 @@ class QuickCopilotWindow(QWidget):
         while self.message_layout.count():
             item = self.message_layout.takeAt(0)
             widget = item.widget()
-            if widget is not None:
+            if widget is not None and widget is not self.empty_state:
                 widget.setParent(None)
                 widget.deleteLater()
         self._message_widgets.clear()
+        if not messages:
+            self.empty_state.show()
+            self.message_layout.addWidget(
+                self.empty_state,
+                1,
+                Qt.AlignmentFlag.AlignCenter,
+            )
+        else:
+            self.empty_state.hide()
         for message in messages:
             widget = MessageWidget(message)
             self._message_widgets[message.id] = widget
@@ -428,6 +472,10 @@ class QuickCopilotWindow(QWidget):
         provider = state.provider or "runtime default"
         suffix = f" / {state.model}" if state.model else ""
         self.provider_label.setText(f"{provider}{suffix}")
+        self.provider_label.hide()
+        self.status_frame.setToolTip(
+            f"{self.runtime_detail_label.text()}\nProvider: {provider}{suffix}"
+        )
 
     def _sync_controls(self) -> None:
         state = self.conversations.get_state(self.current_conversation_id)

@@ -13,16 +13,19 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QSettings
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication
 
 from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationService, ConversationStore
+from zara.desktop.theme import apply_desktop_theme
 from zara.desktop.windows import CopilotPresentation, CopilotWindow
+from zara.runtime import events
 
 _COMPACT_SIZE = (680, 460)
 _EXPANDED_SIZE = (960, 680)
 _MINIMUM_SIZE = (480, 320)
-_THEME = "default"
+_THEME = "signal-cabin"
 
 _FIXTURES: tuple[tuple[str, str], ...] = (
     ("empty-compact", "copilot-empty-compact.png"),
@@ -74,13 +77,35 @@ def _add_user_messages(service: ConversationService, conversation_id: str, *mess
         )
 
 
+def _add_assistant_message(
+    service: ConversationService,
+    conversation_id: str,
+    text: str,
+    *,
+    turn_id: str,
+) -> None:
+    service.apply_event(
+        events.ResponseText(
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            text=text,
+        )
+    )
+
+
 def _configure_fixture(state: str, window: CopilotWindow, service: ConversationService) -> None:
     conversation_id = window.current_conversation_id
 
     if state == "empty-compact":
         return
     if state == "short-chat-compact":
-        _add_user_messages(service, conversation_id, "Can you summarize today's plan?", "Keep it concise.")
+        _add_user_messages(service, conversation_id, "Can you summarize today's plan?")
+        _add_assistant_message(
+            service,
+            conversation_id,
+            "Three priorities: finish the desktop pass, verify the runtime, and keep the handoff concise.",
+            turn_id="fixture-short-chat",
+        )
     elif state == "long-wrap-compact":
         _add_user_messages(
             service,
@@ -90,26 +115,50 @@ def _configure_fixture(state: str, window: CopilotWindow, service: ConversationS
         )
     elif state == "streaming":
         _add_user_messages(service, conversation_id, "What changed in Zara today?")
+        service.apply_event(
+            events.AssistantDelta(
+                conversation_id=conversation_id,
+                turn_id="fixture-streaming",
+                text="The desktop now keeps one durable conversation",
+            )
+        )
         window.runtime_status_label.setText("Thinking")
-        window.runtime_detail_label.setText("Streaming assistant response…")
+        window.runtime_detail_label.setText("Streaming assistant response...")
     elif state == "error":
         _add_user_messages(service, conversation_id, "Run the last request again.")
         window.command_error_label.setText("The runtime rejected this turn. Nothing was executed.")
         window.command_error_label.show()
     elif state == "disconnected":
         window.runtime_status_label.setText("Disconnected")
-        window.runtime_detail_label.setText("Daemon unavailable — reconnecting.")
+        window.runtime_detail_label.setText("Daemon unavailable; reconnecting.")
     elif state == "tool-running":
-        _add_user_messages(service, conversation_id, "Check the repository status.")
+        _add_user_messages(service, conversation_id, "Sync my calendar before the next meeting.")
+        service.apply_event(
+            events.ToolStarted(
+                conversation_id=conversation_id,
+                turn_id="fixture-plugin-turn",
+                tool_run_id="fixture-plugin-tool",
+                tool_name="calendar.sync",
+            )
+        )
         window.runtime_status_label.setText("Tool running")
-        window.runtime_detail_label.setText("git status · running")
+        window.runtime_detail_label.setText("calendar.sync is running")
     elif state == "tool-approval":
         _add_user_messages(service, conversation_id, "Apply the verified update.")
+        service.apply_event(
+            events.ToolWaitingForUser(
+                conversation_id=conversation_id,
+                turn_id="fixture-approval-turn",
+                tool_run_id="fixture-approval-tool",
+                tool_name="workspace.apply",
+                prompt="Apply the verified update?",
+            )
+        )
         window.runtime_status_label.setText("Approval required")
         window.runtime_detail_label.setText("A side effect is waiting for your approval.")
     elif state == "voice-listening":
         window.runtime_status_label.setText("Listening")
-        window.runtime_detail_label.setText("Microphone active · waiting for speech")
+        window.runtime_detail_label.setText("Microphone active; waiting for speech")
     elif state == "voice-partial":
         window.runtime_status_label.setText("Listening")
         window.runtime_detail_label.setText("Partial transcript: open roam daily…")
@@ -190,19 +239,33 @@ def render_copilot_fixtures(output_dir: Path | str, *, source_commit: str) -> di
     """
     target = Path(output_dir)
     target.mkdir(parents=True, exist_ok=True)
+    app = _application()
+    previous_palette = QPalette(app.palette())
+    previous_stylesheet = app.styleSheet()
+    app.setStyleSheet("")
+    previous_style_name = app.style().objectName()
+    app.setStyleSheet(previous_stylesheet)
+    previous_theme = app.property("zaraTheme")
+    apply_desktop_theme(app, _THEME)
 
-    with tempfile.TemporaryDirectory(prefix="zara-copilot-fixtures-") as temp_dir:
-        root = Path(temp_dir)
-        fixtures = [
-            _render_one(
-                target,
-                state,
-                filename,
-                source_commit=source_commit,
-                root=root,
-            )
-            for state, filename in _FIXTURES
-        ]
+    try:
+        with tempfile.TemporaryDirectory(prefix="zara-copilot-fixtures-") as temp_dir:
+            root = Path(temp_dir)
+            fixtures = [
+                _render_one(
+                    target,
+                    state,
+                    filename,
+                    source_commit=source_commit,
+                    root=root,
+                )
+                for state, filename in _FIXTURES
+            ]
+    finally:
+        app.setStyle(previous_style_name)
+        app.setPalette(previous_palette)
+        app.setStyleSheet(previous_stylesheet)
+        app.setProperty("zaraTheme", previous_theme)
 
     manifest: dict[str, object] = {
         "schema": 1,
