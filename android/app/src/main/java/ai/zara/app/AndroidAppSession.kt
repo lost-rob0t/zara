@@ -14,6 +14,24 @@ import ai.zara.app.device.DeviceCapabilityRegistry
 import ai.zara.app.device.OpenAppAdapter
 import ai.zara.app.device.OpenUriAdapter
 import ai.zara.app.device.RegistryDeviceActionHandler
+import ai.zara.app.history.ConversationHistoryContract
+import ai.zara.app.history.HistoryConversation
+import ai.zara.app.history.HistoryConversationState
+import ai.zara.app.history.HistoryMessage
+import ai.zara.app.history.HistoryMessageRole
+import ai.zara.app.history.HistoryMessageStatus
+import ai.zara.app.history.PortableConversationStore
+import ai.zara.app.prolog.AndroidPortableSemanticAssetSource
+import ai.zara.app.prolog.LocalNaturalLanguageExpertRouter
+import ai.zara.app.prolog.LocalPrologCommand
+import ai.zara.app.prolog.NativeTreallaBridge
+import ai.zara.app.prolog.PortableSemanticAssetStager
+import ai.zara.app.prolog.PrologDocument
+import ai.zara.app.prolog.PrologExampleCatalog
+import ai.zara.app.prolog.PrologSource
+import ai.zara.app.prolog.PrologSourceAnalyzer
+import ai.zara.app.prolog.PrologWorkspace
+import ai.zara.app.prolog.PrologWorkspaceCatalog
 import ai.zara.app.runtime.AndroidTextSessionController
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.AudioOutputFormat
@@ -26,25 +44,14 @@ import ai.zara.app.runtime.LocalServerState
 import ai.zara.app.runtime.LocalZaraServer
 import ai.zara.app.runtime.RestorableClientState
 import ai.zara.app.runtime.RuntimeEvent
-import ai.zara.app.runtime.RuntimeState
 import ai.zara.app.runtime.RuntimeMode
+import ai.zara.app.runtime.RuntimeState
 import ai.zara.app.runtime.ServerConnection
 import ai.zara.app.runtime.ServerProfile
 import ai.zara.app.runtime.TextTurnResult
 import ai.zara.app.runtime.ZaraTextClientActor
 import ai.zara.app.runtime.reduce
 import ai.zara.app.runtime.toRuntimeReadiness
-import ai.zara.app.prolog.AndroidPortableSemanticAssetSource
-import ai.zara.app.prolog.NativeTreallaBridge
-import ai.zara.app.prolog.PortableSemanticAssetStager
-import ai.zara.app.prolog.PrologDocument
-import ai.zara.app.prolog.LocalPrologCommand
-import ai.zara.app.prolog.LocalNaturalLanguageExpertRouter
-import ai.zara.app.prolog.PrologExampleCatalog
-import ai.zara.app.prolog.PrologSource
-import ai.zara.app.prolog.PrologSourceAnalyzer
-import ai.zara.app.prolog.PrologWorkspace
-import ai.zara.app.prolog.PrologWorkspaceCatalog
 import ai.zara.app.voice.AndroidAudioFocusPlatform
 import ai.zara.app.voice.AndroidAudioRoutePlatform
 import ai.zara.app.voice.AndroidPcmOutput
@@ -64,14 +71,18 @@ import ai.zara.app.voice.VoiceStreamState
 import android.content.Context
 import android.content.Intent
 import java.io.File
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CompletionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import java.util.UUID
 
 class AndroidAppSession(context: Context) : AutoCloseable {
     private val enrollment: EnrollmentRepository = AndroidEnrollmentRepository.create(context)
     private val stateStore = ClientStateStore(File(context.noBackupFilesDir, "zara/client-state.bin"))
+    private val localHistory = PortableConversationStore(context)
+    @Volatile private var selectedLocalConversationId: String? =
+        localHistory.listConversations(limit = 1).firstOrNull()?.id
     private val actor: ZaraTextClientActor
     private val controller: AndroidTextSessionController
     private val assistantRolePlatform: AndroidAssistantRolePlatform
@@ -190,6 +201,26 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun setLocalServerObserver(observer: ((LocalServerState) -> Unit)?) {
         localServer.setStateObserver(observer)
+    }
+
+    fun localConversations(limit: Int = 100): List<HistoryConversation> =
+        localHistory.listConversations(limit = limit)
+
+    fun selectedLocalConversation(): HistoryConversationState? {
+        val id = selectedLocalConversationId ?: return null
+        return runCatching { localHistory.loadState(id) }.getOrNull()
+    }
+
+    fun selectLocalConversation(conversationId: String): HistoryConversationState {
+        val state = localHistory.loadState(conversationId)
+        selectedLocalConversationId = conversationId
+        return state
+    }
+
+    fun newLocalConversation(): HistoryConversationState {
+        val conversation = localHistory.createConversation()
+        selectedLocalConversationId = conversation.id
+        return localHistory.loadState(conversation.id)
     }
 
     fun prologSources(): List<PrologSource> = prologWorkspace.listSources()
@@ -371,6 +402,28 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     private fun submitLocalText(text: String): CompletableFuture<TextTurnResult> {
         val query = text.trim()
+        require(query.isNotEmpty()) { "message text must not be empty" }
+        val conversation = ensureLocalConversation()
+        val userNow = PortableConversationStore.nowIso()
+        localHistory.saveMessage(
+            HistoryMessage(
+                id = UUID.randomUUID().toString().replace("-", ""),
+                conversationId = conversation.id,
+                sequence = localHistory.nextSequence(conversation.id),
+                role = HistoryMessageRole.User,
+                content = query,
+                status = HistoryMessageStatus.Complete,
+                createdAt = userNow,
+                updatedAt = userNow,
+            )
+        )
+        if (conversation.title == "New chat") {
+            localHistory.renameConversation(
+                conversation.id,
+                ConversationHistoryContract.deriveTitle(query),
+            )
+        }
+
         val catalog = PrologWorkspaceCatalog.from(prologWorkspace.listSources())
         val future = when {
             query.startsWith("?-") -> localServer.query(query)
@@ -378,6 +431,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 val command = try {
                     LocalPrologCommand.parse(query, catalog)
                 } catch (error: Throwable) {
+                    recordLocalFailure(conversation.id, error)
                     return CompletableFuture.failedFuture(error)
                 }
                 localServer.query(command.query)
@@ -385,19 +439,65 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             else -> LocalNaturalLanguageExpertRouter.query(query, catalog)?.let(localServer::query)
                 ?: localServer.resolve(query)
         }
-        return future.thenApply { result ->
+        return future.handle { result, error ->
+            if (error != null) {
+                recordLocalFailure(conversation.id, error)
+                throw CompletionException(error)
+            }
             val answer = if (result.terms.isEmpty()) {
                 "No deterministic local rule matched. Remote model capabilities are optional; the local Prolog server is still ready."
             } else {
                 result.terms.joinToString("\n")
             }
-            TextTurnResult(
-                conversationId = "local-device",
+            val turn = TextTurnResult(
+                conversationId = conversation.id,
                 turnId = UUID.randomUUID().toString(),
                 text = answer,
                 success = result.terms.isNotEmpty(),
             )
+            val assistantNow = PortableConversationStore.nowIso()
+            localHistory.saveMessage(
+                HistoryMessage(
+                    id = UUID.randomUUID().toString().replace("-", ""),
+                    conversationId = conversation.id,
+                    sequence = localHistory.nextSequence(conversation.id),
+                    turnId = turn.turnId,
+                    role = HistoryMessageRole.Assistant,
+                    content = turn.text,
+                    status = if (turn.success) HistoryMessageStatus.Complete else HistoryMessageStatus.Error,
+                    error = if (turn.success) "" else "assistant generation failed",
+                    createdAt = assistantNow,
+                    updatedAt = assistantNow,
+                )
+            )
+            turn
         }
+    }
+
+    private fun ensureLocalConversation(): HistoryConversation {
+        val selected = selectedLocalConversationId?.let(localHistory::getConversation)
+        if (selected != null) return selected
+        val created = localHistory.createConversation()
+        selectedLocalConversationId = created.id
+        return created
+    }
+
+    private fun recordLocalFailure(conversationId: String, failure: Throwable) {
+        val reason = failure.cause?.message ?: failure.message ?: failure.javaClass.simpleName
+        val now = PortableConversationStore.nowIso()
+        localHistory.saveMessage(
+            HistoryMessage(
+                id = UUID.randomUUID().toString().replace("-", ""),
+                conversationId = conversationId,
+                sequence = localHistory.nextSequence(conversationId),
+                role = HistoryMessageRole.System,
+                content = "Message could not be completed.",
+                status = HistoryMessageStatus.Error,
+                error = reason,
+                createdAt = now,
+                updatedAt = now,
+            )
+        )
     }
 
     fun pressToTalk(permissionGranted: Boolean): CompletableFuture<Unit> =
@@ -542,7 +642,11 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 voiceStreamSink.close()
             }
         }
-        localServer.close()
+        try {
+            localServer.close()
+        } finally {
+            localHistory.close()
+        }
         if (routeFailure != null) throw routeFailure
     }
 }
