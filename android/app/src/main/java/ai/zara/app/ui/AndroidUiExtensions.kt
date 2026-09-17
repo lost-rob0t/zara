@@ -16,14 +16,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -170,28 +166,17 @@ private fun UiContributionControl(
             SecondaryAction(contribution.label, enabled = true) {
                 onAction(contribution.action)
             }
-        UiContributionKind.TOGGLE -> {
-            var enabled by rememberSaveable(contribution.owner, contribution.id) { mutableStateOf(false) }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(contribution.label, color = tokens.text)
-                TextButton(
-                    onClick = {
-                        enabled = !enabled
-                        onAction(
-                            contribution.action.replace(
-                                "{value}",
-                                if (enabled) "true" else "false",
-                            )
-                        )
-                    },
-                ) {
-                    Text(if (enabled) "ON" else "OFF")
-                }
-            }
+        UiContributionKind.TOGGLE -> Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(contribution.label, color = tokens.text)
+            Text(
+                "STATE UNAVAILABLE",
+                color = tokens.textMuted,
+                style = MaterialTheme.typography.labelSmall,
+            )
         }
     }
 }
