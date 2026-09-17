@@ -8,8 +8,8 @@ data class PrologProjectIdentity(
 
     fun effectiveLlmAppName(configuredName: String? = null): String =
         llmAppName?.takeIf(String::isNotBlank)
-            ?: configuredName?.takeIf(String::isNotBlank)
             ?: projectName?.takeIf(String::isNotBlank)
+            ?: configuredName?.takeIf(String::isNotBlank)
             ?: DEFAULT_PROJECT_NAME
 
     fun defaultWakeWords(): List<String> {
