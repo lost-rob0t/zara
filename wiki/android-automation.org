@@ -66,7 +66,7 @@ Samsung Bixby is exposed as the reviewed semantic app alias =bixby=.  Zara does
 not expose a raw Bixby Intent, component, command receiver, package name, or
 arbitrary command injection surface to Prolog.
 
-The seeded local rule is:
+The app-owned =zara_bixby.pl= source contains:
 
 #+begin_src prolog
 automation(open_bixby,
@@ -74,6 +74,10 @@ automation(open_bixby,
         open_app(bixby)
     ])).
 #+end_src
+
+Catalog sources are seeded independently when missing.  Existing Prolog sources
+are never replaced, so an install that already has =android_automation.pl=
+receives =zara_bixby.pl= on upgrade without losing user edits.
 
 The Automation surface includes a =Bixby= action that runs =open_bixby=.  Android
 resolves the reviewed alias to Samsung's Bixby package and launches its normal
