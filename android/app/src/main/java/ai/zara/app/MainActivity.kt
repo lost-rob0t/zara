@@ -282,6 +282,40 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 },
+                onRenamePrologSource = { from, to ->
+                    operationError = null
+                    operationBusy = true
+                    appSession.renamePrologSource(from, to).whenComplete { result, error ->
+                        runOnUiThread {
+                            operationBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            if (result != null) prologSources = result
+                        }
+                    }
+                },
+                onDeletePrologSource = { name ->
+                    operationError = null
+                    operationBusy = true
+                    appSession.deletePrologSource(name).whenComplete { result, error ->
+                        runOnUiThread {
+                            operationBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            if (result != null) prologSources = result
+                        }
+                    }
+                },
+                onImportPrologWorkspace = { bundle ->
+                    operationError = null
+                    operationBusy = true
+                    appSession.importPrologWorkspace(bundle).whenComplete { result, error ->
+                        runOnUiThread {
+                            operationBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            if (result != null) prologSources = result
+                        }
+                    }
+                },
+                onExportPrologWorkspace = appSession::exportPrologWorkspace,
                 onCheckForUpdate = {
                     operationError = null
                     updateManager.check().whenComplete { _, error ->
