@@ -203,3 +203,90 @@ def test_local_owner_claims_history_from_previous_numeric_uid_without_claiming_o
     assert migrated["principal_id"] == PORTABLE_LOCAL_PRINCIPAL_ID
     assert authenticated["principal_id"] == "user:alice"
     assert nonnumeric_uid["principal_id"] == "uid:service"
+
+
+def test_pre_portable_schema_upgrade_preserves_history_and_messages(tmp_path):
+    path = tmp_path / "pre-portable.db"
+    conn = sqlite3.connect(path)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE desktop_conversations (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                provider TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE desktop_messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                turn_id TEXT,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error TEXT NOT NULL DEFAULT '',
+                tool_run_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (conversation_id) REFERENCES desktop_conversations(id) ON DELETE CASCADE
+            );
+            """
+        )
+        timestamp = "2026-09-17T01:00:00.000000"
+        conn.execute(
+            """
+            INSERT INTO desktop_conversations
+                (id, title, created_at, updated_at, provider, model)
+            VALUES (?, ?, ?, ?, '', '')
+            """,
+            ("legacy-conversation", "Before portable history", timestamp, timestamp),
+        )
+        conn.execute(
+            """
+            INSERT INTO desktop_messages
+                (id, conversation_id, sequence, turn_id, role, content, status,
+                 error, tool_run_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, '', NULL, ?, ?)
+            """,
+            (
+                "legacy-message",
+                "legacy-conversation",
+                1,
+                "legacy-turn",
+                "assistant",
+                "this row must survive the upgrade",
+                "complete",
+                timestamp,
+                timestamp,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    db = DatabaseManager(path)
+    store = ConversationStore(
+        db,
+        principal=PrincipalContext("uid:9001", kind="local-owner"),
+    )
+    state = store.load_state("legacy-conversation")
+
+    assert state.conversation.title == "Before portable history"
+    assert [message.id for message in state.messages] == ["legacy-message"]
+    assert [message.content for message in state.messages] == [
+        "this row must survive the upgrade"
+    ]
+    conversation_owner = db.fetch_one(
+        "SELECT principal_id FROM desktop_conversations WHERE id = ?",
+        ("legacy-conversation",),
+    )
+    message_owner = db.fetch_one(
+        "SELECT principal_id FROM desktop_messages WHERE id = ?",
+        ("legacy-message",),
+    )
+    assert conversation_owner["principal_id"] == PORTABLE_LOCAL_PRINCIPAL_ID
+    assert message_owner["principal_id"] == PORTABLE_LOCAL_PRINCIPAL_ID
+    db.close()
