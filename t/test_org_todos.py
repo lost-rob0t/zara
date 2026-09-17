@@ -10,30 +10,30 @@ def _write_agenda(root: Path) -> Path:
     root.mkdir(parents=True)
     path = root / "zara.org"
     path.write_text(
-        """#+title: Zara\n"
-        "#+todo: TODO(t) STRT(s!) WAIT(w@/!) HOLD(h@/!) IDEA(i) LOOP(l!) | DONE(d!) KILL(k@/!)\n"
-        "\n"
-        "* Current Work\n"
-        "Project prose must survive rewrites.\n"
-        "\n"
-        "** STRT [#A] Build Org watch face :wearos:todo:\n"
-        ":PROPERTIES:\n"
-        ":ID:       5021ae0b-6b2f-4dc2-92c9-cc79b8ed1ed6\n"
-        ":OWNER:    user\n"
-        ":REPO:     lost-rob0t/zara\n"
-        ":EFFORT:   1:30\n"
-        ":END:\n"
-        "SCHEDULED: <2026-09-17 Thu 18:00 +1w>\n"
-        "DEADLINE: <2026-10-01 Thu 23:59>\n"
-        "Keep this note.\n"
-        "\n"
-        "** TODO Unrelated task :safe:\n"
-        ":PROPERTIES:\n"
-        ":ID:       9f34af61-9d7d-4b9a-9686-93d616c70e45\n"
-        ":OWNER:    user\n"
-        ":END:\n"
-        "Do not rewrite this block.\n"
-        """,
+        """#+title: Zara
+#+todo: TODO(t) STRT(s!) WAIT(w@/!) HOLD(h@/!) IDEA(i) LOOP(l!) | DONE(d!) KILL(k@/!)
+
+* Current Work
+Project prose must survive rewrites.
+
+** STRT [#A] Build Org watch face :wearos:todo:
+:PROPERTIES:
+:ID:       5021ae0b-6b2f-4dc2-92c9-cc79b8ed1ed6
+:OWNER:    user
+:REPO:     lost-rob0t/zara
+:EFFORT:   1:30
+:END:
+SCHEDULED: <2026-09-17 Thu 18:00 +1w>
+DEADLINE: <2026-10-01 Thu 23:59>
+Keep this note.
+
+** TODO Unrelated task :safe:
+:PROPERTIES:
+:ID:       9f34af61-9d7d-4b9a-9686-93d616c70e45
+:OWNER:    user
+:END:
+Do not rewrite this block.
+""",
         encoding="utf-8",
     )
     return path
