@@ -65,7 +65,7 @@ class AutomationActivity : ComponentActivity() {
             accessGranted = accessBroker::isGranted,
         )
         refreshAccess()
-        seedDemo().whenComplete { _, error ->
+        seedCatalogSources().whenComplete { _, error ->
             runOnUiThread {
                 status = error?.cause?.message ?: error?.message ?: "Prolog automation ready"
             }
@@ -95,11 +95,8 @@ class AutomationActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    private fun seedDemo(): CompletableFuture<*> {
+    private fun seedCatalogSources(): CompletableFuture<*> {
         val session = (application as ZaraApplication).appSession
-        if (session.prologSources().any { it.name == DEMO.fileName }) {
-            return CompletableFuture.completedFuture(Unit)
-        }
         return CompletableFuture.supplyAsync(
             {
                 repeat(100) {
@@ -114,10 +111,14 @@ class AutomationActivity : ComponentActivity() {
             },
             io,
         ).thenCompose {
-            if (session.prologSources().any { source -> source.name == DEMO.fileName }) {
-                CompletableFuture.completedFuture(Unit)
-            } else {
-                session.savePrologSource(DEMO.fileName, DEMO.source).thenApply { Unit }
+            val existingNames = session.prologSources().map(PrologSource::name).toSet()
+            val missing = AndroidAutomationCatalog.examples.filterNot { source ->
+                source.fileName in existingNames
+            }
+            missing.fold(CompletableFuture.completedFuture(Unit)) { chain, source ->
+                chain.thenCompose {
+                    session.savePrologSource(source.fileName, source.source).thenApply { Unit }
+                }
             }
         }
     }
@@ -193,10 +194,6 @@ class AutomationActivity : ComponentActivity() {
             append(text)
             append("END-SOURCE\n")
         }
-    }
-
-    private companion object {
-        val DEMO = AndroidAutomationCatalog.examples.single()
     }
 }
 
