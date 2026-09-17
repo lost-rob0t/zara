@@ -36,6 +36,44 @@ class LocalModelStoreTest {
     }
 
     @Test
+    fun catalogKeepsMultipleVerifiedModelsAndCanReactivateEitherOne() {
+        val root = Files.createTempDirectory("zara-model-store").toFile()
+        val store = LocalModelStore(root)
+        val firstBytes = "first model".toByteArray()
+        val secondBytes = "second model".toByteArray()
+        val first = LocalModelMetadata(
+            id = "gemma-fixture",
+            version = "1",
+            quantization = LocalModelQuantization.INT4,
+            sha256 = sha256(firstBytes),
+            maxContextTokens = 2048,
+            backend = LocalModelBackend.CPU,
+        )
+        val second = LocalModelMetadata(
+            id = "qwen-fixture",
+            version = "2",
+            quantization = LocalModelQuantization.INT8,
+            sha256 = sha256(secondBytes),
+            maxContextTokens = 4096,
+            backend = LocalModelBackend.GPU,
+        )
+
+        firstBytes.inputStream().use { store.install(it, first) }
+        secondBytes.inputStream().use { store.install(it, second) }
+
+        assertEquals(
+            setOf("gemma-fixture@1", "qwen-fixture@2"),
+            store.installedModels().map { "${it.id}@${it.version}" }.toSet(),
+        )
+        assertEquals("qwen-fixture", store.activeModel()?.id)
+
+        val selected = requireNotNull(store.model("gemma-fixture", "1"))
+        store.activate(selected)
+        assertEquals("gemma-fixture", store.activeModel()?.id)
+        assertEquals(2, store.installedModels().size)
+    }
+
+    @Test
     fun installRejectsChecksumMismatchWithoutActivatingModel() {
         val root = Files.createTempDirectory("zara-model-store").toFile()
         val store = LocalModelStore(root)
@@ -73,6 +111,9 @@ class LocalModelStoreTest {
 
         assertThrows(IllegalStateException::class.java) {
             store.activeModel()
+        }
+        assertThrows(IllegalStateException::class.java) {
+            store.installedModels()
         }
     }
 
