@@ -69,18 +69,32 @@ class AndroidEmailRuntimeBinding(
                     arguments.optBoolean("dry_run", true),
                 )
             )
+            "email_refresh_spam_rules" -> {
+                val feeds = arguments.optJSONArray("feeds")?.let(::parseFeeds) ?: emptyList()
+                val generatedRulePath = arguments.requireString("generated_rule_path")
+                JSONObject()
+                    .put("rules", plugin.refreshSpamRules(feeds, generatedRulePath))
+                    .put("path", generatedRulePath)
+            }
             "email_prolog_api" -> JSONObject()
                 .put("context", plugin.modelTurnContext)
                 .put("tools", JSONArray(plugin.toolNames.toList()))
-            "email_refresh_spam_rules" -> throw IllegalArgumentException(
-                "spam feed refresh requires the configured feed service boundary"
-            )
             else -> error("unreachable")
         }
     }
 
     override fun close() {
         LocalPromptContexts.unregister(CONTEXT_NAME)
+    }
+
+    private fun parseFeeds(array: JSONArray): List<SpamFeed> = (0 until array.length()).map { index ->
+        val item = array.getJSONObject(index)
+        SpamFeed(
+            name = item.requireString("name"),
+            url = item.requireString("url"),
+            kind = item.requireString("kind"),
+            weight = item.optInt("weight", 50),
+        )
     }
 
     private fun messageJson(message: AndroidEmailMessage): JSONObject = JSONObject()
