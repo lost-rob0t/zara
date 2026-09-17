@@ -16,7 +16,7 @@ test(active_schedule_state) :-
     todo_state(strt, 1000, 60, none, 1200, State),
     assertion(State == active).
 
-test_upcoming_schedule_state :-
+test(upcoming_schedule_state) :-
     todo_state(todo, 2000, 30, none, 1200, State),
     assertion(State == upcoming).
 
