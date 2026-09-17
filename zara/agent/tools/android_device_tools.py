@@ -13,7 +13,7 @@ from typing import Dict
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from ... import android_device_bridge, android_raw_protocol
+from ... import android_device_bridge
 
 
 class AndroidExecuteArgs(BaseModel):
@@ -89,9 +89,8 @@ def _android_execute(
 
 
 def build_android_execute_tool() -> StructuredTool:
-    # Activate the ZARA/1 extension and gateway tracking while built-ins are
-    # loaded. AgentManager is constructed before the server gateway.
-    android_raw_protocol.install()
+    # Track future gateways while built-ins are loaded. The protocol extension
+    # itself activates only when a gateway is actually constructed.
     android_device_bridge.install_gateway_tracking()
     return StructuredTool.from_function(
         func=_android_execute,
