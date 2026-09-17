@@ -12,7 +12,7 @@ import re
 from typing import Optional, Tuple
 
 WAKE_WORDS = ["zarathushtra", "zarathustra", "hey zara", "zara", "sarah", "sara"]
-WAKE_TOKEN_STRIP = " \t\r\n,.:;!?-\"'`()[]{}<>…"
+WAKE_TOKEN_STRIP = " \t\r\n,.:;!?-\\\"'`()[]{}<>…"
 
 
 def edit_distance(left: str, right: str) -> int:
@@ -106,8 +106,43 @@ def _normalize_wake_words(raw_words) -> list:
     return normalized
 
 
+def _effective_prolog_string(prolog_engine, goal: str, variable: str) -> Optional[str]:
+    """Resolve a scalar Prolog setting using config-loader clause precedence.
+
+    User config is installed with ``asserta/2``. The mutable overlay is loaded
+    after the provisioned layer, so the first successful clause is the
+    effective value and the packaged default remains the final fallback.
+    """
+    if prolog_engine is None:
+        return None
+    try:
+        results = prolog_engine.query_all(goal, max_solutions=64)
+    except Exception as error:
+        logging.getLogger(__name__).warning(
+            "Project identity Prolog query failed, using defaults: %s", error
+        )
+        return None
+    for result in results or []:
+        if not isinstance(result, dict):
+            continue
+        raw = result.get(variable)
+        if raw is None:
+            continue
+        value = " ".join(str(raw).split()).strip()
+        if value:
+            return value
+    return None
+
+
+def _default_wake_words(project_name: Optional[str]) -> list:
+    name = " ".join(str(project_name or "").split()).strip()
+    if not name or name.lower() == "zara":
+        return list(WAKE_WORDS)
+    return _normalize_wake_words([f"hey {name}", name])
+
+
 def resolve_wake_words(config=None, prolog_engine=None) -> list:
-    """Resolve wake words: config.toml override, Prolog facts, then defaults."""
+    """Resolve wake words: config, explicit Prolog facts, project identity."""
     words: list = []
     if config is not None:
         try:
@@ -128,8 +163,14 @@ def resolve_wake_words(config=None, prolog_engine=None) -> list:
             words = _normalize_wake_words(prolog_engine.get_wake_words())
         except Exception as error:
             logging.getLogger(__name__).warning(
-                "Wake word Prolog query failed, using defaults: %s", error
+                "Wake word Prolog query failed, checking project identity: %s", error
             )
     if words:
         return words
-    return list(WAKE_WORDS)
+
+    project_name = _effective_prolog_string(
+        prolog_engine,
+        "kb_config:project_name(Name)",
+        "Name",
+    )
+    return _default_wake_words(project_name)
