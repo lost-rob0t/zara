@@ -121,6 +121,36 @@ def test_stream_filter_does_not_leak_even_a_short_prefix_of_scannable_secret() -
     assert stream.finalize() == ""
 
 
+def test_stream_filter_holds_exact_short_secret_when_it_can_extend_to_longer_secret() -> None:
+    short = ref("SHORT")
+    long = ref("LONG")
+    stream = SecretRedactor(
+        {
+            short: "token-123",
+            long: "token-123-more",
+        }
+    ).streaming_filter()
+
+    assert stream.process_chunk("token-123") == ""
+    assert stream.process_chunk("-more") == "§§secret(LONG)"
+    assert stream.finalize() == ""
+
+
+def test_stream_filter_emits_short_secret_once_longer_candidate_is_disproved() -> None:
+    short = ref("SHORT")
+    long = ref("LONG")
+    stream = SecretRedactor(
+        {
+            short: "token-123",
+            long: "token-123-more",
+        }
+    ).streaming_filter()
+
+    assert stream.process_chunk("token-123") == ""
+    assert stream.process_chunk("!") == "§§secret(SHORT)!"
+    assert stream.finalize() == ""
+
+
 def test_stream_filter_matches_full_mask_for_every_two_chunk_boundary() -> None:
     secret = ref("PROVIDER_KEY")
     raw = "sk-prod-AbC123456"
@@ -199,6 +229,15 @@ def test_redactor_bounds_secret_count_and_material_length() -> None:
             {ref("LONG"): "x" * 33},
             max_secret_length=32,
         )
+
+
+def test_redactor_bounds_total_scannable_material() -> None:
+    secrets = {
+        ref("A", secret_id="secret:a"): "abcdefgh",
+        ref("B", secret_id="secret:b"): "ijklmnop",
+    }
+    with pytest.raises(ValueError, match="total secret material"):
+        SecretRedactor(secrets, max_total_secret_chars=15)
 
 
 def test_redactor_repr_never_contains_secret_material() -> None:
