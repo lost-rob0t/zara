@@ -3,8 +3,8 @@
 from .chat import FullChatWindow
 from .copilot import CopilotPresentation
 from .extensible import CopilotWindow
+from .extensible_settings import SettingsWindow
 from .quick import QuickCopilotWindow
-from .settings import SettingsWindow
 from .status import DesktopStatusWindow
 
 __all__ = [
