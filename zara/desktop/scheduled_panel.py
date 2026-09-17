@@ -86,7 +86,8 @@ class ScheduledPanel(QWidget):
 
     def refresh(self) -> None:
         """Reflect whether RuntimeHost actually owns a live scheduler service."""
-        available = self._bridge.host.scheduled_tasks is not None
+        host = getattr(self._bridge, "host", None)
+        available = getattr(host, "scheduled_tasks", None) is not None
         self.status_label.setText(
             "Scheduler ready"
             if available
