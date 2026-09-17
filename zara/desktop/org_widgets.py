@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtWidgets import (
@@ -18,17 +18,37 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from zara.org_roam import OrgDocument, OrgRoamIndex, parse_org_file, render_org_html
+from zara.org_browser import OrgBrowserConfig, OrgBrowserHookRegistry
+from zara.org_browser_runtime import (
+    notify_help_open,
+    notify_node_selected,
+    render_org_document,
+    resolve_help_sources,
+)
+from zara.org_roam import OrgDocument, OrgRoamIndex, parse_org_file
 
 
 class OrgDocumentView(QTextBrowser):
-    """Source-preserving Org renderer with Doom-like heading typography."""
+    """Source-preserving Org renderer with configurable Doom-like typography."""
 
     org_link_activated = Signal(str)
 
-    def __init__(self, *, base_font_pt: float = 12.0, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        *,
+        base_font_pt: Optional[float] = None,
+        config: Optional[OrgBrowserConfig] = None,
+        hooks: Optional[OrgBrowserHookRegistry] = None,
+        prolog_engine: Any = None,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         super().__init__(parent)
-        self.base_font_pt = float(base_font_pt)
+        resolved = config or OrgBrowserConfig()
+        if base_font_pt is not None:
+            resolved = resolved.with_setting("base_font_pt", base_font_pt)
+        self.browser_config = resolved
+        self.browser_hooks = hooks or OrgBrowserHookRegistry()
+        self.prolog_engine = prolog_engine
         self.document_model: Optional[OrgDocument] = None
         self.setObjectName("zaraOrgDocumentView")
         self.setOpenLinks(False)
@@ -38,7 +58,14 @@ class OrgDocumentView(QTextBrowser):
 
     def set_document(self, document: OrgDocument) -> None:
         self.document_model = document
-        self.setHtml(render_org_html(document, base_font_pt=self.base_font_pt))
+        self.setHtml(
+            render_org_document(
+                document,
+                self.browser_config,
+                self.browser_hooks,
+                prolog_engine=self.prolog_engine,
+            )
+        )
         self.moveCursor(self.textCursor().MoveOperation.Start)
 
     def _on_anchor_clicked(self, url: QUrl) -> None:
@@ -50,10 +77,21 @@ class OrgWorkspaceWidget(QWidget):
 
     node_selected = Signal(str)
 
-    def __init__(self, index: OrgRoamIndex, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        index: OrgRoamIndex,
+        *,
+        config: Optional[OrgBrowserConfig] = None,
+        hooks: Optional[OrgBrowserHookRegistry] = None,
+        prolog_engine: Any = None,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         super().__init__(parent)
         self.setObjectName("zaraOrgWorkspace")
         self.index = index
+        self.browser_config = config or OrgBrowserConfig()
+        self.browser_hooks = hooks or OrgBrowserHookRegistry()
+        self.prolog_engine = prolog_engine
         self.current_node_key: Optional[str] = None
 
         self.search_edit = QLineEdit()
@@ -71,16 +109,23 @@ class OrgWorkspaceWidget(QWidget):
         left_layout.addWidget(self.search_edit)
         left_layout.addWidget(self.node_list, 1)
 
-        self.document_view = OrgDocumentView()
+        self.document_view = OrgDocumentView(
+            config=self.browser_config,
+            hooks=self.browser_hooks,
+            prolog_engine=self.prolog_engine,
+        )
+        self.backlinks_label = QLabel("Backlinks")
         self.backlinks_list = QListWidget()
         self.backlinks_list.setObjectName("zaraOrgBacklinks")
         self.backlinks_list.setMaximumHeight(150)
+        self.backlinks_label.setVisible(self.browser_config.show_backlinks)
+        self.backlinks_list.setVisible(self.browser_config.show_backlinks)
 
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.addWidget(self.document_view, 1)
-        right_layout.addWidget(QLabel("Backlinks"))
+        right_layout.addWidget(self.backlinks_label)
         right_layout.addWidget(self.backlinks_list)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -111,7 +156,13 @@ class OrgWorkspaceWidget(QWidget):
     def refresh_nodes(self, query: Optional[str] = None) -> None:
         if query is None:
             query = self.search_edit.text()
-        rows = self.index.search(query, limit=200) if query.strip() else self.index.nodes[:200]
+        rows = (
+            self.index.search(query, limit=self.browser_config.search_limit)
+            if query.strip()
+            else self.index.nodes[: self.browser_config.search_limit]
+        )
+        rows = self.browser_hooks.filter_nodes(rows, self.browser_config)
+        rows = self.browser_hooks.sort_nodes(rows, self.browser_config)
         self.node_list.blockSignals(True)
         self.node_list.clear()
         for node in rows:
@@ -130,6 +181,7 @@ class OrgWorkspaceWidget(QWidget):
         if node is None:
             return
         self.current_node_key = node.key
+        notify_node_selected(self.prolog_engine, node)
         document = next(
             (document for document in self.index.documents if document.path == node.file_path),
             None,
@@ -137,10 +189,11 @@ class OrgWorkspaceWidget(QWidget):
         if document is not None:
             self.document_view.set_document(document)
         self.backlinks_list.clear()
-        for backlink in self.index.backlinks(node.key):
-            item = QListWidgetItem(backlink.title)
-            item.setData(Qt.ItemDataRole.UserRole, backlink.key)
-            self.backlinks_list.addItem(item)
+        if self.browser_config.show_backlinks:
+            for backlink in self.index.backlinks(node.key):
+                item = QListWidgetItem(backlink.title)
+                item.setData(Qt.ItemDataRole.UserRole, backlink.key)
+                self.backlinks_list.addItem(item)
         self.refresh_nodes()
         self.node_selected.emit(node.key)
 
@@ -160,21 +213,36 @@ class OrgWorkspaceWidget(QWidget):
 
 
 class OrgHelpWindow(QWidget):
-    """Render repository-owned Org help sources instead of duplicated UI copy."""
+    """Render configurable repository-owned Org help sources."""
 
-    def __init__(self, *, repo_root: Optional[Path] = None, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        *,
+        repo_root: Optional[Path] = None,
+        config: Optional[OrgBrowserConfig] = None,
+        hooks: Optional[OrgBrowserHookRegistry] = None,
+        prolog_engine: Any = None,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         super().__init__(parent)
         self.setObjectName("zaraOrgHelpWindow")
         self.setWindowTitle("Zara Help — Org")
         self.resize(980, 720)
         self.repo_root = (repo_root or Path(__file__).resolve().parents[2]).resolve()
+        self.browser_config = config or OrgBrowserConfig()
+        self.browser_hooks = hooks or OrgBrowserHookRegistry()
+        self.prolog_engine = prolog_engine
         self.current_path: Optional[Path] = None
 
         self.source_list = QListWidget()
         self.source_list.setObjectName("zaraOrgHelpSources")
         self.source_list.setMinimumWidth(240)
         self.source_list.setMaximumWidth(360)
-        self.document_view = OrgDocumentView(base_font_pt=12.0)
+        self.document_view = OrgDocumentView(
+            config=self.browser_config,
+            hooks=self.browser_hooks,
+            prolog_engine=self.prolog_engine,
+        )
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -190,14 +258,11 @@ class OrgHelpWindow(QWidget):
             self.source_list.setCurrentItem(first)
 
     def _source_paths(self) -> tuple[Path, ...]:
-        rows: list[Path] = []
-        readme = self.repo_root / "README.org"
-        if readme.is_file():
-            rows.append(readme)
-        for directory in (self.repo_root / "docs", self.repo_root / "wiki"):
-            if directory.is_dir():
-                rows.extend(path for path in directory.rglob("*.org") if path.is_file())
-        return tuple(sorted(set(rows), key=lambda path: str(path.relative_to(self.repo_root))))
+        return resolve_help_sources(
+            self.repo_root,
+            self.browser_config,
+            self.browser_hooks,
+        )
 
     def _populate_sources(self) -> None:
         self.source_list.clear()
@@ -211,10 +276,16 @@ class OrgHelpWindow(QWidget):
         candidate = (self.repo_root / relative).resolve()
         if self.repo_root not in candidate.parents and candidate != self.repo_root:
             return
+        allowed = set(self._source_paths())
+        if candidate not in allowed:
+            return
         if candidate.suffix.casefold() != ".org" or not candidate.is_file():
             return
         self.current_path = candidate
-        self.document_view.set_document(parse_org_file(candidate))
+        notify_help_open(self.prolog_engine, str(candidate.relative_to(self.repo_root)))
+        self.document_view.set_document(
+            parse_org_file(candidate, max_bytes=self.browser_config.max_file_bytes)
+        )
 
     def _activate_source_item(self, item: QListWidgetItem) -> None:
         relative = item.data(Qt.ItemDataRole.UserRole)
@@ -228,7 +299,7 @@ class OrgHelpWindow(QWidget):
         candidate = (self.current_path.parent / raw).resolve()
         if self.repo_root not in candidate.parents and candidate != self.repo_root:
             return
-        if candidate.suffix.casefold() != ".org" or not candidate.is_file():
+        if candidate not in set(self._source_paths()):
             return
         self.open_source(str(candidate.relative_to(self.repo_root)))
         for index in range(self.source_list.count()):
