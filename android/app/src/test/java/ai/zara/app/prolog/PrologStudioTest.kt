@@ -119,4 +119,49 @@ class PrologStudioTest {
         assertTrue(workspace.deleteSource("temporary.pl"))
         assertTrue(workspace.listSources().isEmpty())
     }
+
+    @Test
+    fun schemaValidatorChecksDeclaredArityAndArgumentTypes() {
+        val source = """
+            :- zara_schema(person, 2, [atom, integer]).
+            person(alice, 42).
+            person(bob, 42.5).
+            person(charlie).
+        """.trimIndent()
+
+        val diagnostics = PrologSchemaValidator.validate(
+            PrologSourceAnalyzer.analyze("people.pl", source),
+        )
+
+        assertEquals(2, diagnostics.size)
+        assertTrue(diagnostics.any { it.message.contains("argument 2") })
+        assertTrue(diagnostics.any { it.message.contains("person/1") })
+    }
+
+    @Test
+    fun completionIncludesLanguageAndWorkspacePredicateSignatures() {
+        val document = PrologSourceAnalyzer.analyze(
+            "family.pl",
+            "parent(alice, bob).\nancestor(X, Y) :- parent(X, Y).\n",
+        )
+
+        val completions = PrologCompletionEngine.complete("anc", 3, listOf(document))
+
+        assertEquals("ancestor/2", completions.first().label)
+        assertEquals("ancestor(\${1:Arg1}, \${2:Arg2})", completions.first().insertion)
+    }
+
+    @Test
+    fun localEmbeddingIsVersionedDeterministicAndCanBeDisabled() {
+        val enabled = LocalEmbeddingConfiguration(enabled = true)
+        val disabled = enabled.copy(enabled = false)
+
+        assertEquals("zara-token-hash-1", enabled.modelVersion)
+        assertEquals(
+            LocalEmbeddingModel.embed("ancestor parent", enabled),
+            LocalEmbeddingModel.embed("ancestor parent", enabled),
+        )
+        assertEquals(96, LocalEmbeddingModel.embed("ancestor parent", enabled).size)
+        assertTrue(LocalEmbeddingModel.embed("ancestor parent", disabled).isEmpty())
+    }
 }
