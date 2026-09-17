@@ -25,7 +25,20 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
+
+      - name: Verify exact source checkout
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$SOURCE_SHA" || {
+            echo "checkout/source mismatch: expected=$SOURCE_SHA actual=$actual" >&2
+            exit 1
+          }
 
       - name: Check whitespace errors
         shell: bash
@@ -93,6 +106,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
@@ -152,6 +167,8 @@ jobs:
 
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install Python audio dependencies
         shell: bash
@@ -185,7 +202,20 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
+
+      - name: Verify exact source checkout
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$SOURCE_SHA" || {
+            echo "checkout/source mismatch: expected=$SOURCE_SHA actual=$actual" >&2
+            exit 1
+          }
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
@@ -272,7 +302,7 @@ jobs:
           } > "$artifact_dir/manifest.txt"
 
       - name: Upload exact-SHA phone debug APK
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: zara-android-debug-${{ github.event.pull_request.head.sha || github.sha }}
@@ -280,7 +310,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Wear debug APK
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: zara-wear-debug-${{ github.event.pull_request.head.sha || github.sha }}
@@ -300,6 +330,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Download desktop screenshot evidence
         uses: actions/download-artifact@v4
