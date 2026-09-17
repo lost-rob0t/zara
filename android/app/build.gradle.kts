@@ -160,5 +160,9 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.jeromq)
+    implementation(libs.play.services.wearable)
+    implementation(libs.libadb.android)
+    implementation(libs.conscrypt.android)
+    implementation(libs.bcpkix)
     testImplementation(libs.junit)
 }
