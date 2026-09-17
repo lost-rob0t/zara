@@ -58,6 +58,7 @@ def test_settings_has_complete_navigation_and_many_real_controls(tmp_path):
         assert [window.category_list.item(index).text() for index in range(window.category_list.count())] == [
             "Appearance",
             "Assistant",
+            "Models",
             "Voice & Speech",
             "Tools & Privacy",
             "Prolog",
@@ -71,6 +72,10 @@ def test_settings_has_complete_navigation_and_many_real_controls(tmp_path):
             "llm.history_limit",
             "agent.max_steps",
             "agent.system_prompt",
+            "local_models.model_dir",
+            "local_models.model_path",
+            "local_models.offload_mode",
+            "local_models.context_size",
             "wake.threshold",
             "stt.provider",
             "stt.model",
