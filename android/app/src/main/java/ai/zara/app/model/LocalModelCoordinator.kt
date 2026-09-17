@@ -57,6 +57,7 @@ class LocalModelCoordinator(
 
     fun generate(
         prompt: String,
+        systemPrompt: String = LocalModelRequest.DEFAULT_SYSTEM_PROMPT,
         onText: (String) -> Unit = {},
     ): CompletableFuture<LocalModelResult> {
         val snapshot = current
@@ -97,6 +98,7 @@ class LocalModelCoordinator(
                         prompt = prompt,
                         maxOutputTokens = snapshot.config.maxOutputTokens,
                         deadlineMs = snapshot.config.deadlineMs,
+                        systemPrompt = systemPrompt,
                     ),
                     cancelled = cancellation::get,
                     onText = onText,
