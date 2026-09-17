@@ -1,5 +1,6 @@
 package ai.zara.app.runtime
 
+import ai.zara.app.prolog.PrologAuthorityPolicy
 import ai.zara.app.prolog.PrologQueryPolicy
 import ai.zara.app.prolog.PrologWorkspace
 import ai.zara.app.prolog.TreallaBridge
@@ -72,7 +73,7 @@ class LocalZaraServer(
 
     fun query(rawQuery: String): CompletableFuture<LocalQueryResult> {
         val query = try {
-            PrologQueryPolicy.requireSafe(rawQuery)
+            PrologAuthorityPolicy.requireSafeQuery(PrologQueryPolicy.requireSafe(rawQuery))
         } catch (error: Throwable) {
             return CompletableFuture.failedFuture(error)
         }
@@ -100,6 +101,8 @@ class LocalZaraServer(
     private fun boot(phase: LocalServerPhase): LocalServerState {
         updateState(current.copy(phase = phase, failure = null))
         return try {
+            val workspaceSources = workspace.listSources()
+            PrologAuthorityPolicy.requireSafeWorkspace(workspaceSources)
             bridge.initialize(corePath)
             val sources = workspace.sourceFiles()
             sources.forEach { bridge.consult(it.absolutePath) }
