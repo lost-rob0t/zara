@@ -54,11 +54,19 @@ from zara.desktop.prolog_studio import (
     PrologStudioError,
 )
 from zara.desktop.theme import THEME_REGISTRY
+from zara.self_hosted_models import (
+    ModelCandidate,
+    assess_model_fit,
+    discover_gguf_models,
+    format_bytes,
+    probe_hardware,
+)
 
 
 _CATEGORIES = (
     "Appearance",
     "Assistant",
+    "Models",
     "Voice & Speech",
     "Tools & Privacy",
     "Prolog",
@@ -208,7 +216,13 @@ class FactEditorDialog(QDialog):
             self._choice(
                 "value",
                 "Provider",
-                [("Ollama", "ollama"), ("OpenAI", "openai"), ("Anthropic", "anthropic")],
+                [
+                    ("Ollama", "ollama"),
+                    ("llama.cpp", "llama_cpp"),
+                    ("OpenAI", "openai"),
+                    ("OpenRouter", "openrouter"),
+                    ("Anthropic", "anthropic"),
+                ],
             )
         elif kind in {"llm_model", "llm_endpoint", "todo_destination"}:
             self._line("value", _FACT_LABELS[kind])
@@ -272,6 +286,7 @@ class SettingsWindow(QWidget):
         self._allow_close = False
         self.setting_widgets: dict[str, QWidget] = {}
         self.theme_buttons: list[ThemePreviewButton] = []
+        self._model_candidates: list[ModelCandidate] = []
 
         self.category_list = QListWidget()
         self.category_list.setObjectName("zaraSettingsCategories")
@@ -292,6 +307,7 @@ class SettingsWindow(QWidget):
         self.stack = QStackedWidget()
         self.stack.addWidget(self._appearance_page())
         self.stack.addWidget(self._assistant_page())
+        self.stack.addWidget(self._models_page())
         self.stack.addWidget(self._voice_page())
         self.stack.addWidget(self._tools_page())
         self.stack.addWidget(self._prolog_page())
@@ -454,7 +470,19 @@ class SettingsWindow(QWidget):
 
     def _assistant_page(self) -> QWidget:
         page, form = self._page("Assistant", "Provider, model, conversation depth, and agent behavior.")
-        self._combo_setting(form, "llm.provider", "Provider", [("Ollama", "ollama"), ("OpenAI", "openai"), ("Anthropic", "anthropic"), ("OpenRouter", "openrouter")], "ollama")
+        self._combo_setting(
+            form,
+            "llm.provider",
+            "Provider",
+            [
+                ("Ollama", "ollama"),
+                ("llama.cpp", "llama_cpp"),
+                ("OpenAI", "openai"),
+                ("Anthropic", "anthropic"),
+                ("OpenRouter", "openrouter"),
+            ],
+            "ollama",
+        )
         self._line_setting(form, "llm.model", "Model")
         self._line_setting(form, "llm.endpoint", "Endpoint")
         self._spin_setting(form, "llm.history_limit", "History messages", 20, 1, 500)
@@ -463,6 +491,150 @@ class SettingsWindow(QWidget):
         prompt.setMaximumHeight(130)
         self._register(form, "agent.system_prompt", "System prompt", prompt)
         return page
+
+    def _models_page(self) -> QWidget:
+        page, form = self._page(
+            "Models",
+            "Browse local GGUF models, inspect this machine, and choose how llama.cpp offloads work.",
+        )
+        binary = str(self._value("local_models.binary", "llama-server"))
+        self._hardware_profile = probe_hardware(binary)
+        self.hardware_summary = QLabel(self._hardware_profile.summary())
+        self.hardware_summary.setWordWrap(True)
+        self.hardware_summary.setObjectName("zaraSettingsHint")
+        form.addRow("Hardware", self.hardware_summary)
+
+        model_dir = self._line_setting(
+            form,
+            "local_models.model_dir",
+            "Model directory",
+            "~/.local/share/zarathushtra/models",
+        )
+        self._line_setting(form, "local_models.model_path", "Selected GGUF")
+        self._line_setting(form, "local_models.binary", "llama.cpp server", "llama-server")
+        self._check_setting(form, "local_models.managed", "Manage server lifecycle", True)
+        self._line_setting(form, "local_models.host", "Server host", "127.0.0.1")
+        self._spin_setting(form, "local_models.port", "Server port", 11435, 1, 65535)
+
+        self.model_list = QListWidget()
+        self.model_list.setMinimumHeight(170)
+        form.addRow("Local GGUF models", self.model_list)
+        self.model_fit_hint = QLabel("Select a model to see a conservative memory fit estimate.")
+        self.model_fit_hint.setWordWrap(True)
+        self.model_fit_hint.setObjectName("zaraSettingsHint")
+        form.addRow("Fit", self.model_fit_hint)
+
+        model_actions = QWidget()
+        model_actions_layout = QHBoxLayout(model_actions)
+        model_actions_layout.setContentsMargins(0, 0, 0, 0)
+        refresh_button = QPushButton("Refresh")
+        self.use_model_button = QPushButton("Use selected GGUF")
+        self.use_model_button.setObjectName("zaraPrimaryAction")
+        model_actions_layout.addWidget(refresh_button)
+        model_actions_layout.addWidget(self.use_model_button)
+        model_actions_layout.addStretch(1)
+        form.addRow("", model_actions)
+
+        self._combo_setting(
+            form,
+            "local_models.offload_mode",
+            "Offload",
+            [
+                ("Auto fit", "auto"),
+                ("CPU only", "cpu"),
+                ("Single accelerator", "single"),
+                ("Multi accelerator", "multi"),
+            ],
+            "auto",
+        )
+        self._line_setting(form, "local_models.gpu_layers", "GPU layers", "auto")
+        self._combo_setting(
+            form,
+            "local_models.split_mode",
+            "Split mode",
+            [
+                ("Layer", "layer"),
+                ("Tensor", "tensor"),
+                ("None", "none"),
+                ("Row compatibility", "row"),
+            ],
+            "layer",
+        )
+        self._line_setting(form, "local_models.devices", "Devices", "")
+        self._line_setting(form, "local_models.tensor_split", "Tensor split", "")
+        self._spin_setting(form, "local_models.main_gpu", "Main GPU", 0, 0, 64)
+        self._check_setting(form, "local_models.fit", "llama.cpp auto-fit", True)
+        self._line_setting(form, "local_models.fit_target_mib", "Fit target MiB", "1024")
+        self._spin_setting(form, "local_models.context_size", "Context size", 4096, 128, 1048576)
+        self._spin_setting(form, "local_models.parallel", "Parallel slots", 1, 1, 128)
+        self._double_setting(
+            form,
+            "local_models.startup_timeout",
+            "Startup timeout",
+            15.0,
+            0.1,
+            300.0,
+            0.5,
+        )
+
+        model_dir.editingFinished.connect(self._refresh_models)
+        refresh_button.clicked.connect(self._refresh_models)
+        self.model_list.currentRowChanged.connect(self._update_model_fit_hint)
+        self.use_model_button.clicked.connect(self._use_selected_model)
+        self._refresh_models()
+        return page
+
+    def _refresh_models(self) -> None:
+        model_dir_widget = self.setting_widgets.get("local_models.model_dir")
+        if not isinstance(model_dir_widget, QLineEdit):
+            return
+        root = Path(os.path.expandvars(model_dir_widget.text())).expanduser()
+        self._model_candidates = discover_gguf_models(root)
+        self.model_list.clear()
+        for model in self._model_candidates:
+            size = format_bytes(model.size_bytes) if model.size_bytes is not None else "size unknown"
+            self.model_list.addItem(f"{model.path.name} · {size} · quantization unknown")
+        if self._model_candidates:
+            self.model_list.setCurrentRow(0)
+        else:
+            self.model_fit_hint.setText("No GGUF models found in the selected model directory.")
+
+    def _update_model_fit_hint(self, row: int) -> None:
+        if row < 0 or row >= len(self._model_candidates):
+            self.model_fit_hint.setText("Select a model to see a conservative memory fit estimate.")
+            return
+        model = self._model_candidates[row]
+        assessment = assess_model_fit(model, self._hardware_profile)
+        self.model_fit_hint.setText(
+            f"{assessment.verdict.replace('_', ' ').title()}: {assessment.reason} Quantization is unknown."
+        )
+
+    def _use_selected_model(self) -> None:
+        row = self.model_list.currentRow()
+        if row < 0 or row >= len(self._model_candidates):
+            if hasattr(self, "feedback_label"):
+                self.feedback_label.setText("Select a GGUF model first.")
+            return
+        model = self._model_candidates[row]
+        model_path = self.setting_widgets["local_models.model_path"]
+        provider = self.setting_widgets["llm.provider"]
+        llm_model = self.setting_widgets["llm.model"]
+        endpoint = self.setting_widgets["llm.endpoint"]
+        managed = self.setting_widgets["local_models.managed"]
+        if isinstance(model_path, QLineEdit):
+            model_path.setText(str(model.path))
+        if isinstance(provider, QComboBox):
+            provider.setCurrentIndex(provider.findData("llama_cpp"))
+        if isinstance(llm_model, QLineEdit):
+            llm_model.setText("local")
+        if isinstance(endpoint, QLineEdit):
+            endpoint.clear()
+        if isinstance(managed, QCheckBox):
+            managed.setChecked(True)
+        if hasattr(self, "feedback_label"):
+            self.feedback_label.setText(
+                "Selected local GGUF. Save settings and restart Zara to load it through managed llama.cpp."
+            )
 
     def _voice_page(self) -> QWidget:
         page, form = self._page("Voice & Speech", "Wake sensitivity, speech recognition, and voice output.")
