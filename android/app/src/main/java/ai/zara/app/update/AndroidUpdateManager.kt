@@ -131,16 +131,13 @@ class AndroidUpdateManager(
         }
     }
 
-    fun requestInstall(): CompletableFuture<UpdateState> = submit {
+    fun requestInstall(): Result<Unit> = runCatching {
         val ready = current
         val apk = ready.downloadedApk
         check(ready.phase == UpdatePhase.READY && apk?.isFile == true) {
             "No verified update is ready"
         }
-        val release = checkNotNull(ready.release)
-        check(UpdateSecurity.verifySha256(apk, release.sha256)) {
-            "Cached update checksum no longer matches"
-        }
+        checkNotNull(ready.release)
         if (!context.packageManager.canRequestPackageInstalls()) {
             val settings = Intent(
                 Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
@@ -149,8 +146,45 @@ class AndroidUpdateManager(
             context.startActivity(settings)
             error("Allow Zara to install verified updates, then tap Install again")
         }
+        submit {
+            installVerifiedUpdate(ready, apk)
+        }
+        Unit
+    }
 
-        try {
+    fun recordInstallStatus(status: Int, statusMessage: String?) {
+        if (closed || status == PackageInstaller.STATUS_PENDING_USER_ACTION) return
+        val snapshot = current
+        val message = statusMessage?.takeIf { it.isNotBlank() }
+        if (status == PackageInstaller.STATUS_SUCCESS) {
+            snapshot.downloadedApk?.delete()
+            update(
+                UpdateState(
+                    phase = UpdatePhase.INSTALLED,
+                    release = snapshot.release,
+                    progressPercent = 100,
+                    message = message ?: "Zara update installed",
+                )
+            )
+            return
+        }
+
+        val retryable = snapshot.downloadedApk?.isFile == true && snapshot.release != null
+        update(
+            snapshot.copy(
+                phase = if (retryable) UpdatePhase.READY else UpdatePhase.FAILED,
+                message = message ?: "Android rejected the update installation",
+            )
+        )
+    }
+
+    private fun installVerifiedUpdate(ready: UpdateState, apk: File): UpdateState {
+        val release = checkNotNull(ready.release)
+        return try {
+            check(UpdateSecurity.verifySha256(apk, release.sha256)) {
+                apk.delete()
+                "Cached update checksum no longer matches"
+            }
             val installer = context.packageManager.packageInstaller
             val parameters = PackageInstaller.SessionParams(
                 PackageInstaller.SessionParams.MODE_FULL_INSTALL,
@@ -187,35 +221,13 @@ class AndroidUpdateManager(
                 message = "Waiting for Android installation confirmation",
             ).also(::update)
         } catch (error: Throwable) {
-            update(ready.copy(message = error.message ?: "Update installation failed"))
-            throw error
-        }
-    }
-
-    fun recordInstallStatus(status: Int, statusMessage: String?) {
-        if (closed || status == PackageInstaller.STATUS_PENDING_USER_ACTION) return
-        val snapshot = current
-        val message = statusMessage?.takeIf { it.isNotBlank() }
-        if (status == PackageInstaller.STATUS_SUCCESS) {
-            snapshot.downloadedApk?.delete()
-            update(
-                UpdateState(
-                    phase = UpdatePhase.INSTALLED,
-                    release = snapshot.release,
-                    progressPercent = 100,
-                    message = message ?: "Zara update installed",
-                )
-            )
-            return
-        }
-
-        val retryable = snapshot.downloadedApk?.isFile == true && snapshot.release != null
-        update(
-            snapshot.copy(
+            val retryable = apk.isFile
+            ready.copy(
                 phase = if (retryable) UpdatePhase.READY else UpdatePhase.FAILED,
-                message = message ?: "Android rejected the update installation",
-            )
-        )
+                downloadedApk = apk.takeIf(File::isFile),
+                message = error.message ?: "Update installation failed",
+            ).also(::update)
+        }
     }
 
     private fun releaseCandidate(json: JSONObject): Candidate? {
