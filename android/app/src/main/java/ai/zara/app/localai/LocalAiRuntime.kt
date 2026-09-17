@@ -68,12 +68,13 @@ class LocalAiRuntime(
                 check(current.phase == LocalAiPhase.READY) { "Local model is not ready" }
                 check(activeFuture == null) { "A local generation is already active" }
                 val spec = checkNotNull(current.model) { "Local model metadata is missing" }
+                val enrichedRequest = LocalPromptContexts.apply(request)
                 activeText = StringBuilder()
                 activeFuture = result
                 activeChunkObserver = onChunk
                 update(current.copy(phase = LocalAiPhase.GENERATING, failure = null))
                 activeSession = backend.generate(
-                    request,
+                    enrichedRequest,
                     object : LocalGenerationListener {
                         override fun onChunk(text: String) {
                             actor.execute { acceptChunk(text) }
