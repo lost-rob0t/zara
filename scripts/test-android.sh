@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Zara Android/Wear gate: semantic parity + JVM tests + stock secure-server interop + pinned native build + phone/Wear debug APKs + secret inspection.
+# Zara Android/Wear gate: semantic parity + JVM tests + stock secure-server interop + pinned native build + phone/Wear/Agenda debug APKs + secret inspection.
 # Run via: nix develop .#android -c bash scripts/test-android.sh
 set -euo pipefail
 
@@ -40,8 +40,6 @@ nix develop "$repo_root" -c env \
   --fixture-file "$interop_fixture" <&9 >"$interop_log" 2>&1 &
 interop_pid=$!
 
-# The nested root Nix shell may be cold on Actions. This bound is only for
-# environment/process readiness; protocol correctness remains event-driven.
 for _ in $(seq 1 1200); do
   if [[ -f "$interop_fixture" ]] && grep -qx 'READY' "$interop_log"; then
     break
@@ -66,9 +64,10 @@ if ! gradle --no-daemon \
   :shared-ui:testDebugUnitTest \
   :wear-app:testDebugUnitTest \
   :app:assembleDebug \
-  :wear-app:assembleDebug; then
+  :wear-app:assembleDebug \
+  :wear-watchface:assembleDebug; then
   cat "$interop_log" >&2
-  echo "stock ZaraServer Android/Wear interop gate failed" >&2
+  echo "stock ZaraServer Android/Wear/Agenda interop gate failed" >&2
   exit 1
 fi
 
@@ -79,14 +78,16 @@ unset ZARA_STOCK_FIXTURE
 
 phone_apk="app/build/outputs/apk/debug/app-debug.apk"
 wear_apk="wear-app/build/outputs/apk/debug/wear-app-debug.apk"
+agenda_apk="wear-watchface/build/outputs/apk/debug/wear-watchface-debug.apk"
 test -f "$phone_apk"
 test -f "$wear_apk"
+test -f "$agenda_apk"
 
-for apk in "$phone_apk" "$wear_apk"; do
-  if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET"; then
+for apk in "$phone_apk" "$wear_apk" "$agenda_apk"; do
+  if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET|github_pat_"; then
     echo "APK secret-marker inspection FAILED: private/secret material found in $apk" >&2
     exit 1
   fi
 done
 
-echo "android/wear gate ok: $phone_apk $wear_apk"
+echo "android/wear gate ok: $phone_apk $wear_apk $agenda_apk"
