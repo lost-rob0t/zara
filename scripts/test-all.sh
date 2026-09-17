@@ -12,13 +12,15 @@
 #   3. Focused ZARA/1 protocol/transport gate
 #   4. Runtime tool-approval security gate
 #   4b. S1-mini transcript normalizer gate
-#   5. Full pytest suite (with JUnit XML output)
+#   5. Full pytest suite (with JUnit XML and Python branch coverage)
 #   6. Config/process/file-tool security scripts
 #   7. Deterministic latency budgets
 #   8. Packaging/Nix checks
 #
 # Output:
 #   - JUnit XML at $ARTIFACT_DIR/junit.xml (pytest)
+#   - Coverage XML at $ARTIFACT_DIR/coverage.xml
+#   - Coverage JSON at $ARTIFACT_DIR/coverage.json
 #   - Per-phase pass/fail summary on stdout
 #   - Artifacts under $ARTIFACT_DIR
 #
@@ -50,7 +52,7 @@ export HOME="$TEST_ROOT/home"
 export XDG_CONFIG_HOME="$TEST_ROOT/config"
 export XDG_RUNTIME_DIR="$TEST_ROOT/run"
 export XDG_DATA_HOME="$TEST_ROOT/share"
-export XARA_DICTATION_PIDFILE="$TEST_ROOT/run/zara_dictation.pid"
+export ZARA_DICTATION_PIDFILE="$TEST_ROOT/run/zara_dictation.pid"
 export ZARA_DICTATION_PIDFILE="$TEST_ROOT/run/zara_dictation.pid"
 export ZARA_DICTATION_LOGFILE="$TEST_ROOT/run/zara_dictation.log"
 export LANG=C.UTF-8
@@ -166,12 +168,20 @@ phase_s1_mini_normalizer() {
 
 run_phase "S1-mini transcript normalizer" phase_s1_mini_normalizer
 
-# --- Phase 5: Full pytest suite -------------------------------------------
+# --- Phase 5: Full pytest suite + coverage --------------------------------
 phase_pytest() {
-  python -m pytest -q -o faulthandler_timeout=15 --junit-xml="$ARTIFACT_DIR/junit.xml" t/
+  python -m pytest -q -o faulthandler_timeout=15 \
+    --junit-xml="$ARTIFACT_DIR/junit.xml" \
+    --cov=zara \
+    --cov-branch \
+    --cov-config="$repo_root/.coveragerc" \
+    --cov-report=term-missing:skip-covered \
+    --cov-report="xml:$ARTIFACT_DIR/coverage.xml" \
+    --cov-report="json:$ARTIFACT_DIR/coverage.json" \
+    t/
 }
 
-run_phase "Pytest suite" phase_pytest
+run_phase "Pytest suite with branch coverage" phase_pytest
 
 # --- Phase 6: Config/process/file-tool security scripts -------------------
 phase_security_scripts() {
@@ -228,6 +238,8 @@ echo "Phases run:    $PHASE_COUNT"
 echo "Phases passed: $PASS_COUNT"
 echo "Phases failed: $FAIL_COUNT"
 echo "JUnit XML:     $ARTIFACT_DIR/junit.xml"
+echo "Coverage XML:  $ARTIFACT_DIR/coverage.xml"
+echo "Coverage JSON: $ARTIFACT_DIR/coverage.json"
 echo "Test root:     $TEST_ROOT (cleaned up on exit)"
 echo ""
 if [ "$FAIL_COUNT" -eq 0 ]; then
