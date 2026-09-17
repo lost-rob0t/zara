@@ -54,6 +54,22 @@ class LocalZaraServer(
         check(current.phase == LocalServerPhase.READY || current.phase == LocalServerPhase.FAILED) {
             "Local Zara server is not reloadable"
         }
+
+        // Reject statically-invalid workspace edits before destroying the last-good runtime.
+        if (current.phase == LocalServerPhase.READY) {
+            val validationError = runCatching {
+                PrologAuthorityPolicy.requireSafeWorkspace(workspace.listSources())
+            }.exceptionOrNull()
+            if (validationError != null) {
+                return@submit LocalServerState(
+                    phase = LocalServerPhase.FAILED,
+                    generation = current.generation,
+                    loadedSources = current.loadedSources,
+                    failure = validationError.message ?: "Prolog workspace validation failed",
+                )
+            }
+        }
+
         val wasReady = current.phase == LocalServerPhase.READY
         updateState(current.copy(phase = LocalServerPhase.RELOADING, failure = null))
         if (wasReady) {
