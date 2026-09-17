@@ -2,6 +2,120 @@ package ai.zara.app.prolog
 
 import kotlin.math.sqrt
 
+enum class PrologTokenKind { COMMENT, DIRECTIVE, VARIABLE, ATOM, NUMBER, STRING, OPERATOR, PUNCTUATION }
+
+data class PrologToken(val kind: PrologTokenKind, val start: Int, val endExclusive: Int) {
+    fun text(source: String): String = source.substring(start, endExclusive)
+}
+
+object PrologLexer {
+    fun lex(source: String): List<PrologToken> {
+        val tokens = mutableListOf<PrologToken>()
+        var index = 0
+        while (index < source.length) {
+            val start = index
+            val character = source[index]
+            when {
+                character.isWhitespace() -> index += 1
+                character == '%' -> {
+                    index = source.indexOf('\n', index).let { if (it < 0) source.length else it }
+                    tokens += PrologToken(PrologTokenKind.COMMENT, start, index)
+                }
+                character == '\'' || character == '"' -> {
+                    val quote = character
+                    index += 1
+                    var escaped = false
+                    while (index < source.length) {
+                        val next = source[index++]
+                        if (escaped) escaped = false
+                        else if (next == '\\') escaped = true
+                        else if (next == quote) break
+                    }
+                    tokens += PrologToken(PrologTokenKind.STRING, start, index)
+                }
+                character.isDigit() -> {
+                    index += 1
+                    while (index < source.length && (source[index].isDigit() || source[index] == '.')) index += 1
+                    tokens += PrologToken(PrologTokenKind.NUMBER, start, index)
+                }
+                character.isLetter() || character == '_' -> {
+                    index += 1
+                    while (index < source.length && (source[index].isLetterOrDigit() || source[index] == '_')) index += 1
+                    val kind = if (character.isUpperCase() || character == '_') PrologTokenKind.VARIABLE else PrologTokenKind.ATOM
+                    tokens += PrologToken(kind, start, index)
+                }
+                index + 1 < source.length && source.substring(index, index + 2) in setOf(":-", "?-", "->", "\\+") -> {
+                    index += 2
+                    tokens += PrologToken(PrologTokenKind.DIRECTIVE, start, index)
+                }
+                character in "=<>\\/+*-" -> {
+                    index += 1
+                    while (index < source.length && source[index] in "=<>\\/+*-") index += 1
+                    tokens += PrologToken(PrologTokenKind.OPERATOR, start, index)
+                }
+                else -> {
+                    index += 1
+                    tokens += PrologToken(PrologTokenKind.PUNCTUATION, start, index)
+                }
+            }
+        }
+        return tokens
+    }
+}
+
+data class PrologEditorSnapshot(val text: String, val cursor: Int)
+
+data class PrologEditorHistory private constructor(
+    private val undoStack: List<PrologEditorSnapshot>,
+    val current: PrologEditorSnapshot,
+    private val redoStack: List<PrologEditorSnapshot>,
+) {
+    val canUndo: Boolean get() = undoStack.isNotEmpty()
+    val canRedo: Boolean get() = redoStack.isNotEmpty()
+
+    fun edit(text: String, cursor: Int): PrologEditorHistory {
+        if (text == current.text && cursor == current.cursor) return this
+        return PrologEditorHistory((undoStack + current).takeLast(MAX_HISTORY), PrologEditorSnapshot(text, cursor.coerceIn(0, text.length)), emptyList())
+    }
+
+    fun undo(): PrologEditorHistory {
+        if (!canUndo) return this
+        return PrologEditorHistory(undoStack.dropLast(1), undoStack.last(), listOf(current) + redoStack)
+    }
+
+    fun redo(): PrologEditorHistory {
+        if (!canRedo) return this
+        return PrologEditorHistory(undoStack + current, redoStack.first(), redoStack.drop(1))
+    }
+
+    companion object {
+        private const val MAX_HISTORY = 100
+        fun initial(text: String, cursor: Int = text.length) = PrologEditorHistory(emptyList(), PrologEditorSnapshot(text, cursor.coerceIn(0, text.length)), emptyList())
+    }
+}
+
+data class PrologSearchMatch(val source: String, val line: Int, val column: Int, val start: Int, val endExclusive: Int)
+
+object PrologSearch {
+    fun find(sources: List<PrologSource>, query: String, limit: Int = 100): List<PrologSearchMatch> {
+        require(query.isNotEmpty()) { "Search query is required" }
+        require(limit in 1..500) { "Search result limit is invalid" }
+        val matches = mutableListOf<PrologSearchMatch>()
+        sources.forEach { source ->
+            var offset = 0
+            while (matches.size < limit) {
+                val found = source.text.indexOf(query, offset, ignoreCase = true)
+                if (found < 0) break
+                val prefix = source.text.substring(0, found)
+                val lineStart = prefix.lastIndexOf('\n') + 1
+                matches += PrologSearchMatch(source.name, prefix.count { it == '\n' } + 1, found - lineStart + 1, found, found + query.length)
+                offset = found + query.length
+            }
+        }
+        return matches
+    }
+}
+
 data class PrologCompletion(
     val label: String,
     val insertion: String,
