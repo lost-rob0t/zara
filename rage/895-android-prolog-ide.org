@@ -1,0 +1,43 @@
+#+title: RAGE #895 — full Android Prolog and expert-system IDE
+
+* Iteration 1 — workspace language services and safe authoring
+
+- Consumed issue :: #895
+- RAGE start commit :: =28ecbe344d6d21985b31ba621caa42203da914ad= (PR #894 exact remote head)
+- Parent boundary :: #652 owns read-only runtime/source introspection. #895 adds editing only for the app-private user workspace.
+- Failure evidence :: CI run 35169153487: Android/Wear/native Trealla/APK gate green; repository test job failed only because the new backlog test marked explicit-priority fixture #152 as an idea. 2224 other tests passed.
+
+** Research
+
+- Existing =PrologWorkspace= already provides private-root containment, visible =.pl= basenames, a 512 KiB per-source limit and atomic replacement.
+- Existing =LocalZaraServer= serializes Trealla through one actor and replaces the runtime on reload. It retains no separate editor runtime.
+- Existing analyzer splits clauses and produces source-line graph provenance, but highlighting is regex-only, completion assumes end-of-document, and editing lacks history/search/rename/import/export contracts.
+- Android UI must not gain authority over bundled semantic assets, plugin sources, arbitrary filesystem paths, or effectful Prolog predicates.
+- A deterministic Kotlin lexer/state machine is preferable to regex layers because comments, quoting, directives and operator tokens overlap. Trealla remains the semantic authority; the lexer is editor assistance only.
+
+** Architecture / design
+
+- Keep =PrologWorkspace= as the only writable source store; add rename and bounded text-bundle import/export using the same filename validator.
+- Add a pure =PrologLexer= producing typed offset ranges for rendering, completion context and tests. It never executes Prolog.
+- Add immutable =PrologEditorHistory= with bounded undo/redo and cursor-safe edits.
+- Add =PrologSearch= with bounded literal matches and exact source offsets.
+- Make completion cursor-aware and schema-aware across every workspace document.
+- Preserve save/reload rollback: invalid editor diagnostics block save; runtime consult failure must leave the last good source/runtime generation intact.
+- Reject archive/zip import in this iteration; a line-oriented bounded bundle avoids traversal and decompression bombs while proving the product contract.
+
+** RED test map
+
+1. Lexer distinguishes comments, directives, variables, atoms, numbers, strings and operators with stable offsets.
+2. Completion uses the actual cursor prefix and workspace schema signatures.
+3. History provides bounded undo/redo and drops redo after a new edit.
+4. Search returns bounded source/line/column matches.
+5. Workspace rename remains inside the private root and refuses overwrite/traversal.
+6. Bundle import/export round-trips multiple sources and rejects oversized, malformed and duplicate entries.
+7. Existing query-policy, analyzer, graph and workspace regression tests stay green.
+
+** Verification gate
+
+- Focused Android JVM tests for =PrologStudioTest=.
+- Full Android/Wear/native Trealla/APK gate.
+- Full repository suite and flake/package gates.
+- Exact-head Actions must pass before merge; then deterministic screenshots and a tagged APK release are still required.
