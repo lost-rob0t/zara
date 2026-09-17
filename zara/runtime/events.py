@@ -20,8 +20,6 @@ class RuntimeEvent:
     label: Optional[str] = None
 
 
-# Runtime lifecycle ---------------------------------------------------------
-
 @dataclass(frozen=True, kw_only=True)
 class RuntimeStarted(RuntimeEvent):
     pass
@@ -42,8 +40,6 @@ class RuntimeError(RuntimeEvent):
 class RuntimeIdle(RuntimeEvent):
     pass
 
-
-# Turn / agent lifecycle ----------------------------------------------------
 
 @dataclass(frozen=True, kw_only=True)
 class TurnStarted(RuntimeEvent):
@@ -69,8 +65,6 @@ class AgentCompleted(RuntimeEvent):
 class AgentFailed(RuntimeEvent):
     reason: str = ""
 
-
-# Assistant/model generation ----------------------------------------------
 
 @dataclass(frozen=True, kw_only=True)
 class AssistantStarted(RuntimeEvent):
@@ -101,12 +95,8 @@ class ResponseText(RuntimeEvent):
     truncated: bool = False
 
 
-# Audio output ---------------------------------------------------------------
-
 @dataclass(frozen=True, kw_only=True)
 class AudioOutputStarted(RuntimeEvent):
-    """A daemon-synthesized audio stream began for a turn."""
-
     stream_id: str = ""
     sample_rate: int = 24000
     channels: int = 1
@@ -114,16 +104,12 @@ class AudioOutputStarted(RuntimeEvent):
 
 @dataclass(frozen=True, kw_only=True)
 class AudioOutputChunk(RuntimeEvent):
-    """One block of raw s16le mono PCM for a turn's audio stream."""
-
     stream_id: str = ""
     pcm: bytes = b""
 
 
 @dataclass(frozen=True, kw_only=True)
 class AudioOutputFinished(RuntimeEvent):
-    """A turn's audio stream completed normally."""
-
     stream_id: str = ""
 
 
@@ -136,8 +122,6 @@ class OutputReady(RuntimeEvent):
 class OutputSeen(RuntimeEvent):
     pass
 
-
-# Voice / transcription ----------------------------------------------------
 
 @dataclass(frozen=True, kw_only=True)
 class VoiceStateChanged(RuntimeEvent):
@@ -184,8 +168,6 @@ class VoiceTranscriptFinal(RuntimeEvent):
     provider: str = ""
 
 
-# Intent / Prolog ----------------------------------------------------------
-
 @dataclass(frozen=True, kw_only=True)
 class IntentResolved(RuntimeEvent):
     intent: str = ""
@@ -198,8 +180,6 @@ class PrologQueryCompleted(RuntimeEvent):
     success: bool = True
     summary: str = ""
 
-
-# Tool execution -----------------------------------------------------------
 
 @dataclass(frozen=True, kw_only=True)
 class ToolQueued(RuntimeEvent):
@@ -254,12 +234,12 @@ class ToolCancelled(RuntimeEvent):
     reason: str = ""
 
 
-# Generic user-input / background activity --------------------------------
-
 @dataclass(frozen=True, kw_only=True)
 class UserInputRequired(RuntimeEvent):
     kind: str = "approval"
     prompt: str = ""
+    question_id: Optional[str] = None
+    choices: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -297,8 +277,6 @@ class BackgroundCompleted(RuntimeEvent):
     success: bool = True
 
 
-# Long-horizon agent tasks --------------------------------------------------
-
 @dataclass(frozen=True, kw_only=True)
 class TaskStarted(RuntimeEvent):
     task_id: str = ""
@@ -331,8 +309,6 @@ class TaskCancelled(RuntimeEvent):
     task_id: str = ""
     reason: str = ""
 
-
-# Provider / notification --------------------------------------------------
 
 @dataclass(frozen=True, kw_only=True)
 class ProviderChanged(RuntimeEvent):
