@@ -6,6 +6,7 @@ import ai.zara.app.prolog.IntentHelperRequest
 import ai.zara.app.prolog.LogicGraph
 import ai.zara.app.prolog.LogicNodeKind
 import ai.zara.app.prolog.PrologAuthorityPolicy
+import ai.zara.app.prolog.PrologClauseKind
 import ai.zara.app.prolog.PrologCompletionEngine
 import ai.zara.app.prolog.PrologDocument
 import ai.zara.app.prolog.PrologEditorHistory
@@ -98,6 +99,7 @@ internal fun PrologStudioSurface(
     var selectedName by rememberSaveable { mutableStateOf(first?.name.orEmpty()) }
     var draft by rememberSaveable { mutableStateOf(first?.text.orEmpty()) }
     var query by rememberSaveable { mutableStateOf(firstExampleQuery(selectedName)) }
+    var requestedLine by rememberSaveable { mutableStateOf<Int?>(null) }
     val selected = sources.firstOrNull { it.name == selectedName } ?: first
     val document = remember(selectedName, draft) {
         val analyzed = PrologSourceAnalyzer.analyze(selectedName.ifBlank { "scratch.pl" }, draft)
@@ -108,6 +110,12 @@ internal fun PrologStudioSurface(
                     PrologAuthorityPolicy.validate(analyzed)
                 ).distinct(),
         )
+    }
+    val workspaceDocuments = remember(sources, selectedName, document) {
+        val analyzed = sources.map { source ->
+            if (source.name == selectedName) document else PrologSourceAnalyzer.analyze(source.name, source.text)
+        }
+        if (analyzed.isEmpty()) listOf(document) else analyzed
     }
     val pane = StudioPane.entries.firstOrNull { it.name == paneName } ?: StudioPane.Editor
 
@@ -142,10 +150,13 @@ internal fun PrologStudioSurface(
                 query = query,
                 queryResult = queryResult,
                 operationBusy = operationBusy,
+                requestedLine = requestedLine,
+                onRequestedLineConsumed = { requestedLine = null },
                 onSelect = { source ->
                     selectedName = source.name
                     draft = source.text
                     query = firstExampleQuery(source.name)
+                    requestedLine = null
                 },
                 onCreateSource = { name ->
                     val normalized = if (name.endsWith(".pl")) name else "$name.pl"
@@ -184,13 +195,21 @@ internal fun PrologStudioSurface(
                 onImportWorkspace = onImportWorkspace,
                 onExportWorkspace = onExportWorkspace,
             )
-            StudioPane.Graph -> GraphPane(document)
+            StudioPane.Graph -> GraphPane(workspaceDocuments) { sourceName, line ->
+                sources.firstOrNull { it.name == sourceName }?.let { source ->
+                    selectedName = source.name
+                    draft = source.text
+                    requestedLine = line
+                    paneName = StudioPane.Editor.name
+                }
+            }
             StudioPane.Learn -> TutorialPane(
                 onOpen = { fileName, exampleQuery ->
                     sources.firstOrNull { it.name == fileName }?.let { source ->
                         selectedName = source.name
                         draft = source.text
                         query = exampleQuery
+                        requestedLine = null
                         paneName = StudioPane.Editor.name
                     }
                 },
@@ -228,6 +247,8 @@ private fun EditorPane(
     query: String,
     queryResult: LocalQueryResult?,
     operationBusy: Boolean,
+    requestedLine: Int?,
+    onRequestedLineConsumed: () -> Unit,
     onSelect: (PrologSource) -> Unit,
     onCreateSource: (String) -> Unit,
     onDraft: (String) -> Unit,
@@ -246,6 +267,18 @@ private fun EditorPane(
     var queryHistory by rememberSaveable(selectedName) { mutableStateOf("") }
     var creatingSource by rememberSaveable { mutableStateOf(false) }
     var newSourceName by rememberSaveable { mutableStateOf("") }
+
+    fun moveCursorToLine(line: Int) {
+        val offset = lineStartOffset(editorValue.text, line)
+        editorValue = editorValue.copy(selection = TextRange(offset))
+    }
+
+    LaunchedEffect(requestedLine, selectedName) {
+        requestedLine?.let { line ->
+            moveCursorToLine(line)
+            onRequestedLineConsumed()
+        }
+    }
 
     val cursor = editorValue.selection.start.coerceIn(0, editorValue.text.length)
     val prefixToCursor = editorValue.text.take(cursor)
@@ -398,14 +431,22 @@ private fun EditorPane(
             }
             KeyValueRow("matches", searchMatches.size.toString())
             searchMatches.take(8).forEach { match ->
-                Text("${match.source}:${match.line}:${match.column}", color = tokens.textMuted, fontFamily = FontFamily.Monospace)
+                TextButton(onClick = { moveCursorToLine(match.line) }) {
+                    Text("${match.source}:${match.line}:${match.column}", color = tokens.textMuted, fontFamily = FontFamily.Monospace)
+                }
             }
         }
         if (document.diagnostics.isEmpty()) {
             KeyValueRow("analysis", "${document.clauses.size} clauses · clean")
         } else {
             document.diagnostics.forEach { diagnostic ->
-                ErrorBanner("line ${diagnostic.line}: ${diagnostic.message}")
+                TextButton(onClick = { moveCursorToLine(diagnostic.line) }) {
+                    Text(
+                        "line ${diagnostic.line}: ${diagnostic.message}",
+                        color = tokens.accentMagenta,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -678,19 +719,39 @@ private fun SyntaxEditorPane(
 }
 
 @Composable
-private fun GraphPane(document: PrologDocument) {
+private fun GraphPane(
+    documents: List<PrologDocument>,
+    onNavigate: (String, Int) -> Unit,
+) {
     val tokens = LocalZaraTokens.current
+    val graph = remember(documents) {
+        LogicGraph(
+            nodes = documents.flatMap { it.graph.nodes }.distinctBy { it.id },
+            edges = documents.flatMap { it.graph.edges }.distinct(),
+        )
+    }
+    val definitions = remember(documents) {
+        documents.flatMap { document ->
+            document.clauses.filter { it.kind != PrologClauseKind.DIRECTIVE }
+        }.distinctBy { "${it.source}:${it.line}:${it.predicate.indicator}" }
+    }
     SectionCard("FACT / RULE GRAPH") {
-        if (document.graph.nodes.isEmpty()) {
+        if (graph.nodes.isEmpty()) {
             MutedNotice("Add facts or rules in the IDE to build the graph.")
             return@SectionCard
         }
-        LogicGraphCanvas(document.graph)
-        document.graph.nodes.filter { it.kind == LogicNodeKind.PREDICATE }.forEach { node ->
-            KeyValueRow(node.label, "${node.source}:${node.line}")
+        LogicGraphCanvas(graph)
+        definitions.forEach { clause ->
+            TextButton(onClick = { onNavigate(clause.source, clause.line) }) {
+                Text(
+                    "${clause.predicate.indicator} · ${clause.source}:${clause.line}",
+                    color = tokens.text,
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
         }
         Text("EDGES", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
-        document.graph.edges.filter { it.label == "calls" }.forEach { edge ->
+        graph.edges.filter { it.label == "calls" }.forEach { edge ->
             Text(
                 "${edge.from.removePrefix("predicate:")} → ${edge.to.removePrefix("predicate:")}",
                 color = tokens.textMuted,
@@ -770,6 +831,18 @@ private fun TutorialPane(onOpen: (String, String) -> Unit) {
             Spacer(Modifier.size(8.dp))
         }
     }
+}
+
+private fun lineStartOffset(text: String, line: Int): Int {
+    if (line <= 1) return 0
+    var currentLine = 1
+    text.forEachIndexed { index, character ->
+        if (character == '\n') {
+            currentLine += 1
+            if (currentLine == line) return index + 1
+        }
+    }
+    return text.length
 }
 
 private fun firstExampleQuery(fileName: String): String =
