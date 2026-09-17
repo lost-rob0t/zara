@@ -179,7 +179,7 @@ jobs:
           chmod 600 "$keystore"
           echo "ZARA_ANDROID_DEBUG_KEYSTORE=$keystore" >> "$GITHUB_ENV"
 
-      - name: Run Android/Wear gate (unit tests + native Trealla + debug APKs + secret inspection)
+      - name: Run Android/Wear/Org gate (unit tests + native Trealla + debug APKs + secret inspection)
         run: nix develop ./android -c bash scripts/test-android.sh
 
       - name: Upload Android parity diagnostics
@@ -214,6 +214,14 @@ jobs:
         with:
           name: zara-android-debug-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifacts/android-debug/
+          if-no-files-found: warn
+
+      - name: Upload Org workbench debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zara-org-debug-${{ github.event.pull_request.head.sha || github.sha }}
+          path: android/org-app/build/outputs/apk/debug/org-app-debug.apk
           if-no-files-found: warn
 
       - name: Upload Wear debug APK
