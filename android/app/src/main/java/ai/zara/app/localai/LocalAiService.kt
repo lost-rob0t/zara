@@ -18,7 +18,10 @@ class LocalAiService : Service() {
 
     private lateinit var modelStore: LocalModelStore
     private lateinit var runtime: LocalAiRuntime
-    private lateinit var tts: AndroidOfflineTtsBackend
+    private lateinit var ttsRegistry: LocalTtsProviderRegistry
+
+    @Volatile
+    private lateinit var tts: LocalTtsProvider
 
     @Volatile
     private var loading: CompletableFuture<LocalAiState>? = null
@@ -27,7 +30,12 @@ class LocalAiService : Service() {
         super.onCreate()
         modelStore = LocalModelStore(File(filesDir, "zara/models"))
         runtime = LocalAiRuntime(LiteRtLocalLlmBackend(this))
-        tts = AndroidOfflineTtsBackend(this)
+        ttsRegistry = LocalTtsProviderRegistry(
+            listOf(
+                AndroidOfflineTtsBackend(this),
+            )
+        )
+        tts = ttsRegistry.default()
         tts.initialize()
         loadActiveModel()
     }
@@ -37,7 +45,7 @@ class LocalAiService : Service() {
     override fun onDestroy() {
         loading?.cancel(true)
         runtime.close()
-        tts.close()
+        ttsRegistry.close()
         modelIo.shutdownNow()
         super.onDestroy()
     }
@@ -50,6 +58,11 @@ class LocalAiService : Service() {
         fun activeModel(): CompletableFuture<LocalModelSpec?> = this@LocalAiService.activeModel()
 
         fun ttsState(): LocalTtsState = tts.state()
+
+        fun ttsProviders(): List<LocalTtsProviderCapabilities> = ttsRegistry.capabilities()
+
+        fun selectTtsProvider(id: String): CompletableFuture<LocalTtsState> =
+            this@LocalAiService.selectTtsProvider(id)
 
         fun loadActiveModel(): CompletableFuture<LocalAiState> = this@LocalAiService.loadActiveModel()
 
@@ -83,6 +96,15 @@ class LocalAiService : Service() {
 
     private fun activeModel(): CompletableFuture<LocalModelSpec?> =
         CompletableFuture.supplyAsync(modelStore::activeModel, modelIo)
+
+    @Synchronized
+    private fun selectTtsProvider(id: String): CompletableFuture<LocalTtsState> {
+        val selected = ttsRegistry.provider(id)
+        if (selected === tts) return selected.initialize()
+        tts.stop()
+        tts = selected
+        return selected.initialize()
+    }
 
     @Synchronized
     private fun loadActiveModel(): CompletableFuture<LocalAiState> {
