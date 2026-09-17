@@ -14,6 +14,7 @@ Important behavior:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from dataclasses import dataclass
@@ -33,6 +34,7 @@ from .user_hooks import UserHookLoader
 from ..config import ZaraConfig, get_config
 from ..memory import build_memory_manager, MemoryManager
 from ..latency import LatencyTrace
+from ..self_hosted_models import LlamaCppSettings, ManagedLlamaCppRuntime
 
 
 @dataclass(frozen=True)
@@ -62,9 +64,16 @@ class AgentManager:
         self.config = config if config is not None else get_config()
         self.prolog_engine = prolog_engine
         self.principal = principal
+        self.local_model_runtime: Optional[ManagedLlamaCppRuntime] = None
 
-        llm_config = self.config.get_llm_config()
-        self.llm_client = self._create_llm_client(llm_config)
+        llm_config = self._prepare_self_hosted_llm(self.config.get_llm_config())
+        try:
+            self.llm_client = self._create_llm_client(llm_config)
+        except Exception:
+            if self.local_model_runtime is not None:
+                self.local_model_runtime.stop()
+                self.local_model_runtime = None
+            raise
 
         memory_config = self.config.get_section("memory")
         self.memory_manager = memory_manager or build_memory_manager(
@@ -164,6 +173,39 @@ class AgentManager:
     def _build_system_prompt(self):
         return build_agent_system_prompt(self.config)
 
+    def _prepare_self_hosted_llm(self, llm_config: Dict[str, Any]) -> Dict[str, Any]:
+        if llm_config.get("provider") != "llama_cpp":
+            return llm_config
+
+        get_local_models_config = getattr(self.config, "get_local_models_config", None)
+        local_config = (
+            get_local_models_config()
+            if callable(get_local_models_config)
+            else self.config.get_section("local_models")
+        )
+        if not local_config.get("managed", True):
+            return llm_config
+
+        settings = LlamaCppSettings.from_mapping(local_config)
+        runtime = ManagedLlamaCppRuntime(settings)
+        runtime.start()
+        self.local_model_runtime = runtime
+
+        if llm_config.get("endpoint"):
+            return llm_config
+        connect_host = "127.0.0.1" if settings.host in {"0.0.0.0", "::"} else settings.host
+        resolved = dict(llm_config)
+        resolved["endpoint"] = f"http://{connect_host}:{settings.port}/v1"
+        return resolved
+
+    @staticmethod
+    def _openai_compatible_base(endpoint: Optional[str], default: str) -> str:
+        base = (endpoint or default).rstrip("/")
+        suffix = "/chat/completions"
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+        return base
+
     def _create_llm_client(self, llm_config: Dict[str, Any]):
         provider = llm_config.get("provider", "ollama")
         model = llm_config.get("model")
@@ -199,6 +241,21 @@ class AgentManager:
                 model=model or "openrouter/free",
                 api_key=api_key,
                 openai_api_base=endpoint or "https://openrouter.ai/api/v1",
+                timeout=60.0,
+                max_retries=2,
+            )
+
+        if provider == "llama_cpp":
+            from langchain_openai import ChatOpenAI
+
+            base_url = self._openai_compatible_base(
+                endpoint,
+                "http://127.0.0.1:11435/v1",
+            )
+            return ChatOpenAI(
+                model=model or "local",
+                api_key="local",
+                openai_api_base=base_url,
                 timeout=60.0,
                 max_retries=2,
             )
@@ -416,7 +473,13 @@ class AgentManager:
             await self.approval_controller.shutdown()
             self.exit_conversation()
         finally:
-            await self.tool_registry.shutdown_async()
+            try:
+                await self.tool_registry.shutdown_async()
+            finally:
+                runtime = self.local_model_runtime
+                self.local_model_runtime = None
+                if runtime is not None:
+                    await asyncio.to_thread(runtime.stop)
 
 
 __all__ = ["AgentManager", "CustomizationDiagnostic"]
