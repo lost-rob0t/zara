@@ -105,11 +105,11 @@ class LocalZaraServer(
         val ticket = queryEpoch.get()
         return submit {
             check(current.phase == LocalServerPhase.READY) { "Local Zara server is not ready" }
-            val terms = bridge.evaluate(bounded(query))
+            val evaluation = runCatching { bridge.evaluate(bounded(query)) }
             if (ticket != queryEpoch.get()) {
                 LocalQueryResult(query, emptyList(), current.generation, cancelled = true)
             } else {
-                LocalQueryResult(query, terms, current.generation)
+                LocalQueryResult(query, evaluation.getOrThrow(), current.generation)
             }
         }
     }
