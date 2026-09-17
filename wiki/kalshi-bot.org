@@ -1,0 +1,245 @@
+#+title: Kalshi evolutionary bot
+
+* Overview
+
+The =kalshi-bot= service plugin is an opt-in event-contract strategy runner with
+one persistent state file and two execution modes:
+
+- =paper= — simulated execution with a larger virtual bankroll.
+- =active= — real Kalshi V2 orders, but only when the plugin is explicitly
+  armed and API credentials are present.
+
+Both modes keep the same performance ledger. Active mode is not a reduced
+telemetry mode: it records orders, fills, fees, open exposure, daily spend,
+realized P&L, wins/losses/pushes, win rate, ROI, maximum drawdown, and account
+balance snapshots. Paper mode records the same strategy/performance fields and
+uses virtual cash/exposure instead of a real account balance.
+
+The bot is disabled by default. Enabling the plugin does not by itself authorize
+real orders: =mode = "active"= and =active_enabled = true= are both required.
+
+* Default risk asymmetry
+
+Paper is intentionally given more room so the evolutionary population gets
+useful observations without risking money:
+
+| Setting | Paper default | Active default |
+|-
+| bankroll | $1000 simulated | $25 risk cap |
+| max order | $10 | $1 |
+| daily spend | $100 | $5 |
+| max open exposure | $250 | $10 |
+
+These are defaults, not recommendations. Active limits are checked before every
+submitted order. Exchange fees are tracked separately from contract risk.
+
+* Configuration
+
+#+begin_src toml
+[plugins.kalshi-bot]
+enabled = true
+mode = "paper"                 # paper | active
+auto_run = true
+poll_seconds = 60
+market_limit = 100
+
+# Paper account — deliberately larger for learning.
+paper_bankroll_dollars = 1000
+paper_max_order_dollars = 10
+paper_daily_spend_cap_dollars = 100
+paper_max_open_exposure_dollars = 250
+
+# Active account — deliberately much smaller.
+active_enabled = false
+active_bankroll_cap_dollars = 25
+active_max_order_dollars = 1
+active_daily_spend_cap_dollars = 5
+active_max_open_exposure_dollars = 10
+
+# Evolution.
+population_size = 12
+evolution_cycles_per_generation = 20
+mutation_rate = 0.30
+mutation_scale = 0.12
+random_seed = 545
+
+# API.
+base_url = "https://external-api.kalshi.com/trade-api/v2"
+api_key_id_env = "KALSHI_API_KEY_ID"
+private_key_path_env = "KALSHI_PRIVATE_KEY_PATH"
+timeout_seconds = 15
+#+end_src
+
+For Kalshi's demo environment use:
+
+#+begin_src toml
+base_url = "https://external-api.demo.kalshi.co/trade-api/v2"
+#+end_src
+
+Demo and production credentials are separate.
+
+* Credentials
+
+Active mode uses Kalshi's current RSA-PSS request-signing contract. Keep the
+private key out of =config.toml=:
+
+#+begin_src sh
+export KALSHI_API_KEY_ID='...'
+export KALSHI_PRIVATE_KEY_PATH="$HOME/.config/zarathushtra/kalshi-private.key"
+chmod 600 "$KALSHI_PRIVATE_KEY_PATH"
+#+end_src
+
+The implementation signs =timestamp + METHOD + request-path=, excludes query
+parameters from the signed path, and uses RSA-PSS/SHA-256 with digest-length
+salt.
+
+* Order behavior
+
+Active execution uses the current V2 endpoint:
+
+#+begin_example
+POST /portfolio/events/orders
+#+end_example
+
+Orders use:
+
+- single-book =bid= / =ask= sides;
+- fixed-point dollar prices;
+- =fill_or_kill= time in force;
+- =taker_at_cross= self-trade prevention;
+- =cancel_order_on_pause = true=;
+- unique client order IDs.
+
+A V2 =bid= buys YES. A V2 =ask= sells YES, which is economically the NO side.
+The risk accounting therefore uses =price * count= for bids and
+=(1-price) * count= for asks.
+
+There is deliberately no LLM tool that directly says "place an order". The
+read-only tools are =kalshi_bot_status= and =kalshi_bot_stats=. Real execution
+comes only from the explicitly armed bot loop, keeping the authority in the
+operator configuration instead of a conversational tool call.
+
+* Persistent statistics
+
+State defaults to:
+
+#+begin_example
+$XDG_STATE_HOME/zarathushtra/kalshi-bot.json
+#+end_example
+
+or =~/.local/state/zarathushtra/kalshi-bot.json= when =XDG_STATE_HOME= is not
+set.
+
+Paper and active ledgers each retain:
+
+- bankroll/cash or reported real balance;
+- order attempts and fills;
+- open positions and max-loss exposure;
+- daily and lifetime gross spend;
+- closed trades;
+- realized P&L;
+- exchange fees;
+- wins, losses, pushes, win rate;
+- ROI;
+- peak equity and maximum drawdown;
+- bounded trade/balance histories.
+
+The file is written atomically with owner-only permissions where supported.
+
+* Evolution
+
+The bot evolves a population of compact strategy genomes. Each genome contains:
+
+- momentum weight;
+- liquidity weight;
+- volume weight;
+- spread penalty;
+- probability bias;
+- minimum estimated edge;
+- maximum contract risk;
+- holding-period cycles.
+
+Every poll is an observation cycle. Each genome runs its own shadow-paper
+positions against the same real Kalshi market snapshots. Shadow positions are
+marked out after their evolved holding period. Fitness combines realized shadow
+P&L, drawdown, win rate, and an inactivity penalty.
+
+At the generation boundary:
+
+1. genomes are ranked by fitness;
+2. the generation champion and its complete genes/stats are appended to
+   history;
+3. top genomes are retained as elites;
+4. remaining children are crossover combinations of elites;
+5. bounded Gaussian mutation changes individual genes;
+6. a fresh evaluation generation starts.
+
+This happens in both paper and active mode. Real money is therefore not needed
+to generate evolutionary fitness observations: active execution consumes the
+current champion while the entire population continues learning in shadow
+paper.
+
+* Signal model
+
+The initial genome evaluates currently open markets from public market fields:
+YES bid/ask, last price, previous price, 24-hour volume, and liquidity.
+
+It constructs a bounded YES probability estimate from midpoint plus the evolved
+feature weights, then compares:
+
+- YES edge = estimated YES probability - YES ask;
+- NO edge = YES bid - estimated YES probability.
+
+The higher positive edge becomes the candidate side when it clears the genome's
+minimum-edge and max-risk genes. This is intentionally a small evolvable base,
+not a claim that market microstructure alone predicts event outcomes.
+
+* Paper mode
+
+Paper mode executes the champion against live quoted prices but never submits
+an exchange order. Virtual risk is reserved from paper cash, all trades enter
+the paper ledger, and positions close either on market settlement or after the
+champion's holding-period cycles.
+
+A profitable exit updates P&L/win-rate/ROI exactly like the active ledger. This
+makes paper progress comparable to active progress instead of using a separate
+"demo score" format.
+
+* Active mode
+
+To arm real execution all of the following must be true:
+
+1. the service plugin is enabled;
+2. =mode = "active"=;
+3. =active_enabled = true=;
+4. API key ID is present;
+5. the RSA private-key file path is present.
+
+If any condition is missing, the strategy/evolution loop may continue observing
+markets, but it does not submit real orders.
+
+Active fills are recorded using Kalshi's returned fill count, average fill
+price, and average fee paid. Settled positions use the final market result to
+compute realized P&L. Account-balance snapshots are kept separately so the
+bot's own ledger can be compared with exchange state.
+
+* Read-only Zara tools
+
+#+begin_example
+kalshi_bot_status
+kalshi_bot_stats
+#+end_example
+
+=status= includes arming state, credential readiness, current generation,
+champion genes/fitness, errors, and both ledgers. =stats= is the compact
+paper/active performance view. Neither tool can arm active mode or place an
+order.
+
+* API compatibility
+
+This plugin targets the September 2026 Kalshi Trade API V2 contract, including
+=/portfolio/events/orders=. The older =/portfolio/orders= order shape is not
+used by the bot.
+
+When Kalshi changes request/response schemas, keep paper/evolution running but
+disable active mode until the V2 adapter and deterministic tests are updated.
