@@ -22,6 +22,7 @@ import ai.zara.app.prolog.PrologTutorialCatalog
 import ai.zara.app.runtime.LocalQueryResult
 import ai.zara.app.runtime.LocalServerPhase
 import ai.zara.app.runtime.LocalServerState
+import ai.zara.app.runtime.LocalZaraServer
 import ai.zara.ui.theme.ZaraSemanticTokens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -167,6 +168,7 @@ internal fun PrologStudioSurface(
                 onSave = { onSaveSource(selectedName.ifBlank { "scratch.pl" }, draft) },
                 onReload = onReload,
                 onRunQuery = { onRunQuery(query) },
+                onCancelQuery = { onRunQuery(LocalZaraServer.CANCEL_QUERY_COMMAND) },
             )
             StudioPane.Expert -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 ExpertEditorPane(
@@ -256,6 +258,7 @@ private fun EditorPane(
     onSave: () -> Unit,
     onReload: () -> Unit,
     onRunQuery: () -> Unit,
+    onCancelQuery: () -> Unit,
 ) {
     val tokens = LocalZaraTokens.current
     var editorValue by remember(selectedName) {
@@ -265,6 +268,7 @@ private fun EditorPane(
     var searchQuery by rememberSaveable(selectedName) { mutableStateOf("") }
     var replacement by rememberSaveable(selectedName) { mutableStateOf("") }
     var queryHistory by rememberSaveable(selectedName) { mutableStateOf("") }
+    var queryPending by rememberSaveable(selectedName) { mutableStateOf(false) }
     var creatingSource by rememberSaveable { mutableStateOf(false) }
     var newSourceName by rememberSaveable { mutableStateOf("") }
 
@@ -278,6 +282,9 @@ private fun EditorPane(
             moveCursorToLine(line)
             onRequestedLineConsumed()
         }
+    }
+    LaunchedEffect(operationBusy, queryResult) {
+        if (!operationBusy || queryResult?.cancelled == true) queryPending = false
     }
 
     val cursor = editorValue.selection.start.coerceIn(0, editorValue.text.length)
@@ -463,11 +470,19 @@ private fun EditorPane(
             textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
             colors = studioFieldColors(),
         )
-        MutedNotice("Queries are bounded and must bind Result. File, process, meta-call, database mutation, network, FFI, and arbitrary consult predicates are blocked.")
-        PrimaryAction("Run query", !operationBusy && query.isNotBlank()) {
-            val historyItems = if (queryHistory.isBlank()) emptyList() else queryHistory.split('\u001F')
-            queryHistory = (historyItems + query).takeLast(12).joinToString("\u001F")
-            onRunQuery()
+        MutedNotice("Queries are bounded to ${LocalZaraServer.QUERY_TIME_LIMIT_SECONDS}s and must bind Result. File, process, meta-call, database mutation, network, FFI, and arbitrary consult predicates are blocked.")
+        if (queryPending && operationBusy) {
+            SecondaryAction("Cancel query", true) {
+                queryPending = false
+                onCancelQuery()
+            }
+        } else {
+            PrimaryAction("Run query", !operationBusy && query.isNotBlank()) {
+                val historyItems = if (queryHistory.isBlank()) emptyList() else queryHistory.split('\u001F')
+                queryHistory = (historyItems + query).takeLast(12).joinToString("\u001F")
+                queryPending = true
+                onRunQuery()
+            }
         }
         if (queryHistory.isNotBlank()) {
             Text("HISTORY", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
@@ -480,7 +495,11 @@ private fun EditorPane(
         queryResult?.let { result ->
             SelectionContainer {
                 Text(
-                    if (result.terms.isEmpty()) "false." else result.terms.joinToString("\n"),
+                    when {
+                        result.cancelled -> "cancelled."
+                        result.terms.isEmpty() -> "false."
+                        else -> result.terms.joinToString("\n")
+                    },
                     color = tokens.text,
                     fontFamily = FontFamily.Monospace,
                 )
@@ -588,10 +607,10 @@ private fun AdvancedKbPane(
     LaunchedEffect(queryResult) {
         val result = queryResult ?: return@LaunchedEffect
         if (pendingBox.isBlank()) return@LaunchedEffect
-        val rendered = if (result.terms.isEmpty()) {
-            "false."
-        } else {
-            result.terms.take(50).joinToString("\n").take(8_192)
+        val rendered = when {
+            result.cancelled -> "cancelled."
+            result.terms.isEmpty() -> "false."
+            else -> result.terms.take(50).joinToString("\n").take(8_192)
         }
         val snapshot = "$rendered\n@generation ${result.generation}"
         when (pendingBox) {
