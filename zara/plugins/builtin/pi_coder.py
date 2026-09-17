@@ -1,4 +1,4 @@
-"""First-party Pi coding-agent integration using Zara's service plugin system."""
+"""Generic Zara coder plugin backed by Pi."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ class CoderArgs(BaseModel):
         ...,
         min_length=1,
         max_length=MAX_TASK_CHARS,
-        description="Coding task for Pi. The task is sent on stdin, never through a shell command.",
+        description="Coding task for the configured coder engine.",
     )
     project: str = Field(
         "",
@@ -44,21 +44,22 @@ class CoderArgs(BaseModel):
 
 
 class PiCoderPlugin(ServicePlugin):
-    """Expose Pi as one approval-gated coder tool without a parallel plugin runtime."""
+    """Generic approval-gated coder surface; Pi is the first execution engine."""
 
     enabled_by_default = False
     metadata = PluginMetadata(
-        name="pi-coder",
+        name="coder",
         version="0.1.0",
         api_version="1",
-        description="Approval-gated coding delegation to the Pi coding agent.",
+        description="Generic approval-gated coding delegation, currently backed by Pi.",
     )
 
     def __init__(self) -> None:
+        self._engine = "pi"
         self._binary = ""
         self._projects: dict[str, Path] = {}
         self._default_project = ""
-        self._provider = ""
+        self._model_provider = ""
         self._model = ""
         self._thinking = ""
         self._project_trust = False
@@ -72,6 +73,10 @@ class PiCoderPlugin(ServicePlugin):
 
     def start(self, runtime) -> None:
         configuration = dict(runtime.configuration)
+        engine = str(configuration.get("engine", "pi") or "pi").strip().lower()
+        if engine != "pi":
+            raise ValueError("coder engine must currently be 'pi'")
+
         binary = self._resolve_binary(configuration.get("binary", "pi"))
         projects = self._resolve_projects(configuration.get("projects", {}))
 
@@ -79,7 +84,10 @@ class PiCoderPlugin(ServicePlugin):
         default_project = self._resolve_default_project(
             configuration.get("default_project", "")
         )
-        provider = self._bounded_text(configuration.get("provider", ""), 128)
+        model_provider = self._bounded_text(
+            configuration.get("model_provider", ""),
+            128,
+        )
         model = self._bounded_text(configuration.get("model", ""), 256)
         thinking = self._resolve_thinking(configuration.get("thinking", ""))
         project_trust = self._require_bool(
@@ -104,9 +112,10 @@ class PiCoderPlugin(ServicePlugin):
         )
 
         with self._state_lock:
+            self._engine = engine
             self._binary = binary
             self._default_project = default_project
-            self._provider = provider
+            self._model_provider = model_provider
             self._model = model
             self._thinking = thinking
             self._project_trust = project_trust
@@ -134,7 +143,7 @@ class PiCoderPlugin(ServicePlugin):
             self._require_started()
             names = sorted(self._projects)
             if not names:
-                return "No Pi coder projects are configured."
+                return "No coder projects are configured."
             rendered = []
             for name in names:
                 suffix = " (default)" if name == self._default_project else ""
@@ -144,7 +153,7 @@ class PiCoderPlugin(ServicePlugin):
         def coder_status() -> str:
             self._require_started()
             return (
-                "Pi coder is ready. "
+                f"Coder engine: {self._engine}. "
                 f"Projects: {len(self._projects)}. "
                 f"Shell: {'enabled' if self._allow_shell else 'disabled'}. "
                 f"Project resources: {'trusted' if self._project_trust else 'ignored'}. "
@@ -156,9 +165,10 @@ class PiCoderPlugin(ServicePlugin):
                 coder,
                 name="coder",
                 description=(
-                    "Delegate a bounded coding task to Pi inside a configured local project. "
-                    "implement may edit/write files and may run bash only when the operator enabled "
-                    "allow_shell; review and plan are always read-only."
+                    "Delegate a bounded coding task to Zara's configured coder engine inside a "
+                    "configured local project. implement may edit/write files and may run shell "
+                    "commands only when the operator enabled allow_shell; review and plan are "
+                    "always read-only."
                 ),
                 args_schema=CoderArgs,
                 metadata={"zara_requires_approval": True},
@@ -166,12 +176,12 @@ class PiCoderPlugin(ServicePlugin):
             StructuredTool.from_function(
                 coder_projects,
                 name="coder_projects",
-                description="List configured Pi coder project names without exposing host paths.",
+                description="List configured coder project names without exposing host paths.",
             ),
             StructuredTool.from_function(
                 coder_status,
                 name="coder_status",
-                description="Show the active Pi coder policy without exposing credentials or paths.",
+                description="Show coder engine and effective policy without exposing credentials or paths.",
             ),
         )
 
@@ -184,7 +194,7 @@ class PiCoderPlugin(ServicePlugin):
     ) -> str:
         self._require_started()
         if not self._execution_lock.acquire(blocking=False):
-            raise RuntimeError("Pi coder is already running a task")
+            raise RuntimeError("coder is already running a task")
         try:
             return self._run_exclusive(task=task, project=project, mode=mode)
         finally:
@@ -221,7 +231,7 @@ class PiCoderPlugin(ServicePlugin):
         with self._state_lock:
             if not self._started:
                 self._terminate(process)
-                raise RuntimeError("Pi coder plugin stopped before task execution")
+                raise RuntimeError("coder plugin stopped before task execution")
             self._processes.add(process)
         try:
             try:
@@ -263,8 +273,10 @@ class PiCoderPlugin(ServicePlugin):
             ",".join(tools),
             "--approve" if self._project_trust else "--no-approve",
         ]
-        if self._provider:
-            command.extend(("--provider", self._provider))
+        if not self._project_trust:
+            command.append("--no-context-files")
+        if self._model_provider:
+            command.extend(("--provider", self._model_provider))
         if self._model:
             command.extend(("--model", self._model))
         if self._thinking:
@@ -313,7 +325,7 @@ class PiCoderPlugin(ServicePlugin):
     def _resolve_binary(value: object) -> str:
         binary = str(value or "pi").strip()
         if not binary:
-            raise ValueError("pi-coder binary must not be empty")
+            raise ValueError("coder Pi binary must not be empty")
         expanded = Path(binary).expanduser()
         has_path = expanded.is_absolute() or os.sep in binary or (
             os.altsep is not None and os.altsep in binary
@@ -326,27 +338,27 @@ class PiCoderPlugin(ServicePlugin):
         found = shutil.which(binary)
         if found is None:
             raise RuntimeError(
-                "Pi executable was not found; install the Pi coding agent or configure plugins.pi-coder.binary"
+                "Pi executable was not found; install Pi or configure plugins.coder.binary"
             )
         return found
 
     @staticmethod
     def _resolve_projects(value: object) -> dict[str, Path]:
         if not isinstance(value, dict):
-            raise TypeError("pi-coder projects must be a table mapping names to local folders")
+            raise TypeError("coder projects must be a table mapping names to local folders")
         projects: dict[str, Path] = {}
         for raw_name, raw_path in value.items():
             name = str(raw_name).strip()
             if not name or len(name) > 128:
-                raise ValueError("pi-coder project names must contain 1 to 128 characters")
+                raise ValueError("coder project names must contain 1 to 128 characters")
             if not isinstance(raw_path, str) or not raw_path.strip():
-                raise TypeError(f"pi-coder project {name!r} path must be a non-empty string")
+                raise TypeError(f"coder project {name!r} path must be a non-empty string")
             path = Path(raw_path).expanduser().resolve()
             if not path.is_dir():
-                raise RuntimeError(f"pi-coder project {name!r} is not an existing directory")
+                raise RuntimeError(f"coder project {name!r} is not an existing directory")
             projects[name] = path
         if not projects:
-            raise ValueError("pi-coder requires at least one configured project")
+            raise ValueError("coder requires at least one configured project")
         return projects
 
     def _resolve_default_project(self, value: object) -> str:
@@ -354,7 +366,7 @@ class PiCoderPlugin(ServicePlugin):
         if not name and len(self._projects) == 1:
             return next(iter(self._projects))
         if name and name not in self._projects:
-            raise ValueError("pi-coder default_project must name a configured project")
+            raise ValueError("coder default_project must name a configured project")
         return name
 
     @staticmethod
@@ -362,40 +374,40 @@ class PiCoderPlugin(ServicePlugin):
         thinking = str(value or "").strip().lower()
         allowed = {"", "off", "minimal", "low", "medium", "high", "xhigh", "max"}
         if thinking not in allowed:
-            raise ValueError("pi-coder thinking must be off/minimal/low/medium/high/xhigh/max")
+            raise ValueError("coder thinking must be off/minimal/low/medium/high/xhigh/max")
         return thinking
 
     @staticmethod
     def _bounded_text(value: object, maximum: int) -> str:
         text = str(value or "").strip()
         if len(text) > maximum:
-            raise ValueError(f"pi-coder setting must not exceed {maximum} characters")
+            raise ValueError(f"coder setting must not exceed {maximum} characters")
         return text
 
     @staticmethod
     def _require_bool(value: object, label: str) -> bool:
         if not isinstance(value, bool):
-            raise TypeError(f"pi-coder {label} must be true or false")
+            raise TypeError(f"coder {label} must be true or false")
         return value
 
     @staticmethod
     def _bounded_float(value: object, *, minimum: float, maximum: float, label: str) -> float:
         if isinstance(value, bool):
-            raise TypeError(f"pi-coder {label} must be numeric")
+            raise TypeError(f"coder {label} must be numeric")
         try:
             number = float(value)
         except (TypeError, ValueError) as error:
-            raise TypeError(f"pi-coder {label} must be numeric") from error
+            raise TypeError(f"coder {label} must be numeric") from error
         if not minimum <= number <= maximum:
-            raise ValueError(f"pi-coder {label} must be between {minimum:g} and {maximum:g}")
+            raise ValueError(f"coder {label} must be between {minimum:g} and {maximum:g}")
         return number
 
     @staticmethod
     def _bounded_int(value: object, *, minimum: int, maximum: int, label: str) -> int:
         if isinstance(value, bool) or not isinstance(value, int):
-            raise TypeError(f"pi-coder {label} must be an integer")
+            raise TypeError(f"coder {label} must be an integer")
         if not minimum <= value <= maximum:
-            raise ValueError(f"pi-coder {label} must be between {minimum} and {maximum}")
+            raise ValueError(f"coder {label} must be between {minimum} and {maximum}")
         return value
 
     def _bounded_output(self, text: str) -> str:
@@ -421,7 +433,7 @@ class PiCoderPlugin(ServicePlugin):
     def _require_started(self) -> None:
         with self._state_lock:
             if not self._started:
-                raise RuntimeError("Pi coder plugin is not started")
+                raise RuntimeError("coder plugin is not started")
 
 
 def create_plugin() -> PiCoderPlugin:
