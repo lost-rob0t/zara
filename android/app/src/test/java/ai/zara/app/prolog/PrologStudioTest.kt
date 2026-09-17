@@ -164,4 +164,60 @@ class PrologStudioTest {
         assertEquals(96, LocalEmbeddingModel.embed("ancestor parent", enabled).size)
         assertTrue(LocalEmbeddingModel.embed("ancestor parent", disabled).isEmpty())
     }
+
+    @Test
+    fun lexerProducesStableSemanticTokens() {
+        val source = ":- module(expert, []).\n% note\nrisk(Person, 0.9) :- signal(Person, \"red\")."
+        val tokens = PrologLexer.lex(source)
+
+        assertTrue(tokens.any { it.kind == PrologTokenKind.DIRECTIVE && it.text(source) == ":-" })
+        assertTrue(tokens.any { it.kind == PrologTokenKind.COMMENT && it.text(source) == "% note" })
+        assertTrue(tokens.any { it.kind == PrologTokenKind.VARIABLE && it.text(source) == "Person" })
+        assertTrue(tokens.any { it.kind == PrologTokenKind.NUMBER && it.text(source) == "0.9" })
+        assertTrue(tokens.any { it.kind == PrologTokenKind.STRING && it.text(source) == "\"red\"" })
+    }
+
+    @Test
+    fun editorHistorySupportsUndoRedoAndInvalidatesRedoOnEdit() {
+        var history = PrologEditorHistory.initial("fact(one).", 10)
+        history = history.edit("fact(two).", 10)
+        history = history.undo()
+        assertEquals("fact(one).", history.current.text)
+        history = history.redo()
+        assertEquals("fact(two).", history.current.text)
+        history = history.undo().edit("fact(three).", 12)
+        assertFalse(history.canRedo)
+    }
+
+    @Test
+    fun workspaceRenameAndBundleRoundTripStayInsidePrivateRoot() {
+        val first = PrologWorkspace(temporary.newFolder("bundle-source"))
+        first.saveSource("facts.pl", "fact(one).\n")
+        first.saveSource("rules.pl", "rule(X) :- fact(X).\n")
+        assertEquals("knowledge.pl", first.renameSource("facts.pl", "knowledge.pl").name)
+
+        val bundle = first.exportBundle()
+        val second = PrologWorkspace(temporary.newFolder("bundle-target"))
+        second.importBundle(bundle)
+
+        assertEquals(first.listSources(), second.listSources())
+        try {
+            first.renameSource("knowledge.pl", "../escape.pl")
+            throw AssertionError("workspace rename escaped private root")
+        } catch (_: IllegalArgumentException) {
+        }
+    }
+
+    @Test
+    fun searchIsBoundedAndReportsLineAndColumn() {
+        val matches = PrologSearch.find(
+            listOf(PrologSource("facts.pl", "fact(one).\nfact(two).\n")),
+            "fact",
+            limit = 1,
+        )
+
+        assertEquals(1, matches.size)
+        assertEquals(1, matches.single().line)
+        assertEquals(1, matches.single().column)
+    }
 }
