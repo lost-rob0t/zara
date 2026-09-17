@@ -179,7 +179,7 @@ fun ZaraApp(
             }
             action.startsWith("submit:") -> onSendText(action.removePrefix("submit:"))
             action.startsWith("prompt:") -> onSendText(action.removePrefix("prompt:"))
-            action.startsWith("plugin:") -> onSendText(action.removePrefix("plugin:"))
+            action.startsWith("plugin:") -> Unit
         }
     }
 
