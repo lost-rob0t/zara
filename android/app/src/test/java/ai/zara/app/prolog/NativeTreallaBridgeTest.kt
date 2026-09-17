@@ -125,6 +125,7 @@ class NativeTreallaBridgeTest {
         private val results: Array<String> = emptyArray()
     ) : TreallaNativeApi {
         var initializeCalls = 0
+        var consultCalls = 0
         var evaluateCalls = 0
         var shutdownCalls = 0
 
@@ -132,6 +133,12 @@ class NativeTreallaBridgeTest {
             initializeCalls += 1
             events += "init:$coreAssetPath"
             return initializeResult
+        }
+
+        override fun consult(sourcePath: String): Boolean {
+            consultCalls += 1
+            events += "consult:$sourcePath"
+            return true
         }
 
         override fun evaluate(query: String): Array<String> {

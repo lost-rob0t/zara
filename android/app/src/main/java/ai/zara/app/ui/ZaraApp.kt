@@ -1,9 +1,17 @@
 package ai.zara.app.ui
 
+import ai.zara.app.BuildConfig
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.RuntimeState
+import ai.zara.app.runtime.RuntimeMode
+import ai.zara.app.runtime.LocalQueryResult
+import ai.zara.app.runtime.LocalServerPhase
+import ai.zara.app.runtime.LocalServerState
 import ai.zara.app.runtime.ServerConnection
+import ai.zara.app.prolog.PrologSource
+import ai.zara.app.update.UpdatePhase
+import ai.zara.app.update.UpdateState
 import ai.zara.app.voice.ManualVoiceState
 import ai.zara.app.voice.VoiceStreamState
 import ai.zara.ui.theme.ZaraSemanticTokens
@@ -69,18 +77,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
-enum class AppSurface(val label: String, val gatedIssue: String? = null) {
-    Chat("Chat"),
-    Logic("Logic", "#652"),
-    Voice("Voice"),
-    Projects("Projects", "#653"),
-    Remote("Remote"),
-    Scheduled("Scheduled", "#654"),
-    Plugins("Plugins", "#655"),
-    Themes("Themes"),
-    Diagnostics("Diagnostics"),
-    Settings("Settings"),
-    About("About"),
+enum class AppSurface(val label: String, val glyph: String, val gatedIssue: String? = null) {
+    Chat("Chat", "⌂"),
+    Logic("Logic", "λ"),
+    Voice("Voice", "◉"),
+    Projects("Projects", "◇", "#653"),
+    Remote("Remote", "⇄"),
+    Scheduled("Scheduled", "◷", "#654"),
+    Plugins("Plugins", "⬡", "#655"),
+    Themes("Themes", "◐"),
+    Diagnostics("Diagnostics", "⌁"),
+    Settings("Settings", "⚙"),
+    About("About", "ⓘ"),
 }
 
 val LocalZaraTokens = staticCompositionLocalOf {
@@ -121,7 +129,13 @@ fun ZaraApp(
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
     selectedTheme: ZaraTheme,
+    localServerState: LocalServerState,
+    prologSources: List<PrologSource>,
+    prologQueryResult: LocalQueryResult?,
+    updateState: UpdateState,
+    runtimeMode: RuntimeMode,
     onSelectTheme: (ZaraTheme) -> Unit,
+    onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
     onReplaceServerPin: (String) -> Unit,
@@ -132,6 +146,12 @@ fun ZaraApp(
     onStartVoice: () -> Unit,
     onStopVoice: () -> Unit,
     onCancelVoice: () -> Unit,
+    onSavePrologSource: (String, String) -> Unit,
+    onReloadLocalServer: () -> Unit,
+    onRunPrologQuery: (String) -> Unit,
+    onCheckForUpdate: () -> Unit,
+    onDownloadUpdate: () -> Unit,
+    onInstallUpdate: () -> Unit,
 ) {
     var selected by rememberSaveable { mutableStateOf(AppSurface.Chat) }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -147,6 +167,7 @@ fun ZaraApp(
                     ZaraDrawer(
                         selected = selected,
                         state = runtimeState,
+                        localState = localServerState,
                         onSelect = { destination ->
                             selected = destination
                             scope.launch { drawerState.close() }
@@ -160,6 +181,7 @@ fun ZaraApp(
                         ZaraTopBar(
                             selected = selected,
                             state = runtimeState,
+                            localState = localServerState,
                             onMenu = { scope.launch { drawerState.open() } },
                         )
                     },
@@ -167,13 +189,24 @@ fun ZaraApp(
                     when (selected) {
                         AppSurface.Chat -> ChatSurface(
                             state = runtimeState,
+                            localServerState = localServerState,
                             lastTurn = lastTurn,
                             operationError = operationError,
                             operationBusy = operationBusy,
                             onSendText = onSendText,
                             padding = padding,
                         )
-                        AppSurface.Logic -> GatedSurface(selected, padding)
+                        AppSurface.Logic -> PrologStudioSurface(
+                            localState = localServerState,
+                            sources = prologSources,
+                            queryResult = prologQueryResult,
+                            operationError = operationError,
+                            operationBusy = operationBusy,
+                            onSaveSource = onSavePrologSource,
+                            onReload = onReloadLocalServer,
+                            onRunQuery = onRunPrologQuery,
+                            padding = padding,
+                        )
                         AppSurface.Voice -> VoiceSurface(
                             state = runtimeState,
                             microphonePermissionGranted = microphonePermissionGranted,
@@ -206,6 +239,7 @@ fun ZaraApp(
                         AppSurface.Diagnostics -> DiagnosticsSurface(
                             state = runtimeState,
                             sourceSha = sourceSha,
+                            localServerState = localServerState,
                             voiceStreamState = voiceStreamState,
                             voiceStreamFailure = voiceStreamFailure,
                             operationError = operationError,
@@ -213,6 +247,9 @@ fun ZaraApp(
                         )
                         AppSurface.Settings -> SettingsSurface(
                             state = runtimeState,
+                            localServerState = localServerState,
+                            updateState = updateState,
+                            runtimeMode = runtimeMode,
                             enrollmentPublicKey = enrollmentPublicKey,
                             pinnedServerPublicKey = pinnedServerPublicKey,
                             operationError = operationError,
@@ -221,6 +258,10 @@ fun ZaraApp(
                             onPinServer = onPinServer,
                             onReplaceServerPin = onReplaceServerPin,
                             onRequestAssistantRole = onRequestAssistantRole,
+                            onCheckForUpdate = onCheckForUpdate,
+                            onDownloadUpdate = onDownloadUpdate,
+                            onInstallUpdate = onInstallUpdate,
+                            onSelectRuntimeMode = onSelectRuntimeMode,
                             padding = padding,
                         )
                         AppSurface.About -> AboutSurface(sourceSha, padding)
@@ -235,6 +276,7 @@ fun ZaraApp(
 private fun ZaraTopBar(
     selected: AppSurface,
     state: RuntimeState,
+    localState: LocalServerState,
     onMenu: () -> Unit,
 ) {
     val tokens = LocalZaraTokens.current
@@ -259,6 +301,8 @@ private fun ZaraTopBar(
                 color = tokens.textMuted,
                 style = MaterialTheme.typography.labelLarge,
             )
+            StatusDot(if (localState.phase == LocalServerPhase.READY) tokens.success else tokens.warning)
+            Spacer(Modifier.size(6.dp))
             StatusDot(connectionAccent(tokens, state.server))
             Spacer(Modifier.size(8.dp))
             ZaraSigil(size = 34.dp)
@@ -270,6 +314,7 @@ private fun ZaraTopBar(
 private fun ZaraDrawer(
     selected: AppSurface,
     state: RuntimeState,
+    localState: LocalServerState,
     onSelect: (AppSurface) -> Unit,
 ) {
     val tokens = LocalZaraTokens.current
@@ -298,9 +343,21 @@ private fun ZaraDrawer(
 
             Spacer(Modifier.size(8.dp))
             AppSurface.entries.forEach { surface ->
+                when (surface) {
+                    AppSurface.Chat -> DrawerDividerLabel("WORKSPACE")
+                    AppSurface.Remote -> DrawerDividerLabel("RUNTIME")
+                    AppSurface.Themes -> DrawerDividerLabel("SYSTEM")
+                    else -> Unit
+                }
                 NavigationDrawerItem(
                     label = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                surface.glyph,
+                                modifier = Modifier.width(30.dp),
+                                color = if (selected == surface) tokens.accentCyan else tokens.textMuted,
+                                fontFamily = FontFamily.Monospace,
+                            )
                             Text(surface.label, modifier = Modifier.weight(1f))
                             surface.gatedIssue?.let {
                                 Text(it, color = tokens.textMuted, style = MaterialTheme.typography.labelSmall)
@@ -320,10 +377,10 @@ private fun ZaraDrawer(
 
             Spacer(Modifier.size(12.dp))
             DrawerDividerLabel("PINNED")
-            DrawerHistoryRow("No pinned conversations", "history hook · #650")
+            DrawerHistoryRow("No pinned conversations", "nothing is synced implicitly")
             Spacer(Modifier.size(10.dp))
             DrawerDividerLabel("RECENTS")
-            DrawerHistoryRow("Session history", "runtime projection · #650")
+            DrawerHistoryRow("No saved conversations", "local history is not enabled yet")
             Spacer(Modifier.weight(1f))
 
             Surface(
@@ -332,17 +389,28 @@ private fun ZaraDrawer(
                 shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    StatusDot(connectionAccent(tokens, state.server))
-                    Text(
-                        connectionLabel(state.server),
-                        modifier = Modifier.padding(start = 10.dp),
-                        color = tokens.textMuted,
-                        style = MaterialTheme.typography.labelMedium,
-                    )
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        StatusDot(if (localState.phase == LocalServerPhase.READY) tokens.success else tokens.warning)
+                        Text(
+                            "local · ${localState.phase.name.lowercase()}",
+                            modifier = Modifier.padding(start = 10.dp),
+                            color = tokens.text,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.padding(top = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        StatusDot(connectionAccent(tokens, state.server))
+                        Text(
+                            "remote · ${connectionLabel(state.server)}",
+                            modifier = Modifier.padding(start = 10.dp),
+                            color = tokens.textMuted,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
                 }
             }
         }
@@ -374,6 +442,7 @@ private fun DrawerHistoryRow(title: String, detail: String) {
 @Composable
 private fun ChatSurface(
     state: RuntimeState,
+    localServerState: LocalServerState,
     lastTurn: RenderedTextTurn?,
     operationError: String?,
     operationBusy: Boolean,
@@ -381,8 +450,10 @@ private fun ChatSurface(
     padding: PaddingValues,
 ) {
     var input by rememberSaveable { mutableStateOf("") }
-    val ready = state.server is ServerConnection.Connected &&
+    val remoteReady = state.server is ServerConnection.Connected &&
         state.enrollment == EnrollmentReadiness.Ready
+    val localReady = localServerState.phase == LocalServerPhase.READY
+    val ready = remoteReady || localReady
     val tokens = LocalZaraTokens.current
 
     Column(
@@ -452,7 +523,11 @@ private fun ChatSurface(
             },
         )
         Text(
-            if (ready) "LOCAL  •  SYMBOLIC  •  PRIVATE" else "REMOTE AUTH REQUIRED FOR CHAT",
+            when {
+                remoteReady -> "REMOTE  •  AUTHENTICATED  •  SYMBOLIC"
+                localReady -> "LOCAL  •  SYMBOLIC  •  PRIVATE"
+                else -> "LOCAL RUNTIME STARTING"
+            },
             modifier = Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 10.dp),
             color = tokens.textMuted,
             textAlign = TextAlign.Center,
@@ -645,6 +720,9 @@ private fun ConnectionSurface(
 @Composable
 private fun SettingsSurface(
     state: RuntimeState,
+    localServerState: LocalServerState,
+    updateState: UpdateState,
+    runtimeMode: RuntimeMode,
     enrollmentPublicKey: String?,
     pinnedServerPublicKey: String?,
     operationError: String?,
@@ -653,6 +731,10 @@ private fun SettingsSurface(
     onPinServer: (String) -> Unit,
     onReplaceServerPin: (String) -> Unit,
     onRequestAssistantRole: () -> Unit,
+    onCheckForUpdate: () -> Unit,
+    onDownloadUpdate: () -> Unit,
+    onInstallUpdate: () -> Unit,
+    onSelectRuntimeMode: (RuntimeMode) -> Unit,
     padding: PaddingValues,
 ) {
     var serverPin by rememberSaveable { mutableStateOf("") }
@@ -662,7 +744,36 @@ private fun SettingsSurface(
     val tokens = LocalZaraTokens.current
 
     ScreenBody(padding) {
-        ScreenTitle("Settings", "Identity, assistant role and enrollment")
+        ScreenTitle("Settings", "Local runtime, identity, remote and updates")
+
+        SectionCard("LOCAL ZARA SERVER") {
+            KeyValueRow("state", localServerState.phase.name.lowercase())
+            KeyValueRow("generation", localServerState.generation.toString())
+            KeyValueRow("knowledge sources", localServerState.loadedSources.size.toString())
+            MutedNotice("Runs inside Zara with no account or network. The Logic workspace is app-private and never syncs to a remote server implicitly.")
+            localServerState.failure?.let { ErrorBanner(it) }
+            Text("CHAT BACKEND", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+            RuntimeMode.entries.forEach { mode ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .selectable(
+                            selected = mode == runtimeMode,
+                            onClick = { onSelectRuntimeMode(mode) },
+                        )
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    StatusDot(if (mode == runtimeMode) tokens.success else tokens.border)
+                    Text(
+                        mode.name,
+                        modifier = Modifier.padding(start = 10.dp),
+                        color = if (mode == runtimeMode) tokens.text else tokens.textMuted,
+                    )
+                }
+            }
+            MutedNotice("Auto prefers an authenticated remote session and falls back to local. Local never sends the turn to the network. Remote fails closed when disconnected.")
+        }
 
         SectionCard("ASSISTANT") {
             KeyValueRow("role", assistantRoleLabel(state.assistantRole))
@@ -767,6 +878,26 @@ private fun SettingsSurface(
                 KeyValueRow("endpoint", it)
             }
         }
+        SectionCard("SELF UPDATE") {
+            KeyValueRow("installed", BuildConfig.VERSION_NAME)
+            KeyValueRow("status", updateState.phase.name.lowercase())
+            updateState.release?.let { release ->
+                KeyValueRow("available", release.version)
+                KeyValueRow("source", release.sourceSha.take(12))
+            }
+            updateState.progressPercent?.let { progress ->
+                KeyValueRow("download", "$progress%")
+            }
+            updateState.message?.let { MutedNotice(it) }
+            when (updateState.phase) {
+                UpdatePhase.AVAILABLE -> PrimaryAction("Download verified APK", true, onDownloadUpdate)
+                UpdatePhase.READY -> PrimaryAction("Install update", true, onInstallUpdate)
+                UpdatePhase.CHECKING, UpdatePhase.DOWNLOADING ->
+                    PrimaryAction("Working…", false) { }
+                else -> PrimaryAction("Check GitHub Releases", true, onCheckForUpdate)
+            }
+            MutedNotice("Zara verifies the release SHA-256 before handing the APK to Android. Android then verifies the signing certificate and requires your install confirmation.")
+        }
         operationError?.let { ErrorBanner(it) }
     }
 }
@@ -775,6 +906,7 @@ private fun SettingsSurface(
 private fun DiagnosticsSurface(
     state: RuntimeState,
     sourceSha: String,
+    localServerState: LocalServerState,
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
     operationError: String?,
@@ -786,6 +918,9 @@ private fun DiagnosticsSurface(
             KeyValueRow("source", sourceSha.take(12))
         }
         SectionCard("RUNTIME") {
+            KeyValueRow("local server", localServerState.phase.name.lowercase())
+            KeyValueRow("local generation", localServerState.generation.toString())
+            KeyValueRow("local sources", localServerState.loadedSources.size.toString())
             KeyValueRow("connection", connectionLabel(state.server))
             KeyValueRow("generation", state.generation.toString())
             KeyValueRow("session", state.sessionId ?: "none")
@@ -913,7 +1048,7 @@ private fun AboutSurface(sourceSha: String, padding: PaddingValues) {
 }
 
 @Composable
-private fun ScreenBody(
+internal fun ScreenBody(
     padding: PaddingValues,
     content: @Composable () -> Unit,
 ) {
@@ -930,7 +1065,7 @@ private fun ScreenBody(
 }
 
 @Composable
-private fun ScreenTitle(title: String, subtitle: String) {
+internal fun ScreenTitle(title: String, subtitle: String) {
     val tokens = LocalZaraTokens.current
     Text(title, color = tokens.text, style = MaterialTheme.typography.headlineSmall)
     Text(
@@ -942,7 +1077,7 @@ private fun ScreenTitle(title: String, subtitle: String) {
 }
 
 @Composable
-private fun SectionCard(title: String, content: @Composable () -> Unit) {
+internal fun SectionCard(title: String, content: @Composable () -> Unit) {
     val tokens = LocalZaraTokens.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -967,7 +1102,7 @@ private fun SectionCard(title: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun KeyValueRow(label: String, value: String) {
+internal fun KeyValueRow(label: String, value: String) {
     val tokens = LocalZaraTokens.current
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         Text(
@@ -1009,7 +1144,7 @@ private fun StatusPill(label: String) {
 }
 
 @Composable
-private fun PrimaryAction(label: String, enabled: Boolean, onClick: () -> Unit) {
+internal fun PrimaryAction(label: String, enabled: Boolean, onClick: () -> Unit) {
     val tokens = LocalZaraTokens.current
     Button(
         onClick = onClick,
@@ -1024,7 +1159,7 @@ private fun PrimaryAction(label: String, enabled: Boolean, onClick: () -> Unit) 
 }
 
 @Composable
-private fun SecondaryAction(label: String, enabled: Boolean, onClick: () -> Unit) {
+internal fun SecondaryAction(label: String, enabled: Boolean, onClick: () -> Unit) {
     val tokens = LocalZaraTokens.current
     TextButton(onClick = onClick, enabled = enabled) {
         Text(label, color = tokens.secondary)
@@ -1032,13 +1167,13 @@ private fun SecondaryAction(label: String, enabled: Boolean, onClick: () -> Unit
 }
 
 @Composable
-private fun MutedNotice(text: String) {
+internal fun MutedNotice(text: String) {
     val tokens = LocalZaraTokens.current
     Text(text, color = tokens.textMuted, style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable
-private fun ErrorBanner(text: String) {
+internal fun ErrorBanner(text: String) {
     val tokens = LocalZaraTokens.current
     Surface(
         modifier = Modifier.fillMaxWidth().padding(top = 10.dp),

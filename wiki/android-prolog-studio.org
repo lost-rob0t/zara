@@ -1,0 +1,203 @@
+#+title: Zara Android Prolog Studio
+#+subtitle: Facts, rules, expert systems, configuration, and safe local execution
+
+* What this is
+
+Zara Android contains a private Prolog workspace backed by the same embedded
+Trealla runtime used for portable symbolic resolution. It works without an
+account, network connection, or remote Zara server.
+
+The mobile boundary is intentionally narrower than a desktop Prolog shell:
+
+- source files are limited to Zara's app-private workspace;
+- queries must bind =Result=;
+- file, process, dynamic-database mutation, meta-call, and arbitrary consult
+  predicates are rejected by the Android query boundary;
+- saving source analyzes it first, then recreates the runtime and consults the
+  complete workspace so deleted or changed clauses do not remain loaded;
+- remote connection never uploads the local workspace implicitly.
+
+* 1. Facts are a database
+
+Open =family.pl= in Logic -> IDE.
+
+#+begin_src prolog
+parent(alice, bob).
+parent(bob, charlie).
+#+end_src
+
+A fact is a relation, not a row locked into a predefined table. Ask for every
+value related to =alice=:
+
+#+begin_src prolog
+parent(alice, Result)
+#+end_src
+
+The query returns =bob=. Capitalized identifiers are variables. Lowercase
+identifiers are atoms.
+
+* 2. Rules derive new facts
+
+#+begin_src prolog
+ancestor(X, Y) :- parent(X, Y).
+ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y).
+#+end_src
+
+The first clause is the base case. The second follows one edge and recursively
+continues from =Z=. Query:
+
+#+begin_src prolog
+ancestor(alice, Result)
+#+end_src
+
+Then open Logic -> Graph. =ancestor/2= points to =parent/2= and to itself. The
+graph is derived from the source; it is not a second copy of the knowledge.
+
+* 3. Backtracking returns every answer
+
+Prolog does not stop at the first proof. The local runtime enumerates every
+solution up to its native result bound. This makes one rule useful as both a
+validator and a search program.
+
+#+begin_src prolog
+member(Result, [red, green, blue])
+#+end_src
+
+* 4. Model an expert system
+
+Open Logic -> Expert. Give the expert a name, evidence keys, and conclusion.
+The builder generates ordinary Prolog with two layers:
+
+1. a decision predicate whose body lists required evidence;
+2. an explanation predicate that returns a structured decision term.
+
+The generated source is deliberately readable and editable. It does not hide
+the logic in a proprietary form.
+
+#+begin_src prolog
+symptom(alex, fever).
+symptom(alex, cough).
+symptom(alex, fatigue).
+
+diagnosis(Person, flu) :-
+    symptom(Person, fever),
+    symptom(Person, cough),
+    symptom(Person, fatigue).
+
+explanation(Person, Result) :-
+    diagnosis(Person, Condition),
+    Result = diagnosis(Person, Condition).
+#+end_src
+
+Run:
+
+#+begin_src prolog
+explanation(alex, Result)
+#+end_src
+
+The returned term is data. Zara can render it, log provenance, compare it with
+policy, or pass it through a typed capability adapter without turning model
+output into authority.
+
+* 5. Configure Zara with facts
+
+Open =config.pl=. Configuration facts use =config(Key, Value)=:
+
+#+begin_src prolog
+config(theme, outrun).
+config(runtime, local).
+config(privacy, device_only).
+#+end_src
+
+Use a rule as the public configuration interface:
+
+#+begin_src prolog
+effective(Key, Result) :- config(Key, Result).
+#+end_src
+
+Now query:
+
+#+begin_src prolog
+effective(theme, Result)
+#+end_src
+
+This separation matters. Raw facts say what the user chose. =effective/2= can
+later include defaults, device constraints, plugin contributions, or policy
+without forcing the UI to duplicate those decisions.
+
+* 6. Derive configuration instead of branching everywhere
+
+#+begin_src prolog
+local_private(Result) :-
+    config(runtime, local),
+    config(privacy, device_only),
+    Result = enabled.
+#+end_src
+
+The Android UI can ask one question instead of reproducing a matrix of
+conditions. This is the core power of Prolog configuration: decisions stay
+declarative, inspectable, testable, and explainable.
+
+* 7. Add defaults and overrides
+
+Keep defaults separate from explicit user facts:
+
+#+begin_src prolog
+default(theme, outrun).
+default(runtime, local).
+
+effective(Key, Result) :- config(Key, Result), !.
+effective(Key, Result) :- default(Key, Result).
+#+end_src
+
+The cut commits to an explicit value when one exists. Zara's production
+configuration should use a reviewed schema and provenance projection; this
+small example teaches the resolution pattern.
+
+* 8. Treat permissions as logic
+
+#+begin_src prolog
+principal(local_owner).
+grant(local_owner, prolog_query).
+
+authorized(Principal, Action, Result) :-
+    principal(Principal),
+    grant(Principal, Action),
+    Result = allowed(Principal, Action).
+#+end_src
+
+Querying policy is different from executing an Android effect. A successful
+rule is evidence for the typed capability layer; it never bypasses Android
+permissions, Zara's capability registry, or user confirmation.
+
+* 9. Debug with provenance
+
+Every IDE source is analyzed into clauses with file and line provenance. Use
+the graph legend to find which predicate defines or calls another. Fix syntax
+diagnostics before Save & reload; the last green runtime remains authoritative
+until a complete replacement loads successfully.
+
+* 10. Local versus remote
+
+Local mode owns:
+
+- private workspace sources;
+- embedded symbolic queries;
+- deterministic intent frames;
+- safe device capability requests.
+
+Remote mode adds model providers, server tools, and server-owned conversation
+state through authenticated ZARA/1. Connecting does not upload local source,
+facts, or history. A future import/sync feature must be explicit and preserve
+provenance.
+
+* Exercises
+
+1. Add =parent(dana, eli).= and predict every answer for
+   =ancestor(alice, Result)= before running it.
+2. Add one evidence fact to =expert_system.pl= and make the decision rule fail
+   until all required evidence exists.
+3. Add =config(glow, reduced).= and write =effective_glow(Result)=.
+4. Write a =why/2= predicate returning the facts that support a conclusion.
+5. Create a cycle in a graph rule, observe it in Graph, then add a visited-list
+   argument to stop infinite recursion.

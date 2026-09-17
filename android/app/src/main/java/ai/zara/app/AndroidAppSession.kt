@@ -20,15 +20,28 @@ import ai.zara.app.runtime.AudioOutputFormat
 import ai.zara.app.runtime.ClientStateStore
 import ai.zara.app.runtime.ConnectedTextSession
 import ai.zara.app.runtime.JeroMqTextDealerFactory
+import ai.zara.app.runtime.LocalQueryResult
+import ai.zara.app.runtime.LocalServerPhase
+import ai.zara.app.runtime.LocalServerState
+import ai.zara.app.runtime.LocalZaraServer
 import ai.zara.app.runtime.RestorableClientState
 import ai.zara.app.runtime.RuntimeEvent
 import ai.zara.app.runtime.RuntimeState
+import ai.zara.app.runtime.RuntimeMode
 import ai.zara.app.runtime.ServerConnection
 import ai.zara.app.runtime.ServerProfile
 import ai.zara.app.runtime.TextTurnResult
 import ai.zara.app.runtime.ZaraTextClientActor
 import ai.zara.app.runtime.reduce
 import ai.zara.app.runtime.toRuntimeReadiness
+import ai.zara.app.prolog.AndroidPortableSemanticAssetSource
+import ai.zara.app.prolog.NativeTreallaBridge
+import ai.zara.app.prolog.PortableSemanticAssetStager
+import ai.zara.app.prolog.PrologDocument
+import ai.zara.app.prolog.PrologExampleCatalog
+import ai.zara.app.prolog.PrologSource
+import ai.zara.app.prolog.PrologSourceAnalyzer
+import ai.zara.app.prolog.PrologWorkspace
 import ai.zara.app.voice.AndroidAudioFocusPlatform
 import ai.zara.app.voice.AndroidAudioRoutePlatform
 import ai.zara.app.voice.AndroidPcmOutput
@@ -51,6 +64,7 @@ import java.io.File
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.UUID
 
 class AndroidAppSession(context: Context) : AutoCloseable {
     private val enrollment: EnrollmentRepository = AndroidEnrollmentRepository.create(context)
@@ -63,17 +77,30 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     private val voice: ManualVoiceSessionCoordinator
     private val voiceStreamSink: VoiceStreamSinkActor
     private val audioRouteController: AudioRouteController
+    private val prologWorkspace = PrologWorkspace(File(context.filesDir, "prolog-workspace"))
+    private val localServer: LocalZaraServer
     @Volatile private var latestVoiceStreamState: VoiceStreamState? = null
     @Volatile private var latestVoiceStreamFailure: String? = null
     @Volatile private var latestAudioRoute: AudioRouteSnapshot? = null
     @Volatile private var voiceStreamObserver: ((VoiceStreamState?, String?) -> Unit)? = null
     @Volatile private var runtimeStateObserver: ((RuntimeState) -> Unit)? = null
     @Volatile private var playbackRuntimeSessionId: String? = null
+    @Volatile private var runtimeMode: RuntimeMode = RuntimeMode.Auto
     private val voiceExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-android-voice-control").apply { isDaemon = true }
     }
 
     init {
+        prologWorkspace.seedExamples(PrologExampleCatalog.examples)
+        val stagedSemanticAssets = PortableSemanticAssetStager(
+            File(context.noBackupFilesDir, "zara/prolog-runtime"),
+        ).stageAll(AndroidPortableSemanticAssetSource(context.assets))
+        localServer = LocalZaraServer(
+            bridge = NativeTreallaBridge(),
+            corePath = stagedSemanticAssets.coreFile.absolutePath,
+            workspace = prologWorkspace,
+        )
+        localServer.start()
         val restored = stateStore.load()
         var initial = restored?.let(RuntimeState::fromRestored) ?: RuntimeState.initial()
         initial = reduce(
@@ -150,6 +177,60 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun state(): RuntimeState = controller.state()
 
+    fun runtimeMode(): RuntimeMode = runtimeMode
+
+    fun setRuntimeMode(mode: RuntimeMode) {
+        runtimeMode = mode
+    }
+
+    fun localServerState(): LocalServerState = localServer.state()
+
+    fun setLocalServerObserver(observer: ((LocalServerState) -> Unit)?) {
+        localServer.setStateObserver(observer)
+    }
+
+    fun prologSources(): List<PrologSource> = prologWorkspace.listSources()
+
+    fun analyzePrologSource(name: String, text: String): PrologDocument =
+        PrologSourceAnalyzer.analyze(name, text)
+
+    fun savePrologSource(name: String, text: String): CompletableFuture<PrologDocument> {
+        val document = PrologSourceAnalyzer.analyze(name, text)
+        if (document.diagnostics.isNotEmpty()) {
+            return CompletableFuture.failedFuture(
+                IllegalArgumentException(document.diagnostics.joinToString("; ") { it.message }),
+            )
+        }
+        val before = prologWorkspace.listSources().firstOrNull { it.name == name }
+        prologWorkspace.saveSource(name, text)
+        return localServer.reload().thenCompose { state ->
+            if (state.phase == LocalServerPhase.READY) {
+                CompletableFuture.completedFuture(document)
+            } else {
+                if (before == null) {
+                    check(prologWorkspace.deleteSource(name)) { "Invalid source could not be rolled back" }
+                } else {
+                    prologWorkspace.saveSource(before.name, before.text)
+                }
+                localServer.reload().thenCompose { restored ->
+                    val message = state.failure ?: "Prolog source failed to load"
+                    if (restored.phase != LocalServerPhase.READY) {
+                        CompletableFuture.failedFuture<PrologDocument>(
+                            IllegalStateException("$message; previous runtime also failed to restore"),
+                        )
+                    } else {
+                        CompletableFuture.failedFuture<PrologDocument>(IllegalArgumentException(message))
+                    }
+                }
+            }
+        }
+    }
+
+    fun reloadLocalServer(): CompletableFuture<LocalServerState> = localServer.reload()
+
+    fun queryLocalProlog(query: String): CompletableFuture<LocalQueryResult> =
+        localServer.query(query)
+
     fun voiceState(): ManualVoiceState = voice.state()
 
     fun voiceStreamState(): VoiceStreamState? = latestVoiceStreamState
@@ -217,6 +298,16 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     }
 
     fun submitText(text: String): CompletableFuture<TextTurnResult> {
+        val remoteConnected = state().server is ServerConnection.Connected
+        when (runtimeMode) {
+            RuntimeMode.Local -> return submitLocalText(text)
+            RuntimeMode.Remote -> if (!remoteConnected) {
+                return CompletableFuture.failedFuture(
+                    IllegalStateException("Remote mode requires an authenticated Zara server"),
+                )
+            }
+            RuntimeMode.Auto -> if (!remoteConnected) return submitLocalText(text)
+        }
         val future = controller.submitText(text)
         future.thenAccept { result ->
             val profile = state().configuredProfile ?: return@thenAccept
@@ -228,6 +319,28 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             )
         }
         return future
+    }
+
+    private fun submitLocalText(text: String): CompletableFuture<TextTurnResult> {
+        val query = text.trim()
+        val future = if (query.startsWith("?-")) {
+            localServer.query(query)
+        } else {
+            localServer.resolve(query)
+        }
+        return future.thenApply { result ->
+            val answer = if (result.terms.isEmpty()) {
+                "No deterministic local rule matched. Remote model capabilities are optional; the local Prolog server is still ready."
+            } else {
+                result.terms.joinToString("\n")
+            }
+            TextTurnResult(
+                conversationId = "local-device",
+                turnId = UUID.randomUUID().toString(),
+                text = answer,
+                success = result.terms.isNotEmpty(),
+            )
+        }
     }
 
     fun pressToTalk(permissionGranted: Boolean): CompletableFuture<Unit> =
@@ -358,6 +471,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         runtimeStateObserver = null
         actor.setVoiceStreamObserver(null)
         actor.setVoiceStreamFailureObserver(null)
+        localServer.setStateObserver(null)
         assistantVoiceGuard.onCaptureStopped()
         val routeFailure = runCatching { audioRouteController.stop() }.exceptionOrNull()
         if (routeFailure != null) reportVoiceStreamFailure(routeFailure)
@@ -371,6 +485,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 voiceStreamSink.close()
             }
         }
+        localServer.close()
         if (routeFailure != null) throw routeFailure
     }
 }

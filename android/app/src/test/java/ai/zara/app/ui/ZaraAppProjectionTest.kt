@@ -208,8 +208,8 @@ class ZaraAppProjectionTest {
         assertTrue(shell.contains("LocalZaraTokens provides"))
         assertTrue(shell.contains("selectedTheme"))
 
-        val sectionCard = source.substringAfter("private fun SectionCard(")
-            .substringBefore("private fun KeyValueRow(")
+        val sectionCard = source.substringAfter("internal fun SectionCard(")
+            .substringBefore("internal fun KeyValueRow(")
         assertFalse(sectionCard.contains("OutrunTokens"))
         assertTrue(sectionCard.contains("LocalZaraTokens"))
     }
