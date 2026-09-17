@@ -103,12 +103,11 @@ class AutomationActivity : ComponentActivity() {
         return CompletableFuture.supplyAsync(
             {
                 repeat(100) {
-                    when (val state = session.localServerState()) {
-                        is ai.zara.app.runtime.LocalServerState -> when (state.phase) {
-                            LocalServerPhase.READY -> return@supplyAsync Unit
-                            LocalServerPhase.FAILED -> error(state.failure ?: "Local Prolog runtime failed")
-                            else -> Thread.sleep(25)
-                        }
+                    val state = session.localServerState()
+                    when (state.phase) {
+                        LocalServerPhase.READY -> return@supplyAsync Unit
+                        LocalServerPhase.FAILED -> error(state.failure ?: "Local Prolog runtime failed")
+                        else -> Thread.sleep(25)
                     }
                 }
                 error("Local Prolog runtime did not become ready")
