@@ -13,7 +13,7 @@ class OpenAppAdapter(
     override val capability = DeviceCapability.OpenApp
 
     override fun isAvailable(): Boolean = try {
-        REVIEWED_ALIASES.any(launcher::isAvailable)
+        AndroidAppAliases.reviewed.any(launcher::isAvailable)
     } catch (_: Throwable) {
         false
     }
@@ -24,7 +24,7 @@ class OpenAppAdapter(
         }
 
         val alias = arguments.app.trim().lowercase()
-        if (alias !in REVIEWED_ALIASES) {
+        if (alias !in AndroidAppAliases.reviewed) {
             return DeviceActionResult.Error(DeviceActionErrorCode.InvalidArguments)
         }
 
@@ -47,9 +47,5 @@ class OpenAppAdapter(
         } catch (_: Throwable) {
             DeviceActionResult.Error(DeviceActionErrorCode.Failed)
         }
-    }
-
-    private companion object {
-        val REVIEWED_ALIASES = setOf("browser", "youtube")
     }
 }
