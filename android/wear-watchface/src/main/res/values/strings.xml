@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="watch_face_name">Zara Agenda</string>
+    <string name="theme_label">Zara theme</string>
+    <string name="theme_outrun_label">Outrun</string>
+    <string name="theme_ultra_black_label">Ultra Black</string>
+    <string name="theme_terminal_label">Terminal</string>
+    <string name="next_todo_label">Next todo</string>
+    <string name="todo_summary_label">Todo summary</string>
+    <string name="todo_sync_label">Todo sync</string>
+</resources>
