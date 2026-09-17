@@ -8,6 +8,7 @@ from zara.agent.tools.schedule_tools import SCHEDULE_TOOL_NAMES, build_schedule_
 @dataclass
 class Row:
     schedule_id: str = "schedule-1"
+    label: str = "Report review"
     cron: str = "0 9 * * 1-5"
     goal: str = "review inbox"
     mode: object = type("Mode", (), {"value": "auto"})()
@@ -29,6 +30,7 @@ class FakeScheduleService:
         self.created.append((cron, goal, mode, label))
         self.row.cron = cron
         self.row.goal = goal
+        self.row.label = label or goal[:80]
         return self.row
 
     def list_schedules(self):
@@ -73,6 +75,7 @@ async def test_schedule_tools_create_list_and_control():
     listed = await tools["schedule_list"].ainvoke({})
     assert "schedule-1" in listed
     assert "*/30 8-18 * * 1-5" in listed
+    assert "review the queued reports" not in listed
 
     for name, action in (
         ("schedule_pause", "pause"),
