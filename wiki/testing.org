@@ -1,0 +1,67 @@
+#+title: Testing Zara
+
+* The rule
+
+A Zara change is not done because it compiles or because one happy-path test passes. It needs evidence at the layer where the behavior actually lives, and the repository-wide gate must still pass on the exact candidate commit.
+
+For Python, Zara also tracks line and branch coverage across =zara/=. Coverage is a diagnostic and regression guard: it points at behavior the suite does not exercise. It is not a target to game.
+
+* Run the full gate
+
+#+begin_src sh
+nix develop -c bash scripts/test-all.sh
+#+end_src
+
+This is the canonical local command. It covers Python, Prolog, protocol/security slices, deterministic latency checks, and packaging checks. CI then runs additional build/platform gates, including Android/Wear and deterministic UI evidence where applicable.
+
+* Read the coverage report
+
+During the full gate, pytest prints uncovered Python lines/branches and writes:
+
+- =artifacts/coverage.xml= in CI;
+- =artifacts/coverage.json= in CI;
+- =artifacts/junit.xml= for test results.
+
+The README coverage badge is a convenient project-level signal. The XML/JSON report from the exact commit is the evidence to use when investigating a change.
+
+For a focused Python iteration:
+
+#+begin_src sh
+nix develop -c python -m pytest \
+  --cov=zara --cov-branch --cov-config=.coveragerc \
+  --cov-report=term-missing:skip-covered \
+  t/test_some_contract.py
+#+end_src
+
+Focused coverage is useful for development, but it must not be confused with the repository-wide percentage.
+
+* What deserves a test
+
+Prefer tests that would actually stop a regression:
+
+- public behavior and state transitions;
+- malformed and hostile inputs;
+- cancellation, timeout, reconnect, restart, and stale-result behavior;
+- authorization and secret-handling boundaries;
+- persistence and migration invariants;
+- actor/service lifecycle ownership;
+- protocol compatibility;
+- UI interaction plus visual evidence when presentation changed.
+
+Do not multiply near-identical tests just to inflate the count. Parameterize equivalent cases and spend the extra tests on different failure modes or integration boundaries.
+
+* Fakes, mocks, and real behavior
+
+A fake can be useful at an external boundary—for example, replacing a network transport while proving Zara's configuration policy. A test is weak when it mocks the very behavior it claims to prove.
+
+Where a real local integration is deterministic and reasonably cheap, prefer it. Hardware, provider, and platform dependencies should be isolated behind reviewed adapters and covered by the corresponding integration/device gate rather than pretended away.
+
+* Coverage changes
+
+The project records a measured coverage baseline and enforces a non-regression floor in the canonical Python gate. When meaningful tests raise the stable exact-head result, raise the floor. Do not lower it or add exclusions merely to get a PR green.
+
+If uncovered code is dead, removing it is better than writing a ceremonial test for a path Zara should not have.
+
+* More detail
+
+See [[file:../docs/testing.org][docs/testing.org]] for the maintainer contract, artifact formats, scope boundaries, and the process for changing the coverage floor.
