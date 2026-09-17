@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import mimetypes
+import threading
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -99,6 +100,16 @@ class ContextAttachmentStore:
         self.max_attachment_bytes = int(max_attachment_bytes)
         self.max_render_chars = int(max_render_chars)
         self._attachments: dict[str, ContextAttachment] = {}
+        self._lock = threading.RLock()
+
+    def add(self, attachment: ContextAttachment) -> ContextAttachment:
+        if not isinstance(attachment, ContextAttachment):
+            raise TypeError("attachment must be a ContextAttachment")
+        with self._lock:
+            if attachment.id in self._attachments:
+                raise ContextAttachmentError("context attachment id is already registered")
+            self._attachments[attachment.id] = attachment
+        return attachment
 
     def add_path(
         self,
@@ -130,20 +141,20 @@ class ContextAttachmentStore:
                 except UnicodeDecodeError:
                     text = None
 
-        attachment = ContextAttachment(
-            id=self._new_id(),
-            kind=kind,
-            display_name=resolved.name,
-            scope=scope,
-            source=source,
-            sensitivity=sensitivity,
-            media_type=media_type,
-            locator=str(resolved),
-            text=text,
-            metadata={"size_bytes": "" if size is None else str(size)},
+        return self.add(
+            ContextAttachment(
+                id=self._new_id(),
+                kind=kind,
+                display_name=resolved.name,
+                scope=scope,
+                source=source,
+                sensitivity=sensitivity,
+                media_type=media_type,
+                locator=str(resolved),
+                text=text,
+                metadata={"size_bytes": "" if size is None else str(size)},
+            )
         )
-        self._attachments[attachment.id] = attachment
-        return attachment
 
     def add_text(
         self,
@@ -160,27 +171,28 @@ class ContextAttachmentStore:
         encoded = text.encode("utf-8")
         if len(encoded) > self.max_inline_bytes:
             raise ContextAttachmentError("context inline text exceeds the configured size limit")
-        attachment = ContextAttachment(
-            id=self._new_id(),
-            kind=kind,
-            display_name=display_name,
-            scope=scope,
-            source=source,
-            sensitivity=sensitivity,
-            media_type=media_type,
-            text=text,
-            metadata=metadata or {},
+        return self.add(
+            ContextAttachment(
+                id=self._new_id(),
+                kind=kind,
+                display_name=display_name,
+                scope=scope,
+                source=source,
+                sensitivity=sensitivity,
+                media_type=media_type,
+                text=text,
+                metadata=metadata or {},
+            )
         )
-        self._attachments[attachment.id] = attachment
-        return attachment
 
     def get(self, attachment_id: str) -> ContextAttachment:
-        try:
-            return self._attachments[attachment_id]
-        except KeyError as error:
+        with self._lock:
+            attachment = self._attachments.get(attachment_id)
+        if attachment is None:
             raise ContextAttachmentNotFound(
                 f"unknown context attachment: {attachment_id}"
-            ) from error
+            )
+        return attachment
 
     def resolve(self, attachment_ids: Sequence[str]) -> tuple[ContextAttachment, ...]:
         seen: set[str] = set()
@@ -193,10 +205,12 @@ class ContextAttachmentStore:
         return tuple(resolved)
 
     def list(self) -> tuple[ContextAttachment, ...]:
-        return tuple(self._attachments.values())
+        with self._lock:
+            return tuple(self._attachments.values())
 
     def remove(self, attachment_id: str) -> bool:
-        return self._attachments.pop(attachment_id, None) is not None
+        with self._lock:
+            return self._attachments.pop(attachment_id, None) is not None
 
     def expire_turn(self, attachment_ids: Sequence[str]) -> int:
         removed = 0
@@ -257,6 +271,13 @@ class ContextAttachmentStore:
         return defaults.get(kind, "application/octet-stream")
 
 
+_DEFAULT_CONTEXT_STORE = ContextAttachmentStore()
+
+
+def get_context_attachment_store() -> ContextAttachmentStore:
+    return _DEFAULT_CONTEXT_STORE
+
+
 __all__ = [
     "ContextAttachment",
     "ContextAttachmentError",
@@ -265,4 +286,5 @@ __all__ = [
     "ContextAttachmentScope",
     "ContextAttachmentStore",
     "ContextSensitivity",
+    "get_context_attachment_store",
 ]
