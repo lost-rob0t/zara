@@ -10,16 +10,40 @@ import java.security.MessageDigest
 class WearApkRepository(
     private val context: Context,
 ) {
-    fun download(onProgress: (Long, Long) -> Unit): File {
-        val expected = readText(CHECKSUM_URL).trim().split(Regex("\\s+")).firstOrNull()
-            ?: error("Wear APK checksum is empty")
-        require(expected.matches(Regex("[0-9a-fA-F]{64}"))) { "Wear APK checksum is invalid" }
+    fun downloadWear(onProgress: (Long, Long) -> Unit): File =
+        download(
+            apkUrl = WEAR_APK_URL,
+            checksumUrl = WEAR_CHECKSUM_URL,
+            fileName = "zara-wear-latest.apk",
+            label = "Wear",
+            onProgress = onProgress,
+        )
 
-        val target = File(context.cacheDir, "zara-wear-latest.apk")
-        val partial = File(context.cacheDir, "zara-wear-latest.apk.part")
+    fun downloadAgenda(onProgress: (Long, Long) -> Unit): File =
+        download(
+            apkUrl = AGENDA_APK_URL,
+            checksumUrl = AGENDA_CHECKSUM_URL,
+            fileName = "zara-agenda-latest.apk",
+            label = "Agenda",
+            onProgress = onProgress,
+        )
+
+    private fun download(
+        apkUrl: String,
+        checksumUrl: String,
+        fileName: String,
+        label: String,
+        onProgress: (Long, Long) -> Unit,
+    ): File {
+        val expected = readText(checksumUrl).trim().split(Regex("\\s+")).firstOrNull()
+            ?: error("$label APK checksum is empty")
+        require(expected.matches(Regex("[0-9a-fA-F]{64}"))) { "$label APK checksum is invalid" }
+
+        val target = File(context.cacheDir, fileName)
+        val partial = File(context.cacheDir, "$fileName.part")
         partial.delete()
 
-        val connection = open(APK_URL)
+        val connection = open(apkUrl)
         try {
             val total = connection.contentLengthLong
             connection.inputStream.use { input ->
@@ -43,7 +67,7 @@ class WearApkRepository(
         val actual = sha256(partial)
         if (!actual.equals(expected, ignoreCase = true)) {
             partial.delete()
-            error("Wear APK checksum mismatch")
+            error("$label APK checksum mismatch")
         }
         target.delete()
         if (!partial.renameTo(target)) {
@@ -72,7 +96,7 @@ class WearApkRepository(
         if (connection.responseCode !in 200..299) {
             val code = connection.responseCode
             connection.disconnect()
-            error("Wear APK download failed with HTTP $code")
+            error("Watch artifact download failed with HTTP $code")
         }
         return connection
     }
@@ -91,9 +115,13 @@ class WearApkRepository(
     }
 
     companion object {
-        const val APK_URL =
+        const val WEAR_APK_URL =
             "https://github.com/lost-rob0t/zara/releases/download/android-latest/zara-wear-latest.apk"
-        const val CHECKSUM_URL =
+        const val WEAR_CHECKSUM_URL =
             "https://github.com/lost-rob0t/zara/releases/download/android-latest/zara-wear-latest.apk.sha256"
+        const val AGENDA_APK_URL =
+            "https://github.com/lost-rob0t/zara/releases/download/android-latest/zara-agenda-latest.apk"
+        const val AGENDA_CHECKSUM_URL =
+            "https://github.com/lost-rob0t/zara/releases/download/android-latest/zara-agenda-latest.apk.sha256"
     }
 }
