@@ -9,9 +9,11 @@
     close_llm_client/0,
     get_llm_provider/1,
     get_llm_model/1,
-    get_llm_endpoint/1
+    get_llm_endpoint/1,
+    get_openrouter_policy/1
 ]).
 
+:- use_module(library(apply)).
 :- use_module(library(http/http_client)).
 :- use_module(library(http/http_open), [http_open/3, http_close_keep_alive/1]).
 :- use_module(library(http/json)).
@@ -46,6 +48,7 @@ get_llm_endpoint(Endpoint) :-
 default_endpoint(ollama, "http://localhost:11434/api/chat").
 default_endpoint(openai, "https://api.openai.com/v1/chat/completions").
 default_endpoint(openrouter, "https://openrouter.ai/api/v1/chat/completions").
+default_endpoint(starintel, "https://llm.starintel.actor/v1/chat/completions").
 default_endpoint(anthropic, "https://api.anthropic.com/v1/messages").
 default_endpoint(llama_cpp, "http://127.0.0.1:11435/v1/chat/completions").
 
@@ -55,7 +58,7 @@ provider_endpoint(anthropic, Endpoint) :-
     ; default_endpoint(anthropic, Endpoint)
     ), !.
 provider_endpoint(Provider, Endpoint) :-
-    memberchk(Provider, [openai, openrouter, llama_cpp]),
+    memberchk(Provider, [openai, openrouter, starintel, llama_cpp]),
     get_llm_endpoint(Configured),
     default_endpoint(ollama, OllamaDefault),
     ( Configured == OllamaDefault
@@ -71,6 +74,8 @@ get_api_key(openai, Key) :-
     getenv('OPENAI_API_KEY', Key), Key \== '', !.
 get_api_key(openrouter, Key) :-
     getenv('OPENROUTER_API_KEY', Key), Key \== '', !.
+get_api_key(starintel, Key) :-
+    getenv('STAR_LLM_ACTOR_TOKEN', Key), Key \== '', !.
 get_api_key(Provider, _) :-
     throw(error(missing_api_key(Provider), _)).
 
@@ -157,30 +162,19 @@ serialize_llm_request(anthropic, Model, Key, System, Messages, Headers, Request)
         messages:Messages
     }.
 serialize_llm_request(openai, Model, Key, System, Messages, Headers, Request) :-
-    text_string(Key, KeyString),
-    format(string(Authorization), 'Bearer ~s', [KeyString]),
-    Headers = ['Authorization'=Authorization],
-    Request = _{
-        model:Model,
-        messages:[_{role:system, content:System}|Messages],
-        max_tokens:1024
-    }.
+    bearer_headers(Key, Headers),
+    openai_compatible_request(Model, System, Messages, Request).
 serialize_llm_request(openrouter, Model, Key, System, Messages, Headers, Request) :-
-    text_string(Key, KeyString),
-    format(string(Authorization), 'Bearer ~s', [KeyString]),
-    Headers = ['Authorization'=Authorization],
-    Request = _{
-        model:Model,
-        messages:[_{role:system, content:System}|Messages],
-        max_tokens:1024
-    }.
+    bearer_headers(Key, Headers),
+    get_openrouter_policy(ProviderPolicy),
+    openai_compatible_request(Model, System, Messages, BaseRequest),
+    put_dict(provider, BaseRequest, ProviderPolicy, Request).
+serialize_llm_request(starintel, Model, Key, System, Messages, Headers, Request) :-
+    bearer_headers(Key, Headers),
+    openai_compatible_request(Model, System, Messages, Request).
 serialize_llm_request(llama_cpp, Model, _, System, Messages, Headers, Request) :-
     Headers = [],
-    Request = _{
-        model:Model,
-        messages:[_{role:system, content:System}|Messages],
-        max_tokens:1024
-    }.
+    openai_compatible_request(Model, System, Messages, Request).
 serialize_llm_request(ollama, Model, _, System, Messages, Headers, Request) :-
     Headers = [],
     Request = _{
@@ -189,6 +183,182 @@ serialize_llm_request(ollama, Model, _, System, Messages, Headers, Request) :-
         stream:false,
         options:_{num_predict:1024}
     }.
+
+bearer_headers(Key, ['Authorization'=Authorization]) :-
+    text_string(Key, KeyString),
+    format(string(Authorization), 'Bearer ~s', [KeyString]).
+
+openai_compatible_request(Model, System, Messages, _{
+    model:Model,
+    messages:[_{role:system, content:System}|Messages],
+    max_tokens:1024
+}).
+
+default_openrouter_policy(_{
+    sort:price,
+    allow_fallbacks:true,
+    quantizations:[fp16, bf16, fp8],
+    data_collection:deny,
+    zdr:false,
+    require_parameters:true
+}).
+
+get_openrouter_policy(Policy) :-
+    default_openrouter_policy(Default),
+    findall(Raw, kb_config:llm_openrouter_policy(Raw), LayersHighToLow),
+    reverse(LayersHighToLow, LayersLowToHigh),
+    foldl(merge_policy_layer, LayersLowToHigh, Default, Merged),
+    normalize_openrouter_policy(Merged, Policy).
+
+merge_policy_layer(Override, Base, Merged) :-
+    is_dict(Override),
+    put_dict(Override, Base, Merged).
+
+normalize_openrouter_policy(Raw, Policy) :-
+    normalize_policy_enum(Raw, sort, ["price", "throughput", "latency"], Sort),
+    normalize_policy_boolean(Raw, allow_fallbacks, AllowFallbacks),
+    normalize_policy_list(Raw, quantizations, quantization, Quantizations),
+    Quantizations \== [],
+    normalize_policy_enum(Raw, data_collection, ["allow", "deny"], DataCollection),
+    normalize_policy_boolean(Raw, zdr, Zdr),
+    normalize_policy_boolean(Raw, require_parameters, RequireParameters),
+    optional_normalized_policy_list(Raw, order, provider, Order),
+    optional_normalized_policy_list(Raw, only, provider, Only),
+    optional_normalized_policy_list(Raw, ignore, provider, Ignore),
+    ensure_no_policy_overlap(Only, Ignore),
+    Base = _{
+        sort:Sort,
+        allow_fallbacks:AllowFallbacks,
+        quantizations:Quantizations,
+        data_collection:DataCollection,
+        zdr:Zdr,
+        require_parameters:RequireParameters
+    },
+    put_nonempty_policy_list(order, Order, Base, WithOrder),
+    put_nonempty_policy_list(only, Only, WithOrder, WithOnly),
+    put_nonempty_policy_list(ignore, Ignore, WithOnly, WithIgnore),
+    put_optional_max_price(Raw, WithIgnore, Policy).
+
+normalize_policy_enum(Dict, Key, Allowed, Normalized) :-
+    get_dict(Key, Dict, Raw),
+    normalized_lower_text(Raw, Normalized),
+    ( memberchk(Normalized, Allowed)
+    -> true
+    ; throw(error(domain_error(openrouter_policy(Key), Raw), _))
+    ).
+
+normalize_policy_boolean(Dict, Key, Value) :-
+    get_dict(Key, Dict, Raw),
+    ( memberchk(Raw, [true, false])
+    -> Value = Raw
+    ; throw(error(type_error(boolean, Raw), _))
+    ).
+
+normalize_policy_list(Dict, Key, Kind, Values) :-
+    get_dict(Key, Dict, Raw),
+    normalized_policy_list(Key, Kind, Raw, Values).
+
+optional_normalized_policy_list(Dict, Key, Kind, Values) :-
+    ( get_dict(Key, Dict, Raw)
+    -> normalized_policy_list(Key, Kind, Raw, Values)
+    ; Values = []
+    ).
+
+normalized_policy_list(Key, Kind, Raw, Values) :-
+    ( is_list(Raw)
+    -> true
+    ; throw(error(type_error(list, Raw), _))
+    ),
+    length(Raw, Count),
+    ( Count =< 32
+    -> true
+    ; throw(error(domain_error(openrouter_policy_list_size(Key), Count), _))
+    ),
+    maplist(normalized_policy_token(Kind), Raw, Values),
+    sort(Values, Unique),
+    ( same_length(Values, Unique)
+    -> true
+    ; throw(error(domain_error(openrouter_policy_duplicates(Key), Raw), _))
+    ).
+
+normalized_policy_token(Kind, Raw, Normalized) :-
+    normalized_lower_text(Raw, Normalized),
+    string_length(Normalized, Length),
+    ( Length >= 1, Length =< 128, string_codes(Normalized, Codes), maplist(policy_token_code, Codes)
+    -> true
+    ; throw(error(domain_error(openrouter_policy_token(Kind), Raw), _))
+    ),
+    ( Kind == quantization, Normalized == "unknown"
+    -> throw(error(domain_error(openrouter_quantization, Raw), _))
+    ; true
+    ).
+
+policy_token_code(Code) :-
+    code_type(Code, alnum), !.
+policy_token_code(Code) :-
+    memberchk(Code, `._/-`).
+
+normalized_lower_text(Value, Lower) :-
+    ( string(Value)
+    -> Text = Value
+    ; atom(Value)
+    -> atom_string(Value, Text)
+    ; throw(error(type_error(text, Value), _))
+    ),
+    string_lower(Text, Lower).
+
+ensure_no_policy_overlap(Only, Ignore) :-
+    ( member(Value, Only), memberchk(Value, Ignore)
+    -> throw(error(domain_error(openrouter_provider_overlap, Value), _))
+    ; true
+    ).
+
+put_nonempty_policy_list(_, [], Dict, Dict) :- !.
+put_nonempty_policy_list(Key, Values, Dict, Result) :-
+    put_dict(Key, Dict, Values, Result).
+
+put_optional_max_price(Raw, Base, Policy) :-
+    ( get_dict(max_price, Raw, PriceRaw)
+    -> normalize_max_price(PriceRaw, Price),
+       put_dict(max_price, Base, Price, Policy)
+    ; Policy = Base
+    ).
+
+normalize_max_price(Raw, Price) :-
+    ( is_dict(Raw)
+    -> true
+    ; throw(error(type_error(dict, Raw), _))
+    ),
+    dict_pairs(Raw, _, Pairs),
+    forall(
+        member(Key-_, Pairs),
+        ( memberchk(Key, [prompt, completion])
+        -> true
+        ; throw(error(domain_error(openrouter_max_price_key, Key), _))
+        )
+    ),
+    normalize_optional_price(Raw, prompt, Prompt),
+    normalize_optional_price(Raw, completion, Completion),
+    Price0 = _{},
+    put_optional_price(prompt, Prompt, Price0, Price1),
+    put_optional_price(completion, Completion, Price1, Price),
+    ( Price == _{}
+    -> throw(error(domain_error(openrouter_max_price, Raw), _))
+    ; true
+    ).
+
+normalize_optional_price(Dict, Key, Value) :-
+    ( get_dict(Key, Dict, Raw)
+    -> ( number(Raw), Raw >= 0, Raw =< 1000000
+       -> Value = some(Raw)
+       ; throw(error(domain_error(openrouter_max_price(Key), Raw), _))
+       )
+    ; Value = none
+    ).
+
+put_optional_price(_, none, Dict, Dict) :- !.
+put_optional_price(Key, some(Value), Dict, Result) :-
+    put_dict(Key, Dict, Value, Result).
 
 request_provider(Provider, Endpoint, Headers, Request, Result) :-
     llm_timeouts(_, _, TotalTimeout),
@@ -311,6 +481,8 @@ parse_provider_response(openai, Reply, Result) :-
     openai_response_result(Reply, "OpenAI response schema mismatch", Result).
 parse_provider_response(openrouter, Reply, Result) :-
     openai_response_result(Reply, "OpenRouter response schema mismatch", Result).
+parse_provider_response(starintel, Reply, Result) :-
+    openai_response_result(Reply, "StarIntel gateway response schema mismatch", Result).
 parse_provider_response(llama_cpp, Reply, Result) :-
     openai_response_result(Reply, "llama.cpp response schema mismatch", Result).
 parse_provider_response(ollama, Reply, Result) :-
