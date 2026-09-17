@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import java.io.InputStream
 import java.util.concurrent.CompletableFuture
 
 class LocalAiServiceClient(
@@ -65,6 +66,27 @@ class LocalAiServiceClient(
 
     fun state(): CompletableFuture<LocalAiState> = service().thenApply { it.state() }
 
+    fun models(): CompletableFuture<List<LocalModelSpec>> =
+        service().thenCompose { it.models() }
+
+    fun activeModel(): CompletableFuture<LocalModelSpec?> =
+        service().thenCompose { it.activeModel() }
+
+    fun loadActiveModel(): CompletableFuture<LocalAiState> =
+        service().thenCompose { it.loadActiveModel() }
+
+    fun installModel(
+        source: InputStream,
+        metadata: LocalModelMetadata,
+    ): CompletableFuture<LocalModelSpec> =
+        service().thenCompose { it.installModel(source, metadata) }
+
+    fun selectModel(
+        id: String,
+        version: String,
+    ): CompletableFuture<LocalAiState> =
+        service().thenCompose { it.selectModel(id, version) }
+
     fun ttsState(): CompletableFuture<LocalTtsState> = service().thenApply { it.ttsState() }
 
     fun generate(
@@ -75,6 +97,9 @@ class LocalAiServiceClient(
 
     fun cancelGeneration(): CompletableFuture<LocalAiState> =
         service().thenCompose { it.cancelGeneration() }
+
+    fun unloadModel(): CompletableFuture<LocalAiState> =
+        service().thenCompose { it.unloadModel() }
 
     fun speak(text: String): CompletableFuture<Unit> =
         service().thenCompose { it.speak(text) }
