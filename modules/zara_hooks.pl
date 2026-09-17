@@ -9,7 +9,8 @@
     list_hooks/1,
     run_hook/2,
     before_reply/1,
-    after_reply/1
+    after_reply/1,
+    memory_sync/1
 ]).
 
 :- use_module(library(error)).
@@ -23,6 +24,7 @@
 
 hook_stage(before_reply).
 hook_stage(after_reply).
+hook_stage(memory_sync).
 
 concise_phrase(success, greet, "Hello.").
 concise_phrase(success, open, "Opened ~w.").
@@ -170,6 +172,9 @@ before_reply(Event) :-
 after_reply(Event) :-
     run_hook(after_reply, Event).
 
+memory_sync(Event) :-
+    run_hook(memory_sync, Event).
+
 validate_hook_registration(Stage, Owner, Priority, Goal) :-
     validate_hook_stage(Stage),
     must_be(atom, Owner),
@@ -218,34 +223,3 @@ run_hook_goal(Goal, Event) :-
     catch((once(call(Goal, Event)) -> true ; true),
           Error,
           print_message(warning, Error)).
-
-emit_reply(Event, Text) :-
-    before_reply(Event),
-    deliver_safely(alert:alert("Zara", normal, "~w", [Text])),
-    deliver_safely(speak_reply(Text)),
-    after_reply(Event).
-
-deliver_safely(Goal) :-
-    catch((call(Goal) -> true ; true), Error, print_message(warning, Error)).
-
-speak_reply(Text) :-
-    getenv('ZARA_REPLY_TTS_COMMAND', Command),
-    Command \== '',
-    !,
-    process_create(path(Command), ['--', Text], [process(Process)]),
-    bounded_speech_wait(Process, Status),
-    Status == exit(0).
-speak_reply(_).
-
-bounded_speech_wait(Process, Status) :-
-    catch(
-        call_with_time_limit(0.5, process_wait(Process, Status)),
-        time_limit_exceeded,
-        ( terminate_speech_process(Process),
-          Status = timeout
-        )
-    ).
-
-terminate_speech_process(Process) :-
-    catch(process_kill(Process, kill), _, true),
-    catch(process_wait(Process, _), _, true).
