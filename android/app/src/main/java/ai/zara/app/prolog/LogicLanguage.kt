@@ -1,5 +1,6 @@
 package ai.zara.app.prolog
 
+import java.net.URI
 import kotlin.math.sqrt
 
 enum class PrologTokenKind { COMMENT, DIRECTIVE, VARIABLE, ATOM, NUMBER, STRING, OPERATOR, PUNCTUATION }
@@ -113,6 +114,141 @@ object PrologSearch {
             }
         }
         return matches
+    }
+}
+
+data class PrologWorkspaceCatalog(
+    val facts: List<PredicateRef>,
+    val rules: List<PredicateRef>,
+    val schemas: List<PredicateRef>,
+    val experts: List<PredicateRef>,
+    val activations: Map<String, String>,
+) {
+    companion object {
+        private val schemaPattern = Regex("(?m)^\\s*:-\\s*zara_schema\\(\\s*([a-z][A-Za-z0-9_]*)\\s*,\\s*(\\d+)")
+        private val activationPattern = Regex("(?m)^\\s*expert_activation\\(\\s*([a-z][A-Za-z0-9_]*)\\s*,\\s*([a-z][A-Za-z0-9_]*)\\s*\\)\\s*\\.")
+
+        fun from(sources: List<PrologSource>): PrologWorkspaceCatalog {
+            val documents = sources.map { PrologSourceAnalyzer.analyze(it.name, it.text) }
+            val facts = documents.flatMap { it.clauses }.filter { it.kind == PrologClauseKind.FACT }.map { it.predicate }.distinctBy { it.indicator }.sortedBy { it.indicator }
+            val rules = documents.flatMap { it.clauses }.filter { it.kind == PrologClauseKind.RULE }.map { it.predicate }.distinctBy { it.indicator }.sortedBy { it.indicator }
+            val schemas = sources.flatMap { source ->
+                schemaPattern.findAll(source.text).map { PredicateRef(it.groupValues[1], it.groupValues[2].toInt()) }.toList()
+            }.distinctBy { it.indicator }.sortedBy { it.indicator }
+            val experts = rules.filter { it.arity == 2 && it.name.endsWith("_explain") }
+            val activations = sources.flatMap { source ->
+                activationPattern.findAll(source.text).map { it.groupValues[2] to it.groupValues[1] }.toList()
+            }.groupBy({ it.first }, { it.second }).mapValues { (_, expertsForWord) ->
+                require(expertsForWord.distinct().size == 1) { "Expert activation collision" }
+                expertsForWord.first()
+            }
+            return PrologWorkspaceCatalog(facts, rules, schemas, experts, activations)
+        }
+    }
+}
+
+object LocalNaturalLanguageExpertRouter {
+    private val utterance = Regex("^([a-z][A-Za-z0-9_]*)\\s+([a-z][A-Za-z0-9_]*)$")
+
+    fun query(text: String, catalog: PrologWorkspaceCatalog): String? {
+        val match = utterance.matchEntire(text.trim().lowercase()) ?: return null
+        val expert = catalog.activations[match.groupValues[1]] ?: return null
+        val predicate = PredicateRef("${expert}_explain", 2)
+        if (predicate !in catalog.experts) return null
+        return "${predicate.name}(${match.groupValues[2]}, Result)"
+    }
+}
+
+data class LocalPrologCommand(val query: String) {
+    companion object {
+        private val expertCommand = Regex("^/expert\\s+([a-z][A-Za-z0-9_]*)\\s+([a-z][A-Za-z0-9_]*)$")
+
+        fun parse(text: String, catalog: PrologWorkspaceCatalog): LocalPrologCommand {
+            val trimmed = text.trim()
+            if (trimmed.startsWith("/prolog ")) {
+                return LocalPrologCommand(PrologQueryPolicy.requireSafe(trimmed.removePrefix("/prolog ")))
+            }
+            val match = expertCommand.matchEntire(trimmed)
+                ?: throw IllegalArgumentException("Use /expert PREDICATE ENTITY")
+            val predicate = PredicateRef(match.groupValues[1], 2)
+            require(catalog.experts.any { it == predicate }) { "Expert entry is not declared in the private workspace" }
+            return LocalPrologCommand("${predicate.name}(${match.groupValues[2]}, Result)")
+        }
+    }
+}
+
+enum class IntentDraftProviderKind { DETERMINISTIC, ON_DEVICE_LLM, REMOTE }
+
+data class IntentArgument(val name: String, val type: String) {
+    init {
+        require(name.matches(Regex("[a-z][a-z0-9_]{0,31}"))) { "Invalid intent argument name" }
+        require(type in setOf("atom", "integer", "number", "string", "list", "term")) { "Invalid intent argument type" }
+    }
+}
+
+data class IntentHelperRequest(
+    val intent: String,
+    val actionWords: List<String>,
+    val arguments: List<IntentArgument>,
+) {
+    init {
+        require(intent.matches(Regex("[a-z][a-z0-9_]{0,31}"))) { "Invalid intent name" }
+        require(actionWords.isNotEmpty() && actionWords.size <= 32) { "Action-word count must be 1 through 32" }
+        require(actionWords.all { it.matches(Regex("[a-z][a-z0-9_]{0,31}")) }) { "Invalid action word" }
+        require(arguments.size <= 8) { "Intent argument count exceeds 8" }
+    }
+}
+
+data class IntentHelperDraft(
+    val provider: IntentDraftProviderKind,
+    val model: String,
+    val source: String,
+    val requiresApproval: Boolean = true,
+)
+
+data class IntentGeneratorConfiguration private constructor(
+    val provider: IntentDraftProviderKind,
+    val endpoint: String?,
+    val model: String,
+) {
+    companion object {
+        fun deterministic() = IntentGeneratorConfiguration(IntentDraftProviderKind.DETERMINISTIC, null, "zara-intent-compiler-1")
+
+        fun onDevice(model: String): IntentGeneratorConfiguration {
+            require(model.matches(Regex("[A-Za-z0-9._/-]{1,128}"))) { "Invalid on-device model id" }
+            return IntentGeneratorConfiguration(IntentDraftProviderKind.ON_DEVICE_LLM, null, model)
+        }
+
+        fun remote(endpoint: String, model: String): IntentGeneratorConfiguration {
+            val uri = runCatching { URI(endpoint) }.getOrNull()
+            require(uri != null && uri.scheme == "https" && uri.host != null && uri.userInfo == null) { "Remote intent endpoint must be credential-free HTTPS" }
+            require(endpoint.length <= 2_048) { "Remote intent endpoint is too large" }
+            require(model.matches(Regex("[A-Za-z0-9._/-]{1,128}"))) { "Invalid remote model id" }
+            return IntentGeneratorConfiguration(IntentDraftProviderKind.REMOTE, endpoint, model)
+        }
+    }
+}
+
+object DeterministicIntentHelperGenerator {
+    fun generate(request: IntentHelperRequest): IntentHelperDraft {
+        val arity = request.arguments.size
+        val types = request.arguments.joinToString(", ") { it.type }
+        val variables = request.arguments.map { it.name.replaceFirstChar(Char::uppercaseChar) }
+        val subject = variables.firstOrNull() ?: "Entity"
+        val actionFacts = request.actionWords.distinct().joinToString("\n") { word ->
+            "verb_intent($word, ${request.intent}, $arity)."
+        }
+        val schemaTypes = (request.arguments.map { it.type } + "term").joinToString(", ")
+        val decisionArguments = (variables + "Decision").joinToString(", ")
+        val source = buildString {
+            append("% generated intent helper; review before activation\n")
+            append(actionFacts).append("\n\n")
+            if (arity > 0) append(":- zara_schema(${request.intent}, $arity, [$types]).\n")
+            append(":- zara_schema(${request.intent}_explain, ${arity + 1}, [$schemaTypes]).\n\n")
+            append("${request.intent}_explain($decisionArguments) :-\n")
+            append("    Decision = intent(${request.intent}, $subject).\n")
+        }
+        return IntentHelperDraft(IntentDraftProviderKind.DETERMINISTIC, "zara-intent-compiler-1", source)
     }
 }
 
