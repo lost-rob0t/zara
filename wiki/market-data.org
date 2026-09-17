@@ -1,0 +1,167 @@
+#+title: Market Data
+
+* Overview
+
+Zara ships a first-class market-data service plugin and a Prolog API. They use
+the same normalized concepts (quote, symbol search, daily OHLCV bars) while
+remaining independently usable:
+
+- the =market-data= service plugin exposes tools to the Zara agent;
+- =modules/market_data.pl= exposes predicates directly to Prolog;
+- =~/.config/zarathushtra/config.exec.pl= is trusted executable Prolog and may
+  select providers, call the API, define rules, or add whole provider adapters.
+
+The managed =config.pl= and =config.local.pl= files remain validated data layers.
+=config.exec.pl= is the deliberate full-code boundary and is loaded only by the
+desktop =main.pl= boot. =server_main.pl= never loads it.
+
+* Built-in provider
+
+The initial built-in provider is Alpha Vantage. Set an API key in the process
+environment:
+
+#+begin_src sh
+export ALPHAVANTAGE_API_KEY='...'
+#+end_src
+
+Optional Prolog-side environment settings:
+
+#+begin_src sh
+export ZARA_MARKET_PROVIDER=alpha_vantage
+export ZARA_MARKET_TIMEOUT=15
+# export ZARA_ALPHA_VANTAGE_ENDPOINT='https://www.alphavantage.co/query'
+#+end_src
+
+The built-in adapter uses =GLOBAL_QUOTE=, =SYMBOL_SEARCH=, and
+=TIME_SERIES_DAILY= with compact output. Compact daily history is bounded to
+100 bars.
+
+Alpha Vantage's quote freshness depends on the account/data entitlement. Do not
+assume =GLOBAL_QUOTE= is realtime merely because the predicate is called
+=market_quote/2=.
+
+* Zara service plugin
+
+Enable the agent-facing tools in =~/.config/zarathushtra/config.toml=:
+
+#+begin_src toml
+[plugins.market-data]
+enabled = true
+provider = "alpha_vantage"
+api_key_env = "ALPHAVANTAGE_API_KEY"
+timeout_seconds = 15
+#+end_src
+
+The plugin registers:
+
+- =market_quote(symbol)=
+- =market_symbol_search(query)=
+- =market_daily_bars(symbol, limit)=
+
+The tools return normalized JSON rather than provider-specific response shapes.
+
+* Prolog API
+
+=main.pl= loads =modules/market_data.pl= before executable user configuration.
+Predicates are available under the =market_data= module:
+
+#+begin_src prolog
+quote(Symbol, Price, ChangePercent) :-
+    market_data:market_quote(Symbol, Quote),
+    Price = Quote.price,
+    ChangePercent = Quote.change_percent.
+
+recent(Symbol, Bars) :-
+    market_data:market_daily_bars(Symbol, 20, Bars).
+
+find_symbol(Text, Matches) :-
+    market_data:market_search(Text, Matches).
+#+end_src
+
+Provider-explicit forms are also available:
+
+#+begin_src prolog
+market_data:market_quote(alpha_vantage, 'AAPL', Quote).
+market_data:market_search(alpha_vantage, "nvidia", Matches).
+market_data:market_daily_bars(alpha_vantage, 'NVDA', 30, Bars).
+#+end_src
+
+* Executable configuration
+
+=config.exec.pl= is ordinary trusted Prolog. Zara does not sandbox, parse, or
+reduce it to facts. It can run directives and arbitrary predicates with the same
+authority as the Zara Prolog process.
+
+Example =~/.config/zarathushtra/config.exec.pl=:
+
+#+begin_src prolog
+:- market_data:set_market_provider(alpha_vantage).
+
+watch_move(Symbol, Threshold, Quote) :-
+    market_data:market_quote(Symbol, Quote),
+    abs(Quote.change_percent) >= Threshold.
+
+watchlist(['AAPL', 'NVDA', 'IBM']).
+#+end_src
+
+Use =reload_config= in the desktop REPL to reconsult =config.pl=,
+=config.local.pl=, =config.exec.pl=, and user hooks.
+
+* Custom provider adapters in Prolog
+
+Provider extension points are =multifile=. A user can implement another feed
+entirely from =config.exec.pl= or from a module loaded by it.
+
+#+begin_src prolog
+:- multifile market_data:market_provider_available/1.
+:- multifile market_data:market_provider_quote/3.
+:- multifile market_data:market_provider_search/3.
+:- multifile market_data:market_provider_daily_bars/4.
+
+market_data:market_provider_available(my_feed).
+
+market_data:market_provider_quote(my_feed, Symbol, Quote) :-
+    my_feed_quote(Symbol, Price),
+    Quote = _{
+        provider:my_feed,
+        symbol:Symbol,
+        price:Price
+    }.
+
+:- market_data:set_market_provider(my_feed).
+#+end_src
+
+For ordinary JSON-over-HTTP providers, =market_data:market_request_json/3= is
+exported as a reusable GET primitive:
+
+#+begin_src prolog
+my_feed_quote(Symbol, Price) :-
+    format(string(URL), 'https://feed.example/quote/~w', [Symbol]),
+    market_data:market_request_json(URL, 10, Reply),
+    Price = Reply.price.
+#+end_src
+
+Provider code is normal executable Prolog, so it may instead use SWI-Prolog's
+HTTP, WebSocket, process, database, actor, or other libraries directly.
+
+* Normalized quote fields
+
+The Alpha Vantage quote adapter returns a dict with:
+
+#+begin_src prolog
+_{ provider:alpha_vantage,
+   symbol:"AAPL",
+   price:228.50,
+   open:225.00,
+   high:230.00,
+   low:224.00,
+   volume:1234567,
+   trading_day:"2026-09-16",
+   previous_close:226.00,
+   change:2.50,
+   change_percent:1.1062
+ }.
+#+end_src
+
+Keep trading/execution logic separate from data retrieval. The market-data API
+reads data; it does not place orders.
