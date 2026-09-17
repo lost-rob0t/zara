@@ -150,7 +150,7 @@ class SamsungHealthPluginTest {
 
         override fun readToday(metric: SamsungHealthMetric): SamsungHealthReading {
             val active = activeReads.incrementAndGet()
-            maxConcurrentReads.accumulateAndGet(active, ::maxOf)
+            maxConcurrentReads.updateAndGet { current -> maxOf(current, active) }
             return try {
                 readCalls.incrementAndGet()
                 onRead()
