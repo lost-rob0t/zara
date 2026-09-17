@@ -16,6 +16,7 @@
         market_request_json/3
     ]).
 
+:- use_module(library(error)).
 :- use_module(library(http/http_open)).
 :- use_module(library(http/json)).
 :- use_module(library(uri)).
@@ -91,7 +92,7 @@ market_daily_bars(Provider, Symbol, Limit, Bars) :-
     must_be(atom, Provider),
     normalize_symbol(Symbol, Normalized),
     must_be(integer, Limit),
-    ( Limit >= 1, Limit =< 5000
+    ( Limit >= 1, Limit =< 100
     -> true
     ; throw(error(domain_error(market_bar_limit, Limit), _))
     ),
@@ -100,6 +101,11 @@ market_daily_bars(Provider, Symbol, Limit, Bars) :-
 market_daily_bars(Provider, _, _, _) :-
     throw(error(existence_error(market_daily_provider, Provider), _)).
 
+require_provider_available(alpha_vantage) :-
+    ( alpha_vantage_api_key(_)
+    -> true
+    ; throw(error(missing_api_key(alpha_vantage, 'ALPHAVANTAGE_API_KEY'), _))
+    ), !.
 require_provider_available(Provider) :-
     ( market_provider_available(Provider)
     -> true
@@ -247,7 +253,9 @@ alpha_vantage_request(Parameters, Reply) :-
     alpha_vantage_endpoint(Endpoint),
     append(Parameters, [apikey=Key], QueryPairs),
     uri_query_components(Query, QueryPairs),
-    format(string(URL), '~s?~s', [Endpoint, Query]),
+    text_string(Query, QueryText),
+    string_concat(Endpoint, "?", URLPrefix),
+    string_concat(URLPrefix, QueryText, URL),
     alpha_vantage_timeout(Timeout),
     market_request_json(URL, Timeout, Reply).
 
