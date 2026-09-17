@@ -18,11 +18,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from zara.config import get_config
 from zara.desktop.conversation import ConversationService
 from zara.desktop.org_widgets import OrgHelpWindow, OrgWorkspaceWidget
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.windows.quick import QuickCopilotWindow
-from zara.org_roam import OrgRoamIndex
+from zara.org_roam import OrgRoamIndex, OrgRoamWorkspace
 
 
 class CopilotPresentation(str, Enum):
@@ -36,6 +37,26 @@ _GEOMETRY_KEYS = {
     CopilotPresentation.COMPACT: "desktop/copilot/compact-geometry",
     CopilotPresentation.EXPANDED: "desktop/copilot/expanded-geometry",
 }
+
+
+def _configured_org_index() -> OrgRoamIndex:
+    try:
+        config = get_config().get_section("org")
+        if not bool(config.get("enabled", True)):
+            return OrgRoamIndex.empty()
+        roots_value = config.get("roots", [])
+        roots = [roots_value] if isinstance(roots_value, str) else list(roots_value)
+        roots = [str(root) for root in roots if str(root).strip()]
+        if not roots:
+            return OrgRoamIndex.empty()
+        workspace = OrgRoamWorkspace(
+            roots,
+            max_files=int(config.get("max_files", 2000)),
+            max_file_bytes=int(config.get("max_file_bytes", 2_000_000)),
+        )
+        return workspace.refresh(force=True).index
+    except Exception:
+        return OrgRoamIndex.empty()
 
 
 class CopilotWindow(QuickCopilotWindow):
@@ -127,7 +148,7 @@ class CopilotWindow(QuickCopilotWindow):
             chat_layout.addWidget(widget)
         chat_layout.setStretchFactor(self.message_scroll, 1)
 
-        self.org_workspace = OrgWorkspaceWidget(org_index or OrgRoamIndex.empty(), self)
+        self.org_workspace = OrgWorkspaceWidget(org_index or _configured_org_index(), self)
         self.org_workspace.setMinimumWidth(420)
         self.org_workspace.hide()
 
