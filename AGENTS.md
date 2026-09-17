@@ -36,6 +36,8 @@ This file guides agentic coding assistants working in this repo.
   - `nix develop -c pytest t/test_agent_history.py`
 - Run a single test by node id:
   - `nix develop -c pytest t/test_agent_history.py::test_multiple_results_survive_in_call_order`
+- Run focused Python coverage while iterating:
+  - `nix develop -c python -m pytest --cov=zara --cov-branch --cov-config=.coveragerc --cov-report=term-missing:skip-covered t/test_agent_history.py`
 
 ## TDD & Coverage Contract
 
@@ -54,6 +56,8 @@ Exceptions are limited to changes needed to create or repair the test harness it
 
 Maximize meaningful coverage across all changed and adjacent behavior. Coverage means exercising distinct behavior and failure paths, not merely causing a line counter to blink.
 
+Python line and branch coverage for `zara/` is a first-class repository artifact. The canonical `scripts/test-all.sh` pytest phase owns the full-suite measurement and writes `coverage.xml` plus `coverage.json` under `$ARTIFACT_DIR`. Do not create a competing coverage suite with different selection rules. Focused coverage is for iteration; only the canonical full run establishes the repository baseline.
+
 Prioritize tests for:
 
 - happy paths and realistic end-to-end flows;
@@ -66,12 +70,21 @@ Prioritize tests for:
 - packaging, console scripts, Nix wrappers, and installed-resource behavior;
 - regressions for every bug fixed.
 
-Do not game coverage. Never weaken assertions, add meaningless execution-only tests, exclude relevant code, or preserve untested reachable branches solely to improve a percentage. If changed reachable behavior remains untested, keep adding useful tests until the practical coverage ceiling is reached or document the specific reason a path cannot be deterministically exercised.
+Do not game coverage. Never weaken assertions, add meaningless execution-only tests, exclude relevant code, add `pragma: no cover`, shrink the measured source set, or preserve untested reachable branches solely to improve a percentage. Do not lower the coverage floor to get a PR merged. If changed reachable behavior remains untested, keep adding useful tests until the practical coverage ceiling is reached or document the specific reason a path cannot be deterministically exercised.
+
+When the measured exact-head baseline rises because of durable meaningful tests or dead-code removal, raise the repository floor to preserve the gain. Leave modest rounding headroom for deterministic tooling differences; never use that headroom to hide a real regression. If coverage exposes dead behavior, remove it when safe instead of writing ceremonial tests for code Zara should not have.
+
+Mocks/fakes may isolate an external boundary, but they must not replace the behavior the test claims to prove. Prefer a deterministic real local integration when it is practical. Parameterize equivalent cases instead of bloating the suite with near-duplicate tests.
+
+The detailed coverage contract lives in `docs/testing.org`; the readable book chapter is `wiki/testing.org`. Keep both aligned with the actual gate and this file.
 
 ## CI/CD Test Gate
 - Always run the focused red/green TDD cycle before the full test suite for behavior changes.
 - Always run the full test suite after any code, configuration, test, or documentation change.
 - Inspect changed-code coverage gaps and add meaningful tests before considering implementation complete.
+- Treat `coverage.xml` / `coverage.json` from the exact candidate SHA as review evidence; a badge alone is not evidence.
+- Never lower the canonical coverage floor, add exclusions, or alter measurement scope merely to make CI green.
+- When a stable exact-head result is higher than the current floor because meaningful coverage improved, raise the floor in the same PR when practical.
 - Do not consider work complete unless every local test passes.
 - Pull requests and pushes to `master` must pass the GitHub Actions `test` job.
 - After pushing or opening a pull request, verify the CI test job passes for the exact candidate SHA; do not report the change as complete while CI is pending or failing.
@@ -219,7 +232,8 @@ Every iteration is ordered and evidence-driven:
 - Do not add non‑Nix dependencies without approval.
 - Do not add inline comments unless asked.
 - Do not implement behavior first and backfill tests later when ordinary TDD is possible.
-- Do not game coverage metrics.
+- Do not game coverage metrics, lower the coverage floor, or add exclusions to hide untested reachable behavior.
+- Do not bloat the suite with near-duplicate tests when one parameterized contract test proves the same behavior.
 
 ## Logging Conventions
 - Prefer module-level loggers via `logging.getLogger(__name__)`.
@@ -255,7 +269,8 @@ Every iteration is ordered and evidence-driven:
 
 ## Wiki Documentation
 - Keep `wiki/` documentation up to date with code changes.
-- Update the relevant wiki pages when behaviors, tools, or flows change.
+- Update the relevant wiki pages when behaviors, tools, flows, or verification policy change.
+- Keep `wiki/testing.org` aligned with `docs/testing.org`, `AGENTS.md`, and the canonical test gate whenever coverage policy changes.
 
 ## Additional Notes
 - Keep code consistent with existing style.
