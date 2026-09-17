@@ -113,7 +113,7 @@ write_default_config(Stream) :-
     writeln(Stream, '% alarm_sound("/path/to/alarm.wav").'),
     writeln(Stream, ''),
     writeln(Stream, '% ---- LLM Provider (for conversational queries) ----'),
-    writeln(Stream, '% Choose provider: ollama (default, local) | openai | openrouter | anthropic'),
+    writeln(Stream, '% Choose provider: ollama | llama_cpp | openai | openrouter | starintel | anthropic'),
     writeln(Stream, '% llm_provider(ollama).'),
     writeln(Stream, '% llm_model("llama3.2").'),
     writeln(Stream, '% llm_endpoint("http://localhost:11434/api/chat").'),
@@ -124,7 +124,12 @@ write_default_config(Stream) :-
     writeln(Stream, '%'),
     writeln(Stream, '% For OpenRouter (requires OPENROUTER_API_KEY env var):'),
     writeln(Stream, '% llm_provider(openrouter).'),
-    writeln(Stream, '% llm_model("openrouter/free").'),
+    writeln(Stream, '% llm_model("openai/gpt-5.4").'),
+    writeln(Stream, '% llm_openrouter_policy(_{sort:throughput, quantizations:[fp16,bf16,fp8], data_collection:deny, zdr:true, max_price:_{prompt:4,completion:20}}).'),
+    writeln(Stream, '%'),
+    writeln(Stream, '% For llm.starintel.actor (requires STAR_LLM_ACTOR_TOKEN env var):'),
+    writeln(Stream, '% llm_provider(starintel).'),
+    writeln(Stream, '% llm_model("teacher-model-id").'),
     writeln(Stream, '%'),
     writeln(Stream, '% For Anthropic (requires ANTHROPIC_API_KEY env var):'),
     writeln(Stream, '% llm_provider(anthropic).'),
@@ -281,11 +286,13 @@ validate_user_fact(wake_word(Word), kb_config, wake_word(Word)) :-
     text_string(Word, Text),
     Text \= "".
 validate_user_fact(llm_provider(Provider), kb_config, llm_provider(Provider)) :-
-    memberchk(Provider, [ollama, openai, openrouter, anthropic]).
+    memberchk(Provider, [ollama, llama_cpp, openai, openrouter, starintel, anthropic]).
 validate_user_fact(llm_model(Model), kb_config, llm_model(Model)) :-
     text_value(Model).
 validate_user_fact(llm_endpoint(Endpoint), kb_config, llm_endpoint(Endpoint)) :-
     text_value(Endpoint).
+validate_user_fact(llm_openrouter_policy(Policy), kb_config, llm_openrouter_policy(Policy)) :-
+    valid_openrouter_policy(Policy).
 validate_user_fact(todo_destination(Path), kb_config, todo_destination(Path)) :-
     text_value(Path).
 validate_user_fact(todo_context_mode(Mode), kb_config, todo_context_mode(Mode)) :-
@@ -298,6 +305,93 @@ validate_user_fact(verb_intent(Surface, Intent, Arity), kb_intents,
 
 text_value(Value) :-
     atom(Value) ; string(Value).
+
+valid_openrouter_policy(Policy) :-
+    is_dict(Policy),
+    dict_pairs(Policy, _, Pairs),
+    forall(
+        member(Key-_, Pairs),
+        memberchk(Key, [
+            sort,
+            allow_fallbacks,
+            quantizations,
+            data_collection,
+            zdr,
+            require_parameters,
+            order,
+            only,
+            ignore,
+            max_price
+        ])
+    ),
+    optional_policy_enum(Policy, sort, [price, throughput, latency]),
+    optional_policy_boolean(Policy, allow_fallbacks),
+    optional_policy_text_list(Policy, quantizations, quantization),
+    optional_policy_enum(Policy, data_collection, [allow, deny]),
+    optional_policy_boolean(Policy, zdr),
+    optional_policy_boolean(Policy, require_parameters),
+    optional_policy_text_list(Policy, order, provider),
+    optional_policy_text_list(Policy, only, provider),
+    optional_policy_text_list(Policy, ignore, provider),
+    optional_policy_price(Policy),
+    policy_lists_do_not_overlap(Policy).
+
+optional_policy_enum(Policy, Key, Allowed) :-
+    ( get_dict(Key, Policy, Value) -> memberchk(Value, Allowed) ; true ).
+
+optional_policy_boolean(Policy, Key) :-
+    ( get_dict(Key, Policy, Value) -> memberchk(Value, [true, false]) ; true ).
+
+optional_policy_text_list(Policy, Key, Kind) :-
+    ( get_dict(Key, Policy, Values)
+    -> is_list(Values),
+       length(Values, Count),
+       Count =< 32,
+       maplist(policy_token(Kind), Values)
+    ; true
+    ).
+
+policy_token(Kind, Value) :-
+    text_value(Value),
+    text_string(Value, Text),
+    Text \= "",
+    string_length(Text, Length),
+    Length =< 128,
+    ( Kind == quantization
+    -> string_lower(Text, Lower), Lower \= "unknown"
+    ; true
+    ).
+
+optional_policy_price(Policy) :-
+    ( get_dict(max_price, Policy, Price)
+    -> is_dict(Price),
+       dict_pairs(Price, _, Pairs),
+       forall(member(Key-_, Pairs), memberchk(Key, [prompt, completion])),
+       optional_nonnegative_finite_number(Price, prompt),
+       optional_nonnegative_finite_number(Price, completion)
+    ; true
+    ).
+
+optional_nonnegative_finite_number(Dict, Key) :-
+    ( get_dict(Key, Dict, Value)
+    -> number(Value),
+       float(Value, Float),
+       Float >= 0.0,
+       Float =< 1000000.0
+    ; true
+    ).
+
+policy_lists_do_not_overlap(Policy) :-
+    policy_normalized_values(Policy, only, Only),
+    policy_normalized_values(Policy, ignore, Ignore),
+    \+ (member(Value, Only), memberchk(Value, Ignore)).
+
+policy_normalized_values(Policy, Key, Values) :-
+    ( get_dict(Key, Policy, Raw) -> maplist(normalized_policy_text, Raw, Values) ; Values = [] ).
+
+normalized_policy_text(Value, Lower) :-
+    text_string(Value, Text),
+    string_lower(Text, Lower).
 
 sound_setting(disabled).
 sound_setting(Path) :-
@@ -377,11 +471,13 @@ validate_server_user_fact(wake_word(Word), kb_config, wake_word(Word)) :-
     text_string(Word, Text),
     Text \= "".
 validate_server_user_fact(llm_provider(Provider), kb_config, llm_provider(Provider)) :-
-    memberchk(Provider, [ollama, openai, openrouter, anthropic]).
+    memberchk(Provider, [ollama, llama_cpp, openai, openrouter, starintel, anthropic]).
 validate_server_user_fact(llm_model(Model), kb_config, llm_model(Model)) :-
     text_value(Model).
 validate_server_user_fact(llm_endpoint(Endpoint), kb_config, llm_endpoint(Endpoint)) :-
     text_value(Endpoint).
+validate_server_user_fact(llm_openrouter_policy(Policy), kb_config, llm_openrouter_policy(Policy)) :-
+    valid_openrouter_policy(Policy).
 validate_server_user_fact(todo_destination(Path), kb_config, todo_destination(Path)) :-
     text_value(Path).
 validate_server_user_fact(todo_context_mode(Mode), kb_config, todo_context_mode(Mode)) :-
