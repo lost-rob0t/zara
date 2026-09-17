@@ -1,5 +1,7 @@
 package ai.zara.app
 
+import ai.zara.app.runtime.RuntimeMode
+import ai.zara.app.runtime.ServerConnection
 import ai.zara.app.ui.RenderedTextTurn
 import ai.zara.app.ui.LocalEmbeddingPreferenceStore
 import ai.zara.app.ui.RuntimeModePreferenceStore
@@ -42,6 +44,8 @@ class MainActivity : ComponentActivity() {
         var enrollmentPublicKey by mutableStateOf(appSession.enrollmentPublicKeyZ85())
         var pinnedServerPublicKey by mutableStateOf(appSession.pinnedServerPublicKeyZ85())
         var lastTurn by mutableStateOf<RenderedTextTurn?>(null)
+        var localConversations by mutableStateOf(appSession.localConversations(limit = 20))
+        var localConversation by mutableStateOf(appSession.selectedLocalConversation())
         var operationBusy by mutableStateOf(false)
         var voiceStreamState by mutableStateOf(appSession.voiceStreamState())
         var voiceStreamFailure by mutableStateOf(appSession.voiceStreamFailure())
@@ -56,6 +60,20 @@ class MainActivity : ComponentActivity() {
         val embeddingPreferenceStore = LocalEmbeddingPreferenceStore(File(filesDir, "local-embedding.bin"))
         var localEmbedding by mutableStateOf(embeddingPreferenceStore.load())
         appSession.setRuntimeMode(runtimeMode)
+
+        fun refreshLocalHistory() {
+            localConversations = appSession.localConversations(limit = 20)
+            localConversation = appSession.selectedLocalConversation()
+        }
+
+        fun activateLocalMode() {
+            if (runtimeMode != RuntimeMode.Local) {
+                runtimeMode = RuntimeMode.Local
+                runtimeModeStore.save(RuntimeMode.Local)
+                appSession.setRuntimeMode(RuntimeMode.Local)
+            }
+            lastTurn = null
+        }
 
         val microphonePermission = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
@@ -112,6 +130,8 @@ class MainActivity : ComponentActivity() {
                 enrollmentPublicKey = enrollmentPublicKey,
                 pinnedServerPublicKey = pinnedServerPublicKey,
                 lastTurn = lastTurn,
+                localConversations = localConversations,
+                localConversation = localConversation,
                 operationError = operationError,
                 operationBusy = operationBusy,
                 microphonePermissionGranted = microphonePermissionGranted,
@@ -180,16 +200,37 @@ class MainActivity : ComponentActivity() {
                         operationError = UiOperationFailure.summarize(error)
                     }
                 },
+                onNewLocalConversation = {
+                    operationError = null
+                    activateLocalMode()
+                    localConversation = appSession.newLocalConversation()
+                    localConversations = appSession.localConversations(limit = 20)
+                },
+                onSelectLocalConversation = { conversationId ->
+                    operationError = null
+                    activateLocalMode()
+                    try {
+                        localConversation = appSession.selectLocalConversation(conversationId)
+                        localConversations = appSession.localConversations(limit = 20)
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
                 onSendText = { text ->
                     operationError = null
                     operationBusy = true
+                    val localTurn = runtimeMode == RuntimeMode.Local ||
+                        (runtimeMode == RuntimeMode.Auto && runtimeState.server !is ServerConnection.Connected)
                     try {
-                        appSession.submitText(text).whenComplete { result, error ->
+                        val future = appSession.submitText(text)
+                        if (localTurn) refreshLocalHistory()
+                        future.whenComplete { result, error ->
                             runOnUiThread {
                                 operationBusy = false
+                                if (localTurn) refreshLocalHistory()
                                 if (error != null) {
                                     operationError = UiOperationFailure.summarize(error)
-                                } else if (result != null) {
+                                } else if (result != null && !localTurn) {
                                     lastTurn = RenderedTextTurn(
                                         userText = text,
                                         assistantText = result.text,
@@ -200,6 +241,7 @@ class MainActivity : ComponentActivity() {
                         }
                     } catch (error: Exception) {
                         operationBusy = false
+                        if (localTurn) refreshLocalHistory()
                         operationError = UiOperationFailure.summarize(error)
                     }
                 },
