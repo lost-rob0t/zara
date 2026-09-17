@@ -2,6 +2,7 @@ package ai.zara.app.runtime
 
 import ai.zara.app.prolog.PrologWorkspace
 import ai.zara.app.prolog.TreallaBridge
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -31,8 +32,35 @@ class LocalZaraServerTest {
         assertEquals(listOf("bob"), result.terms)
         assertEquals(listOf("/private/semantic_core.pl"), bridge.initialized)
         assertEquals(listOf("family.pl"), bridge.consulted.map { it.substringAfterLast('/') })
+        assertEquals(
+            "call_with_time_limit(${LocalZaraServer.QUERY_TIME_LIMIT_SECONDS}, (parent(alice, Result)))",
+            bridge.queries.single(),
+        )
         assertEquals(1, bridge.threadNames.distinct().size)
         assertTrue(bridge.threadNames.distinct().single().contains("zara-local-server"))
+        server.close()
+    }
+
+    @Test
+    fun cancelCommandImmediatelyInvalidatesActiveQueryAndDiscardsItsResult() {
+        val bridge = BlockingTreallaBridge()
+        val server = LocalZaraServer(
+            bridge,
+            "/private/core.pl",
+            PrologWorkspace(temporary.newFolder("cancel")),
+        )
+        server.start().get(2, TimeUnit.SECONDS)
+
+        val active = server.query("member(Result, [one, two])")
+        assertTrue(bridge.entered.await(2, TimeUnit.SECONDS))
+
+        val cancelled = server.query(LocalZaraServer.CANCEL_QUERY_COMMAND).get(1, TimeUnit.SECONDS)
+        assertTrue(cancelled.cancelled)
+        bridge.release.countDown()
+
+        val stale = active.get(2, TimeUnit.SECONDS)
+        assertTrue(stale.cancelled)
+        assertTrue(stale.terms.isEmpty())
         server.close()
     }
 
@@ -121,5 +149,21 @@ class LocalZaraServerTest {
             shutdownCount += 1
             threadNames += Thread.currentThread().name
         }
+    }
+
+    private class BlockingTreallaBridge : TreallaBridge {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+
+        override fun initialize(coreAssetPath: String) = Unit
+        override fun consult(sourcePath: String) = Unit
+
+        override fun evaluate(query: String): List<String> {
+            entered.countDown()
+            check(release.await(2, TimeUnit.SECONDS)) { "test bridge was not released" }
+            return listOf("one")
+        }
+
+        override fun shutdown() = Unit
     }
 }
