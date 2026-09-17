@@ -145,6 +145,14 @@ class _RedactionEntry:
     replacement: str
 
 
+class _TrieNode:
+    __slots__ = ("children", "replacement")
+
+    def __init__(self) -> None:
+        self.children: dict[str, _TrieNode] = {}
+        self.replacement: str | None = None
+
+
 class SecretRedactor:
     """Mask known secret values before text leaves a trusted boundary.
 
@@ -155,8 +163,8 @@ class SecretRedactor:
     Typed secret objects/sinks must protect excluded short values structurally
     rather than by substring scanning.
 
-    The configured secret set and each value length are bounded so an untrusted
-    caller cannot turn outbound redaction into an unbounded lookup workload.
+    Secret count, individual value length, and aggregate scannable material are
+    bounded so redaction cannot become an unbounded lookup/memory workload.
     """
 
     def __init__(
@@ -166,6 +174,7 @@ class SecretRedactor:
         min_scan_length: int = 4,
         max_secret_length: int = 4096,
         max_secret_count: int = 512,
+        max_total_secret_chars: int = 262_144,
     ) -> None:
         if not isinstance(min_scan_length, int) or min_scan_length < 1:
             raise ValueError("min_scan_length must be a positive integer")
@@ -173,11 +182,14 @@ class SecretRedactor:
             raise ValueError("max_secret_length must be >= min_scan_length")
         if not isinstance(max_secret_count, int) or max_secret_count < 1:
             raise ValueError("max_secret_count must be a positive integer")
+        if not isinstance(max_total_secret_chars, int) or max_total_secret_chars < 1:
+            raise ValueError("max_total_secret_chars must be a positive integer")
         if len(secrets) > max_secret_count:
             raise ValueError("secret count exceeds maximum redaction set size")
 
         grouped: dict[str, list[SecretRef]] = {}
         skipped_short = 0
+        total_secret_chars = 0
         for secret_ref, value in secrets.items():
             if not isinstance(secret_ref, SecretRef):
                 raise TypeError("secret mapping keys must be SecretRef")
@@ -187,6 +199,9 @@ class SecretRedactor:
                 continue
             if len(value) > max_secret_length:
                 raise ValueError("secret material exceeds maximum redaction length")
+            total_secret_chars += len(value)
+            if total_secret_chars > max_total_secret_chars:
+                raise ValueError("total secret material exceeds redaction budget")
             if len(value) < min_scan_length:
                 skipped_short += 1
                 continue
@@ -200,11 +215,13 @@ class SecretRedactor:
         self._entries = tuple(
             sorted(entries, key=lambda entry: len(entry.value), reverse=True)
         )
-        self._max_secret_length = max(
-            (len(entry.value) for entry in self._entries),
-            default=0,
-        )
         self._skipped_short = skipped_short
+        self._trie = _TrieNode()
+        for entry in self._entries:
+            node = self._trie
+            for character in entry.value:
+                node = node.children.setdefault(character, _TrieNode())
+            node.replacement = entry.replacement
 
     @property
     def skipped_short_secret_count(self) -> int:
@@ -217,7 +234,11 @@ class SecretRedactor:
         )
 
     def mask_text(self, text: str) -> str:
-        """Replace complete known secret values with safe aliases/redaction."""
+        """Replace complete known secret values with safe aliases/redaction.
+
+        Full-text masking uses longest values first so one known value contained
+        inside another cannot prevent the longer value from being removed.
+        """
 
         if not isinstance(text, str):
             raise TypeError("text must be str")
@@ -229,28 +250,15 @@ class SecretRedactor:
     def streaming_filter(self) -> "SecretStreamingFilter":
         return SecretStreamingFilter(self)
 
-    def _longest_suffix_prefix(self, text: str) -> int:
-        """Length of the longest suffix that may continue into a secret.
-
-        Complete values are replaced before this is called, so this method only
-        retains unresolved prefixes.  For every value admitted to free-text
-        scanning, even a one-character prefix is held rather than emitted.  The
-        retained suffix remains bounded by the longest configured secret.
-        """
-
-        if not text or not self._entries:
-            return 0
-
-        max_candidate = min(len(text), self._max_secret_length)
-        for length in range(max_candidate, 0, -1):
-            suffix = text[-length:]
-            if any(entry.value.startswith(suffix) for entry in self._entries):
-                return length
-        return 0
-
 
 class SecretStreamingFilter:
-    """Stateful redactor that prevents cross-chunk secret-prefix leakage."""
+    """Stateful leftmost-longest redactor for chunked text.
+
+    ``pending`` always contains the earliest not-yet-safe raw text.  A complete
+    secret that is also a prefix of a longer configured secret is retained until
+    the next input disambiguates it.  This prevents eager replacement at a chunk
+    boundary from exposing a longer credential split across chunks.
+    """
 
     __slots__ = ("_redactor", "_pending")
 
@@ -269,29 +277,64 @@ class SecretStreamingFilter:
             return ""
 
         self._pending += chunk
-        self._pending = self._redactor.mask_text(self._pending)
-        hold = self._redactor._longest_suffix_prefix(self._pending)
-        if hold:
-            emit = self._pending[:-hold]
-            self._pending = self._pending[-hold:]
-            return emit
-
-        emit = self._pending
-        self._pending = ""
-        return emit
+        return self._drain(final=False)
 
     def finalize(self) -> str:
-        if not self._pending:
-            return ""
+        return self._drain(final=True)
 
-        self._pending = self._redactor.mask_text(self._pending)
-        hold = self._redactor._longest_suffix_prefix(self._pending)
-        if hold:
-            result = self._pending[:-hold] + "***"
-        else:
-            result = self._pending
-        self._pending = ""
-        return result
+    def _drain(self, *, final: bool) -> str:
+        output: list[str] = []
+        root = self._redactor._trie
+
+        while self._pending:
+            node = root
+            last_terminal_end = 0
+            last_terminal_replacement: str | None = None
+            mismatch = False
+
+            for index, character in enumerate(self._pending):
+                next_node = node.children.get(character)
+                if next_node is None:
+                    mismatch = True
+                    break
+                node = next_node
+                if node.replacement is not None:
+                    last_terminal_end = index + 1
+                    last_terminal_replacement = node.replacement
+            else:
+                # The entire pending buffer is a valid secret prefix.
+                if node.replacement is not None and (final or not node.children):
+                    output.append(node.replacement)
+                    self._pending = ""
+                    continue
+
+                if final:
+                    # No more bytes can arrive.  If a shorter complete secret
+                    # was observed along this path, emit that safe replacement
+                    # and continue classifying the remainder.  Otherwise this is
+                    # an unresolved secret prefix and must be masked.
+                    if last_terminal_end:
+                        assert last_terminal_replacement is not None
+                        output.append(last_terminal_replacement)
+                        self._pending = self._pending[last_terminal_end:]
+                        continue
+                    output.append("***")
+                    self._pending = ""
+                break
+
+            if mismatch and last_terminal_end:
+                assert last_terminal_replacement is not None
+                output.append(last_terminal_replacement)
+                self._pending = self._pending[last_terminal_end:]
+                continue
+
+            # The first pending character cannot begin any configured secret.
+            # It is therefore safe to emit; the remaining suffix is reevaluated
+            # because a secret may start at the next character.
+            output.append(self._pending[0])
+            self._pending = self._pending[1:]
+
+        return "".join(output)
 
 
 __all__ = [
