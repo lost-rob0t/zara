@@ -90,6 +90,41 @@ class ProjectContextStoreTest {
         assertEquals(ProjectSourceScope.AppPrivate, created.sourceScope)
     }
 
+    @Test fun `duplicate project names are rejected case insensitively without changing registry`() {
+        val root = Files.createTempDirectory("zara-project-duplicate-name").toFile()
+        val ids = ArrayDeque(listOf("alpha", "beta"))
+        val store = ProjectContextStore(File(root, "projects.bin")) { ids.removeFirst() }
+        store.create("Alpha")
+
+        assertThrows(IllegalArgumentException::class.java) { store.create(" alpha ") }
+        assertEquals(listOf("Alpha"), store.state().projects.map { it.name })
+    }
+
+    @Test fun `duplicate generated project id is rejected without overwriting existing context`() {
+        val root = Files.createTempDirectory("zara-project-duplicate-id").toFile()
+        val store = ProjectContextStore(File(root, "projects.bin")) { "same-id" }
+        store.create("Alpha")
+
+        assertThrows(IllegalArgumentException::class.java) { store.create("Beta") }
+        assertEquals(listOf("Alpha"), store.state().projects.map { it.name })
+    }
+
+    @Test fun `conversation ids are trimmed bounded and reject control characters`() {
+        val root = Files.createTempDirectory("zara-project-conversation-id").toFile()
+        val store = ProjectContextStore(File(root, "projects.bin")) { "alpha" }
+        store.create("Alpha")
+
+        store.bindConversation("alpha", "  conversation-alpha  ")
+        assertEquals("conversation-alpha", store.state().project("alpha")?.conversationId)
+        assertThrows(IllegalArgumentException::class.java) {
+            store.bindConversation("alpha", "conversation\nalpha")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            store.bindConversation("alpha", "c".repeat(257))
+        }
+        assertEquals("conversation-alpha", store.state().project("alpha")?.conversationId)
+    }
+
     @Test fun `corrupt state degrades explicitly instead of inventing projects`() {
         val root = Files.createTempDirectory("zara-project-corrupt").toFile()
         val file = File(root, "projects.bin")
@@ -99,6 +134,18 @@ class ProjectContextStoreTest {
         assertTrue(state.projects.isEmpty())
         assertNull(state.selectedProjectId)
         assertNotNull(state.loadFailure)
+    }
+
+    @Test fun `degraded state blocks mutation and preserves corrupt bytes for recovery`() {
+        val root = Files.createTempDirectory("zara-project-degraded-write").toFile()
+        val file = File(root, "projects.bin")
+        val original = "not a Zara project registry"
+        file.writeText(original)
+        val store = ProjectContextStore(file) { "alpha" }
+
+        assertThrows(IllegalStateException::class.java) { store.create("Alpha") }
+        assertThrows(IllegalStateException::class.java) { store.select(null) }
+        assertEquals(original, file.readText())
     }
 
     @Test fun `clearing selection preserves registered contexts`() {
