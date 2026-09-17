@@ -9,13 +9,16 @@ class AutomationManifestContractTest {
     @Test
     fun `automation surface declares platform owned special access`() {
         val manifest = File("src/main/AndroidManifest.xml").readText()
+        val accessibility = manifest
+            .substringAfter(".accessibility.ZaraAccessibilityService")
+            .substringBefore("</service>")
 
         assertTrue(manifest.contains("android.permission.PACKAGE_USAGE_STATS"))
         assertTrue(manifest.contains("android.permission.WRITE_SETTINGS"))
         assertTrue(manifest.contains("android.permission.SYSTEM_ALERT_WINDOW"))
-        assertTrue(manifest.contains("android.permission.BIND_ACCESSIBILITY_SERVICE"))
-        assertTrue(manifest.contains(".accessibility.ZaraAccessibilityService"))
         assertTrue(manifest.contains(".automation.AutomationActivity"))
+        assertTrue(accessibility.contains("android:exported=\"true\""))
+        assertTrue(accessibility.contains("android.permission.BIND_ACCESSIBILITY_SERVICE"))
     }
 
     @Test
