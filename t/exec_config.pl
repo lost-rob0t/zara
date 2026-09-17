@@ -33,6 +33,13 @@ test(exec_config_is_not_auto_created) :-
     exec_config_loader:load_user_exec_config,
     \+ exists_file(Path).
 
+test(unqualified_exec_code_loads_into_user_module) :-
+    exec_config_loader:user_exec_config_path(Path),
+    write_text(Path, 'exec_plain_rule(ok).\n'),
+    exec_config_loader:load_user_exec_config,
+    user:exec_plain_rule(ok),
+    \+ current_predicate(exec_config_loader:exec_plain_rule/1).
+
 test(exec_config_executes_arbitrary_prolog,
      [cleanup(cleanup_exec_probe)]) :-
     exec_config_loader:user_exec_config_path(Path),
