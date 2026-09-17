@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
 import sys
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,6 +85,15 @@ def _run_validator(source_sha: str, desktop: Path, android: Path) -> subprocess.
     )
 
 
+def _load_device_acceptance_module():
+    spec = importlib.util.spec_from_file_location("zara_device_acceptance_test", DEVICE_ACCEPTANCE)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_dual_surface_validator_accepts_exact_sha_png_evidence(tmp_path: Path) -> None:
     source_sha = "0123456789abcdef0123456789abcdef01234567"
     desktop = _write_desktop_evidence(tmp_path, source_sha)
@@ -148,6 +160,7 @@ def test_ci_generates_android_screenshots_and_validates_both_surfaces() -> None:
 
     assert "reactivecircus/android-emulator-runner@v2" in workflow
     assert "Capture Android screenshot evidence" in workflow
+    assert "bash -euo pipefail <<'BASH'" in workflow
     assert "android-ui-evidence" in workflow
     assert "Validate dual-surface screenshot evidence" in workflow
     assert "scripts/validate-ui-evidence.py" in workflow
@@ -172,31 +185,15 @@ def test_ci_checks_out_exact_reviewed_source_and_success_gates_candidate_apks() 
     assert "name: Upload Wear debug APK\n        if: success()" in workflow
 
 
-def test_android_acceptance_rejects_claimed_sha_mismatch(tmp_path: Path) -> None:
-    actual_source_sha = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"],
-        cwd=ROOT,
-        text=True,
-    ).strip()
-    replacement = "0" if actual_source_sha[0] != "0" else "1"
-    claimed_source_sha = replacement + actual_source_sha[1:]
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(DEVICE_ACCEPTANCE),
-            "--serial",
-            "unused",
-            "--source-sha",
-            claimed_source_sha,
-            "--output",
-            str(tmp_path / "device"),
-        ],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
+def test_android_acceptance_rejects_claimed_sha_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_device_acceptance_module()
+    actual_source_sha = "a" * 40
+    claimed_source_sha = "b" * 40
+    monkeypatch.setattr(
+        module.subprocess,
+        "check_output",
+        lambda *args, **kwargs: actual_source_sha,
     )
 
-    assert result.returncode != 0
-    assert "does not match the checked-out repository" in result.stderr
+    with pytest.raises(RuntimeError, match="does not match the checked-out repository"):
+        module.verified_source_sha(claimed_source_sha)
