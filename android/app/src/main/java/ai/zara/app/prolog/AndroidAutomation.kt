@@ -6,6 +6,7 @@ import ai.zara.app.accessibility.AccessibilityGlobalAction
 import ai.zara.app.accessibility.AccessibilitySelector
 import ai.zara.app.control.AndroidControlAccess
 import ai.zara.app.device.AppSearchAdapter
+import ai.zara.app.device.CalendarInsertAdapter
 import ai.zara.app.device.DeviceActionArguments
 import ai.zara.app.device.DeviceActionErrorCode
 import ai.zara.app.device.DeviceActionResult
@@ -18,6 +19,9 @@ sealed interface AndroidAutomationAction {
     data class OpenApp(val alias: String) : AndroidAutomationAction
     data class OpenUri(val uri: String) : AndroidAutomationAction
     data class SearchApp(val alias: String, val query: String) : AndroidAutomationAction
+    data class CalendarInsert(
+        val arguments: DeviceActionArguments.CalendarInsert,
+    ) : AndroidAutomationAction
     data class UiClick(val selector: AccessibilitySelector) : AndroidAutomationAction
     data class UiSetText(val selector: AccessibilitySelector, val text: String) : AndroidAutomationAction
     data class UiScrollForward(val selector: AccessibilitySelector) : AndroidAutomationAction
@@ -72,6 +76,17 @@ object AndroidAutomationPlanParser {
                 query = parseText(args[1]),
             )
         }
+        parseCall(term, "calendar_insert", 5)?.let { args ->
+            return AndroidAutomationAction.CalendarInsert(
+                DeviceActionArguments.CalendarInsert(
+                    title = parseText(args[0], maxBytes = 512),
+                    startMillis = parseLong(args[1], "calendar start"),
+                    endMillis = parseLong(args[2], "calendar end"),
+                    location = parseOptionalText(args[3], maxBytes = 2_048),
+                    description = parseOptionalText(args[4], maxBytes = 2_048),
+                )
+            )
+        }
         parseCall(term, "ui_click", 1)?.let { args ->
             return AndroidAutomationAction.UiClick(parseSelector(args.single()))
         }
@@ -123,6 +138,15 @@ object AndroidAutomationPlanParser {
         require(atom.matches(value)) { "$label must be a bounded atom" }
         return value
     }
+
+    private fun parseLong(raw: String, label: String): Long {
+        val value = raw.trim()
+        require(value.matches(Regex("-?[0-9]{1,19}"))) { "$label must be an integer" }
+        return value.toLongOrNull() ?: throw IllegalArgumentException("$label is out of range")
+    }
+
+    private fun parseOptionalText(raw: String, maxBytes: Int): String? =
+        if (raw.trim() == "none") null else parseText(raw, maxBytes)
 
     private fun parseText(raw: String, maxBytes: Int = 512): String {
         val value = raw.trim()
@@ -230,6 +254,7 @@ class AndroidAutomationRunner(
     private val appSearch: AppSearchAdapter,
     private val accessibility: AccessibilityAutomationAdapter,
     private val accessGranted: (AndroidControlAccess) -> Boolean,
+    private val calendarInsert: CalendarInsertAdapter? = null,
 ) {
     fun run(name: String): CompletableFuture<AndroidAutomationResult> {
         require(name.matches(Regex("[a-z][a-z0-9_]{0,63}"))) { "automation name is invalid" }
@@ -256,6 +281,8 @@ class AndroidAutomationRunner(
                 is AndroidAutomationAction.SearchApp -> appSearch.execute(
                     DeviceActionArguments.AppSearch(action.alias, action.query),
                 )
+                is AndroidAutomationAction.CalendarInsert -> calendarInsert?.execute(action.arguments)
+                    ?: DeviceActionResult.Error(DeviceActionErrorCode.Unavailable)
                 is AndroidAutomationAction.UiClick -> accessibility.execute(
                     AccessibilityAutomationAction.Click(action.selector),
                 )
@@ -283,6 +310,7 @@ class AndroidAutomationRunner(
         is AndroidAutomationAction.GlobalAction -> true
         is AndroidAutomationAction.OpenApp,
         is AndroidAutomationAction.OpenUri,
-        is AndroidAutomationAction.SearchApp -> false
+        is AndroidAutomationAction.SearchApp,
+        is AndroidAutomationAction.CalendarInsert -> false
     }
 }
