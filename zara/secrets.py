@@ -213,7 +213,6 @@ class SecretLease:
             raise SecretLeaseError("Incomplete runtime lease")
         if expires_at_monotonic is None or not math.isfinite(expires_at_monotonic):
             raise SecretLeaseError("Invalid runtime lease expiry")
-
         self._lease_id = lease_id
         self._secret_id = secret.id
         self._secret_revision = secret.revision
@@ -375,6 +374,7 @@ class SecretRedactor:
         max_secret_length: int = 4096,
         max_secret_count: int = 512,
         max_total_secret_chars: int = 262_144,
+        max_scan_steps: int = 1_000_000,
         reveal_aliases: bool = True,
     ) -> None:
         if type(min_scan_length) is not int or min_scan_length < 1:
@@ -385,6 +385,8 @@ class SecretRedactor:
             raise ValueError("max_secret_count must be a positive integer")
         if type(max_total_secret_chars) is not int or max_total_secret_chars < 1:
             raise ValueError("max_total_secret_chars must be a positive integer")
+        if type(max_scan_steps) is not int or max_scan_steps < 1:
+            raise ValueError("max_scan_steps must be a positive integer")
         if not isinstance(reveal_aliases, bool):
             raise TypeError("reveal_aliases must be bool")
         if len(secrets) > max_secret_count:
@@ -416,6 +418,7 @@ class SecretRedactor:
             entries.append(_RedactionEntry(value=value, replacement=replacement))
         self._entries = tuple(sorted(entries, key=lambda entry: len(entry.value), reverse=True))
         self._skipped_short = skipped_short
+        self._max_scan_steps = max_scan_steps
         self._trie = _TrieNode()
         for entry in self._entries:
             node = self._trie
@@ -474,6 +477,7 @@ class SecretStreamingFilter:
         text = self._pending
         size = len(text)
         index = 0
+        scan_steps = 0
         output: list[str] = []
         root = self._redactor._trie
 
@@ -484,6 +488,11 @@ class SecretStreamingFilter:
             last_replacement: str | None = None
 
             while cursor < size:
+                if scan_steps >= self._redactor._max_scan_steps:
+                    output.append("***")
+                    self._pending = ""
+                    return "".join(output)
+                scan_steps += 1
                 next_node = node.children.get(text[cursor])
                 if next_node is None:
                     break
