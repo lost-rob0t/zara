@@ -1,28 +1,32 @@
 package ai.zara.app.email
 
-import ai.zara.app.localai.LocalPromptContexts
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
  * Local Android tool boundary for the email plugin.
  *
- * Construction installs the email/Prolog symbol catalog into every embedded
- * local-model turn. Closing removes only this plugin-owned context.
+ * EmailPrologPlugin owns model-context installation for the process lifetime.
  * The generated spam-rule path is supplied by trusted app configuration and is
  * never accepted from model/tool arguments.
  */
 class AndroidEmailRuntimeBinding(
     private val plugin: AndroidEmailPlugin,
     private val generatedSpamRulePath: String,
-) : AutoCloseable {
+) {
     init {
         require(generatedSpamRulePath.isNotBlank()) { "generated spam rule path is required" }
-        LocalPromptContexts.register(CONTEXT_NAME, plugin.modelTurnContext)
     }
 
     val toolNames: Set<String>
         get() = plugin.toolNames
+
+    val mutatingToolNames: Set<String> = setOf(
+        "email_send",
+        "email_reply",
+        "email_apply_rules",
+        "email_refresh_spam_rules",
+    )
 
     fun invoke(toolName: String, arguments: JSONObject = JSONObject()): JSONObject {
         require(toolName in plugin.toolNames) { "unknown email tool" }
@@ -82,12 +86,9 @@ class AndroidEmailRuntimeBinding(
             "email_prolog_api" -> JSONObject()
                 .put("context", plugin.modelTurnContext)
                 .put("tools", JSONArray(plugin.toolNames.toList()))
+                .put("mutating_tools", JSONArray(mutatingToolNames.toList()))
             else -> error("unreachable")
         }
-    }
-
-    override fun close() {
-        LocalPromptContexts.unregister(CONTEXT_NAME)
     }
 
     private fun parseFeeds(array: JSONArray): List<SpamFeed> = (0 until array.length()).map { index ->
@@ -113,9 +114,5 @@ class AndroidEmailRuntimeBinding(
         val value = optString(name, "").trim()
         require(value.isNotEmpty()) { "$name is required" }
         return value
-    }
-
-    companion object {
-        private const val CONTEXT_NAME = "email-prolog-api"
     }
 }
