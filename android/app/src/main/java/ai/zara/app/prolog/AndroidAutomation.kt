@@ -4,9 +4,8 @@ import ai.zara.app.device.AppSearchAdapter
 import ai.zara.app.device.DeviceActionArguments
 import ai.zara.app.device.DeviceActionErrorCode
 import ai.zara.app.device.DeviceActionResult
-import ai.zara.app.device.DeviceCapabilityRegistry
-import ai.zara.app.runtime.DeviceCapability
-import ai.zara.app.runtime.LocalZaraServer
+import ai.zara.app.device.OpenAppAdapter
+import ai.zara.app.runtime.LocalQueryResult
 import java.util.concurrent.CompletableFuture
 
 sealed interface AndroidAutomationAction {
@@ -151,13 +150,13 @@ object AndroidAutomationPlanParser {
 }
 
 class AndroidAutomationRunner(
-    private val localServer: LocalZaraServer,
-    private val deviceRegistry: DeviceCapabilityRegistry,
+    private val queryProlog: (String) -> CompletableFuture<LocalQueryResult>,
+    private val openApp: OpenAppAdapter,
     private val appSearch: AppSearchAdapter,
 ) {
     fun run(name: String): CompletableFuture<AndroidAutomationResult> {
         require(name.matches(Regex("[a-z][a-z0-9_]{0,63}"))) { "automation name is invalid" }
-        return localServer.query("automation($name, Result)").thenApply { queryResult ->
+        return queryProlog("automation($name, Result)").thenApply { queryResult ->
             val term = queryResult.terms.singleOrNull()
                 ?: throw IllegalArgumentException("automation must resolve to exactly one plan")
             val plan = AndroidAutomationPlanParser.parse(name, term)
@@ -168,8 +167,7 @@ class AndroidAutomationRunner(
     private fun execute(plan: AndroidAutomationPlan): AndroidAutomationResult {
         plan.actions.forEachIndexed { index, action ->
             val outcome = when (action) {
-                is AndroidAutomationAction.OpenApp -> deviceRegistry.execute(
-                    DeviceCapability.OpenApp,
+                is AndroidAutomationAction.OpenApp -> openApp.execute(
                     DeviceActionArguments.OpenApp(action.alias),
                 )
                 is AndroidAutomationAction.SearchApp -> appSearch.execute(
