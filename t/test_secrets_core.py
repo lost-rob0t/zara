@@ -87,6 +87,26 @@ def test_redactor_masks_complete_values_longest_first() -> None:
     )
 
 
+def test_mask_text_does_not_reprocess_generated_aliases_as_raw_secret_material() -> None:
+    first = ref("A")
+    second = ref("B")
+    redactor = SecretRedactor(
+        {
+            first: "a-very-long-secret-value",
+            second: "secret(A)",
+        }
+    )
+
+    assert redactor.mask_text("a-very-long-secret-value") == "§§secret(A)"
+
+
+def test_mask_text_keeps_incomplete_secret_prefix_as_ordinary_complete_text() -> None:
+    secret = ref("PROVIDER_KEY")
+    redactor = SecretRedactor({secret: "sk-prod-AbC123456"})
+
+    assert redactor.mask_text("ordinary text ending in s") == "ordinary text ending in s"
+
+
 def test_duplicate_material_uses_generic_redaction_instead_of_guessing_alias() -> None:
     redactor = SecretRedactor(
         {
