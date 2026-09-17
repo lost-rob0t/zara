@@ -44,7 +44,7 @@ class LocalModelTest {
         assertEquals("hello from local model", first.text)
         assertEquals(listOf("one", "two"), backend.prompts)
         assertEquals(1, backend.threadNames.distinct().size)
-        assertTrue(backend.threadNames.single().contains("zara-local-model"))
+        assertTrue(backend.threadNames.first().contains("zara-local-model"))
         coordinator.close()
     }
 
