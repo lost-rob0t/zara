@@ -255,6 +255,18 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Install Android emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          apt-cache policy libpulse0
+          sudo apt-get install -y --no-install-recommends libpulse0
+          ldconfig -p | grep -F 'libpulse.so.0' >/dev/null || {
+            echo "required emulator host library libpulse.so.0 is unavailable" >&2
+            exit 1
+          }
+
       - name: Prime Android emulator SDK with current command-line tools
         shell: bash
         run: |
