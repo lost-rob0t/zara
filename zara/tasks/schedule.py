@@ -1,4 +1,4 @@
-"""Persistent cron schedules that route Prolog first and escalate to agent tasks."""
+"""Persistent cron schedules with Prolog-first execution and LLM escalation."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 _MAX_CRON_SEARCH_MINUTES = 366 * 24 * 60 * 5
 _SCHEDULE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$")
-
 _CRON_ALIASES = {
     "@hourly": "0 * * * *",
     "@daily": "0 0 * * *",
@@ -65,14 +64,16 @@ class CronExpression:
         if len(parts) != 5:
             raise ValueError("cron expression must contain exactly five fields")
         try:
-            minute = _parse_cron_field(parts[0], 0, 59)
-            hour = _parse_cron_field(parts[1], 0, 23)
-            day = _parse_cron_field(parts[2], 1, 31)
-            month = _parse_cron_field(parts[3], 1, 12)
-            weekday = _parse_cron_field(parts[4], 0, 7, weekday=True)
+            fields = (
+                _parse_cron_field(parts[0], 0, 59),
+                _parse_cron_field(parts[1], 0, 23),
+                _parse_cron_field(parts[2], 1, 31),
+                _parse_cron_field(parts[3], 1, 12),
+                _parse_cron_field(parts[4], 0, 7, weekday=True),
+            )
         except ValueError as error:
             raise ValueError(f"invalid cron expression: {error}") from error
-        return cls(normalized, minute, hour, day, month, weekday)
+        return cls(normalized, *fields)
 
     def matches(self, value: datetime) -> bool:
         if value.minute not in self.minute.values:
@@ -192,11 +193,10 @@ class ScheduledTaskStore:
         clean_goal = _validate_text(goal, "goal", max_chars=2000)
         parsed = CronExpression.parse(cron)
         selected_mode = _coerce_mode(mode)
-        identifier = schedule_id or f"schedule-{uuid.uuid4().hex[:12]}"
-        identifier = _validate_schedule_id(identifier)
-        clean_label = _validate_label(label, clean_goal)
+        identifier = _validate_schedule_id(
+            schedule_id or f"schedule-{uuid.uuid4().hex[:12]}"
+        )
         current = now or _local_now()
-        next_run = parsed.next_after(current)
         timestamp = _iso(current)
         self._db.execute(
             """
@@ -204,22 +204,21 @@ class ScheduledTaskStore:
                 schedule_id, principal_id, label, cron, goal, mode, state,
                 next_run_at, last_run_at, last_status, last_route, last_task_id,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, NULL, NULL, NULL, NULL, ?, ?)
             """,
             (
                 identifier,
                 principal,
-                clean_label,
+                _validate_label(label, clean_goal),
                 parsed.expression,
                 clean_goal,
                 selected_mode.value,
-                ScheduleState.ACTIVE.value,
-                _iso(next_run),
+                _iso(parsed.next_after(current)),
                 timestamp,
                 timestamp,
             ),
         )
-        return self.get_schedule(identifier, principal_id=principal)
+        return self._require(identifier, principal)
 
     def upsert_definition(
         self,
@@ -243,14 +242,13 @@ class ScheduledTaskStore:
                 label=label,
                 now=now,
             )
+
         parsed = CronExpression.parse(cron)
-        selected_mode = _coerce_mode(mode)
         clean_goal = _validate_text(goal, "goal", max_chars=2000)
-        clean_label = _validate_label(label, clean_goal)
         current = now or _local_now()
-        next_run = existing.next_run_at
+        next_run_at = existing.next_run_at
         if existing.state is ScheduleState.ACTIVE:
-            next_run = _iso(parsed.next_after(current))
+            next_run_at = _iso(parsed.next_after(current))
         self._db.execute(
             """
             UPDATE scheduled_tasks
@@ -258,22 +256,25 @@ class ScheduledTaskStore:
             WHERE schedule_id = ? AND principal_id = ?
             """,
             (
-                clean_label,
+                _validate_label(label, clean_goal),
                 parsed.expression,
                 clean_goal,
-                selected_mode.value,
-                next_run,
+                _coerce_mode(mode).value,
+                next_run_at,
                 _iso(current),
-                schedule_id,
-                principal_id,
+                _validate_schedule_id(schedule_id),
+                _validate_text(principal_id, "principal"),
             ),
         )
-        return self.get_schedule(schedule_id, principal_id=principal_id)
+        return self._require(schedule_id, principal_id)
 
     def get_schedule(self, schedule_id: str, *, principal_id: str) -> Optional[ScheduledTask]:
         row = self._db.fetch_one(
             "SELECT * FROM scheduled_tasks WHERE schedule_id = ? AND principal_id = ?",
-            (_validate_schedule_id(schedule_id), _validate_text(principal_id, "principal")),
+            (
+                _validate_schedule_id(schedule_id),
+                _validate_text(principal_id, "principal"),
+            ),
         )
         return _row_to_schedule(row) if row is not None else None
 
@@ -299,6 +300,9 @@ class ScheduledTaskStore:
         ]
 
     def pause(self, schedule_id: str, *, principal_id: str) -> ScheduledTask:
+        row = self._require(schedule_id, principal_id)
+        if row.state is ScheduleState.CANCELLED:
+            raise ValueError("cancelled schedules cannot be paused")
         return self._set_state(
             schedule_id,
             principal_id=principal_id,
@@ -317,12 +321,11 @@ class ScheduledTaskStore:
         if row.state is ScheduleState.CANCELLED:
             raise ValueError("cancelled schedules cannot be resumed")
         current = now or _local_now()
-        next_run = CronExpression.parse(row.cron).next_after(current)
         return self._set_state(
             schedule_id,
             principal_id=principal_id,
             state=ScheduleState.ACTIVE,
-            next_run_at=_iso(next_run),
+            next_run_at=_iso(CronExpression.parse(row.cron).next_after(current)),
             now=current,
         )
 
@@ -344,6 +347,19 @@ class ScheduledTaskStore:
         due = _iso(due_at)
         started = _iso(_local_now())
         with self._db.transaction(immediate=True) as connection:
+            live = connection.execute(
+                """
+                SELECT state, next_run_at FROM scheduled_tasks
+                WHERE schedule_id = ? AND principal_id = ?
+                """,
+                (schedule.schedule_id, schedule.principal_id),
+            ).fetchone()
+            if live is None:
+                return False
+            if live["state"] != ScheduleState.ACTIVE.value:
+                return False
+            if live["next_run_at"] != due:
+                return False
             present = connection.execute(
                 "SELECT 1 FROM scheduled_task_runs WHERE schedule_id = ? AND due_at = ?",
                 (schedule.schedule_id, due),
@@ -352,9 +368,8 @@ class ScheduledTaskStore:
                 return False
             connection.execute(
                 """
-                INSERT INTO scheduled_task_runs (
-                    schedule_id, due_at, started_at, status
-                ) VALUES (?, ?, ?, 'running')
+                INSERT INTO scheduled_task_runs (schedule_id, due_at, started_at, status)
+                VALUES (?, ?, ?, 'running')
                 """,
                 (schedule.schedule_id, due, started),
             )
@@ -362,7 +377,7 @@ class ScheduledTaskStore:
                 """
                 UPDATE scheduled_tasks
                 SET next_run_at = ?, last_run_at = ?, last_status = 'running', updated_at = ?
-                WHERE schedule_id = ? AND principal_id = ? AND state = 'active'
+                WHERE schedule_id = ? AND principal_id = ?
                 """,
                 (
                     _iso(next_run_at),
@@ -447,7 +462,7 @@ class ScheduledTaskService:
         prolog_engine,
         principal_id: str,
         poll_seconds: float = 15.0,
-        now: Callable[[], datetime] = _local_now,
+        now: Callable[[], datetime] = lambda: datetime.now().astimezone(),
     ) -> None:
         if poll_seconds <= 0:
             raise ValueError("poll_seconds must be positive")
@@ -520,10 +535,9 @@ class ScheduledTaskService:
             return
         for definition in definitions:
             raw_id = str(definition["id"])
-            schedule_id = _validate_schedule_id(f"prolog:{raw_id}")
             self._store.upsert_definition(
                 principal_id=self._principal_id,
-                schedule_id=schedule_id,
+                schedule_id=_validate_schedule_id(f"prolog:{raw_id}"),
                 cron=str(definition["cron"]),
                 goal=str(definition["goal"]),
                 mode=str(definition["mode"]),
@@ -552,7 +566,8 @@ class ScheduledTaskService:
         if route == "prolog" and self._prolog_engine is not None:
             try:
                 handled = await asyncio.to_thread(
-                    self._prolog_engine.execute_command, row.goal
+                    self._prolog_engine.execute_command,
+                    row.goal,
                 )
             except Exception:
                 handled = False
@@ -612,7 +627,8 @@ class ScheduledTaskService:
             return "llm"
         try:
             route = await asyncio.to_thread(
-                self._prolog_engine.scheduled_execution_route, row.goal
+                self._prolog_engine.scheduled_execution_route,
+                row.goal,
             )
         except Exception:
             logger.warning("[ScheduledTasks] Prolog route failed; escalating", exc_info=True)
@@ -707,8 +723,6 @@ def _local_now() -> datetime:
 
 
 def _iso(value: datetime) -> str:
-    if value.tzinfo is None:
-        return value.isoformat(timespec="seconds")
     return value.isoformat(timespec="seconds")
 
 
