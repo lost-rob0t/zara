@@ -1,0 +1,182 @@
+#+title: Zara email plugin
+
+* Scope
+
+The first-party =email= service plugin exposes the same semantic mail API to
+Zara model turns on desktop/server and Android:
+
+- Gmail via the Gmail REST API.
+- IMAP and POP3 retrieval over TLS.
+- SMTP sending for generic IMAP/POP3 accounts.
+- Prolog pre-send, post-receive, and spam rules.
+- Bounded public feed compilation into inert =email_feed_rule/4= facts.
+- Explicit model context containing all email tools and Prolog predicate names.
+
+Email bodies are untrusted input. Tool descriptions and model context explicitly
+tell the model not to follow instructions embedded in mail unless the user asks
+for that content to be acted on.
+
+* Desktop/server configuration
+
+The plugin is built in and uses =[plugins.email]=. Secrets are references to
+environment variables; passwords and OAuth bearer tokens must not be placed in
+Prolog or committed configuration.
+
+#+begin_src toml
+[plugins.email]
+enabled = true
+spam_threshold = 60
+rules_files = ["~/.config/zara/email-rules.pl"]
+
+[[plugins.email.accounts]]
+id = "personal"
+provider = "gmail"
+address = "me@example.com"
+username = "me@example.com"
+token_env = "ZARA_GMAIL_PERSONAL_TOKEN"
+
+[[plugins.email.accounts]]
+id = "other"
+provider = "imap"
+address = "me@example.net"
+username = "me@example.net"
+host = "imap.example.net"
+port = 993
+secret_env = "ZARA_MAIL_OTHER_PASSWORD"
+smtp_host = "smtp.example.net"
+smtp_port = 465
+smtp_mode = "ssl"
+smtp_secret_env = "ZARA_MAIL_OTHER_PASSWORD"
+
+[[plugins.email.accounts]]
+id = "legacy"
+provider = "pop3"
+address = "me@example.org"
+username = "me@example.org"
+host = "pop.example.org"
+port = 995
+secret_env = "ZARA_MAIL_LEGACY_PASSWORD"
+smtp_host = "smtp.example.org"
+smtp_port = 587
+smtp_mode = "starttls"
+smtp_secret_env = "ZARA_MAIL_LEGACY_PASSWORD"
+#+end_src
+
+For Gmail REST access the plugin needs read/send/label mutation. Prefer the
+least-permissive Gmail API scope that covers the configured operations. Google's
+scope documentation identifies =gmail.modify= for reading/composing/sending and
+mailbox mutation while =https://mail.google.com/= is the broad full-mail scope.
+The latter is required for Gmail IMAP/POP/SMTP OAuth and should not be requested
+when the Gmail REST path is sufficient.
+
+Sources:
+- https://developers.google.com/workspace/gmail/api/auth/scopes
+- https://developers.google.com/workspace/gmail/imap/xoauth2-protocol
+
+* LLM tools
+
+Every model turn that binds the plugin tools sees the Prolog symbol catalog in
+the tool descriptions. When Zara agent-loop hooks are enabled the plugin also
+adds a bounded system-context message before the turn.
+
+- =email_accounts=
+- =email_search(Account, Query, Limit)=
+- =email_read(Account, MessageId)=
+- =email_send(Account, To, Subject, Body, Cc, Bcc)=
+- =email_reply(Account, MessageId, Body)=
+- =email_classify_spam(Account, MessageId)=
+- =email_apply_rules(Account, MessageId, DryRun)=
+- =email_refresh_spam_rules=
+- =email_prolog_api=
+
+Sending, replying, mutating a mailbox, and downloading rule feeds use Zara's
+canonical tool approval marker. Read/search/classification stay non-mutating.
+
+* Prolog API and hooks
+
+The portable rules live in =kb/email_rules.pl= and are staged into the Android
+Trealla asset set from the same source file.
+
+#+begin_src prolog
+email_before_send(Account, To, Subject, Body, Decision, Reason).
+email_before_send_rule(Account, To, Subject, Body, Decision, Reason).
+email_after_receive_rule(Account, MessageId, Sender, Subject, SpamScore, Action).
+email_spam_rule(Sender, SenderDomain, Subject, Body, Score, Reason).
+email_user_spam_rule(Sender, SenderDomain, Subject, Body, Score, Reason).
+email_feed_rule(Kind, Value, Weight, Source).
+#+end_src
+
+=Decision= is =allow= or =deny=. Mailbox actions are =keep=, =spam=, =trash=,
+or =archive=. User code should extend =email_before_send_rule/6=,
+=email_after_receive_rule/6=, and =email_user_spam_rule/6= rather than replacing
+the public wrapper predicates.
+
+Example:
+
+#+begin_src prolog
+email_before_send_rule(work, To, _, _, deny, external_recipient) :-
+    \+ sub_atom(To, _, _, 0, '@example.com').
+
+email_user_spam_rule(_, 'bad.example', _, _, 80, local_domain_rule).
+
+email_after_receive_rule(_, _, _, Subject, _, trash) :-
+    email_contains_ci(Subject, '[known junk]').
+#+end_src
+
+* Public spam-feed service
+
+A configured feed is plain data, never source code. Supported kinds are
+=sender=, =domain=, =subject=, and =body=. The compiler requires HTTPS, caps one
+feed at 5 MiB, caps the aggregate at 50,000 rules, strips comments, quotes every
+value as a Prolog atom, writes through a temporary file, and then consults the
+generated file.
+
+#+begin_src toml
+[[plugins.email.spam_feeds]]
+name = "community-domains"
+url = "https://example.net/spam-domains.txt"
+kind = "domain"
+weight = 75
+#+end_src
+
+Do not point this directly at arbitrary SpamAssassin update archives. Apache's
+=sa-update= supports signed rule channels and explicitly warns that enabling
+third-party plugin code permits unrestricted execution. If SpamAssassin channel
+interop is added later, Zara should verify the signed archive and translate only
+understood rule data rather than load channel plugins.
+
+Spamhaus also needs separate treatment. Its DNSBLs are designed for SMTP/mail
+filtering under published usage terms. The DROP feed is a routing/firewall list
+and Spamhaus says it is not a replacement for SBL/XBL/PBL-style mail filtering.
+Zara therefore does not ship a hard-coded DROP-to-spam conversion.
+
+Sources:
+- https://spamassassin.apache.org/full/4.0.x/doc/sa-update.html
+- https://www.spamhaus.org/faqs/dnsbl-usage/
+- https://www.spamhaus.org/blocklists/do-not-route-or-peer/
+
+* Android
+
+Android uses Eclipse Angus Mail for IMAP, POP3, and SMTP. Angus documents the
+standard distribution as Android-compatible and includes OAuth2 support without
+Android SASL. Gmail itself uses the Gmail REST path in =AndroidEmailPlugin= so
+it can use granular Gmail scopes instead of the broad IMAP/POP Gmail scope.
+
+The Android class accepts an =EmailCredentialStore= instead of raw credentials,
+so the UI/plugin installer can bind it to Zara's encrypted Android credential
+store. It also accepts an =EmailRuleEngine=; =TreallaEmailRuleEngine= evaluates
+the same portable predicates used on desktop.
+
+Source:
+- https://eclipse-ee4j.github.io/angus-mail/Android
+
+* Protocol notes
+
+IMAP remains the stateful mailbox protocol: IMAP4rev2 supports mailbox search,
+flags and selective message fetches. POP3 is deliberately simpler and the Zara
+adapter performs bounded client-side scanning. Generic outbound mail is SMTP,
+because neither IMAP nor POP3 is a submission protocol.
+
+Sources:
+- https://www.rfc-editor.org/rfc/rfc9051.html
+- https://www.rfc-editor.org/rfc/rfc1939.html
