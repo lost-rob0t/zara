@@ -78,20 +78,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
-enum class AppSurface(val label: String, val glyph: String, val gatedIssue: String? = null) {
-    Chat("Chat", "⌂"),
-    Logic("Logic", "λ"),
-    Voice("Voice", "◉"),
-    Projects("Projects", "◇", "#653"),
-    Remote("Remote", "⇄"),
-    Scheduled("Scheduled", "◷", "#654"),
-    Plugins("Plugins", "⬡", "#655"),
-    Themes("Themes", "◐"),
-    Diagnostics("Diagnostics", "⌁"),
-    Settings("Settings", "⚙"),
-    About("About", "ⓘ"),
-}
-
 val LocalZaraTokens = staticCompositionLocalOf {
     themeTokens(ZaraTheme.Outrun, systemDark = true, reducedGlow = false)
 }
@@ -172,7 +158,7 @@ fun ZaraApp(
                 drawerState = drawerState,
                 drawerContent = {
                     ZaraDrawer(
-                        selected = selected,
+                        selected = displaySurface(selected),
                         state = runtimeState,
                         localState = localServerState,
                         onSelect = { destination ->
@@ -186,7 +172,7 @@ fun ZaraApp(
                     containerColor = tokens.background,
                     topBar = {
                         ZaraTopBar(
-                            selected = selected,
+                            selected = displaySurface(selected),
                             state = runtimeState,
                             localState = localServerState,
                             onMenu = { scope.launch { drawerState.open() } },
@@ -241,7 +227,6 @@ fun ZaraApp(
                             padding = padding,
                         )
                         AppSurface.Scheduled -> GatedSurface(selected, padding)
-                        AppSurface.Plugins -> GatedSurface(selected, padding)
                         AppSurface.Themes -> ThemesSurface(
                             selected = selectedTheme,
                             onSelectTheme = onSelectTheme,
@@ -256,7 +241,8 @@ fun ZaraApp(
                             operationError = operationError,
                             padding = padding,
                         )
-                        AppSurface.Settings -> SettingsSurface(
+                        AppSurface.Plugins, AppSurface.Settings -> SettingsSurface(
+                            initialTab = initialSettingsTab(selected),
                             state = runtimeState,
                             localServerState = localServerState,
                             updateState = updateState,
@@ -355,7 +341,7 @@ private fun ZaraDrawer(
             }
 
             Spacer(Modifier.size(8.dp))
-            AppSurface.entries.forEach { surface ->
+            drawerSurfaces().forEach { surface ->
                 when (surface) {
                     AppSurface.Chat -> DrawerDividerLabel("WORKSPACE")
                     AppSurface.Remote -> DrawerDividerLabel("RUNTIME")
@@ -732,6 +718,7 @@ private fun ConnectionSurface(
 
 @Composable
 private fun SettingsSurface(
+    initialTab: SettingsTab,
     state: RuntimeState,
     localServerState: LocalServerState,
     updateState: UpdateState,
@@ -752,6 +739,7 @@ private fun SettingsSurface(
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     padding: PaddingValues,
 ) {
+    var selectedTab by rememberSaveable { mutableStateOf(initialTab) }
     var serverPin by rememberSaveable { mutableStateOf("") }
     var replacementServerPin by rememberSaveable { mutableStateOf("") }
     var showServerPinReplacement by rememberSaveable { mutableStateOf(false) }
@@ -759,7 +747,12 @@ private fun SettingsSurface(
     val tokens = LocalZaraTokens.current
 
     ScreenBody(padding) {
-        ScreenTitle("Settings", "Local runtime, identity, remote and updates")
+        ScreenTitle("Settings", "Local runtime, identity, updates and plugins")
+        SettingsTabBar(selectedTab) { selectedTab = it }
+        if (selectedTab == SettingsTab.Plugins) {
+            PluginInstallSettings()
+            return@ScreenBody
+        }
 
         SectionCard("LOCAL ZARA SERVER") {
             KeyValueRow("state", localServerState.phase.name.lowercase())
@@ -1174,7 +1167,7 @@ private fun StatusPill(label: String) {
             color = tokens.textMuted,
             fontFamily = FontFamily.Monospace,
             fontSize = 9.sp,
-            letterSpacing = 1.sp,
+            letterSpacing = 1.5.sp,
         )
     }
 }

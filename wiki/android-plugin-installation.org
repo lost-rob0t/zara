@@ -1,0 +1,70 @@
+#+title: Android plugin installation
+
+* Location
+
+Open the drawer, choose *Settings*, then the *Plugins* tab. General settings
+remain in the default *General* tab. There is no Plugins drawer destination,
+launcher, or home-screen install shortcut.
+
+The operator's 2026-09-17 navigation instruction supersedes the older
+Plugins-in-the-drawer placement in =android/DESIGN.md=. The rest of that visual
+contract, including shared semantic theme tokens, remains unchanged. Restored
+legacy Plugins navigation resolves to Settings / Plugins rather than a dead
+placeholder.
+
+* Install a standalone Android plugin APK
+
+Obtain the complete APK and its published SHA-256 from a publisher you trust.
+Enter the checksum, tap *Choose plugin APK*, and select the APK with Android's
+file picker. Zara stages at most 256 MiB in private cache and rejects empty,
+malformed, unreadable, or checksum-mismatched files.
+
+Review the package name, version, file digest, and signing-certificate digest.
+A matching file checksum is not a trust decision about its publisher. Android
+validates the APK signature and package compatibility during installation.
+
+Tap *Install plugin*. When Android requires install-source permission, use
+*Allow plugin installs*, return to Zara, and tap *Install plugin* again.
+Granting this Android permission does not automatically start an installation.
+Confirm or cancel in Android's package installer.
+
+The UI reports installation success only after the matching Android session
+returns success. Handing bytes to Android is not success. Cancellation,
+insufficient storage, signature conflicts, policy blocks, and incompatible APKs
+produce explicit failure states. Use *Dismiss installation* to clear the
+transaction; this does not uninstall a package whose installation completed.
+
+* Scope and authority
+
+This is a package-installation surface, not a second plugin runtime. It does
+not enable or trust the plugin, grant its runtime permissions, bind its service,
+load classes, evaluate Prolog, or authorize capabilities. Plugin activation and
+health depend on the separate canonical host integration tracked in #924 / #655.
+The UI does not claim that an installed APK is a compatible or ready Zara plugin.
+
+Desktop Python plugins, split APK bundles, repository imports, and a remote
+plugin catalog are not supported by this first installation slice. Use Zara's
+existing self-update flow for the Zara host APK itself.
+
+* Implementation and review
+
+The application owns one serialized installation controller with a bounded
+executor queue. Compose observes it and releases its subscription when leaving
+the surface. Installation identity is persisted before commit, and the private
+receiver runs in the same Android process as the main activity. Callbacks must
+match both the current session and a fresh nonce. Replayed or stale callbacks
+cannot complete a different transaction. The staged bytes are SHA-256 checked
+again while being written into the PackageInstaller session.
+
+Relevant tests:
+
+- =PluginApkSecurityTest=: checksum validation, bounded streaming, cancellation,
+  stalled input, empty input, identity checks, and callback correlation;
+- =AppNavigationTest=: hidden drawer route, legacy state migration, default tab;
+- =t/test_android_plugin_install_surface.py=: supplemental manifest/UI wiring.
+
+Before release, run the repository's full gate and Android build, then exercise
+real PackageInstaller permission, cancellation, process recreation, and success
+callbacks. Capture Settings General, Plugins empty/review/error/success,
+small-width/large-font, and alternate-theme screenshots. Pure JVM and source
+contract tests do not replace this Android/device evidence.
