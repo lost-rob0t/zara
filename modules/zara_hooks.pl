@@ -223,3 +223,34 @@ run_hook_goal(Goal, Event) :-
     catch((once(call(Goal, Event)) -> true ; true),
           Error,
           print_message(warning, Error)).
+
+emit_reply(Event, Text) :-
+    before_reply(Event),
+    deliver_safely(alert:alert("Zara", normal, "~w", [Text])),
+    deliver_safely(speak_reply(Text)),
+    after_reply(Event).
+
+deliver_safely(Goal) :-
+    catch((call(Goal) -> true ; true), Error, print_message(warning, Error)).
+
+speak_reply(Text) :-
+    getenv('ZARA_REPLY_TTS_COMMAND', Command),
+    Command \== '',
+    !,
+    process_create(path(Command), ['--', Text], [process(Process)]),
+    bounded_speech_wait(Process, Status),
+    Status == exit(0).
+speak_reply(_).
+
+bounded_speech_wait(Process, Status) :-
+    catch(
+        call_with_time_limit(0.5, process_wait(Process, Status)),
+        time_limit_exceeded,
+        ( terminate_speech_process(Process),
+          Status = timeout
+        )
+    ).
+
+terminate_speech_process(Process) :-
+    catch(process_kill(Process, kill), _, true),
+    catch(process_wait(Process, _), _, true).
