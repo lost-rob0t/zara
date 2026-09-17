@@ -1,9 +1,22 @@
+import groovy.json.JsonSlurper
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
 
+fun githubPullRequestHeadSha(): String? {
+    val eventPath = providers.environmentVariable("GITHUB_EVENT_PATH").orNull ?: return null
+    val eventFile = file(eventPath)
+    if (!eventFile.isFile) return null
+    val payload = JsonSlurper().parse(eventFile) as? Map<*, *> ?: return null
+    val pullRequest = payload["pull_request"] as? Map<*, *> ?: return null
+    val head = pullRequest["head"] as? Map<*, *> ?: return null
+    return head["sha"] as? String
+}
+
 val sourceSha = providers.environmentVariable("ZARA_SOURCE_SHA").orNull
+    ?: githubPullRequestHeadSha()
     ?: providers.exec {
         commandLine("git", "rev-parse", "HEAD")
     }.standardOutput.asText.get().trim()
