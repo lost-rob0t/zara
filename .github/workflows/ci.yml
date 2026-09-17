@@ -260,6 +260,7 @@ jobs:
         run: |
           set -euo pipefail
           sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?ANDROID SDK root is unavailable}}"
+          emulator_bin="$sdk_root/emulator/emulator"
           sdkmanager_bin="$(
             find "$sdk_root/cmdline-tools" \
               -path '*/bin/sdkmanager' \
@@ -279,13 +280,19 @@ jobs:
               exit 1
               ;;
           esac
+          if test -x "$emulator_bin" && "$emulator_bin" -version; then
+            echo "host Android emulator SDK is already healthy"
+            exit 0
+          fi
           for attempt in 1 2 3; do
             echo "emulator SDK install attempt ${attempt}/3"
-            if "$sdkmanager_bin" --install emulator --channel=0; then
+            rm -rf "$sdk_root/emulator" "$sdk_root/.temp"
+            if "$sdkmanager_bin" --install emulator --channel=0 \
+              && test -x "$emulator_bin" && "$emulator_bin" -version; then
               exit 0
             fi
-            echo "emulator SDK install failed; clearing transient package state" >&2
-            rm -rf "$sdk_root/.temp"
+            echo "emulator SDK install failed or verification failed; clearing package state" >&2
+            rm -rf "$sdk_root/emulator" "$sdk_root/.temp"
             sleep "$((attempt * 2))"
           done
           echo "emulator SDK install failed after 3 attempts" >&2
