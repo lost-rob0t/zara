@@ -2,12 +2,6 @@
 % FILE: kb/config.pl
 % ======================================================================
 % Shared semantic configuration (issue #158 split).
-%
-% Everything here is safe to consult on any host, including a headless
-% server: settings and data templates only, never shell commands. Linux
-% device provider configuration (app mappings, dictation, sounds) lives in
-% kb/device_providers.pl and is consulted only by the desktop boot.
-% Server provider configuration lives in kb/server_providers.pl.
 
 :- module(kb_config,
     [
@@ -16,19 +10,17 @@
         todo_context_mode/1,
         todo_format/1,
         todo_template/2,
-
         search_engine/1,
         wake_word/1,
-
         llm_provider/1,
         llm_model/1,
         llm_endpoint/1,
-
         org_browser_setting/2,
         org_browser_effective_setting/2,
         set_org_browser_setting/2,
         clear_org_browser_setting/1,
         org_browser_root/1,
+        org_browser_roots_overridden/0,
         add_org_browser_root/1,
         clear_org_browser_roots/0,
         org_browser_heading_scale/2,
@@ -36,6 +28,7 @@
         set_org_browser_heading_scale/2,
         clear_org_browser_heading_scales/0,
         org_browser_help_source/1,
+        org_browser_help_sources_overridden/0,
         org_browser_default_help_source/1,
         org_browser_effective_help_source/1,
         add_org_browser_help_source/1,
@@ -65,8 +58,10 @@
 :- dynamic llm_endpoint/1.
 :- dynamic org_browser_setting/2.
 :- dynamic org_browser_root/1.
+:- dynamic org_browser_roots_overridden/0.
 :- dynamic org_browser_heading_scale/2.
 :- dynamic org_browser_help_source/1.
+:- dynamic org_browser_help_sources_overridden/0.
 
 % ============================================================
 % ZARATHUSTRA DEFAULT CONFIGURATION
@@ -155,16 +150,15 @@ clear_org_browser_setting(Key) :-
 add_org_browser_root(Path) :-
     validate_org_browser_text(Path, root),
     with_mutex(org_browser_config,
-        ( ( org_browser_root(Path)
-          -> true
-          ; assertz(org_browser_root(Path))
-          ),
+        ( ( org_browser_roots_overridden -> true ; assertz(org_browser_roots_overridden) ),
+          ( org_browser_root(Path) -> true ; assertz(org_browser_root(Path)) ),
           write_org_browser_snapshot_unlocked
         )).
 
 clear_org_browser_roots :-
     with_mutex(org_browser_config,
         ( retractall(org_browser_root(_)),
+          ( org_browser_roots_overridden -> true ; assertz(org_browser_roots_overridden) ),
           write_org_browser_snapshot_unlocked
         )).
 
@@ -194,7 +188,7 @@ clear_org_browser_heading_scales :-
         )).
 
 org_browser_effective_help_source(Path) :-
-    org_browser_help_source(_),
+    org_browser_help_sources_overridden,
     !,
     org_browser_help_source(Path).
 org_browser_effective_help_source(Path) :-
@@ -203,16 +197,15 @@ org_browser_effective_help_source(Path) :-
 add_org_browser_help_source(Path) :-
     validate_org_browser_text(Path, help_source),
     with_mutex(org_browser_config,
-        ( ( org_browser_help_source(Path)
-          -> true
-          ; assertz(org_browser_help_source(Path))
-          ),
+        ( ( org_browser_help_sources_overridden -> true ; assertz(org_browser_help_sources_overridden) ),
+          ( org_browser_help_source(Path) -> true ; assertz(org_browser_help_source(Path)) ),
           write_org_browser_snapshot_unlocked
         )).
 
 clear_org_browser_help_sources :-
     with_mutex(org_browser_config,
         ( retractall(org_browser_help_source(_)),
+          ( org_browser_help_sources_overridden -> true ; assertz(org_browser_help_sources_overridden) ),
           write_org_browser_snapshot_unlocked
         )).
 
@@ -220,8 +213,10 @@ reset_org_browser_config :-
     with_mutex(org_browser_config,
         ( retractall(org_browser_setting(_, _)),
           retractall(org_browser_root(_)),
+          retractall(org_browser_roots_overridden),
           retractall(org_browser_heading_scale(_, _)),
           retractall(org_browser_help_source(_)),
+          retractall(org_browser_help_sources_overridden),
           write_org_browser_snapshot_unlocked
         )).
 
@@ -265,11 +260,15 @@ org_browser_snapshot_dict(Snapshot) :-
             org_browser_heading_scale(Level, Scale),
             HeadingScales),
     findall(Path, org_browser_help_source(Path), HelpSources),
+    ( org_browser_roots_overridden -> RootsOverride = true ; RootsOverride = false ),
+    ( org_browser_help_sources_overridden -> HelpOverride = true ; HelpOverride = false ),
     Snapshot = _{
         version:1,
         settings:Settings,
+        roots_override:RootsOverride,
         roots:Roots,
         heading_scales:HeadingScales,
+        help_sources_override:HelpOverride,
         help_sources:HelpSources
     }.
 
