@@ -12,6 +12,18 @@ def test_ci_names_phone_apk_artifact_with_exact_source_sha():
     assert "source_sha=${SOURCE_SHA}" in workflow
 
 
+def test_green_master_publishes_direct_latest_apks():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+
+    assert "publish-android-latest:" in workflow
+    assert "needs: [test, shared-mic, android]" in workflow
+    assert "github.event_name == 'push' && github.ref == 'refs/heads/master'" in workflow
+    assert "zara-latest.apk" in workflow
+    assert "zara-wear-latest.apk" in workflow
+    assert "android-latest" in workflow
+    assert "mutable=true" in workflow
+
+
 def test_release_assets_use_semver_name_and_record_provenance():
     workflow = (ROOT / ".github/workflows/release.yml").read_text()
 
@@ -30,4 +42,5 @@ def test_repo_documents_the_semver_release_skill():
     assert "exact candidate SHA" in skill
     assert "versionCode" in skill
     assert "Never move or overwrite a release tag" in skill
+    assert "android-latest" in skill
     assert "downloaded GitHub artifact" in skill
