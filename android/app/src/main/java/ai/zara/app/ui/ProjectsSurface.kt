@@ -40,7 +40,7 @@ internal fun ProjectBreadcrumb(project: ProjectContext) {
 @Composable
 internal fun ProjectsSurface(
     state: ProjectContextState,
-    operationError: String?,
+    operationError: String? = null,
     operationBusy: Boolean,
     onCreateProject: (String) -> Unit,
     onSelectProject: (String?) -> Unit,
