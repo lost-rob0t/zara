@@ -2,6 +2,7 @@ package ai.zara.app.device
 
 object AndroidAppAliases {
     private val packagesByAlias = mapOf(
+        "bixby" to listOf("com.samsung.android.bixby.agent"),
         "browser" to listOf(
             "com.sec.android.app.sbrowser",
             "com.android.chrome",
