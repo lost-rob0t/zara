@@ -9,6 +9,7 @@ class LocalModelStore(
     private val root: File,
 ) {
     private val manifest = File(root, ACTIVE_MANIFEST)
+    private val metadataRoot = File(root, METADATA_DIRECTORY)
 
     fun install(
         source: InputStream,
@@ -40,43 +41,105 @@ class LocalModelStore(
             require(actual == metadata.sha256) { "Local model SHA-256 mismatch" }
             if (destination.exists()) require(destination.delete()) { "Existing local model could not be replaced" }
             require(temporary.renameTo(destination)) { "Local model could not be finalized" }
-            writeManifest(destination.name, metadata)
-            return metadata.toSpec(destination.absolutePath)
+            writeCatalogManifest(destination.name, metadata)
+            val spec = metadata.toSpec(destination.absolutePath)
+            activate(spec)
+            return spec
         } catch (error: Throwable) {
             temporary.delete()
             throw error
         }
     }
 
+    fun installedModels(): List<LocalModelSpec> {
+        if (!root.isDirectory) return emptyList()
+        val models = linkedMapOf<Pair<String, String>, LocalModelSpec>()
+        if (metadataRoot.isDirectory) {
+            metadataRoot.listFiles { file -> file.isFile && file.extension == "properties" }
+                ?.sortedBy(File::getName)
+                ?.forEach { file ->
+                    val spec = readManifest(file)
+                    models[spec.id to spec.version] = spec
+                }
+        }
+        // Compatibility with installs created before the provider catalog existed.
+        activeModel()?.let { active -> models.putIfAbsent(active.id to active.version, active) }
+        return models.values.toList()
+    }
+
+    fun model(
+        id: String,
+        version: String,
+    ): LocalModelSpec? {
+        LocalModelMetadata(
+            id = id,
+            version = version,
+            quantization = LocalModelQuantization.INT8,
+            sha256 = "0".repeat(64),
+            maxContextTokens = 128,
+            backend = LocalModelBackend.CPU,
+        )
+        val metadataFile = catalogManifest(id, version)
+        if (metadataFile.isFile) return readManifest(metadataFile)
+        return activeModel()?.takeIf { it.id == id && it.version == version }
+    }
+
+    fun activate(spec: LocalModelSpec) {
+        ensureRoot()
+        val file = File(spec.path).canonicalFile
+        require(file.parentFile == root.canonicalFile) { "Model path escaped app-private storage" }
+        check(file.isFile) { "Local model file is missing" }
+        check(sha256(file) == spec.sha256) { "Local model failed SHA-256 verification" }
+        writeManifest(manifest, file.name, spec.metadata())
+    }
+
     fun activeModel(): LocalModelSpec? {
         if (!manifest.isFile) return null
-        val properties = Properties().apply {
-            manifest.inputStream().buffered().use(::load)
-        }
-        val filename = requireProperty(properties, "filename")
-        val file = File(root, filename).canonicalFile
-        check(file.parentFile == root.canonicalFile) { "Active model path escaped app-private storage" }
-        check(file.isFile) { "Active local model file is missing" }
-        val metadata = LocalModelMetadata(
-            id = requireProperty(properties, "id"),
-            version = requireProperty(properties, "version"),
-            quantization = LocalModelQuantization.requireKnown(requireProperty(properties, "quantization")),
-            sha256 = requireProperty(properties, "sha256"),
-            maxContextTokens = requireProperty(properties, "max_context_tokens").toIntOrNull()
-                ?: error("Active model context limit is invalid"),
-            backend = runCatching {
-                LocalModelBackend.valueOf(requireProperty(properties, "backend"))
-            }.getOrElse { throw IllegalStateException("Active model backend is invalid") },
-        )
-        check(sha256(file) == metadata.sha256) { "Active local model failed SHA-256 verification" }
-        return metadata.toSpec(file.absolutePath)
+        return readManifest(manifest)
     }
 
     fun clear() {
         if (manifest.exists()) check(manifest.delete()) { "Active model manifest could not be removed" }
     }
 
+    private fun readManifest(file: File): LocalModelSpec {
+        val properties = Properties().apply {
+            file.inputStream().buffered().use(::load)
+        }
+        val filename = requireProperty(properties, "filename")
+        val modelFile = File(root, filename).canonicalFile
+        check(modelFile.parentFile == root.canonicalFile) { "Model path escaped app-private storage" }
+        check(modelFile.isFile) { "Local model file is missing" }
+        val metadata = LocalModelMetadata(
+            id = requireProperty(properties, "id"),
+            version = requireProperty(properties, "version"),
+            quantization = LocalModelQuantization.requireKnown(requireProperty(properties, "quantization")),
+            sha256 = requireProperty(properties, "sha256"),
+            maxContextTokens = requireProperty(properties, "max_context_tokens").toIntOrNull()
+                ?: error("Local model context limit is invalid"),
+            backend = runCatching {
+                LocalModelBackend.valueOf(requireProperty(properties, "backend"))
+            }.getOrElse { throw IllegalStateException("Local model backend is invalid") },
+        )
+        check(sha256(modelFile) == metadata.sha256) { "Local model failed SHA-256 verification" }
+        return metadata.toSpec(modelFile.absolutePath)
+    }
+
+    private fun writeCatalogManifest(
+        filename: String,
+        metadata: LocalModelMetadata,
+    ) {
+        check(metadataRoot.mkdirs() || metadataRoot.isDirectory) { "Local model metadata directory is unavailable" }
+        writeManifest(catalogManifest(metadata.id, metadata.version), filename, metadata)
+    }
+
+    private fun catalogManifest(
+        id: String,
+        version: String,
+    ): File = File(metadataRoot, "$id-$version.properties")
+
     private fun writeManifest(
+        destination: File,
         filename: String,
         metadata: LocalModelMetadata,
     ) {
@@ -90,10 +153,13 @@ class LocalModelStore(
             setProperty("max_context_tokens", metadata.maxContextTokens.toString())
             setProperty("backend", metadata.backend.name)
         }
-        val temporary = File(root, ".$ACTIVE_MANIFEST.part")
+        check(destination.parentFile?.mkdirs() != false || destination.parentFile?.isDirectory != false) {
+            "Model metadata directory is unavailable"
+        }
+        val temporary = File(destination.parentFile, ".${destination.name}.part")
         temporary.outputStream().buffered().use { properties.store(it, "Zara local model metadata") }
-        if (manifest.exists()) check(manifest.delete()) { "Old model manifest could not be replaced" }
-        check(temporary.renameTo(manifest)) { "Model manifest could not be finalized" }
+        if (destination.exists()) check(destination.delete()) { "Old model manifest could not be replaced" }
+        check(temporary.renameTo(destination)) { "Model manifest could not be finalized" }
     }
 
     private fun ensureRoot() {
@@ -104,7 +170,7 @@ class LocalModelStore(
         properties: Properties,
         name: String,
     ): String = properties.getProperty(name)?.trim()?.takeIf(String::isNotEmpty)
-        ?: throw IllegalStateException("Active model metadata is missing $name")
+        ?: throw IllegalStateException("Local model metadata is missing $name")
 
     private fun LocalModelMetadata.toSpec(path: String): LocalModelSpec = LocalModelSpec(
         id = id,
@@ -133,6 +199,7 @@ class LocalModelStore(
 
     companion object {
         private const val ACTIVE_MANIFEST = "active.properties"
+        private const val METADATA_DIRECTORY = "metadata"
         private const val MAX_MODEL_BYTES = 8L * 1024 * 1024 * 1024
     }
 }
