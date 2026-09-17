@@ -17,6 +17,8 @@ test(all_supported_overrides_and_reload) :-
         'app_mapping(github, ["custom-browser", "--new-window"]).',
         'direct_app(custom_app).',
         'search_engine("https://example.test/?q=~w").',
+        'project_name("Mara").',
+        'llm_app_name("Mara Android").',
         'dictation_command("custom-dictate").',
         'timer_sound(disabled).',
         'alarm_sound("/tmp/custom-alarm.wav").',
@@ -30,6 +32,8 @@ test(all_supported_overrides_and_reload) :-
     once(kb_device_providers:app_mapping(github, ["custom-browser", "--new-window"])),
     once(kb_device_providers:direct_app(custom_app)),
     once(kb_config:search_engine("https://example.test/?q=~w")),
+    once(kb_config:project_name("Mara")),
+    once(kb_config:llm_app_name("Mara Android")),
     once(kb_device_providers:dictation_command("custom-dictate")),
     once(kb_device_providers:timer_sound(disabled)),
     once(kb_device_providers:alarm_sound("/tmp/custom-alarm.wav")),
@@ -88,8 +92,24 @@ invalid_sound_config('timer_sound("").\n').
 invalid_sound_config('timer_sound(["tone.wav"]).\n').
 invalid_sound_config('timer_sound("disabled").\n').
 
-test(default_wake_words_include_zarathushtra) :-
-    once(kb_config:wake_word("zarathushtra")).
+test(default_project_identity_is_zara) :-
+    once(kb_config:project_name("Zara")),
+    once(kb_config:llm_app_name("Zara")).
+
+test(project_identity_overrides_are_supported) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, 'project_name("Nova").\nllm_app_name("Nova Android").\n'),
+    config_loader:reload_user_config,
+    kb_config:project_name(Project),
+    Project == "Nova",
+    kb_config:llm_app_name(App),
+    App == "Nova Android".
+
+test(empty_project_identity_is_rejected,
+     [throws(error(domain_error(zarathushtra_user_config_fact, _), _))]) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, 'project_name("").\n'),
+    config_loader:reload_user_config.
 
 test(wake_word_override_is_supported) :-
     config_loader:user_config_path(Path),
