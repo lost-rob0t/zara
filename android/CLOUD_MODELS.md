@@ -23,6 +23,25 @@ The Z.AI Coding Plan endpoint is intentionally not interchangeable with Z.AI's g
 
 OpenRouter's OpenAI-compatible API documentation is at https://openrouter.ai/developers.
 
+## OpenRouter provider policy
+
+Cloud-model metadata is stored as schema version `1`. The OpenRouter profile carries a typed provider-routing policy alongside the exact selected model. This follows the same separation used by `llm.starintel.actor`: model/provider policy is explicit configuration and the transport remains a bounded execution adapter.
+
+Current safe defaults are:
+
+- provider sorting: `price`;
+- provider fallback: enabled **only among endpoints serving the same exact model**;
+- accepted quantizations: `fp16`, `bf16`, `fp8`;
+- provider data collection: `deny`;
+- require request-parameter support: enabled;
+- Zero Data Retention requirement: disabled unless explicitly requested.
+
+The policy also supports explicit provider `order`, `only`, and `ignore` lists plus prompt/completion price ceilings in USD per million tokens. Invalid provider slugs, duplicate/unknown quantization entries, conflicting allow/block lists, and invalid price ceilings fail validation.
+
+Zara deliberately does **not** emit OpenRouter's cross-model `models` fallback array. A configured model ID therefore remains the model identity for the request; provider failover does not authorize switching to a different paid model.
+
+The `provider` object is emitted only for the OpenRouter profile. A generic OpenAI-compatible endpoint such as `llm.starintel.actor` receives the ordinary OpenAI-compatible request and remains responsible for its own server-side provider routing, budget policy, and fallback rules.
+
 ## Commands
 
 Provider metadata can be changed from chat without exposing secrets:

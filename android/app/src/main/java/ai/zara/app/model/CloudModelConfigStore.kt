@@ -15,6 +15,9 @@ class CloudModelConfigStore(
             val properties = Properties()
             file.inputStream().use(properties::load)
             CloudModelConfig(
+                schemaVersion = properties.getProperty("schema_version")
+                    ?.toInt()
+                    ?: CloudModelConfig.SCHEMA_VERSION,
                 enabled = properties.getProperty("enabled")?.toBooleanStrictOrNull() ?: false,
                 provider = properties.getProperty("provider")
                     ?.let(CloudModelProvider::fromWireName)
@@ -23,11 +26,35 @@ class CloudModelConfigStore(
                 model = properties.getProperty("model") ?: "",
                 appName = properties.getProperty("app_name") ?: CloudModelConfig.DEFAULT_APP_NAME,
                 maxOutputTokens = properties.getProperty("max_output_tokens")
-                    ?.toIntOrNull()
+                    ?.toInt()
                     ?: CloudModelConfig.DEFAULT_MAX_OUTPUT_TOKENS,
                 deadlineMs = properties.getProperty("deadline_ms")
-                    ?.toLongOrNull()
+                    ?.toLong()
                     ?: CloudModelConfig.DEFAULT_DEADLINE_MS,
+                openRouterPolicy = OpenRouterProviderPolicy(
+                    sort = properties.getProperty("openrouter.sort")
+                        ?.let(OpenRouterProviderSort::fromWireName)
+                        ?: OpenRouterProviderSort.PRICE,
+                    allowFallbacks = properties.getProperty("openrouter.allow_fallbacks")
+                        ?.toBooleanStrictOrNull()
+                        ?: true,
+                    quantizations = properties.optionalCsv("openrouter.quantizations")
+                        ?: OpenRouterProviderPolicy.DEFAULT_ALLOWED_QUANTIZATIONS,
+                    dataCollection = properties.getProperty("openrouter.data_collection")
+                        ?.let(OpenRouterDataCollection::fromWireName)
+                        ?: OpenRouterDataCollection.DENY,
+                    zeroDataRetention = properties.getProperty("openrouter.zdr")
+                        ?.toBooleanStrictOrNull()
+                        ?: false,
+                    requireParameters = properties.getProperty("openrouter.require_parameters")
+                        ?.toBooleanStrictOrNull()
+                        ?: true,
+                    order = properties.optionalCsv("openrouter.order") ?: emptyList(),
+                    only = properties.optionalCsv("openrouter.only") ?: emptyList(),
+                    ignore = properties.optionalCsv("openrouter.ignore") ?: emptyList(),
+                    maxPromptUsdPerMillion = properties.optionalDouble("openrouter.max_prompt_usd_per_m"),
+                    maxCompletionUsdPerMillion = properties.optionalDouble("openrouter.max_completion_usd_per_m"),
+                ),
             ).validated()
         }.getOrElse { CloudModelConfig() }
     }
@@ -39,6 +66,7 @@ class CloudModelConfigStore(
             "Cloud model config directory is unavailable"
         }
         val properties = Properties().apply {
+            setProperty("schema_version", safe.schemaVersion.toString())
             setProperty("enabled", safe.enabled.toString())
             setProperty("provider", safe.provider.wireName)
             setProperty("endpoint", safe.endpoint)
@@ -46,6 +74,21 @@ class CloudModelConfigStore(
             setProperty("app_name", safe.appName)
             setProperty("max_output_tokens", safe.maxOutputTokens.toString())
             setProperty("deadline_ms", safe.deadlineMs.toString())
+            setProperty("openrouter.sort", safe.openRouterPolicy.sort.wireName)
+            setProperty("openrouter.allow_fallbacks", safe.openRouterPolicy.allowFallbacks.toString())
+            setProperty("openrouter.quantizations", safe.openRouterPolicy.quantizations.joinToString(","))
+            setProperty("openrouter.data_collection", safe.openRouterPolicy.dataCollection.wireName)
+            setProperty("openrouter.zdr", safe.openRouterPolicy.zeroDataRetention.toString())
+            setProperty("openrouter.require_parameters", safe.openRouterPolicy.requireParameters.toString())
+            setProperty("openrouter.order", safe.openRouterPolicy.order.joinToString(","))
+            setProperty("openrouter.only", safe.openRouterPolicy.only.joinToString(","))
+            setProperty("openrouter.ignore", safe.openRouterPolicy.ignore.joinToString(","))
+            safe.openRouterPolicy.maxPromptUsdPerMillion?.let {
+                setProperty("openrouter.max_prompt_usd_per_m", it.toString())
+            }
+            safe.openRouterPolicy.maxCompletionUsdPerMillion?.let {
+                setProperty("openrouter.max_completion_usd_per_m", it.toString())
+            }
         }
         val temporary = File(parent, ".${file.name}.tmp")
         try {
@@ -69,4 +112,10 @@ class CloudModelConfigStore(
         }
         return safe
     }
+
+    private fun Properties.optionalCsv(key: String): List<String>? =
+        getProperty(key)?.split(',')?.map(String::trim)?.filter(String::isNotEmpty)
+
+    private fun Properties.optionalDouble(key: String): Double? =
+        getProperty(key)?.trim()?.takeIf(String::isNotEmpty)?.toDouble()
 }

@@ -65,6 +65,82 @@ class CloudModelTest {
     }
 
     @Test
+    fun openRouterPolicyDefaultsAreExplicitAndExactModelOnly() {
+        val safe = CloudModelConfig(
+            enabled = true,
+            provider = CloudModelProvider.OPENROUTER,
+            endpoint = CloudModelConfig.OPENROUTER_ENDPOINT,
+            model = "openai/gpt-5",
+        ).validated()
+
+        assertEquals(OpenRouterProviderSort.PRICE, safe.openRouterPolicy.sort)
+        assertTrue(safe.openRouterPolicy.allowFallbacks)
+        assertEquals(listOf("fp16", "bf16", "fp8"), safe.openRouterPolicy.quantizations)
+        assertEquals(OpenRouterDataCollection.DENY, safe.openRouterPolicy.dataCollection)
+        assertTrue(safe.openRouterPolicy.requireParameters)
+
+        val wire = safe.openRouterPolicy.toWireMap()
+        assertEquals("price", wire["sort"])
+        assertEquals(listOf("fp16", "bf16", "fp8"), wire["quantizations"])
+        assertEquals("deny", wire["data_collection"])
+        assertFalse(wire.containsKey("models"))
+    }
+
+    @Test
+    fun openRouterPolicyRoundTripsActorStyleRoutingAndBudgetCaps() {
+        val root = temporary.newFolder("openrouter-policy")
+        val configFile = File(root, "cloud.properties")
+        val store = CloudModelConfigStore(configFile)
+        val expected = CloudModelConfig(
+            enabled = true,
+            provider = CloudModelProvider.OPENROUTER,
+            endpoint = CloudModelConfig.OPENROUTER_ENDPOINT,
+            model = "anthropic/claude-sonnet-4.5",
+            openRouterPolicy = OpenRouterProviderPolicy(
+                sort = OpenRouterProviderSort.THROUGHPUT,
+                allowFallbacks = false,
+                quantizations = listOf("fp16", "bf16"),
+                dataCollection = OpenRouterDataCollection.DENY,
+                zeroDataRetention = true,
+                requireParameters = true,
+                order = listOf("anthropic", "google-vertex"),
+                only = listOf("anthropic", "google-vertex"),
+                ignore = listOf("deepinfra"),
+                maxPromptUsdPerMillion = 4.0,
+                maxCompletionUsdPerMillion = 20.0,
+            ),
+        ).validated()
+
+        store.save(expected)
+        assertEquals(expected, store.load())
+        assertTrue(configFile.readText().contains("schema_version=1"))
+        assertTrue(configFile.readText().contains("openrouter.max_prompt_usd_per_m=4.0"))
+        assertFalse(configFile.readText().contains("models="))
+    }
+
+    @Test
+    fun openRouterPolicyFailsClosedOnUnknownQuantizationAndConflictingProviders() {
+        assertTrue(
+            runCatching {
+                OpenRouterProviderPolicy(quantizations = listOf("unknown")).validated()
+            }.isFailure
+        )
+        assertTrue(
+            runCatching {
+                OpenRouterProviderPolicy(
+                    only = listOf("openai"),
+                    ignore = listOf("openai"),
+                ).validated()
+            }.isFailure
+        )
+        assertTrue(
+            runCatching {
+                OpenRouterProviderPolicy(maxPromptUsdPerMillion = Double.NaN).validated()
+            }.isFailure
+        )
+    }
+
+    @Test
     fun zaiCodingPlanCannotBecomeGeneralAssistantFallback() {
         val root = temporary.newFolder("zai")
         val configStore = CloudModelConfigStore(File(root, "cloud.properties"))

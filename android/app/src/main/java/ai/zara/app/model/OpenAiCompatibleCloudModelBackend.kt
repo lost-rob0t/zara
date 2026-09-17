@@ -61,6 +61,9 @@ class OpenAiCompatibleCloudModelBackend : CloudModelBackend {
                         .put(JSONObject().put("role", "system").put("content", request.systemPrompt()))
                         .put(JSONObject().put("role", "user").put("content", request.prompt)),
                 )
+            if (safe.provider == CloudModelProvider.OPENROUTER) {
+                payload.put("provider", JSONObject(safe.openRouterPolicy.toWireMap()))
+            }
             connection.outputStream.use { output ->
                 output.write(payload.toString().encodeToByteArray())
             }
