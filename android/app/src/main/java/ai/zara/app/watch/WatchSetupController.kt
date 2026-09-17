@@ -1,6 +1,7 @@
 package ai.zara.app.watch
 
 import android.content.Context
+import java.io.File
 import java.io.IOException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -151,43 +152,73 @@ class WatchSetupController(
         }
         executor.execute {
             runCatching {
-                update { it.copy(phase = WatchSetupPhase.DOWNLOADING, progress = 0f, status = "Downloading verified Zara Wear APK…") }
-                val apk = apkRepository.download { written, total ->
-                    if (total > 0) {
-                        update { it.copy(progress = (written.toFloat() / total).coerceIn(0f, 1f) * 0.35f) }
-                    }
+                update {
+                    it.copy(
+                        phase = WatchSetupPhase.DOWNLOADING,
+                        progress = 0f,
+                        status = "Downloading verified Zara Wear + Agenda APKs…",
+                    )
                 }
-                val remotePath = "/data/local/tmp/zara-wear-${System.currentTimeMillis()}.apk"
-                update { it.copy(phase = WatchSetupPhase.INSTALLING, status = "Sending Zara to the watch…") }
-                WatchAdbTransfer.push(manager, apk, remotePath) { written, total ->
-                    if (total > 0) {
-                        val transfer = (written.toFloat() / total).coerceIn(0f, 1f)
-                        update { it.copy(progress = 0.35f + transfer * 0.6f) }
-                    }
+                val wearApk = apkRepository.downloadWear { written, total ->
+                    updateDownloadProgress(written, total, 0f, 0.20f)
                 }
-                update { it.copy(progress = 0.97f, status = "Installing Zara on the watch…") }
-                val output = WatchAdbTransfer.shell(manager, "pm install -r -t -d $remotePath").trim()
-                runCatching { WatchAdbTransfer.shell(manager, "rm -f $remotePath") }
-                if (!output.contains("Success", ignoreCase = true)) {
-                    throw IOException(output.ifBlank { "Watch package manager returned no result" })
+                val agendaApk = apkRepository.downloadAgenda { written, total ->
+                    updateDownloadProgress(written, total, 0.20f, 0.35f)
                 }
 
-                val legacyPackage = WatchAdbTransfer.shell(manager, "pm path ai.zara.wear").trim()
-                if (legacyPackage.startsWith("package:")) {
-                    runCatching { WatchAdbTransfer.shell(manager, "pm uninstall ai.zara.wear") }
+                installPackage(manager, wearApk, "zara-wear", 0.35f, 0.68f)
+                try {
+                    installPackage(manager, agendaApk, "zara-agenda", 0.68f, 0.96f)
+                } catch (error: Throwable) {
+                    runCatching { uninstallIfPresent(manager, AGENDA_PACKAGE) }
+                    throw error
                 }
+
+                requirePackage(manager, WEAR_PACKAGE)
+                requirePackage(manager, AGENDA_PACKAGE)
+                uninstallIfPresent(manager, LEGACY_WEAR_PACKAGE)
+                update { it.copy(progress = 0.99f, status = "Verified Zara Wear + Agenda on watch…") }
             }.onSuccess {
                 update {
                     it.copy(
                         phase = WatchSetupPhase.INSTALLED,
                         progress = 1f,
-                        status = "Zara Wear installed. Bluetooth/Data Layer can take over normal phone↔watch communication.",
+                        status = "Zara Wear + Agenda installed. Pick Zara Agenda from the watch-face chooser.",
                     )
                 }
                 nodeScanner.scan { result ->
                     result.onSuccess { watches ->
                         update { it.copy(watches = mergeWatches(it.watches, watches)) }
                     }
+                }
+            }.onFailure { error -> fail(message(error)) }
+        }
+    }
+
+    fun uninstallZara() {
+        val manager = WatchAdbConnection.get(appContext)
+        if (!manager.isConnected) {
+            fail("Connect to the watch before uninstalling Zara.")
+            return
+        }
+        update {
+            it.copy(
+                phase = WatchSetupPhase.REMOVING,
+                progress = null,
+                status = "Removing Zara Agenda and Zara Wear…",
+            )
+        }
+        executor.execute {
+            runCatching {
+                uninstallIfPresent(manager, AGENDA_PACKAGE)
+                uninstallIfPresent(manager, WEAR_PACKAGE)
+                uninstallIfPresent(manager, LEGACY_WEAR_PACKAGE)
+            }.onSuccess {
+                update {
+                    it.copy(
+                        phase = WatchSetupPhase.CONNECTED,
+                        status = "Zara Wear + Agenda removed from the watch.",
+                    )
                 }
             }.onFailure { error -> fail(message(error)) }
         }
@@ -204,6 +235,56 @@ class WatchSetupController(
                     status = WatchInstallPolicy.transportNotice,
                 )
             }
+        }
+    }
+
+    private fun installPackage(
+        manager: AdbConnectionManager,
+        apk: File,
+        slug: String,
+        startProgress: Float,
+        endProgress: Float,
+    ) {
+        val remotePath = "/data/local/tmp/$slug-${System.currentTimeMillis()}.apk"
+        update { it.copy(phase = WatchSetupPhase.INSTALLING, status = "Sending $slug to the watch…") }
+        try {
+            WatchAdbTransfer.push(manager, apk, remotePath) { written, total ->
+                if (total > 0) {
+                    val fraction = (written.toFloat() / total).coerceIn(0f, 1f)
+                    val progress = startProgress + (endProgress - startProgress) * fraction * 0.85f
+                    update { it.copy(progress = progress) }
+                }
+            }
+            update { it.copy(status = "Installing $slug on the watch…") }
+            val output = WatchAdbTransfer.shell(manager, "pm install -r -t -d $remotePath").trim()
+            if (!output.contains("Success", ignoreCase = true)) {
+                throw IOException(output.ifBlank { "Watch package manager returned no result for $slug" })
+            }
+            update { it.copy(progress = endProgress) }
+        } finally {
+            runCatching { WatchAdbTransfer.shell(manager, "rm -f $remotePath") }
+        }
+    }
+
+    private fun updateDownloadProgress(written: Long, total: Long, start: Float, end: Float) {
+        if (total <= 0) return
+        val fraction = (written.toFloat() / total).coerceIn(0f, 1f)
+        update { it.copy(progress = start + (end - start) * fraction) }
+    }
+
+    private fun requirePackage(manager: AdbConnectionManager, packageName: String) {
+        val path = WatchAdbTransfer.shell(manager, "pm path $packageName").trim()
+        if (!path.startsWith("package:")) {
+            throw IOException("$packageName was not present after installation")
+        }
+    }
+
+    private fun uninstallIfPresent(manager: AdbConnectionManager, packageName: String) {
+        val path = WatchAdbTransfer.shell(manager, "pm path $packageName").trim()
+        if (!path.startsWith("package:")) return
+        val output = WatchAdbTransfer.shell(manager, "pm uninstall $packageName").trim()
+        if (!output.contains("Success", ignoreCase = true)) {
+            throw IOException(output.ifBlank { "Could not uninstall $packageName" })
         }
     }
 
@@ -242,4 +323,10 @@ class WatchSetupController(
             .mapNotNull { it.message?.takeIf(String::isNotBlank) }
             .firstOrNull()
             ?: error.javaClass.simpleName
+
+    companion object {
+        private const val WEAR_PACKAGE = "ai.zara.app"
+        private const val AGENDA_PACKAGE = "ai.zara.agenda"
+        private const val LEGACY_WEAR_PACKAGE = "ai.zara.wear"
+    }
 }
