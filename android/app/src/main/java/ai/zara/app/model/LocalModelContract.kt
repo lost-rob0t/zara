@@ -126,5 +126,7 @@ interface LocalModelBackend : AutoCloseable {
         onText: (String) -> Unit,
     ): LocalModelResult
 
+    fun cancel() = Unit
+
     override fun close() = Unit
 }
