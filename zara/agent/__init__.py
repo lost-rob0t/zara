@@ -32,6 +32,7 @@ from .prompting import build_agent_system_prompt
 from .tools.registry import ToolRegistry
 from .user_hooks import UserHookLoader
 from ..config import ZaraConfig, get_config
+from ..llm import OpenRouterPolicy
 from ..memory import build_memory_manager, MemoryManager
 from ..latency import LatencyTrace
 from ..self_hosted_models import LlamaCppSettings, ManagedLlamaCppRuntime
@@ -146,7 +147,6 @@ class AgentManager:
             (item for item in backends if item.name == configured_backend),
             None,
         )
-
         overrides = [item for item in advice if item.kind == "override"]
         override_conflict = len(overrides) > 1
         winner = (
@@ -207,7 +207,7 @@ class AgentManager:
         return base
 
     def _create_llm_client(self, llm_config: Dict[str, Any]):
-        provider = llm_config.get("provider", "ollama")
+        provider = str(llm_config.get("provider", "ollama")).strip().lower()
         model = llm_config.get("model")
         endpoint = llm_config.get("endpoint")
 
@@ -237,10 +237,44 @@ class AgentManager:
             from langchain_openai import ChatOpenAI
 
             api_key = llm_config.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")
+            if not api_key:
+                raise ValueError("OPENROUTER_API_KEY is not set")
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError("OpenRouter model must be explicit")
+            policy = OpenRouterPolicy.from_mapping(
+                llm_config.get("openrouter_policy")
+            ).to_wire_dict()
+            base_url = self._openai_compatible_base(
+                endpoint,
+                "https://openrouter.ai/api/v1",
+            )
             return ChatOpenAI(
-                model=model or "openrouter/free",
+                model=model.strip(),
                 api_key=api_key,
-                openai_api_base=endpoint or "https://openrouter.ai/api/v1",
+                openai_api_base=base_url,
+                extra_body={"provider": policy},
+                timeout=60.0,
+                max_retries=2,
+            )
+
+        if provider == "starintel":
+            from langchain_openai import ChatOpenAI
+
+            api_key = llm_config.get("starintel_api_key") or os.getenv(
+                "STAR_LLM_ACTOR_TOKEN"
+            )
+            if not api_key:
+                raise ValueError("STAR_LLM_ACTOR_TOKEN is not set")
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError("StarIntel model must be explicit")
+            base_url = self._openai_compatible_base(
+                endpoint,
+                "https://llm.starintel.actor/v1",
+            )
+            return ChatOpenAI(
+                model=model.strip(),
+                api_key=api_key,
+                openai_api_base=base_url,
                 timeout=60.0,
                 max_retries=2,
             )
