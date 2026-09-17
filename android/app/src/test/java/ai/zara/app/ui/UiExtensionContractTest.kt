@@ -148,6 +148,21 @@ class UiExtensionContractTest {
     }
 
     @Test
+    fun typedPluginActionsStayDisabledUntilHostDispatcherExists() {
+        val pluginAction = UiContribution(
+            id = "sync",
+            slot = UiSlot.SETTINGS,
+            kind = UiContributionKind.BUTTON,
+            label = "Sync",
+            action = "plugin:sync",
+        )
+        val routeAction = pluginAction.copy(id = "settings", action = "route:settings")
+
+        assertFalse(pluginAction.isUiActionEnabled())
+        assertTrue(routeAction.isUiActionEnabled())
+    }
+
+    @Test
     fun androidToggleRendererDoesNotOwnCanonicalPluginState() {
         val source = File("src/main/java/ai/zara/app/ui/AndroidUiExtensions.kt").readText()
 
