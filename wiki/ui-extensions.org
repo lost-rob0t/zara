@@ -1,0 +1,183 @@
+#+title: UI extensions
+
+* Overview
+
+Zara desktop and Zara Android render UI extensions from one semantic contribution
+model. Configuration describes *what* should appear; PySide6/Qt and Jetpack
+Compose remain the native renderers.
+
+UI configuration can come from:
+
+- desktop =init.py=;
+- desktop =init.pl=;
+- Android app-private portable =init.py=;
+- Android Logic-workspace Prolog, including an =init.pl= source;
+- declarative plugin =ui.json= manifests.
+
+The UI layer does not create a second plugin runtime. Plugin lifecycle,
+capabilities, permissions, and enablement stay with Zara's canonical plugin and
+runtime systems. UI manifests only describe presentation contributions.
+
+* Contribution ABI
+
+A contribution has these fields:
+
+| Field | Meaning |
+|-
+| =id= | Portable contribution identifier. |
+| =slot= | =drawer=, =chat.top=, =chat.bottom=, =settings=, or =plugins=. |
+| =kind= | =surface=, =section=, =text=, =button=, =toggle=, or =status=. |
+| =label= | User-visible text. |
+| =action= | Semantic action. Required for surfaces, buttons, and toggles. |
+| =priority= | Lower numbers render first. |
+| =platforms= | Any non-empty subset of =desktop= and =android=. |
+
+Supported action schemes are deliberately small:
+
+- =route:NAME= — navigate to a Zara surface;
+- =prompt:TEXT= — hand text to the normal Zara interaction path;
+- =submit:TEXT= — submit text through the normal Zara client/runtime path;
+- =plugin:TEXT= — hand a plugin-oriented command payload to the normal Zara path.
+
+Actions do not bypass existing authentication, plugin, device, permission, or
+runtime boundaries.
+
+* Python init
+
+On desktop, Zara reads =init.py= from the normal Zara configuration directory
+(the same directory that contains the rest of the user configuration). The file
+must expose =register(ui)=.
+
+#+begin_src python
+def register(ui):
+    ui.add(
+        "logic-shortcut",
+        "drawer",
+        "surface",
+        "Logic +",
+        "route:logic",
+        20,
+        ["desktop", "android"],
+    )
+    ui.add(
+        "symbolic-query",
+        "chat.top",
+        "button",
+        "Run symbolic query",
+        "submit:/prolog demo(Result)",
+        30,
+        ["desktop"],
+    )
+#+end_src
+
+Desktop =init.py= is ordinary trusted-local Python. UI registration is staged,
+so an exception does not replace the last valid UI generation.
+
+** Android portable Python
+
+Android reads the portable UI file from the app-private UI config directory:
+=filesDir/ui-config/init.py=.
+
+The Android UI process deliberately supports only the portable subset shown
+above: an exact =def register(ui):= followed by positional =ui.add(...)= calls.
+Imports, loops, arbitrary function calls, and other executable Python are
+rejected. This keeps UI customization portable without inventing another Python
+execution authority inside the Android UI process.
+
+General Android Python plugin execution belongs to Zara's typed plugin runtime
+(e.g. the =python_termux= runtime), not to UI configuration.
+
+* Prolog init
+
+Desktop reads =init.pl= from the Zara configuration directory. It is normal
+trusted-local Prolog and may compute =zara_ui/1= dynamically.
+
+#+begin_src prolog
+zara_ui(ui(logic_plus,
+           drawer,
+           surface,
+           "Logic +",
+           "route:logic",
+           20,
+           [desktop, android])).
+
+zara_ui(ui(symbolic_ready,
+           'chat.top',
+           status,
+           "Symbolic runtime ready",
+           "",
+           5,
+           [desktop])).
+#+end_src
+
+Android does not start a second Prolog engine. The existing app-private Logic
+workspace is already consulted by the local Trealla server. Put the same
+=zara_ui/1= clauses in any workspace =.pl= source (using =init.pl= is the
+recommended convention); Android queries =zara_ui(Result)= and projects the
+returned =ui/7= terms through the same contribution ABI.
+
+* Plugin UI manifests
+
+Plugin code does not need to be imported merely to discover its UI. A plugin can
+ship a declarative manifest modeled after Agent Zero's split between backend
+plugin lifecycle and WebUI extension contributions.
+
+Desktop discovers either of these forms under configured plugin search paths:
+
+- =PLUGIN.ui.json=
+- =PLUGIN/ui.json=
+
+Android consumes installed UI manifests from the app-private
+=filesDir/ui-config/plugins/= tree. Installation/capability authority still
+belongs to the canonical Android plugin system; the manifest is presentation
+metadata only.
+
+#+begin_src json
+{
+  "api_version": "1",
+  "plugin": "notes",
+  "contributions": [
+    {
+      "id": "notes",
+      "slot": "drawer",
+      "kind": "surface",
+      "label": "Notes",
+      "action": "plugin:open notes",
+      "priority": 40,
+      "platforms": ["desktop", "android"]
+    },
+    {
+      "id": "notes-status",
+      "slot": "chat.top",
+      "kind": "status",
+      "label": "Notes indexed",
+      "priority": 50,
+      "platforms": ["desktop", "android"]
+    }
+  ]
+}
+#+end_src
+
+Plugin enabled/disabled state is not owned by the UI manifest. Desktop consults
+the canonical plugin configuration before projecting a manifest. Android's UI
+loader likewise does not introduce a manifest-level enable switch.
+
+* Native rendering
+
+Desktop projects contributions into the canonical Copilot using Qt widgets.
+Android projects the same semantic objects into the canonical Compose shell.
+Current native slots include the navigation drawer, chat top/bottom, Settings,
+and the Plugins surface.
+
+The Android Plugins route is a real manifest-backed surface rather than a fake
+backend placeholder: it shows installed UI contributions grouped by plugin
+owner. Backend plugin execution remains separate.
+
+* Failure and ordering rules
+
+- each owner replaces its previous contribution generation atomically;
+- duplicate =(slot,id)= pairs for one owner fail closed;
+- malformed actions, platforms, slots, or kinds fail closed;
+- contributions are ordered by priority, then slot, owner, and id;
+- UI discovery never imports plugin Python merely to render a control;
+- Android portable Python cannot execute arbitrary code in the UI process.
