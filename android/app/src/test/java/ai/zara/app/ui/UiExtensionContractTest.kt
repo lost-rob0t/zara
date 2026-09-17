@@ -110,6 +110,41 @@ class UiExtensionContractTest {
     }
 
     @Test
+    fun brokenPortablePythonDoesNotHideTrustedPluginProjection() {
+        val root = Files.createTempDirectory("zara-ui-isolation").toFile()
+        root.resolve("init.py").writeText(
+            """
+            def register(ui):
+                import os
+            """.trimIndent(),
+        )
+        val contribution = UiContribution(
+            id = "status",
+            slot = UiSlot.PLUGINS,
+            kind = UiContributionKind.STATUS,
+            label = "Ready",
+            platforms = setOf(UiPlatform.ANDROID),
+        )
+        try {
+            val repository = AndroidUiExtensionRepository(
+                root = root,
+                prologQuery = { query ->
+                    CompletableFuture.completedFuture(LocalQueryResult(query, emptyList(), 1))
+                },
+                pluginProjectionProvider = {
+                    listOf(AndroidPluginUiProjection("notes", true, true, 3, listOf(contribution)))
+                },
+            )
+
+            val projected = repository.load().get()
+            assertEquals(listOf("plugin:notes"), projected.map { it.owner })
+            assertEquals(listOf("status"), projected.map { it.id })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun invalidActionSchemeFailsClosed() {
         assertThrows(IllegalArgumentException::class.java) {
             UiContribution(
