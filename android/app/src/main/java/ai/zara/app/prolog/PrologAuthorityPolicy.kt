@@ -104,11 +104,12 @@ object PrologAuthorityPolicy {
         "(?:[A-Z_][A-Za-z0-9_]*\\s*:\\s*[A-Z_][A-Za-z0-9_]*|[a-z][A-Za-z0-9_]*\\s*:\\s*[A-Z_][A-Za-z0-9_]*)",
     )
     private val dynamicBareGoal = Regex(
-        "(?:^|[,;]|->)\\s*(?:\\\\+\\s*)?([A-Z_][A-Za-z0-9_]*)\\s*(?=(?:[,;]|->|$))",
+        "(?:^|[,;]|->)\\s*([A-Z_][A-Za-z0-9_]*)\\s*(?=(?:[,;]|->|$))",
     )
     private val parenthesizedDynamicGoal = Regex(
         "(?<![A-Za-z0-9_])\\(\\s*[A-Z_][A-Za-z0-9_]*\\s*\\)",
     )
+    private val negationMetaGoal = Regex("""\\\+""")
     private val safeSchemaDirective = Regex(
         "^zara_schema\\(\\s*[a-z][A-Za-z0-9_]*\\s*,\\s*[0-9]{1,3}\\s*,\\s*\\[[^]]*]\\s*\\)$",
     )
@@ -218,6 +219,7 @@ object PrologAuthorityPolicy {
         if (dynamicQualifiedGoal.containsMatchIn(code)) names += "dynamic module goal"
         if (dynamicBareGoal.containsMatchIn(code)) names += "dynamic variable goal"
         if (parenthesizedDynamicGoal.containsMatchIn(code)) names += "parenthesized dynamic variable goal"
+        if (negationMetaGoal.containsMatchIn(code)) names += "\\+/1 meta goal"
         return names.distinct()
     }
 
