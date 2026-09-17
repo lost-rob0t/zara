@@ -1,22 +1,15 @@
 package ai.zara.app.device
 
-import ai.zara.app.runtime.DeviceCapability
-
 class AppSearchAdapter(
     private val launcher: AppSearchLauncher,
-) : DeviceCapabilityAdapter {
-    override val capability = DeviceCapability.AppSearch
-
-    override fun isAvailable(): Boolean = try {
+) {
+    fun isAvailable(): Boolean = try {
         SEARCHABLE_ALIASES.any(launcher::isAvailable)
     } catch (_: Throwable) {
         false
     }
 
-    override fun execute(arguments: DeviceActionArguments): DeviceActionResult {
-        if (arguments !is DeviceActionArguments.AppSearch) {
-            return DeviceActionResult.Error(DeviceActionErrorCode.InvalidArguments)
-        }
+    fun execute(arguments: DeviceActionArguments.AppSearch): DeviceActionResult {
         val alias = arguments.app.trim().lowercase()
         val query = arguments.query.trim()
         if (alias !in SEARCHABLE_ALIASES || query.isEmpty() || query.encodeToByteArray().size > 512) {
@@ -41,7 +34,7 @@ class AppSearchAdapter(
         }
     }
 
-    private companion object {
+    companion object {
         val SEARCHABLE_ALIASES = setOf("youtube", "youtube_revanced")
     }
 }
