@@ -84,7 +84,7 @@ enum class AppSurface(val label: String, val glyph: String, val gatedIssue: Stri
     Voice("Voice", "◉"),
     Projects("Projects", "◇", "#653"),
     Remote("Remote", "⇄"),
-    Scheduled("Scheduled", "◷", "#654"),
+    Scheduled("Scheduled", "◷"),
     Plugins("Plugins", "⬡", "#655"),
     Themes("Themes", "◐"),
     Diagnostics("Diagnostics", "⌁"),
@@ -240,7 +240,13 @@ fun ZaraApp(
                             onConnect = onConnect,
                             padding = padding,
                         )
-                        AppSurface.Scheduled -> GatedSurface(selected, padding)
+                        AppSurface.Scheduled -> ScheduledSurface(
+                            lastTurn = lastTurn,
+                            operationError = operationError,
+                            operationBusy = operationBusy,
+                            onSendText = onSendText,
+                            padding = padding,
+                        )
                         AppSurface.Plugins -> GatedSurface(selected, padding)
                         AppSurface.Themes -> ThemesSurface(
                             selected = selectedTheme,
