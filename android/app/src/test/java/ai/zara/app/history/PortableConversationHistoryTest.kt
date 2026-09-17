@@ -45,4 +45,14 @@ class PortableConversationHistoryTest {
         assertTrue(ui.contains("localConversation?.messages.orEmpty()"))
         assertTrue(!ui.contains("local history is not enabled yet"))
     }
+
+    @Test
+    fun `android legacy owner migration is numeric uid only`() {
+        val store = File("src/main/java/ai/zara/app/history/PortableConversationStore.kt").readText()
+
+        assertTrue(store.contains("substr(principal_id, 1, 4) = 'uid:'"))
+        assertTrue(store.contains("length(substr(principal_id, 5)) > 0"))
+        assertTrue(store.contains("substr(principal_id, 5) NOT GLOB '*[^0-9]*'"))
+        assertTrue(!store.contains("principal_id LIKE 'uid:%'"))
+    }
 }
