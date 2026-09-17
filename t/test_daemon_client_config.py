@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+import zmq
 
 from zara import daemon_client
 
@@ -33,6 +34,11 @@ def clear_daemon_env(monkeypatch) -> None:
         daemon_client.CURVE_SERVER_PUBLIC_KEY_ENV,
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+def curve_keypair() -> tuple[str, str]:
+    public_key, secret_key = zmq.curve_keypair()
+    return public_key.decode("ascii"), secret_key.decode("ascii")
 
 
 def test_configured_daemon_endpoint_is_default(monkeypatch):
@@ -111,59 +117,53 @@ def test_unconfigured_curve_auth_returns_none(monkeypatch):
 
 def test_complete_curve_configuration_is_trimmed(monkeypatch):
     clear_daemon_env(monkeypatch)
+    client_public, client_secret = curve_keypair()
+    server_public, _ = curve_keypair()
     config = FakeConfig(
         {
-            "curve_public_key": " public ",
-            "curve_secret_key": " secret ",
-            "curve_server_public_key": " server ",
+            "curve_public_key": f" {client_public} ",
+            "curve_secret_key": f" {client_secret} ",
+            "curve_server_public_key": f" {server_public} ",
         }
     )
 
     curve = daemon_client.curve_client_config(config)
 
     assert curve is not None
-    assert curve.public_key == "public"
-    assert curve.secret_key == "secret"
-    assert curve.server_public_key == "server"
+    assert curve.public_key == client_public
+    assert curve.secret_key == client_secret
+    assert curve.server_public_key == server_public
 
 
-@pytest.mark.parametrize(
-    ("env_name", "env_value", "expected"),
-    [
-        (
-            daemon_client.CURVE_PUBLIC_KEY_ENV,
-            "env-public",
-            ("env-public", "config-secret", "config-server"),
-        ),
-        (
-            daemon_client.CURVE_SECRET_KEY_ENV,
-            "env-secret",
-            ("config-public", "env-secret", "config-server"),
-        ),
-        (
-            daemon_client.CURVE_SERVER_PUBLIC_KEY_ENV,
-            "env-server",
-            ("config-public", "config-secret", "env-server"),
-        ),
-    ],
-)
-def test_curve_environment_values_override_config_per_field(
-    monkeypatch,
-    env_name,
-    env_value,
-    expected,
-):
+@pytest.mark.parametrize("field", ["public", "secret", "server"])
+def test_curve_environment_values_override_config_per_field(monkeypatch, field):
     clear_daemon_env(monkeypatch)
-    monkeypatch.setenv(env_name, env_value)
-    config = FakeConfig(
-        {
-            "curve_public_key": "config-public",
-            "curve_secret_key": "config-secret",
-            "curve_server_public_key": "config-server",
-        }
-    )
+    client_public, client_secret = curve_keypair()
+    alternate_public, alternate_secret = curve_keypair()
+    server_public, _ = curve_keypair()
+    alternate_server_public, _ = curve_keypair()
 
-    curve = daemon_client.curve_client_config(config)
+    config_values = {
+        "curve_public_key": client_public,
+        "curve_secret_key": client_secret,
+        "curve_server_public_key": server_public,
+    }
+    expected = (client_public, client_secret, server_public)
+
+    if field == "public":
+        config_values["curve_public_key"] = alternate_public
+        monkeypatch.setenv(daemon_client.CURVE_PUBLIC_KEY_ENV, client_public)
+    elif field == "secret":
+        config_values["curve_secret_key"] = alternate_secret
+        monkeypatch.setenv(daemon_client.CURVE_SECRET_KEY_ENV, client_secret)
+    else:
+        monkeypatch.setenv(
+            daemon_client.CURVE_SERVER_PUBLIC_KEY_ENV,
+            alternate_server_public,
+        )
+        expected = (client_public, client_secret, alternate_server_public)
+
+    curve = daemon_client.curve_client_config(FakeConfig(config_values))
 
     assert curve is not None
     assert (curve.public_key, curve.secret_key, curve.server_public_key) == expected
