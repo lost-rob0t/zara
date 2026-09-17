@@ -6,8 +6,7 @@ import java.nio.charset.StandardCharsets
 
 enum class DeviceCapability(val wireId: String) {
     OpenApp("open_app"),
-    OpenUri("open_uri"),
-    AppSearch("app_search");
+    OpenUri("open_uri");
 
     companion object {
         fun fromWireId(value: String): DeviceCapability =
