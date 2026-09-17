@@ -55,21 +55,21 @@ test(browser_lifecycle_hook_stages_are_registered) :-
         org_browser_before_index,
         org_browser_test,
         10,
-        org_browser_config_tests:record(before_index),
+        plunit_org_browser_config:record(before_index),
         _
     ),
     zara_hooks:register_hook(
         org_browser_node_selected,
         org_browser_test,
         20,
-        org_browser_config_tests:record(node_selected),
+        plunit_org_browser_config:record(node_selected),
         _
     ),
     zara_hooks:register_hook(
         org_browser_after_memory_sync,
         org_browser_test,
         30,
-        org_browser_config_tests:record(after_memory_sync),
+        plunit_org_browser_config:record(after_memory_sync),
         _
     ),
     zara_hooks:run_hook(org_browser_before_index, workspace(main)),
