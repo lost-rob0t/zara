@@ -12,10 +12,13 @@ object PrologAuthorityPolicy {
         "abolish",
         "access_file",
         "absolute_file_name",
+        "apply",
         "assert",
         "asserta",
         "assertz",
+        "bagof",
         "call",
+        "call_cleanup",
         "catch",
         "clause",
         "close",
@@ -26,29 +29,42 @@ object PrologAuthorityPolicy {
         "directory_files",
         "engine_create",
         "ensure_loaded",
+        "exclude",
+        "findall",
+        "foldl",
+        "forall",
         "foreign_struct",
         "future",
         "geturl",
         "get_url",
+        "goal_expansion",
         "halt",
+        "ignore",
+        "include",
         "initialization",
         "load_files",
         "load_foreign_library",
         "make_directory",
+        "maplist",
         "once",
         "open",
+        "partition",
+        "phrase",
+        "phrase_from_file",
         "process_create",
         "read",
         "rename_file",
         "retract",
         "retractall",
+        "scanl",
         "set_prolog_flag",
+        "setof",
+        "setup_call_cleanup",
         "shell",
         "sleep",
         "system",
         "task_create",
         "term_expansion",
-        "goal_expansion",
         "thread_create",
         "thread_sleep",
         "throw",
@@ -61,7 +77,6 @@ object PrologAuthorityPolicy {
     private val forbiddenPrefixes = listOf(
         "curl_",
         "ffi_",
-        "file_",
         "foreign_",
         "http_",
         "https_",
@@ -76,9 +91,16 @@ object PrologAuthorityPolicy {
     private val callPattern = Regex(
         "(?:^|[^A-Za-z0-9_])(?:[a-z][A-Za-z0-9_]*:)?([a-z][A-Za-z0-9_]*)\\s*(?=\\()",
     )
+    private val quotedCallPattern = Regex(
+        "'([A-Za-z][A-Za-z0-9_]*)'\\s*(?=\\()",
+    )
     private val bareHaltPattern = Regex(
         "(?:^|[,;!])\\s*(?:[a-z][A-Za-z0-9_]*:)?halt\\s*(?=$|[,;!])",
         RegexOption.IGNORE_CASE,
+    )
+    private val dynamicTermConstruction = Regex("=\\s*\\.\\.")
+    private val dynamicQualifiedGoal = Regex(
+        "(?:[A-Z_][A-Za-z0-9_]*\\s*:\\s*[A-Z_][A-Za-z0-9_]*|[a-z][A-Za-z0-9_]*\\s*:\\s*[A-Z_][A-Za-z0-9_]*)",
     )
     private val safeSchemaDirective = Regex(
         "^zara_schema\\(\\s*[a-z][A-Za-z0-9_]*\\s*,\\s*[0-9]{1,3}\\s*,\\s*\\[[^]]*]\\s*\\)$",
@@ -117,7 +139,7 @@ object PrologAuthorityPolicy {
                     unsafeCalls(body).forEach { name ->
                         diagnostics += PrologDiagnostic(
                             clause.line,
-                            "Effectful predicate is not available in the private workspace: $name",
+                            "Effectful or meta predicate is not available in the private workspace: $name",
                         )
                     }
                 }
@@ -167,18 +189,29 @@ object PrologAuthorityPolicy {
     }
 
     private fun unsafeCalls(text: String): List<String> {
+        val names = mutableListOf<String>()
+        quotedCallPattern.findAll(text).forEach { match ->
+            val name = match.groupValues[1].lowercase()
+            if (isForbidden(name)) names += name
+        }
+
         val code = maskQuotedAndComments(text)
-        val names = callPattern.findAll(code)
+        names += callPattern.findAll(code)
             .map { it.groupValues[1].lowercase() }
             .filter(::isForbidden)
-            .toMutableList()
+            .toList()
         if (bareHaltPattern.containsMatchIn(code)) names += "halt"
+        if (dynamicTermConstruction.containsMatchIn(code)) names += "=../2"
+        if (dynamicQualifiedGoal.containsMatchIn(code)) names += "dynamic module goal"
         return names.distinct()
     }
 
     private fun isForbidden(rawName: String): Boolean {
         val name = rawName.substringAfterLast(':').lowercase()
-        return name in forbiddenNames || forbiddenPrefixes.any(name::startsWith)
+        if (name in forbiddenNames || forbiddenPrefixes.any(name::startsWith)) return true
+        if (name.startsWith("file_") || name.endsWith("_file") || "_file_" in name) return true
+        if (name.startsWith("directory_") || name.endsWith("_directory") || "_directory_" in name) return true
+        return false
     }
 
     private fun maskQuotedAndComments(text: String): String {
