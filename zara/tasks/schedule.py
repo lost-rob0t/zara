@@ -231,23 +231,35 @@ class ScheduledTaskStore:
         label: Optional[str] = None,
         now: Optional[datetime] = None,
     ) -> ScheduledTask:
+        parsed = CronExpression.parse(cron)
+        clean_goal = _validate_text(goal, "goal", max_chars=2000)
+        selected_mode = _coerce_mode(mode)
+        clean_label = _validate_label(label, clean_goal)
         existing = self.get_schedule(schedule_id, principal_id=principal_id)
         if existing is None:
             return self.create_schedule(
                 principal_id=principal_id,
                 schedule_id=schedule_id,
-                cron=cron,
-                goal=goal,
-                mode=mode,
-                label=label,
+                cron=parsed.expression,
+                goal=clean_goal,
+                mode=selected_mode,
+                label=clean_label,
                 now=now,
             )
 
-        parsed = CronExpression.parse(cron)
-        clean_goal = _validate_text(goal, "goal", max_chars=2000)
+        if (
+            existing.cron == parsed.expression
+            and existing.goal == clean_goal
+            and existing.mode == selected_mode
+            and existing.label == clean_label
+        ):
+            return existing
+
         current = now or _local_now()
         next_run_at = existing.next_run_at
-        if existing.state is ScheduleState.ACTIVE:
+        if existing.state is ScheduleState.ACTIVE and (
+            existing.cron != parsed.expression or next_run_at is None
+        ):
             next_run_at = _iso(parsed.next_after(current))
         self._db.execute(
             """
@@ -256,10 +268,10 @@ class ScheduledTaskStore:
             WHERE schedule_id = ? AND principal_id = ?
             """,
             (
-                _validate_label(label, clean_goal),
+                clean_label,
                 parsed.expression,
                 clean_goal,
-                _coerce_mode(mode).value,
+                selected_mode.value,
                 next_run_at,
                 _iso(current),
                 _validate_schedule_id(schedule_id),
@@ -546,6 +558,7 @@ class ScheduledTaskService:
             )
 
     async def run_due(self, *, now: Optional[datetime] = None) -> int:
+        await self.sync_prolog_definitions()
         current = now or self._now()
         rows = self._store.due_schedules(
             principal_id=self._principal_id,
