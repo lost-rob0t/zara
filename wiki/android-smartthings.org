@@ -1,0 +1,175 @@
+#+title: Zara Android SmartThings Prolog Plugin
+
+* Status
+
+The Android SmartThings integration is a first-class Prolog-driven device adapter.
+It deliberately does not attach arbitrary network side effects to chat parsing.
+Prolog decides the requested SmartThings effect, and a bounded Kotlin actor executes
+that already-decided effect against the SmartThings REST API.
+
+The initial Android slice supports personal/development access with a short-lived
+SmartThings Personal Access Token (PAT). Production multi-user account linking must
+use SmartThings OAuth 2.0 through a server-side service integration; the SmartThings
+client secret must never be embedded in the APK.
+
+* Architecture
+
+#+begin_example
+Zara Android caller
+      |
+      v
+SmartThingsAndroidPlugin
+      |
+      +-- queryLocalProlog(... Result)
+      |         |
+      |         v
+      |   smartthings.pl
+      |         |
+      |         v
+      |   smartthings_action(...)
+      |
+      v
+SmartThingsPluginActor
+      |
+      v
+SmartThingsApiGateway
+      |
+      v
+https://api.smartthings.com/v1
+#+end_example
+
+There is one SmartThings executor thread (=zara-smartthings=). Multiple Prolog
+solutions are rejected instead of fanning a single user action out to multiple
+physical-device commands.
+
+Credentials never enter the Prolog workspace. The PAT is wrapped with an
+AndroidKeyStore AES-GCM key and stored below =noBackupFilesDir=. Remote HTTP error
+bodies are not surfaced in user-facing failures.
+
+* Prolog source
+
+On first construction of =ZaraApplication.appSession=, Zara installs
+=smartthings.pl= into the normal private Prolog workspace if the file does not
+already exist. User edits are never overwritten.
+
+Add device aliases as facts in that file:
+
+#+begin_src prolog
+smartthings_device(desk_lamp, "00000000-0000-0000-0000-000000000000").
+smartthings_device(kitchen_lamp, "11111111-1111-1111-1111-111111111111").
+#+end_src
+
+The built-in predicates are:
+
+#+begin_src prolog
+smartthings_devices(Result).
+smartthings_status(DeviceAlias, Result).
+smartthings_on(DeviceAlias, Result).
+smartthings_off(DeviceAlias, Result).
+smartthings_set_level(DeviceAlias, Level, Result).
+smartthings_command(DeviceAlias, Component, Capability, Command, Arguments, Result).
+#+end_src
+
+Examples of the bounded effects returned to Android:
+
+#+begin_src prolog
+smartthings_action(list_devices)
+smartthings_action(status("00000000-0000-0000-0000-000000000000"))
+smartthings_action(command("00000000-0000-0000-0000-000000000000", main, switch, on, []))
+smartthings_action(command("00000000-0000-0000-0000-000000000000", main, switchLevel, setLevel, [42]))
+#+end_src
+
+The source also declares =on=, =off=, and =status= expert activations so the
+existing local expert catalog can discover those rules. Physical execution still
+goes through =SmartThingsAndroidPlugin=; merely rendering an effect term does not
+implicitly execute it.
+
+* Android controller
+
+The application exposes one process-scoped controller:
+
+#+begin_src kotlin
+val smartThings = (application as ZaraApplication).smartThingsPlugin
+
+smartThings.devices()
+smartThings.status("desk_lamp")
+smartThings.turnOn("desk_lamp")
+smartThings.turnOff("desk_lamp")
+smartThings.setLevel("desk_lamp", 42)
+#+end_src
+
+Aliases are bounded Prolog atoms. Levels are restricted to 0 through 100 before a
+query reaches Prolog. The Prolog result must resolve to exactly one SmartThings
+effect before the actor will execute it.
+
+* Personal token setup
+
+For local testing/personal use, generate a short-lived PAT with only the permissions
+needed by this adapter. Device discovery/status needs device read access; device
+control needs device execute access. Current SmartThings documentation describes the
+corresponding scopes as =r:devices:*= and =x:devices:*=/equivalent permissions in the
+token UI.
+
+Pass the token and its absolute expiry to the controller from the Plugins/settings
+surface when that surface owns configuration:
+
+#+begin_src kotlin
+smartThings.connectPersonalAccessToken(
+    token = token,
+    expiresAtEpochMillis = expiresAt,
+)
+#+end_src
+
+The controller reports only =MISSING=, =READY=, =EXPIRED=, or =CORRUPT=. It never
+returns the stored token for diagnostics/UI.
+
+PATs are intentionally not treated as a production account-linking mechanism.
+SmartThings currently documents PATs as short-lived testing/personal credentials
+(typically 24 hours) and requires OAuth 2.0 for long-running integrations.
+
+* Production OAuth boundary
+
+SmartThings API Access Apps use OAuth 2.0 authorization-code flow. The code-to-token
+exchange authenticates with a client secret and SmartThings requires a publicly
+reachable HTTPS service for the app callback/target. Therefore Zara Android must not
+perform that confidential-client exchange inside the APK.
+
+The production design is:
+
+#+begin_example
+Zara Android -> authenticated Zara service -> SmartThings OAuth/API Access App
+#+end_example
+
+The server owns the SmartThings client secret, refresh token and refresh lifecycle.
+Android receives only Zara's normal authenticated capability surface. The Android
+=SmartThingsGateway= interface deliberately keeps the transport/token source
+replaceable so the local PAT transport can be swapped for that relay without moving
+SmartThings policy out of Prolog.
+
+SmartThings references:
+- https://developer.smartthings.com/docs/getting-started/quickstart
+- https://developer.smartthings.com/docs/getting-started/authorization-and-permissions
+- https://developer.smartthings.com/docs/service-integrations/oauth
+- https://developer.smartthings.com/docs/service-integrations/app-setup
+
+* Failure and safety behavior
+
+- SmartThings effect terms are capped at 4096 characters, bounded in nesting/list size,
+  and parsed with a closed grammar.
+- Unknown/malformed SmartThings actions fail closed.
+- One Prolog turn may execute at most one SmartThings effect.
+- Device ids and SmartThings capability/component/command identifiers are validated
+  before they can affect request paths/payloads.
+- HTTPS redirects are disabled so the bearer token cannot be forwarded to a different
+  host through a redirect.
+- Request/response sizes and HTTP timeouts are bounded.
+- 401, 403, 404, and 429 responses become bounded errors without echoing the remote
+  response body.
+- The credential file is authenticated-encrypted with an AndroidKeyStore wrapping key.
+- =disconnect()= deletes the locally stored credential.
+
+* Plugin UI follow-up
+
+Issue #655 owns the canonical Android Plugins surface. SmartThings configuration,
+health and permission summaries should project this controller there rather than
+creating a SmartThings-specific settings/runtime authority.
