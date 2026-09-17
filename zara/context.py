@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 
 class ContextAttachmentError(RuntimeError):
@@ -55,6 +55,22 @@ _TEXT_MIME_TYPES = frozenset(
 _MAX_DISPLAY_NAME = 256
 _MAX_SOURCE = 128
 _MAX_TEXT_CHARS = 262_144
+_MAX_FRAGMENT_CHARS = 16_384
+_MAX_FRAGMENTS = 32
+_CONTEXT_FRAGMENTS_KEY = "_zara_context_fragments"
+
+
+@dataclass(frozen=True)
+class ContextFragment:
+    source: str
+    text: str
+    sensitivity: ContextSensitivity = ContextSensitivity.PRIVATE
+
+    def __post_init__(self) -> None:
+        if not self.source or len(self.source) > _MAX_SOURCE:
+            raise ValueError("context fragment source must contain 1 to 128 characters")
+        if not self.text or len(self.text) > _MAX_FRAGMENT_CHARS:
+            raise ValueError("context fragment text must be non-empty and bounded")
 
 
 @dataclass(frozen=True)
@@ -278,6 +294,32 @@ def get_context_attachment_store() -> ContextAttachmentStore:
     return _DEFAULT_CONTEXT_STORE
 
 
+def add_context_fragment(
+    state: dict[str, Any],
+    text: str,
+    *,
+    source: str,
+    sensitivity: ContextSensitivity = ContextSensitivity.PRIVATE,
+) -> None:
+    fragment = ContextFragment(source=source, text=text.strip(), sensitivity=sensitivity)
+    fragments = state.setdefault(_CONTEXT_FRAGMENTS_KEY, [])
+    if not isinstance(fragments, list):
+        raise ContextAttachmentError("agent context fragment state is malformed")
+    if len(fragments) >= _MAX_FRAGMENTS:
+        raise ContextAttachmentError("agent context fragment limit reached")
+    fragments.append(fragment)
+
+
+def context_fragments(state: Mapping[str, Any]) -> tuple[ContextFragment, ...]:
+    raw = state.get(_CONTEXT_FRAGMENTS_KEY, ())
+    if not isinstance(raw, (list, tuple)):
+        raise ContextAttachmentError("agent context fragment state is malformed")
+    result = tuple(raw)
+    if not all(isinstance(item, ContextFragment) for item in result):
+        raise ContextAttachmentError("agent context fragments must be typed")
+    return result
+
+
 __all__ = [
     "ContextAttachment",
     "ContextAttachmentError",
@@ -285,6 +327,9 @@ __all__ = [
     "ContextAttachmentNotFound",
     "ContextAttachmentScope",
     "ContextAttachmentStore",
+    "ContextFragment",
     "ContextSensitivity",
+    "add_context_fragment",
+    "context_fragments",
     "get_context_attachment_store",
 ]
