@@ -3,9 +3,11 @@
 import asyncio
 import json
 import logging
+from math import isfinite
 import os
+import re
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import aiohttp
 
@@ -14,6 +16,31 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_HISTORY_LENGTH = 20
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+OPENROUTER_CHAT_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+STARINTEL_CHAT_ENDPOINT = "https://llm.starintel.actor/v1/chat/completions"
+DEFAULT_OPENROUTER_QUANTIZATIONS = ("fp16", "bf16", "fp8")
+_ALLOWED_OPENROUTER_SORTS = frozenset({"price", "throughput", "latency"})
+_ALLOWED_OPENROUTER_DATA_COLLECTION = frozenset({"allow", "deny"})
+_ALLOWED_OPENROUTER_POLICY_KEYS = frozenset(
+    {
+        "sort",
+        "allow_fallbacks",
+        "quantizations",
+        "data_collection",
+        "zdr",
+        "require_parameters",
+        "order",
+        "only",
+        "ignore",
+        "max_price",
+    }
+)
+_ALLOWED_OPENROUTER_PRICE_KEYS = frozenset({"prompt", "completion"})
+_OPENROUTER_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+_OPENROUTER_PROVIDER_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]*$")
+_MAX_OPENROUTER_LIST_ITEMS = 32
+_MAX_OPENROUTER_TOKEN_CHARS = 128
+_MAX_OPENROUTER_USD_PER_MILLION = 1_000_000.0
 
 
 @dataclass(frozen=True)
@@ -27,6 +54,216 @@ class LLMResult:
     status: Optional[int] = None
     cancelled: bool = False
     attempts: int = 1
+
+
+def _openrouter_bool(value: Any, field: str) -> bool:
+    if type(value) is not bool:
+        raise ValueError(f"OpenRouter {field} must be boolean")
+    return value
+
+
+def _openrouter_text(value: Any, field: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"OpenRouter {field} must be text")
+    normalized = value.strip().lower()
+    if not normalized:
+        raise ValueError(f"OpenRouter {field} must not be empty")
+    return normalized
+
+
+def _openrouter_tokens(
+    values: Any,
+    *,
+    field: str,
+    provider: bool = False,
+) -> Tuple[str, ...]:
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise ValueError(f"OpenRouter {field} must be a list")
+    if len(values) > _MAX_OPENROUTER_LIST_ITEMS:
+        raise ValueError(f"OpenRouter {field} list is too large")
+
+    normalized: List[str] = []
+    for raw in values:
+        if not isinstance(raw, str):
+            raise ValueError(f"OpenRouter {field} entries must be text")
+        value = raw.strip().lower()
+        if not value:
+            raise ValueError(f"OpenRouter {field} entries must not be empty")
+        if len(value) > _MAX_OPENROUTER_TOKEN_CHARS:
+            raise ValueError(f"OpenRouter {field} entry is too long")
+        matcher = _OPENROUTER_PROVIDER_RE if provider else _OPENROUTER_TOKEN_RE
+        if matcher.fullmatch(value) is None:
+            raise ValueError(f"OpenRouter {field} entry is invalid: {raw}")
+        normalized.append(value)
+
+    if len(normalized) != len(set(normalized)):
+        raise ValueError(f"OpenRouter {field} contains duplicates")
+    return tuple(normalized)
+
+
+def _openrouter_price(value: Any, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"OpenRouter {field} price ceiling must be numeric")
+    normalized = float(value)
+    if (
+        not isfinite(normalized)
+        or normalized < 0.0
+        or normalized > _MAX_OPENROUTER_USD_PER_MILLION
+    ):
+        raise ValueError(f"OpenRouter {field} price ceiling is invalid")
+    return normalized
+
+
+@dataclass(frozen=True)
+class OpenRouterPolicy:
+    """Validated same-model provider-routing policy for OpenRouter."""
+
+    sort: str = "price"
+    allow_fallbacks: bool = True
+    quantizations: Tuple[str, ...] = DEFAULT_OPENROUTER_QUANTIZATIONS
+    data_collection: str = "deny"
+    zdr: bool = False
+    require_parameters: bool = True
+    order: Tuple[str, ...] = ()
+    only: Tuple[str, ...] = ()
+    ignore: Tuple[str, ...] = ()
+    max_prompt_usd_per_million: Optional[float] = None
+    max_completion_usd_per_million: Optional[float] = None
+
+    @classmethod
+    def from_mapping(
+        cls,
+        value: Optional[Union["OpenRouterPolicy", Mapping[str, Any]]] = None,
+    ) -> "OpenRouterPolicy":
+        if isinstance(value, cls):
+            raw: Mapping[str, Any] = value.to_input_mapping()
+        elif value is None:
+            raw = {}
+        elif isinstance(value, Mapping):
+            raw = value
+        else:
+            raise ValueError("OpenRouter policy must be a mapping")
+
+        unknown = set(raw) - _ALLOWED_OPENROUTER_POLICY_KEYS
+        if unknown:
+            names = ", ".join(sorted(str(name) for name in unknown))
+            raise ValueError(f"Unsupported OpenRouter policy field(s): {names}")
+
+        sort = _openrouter_text(raw.get("sort", "price"), "sort")
+        if sort not in _ALLOWED_OPENROUTER_SORTS:
+            raise ValueError(f"Unsupported OpenRouter sort: {sort}")
+
+        data_collection = _openrouter_text(
+            raw.get("data_collection", "deny"), "data_collection"
+        )
+        if data_collection not in _ALLOWED_OPENROUTER_DATA_COLLECTION:
+            raise ValueError(
+                f"Unsupported OpenRouter data_collection: {data_collection}"
+            )
+
+        quantizations = _openrouter_tokens(
+            raw.get("quantizations", DEFAULT_OPENROUTER_QUANTIZATIONS),
+            field="quantizations",
+        )
+        if not quantizations:
+            raise ValueError("OpenRouter quantizations must not be empty")
+        if "unknown" in quantizations:
+            raise ValueError(
+                "OpenRouter quantization must be explicit; unknown is not routable"
+            )
+
+        order = _openrouter_tokens(raw.get("order", ()), field="order", provider=True)
+        only = _openrouter_tokens(raw.get("only", ()), field="only", provider=True)
+        ignore = _openrouter_tokens(
+            raw.get("ignore", ()), field="ignore", provider=True
+        )
+        overlap = set(only).intersection(ignore)
+        if overlap:
+            raise ValueError(
+                "OpenRouter provider allowlist and blocklist overlap: "
+                + ", ".join(sorted(overlap))
+            )
+
+        prompt_price: Optional[float] = None
+        completion_price: Optional[float] = None
+        if "max_price" in raw:
+            max_price = raw["max_price"]
+            if not isinstance(max_price, Mapping) or not max_price:
+                raise ValueError("OpenRouter max_price must be a non-empty mapping")
+            unknown_price = set(max_price) - _ALLOWED_OPENROUTER_PRICE_KEYS
+            if unknown_price:
+                names = ", ".join(sorted(str(name) for name in unknown_price))
+                raise ValueError(f"Unsupported OpenRouter max_price field(s): {names}")
+            if "prompt" in max_price:
+                prompt_price = _openrouter_price(max_price["prompt"], "prompt")
+            if "completion" in max_price:
+                completion_price = _openrouter_price(
+                    max_price["completion"], "completion"
+                )
+
+        return cls(
+            sort=sort,
+            allow_fallbacks=_openrouter_bool(
+                raw.get("allow_fallbacks", True), "allow_fallbacks"
+            ),
+            quantizations=quantizations,
+            data_collection=data_collection,
+            zdr=_openrouter_bool(raw.get("zdr", False), "zdr"),
+            require_parameters=_openrouter_bool(
+                raw.get("require_parameters", True), "require_parameters"
+            ),
+            order=order,
+            only=only,
+            ignore=ignore,
+            max_prompt_usd_per_million=prompt_price,
+            max_completion_usd_per_million=completion_price,
+        )
+
+    def to_input_mapping(self) -> Dict[str, Any]:
+        raw: Dict[str, Any] = {
+            "sort": self.sort,
+            "allow_fallbacks": self.allow_fallbacks,
+            "quantizations": list(self.quantizations),
+            "data_collection": self.data_collection,
+            "zdr": self.zdr,
+            "require_parameters": self.require_parameters,
+            "order": list(self.order),
+            "only": list(self.only),
+            "ignore": list(self.ignore),
+        }
+        max_price: Dict[str, float] = {}
+        if self.max_prompt_usd_per_million is not None:
+            max_price["prompt"] = self.max_prompt_usd_per_million
+        if self.max_completion_usd_per_million is not None:
+            max_price["completion"] = self.max_completion_usd_per_million
+        if max_price:
+            raw["max_price"] = max_price
+        return raw
+
+    def to_wire_dict(self) -> Dict[str, Any]:
+        safe = OpenRouterPolicy.from_mapping(self)
+        value: Dict[str, Any] = {
+            "sort": safe.sort,
+            "allow_fallbacks": safe.allow_fallbacks,
+            "quantizations": list(safe.quantizations),
+            "data_collection": safe.data_collection,
+            "zdr": safe.zdr,
+            "require_parameters": safe.require_parameters,
+        }
+        if safe.order:
+            value["order"] = list(safe.order)
+        if safe.only:
+            value["only"] = list(safe.only)
+        if safe.ignore:
+            value["ignore"] = list(safe.ignore)
+        max_price: Dict[str, float] = {}
+        if safe.max_prompt_usd_per_million is not None:
+            max_price["prompt"] = safe.max_prompt_usd_per_million
+        if safe.max_completion_usd_per_million is not None:
+            max_price["completion"] = safe.max_completion_usd_per_million
+        if max_price:
+            value["max_price"] = max_price
+        return value
 
 
 class ChatHistory:
@@ -67,6 +304,9 @@ class LLMClient:
         max_retries: int = 2,
         retry_delay: float = 0.1,
         history_limit: int = DEFAULT_HISTORY_LENGTH,
+        openrouter_policy: Optional[
+            Union[OpenRouterPolicy, Mapping[str, Any]]
+        ] = None,
     ):
         if connect_timeout <= 0 or read_timeout <= 0 or total_timeout <= 0:
             raise ValueError("LLM timeouts must be positive")
@@ -74,10 +314,21 @@ class LLMClient:
             raise ValueError("max_retries cannot be negative")
         if history_limit < 1:
             raise ValueError("history_limit must be positive")
+        if not isinstance(provider, str) or not provider.strip():
+            raise ValueError("provider must be non-empty text")
 
-        self.provider = provider
+        self.provider = provider.strip().lower()
+        if self.provider == "openrouter":
+            self.openrouter_policy: Optional[OpenRouterPolicy] = (
+                OpenRouterPolicy.from_mapping(openrouter_policy)
+            )
+        elif openrouter_policy is not None:
+            raise ValueError("OpenRouter policy may only be set for the openrouter provider")
+        else:
+            self.openrouter_policy = None
+
         self.model, self.endpoint, self.api_key = self._provider_config(
-            provider, model, endpoint, api_key
+            self.provider, model, endpoint, api_key
         )
         self.max_retries = max_retries
         self.retry_delay = max(0.0, retry_delay)
@@ -119,11 +370,16 @@ class LLMClient:
             resolved_key = api_key or os.getenv("OPENROUTER_API_KEY")
             if not resolved_key:
                 raise ValueError("OPENROUTER_API_KEY is not set")
-            return (
-                model or "openrouter/free",
-                endpoint or "https://openrouter.ai/api/v1/chat/completions",
-                resolved_key,
-            )
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError("OpenRouter model must be explicit")
+            return (model.strip(), endpoint or OPENROUTER_CHAT_ENDPOINT, resolved_key)
+        if provider == "starintel":
+            resolved_key = api_key or os.getenv("STAR_LLM_ACTOR_TOKEN")
+            if not resolved_key:
+                raise ValueError("STAR_LLM_ACTOR_TOKEN is not set")
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError("StarIntel model must be explicit")
+            return (model.strip(), endpoint or STARINTEL_CHAT_ENDPOINT, resolved_key)
         if provider == "ollama":
             return (
                 model or "llama3.2",
@@ -138,7 +394,7 @@ class LLMClient:
             )
         raise ValueError(
             f"Unsupported provider: {provider}. "
-            "Use: anthropic, openai, openrouter, ollama, or llama_cpp"
+            "Use: anthropic, openai, openrouter, starintel, ollama, or llama_cpp"
         )
 
     async def __aenter__(self) -> "LLMClient":
@@ -198,7 +454,7 @@ class LLMClient:
                 "system": system,
                 "messages": messages,
             }
-        elif self.provider in {"openai", "openrouter", "llama_cpp"}:
+        elif self.provider in {"openai", "openrouter", "starintel", "llama_cpp"}:
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
             payload = {
@@ -206,6 +462,9 @@ class LLMClient:
                 "messages": [{"role": "system", "content": system}, *messages],
                 "max_tokens": max_tokens,
             }
+            if self.provider == "openrouter":
+                assert self.openrouter_policy is not None
+                payload["provider"] = self.openrouter_policy.to_wire_dict()
         else:
             payload = {
                 "model": self.model,
@@ -294,7 +553,7 @@ class LLMClient:
                     done = False
                     provider_error = False
                     try:
-                        if self.provider in {"openai", "openrouter", "llama_cpp"}:
+                        if self.provider in {"openai", "openrouter", "starintel", "llama_cpp"}:
                             if not line.startswith("data:"):
                                 continue
                             data = line[len("data:"):].strip()
@@ -418,7 +677,7 @@ class LLMClient:
                     and block.get("type") == "text"
                     and block.get("text")
                 )
-            elif self.provider in {"openai", "openrouter", "llama_cpp"}:
+            elif self.provider in {"openai", "openrouter", "starintel", "llama_cpp"}:
                 text = data["choices"][0]["message"]["content"]
             else:
                 text = data["message"]["content"]
