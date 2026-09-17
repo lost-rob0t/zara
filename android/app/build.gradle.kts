@@ -164,5 +164,6 @@ dependencies {
     implementation(libs.libadb.android)
     implementation(libs.conscrypt.android)
     implementation(libs.bcpkix)
+    implementation(libs.litert.lm.android)
     testImplementation(libs.junit)
 }
