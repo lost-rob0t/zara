@@ -9,7 +9,18 @@ class ZaraThemeTest {
     @Test
     fun frozenThemeInventoryAndSystemResolutionStayStable() {
         assertEquals(
-            listOf("Outrun", "StarIntel", "Midnight", "Terminal", "Light", "System"),
+            listOf(
+                "Outrun",
+                "OutrunOled",
+                "StarIntel",
+                "StarIntelOled",
+                "Midnight",
+                "MidnightOled",
+                "Terminal",
+                "TerminalOled",
+                "Light",
+                "System",
+            ),
             ZaraTheme.entries.map { it.name },
         )
         assertEquals(
@@ -30,6 +41,27 @@ class ZaraThemeTest {
             assertNotEquals(tokens.textMuted, tokens.surface)
             assertNotEquals(tokens.success, tokens.error)
             assertNotEquals(tokens.focus, tokens.background)
+        }
+    }
+
+    @Test
+    fun oledThemesInheritAccentsAndUseTrueBlackBackgrounds() {
+        listOf(
+            ZaraTheme.OutrunOled to ZaraTheme.Outrun,
+            ZaraTheme.StarIntelOled to ZaraTheme.StarIntel,
+            ZaraTheme.MidnightOled to ZaraTheme.Midnight,
+            ZaraTheme.TerminalOled to ZaraTheme.Terminal,
+        ).forEach { (oledTheme, parentTheme) ->
+            val oled = themeTokens(oledTheme, systemDark = true, reducedGlow = false)
+            val parent = themeTokens(parentTheme, systemDark = true, reducedGlow = false)
+            assertEquals(Color.Black, oled.background)
+            assertEquals(Color.Transparent, oled.ambientGlow)
+            assertEquals(parent.primary, oled.primary)
+            assertEquals(parent.secondary, oled.secondary)
+            assertEquals(parent.text, oled.text)
+            assertEquals(parent.success, oled.success)
+            assertEquals(parent.warning, oled.warning)
+            assertEquals(parent.error, oled.error)
         }
     }
 
