@@ -50,11 +50,13 @@ class LocalAiProviderContractTest {
     @Test
     fun embeddedProviderRemainsOfflineAndAdvertisesOnlyWhatItActuallyExecutes() {
         val client = File("src/main/java/ai/zara/app/localai/LocalAiServiceClient.kt").readText()
+        val provider = File("src/main/java/ai/zara/app/localai/LocalAiProvider.kt").readText()
         val service = File("src/main/java/ai/zara/app/localai/LocalAiService.kt").readText()
 
         assertTrue(client.contains("offlineOnly = true"))
-        assertTrue(client.contains("modelContainerExtensions = setOf(\".litertlm\")"))
+        assertTrue(client.contains("modelFormats = setOf(LocalModelFormat.LITERT_LM)"))
         assertTrue(client.contains("accelerators = LocalModelBackend.entries.toSet()"))
+        assertTrue(provider.contains("Speech is a separate"))
         assertTrue(service.contains("metadata.format == LocalModelFormat.LITERT_LM"))
     }
 
