@@ -1,6 +1,7 @@
 package ai.zara.app
 
 import ai.zara.app.ui.RenderedTextTurn
+import ai.zara.app.ui.LocalEmbeddingPreferenceStore
 import ai.zara.app.ui.RuntimeModePreferenceStore
 import ai.zara.app.ui.ThemePreferenceStore
 import ai.zara.app.ui.UiOperationFailure
@@ -52,6 +53,8 @@ class MainActivity : ComponentActivity() {
         var selectedTheme by mutableStateOf(themePreferenceStore.load())
         val runtimeModeStore = RuntimeModePreferenceStore(File(filesDir, "runtime-mode.bin"))
         var runtimeMode by mutableStateOf(runtimeModeStore.load())
+        val embeddingPreferenceStore = LocalEmbeddingPreferenceStore(File(filesDir, "local-embedding.bin"))
+        var localEmbedding by mutableStateOf(embeddingPreferenceStore.load())
         appSession.setRuntimeMode(runtimeMode)
 
         val microphonePermission = registerForActivityResult(
@@ -121,6 +124,7 @@ class MainActivity : ComponentActivity() {
                 prologQueryResult = prologQueryResult,
                 updateState = updateState,
                 runtimeMode = runtimeMode,
+                localEmbedding = localEmbedding,
                 onSelectTheme = { theme ->
                     selectedTheme = theme
                     themePreferenceStore.save(theme)
@@ -129,6 +133,10 @@ class MainActivity : ComponentActivity() {
                     runtimeMode = mode
                     runtimeModeStore.save(mode)
                     appSession.setRuntimeMode(mode)
+                },
+                onSetLocalEmbeddingEnabled = { enabled ->
+                    localEmbedding = localEmbedding.copy(enabled = enabled)
+                    embeddingPreferenceStore.save(localEmbedding)
                 },
                 onCreateIdentity = {
                     operationError = null
