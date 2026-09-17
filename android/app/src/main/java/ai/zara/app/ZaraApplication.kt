@@ -6,6 +6,8 @@ import ai.zara.app.device.DeviceCapabilityExtensions
 import ai.zara.app.integration.AndroidIntegrationRuntime
 import ai.zara.app.update.AndroidUpdateManager
 import android.app.Application
+import rikka.shizuku.ShizukuProvider
+import rikka.sui.Sui
 
 class ZaraApplication : Application() {
     internal val assistantLifecycleFence = AssistantLifecycleFence()
@@ -24,6 +26,20 @@ class ZaraApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        if (!suiAvailable && !providerProcess) {
+            ShizukuProvider.requestBinderForNonProviderProcess(this)
+        }
         DeviceCapabilityExtensions.installAndroidRaw(AndroidRawAdapter(androidIntegration))
+    }
+
+    companion object {
+        private val providerProcess = Application.getProcessName() == BuildConfig.APPLICATION_ID
+        private val suiAvailable = Sui.init(BuildConfig.APPLICATION_ID)
+
+        init {
+            if (!suiAvailable) {
+                ShizukuProvider.enableMultiProcessSupport(providerProcess)
+            }
+        }
     }
 }
