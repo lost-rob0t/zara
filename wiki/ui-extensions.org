@@ -12,24 +12,25 @@ UI configuration can come from:
 - desktop =init.pl=;
 - Android app-private portable =init.py=;
 - Android Logic-workspace Prolog, including an =init.pl= source;
-- declarative plugin =ui.json= manifests.
+- desktop declarative plugin =ui.json= manifests;
+- Android trusted/enabled =ZARA-ANDROID-PLUGIN/1= UI projections.
 
 The UI layer does not create a second plugin runtime. Plugin lifecycle,
-capabilities, permissions, and enablement stay with Zara's canonical plugin and
-runtime systems. UI manifests only describe presentation contributions.
+capabilities, permissions, trust and enablement stay with Zara's canonical plugin
+and runtime systems. UI metadata only describes presentation contributions.
 
 * Contribution ABI
 
 A contribution has these fields:
 
-| Field | Meaning |
-|-
-| =id= | Portable contribution identifier. |
-| =slot= | =drawer=, =chat.top=, =chat.bottom=, =settings=, or =plugins=. |
-| =kind= | =surface=, =section=, =text=, =button=, =toggle=, or =status=. |
-| =label= | User-visible text. |
-| =action= | Semantic action. Required for surfaces, buttons, and toggles. |
-| =priority= | Lower numbers render first. |
+| Field       | Meaning |
+|-------------+---------|
+| =id=        | Portable contribution identifier. |
+| =slot=      | =drawer=, =chat.top=, =chat.bottom=, =settings=, or =plugins=. |
+| =kind=      | =surface=, =section=, =text=, =button=, =toggle=, or =status=. |
+| =label=     | User-visible text. |
+| =action=    | Semantic action. Required for surfaces, buttons, and toggles. |
+| =priority=  | Lower numbers render first. |
 | =platforms= | Any non-empty subset of =desktop= and =android=. |
 
 Supported action schemes are deliberately small:
@@ -37,7 +38,8 @@ Supported action schemes are deliberately small:
 - =route:NAME= — navigate to a Zara surface;
 - =prompt:TEXT= — hand text to the normal Zara interaction path;
 - =submit:TEXT= — submit text through the normal Zara client/runtime path;
-- =plugin:TEXT= — hand a plugin-oriented command payload to the normal Zara path.
+- =plugin:TEXT= — plugin-oriented action namespace; Android plugin-provided
+  actions must ultimately dispatch through the typed plugin host, not model text.
 
 Actions do not bypass existing authentication, plugin, device, permission, or
 runtime boundaries.
@@ -116,21 +118,17 @@ workspace is already consulted by the local Trealla server. Put the same
 recommended convention); Android queries =zara_ui(Result)= and projects the
 returned =ui/7= terms through the same contribution ABI.
 
-* Plugin UI manifests
+* Desktop plugin UI manifests
 
-Plugin code does not need to be imported merely to discover its UI. A plugin can
-ship a declarative manifest modeled after Agent Zero's split between backend
-plugin lifecycle and WebUI extension contributions.
+Desktop plugin code does not need to be imported merely to discover its UI. A
+plugin can ship a declarative manifest modeled after Agent Zero's split between
+backend plugin lifecycle and frontend/WebUI contributions.
 
-Desktop discovers either of these forms under configured plugin search paths:
+Desktop discovers either of these forms under the canonical configured plugin
+search paths:
 
 - =PLUGIN.ui.json=
 - =PLUGIN/ui.json=
-
-Android consumes installed UI manifests from the app-private
-=filesDir/ui-config/plugins/= tree. Installation/capability authority still
-belongs to the canonical Android plugin system; the manifest is presentation
-metadata only.
 
 #+begin_src json
 {
@@ -158,20 +156,45 @@ metadata only.
 }
 #+end_src
 
-Plugin enabled/disabled state is not owned by the UI manifest. Desktop consults
-the canonical plugin configuration before projecting a manifest. Android's UI
-loader likewise does not introduce a manifest-level enable switch.
+Desktop consults canonical plugin configuration for enablement before projecting
+a manifest.
+
+* Android plugin UI projection
+
+Android intentionally does *not* scan an app-private plugin-manifest directory.
+That would create a second discovery/trust convention beside
+=ZARA-ANDROID-PLUGIN/1= and violate #924/#969.
+
+Instead =AndroidUiExtensionRepository= accepts bounded
+=AndroidPluginUiProjection= values from the canonical Android plugin host. Each
+projection carries:
+
+- a bounded plugin identity;
+- current trusted state;
+- current enabled state;
+- host generation/revision;
+- validated semantic UI contributions.
+
+Only trusted *and* enabled projections become =plugin:ID= UI owners. Duplicate
+plugin projections fail closed. The provider seam is inert until the canonical
+Android plugin host supplies it; the UI layer does not discover packages, verify
+certificates, enable plugins, or invent capability authority itself.
+
+This matches #969: signer/protocol/session validation and stale-generation
+fencing live in the host boundary; Compose receives presentation data. Rich
+plugin APK UI remains out-of-process and typed host mutations/actions must go
+through that same host boundary.
 
 * Native rendering
 
-Desktop projects contributions into the canonical Copilot using Qt widgets.
-Android projects the same semantic objects into the canonical Compose shell.
-Current native slots include the navigation drawer, chat top/bottom, Settings,
-and the Plugins surface.
+Desktop projects contributions into the canonical Copilot and Settings workspace
+using Qt widgets. Android projects the same semantic objects into the canonical
+Compose shell. Current native slots include the navigation drawer, chat
+top/bottom, Settings, and the Plugins surface.
 
-The Android Plugins route is a real manifest-backed surface rather than a fake
-backend placeholder: it shows installed UI contributions grouped by plugin
-owner. Backend plugin execution remains separate.
+The Android Plugins route is no longer a fake backend placeholder. It renders
+trusted plugin UI projections when the canonical host supplies them and otherwise
+shows an explicit empty state.
 
 * Failure and ordering rules
 
@@ -179,5 +202,7 @@ owner. Backend plugin execution remains separate.
 - duplicate =(slot,id)= pairs for one owner fail closed;
 - malformed actions, platforms, slots, or kinds fail closed;
 - contributions are ordered by priority, then slot, owner, and id;
-- UI discovery never imports plugin Python merely to render a control;
-- Android portable Python cannot execute arbitrary code in the UI process.
+- desktop UI discovery never imports plugin Python merely to render a control;
+- Android portable Python cannot execute arbitrary code in the UI process;
+- Android plugin UI is accepted only from trusted/enabled canonical host
+  projections, never a second manifest/package scanner.
