@@ -30,14 +30,17 @@ class WatchInstallerContractTest {
     }
 
     @Test
-    fun phoneUiExposesWatchSetupAndLatestWearApkChannel() {
-        val shell = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+    fun zaraPhoneAppShipsDedicatedWatchSetupSurfaceAndLatestWearChannel() {
+        val manifest = File("src/main/AndroidManifest.xml").readText()
+        val activity = File("src/main/java/ai/zara/app/watch/WatchSetupActivity.kt").readText()
         val surface = File("src/main/java/ai/zara/app/ui/WatchSetupSurface.kt").readText()
         val repository = File("src/main/java/ai/zara/app/watch/WearApkRepository.kt").readText()
 
-        assertTrue(shell.contains("Watch(\"Watch\""))
-        assertTrue(shell.contains("AppSurface.Watch -> WatchSetupSurface"))
+        assertTrue(manifest.contains(".watch.WatchSetupActivity"))
+        assertTrue(manifest.contains("Zara Watch Setup"))
+        assertTrue(activity.contains("WatchSetupController"))
         assertTrue(surface.contains("WatchInstallPolicy.transportNotice"))
+        assertTrue(surface.contains("Install Zara Wear"))
         assertTrue(repository.contains("zara-wear-latest.apk"))
         assertTrue(repository.contains("zara-wear-latest.apk.sha256"))
     }
