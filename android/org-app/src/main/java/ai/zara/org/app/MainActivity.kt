@@ -23,7 +23,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.DarkColorScheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -44,7 +44,7 @@ import androidx.compose.ui.unit.dp
 
 private enum class WorkbenchTab { AGENDA, FILES, EDITOR }
 
-private val OutrunScheme: DarkColorScheme = darkColorScheme(
+private val OutrunScheme: ColorScheme = darkColorScheme(
     primary = Color(0xFFFF4FD8),
     secondary = Color(0xFF45E6FF),
     tertiary = Color(0xFF9D7CFF),
