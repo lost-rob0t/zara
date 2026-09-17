@@ -3,6 +3,7 @@ package ai.zara.app.device
 import ai.zara.app.prolog.AndroidAutomationCatalog
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -26,11 +27,27 @@ class BixbyHandoffContractTest {
     }
 
     @Test
-    fun `seeded Prolog automation can call Bixby through open app`() {
-        val source = AndroidAutomationCatalog.examples.single().source
+    fun `Bixby ships as its own Prolog automation source`() {
+        val bixby = AndroidAutomationCatalog.examples.single {
+            it.fileName == "zara_bixby.pl"
+        }
 
-        assertTrue(source.contains("automation(open_bixby,"))
-        assertTrue(source.contains("open_app(bixby)"))
+        assertTrue(bixby.source.contains("automation(open_bixby,"))
+        assertTrue(bixby.source.contains("open_app(bixby)"))
+        assertFalse(
+            AndroidAutomationCatalog.examples.single {
+                it.fileName == "android_automation.pl"
+            }.source.contains("open_bixby"),
+        )
+    }
+
+    @Test
+    fun `automation screen seeds missing catalog sources without replacing existing ones`() {
+        val activity = File("src/main/java/ai/zara/app/automation/AutomationActivity.kt").readText()
+
+        assertTrue(activity.contains("AndroidAutomationCatalog.examples.filterNot"))
+        assertTrue(activity.contains("source.name in existingNames"))
+        assertFalse(activity.contains("AndroidAutomationCatalog.examples.single()"))
     }
 
     @Test
