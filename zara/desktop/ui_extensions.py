@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from zara.ui.extensions import (
@@ -17,6 +17,22 @@ from zara.ui.plugin_manifests import UiManifestLoader
 from zara.ui.prolog_init import PrologUiInitLoader
 
 logger = logging.getLogger(__name__)
+
+
+class DesktopUiActionBus(QObject):
+    """Process-local bridge from extension controls to the canonical Copilot path."""
+
+    action_requested = Signal(str)
+
+
+_ACTION_BUS: DesktopUiActionBus | None = None
+
+
+def desktop_ui_action_bus() -> DesktopUiActionBus:
+    global _ACTION_BUS
+    if _ACTION_BUS is None:
+        _ACTION_BUS = DesktopUiActionBus()
+    return _ACTION_BUS
 
 
 class DesktopUiExtensionHost(QWidget):
@@ -121,4 +137,9 @@ def build_desktop_ui_registry(config) -> UiExtensionRegistry:
     return registry
 
 
-__all__ = ["DesktopUiExtensionHost", "build_desktop_ui_registry"]
+__all__ = [
+    "DesktopUiActionBus",
+    "DesktopUiExtensionHost",
+    "build_desktop_ui_registry",
+    "desktop_ui_action_bus",
+]
