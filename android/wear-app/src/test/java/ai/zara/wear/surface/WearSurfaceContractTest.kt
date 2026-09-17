@@ -65,4 +65,29 @@ class WearSurfaceContractTest {
         assertTrue(catalog.contains("wearProtoLayout = \"1.4.2\""))
         assertTrue(catalog.contains("wearWatchface = \"1.3.0\""))
     }
+
+    @Test
+    fun tilePreviewUsesProductionRendererForBothRoundProfiles() {
+        val catalog = File("../gradle/libs.versions.toml").readText()
+        assertTrue(catalog.contains("wear-tiles-tooling-preview"))
+        assertTrue(catalog.contains("wear-tiles-renderer"))
+        assertTrue(catalog.contains("wear-tooling-preview"))
+
+        val build = File("build.gradle.kts").readText()
+        assertTrue(build.contains("implementation(libs.wear.tiles.tooling.preview)"))
+        assertTrue(build.contains("debugImplementation(libs.wear.tiles.renderer)"))
+        assertTrue(build.contains("implementation(libs.wear.tooling.preview)"))
+
+        val previewFile = File("src/main/java/ai/zara/wear/surface/ZaraTilePreview.kt")
+        assertTrue("round Tile preview contract must exist", previewFile.isFile)
+        val preview = previewFile.readText()
+        assertTrue(preview.contains("TilePreviewData"))
+        assertTrue(preview.contains("WearDevices.SMALL_ROUND"))
+        assertTrue(preview.contains("WearDevices.LARGE_ROUND"))
+        assertTrue(preview.contains("buildZaraTile(context, request)"))
+
+        val tile = File("src/main/java/ai/zara/wear/surface/ZaraTileService.kt").readText()
+        assertTrue(tile.contains("internal fun buildZaraTile("))
+        assertTrue(tile.contains("buildZaraTile(this, requestParams)"))
+    }
 }
