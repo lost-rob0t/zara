@@ -181,6 +181,27 @@ Java_ai_zara_app_prolog_JniTreallaNativeApi_evaluate(
     return output;
 }
 
+JNIEXPORT jboolean JNICALL
+Java_ai_zara_app_prolog_JniTreallaNativeApi_consult(
+    JNIEnv *env,
+    jobject self,
+    jstring source_path)
+{
+    (void)self;
+    if (source_path == NULL)
+        return JNI_FALSE;
+
+    const char *path = (*env)->GetStringUTFChars(env, source_path, NULL);
+    if (path == NULL)
+        return JNI_FALSE;
+
+    pthread_mutex_lock(&g_runtime_lock);
+    bool loaded = g_runtime != NULL && pl_consult(g_runtime, path) && !get_error(g_runtime);
+    pthread_mutex_unlock(&g_runtime_lock);
+    (*env)->ReleaseStringUTFChars(env, source_path, path);
+    return loaded ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT void JNICALL
 Java_ai_zara_app_prolog_JniTreallaNativeApi_shutdown(
     JNIEnv *env,

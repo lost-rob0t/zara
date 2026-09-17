@@ -1,6 +1,7 @@
 package ai.zara.app
 
 import ai.zara.app.assistant.AssistantLifecycleFence
+import ai.zara.app.update.AndroidUpdateManager
 import android.app.Application
 
 class ZaraApplication : Application() {
@@ -8,5 +9,9 @@ class ZaraApplication : Application() {
 
     val appSession: AndroidAppSession by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         AndroidAppSession(this)
+    }
+
+    val updateManager: AndroidUpdateManager by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        AndroidUpdateManager(this, BuildConfig.VERSION_NAME)
     }
 }

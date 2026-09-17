@@ -1,6 +1,7 @@
 package ai.zara.app
 
 import ai.zara.app.ui.RenderedTextTurn
+import ai.zara.app.ui.RuntimeModePreferenceStore
 import ai.zara.app.ui.ThemePreferenceStore
 import ai.zara.app.ui.UiOperationFailure
 import ai.zara.app.ui.ZaraApp
@@ -32,6 +33,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         appSession = (application as ZaraApplication).appSession
+        val updateManager = (application as ZaraApplication).updateManager
         microphonePermissionGranted = hasMicrophonePermission()
         voiceState = appSession.voiceState()
 
@@ -42,8 +44,15 @@ class MainActivity : ComponentActivity() {
         var operationBusy by mutableStateOf(false)
         var voiceStreamState by mutableStateOf(appSession.voiceStreamState())
         var voiceStreamFailure by mutableStateOf(appSession.voiceStreamFailure())
+        var localServerState by mutableStateOf(appSession.localServerState())
+        var prologSources by mutableStateOf(appSession.prologSources())
+        var prologQueryResult by mutableStateOf<ai.zara.app.runtime.LocalQueryResult?>(null)
+        var updateState by mutableStateOf(updateManager.state())
         val themePreferenceStore = ThemePreferenceStore(File(filesDir, "theme.bin"))
         var selectedTheme by mutableStateOf(themePreferenceStore.load())
+        val runtimeModeStore = RuntimeModePreferenceStore(File(filesDir, "runtime-mode.bin"))
+        var runtimeMode by mutableStateOf(runtimeModeStore.load())
+        appSession.setRuntimeMode(runtimeMode)
 
         val microphonePermission = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
@@ -70,6 +79,12 @@ class MainActivity : ComponentActivity() {
                 voiceStreamState = streamState
                 voiceStreamFailure = failure
             }
+        }
+        appSession.setLocalServerObserver { state ->
+            runOnUiThread { localServerState = state }
+        }
+        updateManager.setObserver { state ->
+            runOnUiThread { updateState = state }
         }
         appSession.assessAssistantRole()
 
@@ -101,9 +116,19 @@ class MainActivity : ComponentActivity() {
                 voiceStreamState = voiceStreamState,
                 voiceStreamFailure = voiceStreamFailure,
                 selectedTheme = selectedTheme,
+                localServerState = localServerState,
+                prologSources = prologSources,
+                prologQueryResult = prologQueryResult,
+                updateState = updateState,
+                runtimeMode = runtimeMode,
                 onSelectTheme = { theme ->
                     selectedTheme = theme
                     themePreferenceStore.save(theme)
+                },
+                onSelectRuntimeMode = { mode ->
+                    runtimeMode = mode
+                    runtimeModeStore.save(mode)
+                    appSession.setRuntimeMode(mode)
                 },
                 onCreateIdentity = {
                     operationError = null
@@ -217,6 +242,58 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 },
+                onSavePrologSource = { name, source ->
+                    operationError = null
+                    operationBusy = true
+                    appSession.savePrologSource(name, source).whenComplete { _, error ->
+                        runOnUiThread {
+                            operationBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            if (error == null) prologSources = appSession.prologSources()
+                        }
+                    }
+                },
+                onReloadLocalServer = {
+                    operationError = null
+                    operationBusy = true
+                    appSession.reloadLocalServer().whenComplete { _, error ->
+                        runOnUiThread {
+                            operationBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                        }
+                    }
+                },
+                onRunPrologQuery = { query ->
+                    operationError = null
+                    operationBusy = true
+                    appSession.queryLocalProlog(query).whenComplete { result, error ->
+                        runOnUiThread {
+                            operationBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            if (result != null) prologQueryResult = result
+                        }
+                    }
+                },
+                onCheckForUpdate = {
+                    operationError = null
+                    updateManager.check().whenComplete { _, error ->
+                        runOnUiThread {
+                            operationError = error?.let(UiOperationFailure::summarize)
+                        }
+                    }
+                },
+                onDownloadUpdate = {
+                    operationError = null
+                    updateManager.download().whenComplete { _, error ->
+                        runOnUiThread {
+                            operationError = error?.let(UiOperationFailure::summarize)
+                        }
+                    }
+                },
+                onInstallUpdate = {
+                    operationError = updateManager.requestInstall().exceptionOrNull()
+                        ?.let(UiOperationFailure::summarize)
+                },
             )
         }
     }
@@ -244,6 +321,8 @@ class MainActivity : ComponentActivity() {
         if (::appSession.isInitialized) {
             appSession.setStateObserver(null)
             appSession.setVoiceStreamObserver(null)
+            appSession.setLocalServerObserver(null)
+            (application as ZaraApplication).updateManager.setObserver(null)
         }
         super.onDestroy()
     }

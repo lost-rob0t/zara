@@ -2,6 +2,7 @@ package ai.zara.app.prolog
 
 interface TreallaBridge {
     fun initialize(coreAssetPath: String)
+    fun consult(sourcePath: String)
     fun evaluate(query: String): List<String>
     fun shutdown()
 }
@@ -46,6 +47,12 @@ class TreallaSemanticRuntime(
             contractVersion = PortableSemanticCore.contractVersion,
             terms = bridge.evaluate(fixture.query)
         )
+    }
+
+    fun consult(sourcePath: String) {
+        check(state == State.READY) { "Trealla runtime is not ready" }
+        require(sourcePath.isNotBlank()) { "Prolog source path is required" }
+        bridge.consult(sourcePath)
     }
 
     override fun close() {

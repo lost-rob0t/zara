@@ -6,6 +6,7 @@ fun interface NativeLibraryLoader {
 
 interface TreallaNativeApi {
     fun initialize(coreAssetPath: String): Boolean
+    fun consult(sourcePath: String): Boolean
     fun evaluate(query: String): Array<String>
     fun shutdown()
 }
@@ -18,6 +19,7 @@ class SystemNativeLibraryLoader : NativeLibraryLoader {
 
 class JniTreallaNativeApi : TreallaNativeApi {
     override external fun initialize(coreAssetPath: String): Boolean
+    override external fun consult(sourcePath: String): Boolean
     override external fun evaluate(query: String): Array<String>
     override external fun shutdown()
 }
@@ -61,6 +63,17 @@ class NativeTreallaBridge(
         } catch (error: Throwable) {
             throw IllegalStateException("Trealla native evaluation failed", error)
         }
+    }
+
+    override fun consult(sourcePath: String) {
+        check(initialized) { "Trealla native bridge is not initialized" }
+        require(sourcePath.isNotBlank()) { "Prolog source path is required" }
+        val loaded = try {
+            nativeApi.consult(sourcePath)
+        } catch (error: Throwable) {
+            throw IllegalStateException("Trealla source consult failed", error)
+        }
+        check(loaded) { "Trealla source consult failed" }
     }
 
     override fun shutdown() {

@@ -71,6 +71,8 @@ class TreallaSemanticRuntimeTest {
             if (failInitialization) error("native init failed")
         }
 
+        override fun consult(sourcePath: String) = Unit
+
         override fun evaluate(query: String): List<String> = results[query].orEmpty()
 
         override fun shutdown() {
