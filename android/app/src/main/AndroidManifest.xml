@@ -23,6 +23,7 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:node="remove" />
 
     <queries>
+        <package android:name="com.samsung.android.bixby.agent" />
         <package android:name="com.sec.android.app.sbrowser" />
         <package android:name="com.android.chrome" />
         <package android:name="com.brave.browser" />
