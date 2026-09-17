@@ -30,15 +30,20 @@ class WatchInstallerContractTest {
     }
 
     @Test
-    fun zaraPhoneAppShipsDedicatedWatchSetupSurfaceAndLatestWearChannel() {
+    fun zaraPhoneAppShipsBluetoothAwareWatchSetupAndLatestWearChannel() {
         val manifest = File("src/main/AndroidManifest.xml").readText()
         val activity = File("src/main/java/ai/zara/app/watch/WatchSetupActivity.kt").readText()
+        val bluetooth = File("src/main/java/ai/zara/app/watch/BluetoothWatchScanner.kt").readText()
         val controller = File("src/main/java/ai/zara/app/watch/WatchSetupController.kt").readText()
         val surface = File("src/main/java/ai/zara/app/ui/WatchSetupSurface.kt").readText()
         val repository = File("src/main/java/ai/zara/app/watch/WearApkRepository.kt").readText()
 
         assertTrue(manifest.contains(".watch.WatchSetupActivity"))
         assertTrue(manifest.contains("Zara Watch Setup"))
+        assertTrue(manifest.contains("android.permission.BLUETOOTH_CONNECT"))
+        assertTrue(activity.contains("RequestMultiplePermissions"))
+        assertTrue(activity.contains("BLUETOOTH_CONNECT"))
+        assertTrue(bluetooth.contains("bondedDevices"))
         assertTrue(activity.contains("WatchSetupController"))
         assertTrue(surface.contains("WatchInstallPolicy.transportNotice"))
         assertTrue(surface.contains("Install Zara Wear"))
