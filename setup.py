@@ -90,6 +90,7 @@ setup(
         "PyYAML>=6.0",
         "pydantic>=2.0",
         "httpx>=0.25",
+        "cryptography>=42.0",
         "tomli>=2.0; python_version < '3.11'",
         "orgparse>=0.0.10",
         "langchain>=0.2",
