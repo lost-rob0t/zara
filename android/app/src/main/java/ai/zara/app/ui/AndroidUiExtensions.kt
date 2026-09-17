@@ -32,6 +32,9 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+internal fun UiContribution.isUiActionEnabled(): Boolean =
+    !action.startsWith("plugin:")
+
 @Composable
 internal fun rememberAndroidUiContributions(localGeneration: Long): List<UiContribution> {
     val context = LocalContext.current.applicationContext
@@ -94,6 +97,7 @@ internal fun AndroidDrawerUiExtensions(
             UiContributionKind.SURFACE, UiContributionKind.BUTTON -> NavigationDrawerItem(
                 label = { Text(contribution.label) },
                 selected = false,
+                enabled = contribution.isUiActionEnabled(),
                 onClick = { onAction(contribution.action) },
                 colors = NavigationDrawerItemDefaults.colors(
                     selectedContainerColor = tokens.ambientGlow,
@@ -163,7 +167,10 @@ private fun UiContributionControl(
         )
         UiContributionKind.STATUS -> MutedNotice(contribution.label)
         UiContributionKind.BUTTON, UiContributionKind.SURFACE ->
-            SecondaryAction(contribution.label, enabled = true) {
+            SecondaryAction(
+                contribution.label,
+                enabled = contribution.isUiActionEnabled(),
+            ) {
                 onAction(contribution.action)
             }
         UiContributionKind.TOGGLE -> Row(
