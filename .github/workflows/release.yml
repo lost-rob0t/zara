@@ -46,11 +46,15 @@ jobs:
           fi
 
           store_version="$(sed -nE 's/^[[:space:]]*versionName = "([^"]+)".*/\1/p' android/apps/zara-store/build.gradle.kts)"
-          store_version_code="$(sed -nE 's/^[[:space:]]*versionCode = ([0-9]+).*/\1/p' android/apps/zara-store/build.gradle.kts)"
-          if [[ "$store_version" != "$version" ]]; then
-            echo "Store/version mismatch: phone=$version store=$store_version" >&2
+          if [[ -z "$store_version" ]]; then
+            echo "Could not resolve Zara Store versionName." >&2
             exit 1
           fi
+          if [[ ! "$store_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Zara Store versionName is not SemVer: $store_version" >&2
+            exit 1
+          fi
+          store_version_code="$(sed -nE 's/^[[:space:]]*versionCode = ([0-9]+).*/\1/p' android/apps/zara-store/build.gradle.kts)"
           if [[ -z "$store_version_code" || "$store_version_code" -lt 1 ]]; then
             echo "Could not resolve a positive Zara Store versionCode." >&2
             exit 1
@@ -64,6 +68,7 @@ jobs:
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+          echo "store_version=$store_version" >> "$GITHUB_OUTPUT"
           echo "store_version_code=$store_version_code" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
@@ -94,6 +99,7 @@ jobs:
         env:
           VERSION: ${{ steps.release.outputs.version }}
           VERSION_CODE: ${{ steps.release.outputs.version_code }}
+          STORE_VERSION: ${{ steps.release.outputs.store_version }}
           STORE_VERSION_CODE: ${{ steps.release.outputs.store_version_code }}
         run: |
           set -euo pipefail
@@ -112,24 +118,24 @@ jobs:
             echo "apk_sha256=$(sha256sum "$apk" | awk '{print $1}')"
           } > "dist/zara-android-${VERSION}.manifest.txt"
 
-          store_apk="dist/zara-store-${VERSION}.apk"
+          store_apk="dist/zara-store-${STORE_VERSION}.apk"
           cp android/apps/zara-store/build/outputs/apk/debug/zara-store-debug.apk "$store_apk"
           sha256sum "$store_apk" > "${store_apk}.sha256"
           {
             echo "schema=1"
             echo "source_sha=${GITHUB_SHA}"
             echo "package_name=ai.zara.store"
-            echo "version_name=${VERSION}"
+            echo "version_name=${STORE_VERSION}"
             echo "version_code=${STORE_VERSION_CODE}"
             echo "release_status=experimental"
             echo "apk=$(basename "$store_apk")"
             echo "apk_sha256=$(sha256sum "$store_apk" | awk '{print $1}')"
-          } > "dist/zara-store-${VERSION}.manifest.txt"
+          } > "dist/zara-store-${STORE_VERSION}.manifest.txt"
 
           echo "apk=$apk" >> "$GITHUB_OUTPUT"
           echo "manifest=dist/zara-android-${VERSION}.manifest.txt" >> "$GITHUB_OUTPUT"
           echo "store_apk=$store_apk" >> "$GITHUB_OUTPUT"
-          echo "store_manifest=dist/zara-store-${VERSION}.manifest.txt" >> "$GITHUB_OUTPUT"
+          echo "store_manifest=dist/zara-store-${STORE_VERSION}.manifest.txt" >> "$GITHUB_OUTPUT"
 
       - name: Verify update-compatible Android signing certificate
         env:
@@ -145,6 +151,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release.outputs.tag }}
+          STORE_VERSION: ${{ steps.release.outputs.store_version }}
           APK: ${{ steps.artifact.outputs.apk }}
           MANIFEST: ${{ steps.artifact.outputs.manifest }}
           STORE_APK: ${{ steps.artifact.outputs.store_apk }}
@@ -168,4 +175,4 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Zara $TAG" \
             --prerelease \
-            --notes "Android alpha preview of Zara plus the experimental Zara Store foundation. These are debug-signed APKs intended for direct sideloading/testing, not production Play Store builds. Zara Store does not yet enable repository trust promotion or APK installation. Requires Android 10 (API 29) or newer. Verify each APK with its accompanying SHA-256 and provenance manifest. Source commit: $GITHUB_SHA"
+            --notes "Android alpha preview of Zara plus Zara Store ${STORE_VERSION} (experimental foundation). These are debug-signed APKs intended for direct sideloading/testing, not production Play Store builds. Zara Store does not yet enable repository trust promotion or APK installation. Requires Android 10 (API 29) or newer. Verify each APK with its accompanying SHA-256 and provenance manifest. Source commit: $GITHUB_SHA"
