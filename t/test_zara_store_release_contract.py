@@ -20,19 +20,25 @@ def test_store_uses_update_compatible_zara_signer():
     assert 'keyAlias = "androiddebugkey"' in gradle
 
 
-def test_store_version_tracks_frozen_zara_release_version():
-    assert _version_name(ROOT / "android/apps/zara-store/build.gradle.kts") == _version_name(
-        ROOT / "android/app/build.gradle.kts"
-    )
+def test_store_and_phone_versions_are_not_forced_to_match():
+    phone_version = _version_name(ROOT / "android/app/build.gradle.kts")
+    store_version = _version_name(ROOT / "android/apps/zara-store/build.gradle.kts")
+    workflow = (ROOT / ".github/workflows/release.yml").read_text()
+
+    assert phone_version
+    assert store_version
+    assert "Store/version mismatch" not in workflow
+    assert 'echo "store_version=$store_version" >> "$GITHUB_OUTPUT"' in workflow
 
 
-def test_versioned_release_publishes_store_with_provenance_and_signer_gate():
+def test_versioned_release_publishes_store_with_own_version_and_provenance():
     workflow = (ROOT / ".github/workflows/release.yml").read_text()
 
     assert "android/apps/zara-store/build.gradle.kts" in workflow
-    assert "Store/version mismatch" in workflow
-    assert 'zara-store-${VERSION}.apk' in workflow
-    assert 'zara-store-${VERSION}.manifest.txt' in workflow
+    assert "Zara Store versionName is not SemVer" in workflow
+    assert 'zara-store-${STORE_VERSION}.apk' in workflow
+    assert 'zara-store-${STORE_VERSION}.manifest.txt' in workflow
+    assert 'echo "version_name=${STORE_VERSION}"' in workflow
     assert "STORE_APK" in workflow
     assert "STORE_MANIFEST" in workflow
     assert workflow.count("scripts/check-android-apk-signer.sh") >= 2
