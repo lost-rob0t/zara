@@ -4,10 +4,14 @@ import ai.zara.app.prolog.LogicGraph
 import ai.zara.app.prolog.LogicNodeKind
 import ai.zara.app.prolog.PrologDocument
 import ai.zara.app.prolog.PrologCompletionEngine
+import ai.zara.app.prolog.PrologEditorHistory
 import ai.zara.app.prolog.PrologExampleCatalog
 import ai.zara.app.prolog.PrologSource
 import ai.zara.app.prolog.PrologSourceAnalyzer
 import ai.zara.app.prolog.PrologSchemaValidator
+import ai.zara.app.prolog.PrologSearch
+import ai.zara.app.prolog.PrologLexer
+import ai.zara.app.prolog.PrologTokenKind
 import ai.zara.app.prolog.PrologTutorialCatalog
 import ai.zara.app.runtime.LocalQueryResult
 import ai.zara.app.runtime.LocalServerPhase
@@ -200,6 +204,15 @@ private fun EditorPane(
     val completions = remember(draft, document) {
         PrologCompletionEngine.complete(draft, draft.length, listOf(document))
     }
+    var history by remember(selectedName) { mutableStateOf(PrologEditorHistory.initial(draft)) }
+    var searchQuery by rememberSaveable(selectedName) { mutableStateOf("") }
+    val searchMatches = remember(searchQuery, draft, selectedName) {
+        if (searchQuery.isBlank()) emptyList() else PrologSearch.find(
+            listOf(PrologSource(selectedName.ifBlank { "scratch.pl" }, draft)),
+            searchQuery,
+            limit = 50,
+        )
+    }
     var creatingSource by rememberSaveable { mutableStateOf(false) }
     var newSourceName by rememberSaveable { mutableStateOf("") }
     SectionCard("SOURCES") {
@@ -242,7 +255,10 @@ private fun EditorPane(
     SectionCard("EDITOR · ${selected?.name ?: "scratch.pl"}") {
         OutlinedTextField(
             value = draft,
-            onValueChange = onDraft,
+            onValueChange = {
+                history = history.edit(it, it.length)
+                onDraft(it)
+            },
             modifier = Modifier.fillMaxWidth().heightIn(min = 300.dp),
             textStyle = MaterialTheme.typography.bodySmall.copy(
                 color = tokens.text,
@@ -269,6 +285,30 @@ private fun EditorPane(
                         Text(completion.label, fontFamily = FontFamily.Monospace)
                     }
                 }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SecondaryAction("Undo", history.canUndo) {
+                history = history.undo()
+                onDraft(history.current.text)
+            }
+            SecondaryAction("Redo", history.canRedo) {
+                history = history.redo()
+                onDraft(history.current.text)
+            }
+        }
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Find in source") },
+            singleLine = true,
+            colors = studioFieldColors(),
+        )
+        if (searchQuery.isNotBlank()) {
+            KeyValueRow("matches", searchMatches.size.toString())
+            searchMatches.take(8).forEach { match ->
+                Text("${match.source}:${match.line}:${match.column}", color = tokens.textMuted, fontFamily = FontFamily.Monospace)
             }
         }
         if (document.diagnostics.isEmpty()) {
@@ -521,26 +561,20 @@ private fun expertSystemSource(name: String, evidence: String, conclusion: Strin
 private class PrologVisualTransformation(
     private val tokens: ZaraSemanticTokens,
 ) : VisualTransformation {
-    private data class Rule(val regex: Regex, val style: SpanStyle)
-
-    private val rules = listOf(
-        Rule(Regex("\\b[A-Z_][A-Za-z0-9_]*\\b"), SpanStyle(color = tokens.secondary)),
-        Rule(Regex("\\b\\d+(?:\\.\\d+)?\\b"), SpanStyle(color = tokens.primary)),
-        Rule(
-            Regex("\\b[a-z][A-Za-z0-9_]*(?=\\s*\\()"),
-            SpanStyle(color = tokens.accentCyan, fontWeight = FontWeight.SemiBold),
-        ),
-        Rule(Regex("'(?:\\\\.|[^'\\\\])*'"), SpanStyle(color = tokens.warning)),
-        Rule(Regex("\"(?:\\\\.|[^\"\\\\])*\""), SpanStyle(color = tokens.warning)),
-        Rule(Regex("%[^\\n]*"), SpanStyle(color = tokens.textMuted)),
-    )
-
     override fun filter(text: AnnotatedString): TransformedText {
         val highlighted = AnnotatedString.Builder(text)
-        rules.forEach { rule ->
-            rule.regex.findAll(text.text).forEach { match ->
-                highlighted.addStyle(rule.style, match.range.first, match.range.last + 1)
+        PrologLexer.lex(text.text).forEach { token ->
+            val style = when (token.kind) {
+                PrologTokenKind.COMMENT -> SpanStyle(color = tokens.textMuted)
+                PrologTokenKind.DIRECTIVE -> SpanStyle(color = tokens.accentMagenta, fontWeight = FontWeight.Bold)
+                PrologTokenKind.VARIABLE -> SpanStyle(color = tokens.secondary)
+                PrologTokenKind.ATOM -> SpanStyle(color = tokens.accentCyan, fontWeight = FontWeight.SemiBold)
+                PrologTokenKind.NUMBER -> SpanStyle(color = tokens.primary)
+                PrologTokenKind.STRING -> SpanStyle(color = tokens.warning)
+                PrologTokenKind.OPERATOR -> SpanStyle(color = tokens.focus)
+                PrologTokenKind.PUNCTUATION -> SpanStyle(color = tokens.text)
             }
+            highlighted.addStyle(style, token.start, token.endExclusive)
         }
         return TransformedText(highlighted.toAnnotatedString(), OffsetMapping.Identity)
     }
