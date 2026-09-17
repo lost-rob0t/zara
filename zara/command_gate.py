@@ -35,10 +35,11 @@ COMMAND_TRIGGER_WORDS: FrozenSet[str] = frozenset(
     }
 )
 
-# Keep fuzzy recovery narrower than the general command vocabulary. ``start``
-# overlaps non-app commands such as ``start voice mode`` and is deliberately
-# excluded until a broader typed rewrite stage exists.
 OPEN_TARGET_VERBS: FrozenSet[str] = frozenset({"open", "launch", "run"})
+_COMMAND_PREFIX_WORDS: FrozenSet[str] = frozenset(
+    {"please", "yo", "hey", "well", "okay", "ok", "just"}
+)
+_REQUEST_MODALS: FrozenSet[str] = frozenset({"can", "could", "would", "will"})
 
 _TOKEN_SPLIT = re.compile(r"[^a-z0-9_]+")
 _SAFE_TARGET = re.compile(r"^[a-z0-9_]+$")
@@ -63,11 +64,23 @@ def _tokens(text: str) -> list[str]:
 
 
 def looks_like_command(text: str, look_words: int = 3) -> bool:
-    """Return True if the first ``look_words`` tokens look like a command verb."""
+    """Return True only for an imperative or explicit request-shaped command."""
     tokens = _tokens(text)
-    if not tokens:
+    if not tokens or look_words < 1:
         return False
-    return any(tok in COMMAND_TRIGGER_WORDS for tok in tokens[:look_words])
+    if tokens[0] in COMMAND_TRIGGER_WORDS:
+        return True
+
+    limit = min(len(tokens), look_words)
+    index = 0
+    while index < limit and tokens[index] in _COMMAND_PREFIX_WORDS:
+        index += 1
+    if 0 < index < limit and tokens[index] in COMMAND_TRIGGER_WORDS:
+        return True
+
+    if len(tokens) >= 3 and tokens[0] in _REQUEST_MODALS and tokens[1] == "you":
+        return tokens[2] in COMMAND_TRIGGER_WORDS
+    return False
 
 
 def target_only_candidate(text: str, max_words: int = 2) -> Optional[str]:
