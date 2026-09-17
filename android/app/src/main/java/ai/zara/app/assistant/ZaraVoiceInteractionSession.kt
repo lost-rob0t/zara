@@ -4,8 +4,11 @@ import ai.zara.app.AndroidAppSession
 import ai.zara.app.ZaraApplication
 import ai.zara.app.ui.UiOperationFailure
 import android.Manifest
+import android.app.assist.AssistContent
+import android.app.assist.AssistStructure
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.service.voice.VoiceInteractionSession
 import android.view.Gravity
@@ -20,8 +23,7 @@ class ZaraVoiceInteractionSession(
     private val context: Context,
 ) : VoiceInteractionSession(context) {
     private val application = context.applicationContext as ZaraApplication
-    private val appSession: AndroidAppSession =
-        (context.applicationContext as ZaraApplication).appSession
+    private val appSession: AndroidAppSession = application.appSession
     private val lifecycleFence = application.assistantLifecycleFence
     private val invocationGate = AssistantInvocationGate()
     private var statusView: TextView? = null
@@ -70,6 +72,20 @@ class ZaraVoiceInteractionSession(
         super.onShow(args, showFlags)
         invocationGate.show()
         updateStatus("Hold to talk to Zara")
+    }
+
+    override fun onHandleAssist(
+        data: Bundle?,
+        structure: AssistStructure?,
+        content: AssistContent?,
+    ) {
+        super.onHandleAssist(data, structure, content)
+        application.androidIntegration.captureAssistantContext(data, structure, content)
+    }
+
+    override fun onHandleScreenshot(screenshot: Bitmap?) {
+        super.onHandleScreenshot(screenshot)
+        application.androidIntegration.captureAssistantScreenshot(screenshot)
     }
 
     override fun onHide() {
