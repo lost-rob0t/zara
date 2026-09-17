@@ -7,7 +7,7 @@ import ai.zara.app.ui.extensions.UiExtensionRegistry
 import ai.zara.app.ui.extensions.UiPlatform
 import ai.zara.app.ui.extensions.UiSlot
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFailsWith
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class UiExtensionContractTest {
@@ -65,14 +65,14 @@ class UiExtensionContractTest {
                 ui.add("bad", "drawer", "text", "Bad", "", 10, ["android"])
         """.trimIndent()
 
-        assertFailsWith<IllegalArgumentException> {
+        assertThrows(IllegalArgumentException::class.java) {
             PortablePythonUiInitParser.parse(source)
         }
     }
 
     @Test
     fun invalidActionSchemeFailsClosed() {
-        assertFailsWith<IllegalArgumentException> {
+        assertThrows(IllegalArgumentException::class.java) {
             UiContribution(
                 id = "bad",
                 slot = UiSlot.DRAWER,
