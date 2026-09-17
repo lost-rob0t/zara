@@ -8,7 +8,11 @@ from PySide6.QtWidgets import QWidget
 from zara.config import get_config
 from zara.desktop.conversation import ConversationService
 from zara.desktop.qt_bridge import QtRuntimeBridge
-from zara.desktop.ui_extensions import DesktopUiExtensionHost, build_desktop_ui_registry
+from zara.desktop.ui_extensions import (
+    DesktopUiExtensionHost,
+    build_desktop_ui_registry,
+    desktop_ui_action_bus,
+)
 from zara.ui.extensions import UiSlot
 
 from .copilot import CopilotPresentation, CopilotWindow as BaseCopilotWindow
@@ -38,6 +42,7 @@ class CopilotWindow(BaseCopilotWindow):
         self.plugin_extensions = DesktopUiExtensionHost(self.ui_registry, UiSlot.PLUGINS, self)
         self.chat_top_extensions = DesktopUiExtensionHost(self.ui_registry, UiSlot.CHAT_TOP, self)
         self.chat_bottom_extensions = DesktopUiExtensionHost(self.ui_registry, UiSlot.CHAT_BOTTOM, self)
+        self.ui_action_bus = desktop_ui_action_bus()
 
         history_layout = self.history_panel.layout()
         history_layout.insertWidget(1, self.drawer_extensions)
@@ -53,9 +58,10 @@ class CopilotWindow(BaseCopilotWindow):
             self.chat_top_extensions,
             self.chat_bottom_extensions,
         ):
-            host.action_requested.connect(self._handle_ui_extension_action)
+            host.action_requested.connect(self.ui_action_bus.action_requested.emit)
+        self.ui_action_bus.action_requested.connect(self.handle_ui_extension_action)
 
-    def _handle_ui_extension_action(self, action: str) -> None:
+    def handle_ui_extension_action(self, action: str) -> None:
         if action.startswith("route:"):
             route = action.removeprefix("route:")
             if route == "settings":
