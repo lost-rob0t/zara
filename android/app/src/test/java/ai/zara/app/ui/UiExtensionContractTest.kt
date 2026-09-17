@@ -1,11 +1,16 @@
 package ai.zara.app.ui
 
+import ai.zara.app.runtime.LocalQueryResult
+import ai.zara.app.ui.extensions.AndroidPluginUiProjection
+import ai.zara.app.ui.extensions.AndroidUiExtensionRepository
 import ai.zara.app.ui.extensions.PortablePythonUiInitParser
 import ai.zara.app.ui.extensions.UiContribution
 import ai.zara.app.ui.extensions.UiContributionKind
 import ai.zara.app.ui.extensions.UiExtensionRegistry
 import ai.zara.app.ui.extensions.UiPlatform
 import ai.zara.app.ui.extensions.UiSlot
+import java.nio.file.Files
+import java.util.concurrent.CompletableFuture
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -67,6 +72,40 @@ class UiExtensionContractTest {
 
         assertThrows(IllegalArgumentException::class.java) {
             PortablePythonUiInitParser.parse(source)
+        }
+    }
+
+    @Test
+    fun androidPluginUiRequiresTrustedEnabledHostProjection() {
+        val root = Files.createTempDirectory("zara-ui-contract").toFile()
+        val contribution = UiContribution(
+            id = "settings",
+            slot = UiSlot.SETTINGS,
+            kind = UiContributionKind.BUTTON,
+            label = "Open settings",
+            action = "plugin:settings",
+            platforms = setOf(UiPlatform.ANDROID),
+        )
+        try {
+            val repository = AndroidUiExtensionRepository(
+                root = root,
+                prologQuery = { query ->
+                    CompletableFuture.completedFuture(LocalQueryResult(query, emptyList(), 1))
+                },
+                pluginProjectionProvider = {
+                    listOf(
+                        AndroidPluginUiProjection("disabled", true, false, 4, listOf(contribution)),
+                        AndroidPluginUiProjection("untrusted", false, true, 7, listOf(contribution)),
+                        AndroidPluginUiProjection("ready", true, true, 9, listOf(contribution)),
+                    )
+                },
+            )
+
+            val projected = repository.load().get()
+            assertEquals(listOf("plugin:ready"), projected.map { it.owner })
+            assertEquals(listOf("settings"), projected.map { it.id })
+        } finally {
+            root.deleteRecursively()
         }
     }
 
