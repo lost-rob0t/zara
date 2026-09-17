@@ -28,7 +28,7 @@ def test_android_screenshot_gate_retries_transient_emulator_package_downloads() 
     # reinstall clears partial package/cache state before each verified attempt.
     assert 'test -x "$emulator_bin" && "$emulator_bin" -version' in workflow
     assert "for attempt in 1 2 3; do" in workflow
-    assert 'rm -rf "$sdk_root/emulator" "$sdk_root/.temp" "$android_cache"' in workflow
+    assert 'rm -rf "$sdk_root/emulator" "$sdk_root/.temp" "$sdk_root/.downloadIntermediates" "$android_cache"' in workflow
     assert '"$sdkmanager_bin" --sdk_root="$sdk_root" --install platform-tools --channel=0' in workflow
     assert '"$sdkmanager_bin" --sdk_root="$sdk_root" --install emulator --channel=0' in workflow
     assert "emulator SDK install failed after 3 attempts" in workflow
