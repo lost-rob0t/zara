@@ -20,6 +20,7 @@ class AndroidRawAdapter(
     }
 
     override fun execute(arguments: DeviceActionArguments): DeviceActionResult {
+        DeviceActionResultReceipts.discardStaged()
         val raw = arguments as? DeviceActionArguments.AndroidRaw
             ?: return DeviceActionResult.Error(DeviceActionErrorCode.InvalidArguments)
         val result = try {
@@ -36,12 +37,16 @@ class AndroidRawAdapter(
             return DeviceActionResult.Error(DeviceActionErrorCode.Failed)
         }
         if (result.success) {
-            return DeviceActionResult.CompletedWithOutput(
-                backend = result.backend ?: raw.backend,
-                identity = result.identity ?: "unknown",
-                output = result.output?.take(MAX_RESULT_CHARS),
+            DeviceActionResultReceipts.stage(
+                AndroidDeviceExecutionReceipt(
+                    backend = result.backend ?: raw.backend,
+                    identity = result.identity ?: "unknown",
+                    output = result.output?.take(MAX_RESULT_CHARS),
+                ),
             )
+            return DeviceActionResult.Completed
         }
+        DeviceActionResultReceipts.discardStaged()
         val code = when (result.error) {
             AndroidOperationError.AUTHORITY_DENIED -> DeviceActionErrorCode.PermissionDenied
             AndroidOperationError.BACKEND_UNAVAILABLE -> DeviceActionErrorCode.Unavailable
