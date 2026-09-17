@@ -12,9 +12,13 @@ def test_ci_names_phone_apk_artifact_with_exact_source_sha():
     assert "source_sha=${SOURCE_SHA}" in workflow
 
 
-def test_green_master_publishes_direct_latest_apks():
+def test_green_master_uses_update_compatible_signer_and_publishes_direct_latest_apks():
+    ci = (ROOT / ".github/workflows/ci.yml").read_text()
     workflow = (ROOT / ".github/workflows/android-latest.yml").read_text()
 
+    assert "ZARA_ANDROID_DEBUG_KEYSTORE_B64" in ci
+    assert "github.event_name == 'push' && github.ref == 'refs/heads/master'" in ci
+    assert "ZARA_ANDROID_DEBUG_KEYSTORE=$keystore" in ci
     assert "workflow_run:" in workflow
     assert "github.event.workflow_run.conclusion == 'success'" in workflow
     assert "github.event.workflow_run.event == 'push'" in workflow
