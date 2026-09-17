@@ -27,6 +27,13 @@ class CloudModelTest {
         assertTrue(
             CloudModelConfig(
                 enabled = true,
+                endpoint = CloudModelConfig.STATINTEL_ENDPOINT,
+                model = "stat-model",
+            ).runCatchingValidated().isSuccess
+        )
+        assertTrue(
+            CloudModelConfig(
+                enabled = true,
                 provider = CloudModelProvider.OPENROUTER,
                 endpoint = CloudModelConfig.OPENROUTER_ENDPOINT,
                 model = "openai/gpt-5",
