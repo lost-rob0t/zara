@@ -18,6 +18,7 @@ data class NearbyWatch(
     val name: String,
     val nearby: Boolean,
     val zaraInstalled: Boolean,
+    val transport: String,
 )
 
 data class WatchDebugEndpoint(
