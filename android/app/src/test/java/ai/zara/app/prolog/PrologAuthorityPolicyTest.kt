@@ -59,6 +59,7 @@ class PrologAuthorityPolicyTest {
             "findall(X, Goal, Result)",
             "Goal =.. [shell, id], Result = Goal",
             "Goal, Result = ok",
+            "\\+ Goal, Result = ok",
         ).forEach { query ->
             try {
                 PrologAuthorityPolicy.requireSafeQuery(query)
@@ -78,6 +79,10 @@ class PrologAuthorityPolicyTest {
             "unsafe_goal.pl",
             "payload(noop).\nrun(Result) :- payload(Goal), Goal, Result = ok.\n",
         )
+        val negatedDynamicGoal = PrologSourceAnalyzer.analyze(
+            "unsafe_negated_goal.pl",
+            "payload(noop).\nrun(Result) :- payload(Goal), \\+ Goal, Result = ok.\n",
+        )
         val storedEffectfulTerm = PrologSourceAnalyzer.analyze(
             "unsafe_fact.pl",
             "payload(shell('id')).\n",
@@ -85,6 +90,7 @@ class PrologAuthorityPolicyTest {
 
         assertTrue(PrologAuthorityPolicy.validate(metaCall).any { it.message.contains("findall") })
         assertTrue(PrologAuthorityPolicy.validate(dynamicGoal).any { it.message.contains("dynamic variable goal") })
+        assertTrue(PrologAuthorityPolicy.validate(negatedDynamicGoal).any { it.message.contains("meta goal") })
         assertTrue(PrologAuthorityPolicy.validate(storedEffectfulTerm).any { it.message.contains("shell") })
     }
 
