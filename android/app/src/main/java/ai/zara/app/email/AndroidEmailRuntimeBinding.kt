@@ -9,11 +9,15 @@ import org.json.JSONObject
  *
  * Construction installs the email/Prolog symbol catalog into every embedded
  * local-model turn. Closing removes only this plugin-owned context.
+ * The generated spam-rule path is supplied by trusted app configuration and is
+ * never accepted from model/tool arguments.
  */
 class AndroidEmailRuntimeBinding(
     private val plugin: AndroidEmailPlugin,
+    private val generatedSpamRulePath: String,
 ) : AutoCloseable {
     init {
+        require(generatedSpamRulePath.isNotBlank()) { "generated spam rule path is required" }
         LocalPromptContexts.register(CONTEXT_NAME, plugin.modelTurnContext)
     }
 
@@ -71,10 +75,9 @@ class AndroidEmailRuntimeBinding(
             )
             "email_refresh_spam_rules" -> {
                 val feeds = arguments.optJSONArray("feeds")?.let(::parseFeeds) ?: emptyList()
-                val generatedRulePath = arguments.requireString("generated_rule_path")
                 JSONObject()
-                    .put("rules", plugin.refreshSpamRules(feeds, generatedRulePath))
-                    .put("path", generatedRulePath)
+                    .put("rules", plugin.refreshSpamRules(feeds, generatedSpamRulePath))
+                    .put("path", generatedSpamRulePath)
             }
             "email_prolog_api" -> JSONObject()
                 .put("context", plugin.modelTurnContext)
