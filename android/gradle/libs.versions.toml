@@ -11,6 +11,7 @@ libadbAndroid = "3.1.1"
 conscrypt = "2.5.3"
 bcpkix = "1.81"
 jgit = "7.8.0.202609011348-r"
+litertLm = "0.17.0"
 junit = "4.13.2"
 
 [libraries]
@@ -27,6 +28,7 @@ libadb-android = { group = "com.github.MuntashirAkon", name = "libadb-android", 
 conscrypt-android = { group = "org.conscrypt", name = "conscrypt-android", version.ref = "conscrypt" }
 bcpkix = { group = "org.bouncycastle", name = "bcpkix-jdk15to18", version.ref = "bcpkix" }
 jgit = { group = "org.eclipse.jgit", name = "org.eclipse.jgit", version.ref = "jgit" }
+litert-lm-android = { group = "com.google.ai.edge.litertlm", name = "litertlm-android", version.ref = "litertLm" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
