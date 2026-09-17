@@ -10,15 +10,16 @@ record(Event) :- assertz(seen(Event)).
 reset_seen :- retractall(seen(_)).
 
 
-test(default_browser_settings_are_queryable) :-
-    kb_config:org_browser_setting(enabled, true),
-    kb_config:org_browser_setting(base_font_pt, Font),
+test(default_browser_settings_are_queryable_without_becoming_overrides) :-
+    kb_config:org_browser_effective_setting(enabled, true),
+    kb_config:org_browser_effective_setting(base_font_pt, Font),
     number(Font), Font > 0,
-    kb_config:org_browser_setting(search_limit, Limit),
+    kb_config:org_browser_effective_setting(search_limit, Limit),
     integer(Limit), Limit > 0,
-    kb_config:org_browser_heading_scale(1, Scale),
+    kb_config:org_browser_effective_heading_scale(1, Scale),
     number(Scale), Scale > 1.0,
-    kb_config:org_browser_help_source("README.org").
+    kb_config:org_browser_default_help_source("README.org"),
+    \+ kb_config:org_browser_setting(base_font_pt, _).
 
 
 test(valid_user_browser_setting_is_accepted) :-
