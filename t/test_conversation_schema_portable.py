@@ -9,7 +9,12 @@ from zara.conversation_schema import (
     conversation_schema_statements,
 )
 from zara.database import DatabaseManager
-from zara.desktop.conversation import ConversationStore
+from zara.desktop.conversation import (
+    ConversationStore,
+    MessageRecord,
+    MessageRole,
+    MessageStatus,
+)
 from zara.principals import PrincipalContext
 
 
@@ -127,3 +132,65 @@ def test_legacy_local_principals_migrate_to_portable_owner(tmp_path):
     )
     assert {row["principal_id"] for row in rows} == {PORTABLE_LOCAL_PRINCIPAL_ID}
     assert {record.id for record in reopened.list_conversations()} == {first.id, second.id}
+
+
+def test_local_owner_claims_history_from_previous_numeric_uid_without_claiming_authenticated_rows(tmp_path):
+    path = tmp_path / "cross-uid.db"
+    current_owner = PrincipalContext("uid:9001", kind="local-owner")
+    db = DatabaseManager(path)
+    store = ConversationStore(db, principal=current_owner)
+    conversation = store.create_conversation("Restored local history", conversation_id="restored-local")
+    message = MessageRecord(
+        id="restored-message",
+        conversation_id=conversation.id,
+        sequence=store.next_sequence(conversation.id),
+        turn_id="restored-turn",
+        role=MessageRole.ASSISTANT,
+        content="survives account migration",
+        status=MessageStatus.COMPLETE,
+        created_at="2026-09-17T01:00:00.000000",
+        updated_at="2026-09-17T01:00:00.000000",
+    )
+    store.save_message(message)
+
+    previous_uid = "uid:4242"
+    db.execute(
+        "UPDATE desktop_conversations SET principal_id = ? WHERE id = ?",
+        (previous_uid, conversation.id),
+    )
+    db.execute(
+        "UPDATE desktop_messages SET principal_id = ? WHERE id = ?",
+        (previous_uid, message.id),
+    )
+    db.execute(
+        """
+        INSERT INTO desktop_conversations
+            (id, title, created_at, updated_at, provider, model, principal_id)
+        VALUES (?, ?, ?, ?, '', '', ?)
+        """,
+        (
+            "authenticated-history",
+            "Authenticated history",
+            "2026-09-17T01:00:00.000000",
+            "2026-09-17T01:00:00.000000",
+            "user:alice",
+        ),
+    )
+    db.close()
+
+    reopened_db = DatabaseManager(path)
+    reopened = ConversationStore(reopened_db, principal=current_owner)
+    state = reopened.load_state(conversation.id)
+
+    assert state.conversation.title == "Restored local history"
+    assert [item.content for item in state.messages] == ["survives account migration"]
+    migrated = reopened_db.fetch_one(
+        "SELECT principal_id FROM desktop_conversations WHERE id = ?",
+        (conversation.id,),
+    )
+    foreign = reopened_db.fetch_one(
+        "SELECT principal_id FROM desktop_conversations WHERE id = ?",
+        ("authenticated-history",),
+    )
+    assert migrated["principal_id"] == PORTABLE_LOCAL_PRINCIPAL_ID
+    assert foreign["principal_id"] == "user:alice"
