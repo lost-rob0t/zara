@@ -1,0 +1,64 @@
+#+title: Android three-menu navigation evidence
+
+* 2026-09-17: user-requested navigation revision
+:PROPERTIES:
+:ISSUE: https://github.com/lost-rob0t/zara/issues/934
+:START_SHA: e8e8382ddea3a48b1b67de9146e5e8ae6d17645f
+:BRANCH: feat/android-three-menu-navigation
+:END:
+
+** Scope and research
+
+Read root AGENTS.md, android/AGENTS.md, android/DESIGN.md, the reference SVG source, epic #648, the complete ZaraApp.kt baseline, Android build configuration, and existing projection tests. The embedded reference image was not rendered or visually verified in this environment.
+
+The baseline exposes eleven drawer routes and combines local runtime, assistant onboarding, identity, and updates in one Settings form. The explicit user request supersedes the flat drawer inventory only. Ongoing Prolog-editor and embedded-model PRs were inspected by metadata and left untouched.
+
+Upstream references consulted:
+- https://developer.android.com/develop/ui/compose/components/tabs
+- https://developer.android.com/develop/ui/compose/components/navigation-rail
+
+** Design
+
+Three primary menus: Chat, Workspace, Settings. Secondary routes are native scrollable tabs. Compact windows keep a left drawer; windows at least 600dp wide expose a left rail too. No bottom bar. Shared semantic tokens and all existing runtime/action callbacks remain in use.
+
+Separate Settings runtime, connection, permissions, appearance, plugins, updates, diagnostics, and about. Consolidate identity/pinning/endpoint/Connect into Connection. Keep gated Projects/Scheduled/Plugins honest.
+
+Use a pure validated navigation value with stable-name persistence and a route-keyed Compose saved-state holder. Back returns through menu roots before delegating app exit. This is not a second task engine, actor runtime, or persistence backend.
+
+** RED before implementation
+
+Navigation contracts committed first at cb09c157028336eeb1297a8a7bf25221efd5b9da. Before creating AppNavigation.kt, compiling AppNavigationContract.kt alone with kotlinc failed with exit 1 and unresolved AppMenu/AppRoute/routesFor symbols, as expected.
+
+Source-wiring contracts committed at 7b1412137e86de0d1de7da12d4e6d1dfc3838c48. Against the unchanged UI, their standalone JVM main failed with exit 1 in stateIsSavedPerRoute because the navigation saver/holder wiring was missing. JUnit adapter committed at 0f2174b552853df8a55db5559b4c12c91ce0507d before production commits.
+
+** Implementation commits
+
+- 1b2f3fa8c687f8f66c72ea952be535b17fb1dd3c: navigation value and inventory.
+- 2c72350e906ab0f27b776a6b6c3a7a6dffc11d72: semantic rail/tab components and saver.
+- 5a32f9e2253146a2882dbe988d89d8f55a951ae1: integrated shell and tabbed forms.
+
+The locally reconstructed baseline exactly matched Git blob ebbdeb694b47c04cbfd52638c5bfa0db30e85e34. The uploaded changed ZaraApp.kt exactly matched locally tested blob 019c2f969d68bd80257f6197b761323ed57f2302. The public ZaraApp parameter/callback signature was checked unchanged.
+
+** Local GREEN, with limits
+
+Using kotlinc 1.9.0 and Java, compiled the actual AppNavigation.kt together with AppNavigationContract.kt, without substituted declarations or stubs. Standalone execution passed 10 contract groups, covering 169 route transitions and 144 saved-state combinations, plus invalid/edge cases.
+
+Compiled and executed AppNavigationWiringContract.kt against the changed source: 5 source-wiring groups passed. These are static wiring checks, not UI behavior/rendering tests.
+
+Kotlin compiler PSI parsed all six changed/new Kotlin files with zero syntax errors. Parsing does not resolve Android/Compose types and is not a successful Android build.
+
+The JUnit adapter and full Android module were not executed locally. Runtime/Compose state restoration, insets, TalkBack, font scaling, rail geometry, and visual contrast still need Android interaction/screenshot evidence. No screenshots or device pass were produced.
+
+** Full gate attempt
+
+Command attempted from the local partial working tree:
+
+#+begin_src sh
+nix develop -c bash scripts/test-all.sh
+#+end_src
+
+Result: exit 127, =nix: command not found=. This environment did not provide the pinned Nix Android toolchain or an emulator. Local network cloning was unavailable; repository reads/writes proceeded through the authorized GitHub connector. The working tree here contained fetched/reconstructed relevant files, not a complete checkout.
+
+** Outcome and remaining gate
+
+Implementation and tests are on an isolated branch for a draft PR. Do not merge or report visual/release completion without current exact-head full repository/Android/Wear/native/APK CI plus the actual screenshot/interaction matrix in wiki/android-navigation.org. No master mutation, merge, APK release, install, or hardware verification is claimed.
