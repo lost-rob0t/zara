@@ -47,13 +47,17 @@ class PrologAuthorityPolicyTest {
     }
 
     @Test
-    fun adHocQueriesAlsoRejectNetworkDatabaseFfiAndConcurrencyAuthority() {
+    fun adHocQueriesRejectEffectfulMetaQuotedAndFileAuthority() {
         listOf(
             "http_open(url, Result)",
             "tcp_connect(socket, Result)",
             "sqlite3_open(path, Result, Status)",
             "use_foreign_module(Result, [])",
             "thread_create(Result, worker)",
+            "read_file_to_string('/etc/passwd', Result, [])",
+            "'shell'('id'), Result = ok",
+            "findall(X, Goal, Result)",
+            "Goal =.. [shell, id], Result = Goal",
         ).forEach { query ->
             try {
                 PrologAuthorityPolicy.requireSafeQuery(query)
@@ -61,6 +65,18 @@ class PrologAuthorityPolicyTest {
             } catch (_: IllegalArgumentException) {
             }
         }
+    }
+
+    @Test
+    fun workspaceMetaRulesCannotExecuteStoredGoalsIndirectly() {
+        val document = PrologSourceAnalyzer.analyze(
+            "unsafe_meta.pl",
+            "run(Result) :- payload(Goal), findall(X, Goal, Result).\n",
+        )
+
+        val diagnostics = PrologAuthorityPolicy.validate(document)
+
+        assertTrue(diagnostics.any { it.message.contains("findall") })
     }
 
     @Test
