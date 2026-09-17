@@ -83,8 +83,37 @@ class PrologAuthorityPolicyTest {
         server.close()
     }
 
+    @Test
+    fun invalidReloadPreflightLeavesLastGoodRuntimeAlive() {
+        val root = temporary.newFolder("reload-workspace")
+        val workspace = PrologWorkspace(root)
+        workspace.saveSource("safe.pl", "safe(Result) :- Result = ok.\n")
+        val bridge = RecordingBridge()
+        val server = LocalZaraServer(bridge, "/private/core.pl", workspace)
+
+        assertEquals(LocalServerPhase.READY, server.start().get(2, TimeUnit.SECONDS).phase)
+        assertEquals(1, bridge.initializeCount)
+        assertEquals(0, bridge.shutdownCount)
+
+        File(root, "safe.pl").writeText("safe(Result) :- shell('id'), Result = ok.\n")
+        val rejected = server.reload().get(2, TimeUnit.SECONDS)
+
+        assertEquals(LocalServerPhase.FAILED, rejected.phase)
+        assertEquals(LocalServerPhase.READY, server.state().phase)
+        assertEquals(1, server.state().generation)
+        assertEquals(1, bridge.initializeCount)
+        assertEquals(0, bridge.shutdownCount)
+
+        File(root, "safe.pl").writeText("safe(Result) :- Result = ok.\n")
+        assertEquals(LocalServerPhase.READY, server.reload().get(2, TimeUnit.SECONDS).phase)
+        assertEquals(2, bridge.initializeCount)
+        assertEquals(1, bridge.shutdownCount)
+        server.close()
+    }
+
     private class RecordingBridge : TreallaBridge {
         var initializeCount = 0
+        var shutdownCount = 0
         val consulted = mutableListOf<String>()
 
         override fun initialize(coreAssetPath: String) {
@@ -97,6 +126,8 @@ class PrologAuthorityPolicyTest {
 
         override fun evaluate(query: String): List<String> = listOf("ok")
 
-        override fun shutdown() = Unit
+        override fun shutdown() {
+            shutdownCount += 1
+        }
     }
 }
