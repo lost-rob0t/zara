@@ -1,0 +1,94 @@
+#+title: Android embedded local AI
+
+* Scope
+
+Zara Android can keep its Prolog-first standalone mode while optionally adding a local conversational model and local speech synthesis. The model does not become action authority. Android device effects continue through the typed Zara capability/policy boundary.
+
+The owning issue is #904 under #622.
+
+* Android service boundary
+
+The phone hosts model and TTS lifetime in the non-exported =LocalAiService= running in Zara's =:voice= process.
+
+#+begin_example
+Compose / VoiceInteractionService / AndroidAppSession
+                    |
+                    | explicit bound service
+                    v
+             LocalAiService
+                actor lane
+             /             \
+      LiteRT-LM engine    offline TTS
+      .litertlm model     Android voice
+             \             /
+              typed results
+                    |
+          Prolog / capability policy
+#+end_example
+
+The service is not a second Zara authority, memory store, plugin system, scheduler, or remote server. It owns only expensive local inference resources and speech synthesis lifetime.
+
+* LiteRT-LM
+
+Android uses the native Kotlin LiteRT-LM package pinned by the repository. Do not use =latest.release=. Model loading and inference stay off the Android main thread. CPU, GPU and NPU are explicit backends. GPU use declares the optional OpenCL/vendor libraries required by LiteRT-LM.
+
+Model files are not bundled into the base APK. They are installed into app-private storage and require explicit metadata:
+
+- model id and version;
+- exact quantization;
+- SHA-256;
+- context limit;
+- requested backend.
+
+Unknown quantization is rejected. Zara never guesses quantization from a filename. The model file is SHA-256 checked before activation and again before service load.
+
+The initial practical real-device lane is a small explicitly quantized =.litertlm= model, such as the Gemma 3 1B IT dynamic-int4 class where its model license is accepted. CI uses fake backends and does not download a large model.
+
+* Routing
+
+Local text remains symbolic-first:
+
+#+begin_example
+utterance
+  -> portable Prolog / expert router
+     -> deterministic result: return it
+     -> no deterministic match: optional LocalAiService model
+        -> no installed/ready model: bounded model-unavailable result
+#+end_example
+
+Model text is conversational output only. It cannot call Android capabilities or LiteRT-LM tools as action authority.
+
+* Local TTS
+
+The first local speech backend is Android =TextToSpeech= with an explicitly selected voice whose =Voice.isNetworkConnectionRequired= value is false. If the device has no installed offline voice, Zara reports TTS unavailable. It does not silently switch to network speech.
+
+Speech uses unique utterance ids and =UtteranceProgressListener=. Zara can stop the engine immediately for barge-in/cancellation.
+
+A later fully Zara-managed neural voice backend may use sherpa-onnx with a downloaded, versioned and checksummed Piper/VITS/Kokoro-family model. That remains behind the same =LocalTtsBackend= contract.
+
+* WebAssembly / Web
+
+The local-AI provider boundary has the stable =local-ai-v1= ABI vocabulary so the same product contract can be implemented by a WebAssembly/Web backend.
+
+For browsers, LiteRT-LM's JavaScript path uses WebGPU and LiteRT.js loads its WebAssembly runtime. That is the Web implementation path.
+
+Android itself deliberately uses native Kotlin LiteRT-LM rather than embedding the browser/WebAssembly runtime in a WebView. Native Android LiteRT-LM exposes the supported CPU/GPU/NPU acceleration path directly. The WebAssembly boundary is portability at the provider contract, not a reason to throw away Android acceleration.
+
+* Security and lifecycle
+
+- =LocalAiService= is non-exported.
+- Models live in app-private storage.
+- No unknown quantization is accepted.
+- No network fallback occurs merely because local inference fails.
+- One actor owns model load/generate/unload ordering.
+- A cancelled LiteRT-LM conversation is discarded rather than reused.
+- Activity recreation does not create another model owner.
+- Local model output remains untrusted text until normal Zara semantic/policy handling.
+- Offline TTS selects only a non-network-required voice.
+
+* References
+
+- Google LiteRT-LM Android: https://developers.google.com/edge/litert-lm/android
+- Google LiteRT-LM Web API: https://developers.google.com/edge/litert-lm/js
+- Android =Voice.isNetworkConnectionRequired=: https://developer.android.com/reference/android/speech/tts/Voice#isNetworkConnectionRequired()
+- sherpa-onnx Android: https://k2-fsa.github.io/sherpa/onnx/android/index.html
