@@ -1,6 +1,7 @@
 package ai.zara.app
 
 import ai.zara.app.assistant.AssistantLifecycleFence
+import ai.zara.app.email.EmailPrologPlugin
 import ai.zara.app.prolog.PrologWorkspace
 import ai.zara.app.samsunghealth.SamsungHealthAndroidPlugin
 import ai.zara.app.samsunghealth.SamsungHealthPrologPlugin
@@ -12,9 +13,9 @@ class ZaraApplication : Application() {
     internal val assistantLifecycleFence = AssistantLifecycleFence()
 
     val appSession: AndroidAppSession by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        SamsungHealthPrologPlugin.install(
-            PrologWorkspace(File(filesDir, "prolog-workspace")),
-        )
+        val workspace = PrologWorkspace(File(filesDir, "prolog-workspace"))
+        SamsungHealthPrologPlugin.install(workspace)
+        EmailPrologPlugin.install(this, workspace)
         AndroidAppSession(this)
     }
 
