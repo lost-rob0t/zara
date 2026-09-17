@@ -255,6 +255,23 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Prime Android emulator SDK with bounded retry
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?ANDROID SDK root is unavailable}}"
+          for attempt in 1 2 3; do
+            echo "emulator SDK install attempt ${attempt}/3"
+            if sdkmanager --install emulator --channel=0; then
+              exit 0
+            fi
+            echo "emulator SDK install failed; clearing transient package state" >&2
+            rm -rf "$sdk_root/.temp"
+            sleep "$((attempt * 2))"
+          done
+          echo "emulator SDK install failed after 3 attempts" >&2
+          exit 1
+
       - name: Capture Android screenshot evidence
         uses: reactivecircus/android-emulator-runner@v2
         env:
