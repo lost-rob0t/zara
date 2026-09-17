@@ -116,6 +116,33 @@ def test_dual_surface_validator_rejects_failed_android_acceptance(tmp_path: Path
     assert "passed" in result.stderr.lower()
 
 
+def test_dual_surface_validator_rejects_tampered_android_png(tmp_path: Path) -> None:
+    source_sha = "0123456789abcdef0123456789abcdef01234567"
+    desktop = _write_desktop_evidence(tmp_path, source_sha)
+    android = _write_android_evidence(tmp_path, source_sha)
+    (android.parent / "empty-shell.png").write_bytes(_png_bytes("tampered"))
+
+    result = _run_validator(source_sha, desktop, android)
+
+    assert result.returncode != 0
+    assert "hash mismatch" in result.stderr.lower()
+
+
+def test_dual_surface_validator_rejects_manifest_path_escape(tmp_path: Path) -> None:
+    source_sha = "0123456789abcdef0123456789abcdef01234567"
+    desktop = _write_desktop_evidence(tmp_path, source_sha)
+    android = _write_android_evidence(tmp_path, source_sha)
+    manifest = json.loads(desktop.read_text(encoding="utf-8"))
+    manifest["fixtures"][0]["path"] = "../outside.png"
+    desktop.write_text(json.dumps(manifest), encoding="utf-8")
+    (desktop.parent.parent / "outside.png").write_bytes(_png_bytes("outside"))
+
+    result = _run_validator(source_sha, desktop, android)
+
+    assert result.returncode != 0
+    assert "escapes" in result.stderr.lower()
+
+
 def test_ci_generates_android_screenshots_and_validates_both_surfaces() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
