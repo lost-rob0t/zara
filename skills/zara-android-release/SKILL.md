@@ -1,6 +1,6 @@
 ---
 name: zara-android-release
-description: Version and release Zara Android with SemVer, focused branch PRs, exact-head CI, immutable tags, and verified APK provenance. Use for Android version bumps, release preparation, APK publication, release tags, or release validation in this repository.
+description: Version and release Zara Android with SemVer, focused branch PRs, exact-head CI, immutable version tags, a rolling latest channel, and verified APK provenance. Use for Android version bumps, release preparation, APK publication, release tags, or release validation in this repository.
 ---
 
 # Zara Android release
@@ -36,9 +36,9 @@ The release gate must bind evidence to the exact candidate SHA. After every push
 
 Do not merge unless the PR is mergeable and the exact candidate SHA is green. Opening a PR does not authorize merging it.
 
-## 3. Publish immutably
+## 3. Publish immutable versions and rolling latest
 
-After the release PR is approved and merged, verify the merge SHA on `master`. Create `v<version>` at that exact merge SHA. Never move or overwrite a release tag. Refuse a tag/version mismatch and refuse to replace an existing release.
+After the release PR is approved and merged, verify the merge SHA on `master`. Create `v<version>` at that exact merge SHA. Never move or overwrite a release tag whose name starts with `v`. Refuse a tag/version mismatch and refuse to replace an existing SemVer release.
 
 The trusted tag or `master` release workflow must produce:
 
@@ -48,6 +48,8 @@ The trusted tag or `master` release workflow must produce:
 - a verified update-compatible signing certificate.
 
 Pull-request CI must publish `zara-android-debug-<sha>` with a phone APK, checksum, and exact-SHA manifest. Do not relabel a PR artifact as a release asset.
+
+A separate post-CI workflow owns the intentionally mutable `android-latest` convenience channel. It runs only after a successful `push` CI run on `master`, moves only the `android-latest` tag, and publishes direct-download `zara-latest.apk` and `zara-wear-latest.apk` assets plus checksums and `zara-latest.manifest.txt`. Never treat `android-latest` as immutable release evidence; its manifest source SHA is the authority for the exact build it currently serves.
 
 ## 4. Verify the distributed APK
 
