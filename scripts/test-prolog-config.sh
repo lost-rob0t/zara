@@ -39,6 +39,20 @@ swipl -q \
   -g "(run_tests(exec_config) -> halt(0) ; halt(1))" \
   -t "halt(1)"
 
+# Emacs-like runtime config primitives are deterministic and side-effect free
+# in this gate: variables, hooks, commands, features and load-path semantics.
+swipl -q \
+  -s "$repo_root/t/config_api.pl" \
+  -g "(run_tests(config_api) -> halt(0) ; halt(1))" \
+  -t "halt(1)"
+
+# Clipboard tests use a multifile in-memory provider. CI never reads or writes
+# the runner's actual desktop clipboard.
+swipl -q \
+  -s "$repo_root/t/clipboard.pl" \
+  -g "(run_tests(clipboard) -> halt(0) ; halt(1))" \
+  -t "halt(1)"
+
 # Market-data provider normalization and user-defined multifile adapters are
 # completely offline in this gate; CI never requires an API credential.
 swipl -q \
