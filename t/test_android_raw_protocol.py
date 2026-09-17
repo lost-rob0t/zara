@@ -2,7 +2,16 @@ import json
 
 import pytest
 
-from zara import protocol
+from zara import android_raw_protocol, protocol
+
+
+@pytest.fixture(autouse=True)
+def raw_protocol_extension():
+    android_raw_protocol.install()
+    try:
+        yield
+    finally:
+        android_raw_protocol.uninstall_for_tests()
 
 
 def frame(message):
