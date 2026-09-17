@@ -368,11 +368,11 @@ def _parse_file(path: Path) -> list[_OrgTask]:
     for row_index, (start, level, status, rest) in enumerate(heading_rows):
         if status not in keywords:
             continue
-        end = len(lines)
-        for candidate_start, candidate_level, _, _ in heading_rows[row_index + 1 :]:
-            if candidate_level <= level:
-                end = candidate_start
-                break
+        end = (
+            heading_rows[row_index + 1][0]
+            if row_index + 1 < len(heading_rows)
+            else len(lines)
+        )
         task = _parse_task(path, lines, start, end, level, status, rest)
         if task is not None:
             tasks.append(task)
