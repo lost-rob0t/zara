@@ -118,7 +118,7 @@ internal class LocalAssistantVoiceController(
                 return
             }
             statusObserver("Thinking locally…")
-            appSession.submitText(transcript).whenComplete { result, error ->
+            appSession.submitLocalText(transcript).whenComplete { result, error ->
                 appContext.mainExecutor.execute {
                     if (!isCurrent(token)) return@execute
                     if (error != null) {
