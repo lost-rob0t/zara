@@ -1,8 +1,6 @@
 package ai.zara.wear.surface
 
 import androidx.wear.watchface.complications.data.ComplicationType
-import androidx.wear.watchface.complications.data.PlainComplicationText
-import androidx.wear.watchface.complications.data.ShortTextComplicationData
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -98,25 +96,26 @@ class WearSurfaceContractTest {
 
     @Test
     fun complicationPreviewPayloadsAreCanonicalAndRejectUnsupportedTypes() {
-        val expectedStatus = ShortTextComplicationData.Builder(
-            text = PlainComplicationText.Builder("Zara").build(),
-            contentDescription = PlainComplicationText.Builder("Open Zara").build(),
+        assertEquals(
+            ZaraShortTextComplicationPayload(
+                text = "Zara",
+                title = "offline",
+                contentDescription = "Open Zara",
+            ),
+            statusComplicationPayload(ComplicationType.SHORT_TEXT),
         )
-            .setTitle(PlainComplicationText.Builder("offline").build())
-            .build()
-        val expectedVoice = ShortTextComplicationData.Builder(
-            text = PlainComplicationText.Builder("Voice").build(),
-            contentDescription = PlainComplicationText.Builder("Open Zara Voice").build(),
+        assertEquals(
+            ZaraShortTextComplicationPayload(
+                text = "Voice",
+                title = "Zara",
+                contentDescription = "Open Zara Voice",
+            ),
+            voiceComplicationPayload(ComplicationType.SHORT_TEXT),
         )
-            .setTitle(PlainComplicationText.Builder("Zara").build())
-            .build()
-
-        assertEquals(expectedStatus, buildStatusComplicationData(ComplicationType.SHORT_TEXT))
-        assertEquals(expectedVoice, buildVoiceComplicationData(ComplicationType.SHORT_TEXT))
 
         listOf(ComplicationType.LONG_TEXT, ComplicationType.RANGED_VALUE).forEach { unsupported ->
-            assertNull(buildStatusComplicationData(unsupported))
-            assertNull(buildVoiceComplicationData(unsupported))
+            assertNull(statusComplicationPayload(unsupported))
+            assertNull(voiceComplicationPayload(unsupported))
         }
     }
 }
