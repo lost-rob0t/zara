@@ -9,8 +9,10 @@ import ai.zara.app.auth.EnrollmentRepository
 import ai.zara.app.auth.EnrollmentState
 import ai.zara.app.auth.JeroMqCurveKeyCodec
 import ai.zara.app.device.AndroidAppLauncher
+import ai.zara.app.device.AndroidCalendarIntentLauncher
 import ai.zara.app.device.AndroidUriLauncher
 import ai.zara.app.device.BixbyLocalHandoff
+import ai.zara.app.device.CalendarInsertAdapter
 import ai.zara.app.device.DeviceActionErrorCode
 import ai.zara.app.device.DeviceActionResult
 import ai.zara.app.device.DeviceCapabilityRegistry
@@ -127,6 +129,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 listOf(
                     OpenUriAdapter(AndroidUriLauncher(context)),
                     openAppAdapter,
+                    CalendarInsertAdapter(AndroidCalendarIntentLauncher(context)),
                 )
             )
         )
