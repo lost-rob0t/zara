@@ -85,7 +85,7 @@ enum class AppSurface(val label: String, val glyph: String, val gatedIssue: Stri
     Projects("Projects", "◇", "#653"),
     Remote("Remote", "⇄"),
     Scheduled("Scheduled", "◷", "#654"),
-    Plugins("Plugins", "⬡", "#655"),
+    Plugins("Plugins", "⬡"),
     Themes("Themes", "◐"),
     Diagnostics("Diagnostics", "⌁"),
     Settings("Settings", "⚙"),
@@ -161,6 +161,8 @@ fun ZaraApp(
     onInstallUpdate: () -> Unit,
 ) {
     var selected by rememberSaveable { mutableStateOf(AppSurface.Chat) }
+    val pluginInstallUi = rememberPluginInstallUi()
+    val shellSurface = if (selected == AppSurface.Plugins) AppSurface.Settings else selected
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val systemDark = isSystemInDarkTheme()
@@ -172,7 +174,7 @@ fun ZaraApp(
                 drawerState = drawerState,
                 drawerContent = {
                     ZaraDrawer(
-                        selected = selected,
+                        selected = shellSurface,
                         state = runtimeState,
                         localState = localServerState,
                         onSelect = { destination ->
@@ -186,7 +188,7 @@ fun ZaraApp(
                     containerColor = tokens.background,
                     topBar = {
                         ZaraTopBar(
-                            selected = selected,
+                            selected = shellSurface,
                             state = runtimeState,
                             localState = localServerState,
                             onMenu = { scope.launch { drawerState.open() } },
@@ -241,7 +243,6 @@ fun ZaraApp(
                             padding = padding,
                         )
                         AppSurface.Scheduled -> GatedSurface(selected, padding)
-                        AppSurface.Plugins -> GatedSurface(selected, padding)
                         AppSurface.Themes -> ThemesSurface(
                             selected = selectedTheme,
                             onSelectTheme = onSelectTheme,
@@ -256,27 +257,33 @@ fun ZaraApp(
                             operationError = operationError,
                             padding = padding,
                         )
-                        AppSurface.Settings -> SettingsSurface(
-                            state = runtimeState,
-                            localServerState = localServerState,
-                            updateState = updateState,
-                            runtimeMode = runtimeMode,
-                            localEmbedding = localEmbedding,
-                            enrollmentPublicKey = enrollmentPublicKey,
-                            pinnedServerPublicKey = pinnedServerPublicKey,
-                            operationError = operationError,
-                            operationBusy = operationBusy,
-                            onCreateIdentity = onCreateIdentity,
-                            onPinServer = onPinServer,
-                            onReplaceServerPin = onReplaceServerPin,
-                            onRequestAssistantRole = onRequestAssistantRole,
-                            onCheckForUpdate = onCheckForUpdate,
-                            onDownloadUpdate = onDownloadUpdate,
-                            onInstallUpdate = onInstallUpdate,
-                            onSelectRuntimeMode = onSelectRuntimeMode,
-                            onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
+                        AppSurface.Settings, AppSurface.Plugins -> SettingsTabLayout(
                             padding = padding,
-                        )
+                            pluginUi = pluginInstallUi,
+                            initiallyPlugins = selected == AppSurface.Plugins,
+                        ) {
+                            SettingsSurface(
+                                state = runtimeState,
+                                localServerState = localServerState,
+                                updateState = updateState,
+                                runtimeMode = runtimeMode,
+                                localEmbedding = localEmbedding,
+                                enrollmentPublicKey = enrollmentPublicKey,
+                                pinnedServerPublicKey = pinnedServerPublicKey,
+                                operationError = operationError,
+                                operationBusy = operationBusy,
+                                onCreateIdentity = onCreateIdentity,
+                                onPinServer = onPinServer,
+                                onReplaceServerPin = onReplaceServerPin,
+                                onRequestAssistantRole = onRequestAssistantRole,
+                                onCheckForUpdate = onCheckForUpdate,
+                                onDownloadUpdate = onDownloadUpdate,
+                                onInstallUpdate = onInstallUpdate,
+                                onSelectRuntimeMode = onSelectRuntimeMode,
+                                onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
+                                padding = PaddingValues(),
+                            )
+                        }
                         AppSurface.About -> AboutSurface(sourceSha, padding)
                     }
                 }
@@ -355,7 +362,7 @@ private fun ZaraDrawer(
             }
 
             Spacer(Modifier.size(8.dp))
-            AppSurface.entries.forEach { surface ->
+            AppSurface.entries.filter { it != AppSurface.Plugins }.forEach { surface ->
                 when (surface) {
                     AppSurface.Chat -> DrawerDividerLabel("WORKSPACE")
                     AppSurface.Remote -> DrawerDividerLabel("RUNTIME")
