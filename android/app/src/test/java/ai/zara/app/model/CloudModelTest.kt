@@ -138,6 +138,24 @@ class CloudModelTest {
     }
 
     @Test
+    fun openRouterProviderSlugsNormalizeCaseAndRejectCaseFoldedDuplicates() {
+        val normalized = OpenRouterProviderPolicy(
+            order = listOf("Anthropic", "Google-Vertex"),
+            only = listOf("ANTHROPIC", "google-vertex"),
+            ignore = listOf("DeepInfra"),
+        ).validated()
+
+        assertEquals(listOf("anthropic", "google-vertex"), normalized.order)
+        assertEquals(listOf("anthropic", "google-vertex"), normalized.only)
+        assertEquals(listOf("deepinfra"), normalized.ignore)
+        assertTrue(
+            runCatching {
+                OpenRouterProviderPolicy(order = listOf("Anthropic", "anthropic")).validated()
+            }.isFailure
+        )
+    }
+
+    @Test
     fun openRouterPolicyFailsClosedOnUnknownQuantizationAndConflictingProviders() {
         assertTrue(
             runCatching {
@@ -147,7 +165,7 @@ class CloudModelTest {
         assertTrue(
             runCatching {
                 OpenRouterProviderPolicy(
-                    only = listOf("openai"),
+                    only = listOf("OPENAI"),
                     ignore = listOf("openai"),
                 ).validated()
             }.isFailure
