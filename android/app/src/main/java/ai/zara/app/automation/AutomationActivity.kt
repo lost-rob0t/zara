@@ -1,12 +1,15 @@
 package ai.zara.app.automation
 
 import ai.zara.app.ZaraApplication
+import ai.zara.app.accessibility.AccessibilityAutomationAdapter
 import ai.zara.app.control.AndroidControlAccess
 import ai.zara.app.control.AndroidControlAccessBroker
 import ai.zara.app.device.AndroidAppLauncher
 import ai.zara.app.device.AndroidAppSearchLauncher
+import ai.zara.app.device.AndroidUriLauncher
 import ai.zara.app.device.AppSearchAdapter
 import ai.zara.app.device.OpenAppAdapter
+import ai.zara.app.device.OpenUriAdapter
 import ai.zara.app.prolog.AndroidAutomationCatalog
 import ai.zara.app.prolog.AndroidAutomationResult
 import ai.zara.app.prolog.AndroidAutomationRunner
@@ -55,7 +58,10 @@ class AutomationActivity : ComponentActivity() {
         runner = AndroidAutomationRunner(
             queryProlog = session::queryLocalProlog,
             openApp = OpenAppAdapter(AndroidAppLauncher(this)),
+            openUri = OpenUriAdapter(AndroidUriLauncher(this)),
             appSearch = AppSearchAdapter(AndroidAppSearchLauncher(this)),
+            accessibility = AccessibilityAutomationAdapter(),
+            accessGranted = accessBroker::isGranted,
         )
         refreshAccess()
         seedDemo().whenComplete { _, error ->
@@ -107,6 +113,10 @@ class AutomationActivity : ComponentActivity() {
                     error != null -> error.cause?.message ?: error.message ?: "Automation failed"
                     result is AndroidAutomationResult.Completed ->
                         "Completed ${result.plan.name}: ${result.plan.actions.size} action(s)"
+                    result is AndroidAutomationResult.NeedsAccess -> {
+                        requestAccess(result.access)
+                        "${result.plan.name} needs ${result.access.name}; Android opened the grant screen. Run it again after granting access."
+                    }
                     result is AndroidAutomationResult.Failed ->
                         "${result.plan.name} stopped at action ${result.actionIndex + 1}: ${result.error.wireId}"
                     else -> "Automation failed"
@@ -140,7 +150,7 @@ class AutomationActivity : ComponentActivity() {
             },
             io,
         ).thenCompose { template ->
-            saveSources(template.sources).thenApply { template }
+            session.importPrologWorkspace(workspaceBundle(template.sources)).thenApply { template }
         }.whenComplete { template, error ->
             runOnUiThread {
                 busy = false
@@ -153,15 +163,15 @@ class AutomationActivity : ComponentActivity() {
         }
     }
 
-    private fun saveSources(sources: List<PrologSource>): CompletableFuture<Unit> {
-        val session = (application as ZaraApplication).appSession
-        var chain = CompletableFuture.completedFuture(Unit)
-        sources.forEach { source ->
-            chain = chain.thenCompose {
-                session.savePrologSource(source.name, source.text).thenApply { Unit }
-            }
+    private fun workspaceBundle(sources: List<PrologSource>): String = buildString {
+        append("ZARA-PROLOG-WORKSPACE/1\n")
+        sources.sortedBy(PrologSource::name).forEach { source ->
+            val text = if (source.text.endsWith('\n')) source.text else source.text + "\n"
+            append("SOURCE ").append(source.name).append(' ')
+                .append(text.encodeToByteArray().size).append('\n')
+            append(text)
+            append("END-SOURCE\n")
         }
-        return chain
     }
 
     private companion object {
