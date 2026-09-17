@@ -103,30 +103,39 @@ class ConversationStore:
     def _claim_legacy_rows_for_local_owner(self) -> None:
         if self._principal.kind != "local-owner":
             return
+        # Before the portable local-owner key existed, Desktop persisted the
+        # host's numeric Unix UID (``uid:<digits>``). A database restored under
+        # another local account must keep that local history visible, while
+        # authenticated principals such as ``user:alice`` remain untouched.
+        legacy_local_predicate = """
+            principal_id IN (?, ?)
+            OR (
+                substr(principal_id, 1, 4) = 'uid:'
+                AND length(substr(principal_id, 5)) > 0
+                AND substr(principal_id, 5) NOT GLOB '*[^0-9]*'
+            )
+        """
+        parameters = (
+            PORTABLE_LOCAL_PRINCIPAL_ID,
+            LEGACY_LOCAL_PRINCIPAL_ID,
+            self._principal.principal_id,
+        )
         with self._db.transaction() as conn:
             conn.execute(
-                """
+                f"""
                 UPDATE desktop_conversations
                 SET principal_id = ?
-                WHERE principal_id IN (?, ?)
+                WHERE {legacy_local_predicate}
                 """,
-                (
-                    PORTABLE_LOCAL_PRINCIPAL_ID,
-                    LEGACY_LOCAL_PRINCIPAL_ID,
-                    self._principal.principal_id,
-                ),
+                parameters,
             )
             conn.execute(
-                """
+                f"""
                 UPDATE desktop_messages
                 SET principal_id = ?
-                WHERE principal_id IN (?, ?)
+                WHERE {legacy_local_predicate}
                 """,
-                (
-                    PORTABLE_LOCAL_PRINCIPAL_ID,
-                    LEGACY_LOCAL_PRINCIPAL_ID,
-                    self._principal.principal_id,
-                ),
+                parameters,
             )
 
     def create_conversation(
