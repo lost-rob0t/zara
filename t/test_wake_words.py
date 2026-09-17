@@ -116,11 +116,33 @@ def test_resolve_wake_words_config_single_string_is_accepted():
     assert resolve_wake_words(config, None) == ["computer"]
 
 
-def test_resolve_wake_words_falls_back_to_prolog_facts():
+def test_resolve_wake_words_falls_back_to_explicit_prolog_facts():
     config = _config_with_wake_section({"words": []})
     prolog = MagicMock()
     prolog.get_wake_words.return_value = ["zarathushtra", "zara"]
     assert resolve_wake_words(config, prolog) == ["zarathushtra", "zara"]
+
+
+def test_resolve_wake_words_derives_defaults_from_project_name_override():
+    config = _config_with_wake_section({})
+    prolog = MagicMock()
+    prolog.get_wake_words.return_value = []
+    # config_loader installs local/base overrides with asserta/2, so the
+    # effective value is the first clause and the packaged default follows it.
+    prolog.query_all.return_value = [{"Name": "Mara"}, {"Name": "Zara"}]
+    assert resolve_wake_words(config, prolog) == ["hey mara", "mara"]
+    prolog.query_all.assert_called_with(
+        "kb_config:project_name(Name)",
+        max_solutions=64,
+    )
+
+
+def test_resolve_wake_words_preserves_zara_legacy_aliases():
+    config = _config_with_wake_section({})
+    prolog = MagicMock()
+    prolog.get_wake_words.return_value = []
+    prolog.query_all.return_value = [{"Name": "Zara"}]
+    assert resolve_wake_words(config, prolog) == list(WAKE_WORDS)
 
 
 def test_resolve_wake_words_defaults_when_prolog_unavailable():
@@ -132,6 +154,7 @@ def test_resolve_wake_words_defaults_when_prolog_fails():
     config = _config_with_wake_section({})
     prolog = MagicMock()
     prolog.get_wake_words.side_effect = RuntimeError("prolog exploded")
+    prolog.query_all.side_effect = RuntimeError("prolog exploded")
     assert resolve_wake_words(config, prolog) == list(WAKE_WORDS)
 
 
