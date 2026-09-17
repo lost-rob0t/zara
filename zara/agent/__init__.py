@@ -33,6 +33,7 @@ from .user_hooks import UserHookLoader
 from ..config import ZaraConfig, get_config
 from ..memory import build_memory_manager, MemoryManager
 from ..latency import LatencyTrace
+from ..response_policy import install_policy
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,7 @@ class AgentManager:
 
         self.tool_registry = ToolRegistry(prolog_engine, self.config)
         self.tool_registry.load_builtin_tools(self.memory_manager)
+        install_policy(self)
 
         for plugin_dir in self.config.get_module_search_paths():
             self.tool_registry.load_user_tools(str(plugin_dir))

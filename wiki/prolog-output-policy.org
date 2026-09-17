@@ -1,0 +1,190 @@
+#+title: Native Prolog output policy
+
+* Scope and defaults
+
+The bundled =zara-policy= plugin makes response policy a native Prolog subsystem,
+not a prompt-only string and not a Prolog-RLM backend. =main.pl= loads
+=modules/response_policy.pl=, which loads =kb/policy_config.pl= and the default KB
+=kb/response_policy.pl=. =AgentManager= installs the provider facade and two
+LangChain tools after built-in tools. General lifecycle hooks and override gates
+remain unchanged. No external service, new actor runtime, or new dependency is
+introduced.
+
+This implementation covers the Python/SWI-Prolog conversation path. Android's
+local Trealla model path and a new Prolog editor/mode UI are not implemented by
+this change. An alternate Prolog entry point must load the policy module to
+activate it; a missing module is reported and leaves the model unwrapped.
+
+The default Prolog facts are:
+
+#+begin_src prolog
+policy_config:default_setting(enabled, true).
+policy_config:default_setting(mode, advise).
+policy_config:default_setting(max_input_chars, 32768).
+policy_config:default_setting(max_findings, 16).
+policy_config:default_setting(max_revisions, 1).
+policy_config:default_setting(revision_timeout_seconds, 10).
+policy_config:default_setting(disabled_rules, []).
+#+end_src
+
+Defaults are packaged Prolog configuration, not a new root TOML configuration
+format. Existing installations receive these defaults through the packaged
+module; no existing config file is overwritten. Turning off =tools.policy_check=
+or =tools.policy_catalog= in the existing TOML tools table hides that tool only;
+use the Prolog =enabled= setting to disable the plugin itself.
+
+* Matching, advice and model execution
+
+The KB contains 38 operator-authored rules and 230 English phrase variants.
+Every rule includes its stable ID, category, severity, phrase alternatives,
+corrective advice and source ID. These phrases are research-inspired heuristics,
+not a validated classifier, and a match is not proof that the answer is wrong.
+For example, "all tests passed" can be entirely correct when the tests actually
+ran. The review prompt explicitly preserves evidence-supported claims.
+
+Matching uses normalized, case-insensitive word sequences, not unrestricted
+regular expressions or substring bans. It handles curly quotes and excludes
+fenced code, inline code, quoted text and Markdown blockquotes. It suppresses
+simple conditional sentences and nearby negation. This is deliberately limited
+syntax handling, not full semantic negation or quotation parsing. Indirect
+claims, unusual Markdown and other languages can evade detection or be falsely
+flagged. Do not treat absence of findings as factual verification.
+
+In =advise= mode, a final text draft with actionable findings receives at most
+one tool-free revision call using the original model without tool binding. The
+matcher checks the revised answer once and attaches both reports. There is no
+recursive revision, replay of the conversation loop, automatic execution of
+model-generated tools, or permission-policy bypass. Existing pending tool calls
+and invalid tool-call messages are returned untouched to the canonical loop.
+
+Refusal, capability, sycophancy and style categories are review-only. Information
+severity is also review-only. Their matches do not automatically trigger a
+revision. Legitimate refusal, honest uncertainty and real access failures must
+not be erased to make an answer sound more confident. This plugin is not an
+output moderation boundary or a factual verifier.
+
+Advise mode buffers the draft before emitting text, including when no finding
+ultimately needs revision. This increases time to first visible/spoken text.
+A triggered review adds one provider call, its token cost and up to the configured
+revision timeout. Provider usage metadata on the returned message is not a
+combined billing total for both calls. Observe mode passes through the provider's
+stream and appends audit metadata without a revision call. Providers without
+streaming still use their buffered invocation.
+
+A failed, timed-out, empty or tool-calling revision retains the original draft
+with an explicit audit outcome. Cancellation propagates. Inspection failure,
+input limits and budget exhaustion return distinct statuses rather than an
+empty "clean" result. This is advisory fail-open behavior, not a hard blocker.
+
+* First-class predicates and tools
+
+#+begin_src prolog
+?- response_policy:settings_json(Json).
+?- response_policy:catalog_json(Json).
+?- response_policy:analyze_json("All tests passed.", Json).
+#+end_src
+
+The model gets =policy_check(text)= and =policy_catalog()= as ordinary LangChain
+tools. The first returns candidates; the second returns effective settings,
+patterns, advice, provenance, user/default origin and enabled status. A model can
+check its own draft explicitly, and the automatic final-text facade still checks
+outputs independently of whether it remembered to call the tool.
+
+Audit is attached to =AIMessage.response_metadata["zara_policy"]= with
+=initial=, =final=, =revision_count= and =outcome=. It is retained by the canonical
+message history/stream aggregation. The ordinary response API is not extended
+with a new top-level policy field in this change. No UI for this audit is added.
+
+* Extend in trusted operator configuration
+
+Create =$XDG_CONFIG_HOME/zarathushtra/plugins/zara-policy/config.pl=, falling back
+to =~/.config/zarathushtra/plugins/zara-policy/config.pl=. A custom Zara config
+location uses its parent directory in place of the standard config directory.
+The local administrator's agent consults this file on startup. Restart to apply
+changes: live reload and rollback are not implemented here.
+
+#+begin_src prolog
+:- multifile policy_config:user_setting/2.
+:- multifile response_policy:user_rule/6.
+:- multifile response_policy:user_source/4.
+
+policy_config:user_setting(mode, observe).
+policy_config:user_setting(disabled_rules, [irrelevant_preamble]).
+
+response_policy:user_source(my_style,
+    "My response conventions", "local:my-style", "2026-09-17").
+
+response_policy:user_rule(handwave, scope, warning,
+    ["the rest is straightforward", "implementation left to the reader"],
+    "Provide the missing implementation or state exactly what is not implemented.",
+    my_style).
+#+end_src
+
+Add a new ID to extend the KB. Reuse a bundled ID to replace that rule; user
+rules take precedence rather than duplicating its matches. Set
+=policy_config:user_setting(enabled, false).= to disable the plugin. Supply
+only one override for each setting and one user rule for each ID; duplicates
+are errors rather than an arbitrary winner. Rules may be computed by ordinary
+Prolog clauses, not just stored as facts, provided they yield bounded, ground,
+well-typed rule records.
+
+This is executable trusted Prolog, not a sandbox. Only install code you trust.
+Model output is JSON-escaped data passed to a fixed predicate, never consulted
+or executed as source. Tool calls cannot install rules. Remote principals do
+not automatically consult a private config path. The underlying SWI runtime is
+process-wide: administrator extensions are host-wide, not tenant-isolated.
+A malformed extension can fail startup; transactional hot-loading is not offered.
+
+The built-in evaluation has a 0.5-second SWI time budget and two-million-inference
+budget, plus bounded input, rules, patterns, advice and findings. These are
+best-effort Prolog execution guards, not hard preemption of blocking foreign
+calls or malicious trusted configuration. The Python bridge does not log output
+text, but the underlying engine/provider logging policy is outside this plugin.
+Do not assume process-wide prompt confidentiality from this plugin alone.
+
+* Research provenance
+
+The following primary sources informed categories and safeguards. They do not
+validate this KB's individual phrases, severity rankings or review decisions.
+
+- [[https://arxiv.org/abs/2503.13657][Why Do Multi-Agent LLM Systems Fail? (2025)]]:
+  verification, termination and specification failures inform completion,
+  verification, scope and handoff rules. Multi-agent findings do not establish
+  prevalence for Zara's single-agent loop.
+- [[https://www.anthropic.com/research/towards-understanding-sycophancy-in-language-models][Towards Understanding Sycophancy in Language Models (2023)]]:
+  agreement and flattery are review candidates, not substitutes for evidence.
+- [[https://openai.com/index/why-language-models-hallucinate/][Why language models hallucinate (2025)]]:
+  preserve honest uncertainty rather than rewarding plausible unsupported claims.
+- [[https://aclanthology.org/2024.naacl-long.301/][XSTest (2024)]]:
+  avoid treating keywords as sufficient evidence of unsafe intent or unjustified
+  refusal. Refusal candidates remain advisory and cannot bypass safety policy.
+- [[https://www.anthropic.com/research/reward-tampering][Reward tampering research (2024)]]:
+  test tampering and suppressed failures motivate verification-integrity rules.
+  Controlled-study results are not estimates of production behavior here.
+- [[https://www.swi-prolog.org/pldoc/man?predicate=multifile/1][SWI multifile/1]],
+  [[https://www.swi-prolog.org/pldoc/man?predicate=call_with_time_limit/2][time limits]] and
+  [[https://www.swi-prolog.org/pldoc/man?predicate=call_with_inference_limit/3][inference limits]]
+  define the actual extension and execution mechanisms.
+
+Local style preferences have explicit =local_style= provenance and must not be
+represented as experimentally established LLM failures.
+
+* Verification
+
+Run the focused Python and real SWI contracts, then the repository gate:
+
+#+begin_src sh
+nix develop -c pytest -q t/test_response_policy.py
+nix develop -c swipl -q -s t/response_policy_tests.pl -g run_tests -t halt
+nix develop -c bash scripts/test-all.sh
+nix flake check
+#+end_src
+
+The Python tests skip real SWI and LangChain-specific cases when those
+dependencies are absent. A passing run with skips is not full integration
+verification. The Prolog suite enumerates every authored variant and checks
+negation, quotes, code, conditionals, extension, override, duplicates, limits,
+disabled mode and provenance. The Python suite checks serialization, validation,
+fail-open status, tool-call preservation, bounded revisions, cancellation,
+streaming, startup disablement and metadata. Merge only after the full repository
+gate and candidate-SHA CI pass.
