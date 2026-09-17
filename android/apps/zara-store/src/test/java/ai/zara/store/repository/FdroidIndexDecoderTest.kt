@@ -15,8 +15,18 @@ class FdroidIndexDecoderTest {
                 "timestamp": 1726531200000
               },
               "packages": {
-                "ai.zara.notes": {},
-                "ai.zara.store": {}
+                "ai.zara.notes": {
+                  "metadata": {
+                    "added": 1726531200000,
+                    "lastUpdated": 1726531200000
+                  }
+                },
+                "ai.zara.store": {
+                  "metadata": {
+                    "added": 1726531200000,
+                    "lastUpdated": 1726531200000
+                  }
+                }
               }
             }
             """.trimIndent(),
