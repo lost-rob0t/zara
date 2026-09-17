@@ -54,6 +54,9 @@ def install_gateway_tracking() -> None:
         original_handle_device = gateway_type._handle_device_message
 
         def tracked_init(self, *args, **kwargs):
+            from . import android_raw_protocol
+
+            android_raw_protocol.install()
             original_init(self, *args, **kwargs)
             _track_gateway(self)
 
