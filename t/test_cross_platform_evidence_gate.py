@@ -160,7 +160,10 @@ def test_ci_generates_android_screenshots_and_validates_both_surfaces() -> None:
 
     assert "reactivecircus/android-emulator-runner@v2" in workflow
     assert "Capture Android screenshot evidence" in workflow
-    assert "bash -euo pipefail <<'BASH'" in workflow
+    assert "script: bash -euo pipefail -c '" in workflow
+    assert "android/integration/device_acceptance.py" in workflow
+    assert '--source-sha "$SOURCE_SHA"' in workflow
+    assert "--output android/app/build/reports/device" in workflow
     assert "android-ui-evidence" in workflow
     assert "Validate dual-surface screenshot evidence" in workflow
     assert "scripts/validate-ui-evidence.py" in workflow
