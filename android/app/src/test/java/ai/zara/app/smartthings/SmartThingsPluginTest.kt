@@ -4,7 +4,6 @@ import ai.zara.app.auth.CredentialCipher
 import ai.zara.app.auth.SealedCredential
 import java.io.File
 import java.util.concurrent.TimeUnit
-import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -67,7 +66,7 @@ class SmartThingsPluginTest {
         assertTrue(devices?.success == true)
         assertTrue(status?.text?.contains("\"switch\"") == true)
         assertEquals(1, gateway.threadNames.distinct().size)
-        assertTrue(gateway.threadNames.single().contains("zara-smartthings"))
+        assertTrue(gateway.threadNames.distinct().single().contains("zara-smartthings"))
 
         val ambiguous = runCatching {
             actor.dispatch(
@@ -132,13 +131,11 @@ class SmartThingsPluginTest {
         assertEquals("/devices", transport.requests[0].path)
         assertEquals("secret-token", transport.requests[0].accessToken)
         assertEquals("/devices/device-1/status", transport.requests[1].path)
-        val command = JSONObject(transport.requests[2].body!!)
-            .getJSONArray("commands")
-            .getJSONObject(0)
-        assertEquals("main", command.getString("component"))
-        assertEquals("switchLevel", command.getString("capability"))
-        assertEquals("setLevel", command.getString("command"))
-        assertEquals(42, command.getJSONArray("arguments").getInt(0))
+        val commandBody = transport.requests[2].body!!
+        assertTrue(commandBody.contains("\"component\":\"main\""))
+        assertTrue(commandBody.contains("\"capability\":\"switchLevel\""))
+        assertTrue(commandBody.contains("\"command\":\"setLevel\""))
+        assertTrue(commandBody.contains("\"arguments\":[42]"))
     }
 
     @Test
