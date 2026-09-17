@@ -280,6 +280,7 @@ fun ZaraApp(
                                             )
                                             AppSurface.Projects -> ProjectsSurface(
                                                 state = projectState,
+                                                operationError = operationError,
                                                 operationBusy = operationBusy,
                                                 onCreateProject = onCreateProject,
                                                 onSelectProject = onSelectProject,
