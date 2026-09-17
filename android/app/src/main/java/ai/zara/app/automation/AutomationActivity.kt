@@ -230,6 +230,9 @@ private fun AutomationScreen(
         Button(enabled = !busy, onClick = { onRun("psytrance_both") }) {
             Text("Run both")
         }
+        Button(enabled = !busy, onClick = { onRun("open_bixby") }) {
+            Text("Bixby")
+        }
 
         Text("Android control access", style = MaterialTheme.typography.titleMedium)
         Text("Zara asks Android for each special access. Android remains the authority; no rule can self-grant it.")
