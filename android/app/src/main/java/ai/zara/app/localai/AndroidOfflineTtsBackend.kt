@@ -25,10 +25,14 @@ class AndroidOfflineTtsBackend(
     @Volatile
     private var initialization: CompletableFuture<LocalTtsState>? = null
 
+    @Volatile
+    private var closed = false
+
     override fun state(): LocalTtsState = current
 
     @Synchronized
     override fun initialize(): CompletableFuture<LocalTtsState> {
+        if (closed) return failed(IllegalStateException("Offline TTS backend is closed"))
         initialization?.let { return it }
         val future = CompletableFuture<LocalTtsState>()
         initialization = future
@@ -36,6 +40,11 @@ class AndroidOfflineTtsBackend(
         var engine: TextToSpeech? = null
         engine = TextToSpeech(appContext) { status ->
             val instance = engine
+            if (closed) {
+                instance?.shutdown()
+                future.completeExceptionally(IllegalStateException("Offline TTS backend is closed"))
+                return@TextToSpeech
+            }
             if (status != TextToSpeech.SUCCESS || instance == null) {
                 current = LocalTtsState(LocalTtsPhase.UNAVAILABLE, failure = "Offline TTS engine initialization failed")
                 future.complete(current)
@@ -60,10 +69,12 @@ class AndroidOfflineTtsBackend(
     }
 
     override fun speak(text: String): CompletableFuture<Unit> {
+        if (closed) return failed(IllegalStateException("Offline TTS backend is closed"))
         val normalized = text.trim()
         require(normalized.isNotEmpty()) { "Speech text is required" }
         require(normalized.length <= MAX_TEXT_CHARS) { "Speech text is too large" }
         return initialize().thenCompose { ready ->
+            if (closed) return@thenCompose failed(IllegalStateException("Offline TTS backend is closed"))
             if (ready.phase != LocalTtsPhase.READY && ready.phase != LocalTtsPhase.SPEAKING) {
                 return@thenCompose failed(IllegalStateException(ready.failure ?: "Offline TTS is unavailable"))
             }
@@ -88,14 +99,19 @@ class AndroidOfflineTtsBackend(
         pending.entries.toList().forEach { (id, future) ->
             if (pending.remove(id, future)) future.completeExceptionally(error)
         }
-        if (current.phase != LocalTtsPhase.UNAVAILABLE && current.phase != LocalTtsPhase.FAILED) {
+        if (!closed && current.phase != LocalTtsPhase.UNAVAILABLE && current.phase != LocalTtsPhase.FAILED) {
             current = current.copy(phase = LocalTtsPhase.READY, failure = null)
         }
     }
 
     @Synchronized
     override fun close() {
+        if (closed) return
+        closed = true
         stop()
+        initialization?.takeIf { !it.isDone }?.completeExceptionally(
+            IllegalStateException("Offline TTS backend is closed")
+        )
         tts?.shutdown()
         tts = null
         initialization = null
@@ -120,7 +136,7 @@ class AndroidOfflineTtsBackend(
 
         override fun onDone(utteranceId: String) {
             pending.remove(utteranceId)?.complete(Unit)
-            if (pending.isEmpty()) current = current.copy(phase = LocalTtsPhase.READY, failure = null)
+            if (!closed && pending.isEmpty()) current = current.copy(phase = LocalTtsPhase.READY, failure = null)
         }
 
         @Deprecated("Deprecated by Android; API 21+ dispatches onError(String, Int)")
@@ -132,15 +148,17 @@ class AndroidOfflineTtsBackend(
             pending.remove(utteranceId)?.completeExceptionally(
                 IllegalStateException("Offline TTS failed with code $errorCode")
             )
-            current = current.copy(
-                phase = LocalTtsPhase.FAILED,
-                failure = "Offline TTS synthesis failed",
-            )
+            if (!closed) {
+                current = current.copy(
+                    phase = LocalTtsPhase.FAILED,
+                    failure = "Offline TTS synthesis failed",
+                )
+            }
         }
 
         override fun onStop(utteranceId: String, interrupted: Boolean) {
             pending.remove(utteranceId)?.completeExceptionally(CancellationException("Local speech stopped"))
-            if (pending.isEmpty()) current = current.copy(phase = LocalTtsPhase.READY, failure = null)
+            if (!closed && pending.isEmpty()) current = current.copy(phase = LocalTtsPhase.READY, failure = null)
         }
     }
 
