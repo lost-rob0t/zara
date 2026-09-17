@@ -223,3 +223,11 @@ jobs:
           name: zara-wear-debug-${{ github.event.pull_request.head.sha || github.sha }}
           path: android/wear-app/build/outputs/apk/debug/wear-app-debug.apk
           if-no-files-found: warn
+
+      - name: Upload Agenda watch face debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zara-agenda-debug-${{ github.event.pull_request.head.sha || github.sha }}
+          path: android/wear-watchface/build/outputs/apk/debug/wear-watchface-debug.apk
+          if-no-files-found: warn
