@@ -75,6 +75,31 @@ jobs:
           path: artifacts/
           if-no-files-found: warn
 
+  deep-regression:
+    name: deep regression / hash seed ${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        seed:
+          - "1"
+          - "31337"
+    env:
+      PYTHONHASHSEED: ${{ matrix.seed }}
+      PYTHONASYNCIODEBUG: "1"
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Run full Python suite under adversarial runtime settings
+        run: nix develop -c python -m pytest -q -o faulthandler_timeout=15 t/
+
   shared-mic:
     name: shared mic / ${{ matrix.name }}
     runs-on: ubuntu-latest
@@ -154,11 +179,13 @@ jobs:
   android:
     name: android + wear gate
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
@@ -189,6 +216,42 @@ jobs:
           name: android-semantic-parity-diagnostics
           path: android/app/build/reports/semantic-parity/
           if-no-files-found: warn
+
+      - name: Enable KVM access for emulator acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Capture Android screenshot evidence
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+            serial="$(adb devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')"
+            test -n "$serial"
+            python android/integration/device_acceptance.py \
+              --serial "$serial" \
+              --source-sha "$SOURCE_SHA" \
+              --output android/app/build/reports/device
+
+      - name: Upload Android UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-ui-evidence
+          path: android/app/build/reports/device/
+          if-no-files-found: error
 
       - name: Prepare exact-SHA phone APK artifact
         shell: bash
@@ -223,3 +286,36 @@ jobs:
           name: zara-wear-debug-${{ github.event.pull_request.head.sha || github.sha }}
           path: android/wear-app/build/outputs/apk/debug/wear-app-debug.apk
           if-no-files-found: warn
+
+  evidence:
+    name: dual-surface screenshot evidence
+    needs:
+      - test
+      - android
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download desktop screenshot evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: regression-artifacts
+          path: evidence/desktop
+
+      - name: Download Android screenshot evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: android-ui-evidence
+          path: evidence/android
+
+      - name: Validate dual-surface screenshot evidence
+        run: |
+          python scripts/validate-ui-evidence.py \
+            --source-sha "$SOURCE_SHA" \
+            --desktop evidence/desktop/ui/manifest.json \
+            --android evidence/android/manifest.json
