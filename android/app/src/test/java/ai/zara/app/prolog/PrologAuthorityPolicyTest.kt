@@ -47,7 +47,7 @@ class PrologAuthorityPolicyTest {
     }
 
     @Test
-    fun adHocQueriesRejectEffectfulMetaQuotedAndFileAuthority() {
+    fun adHocQueriesRejectEffectfulMetaQuotedFileAndDynamicGoalAuthority() {
         listOf(
             "http_open(url, Result)",
             "tcp_connect(socket, Result)",
@@ -58,6 +58,7 @@ class PrologAuthorityPolicyTest {
             "'shell'('id'), Result = ok",
             "findall(X, Goal, Result)",
             "Goal =.. [shell, id], Result = Goal",
+            "Goal, Result = ok",
         ).forEach { query ->
             try {
                 PrologAuthorityPolicy.requireSafeQuery(query)
@@ -69,14 +70,22 @@ class PrologAuthorityPolicyTest {
 
     @Test
     fun workspaceMetaRulesCannotExecuteStoredGoalsIndirectly() {
-        val document = PrologSourceAnalyzer.analyze(
+        val metaCall = PrologSourceAnalyzer.analyze(
             "unsafe_meta.pl",
             "run(Result) :- payload(Goal), findall(X, Goal, Result).\n",
         )
+        val dynamicGoal = PrologSourceAnalyzer.analyze(
+            "unsafe_goal.pl",
+            "payload(noop).\nrun(Result) :- payload(Goal), Goal, Result = ok.\n",
+        )
+        val storedEffectfulTerm = PrologSourceAnalyzer.analyze(
+            "unsafe_fact.pl",
+            "payload(shell('id')).\n",
+        )
 
-        val diagnostics = PrologAuthorityPolicy.validate(document)
-
-        assertTrue(diagnostics.any { it.message.contains("findall") })
+        assertTrue(PrologAuthorityPolicy.validate(metaCall).any { it.message.contains("findall") })
+        assertTrue(PrologAuthorityPolicy.validate(dynamicGoal).any { it.message.contains("dynamic variable goal") })
+        assertTrue(PrologAuthorityPolicy.validate(storedEffectfulTerm).any { it.message.contains("shell") })
     }
 
     @Test
