@@ -112,11 +112,9 @@ private fun JsonObject.requiredLong(name: String): Long {
     require(element.isJsonPrimitive && element.asJsonPrimitive.isNumber) {
         "$name must be an integer"
     }
-    return try {
-        element.asLong
-    } catch (error: NumberFormatException) {
-        throw IllegalArgumentException("$name must be an integer", error)
-    }
+    val literal = element.asJsonPrimitive.toString()
+    require(literal.matches(Regex("-?(0|[1-9][0-9]*)"))) { "$name must be an integer" }
+    return literal.toLongOrNull() ?: throw IllegalArgumentException("$name is outside the Long range")
 }
 
 private fun JsonObject.requiredObject(name: String): JsonObject {
