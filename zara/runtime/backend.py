@@ -163,6 +163,29 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             if bind is not None:
                 bind(self._publisher)
 
+    def _publish_input_request(
+        self,
+        decision,
+        *,
+        turn_id: str,
+        conversation_id: Optional[str],
+    ) -> None:
+        request = getattr(decision, "input_request", None)
+        publisher = self._publisher
+        if request is None or publisher is None:
+            return
+        publisher(
+            events.UserInputRequired(
+                turn_id=turn_id,
+                conversation_id=conversation_id,
+                label="prolog",
+                kind=request.kind,
+                prompt=request.prompt,
+                question_id=request.question_id,
+                choices=tuple(request.choices),
+            )
+        )
+
     async def submit_turn(
         self,
         text: str,
@@ -208,6 +231,11 @@ class LangGraphRuntimeBackend(RuntimeBackend):
                 text,
                 state=state,
                 latency_trace=latency_trace,
+                conversation_id=conversation_id,
+            )
+            self._publish_input_request(
+                decision,
+                turn_id=turn_id,
                 conversation_id=conversation_id,
             )
             if decision.action == "greeting":
