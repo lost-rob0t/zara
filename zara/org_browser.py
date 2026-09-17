@@ -1,13 +1,15 @@
 """Resolved Org browser configuration and trusted Python customization.
 
-The browser is intentionally split from Org file parsing. Org files remain the
-canonical data source; this module only controls how the browser indexes,
-presents, filters, and projects that data.
+Org files remain canonical. This module controls browser policy only. Native
+clients that do not own SWI-Prolog consume the canonical runtime's disposable,
+owner-local override snapshot instead of starting a second Prolog engine.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
 import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -34,6 +36,7 @@ _ALLOWED_HOOKS = frozenset(
     }
 )
 _USER_OWNER = "user:org_browser.py"
+_MAX_SNAPSHOT_BYTES = 256_000
 
 
 class OrgBrowserConfigError(ValueError):
@@ -89,8 +92,7 @@ class OrgBrowserConfig:
         if key == "enabled":
             return replace(self, enabled=_bool_value(value, key))
         if key == "default_project":
-            text = _optional_text(value)
-            return replace(self, default_project=text)
+            return replace(self, default_project=_optional_text(value))
         if key == "memory_sync":
             return replace(self, memory_sync=_bool_value(value, key))
         if key == "base_font_pt":
@@ -165,7 +167,7 @@ class _HookRegistration:
 
 
 class OrgBrowserHookRegistry:
-    """Ordered synchronous transforms for the native Org browser."""
+    """Ordered synchronous transforms for native Org browser projections."""
 
     def __init__(self) -> None:
         self._next_registration_id = 1
@@ -390,16 +392,14 @@ def build_org_browser_runtime(
     config = OrgBrowserConfig.from_mapping(org_mapping)
     if prolog_engine is not None:
         config = _apply_prolog_overrides(config, prolog_engine)
+    else:
+        config = _apply_prolog_snapshot(config)
 
     hooks = OrgBrowserHookRegistry()
     hooks_mapping = get_section("hooks") if callable(get_section) else {}
     hooks_enabled = bool((hooks_mapping or {}).get("enabled", False))
     config_dir = getattr(zara_config, "config_dir", None)
-    if (
-        hooks_enabled
-        and config.python_config_enabled
-        and config_dir is not None
-    ):
+    if hooks_enabled and config.python_config_enabled and config_dir is not None:
         config = OrgBrowserPythonLoader(config_dir=Path(config_dir)).apply(config, hooks)
     return OrgBrowserRuntime(config=config, hooks=hooks)
 
@@ -415,7 +415,8 @@ def _apply_prolog_overrides(config: OrgBrowserConfig, engine: Any) -> OrgBrowser
         seen.add(key)
 
     roots = engine.query_all("kb_config:org_browser_root(Path)", max_solutions=10_000)
-    if roots:
+    roots_overridden = bool(roots) or _query_succeeds(engine, "kb_config:org_browser_roots_overridden")
+    if roots_overridden:
         config = config.without_roots()
         for row in roots:
             config = config.with_root(str(row.get("Path", "")))
@@ -436,11 +437,76 @@ def _apply_prolog_overrides(config: OrgBrowserConfig, engine: Any) -> OrgBrowser
         "kb_config:org_browser_help_source(Path)",
         max_solutions=1000,
     )
-    if help_sources:
+    help_overridden = bool(help_sources) or _query_succeeds(
+        engine,
+        "kb_config:org_browser_help_sources_overridden",
+    )
+    if help_overridden:
         config = config.without_help_sources()
         for row in help_sources:
             config = config.with_help_source(str(row.get("Path", "")))
     return config
+
+
+def _query_succeeds(engine: Any, goal: str) -> bool:
+    try:
+        return bool(engine.query_all(goal, max_solutions=1))
+    except Exception:
+        return False
+
+
+def _apply_prolog_snapshot(config: OrgBrowserConfig) -> OrgBrowserConfig:
+    path = _prolog_snapshot_path()
+    if path is None or not path.is_file():
+        return config
+    try:
+        stat = path.stat()
+        if stat.st_size <= 0 or stat.st_size > _MAX_SNAPSHOT_BYTES:
+            return config
+        getuid = getattr(os, "getuid", None)
+        if callable(getuid) and stat.st_uid != getuid():
+            return config
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or payload.get("version") != 1:
+            return config
+        settings = payload.get("settings", {})
+        if isinstance(settings, dict):
+            for key, value in settings.items():
+                config = config.with_setting(str(key), value)
+
+        roots = payload.get("roots", [])
+        if payload.get("roots_override") is True:
+            config = config.without_roots()
+            if isinstance(roots, list):
+                for root in roots:
+                    config = config.with_root(str(root))
+
+        scales = payload.get("heading_scales", [])
+        if isinstance(scales, list):
+            for row in scales:
+                if not isinstance(row, dict):
+                    continue
+                config = config.with_heading_scale(int(row["level"]), float(row["scale"]))
+
+        help_sources = payload.get("help_sources", [])
+        if payload.get("help_sources_override") is True:
+            config = config.without_help_sources()
+            if isinstance(help_sources, list):
+                for source in help_sources:
+                    config = config.with_help_source(str(source))
+        return config
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return config
+
+
+def _prolog_snapshot_path() -> Optional[Path]:
+    explicit = os.getenv("ZARA_ORG_BROWSER_PROLOG_SNAPSHOT", "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+    runtime_dir = os.getenv("XDG_RUNTIME_DIR", "").strip()
+    if not runtime_dir:
+        return None
+    return Path(runtime_dir) / "zarathushtra" / "org-browser-prolog.json"
 
 
 def _optional_text(value: Any) -> Optional[str]:
@@ -464,8 +530,7 @@ def _string_tuple(value: Any, name: str) -> tuple[str, ...]:
         rows = value
     else:
         raise OrgBrowserConfigError(f"{name} must be a string or list of strings")
-    result = tuple(dict.fromkeys(_required_text(item, name) for item in rows))
-    return result
+    return tuple(dict.fromkeys(_required_text(item, name) for item in rows))
 
 
 def _bool_value(value: Any, name: str) -> bool:
