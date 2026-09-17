@@ -275,6 +275,12 @@ Themes screen provides preview cards and immediate semantic-token switching. The
 
 Do not ship six divergent component implementations. One component system, six token sets.
 
+## Home-screen widgets
+
+Assistant, Runtime, and Quick Actions widgets use the same semantic theme source and restrained outlined hierarchy as the app shell. They are responsive `RemoteViews`, not parallel assistant runtimes. Runtime text is a bounded last-known projection and must not claim a live state it cannot observe.
+
+The fixed Android view/accessibility skeleton may remain XML, but all user-facing widget styling is a validated, importable Prolog stylesheet. Colors, semantic color references, dimensions, typography, text, visibility, alignment, and bounded Zara route assignments must be editable without rebuilding the APK. See [`WIDGETS.md`](WIDGETS.md).
+
 ## Diagnostics
 
 Diagnostics is an operator surface, not a dump of internals.

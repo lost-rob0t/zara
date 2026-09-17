@@ -24,6 +24,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:process=":voice">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -54,6 +55,39 @@
         <receiver
             android:name=".update.UpdateInstallReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name=".widget.ZaraAssistantWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/zara_assistant_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.ZaraRuntimeWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/zara_runtime_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.ZaraActionsWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/zara_actions_widget_info" />
+        </receiver>
     </application>
 
 </manifest>
