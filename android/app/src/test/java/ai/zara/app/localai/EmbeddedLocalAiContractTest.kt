@@ -31,7 +31,7 @@ class EmbeddedLocalAiContractTest {
         assertTrue(service.contains("LiteRtLocalLlmBackend"))
         assertTrue(service.contains("AndroidOfflineTtsBackend"))
         assertTrue(tts.contains("isNetworkConnectionRequired"))
-        assertTrue(tts.contains("TextToSpeech.stop" ) || tts.contains("tts.stop()"))
+        assertTrue(tts.contains("engine.stop()"))
     }
 
     @Test
