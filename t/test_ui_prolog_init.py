@@ -26,6 +26,21 @@ def test_prolog_init_projects_ui_seven_terms(tmp_path):
     assert registry.for_platform(UiPlatform.DESKTOP, UiSlot.DRAWER)[0].owner == "user:init.pl"
 
 
+def test_prolog_init_rejects_overflow_instead_of_silently_truncating(tmp_path):
+    clauses = "\n".join(
+        f'zara_ui(ui(item_{index}, drawer, text, "Item {index}", "", {index}, [desktop])).'
+        for index in range(257)
+    )
+    (tmp_path / "init.pl").write_text(clauses + "\n", encoding="utf-8")
+    registry = UiExtensionRegistry()
+    loader = PrologUiInitLoader(config_dir=tmp_path, registry=registry)
+
+    with pytest.raises(UserPrologUiInitLoadError, match="failed to load init.pl"):
+        loader.load()
+
+    assert registry.snapshot() == ()
+
+
 def test_prolog_init_reload_is_failure_atomic(tmp_path):
     path = tmp_path / "init.pl"
     path.write_text(
