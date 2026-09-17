@@ -7,6 +7,7 @@ import ai.zara.app.integration.ime.ImeBackend
 import ai.zara.app.integration.ime.ZaraInputMethodService
 import ai.zara.app.integration.notification.NotificationBackend
 import ai.zara.app.integration.notification.ZaraNotificationListenerService
+import ai.zara.app.integration.shizuku.ShizukuBackend
 import android.app.assist.AssistContent
 import android.app.assist.AssistStructure
 import android.content.Context
@@ -24,11 +25,13 @@ class AndroidIntegrationRuntime(context: Context) : AutoCloseable {
     private val notifications = NotificationBackend()
     private val ime = ImeBackend()
     private val assist = AssistantContextBackend()
+    private val shizuku = ShizukuBackend(appContext)
 
     private val actor = AndroidIntegrationActor(
         policy = authorityPolicy,
         backends = listOf(
             RootShellBackend(),
+            shizuku,
             DeviceOwnerBackend(appContext),
             accessibility,
             notifications,
