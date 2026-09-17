@@ -6,6 +6,8 @@ import android.content.Intent
 
 internal object ZaraWearLaunchTargets {
     const val VOICE_ACTION = "ai.zara.action.WEAR_VOICE"
+    const val OPEN_ORG_TODO_ACTION = "ai.zara.action.OPEN_ORG_TODO"
+    const val EXTRA_ORG_TODO_ID = "ai.zara.extra.ORG_TODO_ID"
     private const val MAIN_PACKAGE = "ai.zara.wear"
     private const val MAIN_ACTIVITY = "ai.zara.wear.WearMainActivity"
     private const val VOICE_PACKAGE = "ai.zara.wear.voice"
@@ -24,6 +26,19 @@ internal object ZaraWearLaunchTargets {
         Intent(VOICE_ACTION).setClassName(VOICE_PACKAGE, VOICE_ACTIVITY),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
+
+    fun orgTodoPendingIntent(context: Context, todoId: String): PendingIntent {
+        val requestCode = 4200 + (todoId.hashCode() and 0x3ff)
+        val intent = Intent(OPEN_ORG_TODO_ACTION)
+            .setClassName(MAIN_PACKAGE, MAIN_ACTIVITY)
+            .putExtra(EXTRA_ORG_TODO_ID, todoId)
+        return PendingIntent.getActivity(
+            context,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
 
     fun mainComponent(): Pair<String, String> = MAIN_PACKAGE to MAIN_ACTIVITY
 
