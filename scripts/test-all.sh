@@ -64,6 +64,7 @@ mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR" "$XDG_DATA_HOME"
 # --- Artifact directory --------------------------------------------------
 export ARTIFACT_DIR="${ARTIFACT_DIR:-$TEST_ROOT/artifacts}"
 mkdir -p "$ARTIFACT_DIR"
+export COVERAGE_FILE="$ARTIFACT_DIR/.coverage"
 
 PHASE_COUNT=0
 PASS_COUNT=0
