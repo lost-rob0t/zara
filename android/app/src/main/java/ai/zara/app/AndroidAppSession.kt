@@ -21,17 +21,10 @@ import ai.zara.app.history.HistoryMessage
 import ai.zara.app.history.HistoryMessageRole
 import ai.zara.app.history.HistoryMessageStatus
 import ai.zara.app.history.PortableConversationStore
-import ai.zara.app.prolog.AndroidPortableSemanticAssetSource
-import ai.zara.app.prolog.LocalNaturalLanguageExpertRouter
-import ai.zara.app.prolog.LocalPrologCommand
-import ai.zara.app.prolog.NativeTreallaBridge
-import ai.zara.app.prolog.PortableSemanticAssetStager
-import ai.zara.app.prolog.PrologDocument
-import ai.zara.app.prolog.PrologExampleCatalog
-import ai.zara.app.prolog.PrologSource
-import ai.zara.app.prolog.PrologSourceAnalyzer
-import ai.zara.app.prolog.PrologWorkspace
-import ai.zara.app.prolog.PrologWorkspaceCatalog
+import ai.zara.app.localai.LocalAiServiceClient
+import ai.zara.app.localai.LocalAiState
+import ai.zara.app.localai.LocalGenerationRequest
+import ai.zara.app.localai.LocalTtsState
 import ai.zara.app.runtime.AndroidTextSessionController
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.AudioOutputFormat
@@ -44,14 +37,25 @@ import ai.zara.app.runtime.LocalServerState
 import ai.zara.app.runtime.LocalZaraServer
 import ai.zara.app.runtime.RestorableClientState
 import ai.zara.app.runtime.RuntimeEvent
-import ai.zara.app.runtime.RuntimeMode
 import ai.zara.app.runtime.RuntimeState
+import ai.zara.app.runtime.RuntimeMode
 import ai.zara.app.runtime.ServerConnection
 import ai.zara.app.runtime.ServerProfile
 import ai.zara.app.runtime.TextTurnResult
 import ai.zara.app.runtime.ZaraTextClientActor
 import ai.zara.app.runtime.reduce
 import ai.zara.app.runtime.toRuntimeReadiness
+import ai.zara.app.prolog.AndroidPortableSemanticAssetSource
+import ai.zara.app.prolog.NativeTreallaBridge
+import ai.zara.app.prolog.PortableSemanticAssetStager
+import ai.zara.app.prolog.PrologDocument
+import ai.zara.app.prolog.LocalPrologCommand
+import ai.zara.app.prolog.LocalNaturalLanguageExpertRouter
+import ai.zara.app.prolog.PrologExampleCatalog
+import ai.zara.app.prolog.PrologSource
+import ai.zara.app.prolog.PrologSourceAnalyzer
+import ai.zara.app.prolog.PrologWorkspace
+import ai.zara.app.prolog.PrologWorkspaceCatalog
 import ai.zara.app.voice.AndroidAudioFocusPlatform
 import ai.zara.app.voice.AndroidAudioRoutePlatform
 import ai.zara.app.voice.AndroidPcmOutput
@@ -93,6 +97,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     private val audioRouteController: AudioRouteController
     private val prologWorkspace = PrologWorkspace(File(context.filesDir, "prolog-workspace"))
     private val localServer: LocalZaraServer
+    private val localAi = LocalAiServiceClient(context)
     @Volatile private var latestVoiceStreamState: VoiceStreamState? = null
     @Volatile private var latestVoiceStreamFailure: String? = null
     @Volatile private var latestAudioRoute: AudioRouteSnapshot? = null
@@ -222,6 +227,14 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         selectedLocalConversationId = conversation.id
         return localHistory.loadState(conversation.id)
     }
+
+    fun localAiState(): CompletableFuture<LocalAiState> = localAi.state()
+
+    fun localTtsState(): CompletableFuture<LocalTtsState> = localAi.ttsState()
+
+    fun speakLocal(text: String): CompletableFuture<Unit> = localAi.speak(text)
+
+    fun stopLocalSpeech() = localAi.stopSpeech()
 
     fun prologSources(): List<PrologSource> = prologWorkspace.listSources()
 
@@ -425,7 +438,8 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         }
 
         val catalog = PrologWorkspaceCatalog.from(prologWorkspace.listSources())
-        val future = when {
+        val explicitSymbolic = query.startsWith("?-") || query.startsWith("/prolog ") || query.startsWith("/expert ")
+        val prologFuture = when {
             query.startsWith("?-") -> localServer.query(query)
             query.startsWith("/prolog ") || query.startsWith("/expert ") -> {
                 val command = try {
@@ -439,23 +453,36 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             else -> LocalNaturalLanguageExpertRouter.query(query, catalog)?.let(localServer::query)
                 ?: localServer.resolve(query)
         }
-        return future.handle { result, error ->
+        val turnFuture = prologFuture.thenCompose { result ->
+            if (result.terms.isNotEmpty() || explicitSymbolic) {
+                CompletableFuture.completedFuture(localPrologTurn(result, conversation.id))
+            } else {
+                localAi.generate(LocalGenerationRequest(query, maxOutputTokens = 256)).handle { generated, error ->
+                    if (error != null) {
+                        TextTurnResult(
+                            conversationId = conversation.id,
+                            turnId = UUID.randomUUID().toString(),
+                            text = "No deterministic local rule matched and no verified local model is ready. Local Prolog is still ready.",
+                            success = false,
+                        )
+                    } else {
+                        val answer = generated.text.trim()
+                        TextTurnResult(
+                            conversationId = conversation.id,
+                            turnId = UUID.randomUUID().toString(),
+                            text = answer.ifEmpty { "The local model returned no text." },
+                            success = answer.isNotEmpty(),
+                        )
+                    }
+                }
+            }
+        }
+        return turnFuture.handle { turn, error ->
             if (error != null) {
                 recordLocalFailure(conversation.id, error)
                 throw CompletionException(error)
             }
-            val answer = if (result.terms.isEmpty()) {
-                "No deterministic local rule matched. Remote model capabilities are optional; the local Prolog server is still ready."
-            } else {
-                result.terms.joinToString("\n")
-            }
-            val turn = TextTurnResult(
-                conversationId = conversation.id,
-                turnId = UUID.randomUUID().toString(),
-                text = answer,
-                success = result.terms.isNotEmpty(),
-            )
-            val assistantNow = PortableConversationStore.nowIso()
+            val now = PortableConversationStore.nowIso()
             localHistory.saveMessage(
                 HistoryMessage(
                     id = UUID.randomUUID().toString().replace("-", ""),
@@ -466,13 +493,25 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                     content = turn.text,
                     status = if (turn.success) HistoryMessageStatus.Complete else HistoryMessageStatus.Error,
                     error = if (turn.success) "" else "assistant generation failed",
-                    createdAt = assistantNow,
-                    updatedAt = assistantNow,
+                    createdAt = now,
+                    updatedAt = now,
                 )
             )
             turn
         }
     }
+
+    private fun localPrologTurn(result: LocalQueryResult, conversationId: String): TextTurnResult =
+        TextTurnResult(
+            conversationId = conversationId,
+            turnId = UUID.randomUUID().toString(),
+            text = if (result.terms.isEmpty()) {
+                "No deterministic local rule matched."
+            } else {
+                result.terms.joinToString("\n")
+            },
+            success = result.terms.isNotEmpty(),
+        )
 
     private fun ensureLocalConversation(): HistoryConversation {
         val selected = selectedLocalConversationId?.let(localHistory::getConversation)
@@ -541,6 +580,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         permissionGranted: Boolean,
     ): CompletableFuture<Unit> =
         submitVoiceControl {
+            localAi.stopSpeech()
             voiceStreamSink.interrupt().get()
             voice.press(state(), permissionGranted)
             assistantVoiceGuard.onCaptureStarted(ownership)
@@ -597,6 +637,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     }
 
     private fun interruptVoicePlayback() {
+        localAi.stopSpeech()
         try {
             voiceStreamSink.interrupt()
         } catch (error: Throwable) {
@@ -630,6 +671,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         actor.setVoiceStreamFailureObserver(null)
         localServer.setStateObserver(null)
         assistantVoiceGuard.onCaptureStopped()
+        localAi.stopSpeech()
         val routeFailure = runCatching { audioRouteController.stop() }.exceptionOrNull()
         if (routeFailure != null) reportVoiceStreamFailure(routeFailure)
         try {
@@ -645,7 +687,11 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         try {
             localServer.close()
         } finally {
-            localHistory.close()
+            try {
+                localAi.close()
+            } finally {
+                localHistory.close()
+            }
         }
         if (routeFailure != null) throw routeFailure
     }
