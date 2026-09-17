@@ -8,13 +8,41 @@ enum class LocalModelBackend {
     NPU,
 }
 
+enum class LocalModelFormat(
+    val wireName: String,
+    val extension: String,
+) {
+    LITERT_LM("litert-lm", ".litertlm"),
+    GGUF("gguf", ".gguf"),
+    ONNX("onnx", ".onnx"),
+    TFLITE("tflite", ".tflite");
+
+    companion object {
+        fun requireKnown(value: String): LocalModelFormat {
+            val normalized = value.trim().lowercase(Locale.ROOT)
+            return entries.firstOrNull { it.wireName == normalized }
+                ?: throw IllegalArgumentException("Unsupported or unknown model format: $value")
+        }
+    }
+}
+
 enum class LocalModelQuantization(val wireName: String) {
     DYNAMIC_INT4("dynamic-int4"),
     INT4("int4"),
     INT8("int8"),
     FP8("fp8"),
     BF16("bf16"),
-    FP16("fp16");
+    FP16("fp16"),
+    FP32("fp32"),
+    Q8_0("q8_0"),
+    Q6_K("q6_k"),
+    Q5_K_M("q5_k_m"),
+    Q5_K_S("q5_k_s"),
+    Q4_K_M("q4_k_m"),
+    Q4_K_S("q4_k_s"),
+    Q4_0("q4_0"),
+    Q3_K_M("q3_k_m"),
+    Q2_K("q2_k");
 
     companion object {
         fun requireKnown(value: String): LocalModelQuantization {
@@ -32,6 +60,7 @@ data class LocalModelMetadata(
     val sha256: String,
     val maxContextTokens: Int,
     val backend: LocalModelBackend,
+    val format: LocalModelFormat = LocalModelFormat.LITERT_LM,
 ) {
     init {
         require(id.matches(Regex("[A-Za-z0-9._-]{1,96}"))) { "Model id is invalid" }
@@ -49,10 +78,13 @@ data class LocalModelSpec(
     val path: String,
     val maxContextTokens: Int,
     val backend: LocalModelBackend,
+    val format: LocalModelFormat = LocalModelFormat.LITERT_LM,
 ) {
     init {
-        LocalModelMetadata(id, version, quantization, sha256, maxContextTokens, backend)
-        require(path.endsWith(".litertlm")) { "LiteRT-LM model must use the .litertlm container" }
+        LocalModelMetadata(id, version, quantization, sha256, maxContextTokens, backend, format)
+        require(path.lowercase(Locale.ROOT).endsWith(format.extension)) {
+            "${format.wireName} model must use the ${format.extension} container"
+        }
     }
 
     fun metadata(): LocalModelMetadata = LocalModelMetadata(
@@ -62,6 +94,7 @@ data class LocalModelSpec(
         sha256 = sha256,
         maxContextTokens = maxContextTokens,
         backend = backend,
+        format = format,
     )
 }
 
