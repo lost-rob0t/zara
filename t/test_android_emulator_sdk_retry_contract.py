@@ -10,6 +10,7 @@ def test_android_screenshot_gate_retries_transient_emulator_package_downloads() 
     assert "Prime Android emulator SDK with bounded retry" in workflow
     assert 'sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?ANDROID SDK root is unavailable}}"' in workflow
     assert 'emulator_bin="$sdk_root/emulator/emulator"' in workflow
+    assert 'android_cache="${HOME:?HOME is unavailable}/.android/cache"' in workflow
 
     # Assert the discovery contract, not YAML line wrapping. sdkmanager must be
     # discovered from the host SDK, executable, selected deterministically, and
@@ -25,11 +26,11 @@ def test_android_screenshot_gate_retries_transient_emulator_package_downloads() 
     assert "refusing sdkmanager outside host SDK root" in workflow
 
     # A healthy existing emulator should short-circuit. Otherwise a bounded
-    # reinstall must clear partial state before every attempt and verify the
-    # resulting binary rather than treating sdkmanager exit 0 as sufficient.
+    # reinstall must clear both the partial SDK package and sdkmanager's user
+    # download cache before every attempt so a corrupt archive is not replayed.
     assert 'test -x "$emulator_bin" && "$emulator_bin" -version' in workflow
     assert "for attempt in 1 2 3; do" in workflow
-    assert 'rm -rf "$sdk_root/emulator" "$sdk_root/.temp"' in workflow
+    assert 'rm -rf "$sdk_root/emulator" "$sdk_root/.temp" "$android_cache"' in workflow
     assert '"$sdkmanager_bin" --install emulator --channel=0' in workflow
     assert "emulator SDK install failed after 3 attempts" in workflow
     assert workflow.index("Prime Android emulator SDK with bounded retry") < workflow.index(
