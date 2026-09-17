@@ -22,7 +22,8 @@ class ZaraVoiceInteractionSession(
     private enum class CaptureBackend { Local, Remote }
 
     private val application = context.applicationContext as ZaraApplication
-    private val appSession: AndroidAppSession = application.appSession
+    private val appSession: AndroidAppSession =
+        (context.applicationContext as ZaraApplication).appSession
     private val lifecycleFence = application.assistantLifecycleFence
     private val invocationGate = AssistantInvocationGate()
     private val localVoice = LocalAssistantVoiceController(context, appSession, ::updateStatus)
