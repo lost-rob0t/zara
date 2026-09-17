@@ -9,10 +9,13 @@ import ai.zara.app.ui.extensions.UiContributionKind
 import ai.zara.app.ui.extensions.UiExtensionRegistry
 import ai.zara.app.ui.extensions.UiPlatform
 import ai.zara.app.ui.extensions.UiSlot
+import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.CompletableFuture
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UiExtensionContractTest {
@@ -142,6 +145,15 @@ class UiExtensionContractTest {
         } finally {
             root.deleteRecursively()
         }
+    }
+
+    @Test
+    fun androidToggleRendererDoesNotOwnCanonicalPluginState() {
+        val source = File("src/main/java/ai/zara/app/ui/AndroidUiExtensions.kt").readText()
+
+        assertFalse(source.contains("rememberSaveable(contribution.owner"))
+        assertFalse(source.contains("enabled = !enabled"))
+        assertTrue(source.contains("STATE UNAVAILABLE"))
     }
 
     @Test
