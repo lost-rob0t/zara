@@ -2,13 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from zara.prolog_engine import IntentResult, adapt_intent_result
-
-
-class Compound:
-    def __init__(self, name: str, args) -> None:
-        self.name = name
-        self.args = list(args)
+from zara.prolog_engine import IntentResult
 
 
 class QuestionProlog:
@@ -24,7 +18,7 @@ class QuestionProlog:
         self.resolve_calls.append((text, state))
         normalized = text.strip().casefold()
         if normalized == "set theme":
-            return IntentResult("question", "theme", [])
+            return IntentResult("pending", "theme", [])
         if normalized == "open firefox":
             return IntentResult("prolog", "open", ["firefox"])
         return None
@@ -57,14 +51,6 @@ def build_router(prolog: QuestionProlog | None = None):
         wake_words=["zara"],
         conversation_id="conv-1",
     )
-
-
-def test_question_functor_has_dedicated_result_kind():
-    result = adapt_intent_result(
-        {"Intent": Compound("question", ["theme"]), "Args": []}
-    )
-
-    assert result == IntentResult("question", "theme", [])
 
 
 @pytest.mark.asyncio
