@@ -105,7 +105,10 @@ data class OpenRouterProviderPolicy(
     }
 
     private fun normalizeProviderSlugs(values: List<String>): List<String> {
-        val safe = normalizeTokens(values, "provider")
+        val safe = normalizeTokens(values, "provider").map { it.lowercase() }
+        require(safe.size == safe.toSet().size) {
+            "OpenRouter provider list contains duplicates"
+        }
         safe.forEach { value ->
             require(PROVIDER_SLUG.matches(value)) { "OpenRouter provider slug is invalid: $value" }
         }
