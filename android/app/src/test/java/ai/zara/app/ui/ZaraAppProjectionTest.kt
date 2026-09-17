@@ -157,8 +157,13 @@ class ZaraAppProjectionTest {
 
     @Test
     fun allFrozenThemesResolveThroughOneSemanticHierarchy() {
-        assertEquals(listOf("Outrun", "StarIntel", "Midnight", "Terminal", "Light", "System"),
-            ZaraTheme.entries.map { it.name })
+        assertEquals(
+            listOf(
+                "Outrun", "OutrunOled", "StarIntel", "StarIntelOled", "Midnight",
+                "MidnightOled", "Terminal", "TerminalOled", "Light", "System",
+            ),
+            ZaraTheme.entries.map { it.name },
+        )
         ZaraTheme.entries.forEach { theme ->
             val tokens = themeTokens(theme, systemDark = true, reducedGlow = false)
             assertTrue(tokens.text != tokens.background)
