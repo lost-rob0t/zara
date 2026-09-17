@@ -2,6 +2,10 @@
 
 * Zara — hybrid symbolic AI assistant and native copilot
 
+[[https://github.com/lost-rob0t/zara/actions/workflows/ci.yml][https://github.com/lost-rob0t/zara/actions/workflows/ci.yml/badge.svg?branch=master]]
+[[https://github.com/lost-rob0t/zara/actions/workflows/android-latest.yml][https://github.com/lost-rob0t/zara/actions/workflows/android-latest.yml/badge.svg?branch=master]]
+[[https://codecov.io/gh/lost-rob0t/zara][https://codecov.io/gh/lost-rob0t/zara/graph/badge.svg?branch=master]]
+
 Zara is an experimental assistant runtime built around *Prolog, voice, tools, LLMs, durable conversations, and native clients*.
 
 The project began as a Linux voice-command experiment. It has grown into a client/server assistant platform with a long-lived Zara runtime, a native PySide6 desktop client, an Android client under active development, a versioned =ZARA/1= protocol, symbolic intent handling, plugin/tool infrastructure, and local or remote model providers.
@@ -236,6 +240,8 @@ Main repository gate:
 nix develop -c bash scripts/test-all.sh
 #+end_src
 
+The Python phase records line and branch coverage for =zara/=, prints uncovered paths, and writes =coverage.xml= plus =coverage.json= into the regression artifacts. CI uploads the exact-head report and publishes it to the coverage badge above. The measured repository baseline is used as a non-regression floor; new coverage should come from meaningful contract/failure-path tests, not duplicate execution-only tests.
+
 Android gate:
 
 #+begin_src sh
@@ -244,7 +250,7 @@ nix develop .#android -c bash scripts/test-android.sh
 
 The project uses focused tests plus Nix/CI gates for Python, Prolog, daemon transport, lifecycle behavior, packaging, Android builds, and other integration surfaces. UI work is also moving toward deterministic screenshot artifacts so visual regressions can be reviewed rather than inferred from widget tests.
 
-See [[file:docs/development.org][docs/development.org]].
+See [[file:docs/development.org][docs/development.org]] and [[file:docs/testing.org][docs/testing.org]].
 
 ** Documentation map
 
@@ -254,8 +260,10 @@ See [[file:docs/development.org][docs/development.org]].
 | [[file:docs/architecture.org][docs/architecture.org]] | Runtime/client/server architecture and invariants. |
 | [[file:docs/server.org][docs/server.org]] | Daemon, =ZARA/1=, principals, auth, and voice boundary. |
 | [[file:docs/development.org][docs/development.org]] | Build/test/development workflow. |
+| [[file:docs/testing.org][docs/testing.org]] | Test layers, branch coverage, artifacts, and coverage-floor policy. |
 | [[file:docs/desktop-copilot-design.md][desktop-copilot-design.md]] | Earlier desktop architecture/design research. |
 | [[file:docs/research/002-unified-copilot-voice-visual-ci.md][unified Copilot research]] | Current desktop/voice continuity/visual-CI direction. |
+| [[file:wiki/testing.org][wiki/testing.org]] | Testing chapter in the user/maintainer book layer. |
 | [[file:wiki/android.org][wiki/android.org]] | Android architecture, toolchain, status, and queue. |
 | [[file:wiki/plugins.org][wiki/plugins.org]] | Plugin API and lifecycle. |
 | [[file:wiki/install.org][wiki/install.org]] | Installation details. |
