@@ -99,6 +99,12 @@ class LocalAiServiceClient(
 
     override fun ttsState(): CompletableFuture<LocalTtsState> = service().thenApply { it.ttsState() }
 
+    fun ttsProviders(): CompletableFuture<List<LocalTtsProviderCapabilities>> =
+        service().thenApply { it.ttsProviders() }
+
+    fun selectTtsProvider(id: String): CompletableFuture<LocalTtsState> =
+        service().thenCompose { it.selectTtsProvider(id) }
+
     override fun generate(
         request: LocalGenerationRequest,
         onChunk: (String) -> Unit,
