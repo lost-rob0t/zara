@@ -40,7 +40,7 @@ class GitConfigTemplateImporter(
             clone.call().use { git ->
                 val manifest = manifestFile(checkout)
                 val properties = Properties().apply {
-                    manifest.inputStream().use(::load)
+                    manifest.inputStream().use { input -> load(input) }
                 }
                 require(properties.getProperty("version") == "1") { "Unsupported Zara config template version" }
                 val name = properties.getProperty("name")?.trim().orEmpty()
@@ -82,6 +82,10 @@ class GitConfigTemplateImporter(
             .take(MAX_SOURCES + 1)
             .map { file ->
                 require(file.length() <= MAX_SOURCE_BYTES) { "Template source exceeds byte limit" }
+                val relativeFile = file.canonicalFile.relativeTo(directory.canonicalFile)
+                require(relativeFile.path == relativeFile.name) {
+                    "Template directory may contain only top-level Prolog source files"
+                }
                 val name = file.name
                 require(name.matches(SOURCE_NAME)) { "Template source name is invalid" }
                 PrologSource(name, file.readText(Charsets.UTF_8))
@@ -99,12 +103,16 @@ class GitConfigTemplateImporter(
             val begin = ORG_BEGIN.matchEntire(line.trim())
             if (begin != null) {
                 require(target == null) { "Nested Prolog Org source block" }
-                val name = File(begin.groupValues[1]).name
-                require(name.matches(SOURCE_NAME)) { "Org :tangle target must be a .pl basename" }
+                val declared = begin.groupValues[1]
+                val name = File(declared).name
+                require(declared == name && name.matches(SOURCE_NAME)) {
+                    "Org :tangle target must be a .pl basename"
+                }
                 target = name
                 return@forEach
             }
             if (ORG_END.matches(line.trim())) {
+                require(target != null) { "Unmatched Org source block end" }
                 target = null
                 return@forEach
             }
@@ -144,6 +152,15 @@ class GitConfigTemplateImporter(
             "Template source ${source.name} failed Prolog analysis: " +
                 document.diagnostics.joinToString("; ") { it.message }
         }
+        document.clauses.filter { it.kind == PrologClauseKind.DIRECTIVE }.forEach { clause ->
+            val directive = clause.text.trim().removePrefix(":-").removeSuffix(".").trim()
+            require(ALLOWED_DIRECTIVE.matches(directive)) {
+                "Template source ${source.name} contains an unsupported directive"
+            }
+        }
+        require(!DANGEROUS_PREDICATE.containsMatchIn(source.text)) {
+            "Template source ${source.name} contains a predicate outside the data-only template boundary"
+        }
     }
 
     private fun validateRepository(raw: String): URI {
@@ -160,6 +177,14 @@ class GitConfigTemplateImporter(
         val REF = Regex("[A-Za-z0-9._/-]{1,160}")
         val ORG_BEGIN = Regex("(?i)^#\\+begin_src\\s+prolog(?:\\s+.*)?\\s+:tangle\\s+([^\\s]+)\\s*$")
         val ORG_END = Regex("(?i)^#\\+end_src\\s*$")
+        val ALLOWED_DIRECTIVE = Regex("(?s)^(zara_schema\\s*\\(.*\\)|op\\s*\\(.*\\))$")
+        val DANGEROUS_PREDICATE = Regex(
+            "(?i)(^|[^a-zA-Z0-9_])(" +
+                "consult|ensure_loaded|load_files|initialization|call|once|catch|throw|halt|shell|" +
+                "open|close|read|write|process_create|assert|asserta|assertz|retract|retractall|abolish|" +
+                "clause|current_predicate|set_prolog_flag|working_directory|directory_files|delete_file|rename_file" +
+                ")\\s*(\\(|$)",
+        )
         const val MAX_SOURCES = 64
         const val MAX_SOURCE_BYTES = 512 * 1024L
         const val MAX_TOTAL_BYTES = 4 * 1024 * 1024L
