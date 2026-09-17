@@ -18,6 +18,9 @@ _ARGUMENT_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
 _MAX_ARGUMENTS = 128
 _MAX_ARGUMENT_BYTES = 64 * 1024
 _MAX_RESULT_OUTPUT_BYTES = 48 * 1024
+_BASE_CAPABILITIES = protocol.DEVICE_CAPABILITIES
+_BASE_ARGS_VALIDATOR = protocol._validate_device_action_args
+_BASE_DEVICE_VALIDATOR = protocol._validate_device_envelope
 _INSTALLED = False
 
 
@@ -80,25 +83,31 @@ def install() -> None:
     if _INSTALLED:
         return
 
-    protocol.DEVICE_CAPABILITIES = frozenset((*protocol.DEVICE_CAPABILITIES, "android_raw"))
-
-    base_args_validator = protocol._validate_device_action_args
+    protocol.DEVICE_CAPABILITIES = frozenset((*_BASE_CAPABILITIES, "android_raw"))
 
     def validate_device_action_args(capability: str, value: Any) -> None:
         if capability == "android_raw":
             _validate_android_raw_args(value)
             return
-        base_args_validator(capability, value)
+        _BASE_ARGS_VALIDATOR(capability, value)
 
     protocol._validate_device_action_args = validate_device_action_args
-
-    base_device_validator = protocol._validate_device_envelope
 
     def validate_device_envelope(message: protocol.ProtocolMessage) -> None:
         if message.type == "device.action.result":
             _validate_rich_device_result(message)
             return
-        base_device_validator(message)
+        _BASE_DEVICE_VALIDATOR(message)
 
     protocol._validate_device_envelope = validate_device_envelope
     _INSTALLED = True
+
+
+def uninstall_for_tests() -> None:
+    """Restore the base protocol exactly; production code never calls this."""
+
+    global _INSTALLED
+    protocol.DEVICE_CAPABILITIES = _BASE_CAPABILITIES
+    protocol._validate_device_action_args = _BASE_ARGS_VALIDATOR
+    protocol._validate_device_envelope = _BASE_DEVICE_VALIDATOR
+    _INSTALLED = False
