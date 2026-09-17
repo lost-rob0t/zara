@@ -24,4 +24,6 @@ dependencyResolutionManagement {
 rootProject.name = "zara-android"
 include(":app")
 include(":shared-ui")
+include(":org-core")
+include(":org-app")
 include(":wear-app")
