@@ -33,6 +33,7 @@ from .user_hooks import UserHookLoader
 from ..config import ZaraConfig, get_config
 from ..memory import build_memory_manager, MemoryManager
 from ..latency import LatencyTrace
+from ..org_roam import OrgRoamMemoryHook, OrgRoamWorkspace
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,29 @@ class AgentManager:
         self.memory_context_limit = int(memory_config.get("max_chars", 1200))
         self.memory_top_k = int(memory_config.get("top_k", 5))
 
+        self.org_workspace: Optional[OrgRoamWorkspace] = None
+        self.org_memory_hook: Optional[OrgRoamMemoryHook] = None
+        self.org_project: Optional[str] = None
+        org_config = self.config.get_section("org")
+        roots_value = org_config.get("roots", [])
+        if isinstance(roots_value, str):
+            roots = [roots_value] if roots_value.strip() else []
+        else:
+            roots = [str(root) for root in roots_value if str(root).strip()]
+        if bool(org_config.get("enabled", True)) and roots:
+            self.org_project = str(org_config.get("default_project", "")).strip() or None
+            self.org_workspace = OrgRoamWorkspace(
+                roots,
+                max_files=int(org_config.get("max_files", 2000)),
+                max_file_bytes=int(org_config.get("max_file_bytes", 2_000_000)),
+            )
+            self.org_memory_hook = OrgRoamMemoryHook(
+                self.memory_manager,
+                prolog_engine=prolog_engine,
+            )
+            if bool(org_config.get("memory_sync", True)):
+                self._refresh_org_memory(force=True)
+
         self.tool_registry = ToolRegistry(prolog_engine, self.config)
         self.tool_registry.load_builtin_tools(self.memory_manager)
 
@@ -107,6 +131,16 @@ class AgentManager:
             enabled=hooks_config.get("enabled", False),
             allow_override=hooks_config.get("allow_override", False),
         )
+        if self.org_memory_hook is not None and self.org_workspace is not None:
+            self.agent_loop_advice.register(
+                "after",
+                "core:org-roam-memory",
+                50,
+                self.org_memory_hook.python_after_hook(
+                    workspace=self.org_workspace,
+                    project=self.org_project,
+                ),
+            )
         self.user_hook_loader = None
         config_dir = getattr(self.config, "config_dir", None)
         if config_dir is not None:
@@ -230,6 +264,21 @@ class AgentManager:
             self.agent_loop_registry = registry
         return registry
 
+    def _refresh_org_memory(self, *, force: bool = False) -> None:
+        if self.org_workspace is None or self.org_memory_hook is None:
+            return
+        import logging
+        logger = logging.getLogger(__name__)
+        try:
+            refresh = self.org_workspace.refresh(force=force)
+            if refresh.changed:
+                self.org_memory_hook.sync_index(
+                    refresh.index,
+                    project=self.org_project,
+                )
+        except Exception as error:
+            logger.warning("[AgentManager] Org-roam memory refresh failed: %s", error)
+
     async def process_async(
         self,
         user_input: str,
@@ -239,6 +288,7 @@ class AgentManager:
         stream_publisher=None,
         conversation_history: Optional[list] = None,
         extra_system_context: Optional[str] = None,
+        project_context: Optional[str] = None,
     ) -> Dict[str, Any]:
         import logging
         logger = logging.getLogger(__name__)
@@ -312,7 +362,10 @@ class AgentManager:
                 logger.info("[AgentManager] System prompt already present")
 
         memory_context_message = None
-        memory_context = self._build_memory_context(user_input)
+        memory_context = self._build_memory_context(
+            user_input,
+            project=project_context or self.org_project,
+        )
         if memory_context:
             memory_context_message = SystemMessage(
                 content=memory_context,
@@ -368,9 +421,37 @@ class AgentManager:
             "conversation_id": conversation_id,
         }
 
-    def _build_memory_context(self, user_input: str) -> Optional[str]:
+    def _build_memory_context(
+        self,
+        user_input: str,
+        *,
+        project: Optional[str] = None,
+    ) -> Optional[str]:
         if self.memory_manager is None:
             return None
+
+        self._refresh_org_memory()
+        if self.org_memory_hook is not None:
+            bundle = self.org_memory_hook.context_bundle(
+                user_input,
+                project=project,
+                limit=self.memory_top_k,
+                recent_chat_limit=min(self.memory_top_k, 5),
+            )
+            sections = []
+            for title, rows in (
+                ("Symbolic memories", bundle.symbolic_memories),
+                ("Project context", bundle.project_context),
+                ("Facts", bundle.facts),
+                ("Recent chats", bundle.recent_chats),
+            ):
+                lines = [f"- {row.get('text', '').strip()}" for row in rows if row.get("text", "").strip()]
+                if lines:
+                    sections.append(f"{title}:\n" + "\n".join(lines))
+            if sections:
+                rendered = "Relevant memory context:\n" + "\n\n".join(sections)
+                return rendered[: self.memory_context_limit].rstrip()
+
         memories = self.memory_manager.retrieve(user_input, k=self.memory_top_k)
         if not memories:
             return None
