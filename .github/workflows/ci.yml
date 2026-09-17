@@ -152,7 +152,7 @@ jobs:
           su zara -s /bin/bash -c "cd '$GITHUB_WORKSPACE' && HOME=/home/zara RUNNER_TEMP=/tmp PATH='$GITHUB_WORKSPACE/.venv/bin':\$PATH bash scripts/test-linux-shared-audio.sh"
 
   android:
-    name: android + wear gate
+    name: android + wear + store gate
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -179,7 +179,7 @@ jobs:
           chmod 600 "$keystore"
           echo "ZARA_ANDROID_DEBUG_KEYSTORE=$keystore" >> "$GITHUB_ENV"
 
-      - name: Run Android/Wear gate (unit tests + native Trealla + debug APKs + secret inspection)
+      - name: Run Android/Wear/Store gate (unit tests + native Trealla + debug APKs + secret inspection)
         run: nix develop ./android -c bash scripts/test-android.sh
 
       - name: Upload Android parity diagnostics
@@ -214,6 +214,33 @@ jobs:
         with:
           name: zara-android-debug-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifacts/android-debug/
+          if-no-files-found: warn
+
+      - name: Prepare exact-SHA Zara Store APK artifact
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          artifact_dir="artifacts/zara-store-debug"
+          apk="$artifact_dir/zara-store-debug-${SOURCE_SHA}.apk"
+          mkdir -p "$artifact_dir"
+          cp android/apps/zara-store/build/outputs/apk/debug/zara-store-debug.apk "$apk"
+          sha256sum "$apk" > "${apk}.sha256"
+          {
+            echo "schema=1"
+            echo "source_sha=${SOURCE_SHA}"
+            echo "package=ai.zara.store"
+            echo "apk=$(basename "$apk")"
+            echo "apk_sha256=$(sha256sum "$apk" | awk '{print $1}')"
+          } > "$artifact_dir/manifest.txt"
+
+      - name: Upload exact-SHA Zara Store debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zara-store-debug-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/zara-store-debug/
           if-no-files-found: warn
 
       - name: Upload Wear debug APK
