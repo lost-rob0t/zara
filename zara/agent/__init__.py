@@ -31,6 +31,7 @@ from .prompting import build_agent_system_prompt
 from .tools.registry import ToolRegistry
 from .user_hooks import UserHookLoader
 from ..config import ZaraConfig, get_config
+from ..context import add_context_fragment, context_fragments
 from ..memory import build_memory_manager, MemoryManager
 from ..latency import LatencyTrace
 
@@ -73,6 +74,7 @@ class AgentManager:
         )
         self.memory_context_limit = int(memory_config.get("max_chars", 1200))
         self.memory_top_k = int(memory_config.get("top_k", 5))
+        self._memory_session_id: Optional[str] = None
 
         self.tool_registry = ToolRegistry(prolog_engine, self.config)
         self.tool_registry.load_builtin_tools(self.memory_manager)
@@ -107,6 +109,7 @@ class AgentManager:
             enabled=hooks_config.get("enabled", False),
             allow_override=hooks_config.get("allow_override", False),
         )
+        self._register_core_context_hooks()
         self.user_hook_loader = None
         config_dir = getattr(self.config, "config_dir", None)
         if config_dir is not None:
@@ -115,6 +118,38 @@ class AgentManager:
                 registry=self.agent_loop_advice,
             )
             self.user_hook_loader.load()
+
+    def _register_core_context_hooks(self) -> None:
+        self.memory_recall_hook_id = self.agent_loop_advice.register_core(
+            "before",
+            "core:memory-recall",
+            -90_000,
+            self._memory_recall_before,
+        )
+        self.runtime_context_hook_id = self.agent_loop_advice.register_core(
+            "before",
+            "core:runtime-context",
+            -80_000,
+            self._runtime_context_before,
+        )
+        self.context_assembly_hook_id = self.agent_loop_advice.register_core(
+            "before",
+            "core:context-assembly",
+            90_000,
+            self._context_assembly_before,
+        )
+        self.memory_capture_hook_id = self.agent_loop_advice.register_core(
+            "after",
+            "core:memory-capture",
+            80_000,
+            self._memory_capture_after,
+        )
+        self.context_cleanup_hook_id = self.agent_loop_advice.register_core(
+            "after",
+            "core:context-cleanup",
+            90_000,
+            self._context_cleanup_after,
+        )
 
     def bind_event_publisher(self, publisher) -> None:
         self.approval_controller.bind_event_publisher(publisher)
@@ -138,7 +173,11 @@ class AgentManager:
             None,
         )
 
-        overrides = [item for item in advice if item.kind == "override"]
+        overrides = [
+            item
+            for item in advice
+            if item.kind == "override" and item.enabled and item.policy_gated
+        ]
         override_conflict = len(overrides) > 1
         winner = (
             overrides[0]
@@ -300,6 +339,8 @@ class AgentManager:
             "max_steps": max_steps,
             "response": None,
             "latency_trace": latency_trace,
+            "extra_system_context": extra_system_context,
+            "_zara_capture_memory": not provided_history,
         }
 
         system_prompt = self._build_system_prompt()
@@ -310,24 +351,6 @@ class AgentManager:
                 logger.info("[AgentManager] System prompt injected")
             else:
                 logger.info("[AgentManager] System prompt already present")
-
-        memory_context_message = None
-        memory_context = self._build_memory_context(user_input)
-        if memory_context:
-            memory_context_message = SystemMessage(
-                content=memory_context,
-                id=f"memory-context-{uuid.uuid4()}",
-            )
-            state["messages"].insert(1, memory_context_message)
-
-        if extra_system_context:
-            state["messages"].insert(
-                1,
-                SystemMessage(
-                    content=extra_system_context,
-                    id=f"task-context-{uuid.uuid4()}",
-                ),
-            )
 
         state["messages"].append(HumanMessage(content=user_input))
         logger.info(
@@ -352,12 +375,6 @@ class AgentManager:
         )
 
         result_messages = result.get("messages", [])
-        if memory_context_message is not None:
-            result_messages = [
-                message
-                for message in result_messages
-                if getattr(message, "id", None) != memory_context_message.id
-            ]
         if not provided_history:
             self.conversation_manager.conversation_history = result_messages
 
@@ -367,6 +384,77 @@ class AgentManager:
             "turn_id": turn_id,
             "conversation_id": conversation_id,
         }
+
+    def _memory_recall_before(self, _llm_client, _tool_registry, state, **_kwargs) -> None:
+        user_input = str(state.get("user_input", ""))
+        memory_context = self._build_memory_context(user_input)
+        if memory_context:
+            add_context_fragment(
+                state,
+                memory_context,
+                source="core:memory-recall",
+            )
+
+    def _runtime_context_before(self, _llm_client, _tool_registry, state, **_kwargs) -> None:
+        context = state.get("extra_system_context")
+        if isinstance(context, str) and context.strip():
+            add_context_fragment(
+                state,
+                context,
+                source="core:explicit-context",
+            )
+
+    def _context_assembly_before(self, _llm_client, _tool_registry, state, **_kwargs) -> None:
+        fragments = context_fragments(state)
+        if not fragments:
+            return
+        blocks = [f"[{fragment.source}]\n{fragment.text}" for fragment in fragments]
+        message = SystemMessage(
+            content="Context for this turn:\n\n" + "\n\n".join(blocks),
+            id=f"context-hook-{uuid.uuid4()}",
+        )
+        state["messages"].insert(1, message)
+        state["_zara_context_message_id"] = message.id
+
+    def _memory_capture_after(self, result) -> None:
+        if not isinstance(result, dict) or not result.get("_zara_capture_memory", True):
+            return
+        user_input = result.get("user_input")
+        response = result.get("response")
+        if not isinstance(user_input, str) or not user_input.strip():
+            return
+        self._capture_memory_turn(user_input, str(response or ""))
+
+    def _context_cleanup_after(self, result) -> None:
+        if not isinstance(result, dict):
+            return
+        message_id = result.pop("_zara_context_message_id", None)
+        if message_id is None:
+            return
+        messages = result.get("messages")
+        if isinstance(messages, list):
+            result["messages"] = [
+                message
+                for message in messages
+                if getattr(message, "id", None) != message_id
+            ]
+
+    def _capture_memory_turn(self, user_input: str, response: str) -> None:
+        if self.memory_manager is None:
+            return
+        if self._memory_session_id is None:
+            self._memory_session_id = self.memory_manager.start_session()
+        self.memory_manager.add_message(self._memory_session_id, "user", user_input)
+        if response:
+            self.memory_manager.add_message(self._memory_session_id, "assistant", response)
+
+    def _rotate_memory_session(self) -> None:
+        if self.memory_manager is None:
+            return
+        session_id = self._memory_session_id
+        if session_id is not None:
+            self.memory_manager.summarise_session(session_id, source="agent-hook")
+        self._memory_session_id = None
 
     def _build_memory_context(self, user_input: str) -> Optional[str]:
         if self.memory_manager is None:
@@ -399,6 +487,7 @@ class AgentManager:
         return self.conversation_manager.should_exit_conversation()
 
     def exit_conversation(self):
+        self._rotate_memory_session()
         self.conversation_manager.exit_conversation()
 
     async def approve_tool(self, tool_run_id: str) -> None:
