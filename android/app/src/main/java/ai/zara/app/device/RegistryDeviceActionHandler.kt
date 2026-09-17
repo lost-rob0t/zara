@@ -10,12 +10,20 @@ class RegistryDeviceActionHandler(
     override fun availableCapabilities(): Set<DeviceCapability> =
         registry.availableCapabilities()
 
-    override fun execute(request: DeviceServerMessage.Request): DeviceActionResult =
-        try {
+    override fun execute(request: DeviceServerMessage.Request): DeviceActionResult {
+        DeviceActionResultReceipts.discardStaged()
+        val result = try {
             registry.execute(request.capability, request.arguments)
         } catch (_: DeviceCapabilityUnavailableException) {
             DeviceActionResult.Error(DeviceActionErrorCode.Unavailable)
         }
+        if (result == DeviceActionResult.Completed) {
+            DeviceActionResultReceipts.bindToAction(request.actionId)
+        } else {
+            DeviceActionResultReceipts.discardStaged()
+        }
+        return result
+    }
 
     override fun cancel(cancel: DeviceServerMessage.Cancel) {
         // Current #174 adapters complete synchronously. Recording the terminal action id
