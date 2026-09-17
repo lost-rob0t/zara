@@ -1,6 +1,8 @@
 package ai.zara.app
 
 import ai.zara.app.assistant.AssistantLifecycleFence
+import ai.zara.app.device.AndroidRawAdapter
+import ai.zara.app.device.DeviceCapabilityExtensions
 import ai.zara.app.integration.AndroidIntegrationRuntime
 import ai.zara.app.update.AndroidUpdateManager
 import android.app.Application
@@ -18,5 +20,10 @@ class ZaraApplication : Application() {
 
     val updateManager: AndroidUpdateManager by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         AndroidUpdateManager(this, BuildConfig.VERSION_NAME)
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        DeviceCapabilityExtensions.installAndroidRaw(AndroidRawAdapter(androidIntegration))
     }
 }
