@@ -22,7 +22,8 @@ class PortableConversationHistoryTest {
         assertTrue(schema.contains("CREATE TABLE IF NOT EXISTS desktop_messages"))
         assertTrue(schema.contains("principal_id TEXT NOT NULL DEFAULT 'local:owner'"))
         assertTrue(gradle.contains("../../zara/conversation_schema.sql"))
-        assertTrue(gradle.contains("database/conversation_schema.sql"))
+        assertTrue(gradle.contains("into(output.resolve(\"database\"))"))
+        assertTrue(gradle.contains("rename { \"conversation_schema.sql\" }"))
         assertEquals("local:owner", ConversationHistoryContract.localPrincipalId)
         assertEquals(2, ConversationHistoryContract.schemaVersion)
     }
