@@ -162,8 +162,41 @@ def test_ci_adds_independent_deep_regression_matrix() -> None:
     assert "31337" in workflow
 
 
-def test_android_acceptance_can_stamp_reviewed_head_sha() -> None:
-    source = DEVICE_ACCEPTANCE.read_text(encoding="utf-8")
+def test_ci_checks_out_exact_reviewed_source_and_success_gates_candidate_apks() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    exact_ref = "ref: ${{ github.event.pull_request.head.sha || github.sha }}"
 
-    assert 'parser.add_argument("--source-sha"' in source
-    assert '"source_sha": source_sha' in source
+    assert workflow.count(exact_ref) >= 5
+    assert "Verify exact source checkout" in workflow
+    assert "name: Upload exact-SHA phone debug APK\n        if: success()" in workflow
+    assert "name: Upload Wear debug APK\n        if: success()" in workflow
+
+
+def test_android_acceptance_rejects_claimed_sha_mismatch(tmp_path: Path) -> None:
+    actual_source_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        text=True,
+    ).strip()
+    replacement = "0" if actual_source_sha[0] != "0" else "1"
+    claimed_source_sha = replacement + actual_source_sha[1:]
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(DEVICE_ACCEPTANCE),
+            "--serial",
+            "unused",
+            "--source-sha",
+            claimed_source_sha,
+            "--output",
+            str(tmp_path / "device"),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "does not match the checked-out repository" in result.stderr
