@@ -115,7 +115,7 @@ setup(
         "pytest-asyncio>=0.23",
     ],
     extras_require={
-        "dev": ["pytest", "pytest-asyncio"],
+        "dev": ["pytest", "pytest-asyncio", "pytest-cov"],
     },
     entry_points={
         "console_scripts": [
