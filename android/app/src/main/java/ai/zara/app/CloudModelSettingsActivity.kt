@@ -199,6 +199,8 @@ class CloudModelSettingsActivity : Activity() {
                 "OpenRouter uses the OpenAI-compatible chat-completions API. The configured LLM app name is sent as X-Title."
             ProviderPreset.STARINTEL ->
                 "StarIntel preset uses llm.starintel.actor as a generic OpenAI-compatible endpoint."
+            ProviderPreset.STATINTEL ->
+                "StatIntel preset uses llm.statintel.actor as a generic OpenAI-compatible endpoint."
             ProviderPreset.GENERIC ->
                 "Generic mode accepts any HTTPS OpenAI-compatible base URL and appends /chat/completions."
         }
@@ -208,6 +210,7 @@ class CloudModelSettingsActivity : Activity() {
         config.provider == CloudModelProvider.ZAI_CODING_PLAN -> ProviderPreset.ZAI_CODING.ordinal
         config.provider == CloudModelProvider.OPENROUTER -> ProviderPreset.OPENROUTER.ordinal
         config.endpoint == CloudModelConfig.DEFAULT_STARINTEL_ENDPOINT -> ProviderPreset.STARINTEL.ordinal
+        config.endpoint == CloudModelConfig.STATINTEL_ENDPOINT -> ProviderPreset.STATINTEL.ordinal
         else -> ProviderPreset.GENERIC.ordinal
     }
 
@@ -234,6 +237,11 @@ class CloudModelSettingsActivity : Activity() {
             "StarIntel / llm.starintel.actor",
             CloudModelProvider.OPENAI_COMPATIBLE,
             CloudModelConfig.DEFAULT_STARINTEL_ENDPOINT,
+        ),
+        STATINTEL(
+            "StatIntel / llm.statintel.actor",
+            CloudModelProvider.OPENAI_COMPATIBLE,
+            CloudModelConfig.STATINTEL_ENDPOINT,
         ),
         OPENROUTER(
             "OpenRouter",
