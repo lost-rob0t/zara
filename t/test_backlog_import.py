@@ -55,7 +55,7 @@ def test_render_backlog_deterministic_and_complete():
         mod.GhIssue(156, 1, "P1 — Prolog IntentFrame adaptation + corpus", "Parent: #150\nDepends on: #155", False),
         mod.GhIssue(155, 1, "P1 — Typed slots + clarification dialogue", "Parent: #150\nDepends on: #154", False),
         mod.GhIssue(154, 1, "P1 — RAGE research the post-client-split semantic intent architecture and freeze an IntentFrame contract", "Parent: #150\nDepends on: #133", False),
-        mod.GhIssue(152, 1, "EPIC — Android client", "", False),
+        mod.GhIssue(152, None, "EPIC — Android client", "", False),
         mod.GhIssue(150, 1, "EPIC — semantic intents", "", False),
     ]
     phases = ["phase(7, [170, 171, 172]).", "phase(5, [154, 155, 156])."]
