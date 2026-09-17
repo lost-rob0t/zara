@@ -7,11 +7,12 @@ import org.json.JSONObject
  * Local Android tool boundary for the email plugin.
  *
  * EmailPrologPlugin owns model-context installation for the process lifetime.
- * The generated spam-rule path is supplied by trusted app configuration and is
- * never accepted from model/tool arguments.
+ * Spam feeds and the generated-rule path are supplied by trusted app
+ * configuration and are never accepted from model/tool arguments.
  */
 class AndroidEmailRuntimeBinding(
     private val plugin: AndroidEmailPlugin,
+    private val configuredSpamFeeds: List<SpamFeed>,
     private val generatedSpamRulePath: String,
 ) {
     init {
@@ -77,28 +78,16 @@ class AndroidEmailRuntimeBinding(
                     arguments.optBoolean("dry_run", true),
                 )
             )
-            "email_refresh_spam_rules" -> {
-                val feeds = arguments.optJSONArray("feeds")?.let(::parseFeeds) ?: emptyList()
-                JSONObject()
-                    .put("rules", plugin.refreshSpamRules(feeds, generatedSpamRulePath))
-                    .put("path", generatedSpamRulePath)
-            }
+            "email_refresh_spam_rules" -> JSONObject()
+                .put("rules", plugin.refreshSpamRules(configuredSpamFeeds, generatedSpamRulePath))
+                .put("feeds", configuredSpamFeeds.size)
+                .put("path", generatedSpamRulePath)
             "email_prolog_api" -> JSONObject()
                 .put("context", plugin.modelTurnContext)
                 .put("tools", JSONArray(plugin.toolNames.toList()))
                 .put("mutating_tools", JSONArray(mutatingToolNames.toList()))
             else -> error("unreachable")
         }
-    }
-
-    private fun parseFeeds(array: JSONArray): List<SpamFeed> = (0 until array.length()).map { index ->
-        val item = array.getJSONObject(index)
-        SpamFeed(
-            name = item.requireString("name"),
-            url = item.requireString("url"),
-            kind = item.requireString("kind"),
-            weight = item.optInt("weight", 50),
-        )
     }
 
     private fun messageJson(message: AndroidEmailMessage): JSONObject = JSONObject()
