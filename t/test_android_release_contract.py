@@ -12,6 +12,19 @@ def test_ci_names_phone_apk_artifact_with_exact_source_sha():
     assert "source_sha=${SOURCE_SHA}" in workflow
 
 
+def test_android_release_candidate_apk_uploads_require_green_gate():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    android_job = workflow.split("\n  android:\n", 1)[1]
+
+    for upload_name in (
+        "Upload exact-SHA phone debug APK",
+        "Upload Wear debug APK",
+    ):
+        step = android_job.split(f"      - name: {upload_name}\n", 1)[1].split("\n      - name:", 1)[0]
+        assert "if: success()" in step
+        assert "if: always()" not in step
+
+
 def test_green_master_uses_update_compatible_signer_and_publishes_direct_latest_apks():
     ci = (ROOT / ".github/workflows/ci.yml").read_text()
     workflow = (ROOT / ".github/workflows/android-latest.yml").read_text()

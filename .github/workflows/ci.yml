@@ -209,7 +209,7 @@ jobs:
           } > "$artifact_dir/manifest.txt"
 
       - name: Upload exact-SHA phone debug APK
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: zara-android-debug-${{ github.event.pull_request.head.sha || github.sha }}
@@ -217,7 +217,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Wear debug APK
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: zara-wear-debug-${{ github.event.pull_request.head.sha || github.sha }}
