@@ -51,6 +51,16 @@
         </activity>
 
         <activity
+            android:name=".automation.AutomationActivity"
+            android:exported="true"
+            android:label="Zara Automation">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
             android:name=".watch.WatchSetupActivity"
             android:exported="true"
             android:label="Zara Watch Setup">
