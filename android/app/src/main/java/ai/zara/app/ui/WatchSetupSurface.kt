@@ -46,6 +46,7 @@ fun WatchSetupSurface(
     onPair: () -> Unit,
     onConnect: () -> Unit,
     onInstall: () -> Unit,
+    onUninstall: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
     val tokens = themeTokens(ZaraTheme.Outrun, systemDark = true, reducedGlow = false)
@@ -163,6 +164,7 @@ fun WatchSetupSurface(
                         WatchSetupPhase.CONNECTING,
                         WatchSetupPhase.DOWNLOADING,
                         WatchSetupPhase.INSTALLING,
+                        WatchSetupPhase.REMOVING,
                     ),
                 ) {
                     Text("Pair Zara with watch")
@@ -204,12 +206,19 @@ fun WatchSetupSurface(
                     enabled = state.phase == WatchSetupPhase.CONNECTED || state.phase == WatchSetupPhase.INSTALLED,
                     colors = ButtonDefaults.buttonColors(containerColor = tokens.secondary),
                 ) {
-                    Text("Install Zara Wear")
+                    Text("Install Zara + Agenda")
+                }
+                OutlinedButton(
+                    onClick = onUninstall,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = state.phase == WatchSetupPhase.CONNECTED || state.phase == WatchSetupPhase.INSTALLED,
+                ) {
+                    Text("Uninstall Zara")
                 }
 
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "After installation, Zara phone and watch share the same app identity and are ready for Wear Data Layer communication over the paired Bluetooth/Wi-Fi path.",
+                    "Zara Wear and the Zara Agenda watch face install as a pair. After installation, phone↔watch data uses the normal Wear Data Layer path; removing Zara from this screen removes both watch packages.",
                     color = tokens.textMuted,
                     style = MaterialTheme.typography.bodySmall,
                 )
