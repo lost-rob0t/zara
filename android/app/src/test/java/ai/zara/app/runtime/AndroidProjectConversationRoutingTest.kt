@@ -6,38 +6,42 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class AndroidProjectConversationRoutingTest {
-    @Test fun `explicit null project conversation starts fresh instead of reusing global selection`() {
+    @Test fun `explicit null project conversation starts fresh without replacing global selection`() {
         val client = RecordingProjectTextClient()
         val controller = AndroidTextSessionController(connectedState("global-conversation"), client, NoopProjectReconnectScheduler())
         client.nextResult = TextTurnResult("project-conversation", "turn-1", "ok", true)
 
         val result = controller.submitText("project hello", null).get()
 
-        assertNull(client.lastConversationId)
+        assertNull(client.conversationIds.single())
         assertEquals("project-conversation", result.conversationId)
-        assertEquals("project-conversation", controller.state().selectedConversationId)
+        assertEquals("global-conversation", controller.state().selectedConversationId)
         controller.close()
     }
 
-    @Test fun `explicit project conversation is routed without depending on selected global conversation`() {
+    @Test fun `project turn cannot contaminate later unscoped conversation routing`() {
         val client = RecordingProjectTextClient()
-        val controller = AndroidTextSessionController(connectedState("other-conversation"), client, NoopProjectReconnectScheduler())
-        client.nextResult = TextTurnResult("project-a", "turn-2", "ok", true)
+        val controller = AndroidTextSessionController(connectedState("global-conversation"), client, NoopProjectReconnectScheduler())
+        client.nextResult = TextTurnResult("project-a", "turn-2", "project ok", true)
+        controller.submitText("continue project", "project-a").get()
 
-        controller.submitText("continue", "project-a").get()
+        client.nextResult = TextTurnResult("global-conversation", "turn-3", "global ok", true)
+        controller.submitText("continue globally").get()
 
-        assertEquals("project-a", client.lastConversationId)
+        assertEquals(listOf("project-a", "global-conversation"), client.conversationIds)
+        assertEquals("global-conversation", controller.state().selectedConversationId)
         controller.close()
     }
 
-    @Test fun `legacy unscoped submission still uses selected conversation`() {
+    @Test fun `legacy unscoped submission adopts returned conversation`() {
         val client = RecordingProjectTextClient()
         val controller = AndroidTextSessionController(connectedState("selected-conversation"), client, NoopProjectReconnectScheduler())
-        client.nextResult = TextTurnResult("selected-conversation", "turn-3", "ok", true)
+        client.nextResult = TextTurnResult("next-conversation", "turn-4", "ok", true)
 
         controller.submitText("continue globally").get()
 
-        assertEquals("selected-conversation", client.lastConversationId)
+        assertEquals(listOf("selected-conversation"), client.conversationIds)
+        assertEquals("next-conversation", controller.state().selectedConversationId)
         controller.close()
     }
 
@@ -52,7 +56,7 @@ class AndroidProjectConversationRoutingTest {
 }
 
 private class RecordingProjectTextClient : TextSessionClient {
-    var lastConversationId: String? = null
+    val conversationIds = mutableListOf<String?>()
     var nextResult = TextTurnResult(null, "turn", "ok", true)
 
     override fun connect(
@@ -68,7 +72,7 @@ private class RecordingProjectTextClient : TextSessionClient {
         conversationId: String?,
         text: String,
     ): CompletableFuture<TextTurnResult> {
-        lastConversationId = conversationId
+        conversationIds += conversationId
         return CompletableFuture.completedFuture(nextResult)
     }
 
