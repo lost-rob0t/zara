@@ -267,9 +267,10 @@ jobs:
           disable-animations: true
           script: |
             bash -euo pipefail <<'BASH'
-            adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-            serial="$(adb devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')"
-            test -n "$serial"
+            serial="emulator-5554"
+            adb -s "$serial" wait-for-device
+            test "$(adb -s "$serial" get-state)" = "device"
+            adb -s "$serial" install -r android/app/build/outputs/apk/debug/app-debug.apk
             python android/integration/device_acceptance.py \
               --serial "$serial" \
               --source-sha "$SOURCE_SHA" \
