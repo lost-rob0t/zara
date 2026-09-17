@@ -197,6 +197,28 @@ object ZaraDeviceActionCodec {
             if (app.isEmpty()) throw ZaraWireException("app must not be empty")
             DeviceActionArguments.OpenApp(app)
         }
+        DeviceCapability.CalendarInsert -> {
+            requireExactKeys(
+                args,
+                setOf("title", "start_ms", "end_ms", "location", "description"),
+                "calendar_insert args",
+            )
+            val title = boundedText("title", requiredString(args, "title", 512), 512)
+            if (title.isBlank()) throw ZaraWireException("title must not be blank")
+            val location = optionalString(args, "location")?.let {
+                boundedText("location", it, 2_048)
+            }
+            val description = optionalString(args, "description")?.let {
+                boundedText("description", it, 2_048)
+            }
+            DeviceActionArguments.CalendarInsert(
+                title = title,
+                startMillis = requiredLong(args, "start_ms"),
+                endMillis = requiredLong(args, "end_ms"),
+                location = location,
+                description = description,
+            )
+        }
     }
 
     private fun encodeTerminalLike(
