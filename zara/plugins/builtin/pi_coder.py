@@ -6,6 +6,7 @@ import os
 import shutil
 import signal
 import subprocess
+import threading
 from pathlib import Path
 from typing import Literal
 
@@ -65,41 +66,61 @@ class PiCoderPlugin(ServicePlugin):
         self._timeout_seconds = DEFAULT_TIMEOUT_SECONDS
         self._max_output_chars = DEFAULT_MAX_OUTPUT_CHARS
         self._started = False
+        self._state_lock = threading.RLock()
+        self._execution_lock = threading.Lock()
+        self._processes: set[subprocess.Popen] = set()
 
     def start(self, runtime) -> None:
         configuration = dict(runtime.configuration)
-        self._binary = self._resolve_binary(configuration.get("binary", "pi"))
-        self._projects = self._resolve_projects(configuration.get("projects", {}))
-        self._default_project = self._resolve_default_project(
+        binary = self._resolve_binary(configuration.get("binary", "pi"))
+        projects = self._resolve_projects(configuration.get("projects", {}))
+
+        self._projects = projects
+        default_project = self._resolve_default_project(
             configuration.get("default_project", "")
         )
-        self._provider = self._bounded_text(configuration.get("provider", ""), 128)
-        self._model = self._bounded_text(configuration.get("model", ""), 256)
-        self._thinking = self._resolve_thinking(configuration.get("thinking", ""))
-        self._project_trust = self._require_bool(
+        provider = self._bounded_text(configuration.get("provider", ""), 128)
+        model = self._bounded_text(configuration.get("model", ""), 256)
+        thinking = self._resolve_thinking(configuration.get("thinking", ""))
+        project_trust = self._require_bool(
             configuration.get("project_trust", False),
             "project_trust",
         )
-        self._allow_shell = self._require_bool(
+        allow_shell = self._require_bool(
             configuration.get("allow_shell", False),
             "allow_shell",
         )
-        self._timeout_seconds = self._bounded_float(
+        timeout_seconds = self._bounded_float(
             configuration.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
             minimum=1.0,
             maximum=MAX_TIMEOUT_SECONDS,
             label="timeout_seconds",
         )
-        self._max_output_chars = self._bounded_int(
+        max_output_chars = self._bounded_int(
             configuration.get("max_output_chars", DEFAULT_MAX_OUTPUT_CHARS),
             minimum=1_000,
             maximum=MAX_OUTPUT_CHARS,
             label="max_output_chars",
         )
-        self._started = True
+
+        with self._state_lock:
+            self._binary = binary
+            self._default_project = default_project
+            self._provider = provider
+            self._model = model
+            self._thinking = thinking
+            self._project_trust = project_trust
+            self._allow_shell = allow_shell
+            self._timeout_seconds = timeout_seconds
+            self._max_output_chars = max_output_chars
+            self._started = True
 
     def stop(self) -> None:
-        self._started = False
+        with self._state_lock:
+            self._started = False
+            processes = tuple(self._processes)
+        for process in processes:
+            self._terminate(process)
 
     def tools(self):
         def coder(
@@ -126,7 +147,8 @@ class PiCoderPlugin(ServicePlugin):
                 "Pi coder is ready. "
                 f"Projects: {len(self._projects)}. "
                 f"Shell: {'enabled' if self._allow_shell else 'disabled'}. "
-                f"Project resources: {'trusted' if self._project_trust else 'ignored'}."
+                f"Project resources: {'trusted' if self._project_trust else 'ignored'}. "
+                f"Worker: {'busy' if self._execution_lock.locked() else 'idle'}."
             )
 
         return (
@@ -161,6 +183,20 @@ class PiCoderPlugin(ServicePlugin):
         mode: Literal["implement", "review", "plan"],
     ) -> str:
         self._require_started()
+        if not self._execution_lock.acquire(blocking=False):
+            raise RuntimeError("Pi coder is already running a task")
+        try:
+            return self._run_exclusive(task=task, project=project, mode=mode)
+        finally:
+            self._execution_lock.release()
+
+    def _run_exclusive(
+        self,
+        *,
+        task: str,
+        project: str,
+        mode: Literal["implement", "review", "plan"],
+    ) -> str:
         task = str(task).strip()
         if not task:
             raise ValueError("coder task must not be empty")
@@ -182,24 +218,35 @@ class PiCoderPlugin(ServicePlugin):
             errors="replace",
             start_new_session=os.name != "nt",
         )
+        with self._state_lock:
+            if not self._started:
+                self._terminate(process)
+                raise RuntimeError("Pi coder plugin stopped before task execution")
+            self._processes.add(process)
         try:
-            stdout, stderr = process.communicate(
-                input=prompt,
-                timeout=self._timeout_seconds,
-            )
-        except subprocess.TimeoutExpired as error:
-            self._terminate(process)
-            process.communicate()
-            raise RuntimeError("Pi coder timed out") from error
+            try:
+                stdout, stderr = process.communicate(
+                    input=prompt,
+                    timeout=self._timeout_seconds,
+                )
+            except subprocess.TimeoutExpired as error:
+                self._terminate(process)
+                process.communicate()
+                raise RuntimeError("Pi coder timed out") from error
 
-        if process.returncode != 0:
-            detail = self._bounded_output(stderr.strip() or stdout.strip())
-            if detail:
-                raise RuntimeError(f"Pi coder failed with exit code {process.returncode}: {detail}")
-            raise RuntimeError(f"Pi coder failed with exit code {process.returncode}")
+            if process.returncode != 0:
+                detail = self._bounded_output(stderr.strip() or stdout.strip())
+                if detail:
+                    raise RuntimeError(
+                        f"Pi coder failed with exit code {process.returncode}: {detail}"
+                    )
+                raise RuntimeError(f"Pi coder failed with exit code {process.returncode}")
 
-        output = self._bounded_output(stdout.strip())
-        return output or "Pi coder completed without text output."
+            output = self._bounded_output(stdout.strip())
+            return output or "Pi coder completed without text output."
+        finally:
+            with self._state_lock:
+                self._processes.discard(process)
 
     def _command(self, mode: Literal["implement", "review", "plan"]) -> list[str]:
         tools = list(READ_ONLY_TOOLS)
@@ -372,8 +419,9 @@ class PiCoderPlugin(ServicePlugin):
         process.kill()
 
     def _require_started(self) -> None:
-        if not self._started:
-            raise RuntimeError("Pi coder plugin is not started")
+        with self._state_lock:
+            if not self._started:
+                raise RuntimeError("Pi coder plugin is not started")
 
 
 def create_plugin() -> PiCoderPlugin:
