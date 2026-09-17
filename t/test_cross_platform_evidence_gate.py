@@ -182,6 +182,18 @@ def test_ci_generates_android_screenshots_and_validates_both_surfaces() -> None:
     assert "scripts/validate-ui-evidence.py" in workflow
 
 
+def test_ci_refreshes_android_command_line_tools_before_emulator_provisioning() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert 'android_cli_tools_build="15859902"' in workflow
+    assert 'android_cli_tools_sha256="4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583"' in workflow
+    assert 'commandlinetools-linux-${android_cli_tools_build}_latest.zip' in workflow
+    assert "sha256sum --check" in workflow
+    assert 'rm -rf "$sdk_root/cmdline-tools/latest"' in workflow
+    assert 'sdkmanager_bin="$sdk_root/cmdline-tools/latest/bin/sdkmanager"' in workflow
+    assert 'sdkmanager_bin" --sdk_root="$sdk_root" --install emulator --channel=0' in workflow
+
+
 def test_ci_targets_the_action_managed_emulator_explicitly() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
