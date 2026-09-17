@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import os
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -10,7 +11,7 @@ from PySide6.QtWidgets import QApplication
 
 from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationService, ConversationStore
-from zara.desktop.org_widgets import OrgDocumentView, OrgWorkspaceWidget
+from zara.desktop.org_widgets import OrgDocumentView, OrgHelpWindow, OrgWorkspaceWidget
 from zara.desktop.windows import CopilotPresentation, CopilotWindow
 from zara.org_roam import OrgRoamIndex, parse_org_text
 
@@ -93,7 +94,7 @@ def test_workspace_search_selection_and_backlinks_use_one_index():
     workspace.show()
     qt_app.processEvents()
 
-    workspace.search_edit.setText("Doom renderer")
+    workspace.search_edit.setText("Build renderer")
     qt_app.processEvents()
     assert workspace.node_list.count() == 1
     assert "Build renderer" in workspace.node_list.item(0).text()
@@ -108,6 +109,26 @@ def test_workspace_search_selection_and_backlinks_use_one_index():
     workspace.close()
     workspace.deleteLater()
     qt_app.processEvents()
+
+
+def test_repo_help_lists_and_renders_canonical_org_sources():
+    qt_app = app()
+    repo_root = Path(__file__).resolve().parents[1]
+    help_window = OrgHelpWindow(repo_root=repo_root)
+    try:
+        labels = [help_window.source_list.item(i).text() for i in range(help_window.source_list.count())]
+        assert "README.org" in labels
+        assert "docs/README.org" in labels
+
+        help_window.open_source("README.org")
+        qt_app.processEvents()
+        rendered = help_window.document_view.toPlainText()
+        assert "Zara" in rendered or "Zarathushtra" in rendered
+        assert "*" in rendered
+    finally:
+        help_window.close()
+        help_window.deleteLater()
+        qt_app.processEvents()
 
 
 def test_expanded_copilot_toggles_org_workspace_without_creating_second_chat_renderer(tmp_path):
