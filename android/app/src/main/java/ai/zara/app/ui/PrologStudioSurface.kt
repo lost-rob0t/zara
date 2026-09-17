@@ -3,9 +3,11 @@ package ai.zara.app.ui
 import ai.zara.app.prolog.LogicGraph
 import ai.zara.app.prolog.LogicNodeKind
 import ai.zara.app.prolog.PrologDocument
+import ai.zara.app.prolog.PrologCompletionEngine
 import ai.zara.app.prolog.PrologExampleCatalog
 import ai.zara.app.prolog.PrologSource
 import ai.zara.app.prolog.PrologSourceAnalyzer
+import ai.zara.app.prolog.PrologSchemaValidator
 import ai.zara.app.prolog.PrologTutorialCatalog
 import ai.zara.app.runtime.LocalQueryResult
 import ai.zara.app.runtime.LocalServerPhase
@@ -57,6 +59,7 @@ import kotlin.math.sin
 private enum class StudioPane(val label: String) {
     Editor("IDE"),
     Expert("Expert"),
+    Syntax("Syntax"),
     Graph("Graph"),
     Learn("Learn"),
 }
@@ -80,7 +83,8 @@ internal fun PrologStudioSurface(
     var query by rememberSaveable { mutableStateOf(firstExampleQuery(selectedName)) }
     val selected = sources.firstOrNull { it.name == selectedName } ?: first
     val document = remember(selectedName, draft) {
-        PrologSourceAnalyzer.analyze(selectedName.ifBlank { "scratch.pl" }, draft)
+        val analyzed = PrologSourceAnalyzer.analyze(selectedName.ifBlank { "scratch.pl" }, draft)
+        analyzed.copy(diagnostics = analyzed.diagnostics + PrologSchemaValidator.validate(analyzed))
     }
     val pane = StudioPane.entries.firstOrNull { it.name == paneName } ?: StudioPane.Editor
 
@@ -131,6 +135,11 @@ internal fun PrologStudioSurface(
                 onRunQuery = { onRunQuery(query) },
             )
             StudioPane.Expert -> ExpertEditorPane(
+                sources = sources,
+                operationBusy = operationBusy,
+                onSaveSource = onSaveSource,
+            )
+            StudioPane.Syntax -> SyntaxEditorPane(
                 sources = sources,
                 operationBusy = operationBusy,
                 onSaveSource = onSaveSource,
@@ -188,6 +197,9 @@ private fun EditorPane(
     onRunQuery: () -> Unit,
 ) {
     val tokens = LocalZaraTokens.current
+    val completions = remember(draft, document) {
+        PrologCompletionEngine.complete(draft, draft.length, listOf(document))
+    }
     var creatingSource by rememberSaveable { mutableStateOf(false) }
     var newSourceName by rememberSaveable { mutableStateOf("") }
     SectionCard("SOURCES") {
@@ -240,6 +252,25 @@ private fun EditorPane(
             visualTransformation = remember(tokens) { PrologVisualTransformation(tokens) },
             colors = studioFieldColors(),
         )
+        if (completions.isNotEmpty()) {
+            Text("AUTOCOMPLETE", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                completions.take(6).forEach { completion ->
+                    TextButton(onClick = {
+                        val prefix = draft.takeLastWhile { it.isLetterOrDigit() || it == '_' }
+                        val predicate = completion.label.substringBefore('/')
+                        val arity = completion.label.substringAfter('/', "0").toIntOrNull() ?: 0
+                        val arguments = (1..arity).joinToString(", ") { "Arg$it" }
+                        onDraft(draft.dropLast(prefix.length) + predicate + if (arity == 0) "" else "($arguments)")
+                    }) {
+                        Text(completion.label, fontFamily = FontFamily.Monospace)
+                    }
+                }
+            }
+        }
         if (document.diagnostics.isEmpty()) {
             KeyValueRow("analysis", "${document.clauses.size} clauses · clean")
         } else {
@@ -290,7 +321,7 @@ private fun ExpertEditorPane(
         expertSystemSource(expertName, evidence, conclusion)
     }
     SectionCard("EXPERT SYSTEM BUILDER") {
-        MutedNotice("Build a small explainable system from evidence facts, a decision rule, and an explanation term. Generated predicates remain ordinary editable Prolog.")
+        MutedNotice("Build a typed, explainable system from schema declarations, evidence facts, a decision rule, and an explanation term. Generated predicates remain ordinary editable Prolog.")
         OutlinedTextField(
             value = expertName,
             onValueChange = { expertName = it },
@@ -327,6 +358,38 @@ private fun ExpertEditorPane(
                 existing.trimEnd() + "\n\n" + generated
             }
             onSaveSource("expert_system.pl", merged.trimStart())
+        }
+    }
+}
+
+@Composable
+private fun SyntaxEditorPane(
+    sources: List<PrologSource>,
+    operationBusy: Boolean,
+    onSaveSource: (String, String) -> Unit,
+) {
+    var operator by rememberSaveable { mutableStateOf("because") }
+    var precedence by rememberSaveable { mutableStateOf("600") }
+    var associativity by rememberSaveable { mutableStateOf("xfx") }
+    val safeOperator = operator.trim().lowercase().replace(Regex("[^a-z0-9_]+"), "_").trim('_')
+    val safePrecedence = precedence.toIntOrNull()?.coerceIn(1, 1200)
+    val safeAssociativity = associativity.takeIf { it in setOf("xfx", "xfy", "yfx", "fx", "fy", "xf", "yf") }
+    val generated = if (safeOperator.isNotBlank() && safePrecedence != null && safeAssociativity != null) {
+        ":- op($safePrecedence, $safeAssociativity, $safeOperator).\n"
+    } else ""
+    SectionCard("LANGUAGE SYNTAX") {
+        MutedNotice("Define a standard Prolog operator. It is stored in syntax.pl and loaded by the same bounded Trealla runtime as the rest of the workspace.")
+        OutlinedTextField(operator, { operator = it }, Modifier.fillMaxWidth(), label = { Text("Operator atom") }, singleLine = true, colors = studioFieldColors())
+        OutlinedTextField(precedence, { precedence = it }, Modifier.fillMaxWidth(), label = { Text("Precedence 1–1200") }, singleLine = true, colors = studioFieldColors())
+        OutlinedTextField(associativity, { associativity = it }, Modifier.fillMaxWidth(), label = { Text("xfx · xfy · yfx · fx · fy · xf · yf") }, singleLine = true, colors = studioFieldColors())
+    }
+    SectionCard("GENERATED DIRECTIVE") {
+        Text(generated.ifBlank { "Invalid operator definition" }, fontFamily = FontFamily.Monospace)
+        PrimaryAction("Add to syntax.pl", !operationBusy && generated.isNotBlank()) {
+            val existing = sources.firstOrNull { it.name == "syntax.pl" }?.text.orEmpty()
+            if (!existing.contains(generated.trim())) {
+                onSaveSource("syntax.pl", (existing.trimEnd() + "\n" + generated).trimStart())
+            }
         }
     }
 }
@@ -442,6 +505,10 @@ private fun expertSystemSource(name: String, evidence: String, conclusion: Strin
     val goals = keys.joinToString(",\n    ") { "evidence(Entity, $it)" }
     return """
         % generated:$safeName
+        :- zara_schema(evidence, 2, [atom, atom]).
+        :- zara_schema(${safeName}_decision, 2, [atom, atom]).
+        :- zara_schema(${safeName}_explain, 2, [atom, term]).
+
         ${safeName}_decision(Entity, $safeConclusion) :-
             $goals.
 
