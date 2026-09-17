@@ -46,7 +46,7 @@ class BixbyHandoffContractTest {
         val activity = File("src/main/java/ai/zara/app/automation/AutomationActivity.kt").readText()
 
         assertTrue(activity.contains("AndroidAutomationCatalog.examples.filterNot"))
-        assertTrue(activity.contains("source.name in existingNames"))
+        assertTrue(activity.contains("source.fileName in existingNames"))
         assertFalse(activity.contains("AndroidAutomationCatalog.examples.single()"))
     }
 
