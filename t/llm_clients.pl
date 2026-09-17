@@ -78,6 +78,8 @@ success_reply(openai) :-
     reply_json_dict(_{choices:[_{message:_{content:"openai-ok"}}]}).
 success_reply(openrouter) :-
     reply_json_dict(_{choices:[_{message:_{content:"openrouter-ok"}}]}).
+success_reply(llama_cpp) :-
+    reply_json_dict(_{choices:[_{message:_{content:"llama-cpp-ok"}}]}).
 success_reply(ollama) :-
     reply_json_dict(_{message:_{content:"ollama-ok"}}).
 
@@ -110,6 +112,15 @@ test(openrouter_golden_request) :-
     assertion(memberchk('Authorization'="Bearer literal-key", Headers)),
     assertion(Request.messages =@= [_{role:system, content:"system"}|Messages]).
 
+test(llama_cpp_golden_request_has_no_auth_header) :-
+    Messages = [_{role:user, content:"hello"}],
+    serialize_llm_request(
+        llama_cpp, "local", "", "system", Messages, Headers, Request
+    ),
+    assertion(Headers == []),
+    assertion(Request.model == "local"),
+    assertion(Request.messages =@= [_{role:system, content:"system"}|Messages]).
+
 test(openrouter_key_comes_from_environment) :-
     llm_client:get_api_key(openrouter, Key),
     assertion(Key == 'literal-key').
@@ -133,6 +144,7 @@ test(provider_round_trips, [forall(member(Provider-Expected, [
     anthropic-"anthropic-ok",
     openai-"openai-ok",
     openrouter-"openrouter-ok",
+    llama_cpp-"llama-cpp-ok",
     ollama-"ollama-ok"
 ]))]) :-
     configure_provider(Provider, success),
@@ -168,6 +180,14 @@ test(openrouter_does_not_inherit_ollama_default_endpoint) :-
     asserta(kb_config:llm_endpoint("http://localhost:11434/api/chat")),
     llm_client:provider_endpoint(openrouter, Endpoint),
     assertion(Endpoint == "https://openrouter.ai/api/v1/chat/completions").
+
+test(llama_cpp_does_not_inherit_ollama_default_endpoint) :-
+    retractall(kb_config:llm_provider(_)),
+    asserta(kb_config:llm_provider(llama_cpp)),
+    retractall(kb_config:llm_endpoint(_)),
+    asserta(kb_config:llm_endpoint("http://localhost:11434/api/chat")),
+    llm_client:provider_endpoint(llama_cpp, Endpoint),
+    assertion(Endpoint == "http://127.0.0.1:11435/v1/chat/completions").
 
 test(rate_limit_retries_are_bounded) :-
     configure_provider(openai, rate_limit),
