@@ -5,6 +5,8 @@ Zara exposes Emacs-like customization seams without creating a second assistant 
 
 Customization is opt-in. Override-capable behavior is separately gated because it can replace canonical loop behavior.
 
+Desktop Zara also supports a trusted executable Prolog init file. That init surface is broader than the policy-gated command hook surface, but it remains local desktop code and is never loaded by =server_main.pl=.
+
 * Configuration
 The main TOML configuration owns policy:
 
@@ -25,14 +27,33 @@ backend = "langgraph"
 * User-owned customization files
 Mutable user customization belongs in the user's Zara configuration directory, outside Git and the Nix store. Zara/Home Manager may provision directories or immutable defaults, but must not overwrite mutable private user state.
 
-The supported user hook files are:
+The supported user customization files are:
 
-- =hooks.pl= for Prolog hook/command customization;
+- =config.exec.pl= for trusted desktop executable configuration and the Emacs-style config API;
+- =hooks.pl= for policy-gated Prolog hook/command customization of the canonical command path;
 - =hooks.py= for Python agent-loop advice/customization.
 
-Reload is owned by Zara's canonical loaders. A failed reload must leave the previous valid registration set intact rather than exposing a partially loaded registry.
+=~/.config/zarathushtra/lisp= is also recognized as the default user Prolog library directory when it exists.
+
+Reload is owned by Zara's canonical loaders. The executable config is deliberately reconsulted on =reload_config=. Canonical hook/advice reload paths must still preserve their last-good registry guarantees.
 
 Do not put secrets in hook source, examples, diagnostics, or repository-managed defaults.
+
+* Executable Prolog init
+=config.exec.pl= is trusted local operator code, analogous to an Emacs init file rather than a declarative settings schema. Before it is loaded, Zara imports the config API and clipboard API into =user= so init code can use them without module prefixes.
+
+The config API includes:
+
+- Lisp-style runtime variables with =defvar/2=, =defcustom/3=, =setq/2=, and =symbol_value/2=;
+- reload-idempotent named config hooks with =add_hook/2= and =run_hooks/1=;
+- an =M-x=-style local command registry with =defcommand/2,3= and =call_command/1,2=;
+- =provide/1=, =featurep/1=, =require_feature/1=, and user load paths;
+- explicit clipboard read/write/clear operations;
+- a system-synchronized Emacs-style kill ring.
+
+The local named command registry is an init/config dispatch mechanism. It does not replace =command_loop.pl=, does not make speech text executable, and does not bypass the canonical command/tool approval path.
+
+See =wiki/prolog-config-api.org= for the predicate reference and examples.
 
 * Python agent-loop advice
 The Python advice registry wraps the one canonical conversation-loop invocation. Registrations have an owner, kind, priority/order, and registration identity.
@@ -63,6 +84,8 @@ Prolog remains the canonical deterministic command-reasoning surface where appli
 
 User =hooks.pl= customization is loaded through the existing Prolog engine/runtime boundary. Speech or untrusted user text does not become an arbitrary Prolog goal. Hook/custom command behavior remains subject to the same command/tool capability policy as core behavior.
 
+This canonical hook system is distinct from the lightweight config-lifecycle hooks in =modules/config_api.pl=. The latter exist for init/reload composition; the former owns actual reply/command customization and its policy gates.
+
 * Diagnostics
 Runtime customization diagnostics expose metadata needed to answer questions such as:
 
@@ -76,7 +99,7 @@ Runtime customization diagnostics expose metadata needed to answer questions suc
 Diagnostics are deliberately callback-free. They must not expose callback objects, prompts, transcripts, tool arguments/results, credentials, private plugin configuration, or other secret-bearing runtime payloads.
 
 * Security boundaries
-Customization is trusted local code, but it is not ambient authorization.
+Customization is trusted local code, but canonical command/advice customization is not ambient authorization.
 
 - Hooks/advice do not grant a tool capability that the active principal lacks.
 - =around= and =override= are disabled unless explicitly authorized.
@@ -84,6 +107,7 @@ Customization is trusted local code, but it is not ambient authorization.
 - User customization is local/private state; remote payloads cannot upload hook source or choose executable Python/Prolog callbacks.
 - Service-plugin registrations are owner-scoped and cleaned up with plugin lifecycle.
 - There is still one RuntimeHost/agent ownership path, one approval controller, and one canonical cancellation/history lifecycle.
+- Clipboard access from executable config is explicit; Zara does not silently capture clipboard contents.
 
 * Troubleshooting
 If customization is not active, check the bounded diagnostics first:
@@ -93,5 +117,7 @@ If customization is not active, check the bounded diagnostics first:
 3. verify the requested backend is registered and diagnostics show the expected owner;
 4. inspect reload/registration error classes without dumping private callback/config data;
 5. return to =backend = "langgraph"= and disable override-capable advice to recover the core path.
+
+For =config.exec.pl= itself, use =reload_config= and inspect typed Prolog errors directly. Clipboard calls additionally require an available backend or an explicitly registered custom provider.
 
 Unknown backends, conflicting overrides, failed user-file reloads, and plugin cleanup problems should remain explicit failures rather than silently changing runtime ownership.
