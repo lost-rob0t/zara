@@ -111,9 +111,9 @@ class SecretRef:
             raise TypeError("scope must be SecretScope")
         if not isinstance(self.kind, SecretKind):
             raise TypeError("kind must be SecretKind")
-        if not isinstance(self.revision, int) or self.revision < 0:
+        if type(self.revision) is not int or self.revision < 0:
             raise ValueError("revision must be a non-negative integer")
-        if not isinstance(self.generation, int) or self.generation < 0:
+        if type(self.generation) is not int or self.generation < 0:
             raise ValueError("generation must be a non-negative integer")
         if not isinstance(self.configured, bool):
             raise TypeError("configured must be bool")
@@ -234,18 +234,19 @@ class SecretRedactor:
         )
 
     def mask_text(self, text: str) -> str:
-        """Replace complete known secret values with safe aliases/redaction.
+        """Mask complete known values without reprocessing generated aliases.
 
-        Full-text masking uses longest values first so one known value contained
-        inside another cannot prevent the longer value from being removed.
+        Unlike streaming finalization, a full already-complete text value keeps
+        an ordinary suffix that merely happens to be an incomplete secret
+        prefix.  Complete secret matches still use the same leftmost/longest
+        trie semantics as streaming output.
         """
 
         if not isinstance(text, str):
             raise TypeError("text must be str")
-        result = text
-        for entry in self._entries:
-            result = result.replace(entry.value, entry.replacement)
-        return result
+        stream = SecretStreamingFilter(self)
+        stream._pending = text
+        return stream._drain(final=True, mask_incomplete=False)
 
     def streaming_filter(self) -> "SecretStreamingFilter":
         return SecretStreamingFilter(self)
@@ -277,12 +278,12 @@ class SecretStreamingFilter:
             return ""
 
         self._pending += chunk
-        return self._drain(final=False)
+        return self._drain(final=False, mask_incomplete=True)
 
     def finalize(self) -> str:
-        return self._drain(final=True)
+        return self._drain(final=True, mask_incomplete=True)
 
-    def _drain(self, *, final: bool) -> str:
+    def _drain(self, *, final: bool, mask_incomplete: bool) -> str:
         output: list[str] = []
         root = self._redactor._trie
 
@@ -312,13 +313,14 @@ class SecretStreamingFilter:
                     # No more bytes can arrive.  If a shorter complete secret
                     # was observed along this path, emit that safe replacement
                     # and continue classifying the remainder.  Otherwise this is
-                    # an unresolved secret prefix and must be masked.
+                    # either an unresolved stream prefix (mask it) or an ordinary
+                    # incomplete prefix in already-complete text (keep it).
                     if last_terminal_end:
                         assert last_terminal_replacement is not None
                         output.append(last_terminal_replacement)
                         self._pending = self._pending[last_terminal_end:]
                         continue
-                    output.append("***")
+                    output.append("***" if mask_incomplete else self._pending)
                     self._pending = ""
                 break
 
