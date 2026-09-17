@@ -14,13 +14,14 @@ class DeviceCapabilityRegistry(adapters: List<DeviceCapabilityAdapter>) {
     private val adaptersByCapability: Map<DeviceCapability, DeviceCapabilityAdapter>
 
     init {
-        val duplicate = adapters
+        val effectiveAdapters = adapters + DeviceCapabilityExtensions.adapters()
+        val duplicate = effectiveAdapters
             .groupingBy(DeviceCapabilityAdapter::capability)
             .eachCount()
             .entries
             .firstOrNull { it.value > 1 }
         require(duplicate == null) { "duplicate device capability adapter" }
-        adaptersByCapability = adapters.associateBy(DeviceCapabilityAdapter::capability)
+        adaptersByCapability = effectiveAdapters.associateBy(DeviceCapabilityAdapter::capability)
     }
 
     fun availableCapabilities(): Set<DeviceCapability> =
