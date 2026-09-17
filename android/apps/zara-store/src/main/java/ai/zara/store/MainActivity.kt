@@ -43,7 +43,7 @@ private fun ZaraStoreScreen() {
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
-                text = "Foundation mode: signed repository metadata and Zara package identity are wired first. APK installation remains disabled until the Android installer authority slice lands.",
+                text = "Experimental foundation: F-Droid index decoding and Zara package identity contracts are present, but repository signature/hash trust promotion and APK installation are not enabled yet.",
                 style = MaterialTheme.typography.bodyLarge,
             )
             Text(
