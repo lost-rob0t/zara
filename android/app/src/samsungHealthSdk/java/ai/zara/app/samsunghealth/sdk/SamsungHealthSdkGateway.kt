@@ -132,12 +132,12 @@ class SamsungHealthSdkGateway(context: Context) : SamsungHealthGateway {
     }
 
     private fun readExerciseToday(): SamsungHealthReading {
-        val today = LocalDate.now()
+        val filter = LocalTimeFilter.of(LocalDate.now().atStartOfDay(), LocalDateTime.now())
         val durationRequest = DataType.ExerciseType.TOTAL_DURATION.requestBuilder
-            .setLocalDateFilter(LocalDateFilter.of(today, today.plusDays(1)))
+            .setLocalTimeFilter(filter)
             .build()
         val caloriesRequest = DataType.ExerciseType.TOTAL_CALORIES.requestBuilder
-            .setLocalTimeFilter(LocalTimeFilter.of(today.atStartOfDay(), LocalDateTime.now()))
+            .setLocalTimeFilter(filter)
             .build()
         val duration = runSuspendBlocking { store.aggregateData(durationRequest) }
             .dataList.fold(Duration.ZERO) { total, item -> total.plus(item.value ?: Duration.ZERO) }
