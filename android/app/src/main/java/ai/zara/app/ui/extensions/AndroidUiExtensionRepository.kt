@@ -4,11 +4,21 @@ import ai.zara.app.runtime.LocalQueryResult
 import java.io.File
 import java.util.concurrent.CompletableFuture
 
+enum class AndroidPluginUiHealth {
+    INSTALLED,
+    DISABLED,
+    PERMISSION_REQUIRED,
+    READY,
+    DEGRADED,
+    INCOMPATIBLE,
+    DISCONNECTED,
+}
+
 /**
  * Trusted host projection for one Android plugin.
  *
  * The ZARA-ANDROID-PLUGIN/1 host owns discovery, signer/protocol validation,
- * enablement and generation fencing. The UI layer only accepts this inert
+ * enablement, health and generation fencing. The UI layer only accepts this inert
  * projection after those checks have been made.
  */
 data class AndroidPluginUiProjection(
@@ -17,6 +27,7 @@ data class AndroidPluginUiProjection(
     val enabled: Boolean,
     val generation: Long,
     val contributions: List<UiContribution>,
+    val health: AndroidPluginUiHealth = AndroidPluginUiHealth.DISCONNECTED,
 ) {
     init {
         require(pluginId.matches(Regex("[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}"))) {
@@ -71,7 +82,15 @@ class AndroidUiExtensionRepository(
                     "duplicate Android plugin UI projection: ${projection.pluginId}"
                 }
                 if (!projection.trusted || !projection.enabled) return@forEach
-                staged.replaceOwner("plugin:${projection.pluginId}", projection.contributions)
+
+                val contributions = if (projection.health == AndroidPluginUiHealth.READY) {
+                    projection.contributions
+                } else {
+                    projection.contributions.filter { contribution ->
+                        contribution.kind in PASSIVE_NON_READY_KINDS
+                    }
+                }
+                staged.replaceOwner("plugin:${projection.pluginId}", contributions)
             }
         staged.snapshot()
             .groupBy { it.owner }
@@ -82,5 +101,10 @@ class AndroidUiExtensionRepository(
 
     companion object {
         private const val MAX_INIT_BYTES = 256 * 1024
+        private val PASSIVE_NON_READY_KINDS = setOf(
+            UiContributionKind.SECTION,
+            UiContributionKind.TEXT,
+            UiContributionKind.STATUS,
+        )
     }
 }
