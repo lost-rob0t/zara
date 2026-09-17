@@ -12,7 +12,14 @@ import java.util.concurrent.ConcurrentHashMap
 
 class AndroidOfflineTtsBackend(
     context: Context,
-) : LocalTtsBackend {
+) : LocalTtsProvider {
+    override val capabilities = LocalTtsProviderCapabilities(
+        id = PROVIDER_ID,
+        displayName = "Android Offline Voice",
+        offlineOnly = true,
+        modelBacked = false,
+    )
+
     private val appContext = context.applicationContext
     private val pending = ConcurrentHashMap<String, CompletableFuture<Unit>>()
 
@@ -166,6 +173,7 @@ class AndroidOfflineTtsBackend(
         CompletableFuture<T>().also { it.completeExceptionally(error) }
 
     companion object {
+        const val PROVIDER_ID = "android-offline"
         private const val MAX_TEXT_CHARS = 16_384
     }
 }
