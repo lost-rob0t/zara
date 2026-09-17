@@ -220,4 +220,89 @@ class PrologStudioTest {
         assertEquals(1, matches.single().line)
         assertEquals(1, matches.single().column)
     }
+
+    @Test
+    fun localCommandRouterInvokesOnlyDeclaredExpertEntries() {
+        val catalog = PrologWorkspaceCatalog.from(
+            listOf(
+                PrologSource(
+                    "expert.pl",
+                    "expert_activation(triage, inspect).\ntriage_decision(Entity, review).\ntriage_explain(Entity, Result) :- Result = review(Entity).\n",
+                ),
+            ),
+        )
+        assertEquals("triage_explain(alice, Result)", LocalNaturalLanguageExpertRouter.query("inspect alice", catalog))
+
+        assertEquals(
+            "triage_explain(alice, Result)",
+            LocalPrologCommand.parse("/expert triage_explain alice", catalog).query,
+        )
+        assertEquals(
+            "triage_explain(alice, Result)",
+            LocalPrologCommand.parse("/prolog triage_explain(alice, Result)", catalog).query,
+        )
+        listOf(
+            "/expert missing alice",
+            "/expert triage_explain '); shell(id).",
+            "/expert triage_decision alice",
+        ).forEach { text ->
+            try {
+                LocalPrologCommand.parse(text, catalog)
+                throw AssertionError("unsafe local expert command accepted: $text")
+            } catch (_: IllegalArgumentException) {
+            }
+        }
+    }
+
+    @Test
+    fun workspaceCatalogSeparatesFactsRulesSchemasAndExperts() {
+        val catalog = PrologWorkspaceCatalog.from(
+            listOf(PrologSource("expert.pl", """
+                :- zara_schema(signal, 2, [atom, atom]).
+                signal(alice, red).
+                triage_explain(Entity, Result) :- signal(Entity, Result).
+            """.trimIndent())),
+        )
+
+        assertEquals(listOf("signal/2"), catalog.facts.map { it.indicator })
+        assertEquals(listOf("triage_explain/2"), catalog.rules.map { it.indicator })
+        assertEquals(listOf("signal/2"), catalog.schemas.map { it.indicator })
+        assertEquals(listOf("triage_explain/2"), catalog.experts.map { it.indicator })
+    }
+
+    @Test
+    fun intentHelpersCompileFromActionWordsWithoutModelAuthority() {
+        val request = IntentHelperRequest(
+            intent = "investigate",
+            actionWords = listOf("investigate", "research", "dig"),
+            arguments = listOf(IntentArgument("target", "atom")),
+        )
+
+        val draft = DeterministicIntentHelperGenerator.generate(request)
+
+        assertEquals(IntentDraftProviderKind.DETERMINISTIC, draft.provider)
+        assertTrue(draft.source.contains("verb_intent(investigate, investigate, 1)."))
+        assertTrue(draft.source.contains("verb_intent(research, investigate, 1)."))
+        assertTrue(draft.source.contains(":- zara_schema(investigate_explain, 2, [atom, term])."))
+        assertTrue(draft.requiresApproval)
+        assertTrue(PrologSchemaValidator.validate(PrologSourceAnalyzer.analyze("intent_investigate.pl", draft.source)).isEmpty())
+    }
+
+    @Test
+    fun remoteIntentGeneratorConfigurationIsExplicitAndBounded() {
+        val configuration = IntentGeneratorConfiguration.remote(
+            endpoint = "https://llm.starintel.actor/v1/intent-drafts",
+            model = "intent-helper-1b",
+        )
+
+        assertEquals(IntentDraftProviderKind.REMOTE, configuration.provider)
+        assertEquals("intent-helper-1b", configuration.model)
+        listOf("http://plain.example/v1", "https://user:secret@example.com/v1").forEach { endpoint ->
+            try {
+                IntentGeneratorConfiguration.remote(endpoint, "model")
+                throw AssertionError("unsafe remote intent endpoint accepted")
+            } catch (_: IllegalArgumentException) {
+            }
+        }
+    }
 }
