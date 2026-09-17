@@ -2,21 +2,35 @@
 
 * Scope
 
-Zara Android can keep its Prolog-first standalone mode while optionally adding a local conversational model and local speech synthesis. The model does not become action authority. Android device effects continue through the typed Zara capability/policy boundary.
+Zara Android can keep its Prolog-first standalone mode while optionally adding local conversational models and local speech synthesis. Model output does not become action authority. Android device effects continue through the typed Zara capability/policy boundary.
 
 The owning issue is #904 under #622.
 
-* Provider contract
+* Provider contracts
 
-The embedded engine is a first-class Zara model provider with provider id =embedded= and display name =Embedded Local=.
+Zara treats local language models and local speech engines as two independent provider families.
 
-Android's =LocalAiServiceClient= implements =LocalAiProvider=. Callers depend on that provider contract rather than on LiteRT-LM directly. The contract exposes provider capabilities, provider state, installed-model catalog, active model, model installation and selection, streaming generation, cancellation/unload, and local speech.
+** Language-model providers
 
-A provider model is selected by model id + version. The model catalog keeps metadata for every verified local install instead of replacing one global model record, so Gemma, Qwen, or any other model that is packaged for a supported embedded backend can coexist and be switched without changing Zara's chat routing code.
+The built-in language-model provider has provider id =embedded= and display name =Embedded Local=.
 
-The built-in embedded provider currently advertises =.litertlm= containers and CPU/GPU/NPU acceleration. That is a capability statement, not a hard-coded model family: Zara does not assume a particular architecture or model id. Future GGUF/llama.cpp, ONNX, or WebAssembly/WebGPU engines should implement/register the same provider interface and advertise only formats they actually execute. Unsupported formats must not be claimed or guessed.
+Android's =LocalAiServiceClient= implements =LocalAiProvider=. Callers depend on that provider contract rather than on LiteRT-LM directly. The contract exposes provider capabilities, provider state, installed-model catalog, active model, model installation and selection, streaming generation, cancellation and unload.
 
-The portable =local-ai-v1= operation vocabulary includes model listing, active-model inspection, verified install, selection, load, generate, cancel, unload, speak and stop-speech.
+A provider model is selected by model id + version. The model catalog keeps metadata for every verified local install instead of replacing one global model record, so many compatible model families can coexist and be switched without changing Zara's chat routing code.
+
+The shared model descriptor is format-neutral and can represent =litert-lm=, =gguf=, =onnx= and =tflite= containers plus explicit quantization metadata. The built-in =embedded= provider currently advertises and accepts only =litert-lm= because that is the runtime it actually executes today. Future GGUF/llama.cpp, ONNX Runtime, TFLite or WebAssembly/WebGPU engines implement/register the same provider interface and advertise only the formats they actually execute. Unsupported formats are never guessed or silently routed to the wrong engine.
+
+The quantization vocabulary includes LiteRT-style dynamic INT4/INT4/INT8/FP8/BF16/FP16/FP32 and common GGUF quantizations such as Q8_0, Q6_K, Q5_K_M, Q4_K_M, Q4_0, Q3_K_M and Q2_K. Unknown quantization is rejected rather than inferred from a filename.
+
+** Speech providers
+
+Speech is separate from the language-model provider. =LocalTtsProvider= and =LocalTtsProviderRegistry= let Zara discover and select speech engines independently.
+
+The first provider is =android-offline=. It uses Android =TextToSpeech= only with a voice whose =Voice.isNetworkConnectionRequired= value is false. It is deliberately marked as not Zara-model-backed because the voice model is owned by the installed Android TTS engine.
+
+A future =sherpa-onnx= provider can own downloaded Piper/VITS/Kokoro-family models, and other local speech engines can register beside it. This separation means changing the LLM does not force a TTS change, and changing TTS does not change the LLM provider.
+
+The portable =local-ai-v1= operation vocabulary includes provider discovery, model listing, active-model inspection, verified install, selection, load, generate, cancel, unload, TTS-provider discovery/selection, speak and stop-speech.
 
 * Android service boundary
 
@@ -25,14 +39,15 @@ The phone hosts model and TTS lifetime in the non-exported =LocalAiService= runn
 #+begin_example
 Compose / VoiceInteractionService / AndroidAppSession
                     |
-                    | LocalAiProvider (embedded)
+                    | provider contracts
                     v
              LocalAiService
-                actor lane
-             /             \
-      LiteRT-LM engine    offline TTS
-      model catalog       Android voice
-             \             /
+          /                     \
+ LocalAiProviderRegistry   LocalTtsProviderRegistry
+          |                     |
+ embedded LiteRT-LM       android-offline TTS
+ model catalog            future neural TTS providers
+          \                     /
               typed results
                     |
           Prolog / capability policy
@@ -47,14 +62,15 @@ Android uses the native Kotlin LiteRT-LM package pinned by the repository. Do no
 Model files are not bundled into the base APK. They are installed into app-private storage and require explicit metadata:
 
 - model id and version;
+- model container format;
 - exact quantization;
 - SHA-256;
 - context limit;
 - requested backend.
 
-Unknown quantization is rejected. Zara never guesses quantization from a filename. The model file is SHA-256 checked before activation and again before service load.
+Unknown format or quantization is rejected. Zara never guesses either from a filename. The model file is SHA-256 checked before activation and again before service load.
 
-Every install gets a catalog sidecar in app-private storage. The active manifest is only the current selection pointer; switching providers/models does not delete the other verified model files or metadata.
+Every install gets a catalog sidecar in app-private storage. The active manifest is only the current selection pointer; switching models does not delete the other verified model files or metadata.
 
 The initial practical real-device lane is a small explicitly quantized =.litertlm= model, such as the Gemma 3 1B IT dynamic-int4 class where its model license is accepted. CI uses fake backends and does not download a large model.
 
@@ -70,15 +86,15 @@ utterance
         -> no installed/ready model: bounded model-unavailable result
 #+end_example
 
-Model text is conversational output only. It cannot call Android capabilities or LiteRT-LM tools as action authority.
+Model text is conversational output only. It cannot call Android capabilities or provider-native tools as action authority.
 
 * Local TTS
 
-The first local speech backend is Android =TextToSpeech= with an explicitly selected voice whose =Voice.isNetworkConnectionRequired= value is false. If the device has no installed offline voice, Zara reports TTS unavailable. It does not silently switch to network speech.
+The first local speech provider is Android =TextToSpeech= with an explicitly selected voice whose =Voice.isNetworkConnectionRequired= value is false. If the device has no installed offline voice, Zara reports TTS unavailable. It does not silently switch to network speech.
 
 Speech uses unique utterance ids and =UtteranceProgressListener=. Zara can stop the engine immediately for barge-in/cancellation.
 
-A later fully Zara-managed neural voice backend may use sherpa-onnx with a downloaded, versioned and checksummed Piper/VITS/Kokoro-family model. That remains behind the same provider/speech boundary.
+A later fully Zara-managed neural voice provider may use sherpa-onnx with a downloaded, versioned and checksummed Piper/VITS/Kokoro-family model. Model files remain app-private and checksum/versioned; the Android system provider remains the lightweight fallback.
 
 * WebAssembly / Web
 
@@ -92,7 +108,8 @@ Android itself deliberately uses native Kotlin LiteRT-LM rather than embedding t
 
 - =LocalAiService= is non-exported.
 - Models and catalog metadata live in app-private storage.
-- No unknown quantization is accepted.
+- Unknown formats and quantizations are rejected.
+- Provider capabilities are explicit; Zara does not claim an engine can execute a format it cannot.
 - No network fallback occurs merely because local inference fails.
 - One actor owns model load/generate/unload ordering.
 - Provider selection never grants model output device-action authority.
