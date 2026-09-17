@@ -1,28 +1,29 @@
 package ai.zara.app.ui
 
-import ai.zara.app.prolog.LogicGraph
-import ai.zara.app.prolog.LogicNodeKind
-import ai.zara.app.prolog.PrologDocument
-import ai.zara.app.prolog.PrologCompletionEngine
-import ai.zara.app.prolog.PrologEditorHistory
-import ai.zara.app.prolog.PrologExampleCatalog
-import ai.zara.app.prolog.PrologReplace
-import ai.zara.app.prolog.PrologSource
-import ai.zara.app.prolog.PrologSourceAnalyzer
-import ai.zara.app.prolog.PrologSchemaValidator
-import ai.zara.app.prolog.PrologSearch
-import ai.zara.app.prolog.PrologLexer
-import ai.zara.app.prolog.PrologTokenKind
 import ai.zara.app.prolog.DeterministicIntentHelperGenerator
 import ai.zara.app.prolog.IntentArgument
 import ai.zara.app.prolog.IntentHelperRequest
+import ai.zara.app.prolog.LogicGraph
+import ai.zara.app.prolog.LogicNodeKind
+import ai.zara.app.prolog.PrologAuthorityPolicy
+import ai.zara.app.prolog.PrologCompletionEngine
+import ai.zara.app.prolog.PrologDocument
+import ai.zara.app.prolog.PrologEditorHistory
+import ai.zara.app.prolog.PrologExampleCatalog
+import ai.zara.app.prolog.PrologLexer
+import ai.zara.app.prolog.PrologReplace
+import ai.zara.app.prolog.PrologSchemaValidator
+import ai.zara.app.prolog.PrologSearch
+import ai.zara.app.prolog.PrologSource
+import ai.zara.app.prolog.PrologSourceAnalyzer
+import ai.zara.app.prolog.PrologTokenKind
 import ai.zara.app.prolog.PrologTutorialCatalog
 import ai.zara.app.runtime.LocalQueryResult
 import ai.zara.app.runtime.LocalServerPhase
 import ai.zara.app.runtime.LocalServerState
 import ai.zara.ui.theme.ZaraSemanticTokens
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -100,7 +101,13 @@ internal fun PrologStudioSurface(
     val selected = sources.firstOrNull { it.name == selectedName } ?: first
     val document = remember(selectedName, draft) {
         val analyzed = PrologSourceAnalyzer.analyze(selectedName.ifBlank { "scratch.pl" }, draft)
-        analyzed.copy(diagnostics = analyzed.diagnostics + PrologSchemaValidator.validate(analyzed))
+        analyzed.copy(
+            diagnostics = (
+                analyzed.diagnostics +
+                    PrologSchemaValidator.validate(analyzed) +
+                    PrologAuthorityPolicy.validate(analyzed)
+                ).distinct(),
+        )
     }
     val pane = StudioPane.entries.firstOrNull { it.name == paneName } ?: StudioPane.Editor
 
@@ -150,11 +157,18 @@ internal fun PrologStudioSurface(
                 onReload = onReload,
                 onRunQuery = { onRunQuery(query) },
             )
-            StudioPane.Expert -> ExpertEditorPane(
-                sources = sources,
-                operationBusy = operationBusy,
-                onSaveSource = onSaveSource,
-            )
+            StudioPane.Expert -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                ExpertEditorPane(
+                    sources = sources,
+                    operationBusy = operationBusy,
+                    onSaveSource = onSaveSource,
+                )
+                PrologStructuredBuilderPane(
+                    sources = sources,
+                    operationBusy = operationBusy,
+                    onSaveSource = onSaveSource,
+                )
+            }
             StudioPane.Syntax -> SyntaxEditorPane(
                 sources = sources,
                 operationBusy = operationBusy,
@@ -408,7 +422,7 @@ private fun EditorPane(
             textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
             colors = studioFieldColors(),
         )
-        MutedNotice("Queries are bounded and must bind Result. File, process, meta-call, database mutation, and arbitrary consult predicates are blocked.")
+        MutedNotice("Queries are bounded and must bind Result. File, process, meta-call, database mutation, network, FFI, and arbitrary consult predicates are blocked.")
         PrimaryAction("Run query", !operationBusy && query.isNotBlank()) {
             val historyItems = if (queryHistory.isBlank()) emptyList() else queryHistory.split('\u001F')
             queryHistory = (historyItems + query).takeLast(12).joinToString("\u001F")
