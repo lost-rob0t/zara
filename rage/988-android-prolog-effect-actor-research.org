@@ -1,0 +1,109 @@
+#+title: #988 Android Prolog effect/actor research addendum
+#+issue: 988
+#+rage-start: 6cbc73c6f894231e1216df9a5f63e51bfa75cd80
+#+date: 2026-09-17
+
+* Question
+Should =android_tool/3= be implemented as a direct Trealla foreign predicate that calls Android APIs, or should it use Zara's existing Prolog-effect / typed-Kotlin-actor boundary?
+
+* Current source evidence
+** Local Trealla host
+=LocalZaraServer= owns one single-thread =zara-local-server= executor. A bounded user query is checked by =PrologQueryPolicy=, then =TreallaBridge.evaluate(query)= returns a list of textual terms plus the local-runtime generation.
+
+=TreallaBridge= exposes only initialize, consult, evaluate and shutdown. =NativeTreallaBridge= delegates those operations to JNI.
+
+** JNI contract
+=android/app/src/main/cpp/zara_trealla_jni.c= embeds one Trealla runtime behind =g_runtime_lock=. =evaluate= runs =pl_query= and extracts a binding named exactly =Result= via =pl_binding(query, "Result")= and =pl_term_text=. It has no Java/Kotlin host-predicate callback, Android =Context=, Activity permission lifecycle, or typed device-capability dispatch.
+
+** Mobile query policy
+=PrologQueryPolicy= requires the =Result= variable and rejects side-effectful query text including =assert/1=, =asserta/1=, =assertz/1=, =retract/1=, =retractall/1=, file/process/shell predicates and generic =call/1=. Operator configuration may contain executable Prolog rules, but the interactive query boundary deliberately remains bounded.
+
+** Existing effect/actor precedent
+Samsung Health already uses the architecture needed here:
+
+#+begin_example
+Prolog predicate
+  -> Result = samsung_health_action(...)
+  -> SamsungHealthPrologCodec
+  -> SamsungHealthPluginActor (single-thread actor)
+  -> typed SamsungHealthGateway
+  -> structured SamsungHealthPluginReply
+#+end_example
+
+The Prolog source is seeded into the private workspace without overwriting operator edits. Platform mechanics stay out of Trealla/JNI.
+
+=AndroidAutomationRunner= likewise queries =automation(Name, Result)=, parses a closed =actions([...])= term, checks access, then executes typed Android adapters. This is already Zara's standard Prolog-directed Android mechanics path.
+
+* Upstream Trealla research
+Trealla supports C embedding and a foreign-function/module interface, including =use_foreign_module/2=. That proves a native FFI path is technically possible. It does not make it a good Zara Android boundary.
+
+A direct Android foreign predicate would require at least one of:
+- native C -> JVM callbacks with durable JVM/object references and thread attachment;
+- a separate native queue/IPC bridge back to Kotlin;
+- blocking native callbacks around asynchronous Android operations.
+
+Those options complicate Activity/runtime-permission handling, cancellation, stale generations, structured approval, and async location while duplicating Zara's existing typed device-action actor boundary.
+
+Primary upstream sources:
+- https://github.com/trealla-prolog/trealla
+- https://trealla-prolog.github.io/trealla/
+
+* Decision refinement
+Do not add Android device mechanics to the Trealla JNI layer for v1.
+
+Use a generic Prolog effect API whose result follows Zara's existing mobile convention:
+
+#+begin_src prolog
+android_tool(Action, Args, Result) :-
+    android_tool_known(Action),
+    Result = android_tool_action(Action, Args).
+
+android_flashlight(Enabled, Result) :-
+    android_tool(flashlight_set, [enabled(Enabled)], Result).
+
+android_sms_compose(To, Text, Result) :-
+    android_tool(sms_compose, [recipient(To), text(Text)], Result).
+#+end_src
+
+The generic Prolog source and ergonomic wrappers are generated or validated from =ZARA-ANDROID-TOOLS/1=. The returned effect is decoded only by a closed =AndroidToolEffectCodec= and executed by a single-thread =AndroidToolActor= through =DeviceCapabilityRegistry=.
+
+#+begin_example
+protocol/android-tools.v1.json
+          |
+          +--> generated/validated Android Prolog source
+          |       `--> android_tool_action(Action, Args)
+          |                `--> AndroidToolEffectCodec
+          |                         `--> AndroidToolActor
+          |                                  `--> DeviceCapabilityRegistry
+          |
+          +--> Kotlin descriptor/adapters
+          +--> ZARA/1 capability/result schemas
+          +--> Python LangChain StructuredTools
+          `--> #51 Skill Browser metadata
+#+end_example
+
+The actor returns a structured =AndroidToolReply= carrying outcome, bounded typed data where applicable, effective backend/authority metadata, and a safe user-facing status. It must not claim that Trealla itself performed Android I/O.
+
+* Read-result semantics
+Direct LLM/device calls return bounded typed data through =device.action.result=. Local Prolog-triggered reads return the same logical result model to the caller through =AndroidToolReply=.
+
+Do not secretly =assertz= read results into the operator's Prolog database. A future rule workflow that needs to branch on a read result should use an explicit continuation query with a bounded serialized result term and generation correlation. That continuation is a separate tested slice, not a hidden mutable side effect.
+
+* Why this wins
+- reuses two existing Zara patterns instead of creating a third runtime;
+- preserves Android Activity/permission lifecycle in Kotlin;
+- keeps Prolog configuration expressive and deterministic;
+- keeps native Trealla embedding small and portable;
+- keeps one actor/authority boundary for Android device effects;
+- makes Prolog and LLM projections share one descriptor set without sharing unsafe execution plumbing;
+- supports cancellation/stale-generation/approval instrumentation in the same place as other typed device actions.
+
+* New RED evidence
+=AndroidToolPrologContractTest= requires:
+- a generic Prolog plugin with =android_tool/3= and effect-term generation;
+- ergonomic wrappers for requested Android operations;
+- a single-thread =AndroidToolActor= using =DeviceCapabilityRegistry=;
+- no Trealla native API/System.loadLibrary dependency in the actor;
+- no Android device-effect code added to =zara_trealla_jni.c=.
+
+Production remains blocked on the pending #647 vote.
