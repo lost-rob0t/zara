@@ -11,7 +11,6 @@ import org.gradle.api.tasks.TaskAction
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.kotlin.parcelize)
 }
 
 abstract class GeneratePortableSemanticAssets : DefaultTask() {
