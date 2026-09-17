@@ -91,8 +91,9 @@ class CopilotWindow(BaseCopilotWindow):
             return
 
         if action.startswith("plugin:"):
-            self.composer.setPlainText(action.removeprefix("plugin:"))
-            self.composer.setFocus()
+            # Typed plugin mutations must dispatch through the canonical plugin host.
+            # Never convert a plugin action into model/composer text as a fallback.
+            return
 
 
 __all__ = ["CopilotWindow"]
