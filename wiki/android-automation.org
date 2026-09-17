@@ -37,16 +37,19 @@ A runnable rule has one public entry point:
 automation(Name, actions(Actions)).
 #+end_src
 
+Text values use Prolog strings.  This keeps text distinct from atoms when
+Trealla serializes =Result= back through JNI.
+
 The local Android action grammar is closed to:
 
 #+begin_src prolog
 open_app(AppAlias).
-open_uri('https://example.com').
-app_search(AppAlias, 'query').
-ui_click(text('Label')).
-ui_click(view_id('package:id/view')).
-ui_click(description('Description')).
-ui_set_text(Selector, 'value').
+open_uri("https://example.com").
+app_search(AppAlias, "query").
+ui_click(text("Label")).
+ui_click(view_id("package:id/view")).
+ui_click(description("Description")).
+ui_set_text(Selector, "value").
 ui_scroll_forward(Selector).
 global_action(back).
 global_action(home).
@@ -64,15 +67,15 @@ that source.
 
 #+begin_src prolog
 automation(youtube_psytrance,
-    actions([app_search(youtube, 'psytrance')])).
+    actions([app_search(youtube, "psytrance")])).
 
 automation(revanced_psytrance,
-    actions([app_search(youtube_revanced, 'psytrance')])).
+    actions([app_search(youtube_revanced, "psytrance")])).
 
 automation(psytrance_both,
     actions([
-        app_search(youtube, 'psytrance'),
-        app_search(youtube_revanced, 'psytrance')
+        app_search(youtube, "psytrance"),
+        app_search(youtube_revanced, "psytrance")
     ])).
 #+end_src
 
@@ -183,7 +186,7 @@ and in =docs/zara.org=:
 #+begin_src org
 ,#+begin_src prolog :tangle android_automation.pl
 automation(youtube_psytrance,
-    actions([app_search(youtube, 'psytrance')])).
+    actions([app_search(youtube, "psytrance")])).
 ,#+end_src
 #+end_src
 
