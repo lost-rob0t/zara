@@ -1,32 +1,43 @@
-"""Secret references and outbound redaction primitives.
+"""Secret references, runtime lease metadata, and outbound redaction primitives.
 
 This module deliberately does not implement a persistent secret store.  It owns
-only the public, plaintext-free reference ABI and the redaction boundary used by
-future Android, desktop, server, provider, and plugin secret-store adapters.
+only the public, plaintext-free reference ABI, the trusted-runtime lease
+contract, and the redaction boundary used by future Android, desktop, server,
+provider, and plugin secret-store adapters.
 
 The agent/operator-facing alias syntax mirrors Agent Zero's useful convention::
 
     §§secret(NAME)
 
 Aliases are inert references.  Nothing in this module expands an alias into
-secret material, and ``SecretRef`` never serializes plaintext.
+secret material, and neither ``SecretRef`` nor ``SecretLease`` contains or
+serializes plaintext.
 """
 
 from __future__ import annotations
 
+import math
 import re
+import time
+import uuid
 from dataclasses import dataclass
 from enum import Enum
-from typing import Mapping
+from typing import Mapping, Protocol, runtime_checkable
 
 
 _NAME_PATTERN = r"[A-Za-z_][A-Za-z0-9_]{0,127}"
 _NAME_RE = re.compile(rf"{_NAME_PATTERN}\Z")
 _ALIAS_RE = re.compile(rf"§§secret\(({_NAME_PATTERN})\)")
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+_LEASE_ISSUER = object()
 
 
 class SecretAliasError(ValueError):
     """Raised when a secret alias or name is malformed."""
+
+
+class SecretLeaseError(RuntimeError):
+    """Raised when a runtime secret lease is invalid or unusable."""
 
 
 class SecretScope(str, Enum):
@@ -48,6 +59,17 @@ class SecretKind(str, Enum):
     GENERIC = "generic"
 
 
+class SecretSink(str, Enum):
+    """Reviewed execution sinks that may later consume materialized secrets."""
+
+    HTTP_HEADER = "http_header"
+    REQUEST_BODY = "request_body"
+    ENVIRONMENT = "environment"
+    STDIN = "stdin"
+    FILE_DESCRIPTOR = "file_descriptor"
+    CREDENTIAL_CALLBACK = "credential_callback"
+
+
 def _canonical_name(name: str) -> str:
     if not isinstance(name, str) or not _NAME_RE.fullmatch(name):
         raise SecretAliasError(
@@ -55,6 +77,23 @@ def _canonical_name(name: str) -> str:
             "only ASCII letters, digits, or underscores (maximum 128 chars)"
         )
     return name.upper()
+
+
+def _bounded_label(
+    value: str,
+    field: str,
+    *,
+    max_length: int = 256,
+    allow_empty: bool = False,
+) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field} must be str")
+    if (not value and not allow_empty) or len(value) > max_length:
+        qualifier = "possibly-empty " if allow_empty else "non-empty "
+        raise ValueError(f"{field} must be {qualifier}text up to {max_length} chars")
+    if _CONTROL_RE.search(value):
+        raise ValueError(f"{field} must not contain control characters")
+    return value
 
 
 def alias_for_secret(name: str) -> str:
@@ -103,10 +142,8 @@ class SecretRef:
     configured: bool
 
     def __post_init__(self) -> None:
-        if not isinstance(self.id, str) or not self.id or len(self.id) > 256:
-            raise ValueError("Secret id must be non-empty text up to 256 chars")
-        if not isinstance(self.owner, str) or not self.owner or len(self.owner) > 256:
-            raise ValueError("Secret owner must be non-empty text up to 256 chars")
+        _bounded_label(self.id, "Secret id")
+        _bounded_label(self.owner, "Secret owner")
         if not isinstance(self.scope, SecretScope):
             raise TypeError("scope must be SecretScope")
         if not isinstance(self.kind, SecretKind):
@@ -137,6 +174,220 @@ class SecretRef:
             "generation": self.generation,
             "configured": self.configured,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class SecretUseContext:
+    """Plaintext-free request context used when resolving a secret reference."""
+
+    principal: str
+    runtime_generation: int
+    consumer: str
+    purpose: str
+    sink: SecretSink
+    request_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _bounded_label(self.principal, "principal")
+        _bounded_label(self.consumer, "consumer")
+        _bounded_label(self.purpose, "purpose")
+        if type(self.runtime_generation) is not int or self.runtime_generation < 0:
+            raise ValueError("runtime_generation must be a non-negative integer")
+        if not isinstance(self.sink, SecretSink):
+            raise TypeError("sink must be SecretSink")
+        if self.request_id is not None:
+            _bounded_label(self.request_id, "request_id")
+
+    def to_public_dict(self) -> dict[str, object]:
+        return {
+            "principal": self.principal,
+            "runtime_generation": self.runtime_generation,
+            "consumer": self.consumer,
+            "purpose": self.purpose,
+            "sink": self.sink.value,
+            "request_id": self.request_id,
+        }
+
+
+class SecretLease:
+    """Short-lived plaintext-free authorization metadata for one secret use.
+
+    A lease is intentionally runtime-issued and non-serializable.  It is not a
+    container for secret bytes.  Future stores/materializers must validate the
+    lease against their own live generation/revocation state before revealing
+    material to a reviewed sink.
+    """
+
+    __slots__ = (
+        "_lease_id",
+        "_secret_id",
+        "_secret_revision",
+        "_secret_generation",
+        "_principal",
+        "_runtime_generation",
+        "_consumer",
+        "_purpose",
+        "_sink",
+        "_request_id",
+        "_expires_at_monotonic",
+        "_closed",
+    )
+
+    def __init__(
+        self,
+        *,
+        _issuer: object | None = None,
+        lease_id: str | None = None,
+        secret: SecretRef | None = None,
+        context: SecretUseContext | None = None,
+        expires_at_monotonic: float | None = None,
+    ) -> None:
+        if _issuer is not _LEASE_ISSUER:
+            raise SecretLeaseError("Secret leases are runtime-issued")
+        if lease_id is None or secret is None or context is None:
+            raise SecretLeaseError("Incomplete runtime lease")
+        if expires_at_monotonic is None or not math.isfinite(expires_at_monotonic):
+            raise SecretLeaseError("Invalid runtime lease expiry")
+
+        self._lease_id = lease_id
+        self._secret_id = secret.id
+        self._secret_revision = secret.revision
+        self._secret_generation = secret.generation
+        self._principal = context.principal
+        self._runtime_generation = context.runtime_generation
+        self._consumer = context.consumer
+        self._purpose = context.purpose
+        self._sink = context.sink
+        self._request_id = context.request_id
+        self._expires_at_monotonic = expires_at_monotonic
+        self._closed = False
+
+    @classmethod
+    def _issue(
+        cls,
+        secret: SecretRef,
+        context: SecretUseContext,
+        *,
+        ttl_seconds: float = 30.0,
+    ) -> "SecretLease":
+        if not isinstance(secret, SecretRef):
+            raise TypeError("secret must be SecretRef")
+        if not isinstance(context, SecretUseContext):
+            raise TypeError("context must be SecretUseContext")
+        if not secret.configured:
+            raise SecretLeaseError("Secret is not configured")
+        if not isinstance(ttl_seconds, (int, float)) or isinstance(ttl_seconds, bool):
+            raise ValueError("ttl_seconds must be a finite positive number")
+        ttl = float(ttl_seconds)
+        if not math.isfinite(ttl) or ttl <= 0:
+            raise ValueError("ttl_seconds must be a finite positive number")
+
+        return cls(
+            _issuer=_LEASE_ISSUER,
+            lease_id=uuid.uuid4().hex,
+            secret=secret,
+            context=context,
+            expires_at_monotonic=time.monotonic() + ttl,
+        )
+
+    @property
+    def lease_id(self) -> str:
+        return self._lease_id
+
+    @property
+    def secret_id(self) -> str:
+        return self._secret_id
+
+    @property
+    def secret_revision(self) -> int:
+        return self._secret_revision
+
+    @property
+    def secret_generation(self) -> int:
+        return self._secret_generation
+
+    @property
+    def principal(self) -> str:
+        return self._principal
+
+    @property
+    def runtime_generation(self) -> int:
+        return self._runtime_generation
+
+    @property
+    def consumer(self) -> str:
+        return self._consumer
+
+    @property
+    def purpose(self) -> str:
+        return self._purpose
+
+    @property
+    def sink(self) -> SecretSink:
+        return self._sink
+
+    @property
+    def request_id(self) -> str | None:
+        return self._request_id
+
+    @property
+    def expires_at_monotonic(self) -> float:
+        return self._expires_at_monotonic
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def assert_usable(self, *, now: float | None = None) -> None:
+        if self._closed:
+            raise SecretLeaseError("Secret lease is closed")
+        current = time.monotonic() if now is None else now
+        if not isinstance(current, (int, float)) or isinstance(current, bool):
+            raise ValueError("now must be a finite monotonic timestamp")
+        current_value = float(current)
+        if not math.isfinite(current_value):
+            raise ValueError("now must be a finite monotonic timestamp")
+        if current_value >= self._expires_at_monotonic:
+            raise SecretLeaseError("Secret lease is expired")
+
+    def close(self) -> None:
+        self._closed = True
+
+    def __repr__(self) -> str:
+        state = "closed" if self._closed else "open"
+        return f"SecretLease(state={state!r})"
+
+    __str__ = __repr__
+
+    def __reduce_ex__(self, protocol: int) -> object:
+        raise TypeError("SecretLease cannot be serialized")
+
+    def __getstate__(self) -> object:
+        raise TypeError("SecretLease cannot be serialized")
+
+
+@runtime_checkable
+class SecretStore(Protocol):
+    """Plaintext-free store contract visible to Core orchestration.
+
+    Concrete backends may expose a separate runtime-private materializer to
+    trusted provider/tool execution code.  Plaintext retrieval is deliberately
+    absent from this protocol.
+    """
+
+    def list_refs(self) -> tuple[SecretRef, ...]: ...
+
+    def get_ref(self, secret_id: str) -> SecretRef | None: ...
+
+    def resolve(
+        self,
+        secret: SecretRef,
+        context: SecretUseContext,
+        *,
+        ttl_seconds: float = 30.0,
+    ) -> SecretLease: ...
+
+    def close_lease(self, lease: SecretLease) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,10 +593,15 @@ class SecretStreamingFilter:
 __all__ = [
     "SecretAliasError",
     "SecretKind",
+    "SecretLease",
+    "SecretLeaseError",
     "SecretRedactor",
     "SecretRef",
     "SecretScope",
+    "SecretSink",
+    "SecretStore",
     "SecretStreamingFilter",
+    "SecretUseContext",
     "alias_for_secret",
     "find_secret_aliases",
     "parse_secret_alias",
