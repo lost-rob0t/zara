@@ -32,4 +32,12 @@ class BixbyHandoffContractTest {
         assertTrue(source.contains("automation(open_bixby,"))
         assertTrue(source.contains("open_app(bixby)"))
     }
+
+    @Test
+    fun `automation screen exposes Bixby without raw intent input`() {
+        val activity = File("src/main/java/ai/zara/app/automation/AutomationActivity.kt").readText()
+
+        assertTrue(activity.contains("onRun(\"open_bixby\")"))
+        assertTrue(activity.contains("Text(\"Bixby\")"))
+    }
 }
