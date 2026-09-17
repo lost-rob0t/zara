@@ -90,7 +90,7 @@ class CopilotWindow(QuickCopilotWindow):
         self.history_list.setObjectName("zaraConversationHistory")
         self.history_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.history_list.setTextElideMode(Qt.TextElideMode.ElideRight)
-        self.scheduled_panel = ScheduledPanel(bridge, self.history_panel)
+        self.scheduled_panel = ScheduledPanel(self.history_panel)
 
         history_layout.addWidget(self.sidebar_new_chat_button)
         history_layout.addLayout(history_header)
@@ -126,6 +126,7 @@ class CopilotWindow(QuickCopilotWindow):
         self.history_list.itemActivated.connect(self._activate_history_item)
         self.rename_button.clicked.connect(lambda _checked=False: self.rename_current())
         self.sidebar_new_chat_button.clicked.connect(self.new_chat)
+        self.scheduled_panel.prompt_requested.connect(self._submit_schedule_prompt)
 
         self.expand_button.clicked.disconnect()
         self.expand_button.clicked.connect(self.toggle_presentation)
@@ -208,6 +209,10 @@ class CopilotWindow(QuickCopilotWindow):
         conversation_id = item.data(Qt.ItemDataRole.UserRole)
         if conversation_id:
             self.bind_conversation(str(conversation_id))
+
+    def _submit_schedule_prompt(self, prompt: str) -> None:
+        self.composer.setPlainText(prompt)
+        self.submit_current_text()
 
     def _sync_conversation_title(self) -> None:
         state = self.conversations.get_state(self.current_conversation_id)
