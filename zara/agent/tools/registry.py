@@ -143,6 +143,7 @@ class ToolRegistry:
         """Load built-ins and apply subsystem-level capability toggles."""
         from pathlib import Path
 
+        from .android_device_tools import build_android_execute_tool
         from .builtin_tools import get_builtin_tools
         from ...python_skills import python_skills
 
@@ -174,6 +175,7 @@ class ToolRegistry:
             memory_manager=memory_manager,
             file_tool_config=file_tool_config,
         )
+        all_tools.append(build_android_execute_tool())
         if not todos_enabled:
             all_tools = [tool for tool in all_tools if tool.name not in TODO_TOOL_NAMES]
 
