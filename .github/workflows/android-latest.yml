@@ -44,6 +44,14 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
 
+      - name: Download exact-SHA Agenda watch face artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: zara-agenda-debug-${{ github.event.workflow_run.head_sha }}
+          path: dist/agenda
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
       - name: Prepare rolling direct-download assets
         env:
           SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -54,16 +62,21 @@ jobs:
 
           phone_apk="$(find dist/phone -type f -name 'zara-android-debug-*.apk' -print -quit)"
           wear_apk="$(find dist/wear -type f -name 'wear-app-debug.apk' -print -quit)"
+          agenda_apk="$(find dist/agenda -type f -name 'wear-watchface-debug.apk' -print -quit)"
           test -n "$phone_apk"
           test -n "$wear_apk"
+          test -n "$agenda_apk"
 
           cp "$phone_apk" dist/latest/zara-latest.apk
           cp "$wear_apk" dist/latest/zara-wear-latest.apk
+          cp "$agenda_apk" dist/latest/zara-agenda-latest.apk
           sha256sum dist/latest/zara-latest.apk > dist/latest/zara-latest.apk.sha256
           sha256sum dist/latest/zara-wear-latest.apk > dist/latest/zara-wear-latest.apk.sha256
+          sha256sum dist/latest/zara-agenda-latest.apk > dist/latest/zara-agenda-latest.apk.sha256
 
           phone_sha="$(sha256sum dist/latest/zara-latest.apk | awk '{print $1}')"
           wear_sha="$(sha256sum dist/latest/zara-wear-latest.apk | awk '{print $1}')"
+          agenda_sha="$(sha256sum dist/latest/zara-agenda-latest.apk | awk '{print $1}')"
           {
             echo "schema=1"
             echo "channel=android-latest"
@@ -73,6 +86,8 @@ jobs:
             echo "phone_sha256=${phone_sha}"
             echo "wear_apk=zara-wear-latest.apk"
             echo "wear_sha256=${wear_sha}"
+            echo "agenda_apk=zara-agenda-latest.apk"
+            echo "agenda_sha256=${agenda_sha}"
           } > dist/latest/zara-latest.manifest.txt
 
       - name: Publish rolling android-latest release
