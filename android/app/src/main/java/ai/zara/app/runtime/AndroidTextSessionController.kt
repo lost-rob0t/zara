@@ -79,10 +79,22 @@ class AndroidTextSessionController(
 
     fun submitText(text: String): CompletableFuture<TextTurnResult> {
         val conversationId = synchronized(lock) { runtimeState.selectedConversationId }
-        return submitText(text, conversationId)
+        return submitTextInternal(text, conversationId, adoptConversation = true)
     }
 
-    fun submitText(text: String, conversationId: String?): CompletableFuture<TextTurnResult> {
+    /**
+     * Submit a turn in an explicit scoped conversation without changing the controller's
+     * default selected conversation. Project contexts use this path so a project reply
+     * cannot contaminate ordinary chat after the user switches scopes.
+     */
+    fun submitText(text: String, conversationId: String?): CompletableFuture<TextTurnResult> =
+        submitTextInternal(text, conversationId, adoptConversation = false)
+
+    private fun submitTextInternal(
+        text: String,
+        conversationId: String?,
+        adoptConversation: Boolean,
+    ): CompletableFuture<TextTurnResult> {
         require(text.isNotBlank()) { "text turn must not be blank" }
         val request = synchronized(lock) {
             check(!closed) { "Android text session controller is closed" }
@@ -94,6 +106,7 @@ class AndroidTextSessionController(
                 generation = connected.generation,
                 sessionId = sessionId,
                 conversationId = conversationId,
+                adoptConversation = adoptConversation,
             )
         }
 
@@ -127,12 +140,14 @@ class AndroidTextSessionController(
                     connected?.generation == request.generation &&
                     runtimeState.sessionId == request.sessionId
                 ) {
-                    val previous = runtimeState
-                    runtimeState = runtimeState.copy(
-                        selectedConversationId = result.conversationId
-                            ?: runtimeState.selectedConversationId,
-                    )
-                    changed = runtimeState != previous
+                    if (request.adoptConversation) {
+                        val previous = runtimeState
+                        runtimeState = runtimeState.copy(
+                            selectedConversationId = result.conversationId
+                                ?: runtimeState.selectedConversationId,
+                        )
+                        changed = runtimeState != previous
+                    }
                     true
                 } else {
                     false
@@ -320,6 +335,7 @@ class AndroidTextSessionController(
         val generation: Long,
         val sessionId: String,
         val conversationId: String?,
+        val adoptConversation: Boolean,
     )
 
     private data class ReconnectRequest(
