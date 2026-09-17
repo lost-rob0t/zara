@@ -10,6 +10,7 @@ playServicesWearable = "20.0.1"
 libadbAndroid = "3.1.1"
 conscrypt = "2.5.3"
 bcpkix = "1.81"
+litertLm = "0.17.0"
 junit = "4.13.2"
 
 [libraries]
@@ -25,6 +26,7 @@ play-services-wearable = { group = "com.google.android.gms", name = "play-servic
 libadb-android = { group = "com.github.MuntashirAkon", name = "libadb-android", version.ref = "libadbAndroid" }
 conscrypt-android = { group = "org.conscrypt", name = "conscrypt-android", version.ref = "conscrypt" }
 bcpkix = { group = "org.bouncycastle", name = "bcpkix-jdk15to18", version.ref = "bcpkix" }
+litert-lm-android = { group = "com.google.ai.edge.litertlm", name = "litertlm-android", version.ref = "litertLm" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
