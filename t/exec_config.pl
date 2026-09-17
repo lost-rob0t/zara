@@ -38,7 +38,8 @@ test(unqualified_exec_code_loads_into_user_module) :-
     write_text(Path, 'exec_plain_rule(ok).\n'),
     exec_config_loader:load_user_exec_config,
     user:exec_plain_rule(ok),
-    \+ current_predicate(exec_config_loader:exec_plain_rule/1).
+    source_file(user:exec_plain_rule(_), Source),
+    same_file(Path, Source).
 
 test(exec_config_executes_arbitrary_prolog,
      [cleanup(cleanup_exec_probe)]) :-
