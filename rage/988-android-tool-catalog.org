@@ -1,0 +1,175 @@
+#+title: #988 Android typed Prolog + LLM capability catalog
+#+status: VOTE-GATED-TDD-RED
+#+issue: 988
+#+rage-start: 6cbc73c6f894231e1216df9a5f63e51bfa75cd80
+#+branch: feat/android-tool-catalog-988-contract-red
+
+* Scope
+The operator requested one generic Android Prolog API that can drive phone capabilities and expose the same operations as LLM tools. Initial requested mechanics are SMS compose/send/read, contacts listing, flashlight, Wi-Fi, foreground location, and Google Maps interaction. The operator also requested an extensive skill system, a Skill Browser, and an explicit chat compaction control.
+
+This slice owns only the Android capability/tool contract. Context/skills/compaction remain owned by #51, UI projection by PR #961, and elevated Android authority by #906 / PR #913. No second runtime, tool registry, UI registry, or privilege broker is introduced.
+
+* ANALYZE
+Current master already has a strict ZARA/1 device-action lifecycle and an Android =DeviceCapabilityRegistry=. It also has local Prolog Android automation, while the server agent already owns canonical LangChain tool registration. The missing pieces are:
+
+- the device capability set only exposes =open_app= and =open_uri=;
+- device actions return only completed/error, so reads cannot return contacts/SMS/location/Wi-Fi state;
+- Android mechanics, Prolog names, LLM tool schemas, permission requirements, side-effect class, and UI metadata have no single shared descriptor source;
+- high-authority Android mechanics are already under #906/#913 and must not be duplicated here.
+
+* RESEARCH
+Primary platform constraints reviewed for this proposal:
+
+- Android contacts are exposed through the Contacts Provider and protected by runtime contact permissions where applicable.
+  https://developer.android.com/guide/topics/providers/contacts-provider
+- Foreground location permissions are runtime permissions; modern Android may grant approximate location when precise was requested, so result metadata must report effective precision rather than assume it.
+  https://developer.android.com/develop/sensors-and-location/location/permissions/runtime
+- Ordinary apps targeting Android 10+ cannot use =WifiManager.setWifiEnabled= as a general Wi-Fi toggle. Standard profile therefore exposes status + Settings panel; direct enable/disable is only valid through an actually provisioned elevated backend.
+  https://developer.android.com/about/versions/10/privacy/changes#enable-disable-wifi
+- Android documents =ACTION_SENDTO= with =smsto:= for user-mediated SMS composition.
+  https://developer.android.com/guide/components/intents-common#Messaging
+- Direct SMS read/send permissions are restricted Android capabilities and must be exposed only when the current install actually holds the required authority. Availability is not inferred from a manifest declaration.
+  https://developer.android.com/reference/android/Manifest.permission#READ_SMS
+  https://developer.android.com/reference/android/Manifest.permission#SEND_SMS
+- Torch control uses Camera2 =CameraManager.setTorchMode= and must surface unavailable/busy/permission failures instead of reporting a false success.
+  https://developer.android.com/reference/android/hardware/camera2/CameraManager#setTorchMode(java.lang.String,%20boolean)
+- Google Maps URLs provide keyless cross-platform search/map/directions invocation and can fall back through normal URL handling.
+  https://developers.google.com/maps/documentation/urls/get-started
+
+* DESIGN
+** One descriptor catalog
+Introduce one bounded Android tool descriptor catalog after the #647 vote passes. Each descriptor owns, directly or by typed references:
+
+- stable ZARA/1 capability id;
+- Prolog predicate/action name;
+- canonical LangChain/LLM tool name and argument schema;
+- human description;
+- side-effect class;
+- required Android permission/role/elevated authority;
+- live availability probe;
+- typed Android adapter;
+- bounded argument schema;
+- bounded result schema;
+- Skill Browser metadata.
+
+The descriptor catalog projects into existing owners instead of replacing them:
+
+#+begin_example
+AndroidToolDescriptor catalog
+   |-- Android DeviceCapabilityRegistry / adapters
+   |-- local Prolog Android bridge
+   |-- ZARA/1 capability.snapshot
+   |-- canonical LangChain ToolRegistry projection
+   `-- #51 / #961 Skill Browser metadata projection
+#+end_example
+
+No custom server tool registry is added. The server projection must produce ordinary LangChain tools through Zara's existing =ToolRegistry=.
+
+** Capability ids
+The first closed wire ids are:
+
+#+begin_src text
+sms_compose
+sms_send
+sms_read
+contacts_list
+flashlight_set
+wifi_status
+wifi_panel
+wifi_set_enabled
+location_current
+maps_search
+maps_directions
+maps_show
+#+end_src
+
+Existing =open_app= and =open_uri= remain unchanged.
+
+** Authority profiles
+- Standard Android profile: =sms_compose=, permission-backed reads when granted, contacts, torch, Wi-Fi status/panel, foreground location, and Maps intents/URLs.
+- Restricted capabilities such as direct SMS send/read are advertised only when Android actually grants the required authority.
+- =wifi_set_enabled= is not advertised for an ordinary modern Android app. It appears only when a #906/#913 backend proves a real elevated identity that can perform it.
+- Capability advertisement remains availability, never authorization. Local Prolog policy + canonical principal/session/approval/generation checks remain effect authority.
+- Model output, downloaded manifests, and web content cannot mutate authority policy.
+
+** Structured results
+Extend the canonical device-action result contract with one bounded structured result value so read tools can return machine-readable data. The transport layer enforces global structural/size bounds. The action correlation/descriptor layer validates the capability-specific result schema before returning it to Prolog or an LLM tool caller.
+
+Do not encode returned contacts/SMS/location into error strings, log lines, or assistant prose as an internal transport.
+
+Representative result categories:
+- contacts: bounded rows + truncation flag;
+- SMS: bounded rows + truncation flag;
+- Wi-Fi: enabled/connected/network metadata permitted by platform policy;
+- location: integer fixed-point coordinates + effective precision + timestamp;
+- Maps/torch/write actions: bounded status/launch result.
+
+** Prolog and LLM parity
+A capability must not exist in only one projection. Contract tests will compare the catalog's executable, Prolog, LLM, wire, and browser projections by stable id. An unavailable capability is removed from live Prolog/LLM execution surfaces or returns one explicit typed unavailable result through a documented projection rule; it is never silently advertised as runnable.
+
+** Skills / browser / compaction handoff
+- #51 stays the one ContextManager + Agent Skills authority. Recover its stale #262 research/tests from current master; do not merge/rebase the stale implementation branch.
+- PR #961 stays the shared UI contribution ABI. The Skill Browser should render descriptors/skills through that ABI rather than invent a new Compose plugin registry.
+- Compact chat is a typed #51 context operation surfaced in #961 =chat.bottom=. It must atomically replace an old complete-turn prefix with one bounded summary, keep the recent complete tail/tool groups, and leave history unchanged on summarization failure. It is not an ordinary user prompt.
+
+* ALTERNATIVES REJECTED
+** Separate Prolog and LLM registries
+Rejected because schemas/permissions would drift and the LLM could learn a tool Prolog cannot safely execute, or vice versa.
+
+** Generic arbitrary Intent/shell/eval Android tool
+Rejected for the standard profile. It destroys the closed capability boundary and duplicates the high-authority work already owned by #906/#913.
+
+** Pretend privileged operations exist and fail at execution time
+Rejected. Live capability advertisement must reflect actual permission/role/backend authority so model planning and Prolog policy start from truthful state.
+
+** Return read data as strings
+Rejected. Contacts/SMS/location/Wi-Fi need bounded typed results for deterministic Prolog rules, LLM tool schemas, tests, and redaction policy.
+
+* ADVERSARIAL REVIEW
+Required failure cases:
+
+- capability declared in one projection but missing from another;
+- manifest permission declared but runtime permission/role not granted;
+- permission revoked after capability snapshot;
+- stale session/runtime generation invokes a formerly available capability;
+- oversized contact/SMS result or deeply nested structured result;
+- malformed/untrusted SMS destination/body;
+- direct SMS capability exposed on an install without authority;
+- raw Wi-Fi toggle exposed on an ordinary Android 10+ profile;
+- torch unavailable/busy and camera resource races;
+- location permission denied, approximate-only grant, timeout, provider disabled;
+- Maps URL injection/encoding/length abuse;
+- read results written to routine logs;
+- model attempts to create an unknown tool/capability name;
+- model or remote peer attempts to grant itself Android authority;
+- structured result capability mismatch for a correlated action;
+- replay/late result after cancellation or reconnect.
+
+* DECISION
+Proceed with one typed descriptor catalog projected into existing Android, Prolog, ZARA/1, LangChain, and UI/skill owners. Keep standard and elevated authority paths explicit. Add bounded structured device-action results for reads.
+
+This changes public ZARA/1 semantics and Android authority exposure, so production implementation is blocked on the #647 fleet vote. =VOTE_REQUEST= was posted to #647 for #988; the proposal author does not vote.
+
+* TDD RED
+Pre-vote RED contracts are intentionally limited to architecture evidence and contain no production authority implementation:
+
+- =t/test_android_tool_catalog_contract.py= requires the requested capability ids to join the closed ZARA/1 set;
+- the same test requires =device.action.result= to round-trip bounded structured read data.
+
+Expected current-master failures:
+- requested capability ids are absent from =DEVICE_CAPABILITIES=;
+- =device.action.result= rejects the additional structured =data= field.
+
+After vote passage, implementation begins from this current-master-derived branch/transaction or a fresh descendant if master has materially moved. Every production behavior follows RED -> GREEN -> refactor and exact-head full gates.
+
+* GATES
+Before merge:
+- #647 vote passes;
+- focused Python protocol/device-action tests green;
+- Android JVM tests cover descriptor projection and permission/authority availability;
+- adversarial protocol tests cover structured-result bounds and malformed payloads;
+- Prolog projection == LLM projection == adapter projection for every descriptor;
+- ZARA/1 replay/session/cancel tests remain green;
+- full repository test gate + Nix + Android exact-head CI green;
+- #646 independent exact-head review;
+- #919 merge lead rechecks current vote/check/head state.
