@@ -97,6 +97,7 @@
               pkgs.gcc
               pkgs.python3
               pkgs.swi-prolog
+              pkgs.fdroidserver
               androidSdk
             ];
 
@@ -107,7 +108,7 @@
               export JAVA_HOME=${pkgs.jdk21.home}
               export ZARA_ANDROID_NDK_VERSION=${androidEnv.ndk-bundle.version}
               export ZARA_TREALLA_SOURCE_DIR=${treallaSource}
-              echo "Zara Android toolchain ready: Gradle 9 + JDK 21 + SDK 37 + NDK ${androidEnv.ndk-bundle.version}"
+              echo "Zara Android toolchain ready: Gradle 9 + JDK 21 + SDK 37 + NDK ${androidEnv.ndk-bundle.version} + fdroidserver"
             '';
           };
         };
