@@ -54,6 +54,7 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.wear.compose.foundation)
     implementation(libs.wear.compose.material3)
+    implementation(libs.wear.watchface.complications.data.source.ktx)
     implementation(libs.play.services.wearable)
     testImplementation(libs.junit)
 }
