@@ -1,0 +1,15 @@
+[run]
+branch = True
+source = zara
+relative_files = True
+
+[report]
+precision = 2
+show_missing = True
+skip_covered = False
+
+[xml]
+package_depth = 4
+
+[json]
+pretty_print = True
