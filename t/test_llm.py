@@ -4,7 +4,12 @@ from contextlib import asynccontextmanager
 import pytest
 from aiohttp import web
 
-from zara.llm import ChatHistory, LLMClient
+from zara.llm import (
+    ChatHistory,
+    LLMClient,
+    OPENROUTER_CHAT_ENDPOINT,
+    STARINTEL_CHAT_ENDPOINT,
+)
 
 
 @asynccontextmanager
@@ -23,7 +28,11 @@ async def fake_server(handler):
 
 
 def make_client(provider, endpoint="http://provider.test/llm", **kwargs):
-    api_key = "literal-key" if provider in {"anthropic", "openai", "openrouter"} else None
+    api_key = (
+        "literal-key"
+        if provider in {"anthropic", "openai", "openrouter", "starintel"}
+        else None
+    )
     return LLMClient(
         provider=provider,
         model="test-model",
@@ -34,7 +43,10 @@ def make_client(provider, endpoint="http://provider.test/llm", **kwargs):
     )
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "openai", "openrouter", "ollama"])
+@pytest.mark.parametrize(
+    "provider",
+    ["anthropic", "openai", "openrouter", "starintel", "llama_cpp", "ollama"],
+)
 def test_provider_golden_requests(provider):
     client = make_client(provider)
     history = [{"role": "assistant", "content": "earlier"}]
@@ -59,10 +71,26 @@ def test_provider_golden_requests(provider):
                 {"role": "user", "content": "now"},
             ],
         }
-    elif provider in {"openai", "openrouter"}:
-        assert headers["Authorization"] == "Bearer literal-key"
+    elif provider in {"openai", "openrouter", "starintel", "llama_cpp"}:
+        if provider == "llama_cpp":
+            assert "Authorization" not in headers
+        else:
+            assert headers["Authorization"] == "Bearer literal-key"
         assert payload["messages"][0] == {"role": "system", "content": "system"}
         assert payload["max_tokens"] == 77
+        if provider == "openrouter":
+            assert payload["provider"] == {
+                "sort": "price",
+                "allow_fallbacks": True,
+                "quantizations": ["fp16", "bf16", "fp8"],
+                "data_collection": "deny",
+                "zdr": False,
+                "require_parameters": True,
+            }
+            assert "models" not in payload
+        else:
+            assert "provider" not in payload
+            assert "models" not in payload
     else:
         assert "Authorization" not in headers
         assert payload["stream"] is False
@@ -90,6 +118,16 @@ def test_timeout_dimensions_are_configured_independently():
             {"choices": [{"message": {"content": "openrouter"}}]},
             "openrouter",
         ),
+        (
+            "starintel",
+            {"choices": [{"message": {"content": "starintel"}}]},
+            "starintel",
+        ),
+        (
+            "llama_cpp",
+            {"choices": [{"message": {"content": "llama-cpp"}}]},
+            "llama-cpp",
+        ),
         ("ollama", {"message": {"content": "ollama"}}, "ollama"),
     ],
 )
@@ -107,8 +145,17 @@ async def test_provider_success_is_typed_and_headers_are_literal(provider, respo
         await client.close()
 
     assert result.success and result.text == expected and not result.error
-    if provider == "openai":
+    if provider in {"openai", "openrouter", "starintel"}:
         assert captured["headers"]["Authorization"] == "Bearer literal-key"
+    if provider == "openrouter":
+        assert captured["payload"]["provider"]["quantizations"] == [
+            "fp16",
+            "bf16",
+            "fp8",
+        ]
+    if provider == "starintel":
+        assert "provider" not in captured["payload"]
+        assert "models" not in captured["payload"]
     if provider == "anthropic":
         assert captured["headers"]["x-api-key"] == "literal-key"
         assert captured["payload"]["system"] == "system"
@@ -282,6 +329,7 @@ def test_missing_api_key_fails_fast(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("STAR_LLM_ACTOR_TOKEN", raising=False)
 
     with pytest.raises(ValueError):
         LLMClient(provider="anthropic", model="test-model")
@@ -289,13 +337,87 @@ def test_missing_api_key_fails_fast(monkeypatch):
         LLMClient(provider="openai", model="test-model")
     with pytest.raises(ValueError):
         LLMClient(provider="openrouter", model="test-model")
+    with pytest.raises(ValueError):
+        LLMClient(provider="starintel", model="test-model")
 
 
-def test_openrouter_defaults_to_free_model_and_canonical_endpoint(monkeypatch):
+def test_openrouter_requires_explicit_model_and_uses_canonical_endpoint(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "env-or-key")
 
-    client = LLMClient(provider="openrouter")
+    with pytest.raises(ValueError, match="model must be explicit"):
+        LLMClient(provider="openrouter")
 
-    assert client.model == "openrouter/free"
-    assert client.endpoint == "https://openrouter.ai/api/v1/chat/completions"
+    client = LLMClient(provider="openrouter", model="openai/gpt-5.4")
+
+    assert client.model == "openai/gpt-5.4"
+    assert client.endpoint == OPENROUTER_CHAT_ENDPOINT
     assert client.api_key == "env-or-key"
+
+
+def test_starintel_requires_explicit_model_and_uses_actor_endpoint(monkeypatch):
+    monkeypatch.setenv("STAR_LLM_ACTOR_TOKEN", "gateway-key")
+
+    with pytest.raises(ValueError, match="model must be explicit"):
+        LLMClient(provider="starintel")
+
+    client = LLMClient(provider="starintel", model="teacher-model")
+
+    assert client.model == "teacher-model"
+    assert client.endpoint == STARINTEL_CHAT_ENDPOINT
+    assert client.api_key == "gateway-key"
+
+
+def test_openrouter_policy_normalizes_and_serializes_same_model_routing():
+    client = make_client(
+        "openrouter",
+        openrouter_policy={
+            "sort": "THROUGHPUT",
+            "allow_fallbacks": False,
+            "quantizations": ["FP16", "BF16", "FP8"],
+            "data_collection": "DENY",
+            "zdr": True,
+            "require_parameters": True,
+            "order": ["Anthropic", "Google-Vertex"],
+            "only": ["ANTHROPIC", "google-vertex"],
+            "ignore": ["DeepInfra"],
+            "max_price": {"prompt": 4, "completion": 20},
+        },
+    )
+
+    _, payload = client.serialize_request("hello", system_prompt="system")
+
+    assert payload["model"] == "test-model"
+    assert payload["provider"] == {
+        "sort": "throughput",
+        "allow_fallbacks": False,
+        "quantizations": ["fp16", "bf16", "fp8"],
+        "data_collection": "deny",
+        "zdr": True,
+        "require_parameters": True,
+        "order": ["anthropic", "google-vertex"],
+        "only": ["anthropic", "google-vertex"],
+        "ignore": ["deepinfra"],
+        "max_price": {"prompt": 4.0, "completion": 20.0},
+    }
+    assert "models" not in payload
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        {"quantizations": ["UNKNOWN"]},
+        {"quantizations": ["fp16", "FP16"]},
+        {"only": ["OpenAI"], "ignore": ["openai"]},
+        {"max_price": {}},
+        {"max_price": {"prompt": float("nan")}},
+        {"mystery": True},
+    ],
+)
+def test_openrouter_policy_invalid_values_fail_closed(policy):
+    with pytest.raises(ValueError):
+        make_client("openrouter", openrouter_policy=policy)
+
+
+def test_openrouter_policy_cannot_leak_to_other_providers():
+    with pytest.raises(ValueError, match="only be set for the openrouter provider"):
+        make_client("openai", openrouter_policy={"sort": "price"})
