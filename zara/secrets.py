@@ -318,7 +318,8 @@ class SecretLease:
         self._closed = True
 
     def __repr__(self) -> str:
-        return f"SecretLease(state={'closed' if self._closed else 'open'!r})"
+        state = "closed" if self._closed else "open"
+        return f"SecretLease(state={state!r})"
 
     __str__ = __repr__
 
@@ -376,13 +377,13 @@ class SecretRedactor:
         max_total_secret_chars: int = 262_144,
         reveal_aliases: bool = True,
     ) -> None:
-        if not isinstance(min_scan_length, int) or min_scan_length < 1:
+        if type(min_scan_length) is not int or min_scan_length < 1:
             raise ValueError("min_scan_length must be a positive integer")
-        if not isinstance(max_secret_length, int) or max_secret_length < min_scan_length:
+        if type(max_secret_length) is not int or max_secret_length < min_scan_length:
             raise ValueError("max_secret_length must be >= min_scan_length")
-        if not isinstance(max_secret_count, int) or max_secret_count < 1:
+        if type(max_secret_count) is not int or max_secret_count < 1:
             raise ValueError("max_secret_count must be a positive integer")
-        if not isinstance(max_total_secret_chars, int) or max_total_secret_chars < 1:
+        if type(max_total_secret_chars) is not int or max_total_secret_chars < 1:
             raise ValueError("max_total_secret_chars must be a positive integer")
         if not isinstance(reveal_aliases, bool):
             raise TypeError("reveal_aliases must be bool")
@@ -409,7 +410,7 @@ class SecretRedactor:
                 continue
             grouped.setdefault(value, []).append(secret_ref)
 
-        entries = []
+        entries: list[_RedactionEntry] = []
         for value, refs in grouped.items():
             replacement = refs[0].alias if reveal_aliases and len(refs) == 1 else "***"
             entries.append(_RedactionEntry(value=value, replacement=replacement))
@@ -433,7 +434,7 @@ class SecretRedactor:
         )
 
     def mask_text(self, text: str) -> str:
-        """Mask complete matches in one pass without re-scanning generated aliases."""
+        """Mask complete matches once; generated aliases are never re-scanned."""
 
         if not isinstance(text, str):
             raise TypeError("text must be str")
@@ -470,54 +471,66 @@ class SecretStreamingFilter:
         return self._drain(final=True, mask_incomplete=True)
 
     def _drain(self, *, final: bool, mask_incomplete: bool) -> str:
+        text = self._pending
+        size = len(text)
+        index = 0
         output: list[str] = []
         root = self._redactor._trie
-        while self._pending:
+
+        while index < size:
             node = root
-            last_end = 0
+            cursor = index
+            last_terminal_end = -1
             last_replacement: str | None = None
 
-            for index, character in enumerate(self._pending):
-                next_node = node.children.get(character)
+            while cursor < size:
+                next_node = node.children.get(text[cursor])
                 if next_node is None:
-                    if last_end:
-                        assert last_replacement is not None
-                        output.append(last_replacement)
-                        self._pending = self._pending[last_end:]
-                    else:
-                        output.append(self._pending[0])
-                        self._pending = self._pending[1:]
                     break
                 node = next_node
+                cursor += 1
                 if node.replacement is not None:
-                    last_end = index + 1
+                    last_terminal_end = cursor
                     last_replacement = node.replacement
-            else:
-                if not final:
-                    if node.replacement is not None and not node.children:
-                        output.append(node.replacement)
-                        self._pending = ""
-                    break
 
-                if node.replacement is not None:
-                    output.append(node.replacement)
-                    self._pending = ""
-                    continue
-
-                if last_end:
+            if cursor < size:
+                if last_terminal_end >= 0:
                     assert last_replacement is not None
                     output.append(last_replacement)
-                    remainder = self._pending[last_end:]
-                    if mask_incomplete and remainder:
-                        output.append("***")
-                        self._pending = ""
-                    else:
-                        self._pending = remainder
-                    continue
+                    index = last_terminal_end
+                else:
+                    output.append(text[index])
+                    index += 1
+                continue
 
-                output.append("***" if mask_incomplete else self._pending)
-                self._pending = ""
+            # The remaining buffer from index to EOF is a valid trie prefix.
+            if not final:
+                if node.replacement is not None and not node.children:
+                    output.append(node.replacement)
+                    index = size
+                    break
+                self._pending = text[index:]
+                return "".join(output)
 
+            if node.replacement is not None:
+                output.append(node.replacement)
+                index = size
+                break
+
+            if last_terminal_end >= 0:
+                assert last_replacement is not None
+                output.append(last_replacement)
+                if mask_incomplete and last_terminal_end < size:
+                    output.append("***")
+                    index = size
+                    break
+                index = last_terminal_end
+                continue
+
+            output.append("***" if mask_incomplete else text[index:])
+            index = size
+
+        self._pending = ""
         return "".join(output)
 
 
