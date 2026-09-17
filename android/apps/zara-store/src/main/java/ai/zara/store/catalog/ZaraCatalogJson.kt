@@ -11,6 +11,20 @@ private const val MAX_PACKAGES = 10_000
 private const val MAX_PROTOCOLS = 32
 private const val MAX_CAPABILITIES = 256
 
+private val ROOT_FIELDS = setOf("schema", "generated_at", "repo", "packages")
+private val REPO_FIELDS = setOf("name", "fdroid_repo", "revision")
+private val PACKAGE_FIELDS = setOf(
+    "package_name",
+    "version_code",
+    "apk_sha256",
+    "accepted_signer_sha256",
+    "kind",
+    "source_repo",
+    "source_sha",
+    "protocols",
+    "capabilities",
+)
+
 data class ZaraCatalogRepository(
     val name: String,
     val fdroidRepo: String,
@@ -39,6 +53,7 @@ object ZaraCatalogJson {
         val root = JsonParser.parseString(json)
         require(root.isJsonObject) { "Zara catalog root must be an object" }
         val obj = root.asJsonObject
+        obj.requireOnlyKeys("catalog", ROOT_FIELDS)
 
         val schema = obj.requiredString("schema")
         require(schema == CATALOG_SCHEMA_V1) { "Unsupported Zara catalog schema: $schema" }
@@ -47,6 +62,7 @@ object ZaraCatalogJson {
         require(generatedAt >= 0) { "generated_at must be non-negative" }
 
         val repoObj = obj.requiredObject("repo")
+        repoObj.requireOnlyKeys("repo", REPO_FIELDS)
         val repository = ZaraCatalogRepository(
             name = repoObj.requiredString("name").bounded("repo.name", 160),
             fdroidRepo = repoObj.requiredString("fdroid_repo").requireHttpsUrl("repo.fdroid_repo"),
@@ -60,6 +76,7 @@ object ZaraCatalogJson {
         val packages = packageArray.mapIndexed { index, element ->
             require(element.isJsonObject) { "packages[$index] must be an object" }
             val packageObj = element.asJsonObject
+            packageObj.requireOnlyKeys("packages[$index]", PACKAGE_FIELDS)
             val packageName = packageObj.requiredString("package_name")
             val versionCode = packageObj.requiredLong("version_code")
             require(identities.add(packageName to versionCode)) {
@@ -97,6 +114,11 @@ object ZaraCatalogJson {
         "support" -> ZaraPackageKind.SUPPORT
         else -> error("Unsupported Zara package kind: $value")
     }
+}
+
+private fun JsonObject.requireOnlyKeys(context: String, allowed: Set<String>) {
+    val unknown = keySet().filterNot(allowed::contains).sorted()
+    require(unknown.isEmpty()) { "$context contains unsupported fields: ${unknown.joinToString()}" }
 }
 
 private fun JsonObject.requiredString(name: String): String {
