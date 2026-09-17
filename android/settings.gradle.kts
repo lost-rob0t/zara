@@ -25,3 +25,5 @@ rootProject.name = "zara-android"
 include(":app")
 include(":shared-ui")
 include(":wear-app")
+include(":zara-store")
+project(":zara-store").projectDir = file("apps/zara-store")

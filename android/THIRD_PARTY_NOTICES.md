@@ -19,3 +19,13 @@ The Android phone client uses `com.github.MuntashirAkon:libadb-android` to imple
 ## Conscrypt and Bouncy Castle
 
 The watch installer also depends on Conscrypt and Bouncy Castle for TLS and certificate support. Their respective upstream licenses continue to apply.
+
+## F-Droid client libraries
+
+Zara Store uses the reusable F-Droid client libraries published by the F-Droid project:
+
+- `org.fdroid:download`
+- `org.fdroid:index`
+- `org.fdroid:database`
+
+These libraries are licensed under Apache License 2.0. Zara pins them together at version `0.2.0`; their upstream public APIs are currently marked alpha and may change between releases.
