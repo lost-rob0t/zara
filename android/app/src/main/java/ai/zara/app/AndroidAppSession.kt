@@ -382,7 +382,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         return future
     }
 
-    private fun submitLocalText(text: String): CompletableFuture<TextTurnResult> {
+    internal fun submitLocalText(text: String): CompletableFuture<TextTurnResult> {
         val query = text.trim()
         val catalog = PrologWorkspaceCatalog.from(prologWorkspace.listSources())
         val explicitSymbolic = query.startsWith("?-") || query.startsWith("/prolog ") || query.startsWith("/expert ")
