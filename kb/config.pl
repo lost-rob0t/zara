@@ -14,15 +14,15 @@
         todo_destination/1,
         todo_destination_md/1,
         todo_context_mode/1,
-        todo_format/1,              % org | markdown
-        todo_template/2,            % todo_template(Format, TemplateString)
+        todo_format/1,
+        todo_template/2,
 
         search_engine/1,
-        wake_word/1,                % wake phrase accepted by the listener
+        wake_word/1,
 
-        llm_provider/1,             % anthropic | openai | openrouter | ollama
-        llm_model/1,                % model name/ID
-        llm_endpoint/1,             % API endpoint URL
+        llm_provider/1,
+        llm_model/1,
+        llm_endpoint/1,
 
         org_browser_setting/2,
         org_browser_effective_setting/2,
@@ -40,10 +40,14 @@
         org_browser_effective_help_source/1,
         add_org_browser_help_source/1,
         clear_org_browser_help_sources/0,
-        reset_org_browser_config/0
+        reset_org_browser_config/0,
+        org_browser_snapshot_path/1,
+        write_org_browser_snapshot/0
     ]).
 
 :- use_module(library(error)).
+:- use_module(library(filesex)).
+:- use_module(library(http/json)).
 
 :- discontiguous kb_config:todo_destination/1.
 :- discontiguous kb_config:todo_template/2.
@@ -67,35 +71,10 @@
 % ============================================================
 % ZARATHUSTRA DEFAULT CONFIGURATION
 % ============================================================
-% This configuration provides sensible defaults that work across
-% most Linux distributions. Provisioned/base overrides may live in
-% ~/.config/zarathushtra/config.pl. Mutable/private operator overrides belong
-% in ~/.config/zarathushtra/config.local.pl, which is loaded after config.pl.
 
-% ---- TODO Settings ----
-% Where to store TODO entries (Org-mode format)
 todo_destination("~/todo.org").
-
-% Optional markdown destination (used when todo_format(markdown)).
-% If missing, markdown falls back to todo_destination/1.
-% todo_destination_md("~/todo.md").
-
-% Context inference mode for TODO categorization
-% Options: infer | infer_with_llm | llm_only
 todo_context_mode(infer).
-
-% Output format for todo capture templates
-% Options: org | markdown
 todo_format(org).
-
-% ---- TODO Template System ----
-% Placeholders you can use:
-%   {task} {tag} {category} {created}
-%   {scheduled}        -> e.g. "2026-01-30 15:00" or ""
-%   {scheduled_org}    -> "<2026-01-30 Tue 15:00>" or ""
-%   {scheduled_line}   -> org helper: "SCHEDULED: <...>\n" or ""
-%   {due_suffix}       -> markdown helper: " (due: 2026-01-30 15:00)" or ""
-%   {cursor}           -> marker string: "%%"
 
 todo_template(org,
 "* TODO {task} :{tag}:
@@ -113,18 +92,8 @@ todo_template(markdown,
 
 ").
 
-
-% Search engine template for the `search` intent.
-% Data only: the device side opens the browser with it; the server side
-% answers with the resolved URL. Mutable/private overrides belong in
-% ~/.config/zarathushtra/config.local.pl.
 search_engine("https://search.brave.com/search?q=~w").
 
-% ---- Wake Words ----
-% Phrases that activate the Python wake listener. Matching tolerates small
-% transcription errors (edit distance ~25% of the phrase length), so close
-% variants such as "Zaratustra" still trigger. Override or add in
-% ~/.config/zarathushtra/config.local.pl, e.g.: wake_word("jarvis").
 wake_word("zarathushtra").
 wake_word("zarathustra").
 wake_word("hey zara").
@@ -133,10 +102,10 @@ wake_word("sarah").
 wake_word("sara").
 
 % ---- Org browser defaults and executable Prolog configuration ----
-% org_browser_setting/2, org_browser_root/1, org_browser_heading_scale/2 and
-% org_browser_help_source/1 hold runtime overrides only. This distinction lets
-% Python merge built-ins -> TOML -> Prolog without defaults accidentally
-% overriding explicit TOML values. Trusted hooks.pl may call the setter API.
+% Runtime overrides remain separate from defaults so Python can merge
+% defaults -> TOML -> Prolog -> trusted org_browser.py deterministically.
+% Every mutation also publishes an owner-local, disposable JSON projection for
+% native clients that must not start a second Prolog engine.
 
 org_browser_default_setting(enabled, true).
 org_browser_default_setting(memory_sync, true).
@@ -172,25 +141,32 @@ set_org_browser_setting(Key, Value) :-
     validate_org_browser_setting(Key, Value),
     with_mutex(org_browser_config,
         ( retractall(org_browser_setting(Key, _)),
-          assertz(org_browser_setting(Key, Value))
+          assertz(org_browser_setting(Key, Value)),
+          write_org_browser_snapshot_unlocked
         )).
 
 clear_org_browser_setting(Key) :-
     must_be(atom, Key),
     with_mutex(org_browser_config,
-        retractall(org_browser_setting(Key, _))).
+        ( retractall(org_browser_setting(Key, _)),
+          write_org_browser_snapshot_unlocked
+        )).
 
 add_org_browser_root(Path) :-
     validate_org_browser_text(Path, root),
     with_mutex(org_browser_config,
-        ( org_browser_root(Path)
-        -> true
-        ; assertz(org_browser_root(Path))
+        ( ( org_browser_root(Path)
+          -> true
+          ; assertz(org_browser_root(Path))
+          ),
+          write_org_browser_snapshot_unlocked
         )).
 
 clear_org_browser_roots :-
     with_mutex(org_browser_config,
-        retractall(org_browser_root(_))).
+        ( retractall(org_browser_root(_)),
+          write_org_browser_snapshot_unlocked
+        )).
 
 org_browser_effective_heading_scale(Level, Scale) :-
     org_browser_heading_scale(Level, Scale),
@@ -207,12 +183,15 @@ set_org_browser_heading_scale(Level, Scale) :-
     ),
     with_mutex(org_browser_config,
         ( retractall(org_browser_heading_scale(Level, _)),
-          assertz(org_browser_heading_scale(Level, Scale))
+          assertz(org_browser_heading_scale(Level, Scale)),
+          write_org_browser_snapshot_unlocked
         )).
 
 clear_org_browser_heading_scales :-
     with_mutex(org_browser_config,
-        retractall(org_browser_heading_scale(_, _))).
+        ( retractall(org_browser_heading_scale(_, _)),
+          write_org_browser_snapshot_unlocked
+        )).
 
 org_browser_effective_help_source(Path) :-
     org_browser_help_source(_),
@@ -224,22 +203,75 @@ org_browser_effective_help_source(Path) :-
 add_org_browser_help_source(Path) :-
     validate_org_browser_text(Path, help_source),
     with_mutex(org_browser_config,
-        ( org_browser_help_source(Path)
-        -> true
-        ; assertz(org_browser_help_source(Path))
+        ( ( org_browser_help_source(Path)
+          -> true
+          ; assertz(org_browser_help_source(Path))
+          ),
+          write_org_browser_snapshot_unlocked
         )).
 
 clear_org_browser_help_sources :-
     with_mutex(org_browser_config,
-        retractall(org_browser_help_source(_))).
+        ( retractall(org_browser_help_source(_)),
+          write_org_browser_snapshot_unlocked
+        )).
 
 reset_org_browser_config :-
     with_mutex(org_browser_config,
         ( retractall(org_browser_setting(_, _)),
           retractall(org_browser_root(_)),
           retractall(org_browser_heading_scale(_, _)),
-          retractall(org_browser_help_source(_))
+          retractall(org_browser_help_source(_)),
+          write_org_browser_snapshot_unlocked
         )).
+
+org_browser_snapshot_path(Path) :-
+    getenv('ZARA_ORG_BROWSER_PROLOG_SNAPSHOT', Explicit),
+    Explicit \== '',
+    !,
+    Path = Explicit.
+org_browser_snapshot_path(Path) :-
+    getenv('XDG_RUNTIME_DIR', RuntimeDir),
+    RuntimeDir \== '',
+    directory_file_path(RuntimeDir, 'zarathushtra', ZaraDir),
+    make_directory_path(ZaraDir),
+    directory_file_path(ZaraDir, 'org-browser-prolog.json', Path).
+
+write_org_browser_snapshot :-
+    with_mutex(org_browser_config,
+        write_org_browser_snapshot_unlocked).
+
+write_org_browser_snapshot_unlocked :-
+    ( org_browser_snapshot_path(Path)
+    -> org_browser_snapshot_dict(Snapshot),
+       format(atom(TempPath), '~w.tmp', [Path]),
+       setup_call_cleanup(
+           open(TempPath, write, Stream, [encoding(utf8)]),
+           ( json_write_dict(Stream, Snapshot, [width(0)]),
+             nl(Stream)
+           ),
+           close(Stream)
+       ),
+       rename_file(TempPath, Path)
+    ; true
+    ).
+
+org_browser_snapshot_dict(Snapshot) :-
+    findall(Key-Value, org_browser_setting(Key, Value), RawPairs),
+    sort(RawPairs, Pairs),
+    dict_pairs(Settings, settings, Pairs),
+    findall(Path, org_browser_root(Path), Roots),
+    findall(_{level:Level, scale:Scale},
+            org_browser_heading_scale(Level, Scale),
+            HeadingScales),
+    findall(Path, org_browser_help_source(Path), HelpSources),
+    Snapshot = _{
+        version:1,
+        settings:Settings,
+        roots:Roots,
+        heading_scales:HeadingScales,
+        help_sources:HelpSources
+    }.
 
 validate_org_browser_setting(enabled, Value) :- !,
     validate_org_browser_boolean(Value).
@@ -293,20 +325,6 @@ validate_org_browser_text(Value, Kind) :-
     ).
 
 % ---- LLM Provider Configuration ----
-
-% Used by Python wake listener for conversational queries.
-% Options: anthropic | openai | openrouter | ollama
 llm_provider(ollama).
-
-% Model name (provider-specific)
-% Ollama: llama3.2, mistral, neural-chat, etc.
-% OpenAI: gpt-4o-mini, gpt-4, gpt-4-turbo
-% Anthropic: claude-sonnet-4-20250514, claude-opus-4-5-20251101
 llm_model("llama3.2:latest").
-
-% API endpoint (optional, uses provider defaults if not specified)
-% Ollama default: http://localhost:11434/api/chat
-% OpenAI default: https://api.openai.com/v1/chat/completions
-% OpenRouter default: https://openrouter.ai/api/v1/chat/completions
-% Anthropic: handled by SDK (don't override)
 llm_endpoint("http://localhost:11434/api/chat").
