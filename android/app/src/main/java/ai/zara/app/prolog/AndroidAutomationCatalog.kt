@@ -29,6 +29,11 @@ object AndroidAutomationCatalog {
                 % UI/global actions require the user-enabled Zara AccessibilityService.
                 % Raw package names, Intents, shell commands and reflection are not actions.
 
+                automation(open_bixby,
+                    actions([
+                        open_app(bixby)
+                    ])).
+
                 automation(youtube_psytrance,
                     actions([
                         app_search(youtube, "psytrance")
