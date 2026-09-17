@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from zara.desktop.conversation import ConversationService
-from zara.desktop.org_widgets import OrgWorkspaceWidget
+from zara.desktop.org_widgets import OrgHelpWindow, OrgWorkspaceWidget
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.windows.quick import QuickCopilotWindow
 from zara.org_roam import OrgRoamIndex
@@ -64,6 +64,7 @@ class CopilotWindow(QuickCopilotWindow):
         )
         self._presentation = CopilotPresentation.COMPACT
         self._org_visible = False
+        self._help_window: Optional[OrgHelpWindow] = None
         self.setObjectName("zaraCopilot")
 
         self.help_button = QPushButton("Help")
@@ -71,7 +72,7 @@ class CopilotWindow(QuickCopilotWindow):
         self.help_button.setAccessibleName("Open Org-rendered help")
         header_layout = self.header_frame.layout()
         header_layout.insertWidget(max(0, header_layout.count() - 1), self.help_button)
-        self.help_button.clicked.connect(self.help_requested.emit)
+        self.help_button.clicked.connect(self.show_help)
 
         self.history_panel = QWidget(self)
         self.history_panel.setObjectName("zaraConversationHistoryPanel")
@@ -184,6 +185,15 @@ class CopilotWindow(QuickCopilotWindow):
 
     def set_org_index(self, index: OrgRoamIndex) -> None:
         self.org_workspace.set_index(index)
+
+    def show_help(self) -> None:
+        if self._help_window is None:
+            self._help_window = OrgHelpWindow(parent=self)
+            self._help_window.setWindowFlag(Qt.WindowType.Window, True)
+        self.help_requested.emit()
+        self._help_window.show()
+        self._help_window.raise_()
+        self._help_window.activateWindow()
 
     def bind_conversation(self, conversation_id: str) -> None:
         """Rebind the one renderer to durable state without runtime traffic."""
