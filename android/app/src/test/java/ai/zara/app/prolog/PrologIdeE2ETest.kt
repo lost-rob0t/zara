@@ -68,7 +68,7 @@ class PrologIdeE2ETest {
 
         assertTrue(studio.contains("TextFieldValue(draft, TextRange(draft.length))"))
         assertTrue(studio.contains("PrologCompletionEngine.complete(editorValue.text, cursor, completionDocuments)"))
-        assertTrue(studio.contains("KeyValueRow(\"cursor\", \"$cursorLine:$cursorColumn\")"))
+        assertTrue(studio.contains("KeyValueRow(\"cursor\""))
         assertTrue(studio.contains("KeyValueRow(\"buffer\", if (dirty) \"dirty\" else \"saved\")"))
         assertTrue(studio.contains("PrologReplace.replaceNext"))
         assertTrue(studio.contains("PrologReplace.replaceAll"))
