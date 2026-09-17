@@ -1,0 +1,31 @@
+#+title: Android rule graph and Prolog file viewer
+
+* Browse the whole workspace
+
+Open =Logic=, then =Graph=. The graph indexes every document supplied by the private Prolog workspace, including the current editor buffer. =All nodes= includes predicate and clause nodes; =Predicates only= hides clause nodes. No 14-node display cap remains. The visible/total count makes filtering explicit.
+
+=Show all= clears the source and text filters and restores all node kinds. =Fit all= resets pan and zoom so the complete indexed graph fits in the viewport. Pinch/pan or use the zoom buttons to inspect labels. The scrollable node list below the canvas provides full available node labels and accessible tap targets independently of canvas zoom.
+
+=All files= lists every supplied source, including empty, comment-only and syntactically invalid files. Tap a filename to read it, or =Graph this file= to restrict graph scope. The search box matches predicate/clause labels and origin filenames; it filters the graph rather than truncating the source inventory.
+
+* Read source without changing the editor
+
+Tap a graph node or node-list entry to open =PROLOG FILE VIEWER=. The viewer has source identity, line numbers, shared Prolog syntax highlighting, a highlighted target line, go-to-line navigation, selectable text and =Copy source=. Copy returns the original entire source text, not a preview with line numbers. All lines are accessible through a virtualized list; long lines wrap rather than disappear off-screen.
+
+Predicates with several definitions expose all available source locations. A predicate referenced before its definition in another file opens the actual definition, not the earlier caller. When no workspace definition is available, the viewer explicitly labels the location as a reference and opens the caller source instead.
+
+Reading, searching and closing the viewer do not save, reload or execute Prolog and do not overwrite the editor draft. =Open in IDE= is a separate explicit action. Opening the current file preserves its unsaved buffer. Opening a different file while the editor is dirty prompts the user to return to the IDE and save first; no implicit discard or save occurs.
+
+* Source is not runtime state
+
+This is the existing analyzer's static source graph, not an execution trace or a claim to resolve every dynamic/meta-call or module import. The editor buffer can differ from the last loaded runtime generation. The inventory covers workspace documents supplied to the Studio; it does not crawl Android storage or expose unavailable bundled/plugin/remote source files. Missing external definitions are marked as references rather than assigned invented source text.
+
+No extra Trealla actor, runtime, permissions, provider, file-I/O path or dependencies are introduced. The viewer consumes the existing workspace projection and semantic theme tokens.
+
+* Verification and release gate
+
+Focused JVM tests: =ai.zara.app.prolog.PrologGraphBrowserTest=. They cover all-node/file retention, all definition locations, reference-vs-definition provenance, filtering/edge integrity, invalid/empty sources, Unicode/CRLF line ranges, complete layout/hit testing and dirty-buffer navigation. They also include an integration check with the real source analyzer and a static Compose-wiring contract.
+
+The dependency-free checks can be invoked through =PrologGraphBrowserChecks.runAll()=; passing those checks alone is not an Android build or visual acceptance result.
+
+Before release, run the exact-head full repository and Android/Wear gates. Capture and inspect actual Android screenshots for graph/all-files/source-viewer/dirty-navigation states in Light and Outrun themes, at minimum width and increased font scale. Exercise rotation, source deletion/reload while the viewer is open, long-source navigation, pinch/tap gestures and editor handoff. Static source tests are not a replacement for this device/emulator gate.

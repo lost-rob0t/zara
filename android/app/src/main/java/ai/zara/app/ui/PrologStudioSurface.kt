@@ -3,10 +3,7 @@ package ai.zara.app.ui
 import ai.zara.app.prolog.DeterministicIntentHelperGenerator
 import ai.zara.app.prolog.IntentArgument
 import ai.zara.app.prolog.IntentHelperRequest
-import ai.zara.app.prolog.LogicGraph
-import ai.zara.app.prolog.LogicNodeKind
 import ai.zara.app.prolog.PrologAuthorityPolicy
-import ai.zara.app.prolog.PrologClauseKind
 import ai.zara.app.prolog.PrologCompletionEngine
 import ai.zara.app.prolog.PrologDocument
 import ai.zara.app.prolog.PrologEditorHistory
@@ -19,27 +16,26 @@ import ai.zara.app.prolog.PrologSource
 import ai.zara.app.prolog.PrologSourceAnalyzer
 import ai.zara.app.prolog.PrologTokenKind
 import ai.zara.app.prolog.PrologTutorialCatalog
+import ai.zara.app.prolog.prologCanOpenSource
 import ai.zara.app.runtime.LocalQueryResult
 import ai.zara.app.runtime.LocalServerPhase
 import ai.zara.app.runtime.LocalServerState
 import ai.zara.app.runtime.LocalZaraServer
 import ai.zara.ui.theme.ZaraSemanticTokens
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -54,7 +50,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -66,9 +61,6 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.sin
 
 private enum class StudioPane(val label: String) {
     Editor("IDE"),
@@ -101,6 +93,7 @@ internal fun PrologStudioSurface(
     var draft by rememberSaveable { mutableStateOf(first?.text.orEmpty()) }
     var query by rememberSaveable { mutableStateOf(firstExampleQuery(selectedName)) }
     var requestedLine by rememberSaveable { mutableStateOf<Int?>(null) }
+    var navigationError by rememberSaveable { mutableStateOf<String?>(null) }
     val selected = sources.firstOrNull { it.name == selectedName } ?: first
     val document = remember(selectedName, draft) {
         val analyzed = PrologSourceAnalyzer.analyze(selectedName.ifBlank { "scratch.pl" }, draft)
@@ -198,11 +191,15 @@ internal fun PrologStudioSurface(
                 onExportWorkspace = onExportWorkspace,
             )
             StudioPane.Graph -> GraphPane(workspaceDocuments) { sourceName, line ->
-                sources.firstOrNull { it.name == sourceName }?.let { source ->
-                    selectedName = source.name
-                    draft = source.text
-                    requestedLine = line
-                    paneName = StudioPane.Editor.name
+                if (!prologCanOpenSource(selectedName, draft, selected?.text.orEmpty(), sourceName)) {
+                    navigationError = "Save your current edits in the IDE before opening a different file. Your draft has not been changed."
+                } else {
+                    sources.firstOrNull { it.name == sourceName }?.let { source ->
+                        if (sourceName != selectedName) draft = source.text
+                        selectedName = source.name
+                        requestedLine = line
+                        paneName = StudioPane.Editor.name
+                    }
                 }
             }
             StudioPane.Learn -> TutorialPane(
@@ -218,6 +215,25 @@ internal fun PrologStudioSurface(
             )
         }
         operationError?.let { ErrorBanner(it) }
+    }
+    navigationError?.let { message ->
+        val tokens = LocalZaraTokens.current
+        AlertDialog(
+            onDismissRequest = { navigationError = null },
+            containerColor = tokens.surface,
+            titleContentColor = tokens.text,
+            textContentColor = tokens.textMuted,
+            title = { Text("Unsaved Prolog edits") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { navigationError = null; paneName = StudioPane.Editor.name }) {
+                    Text("Back to IDE")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { navigationError = null }) { Text("Keep browsing") }
+            },
+        )
     }
 }
 
@@ -742,75 +758,8 @@ private fun GraphPane(
     documents: List<PrologDocument>,
     onNavigate: (String, Int) -> Unit,
 ) {
-    val tokens = LocalZaraTokens.current
-    val graph = remember(documents) {
-        LogicGraph(
-            nodes = documents.flatMap { it.graph.nodes }.distinctBy { it.id },
-            edges = documents.flatMap { it.graph.edges }.distinct(),
-        )
-    }
-    val definitions = remember(documents) {
-        documents.flatMap { document ->
-            document.clauses.filter { it.kind != PrologClauseKind.DIRECTIVE }
-        }.distinctBy { "${it.source}:${it.line}:${it.predicate.indicator}" }
-    }
-    SectionCard("FACT / RULE GRAPH") {
-        if (graph.nodes.isEmpty()) {
-            MutedNotice("Add facts or rules in the IDE to build the graph.")
-            return@SectionCard
-        }
-        LogicGraphCanvas(graph)
-        definitions.forEach { clause ->
-            TextButton(onClick = { onNavigate(clause.source, clause.line) }) {
-                Text(
-                    "${clause.predicate.indicator} · ${clause.source}:${clause.line}",
-                    color = tokens.text,
-                    fontFamily = FontFamily.Monospace,
-                )
-            }
-        }
-        Text("EDGES", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
-        graph.edges.filter { it.label == "calls" }.forEach { edge ->
-            Text(
-                "${edge.from.removePrefix("predicate:")} → ${edge.to.removePrefix("predicate:")}",
-                color = tokens.textMuted,
-                fontFamily = FontFamily.Monospace,
-            )
-        }
-    }
-}
-
-@Composable
-private fun LogicGraphCanvas(graph: LogicGraph) {
-    val tokens = LocalZaraTokens.current
-    val nodes = graph.nodes.filter { it.kind == LogicNodeKind.PREDICATE }.take(14)
-    Box(modifier = Modifier.fillMaxWidth().height(280.dp)) {
-        Canvas(modifier = Modifier.fillMaxWidth().height(280.dp)) {
-            if (nodes.isEmpty()) return@Canvas
-            val center = Offset(size.width / 2f, size.height / 2f)
-            val radius = minOf(size.width, size.height) * 0.34f
-            val positions = nodes.mapIndexed { index, _ ->
-                val angle = (2.0 * PI * index / nodes.size) - PI / 2.0
-                Offset(
-                    center.x + (cos(angle) * radius).toFloat(),
-                    center.y + (sin(angle) * radius).toFloat(),
-                )
-            }
-            val positionsById = nodes.mapIndexed { index, node -> node.id to positions[index] }.toMap()
-            graph.edges.filter { it.label == "calls" }.forEach { edge ->
-                val from = positionsById[edge.from] ?: return@forEach
-                val to = positionsById[edge.to] ?: return@forEach
-                drawLine(tokens.borderActive, from, to, strokeWidth = 2.dp.toPx())
-            }
-            positions.forEachIndexed { index, position ->
-                drawCircle(
-                    color = if (index == 0) tokens.accentMagenta else tokens.accentCyan,
-                    radius = 12.dp.toPx(),
-                    center = position,
-                )
-                drawCircle(tokens.background, 6.dp.toPx(), position)
-            }
-        }
+    PrologGraphExplorer(documents) { clause ->
+        onNavigate(clause.source, clause.line)
     }
 }
 
@@ -908,7 +857,7 @@ private fun expertSystemSource(name: String, evidence: String, conclusion: Strin
     """.trimIndent() + "\n"
 }
 
-private class PrologVisualTransformation(
+internal class PrologVisualTransformation(
     private val tokens: ZaraSemanticTokens,
 ) : VisualTransformation {
     override fun filter(text: AnnotatedString): TransformedText {
@@ -931,7 +880,7 @@ private class PrologVisualTransformation(
 }
 
 @Composable
-private fun studioFieldColors() = run {
+internal fun studioFieldColors() = run {
     val tokens = LocalZaraTokens.current
     OutlinedTextFieldDefaults.colors(
         focusedTextColor = tokens.text,
