@@ -54,8 +54,12 @@ class PrologUiInitLoader:
             engine = PrologEngine(self.path)
             rows = engine.query_all(
                 "zara_ui(ui(Id, Slot, Kind, Label, Action, Priority, Platforms))",
-                max_solutions=_MAX_CONTRIBUTIONS,
+                max_solutions=_MAX_CONTRIBUTIONS + 1,
             )
+            if len(rows) > _MAX_CONTRIBUTIONS:
+                raise ValueError(
+                    f"zara_ui may return at most {_MAX_CONTRIBUTIONS} contributions"
+                )
             contributions = tuple(self._decode(row) for row in rows)
             staged = UiExtensionRegistry()
             staged.replace_owner(_USER_INIT_OWNER, contributions)
