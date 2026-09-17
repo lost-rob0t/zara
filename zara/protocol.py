@@ -66,6 +66,7 @@ SERVER_MESSAGE_TYPES = frozenset(
         "assistant.delta",
         "assistant.completed",
         "assistant.response",
+        "input.required",
         "voice.speech.started",
         "voice.transcript.partial",
         "voice.speech.ended",
@@ -118,6 +119,7 @@ _ALLOWED_ENVELOPE_KEYS = frozenset(
 )
 _ALLOWED_FLAGS = frozenset({"idempotent", "resume"})
 _TYPE_RE = re.compile(r"^[a-z][a-z0-9]*(?:\.[a-z0-9]+)*$")
+_INPUT_KIND_RE = re.compile(r"^[a-z][a-z0-9_.:-]*$")
 _AUDIO_INPUT_START_BODY = {
     "codec": AUDIO_INPUT_CODEC,
     "sample_rate": AUDIO_INPUT_SAMPLE_RATE,
@@ -497,6 +499,39 @@ def _bounded_safe_text(name: str, value: Any, *, max_bytes: int) -> str:
     return value
 
 
+def _validate_input_required_envelope(message: ProtocolMessage) -> None:
+    if message.type != "input.required":
+        return
+    if message.session_id is None or message.turn_id is None or message.seq is None:
+        raise ProtocolValidationError("input.required requires session, turn and sequence")
+    if message.payload_count != 0:
+        raise ProtocolValidationError("input.required does not accept payload frames")
+    if any(
+        value is not None
+        for value in (message.reply_to, message.stream_id, message.trace_id, message.content_type)
+    ) or message.flags:
+        raise ProtocolValidationError("input.required has invalid correlation or payload fields")
+    body = dict(message.body or {})
+    if set(body) != {"kind", "prompt", "question_id", "choices"}:
+        raise ProtocolValidationError("input.required body has invalid fields")
+    kind = _bounded_safe_text("kind", body["kind"], max_bytes=64)
+    if not kind or _INPUT_KIND_RE.fullmatch(kind) is None:
+        raise ProtocolValidationError("input.required kind is invalid")
+    prompt = _bounded_safe_text("prompt", body["prompt"], max_bytes=2048)
+    if not prompt:
+        raise ProtocolValidationError("input.required prompt must not be empty")
+    question_id = body["question_id"]
+    if question_id is not None:
+        _validate_ascii_token("question_id", question_id, max_bytes=128)
+    choices = body["choices"]
+    if not isinstance(choices, list) or len(choices) > 16:
+        raise ProtocolValidationError("input.required choices must be a bounded list")
+    for choice in choices:
+        value = _bounded_safe_text("choice", choice, max_bytes=128)
+        if not value:
+            raise ProtocolValidationError("input.required choices must not be empty")
+
+
 def _validate_tool_run_id(value: Any) -> str:
     return _validate_ascii_token("tool_run_id", value, max_bytes=256)
 
@@ -767,6 +802,7 @@ def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> Pr
     _validate_audio_input_envelope(message)
     _validate_audio_output_envelope(message)
     _validate_visible_stt_envelope(message)
+    _validate_input_required_envelope(message)
     _validate_tool_envelope(message)
     _validate_device_envelope(message)
     return message
