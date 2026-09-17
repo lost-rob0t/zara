@@ -148,6 +148,9 @@ def test_external_service_plugin_lifecycle_tools_events_config_and_diagnostics(t
         assert [(item.name, item.version, item.plugin_type, item.state) for item in diagnostics] == [
             ("test-service", "1.2.3", "service", PluginState.RUNNING)
         ]
+        assert diagnostics[0].enabled is True
+        assert diagnostics[0].description == "test service"
+        assert diagnostics[0].capabilities == ("service_echo",)
     finally:
         stop_host(host)
 
@@ -156,6 +159,36 @@ def test_external_service_plugin_lifecycle_tools_events_config_and_diagnostics(t
     assert module.SUBSCRIPTION.closed is True
     assert backend.tools == []
     assert host.plugin_diagnostics()[0].state is PluginState.STOPPED
+
+
+def test_disabled_service_plugin_remains_visible_but_never_starts(tmp_path):
+    plugin_path = tmp_path / "disabled_plugin.py"
+    write_service_plugin(plugin_path)
+    backend = PluginBackend()
+    host = RuntimeHost(
+        lambda: backend,
+        plugin_paths=(tmp_path,),
+        config=PluginTestConfig({"test-service": {"enabled": False, "token": "do-not-project"}}),
+    )
+
+    try:
+        host.start().result(timeout=5)
+        module = load_plugin_module(plugin_path)
+        diagnostics = host.plugin_diagnostics()
+
+        assert module.CREATE_COUNT == 1
+        assert module.START_COUNT == 0
+        assert backend.tools == []
+        assert len(diagnostics) == 1
+        diagnostic = diagnostics[0]
+        assert diagnostic.name == "test-service"
+        assert diagnostic.enabled is False
+        assert diagnostic.state is PluginState.INSTALLED
+        assert diagnostic.description == "test service"
+        assert diagnostic.capabilities == ()
+        assert "do-not-project" not in repr(diagnostic)
+    finally:
+        stop_host(host)
 
 
 def test_service_worker_dispatches_on_runtime_thread_and_is_cleaned_up(tmp_path):
