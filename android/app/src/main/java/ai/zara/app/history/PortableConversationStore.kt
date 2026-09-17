@@ -232,7 +232,7 @@ class PortableConversationStore(context: Context) : SQLiteOpenHelper(
             val existing = db.rawQuery(
                 "SELECT id FROM desktop_messages WHERE id = ? AND principal_id = ? LIMIT 1",
                 arrayOf(message.id, ConversationHistoryContract.localPrincipalId),
-            ).use(Cursor::moveToFirst)
+            ).use { it.moveToFirst() }
             if (existing) {
                 val changed = db.update(
                     "desktop_messages",
@@ -299,26 +299,13 @@ class PortableConversationStore(context: Context) : SQLiteOpenHelper(
     }
 
     private fun installSchema(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS schema_migrations (
-                version INTEGER PRIMARY KEY,
-                applied_at INTEGER NOT NULL
-            )
-            """.trimIndent()
-        )
-        // Old desktop v2 databases may say migration 2 is applied while still
-        // lacking principal_id. Repair before executing indexes from the shared
-        // schema, because those indexes reference the ownership columns.
+        // Keep the conversation ABI independent of DatabaseManager's shared
+        // schema_migrations table. Desktop has unrelated stores that
+        // historically reused numeric migration versions; Android's
+        // SQLiteOpenHelper owns user_version instead.
         repairPrincipalColumn(db, "desktop_conversations")
         repairPrincipalColumn(db, "desktop_messages")
         schemaStatements().forEach(db::execSQL)
-        repairPrincipalColumn(db, "desktop_conversations")
-        repairPrincipalColumn(db, "desktop_messages")
-        db.execSQL(
-            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, strftime('%s','now'))",
-            arrayOf(ConversationHistoryContract.schemaVersion),
-        )
     }
 
     private fun schemaStatements(): List<String> {
@@ -366,7 +353,7 @@ class PortableConversationStore(context: Context) : SQLiteOpenHelper(
         db.rawQuery(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
             arrayOf(table),
-        ).use(Cursor::moveToFirst)
+        ).use { it.moveToFirst() }
 
     private fun Cursor.toConversation(): HistoryConversation = HistoryConversation(
         id = getString(getColumnIndexOrThrow("id")),
