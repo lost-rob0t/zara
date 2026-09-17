@@ -12,6 +12,8 @@ This initial module deliberately implements the trust/state contract before APK 
 - accepts ordinary F-Droid package identities without Zara metadata;
 - only applies Zara metadata when package name, version code, APK SHA-256, and signer SHA-256 match;
 - embeds the exact Zara source commit in `BuildConfig.SOURCE_SHA`;
+- decodes standard F-Droid V2 indexes through F-Droid's own `IndexParser` behind a Zara-owned seam;
+- keeps index decoding explicitly separate from signature/hash verification and repository trust;
 - separates `downloaded`, `verified`, and observed `installed` state;
 - separates Android-plugin `enabled`, `trusted`, `permissionReady`, and `runtimeReady` state;
 - only requests network access. This slice does **not** request `REQUEST_INSTALL_PACKAGES` and cannot install APKs yet.
@@ -62,10 +64,17 @@ The same store UI, catalog, package identities, and plugin trust model remain. O
 
 ## Build
 
-From the Android project root, using the repository's pinned toolchain:
+From the repository root, use the pinned Android Nix toolchain and Gradle installation:
 
 ```sh
-./gradlew :zara-store:test :zara-store:assembleDebug
+nix develop ./android -c bash -lc \
+  'cd android && gradle --no-daemon :zara-store:testDebugUnitTest :zara-store:assembleDebug'
 ```
 
-The build embeds the immutable source SHA supplied by `ZARA_SOURCE_SHA` or resolved from Git.
+The full Android/Wear/Store gate is:
+
+```sh
+nix develop ./android -c bash scripts/test-android.sh
+```
+
+The build embeds the immutable source SHA supplied by `ZARA_SOURCE_SHA`, resolved from the pull-request head in CI, or resolved from Git for a local checkout.
