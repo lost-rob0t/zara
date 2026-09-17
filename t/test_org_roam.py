@@ -59,7 +59,7 @@ def _local_memory(monkeypatch) -> MemoryManager:
     import zara.memory as memory_module
 
     monkeypatch.setattr(memory_module, "_CHROMADB_AVAILABLE", False)
-    return MemoryManager(enabled=True, persist_directory=None, principal_id="test-user")
+    return MemoryManager(enabled=True, persist_directory=None)
 
 
 def test_org_parser_preserves_roam_identity_structure_and_links():
@@ -115,6 +115,7 @@ def test_doom_renderer_keeps_stars_but_scales_heading_fonts():
     assert "*" in rendered
     assert "**" in rendered
     assert "Build renderer" in rendered
+    assert "[[id:beta-memory][memory design]]" in rendered
     assert "org_memory(alpha_renderer, zara)." in rendered
     assert heading_font_pt(1, 12.0) > heading_font_pt(2, 12.0)
     assert heading_font_pt(2, 12.0) > heading_font_pt(5, 12.0)
