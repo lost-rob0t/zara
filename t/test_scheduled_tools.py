@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from zara.agent.tools.builtin_tools import SCHEDULE_TOOL_NAMES, build_schedule_tools
+from zara.agent.tools.schedule_tools import SCHEDULE_TOOL_NAMES, build_schedule_tools
 
 
 @dataclass
