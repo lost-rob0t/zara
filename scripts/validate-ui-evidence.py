@@ -49,6 +49,16 @@ def _require_png(path: Path) -> bytes:
     return data
 
 
+def _require_sha256(value: object, *, label: str) -> str:
+    if not isinstance(value, str) or len(value) != 64:
+        raise EvidenceError(f"{label} hash is invalid")
+    try:
+        int(value, 16)
+    except ValueError as error:
+        raise EvidenceError(f"{label} hash is invalid") from error
+    return value.lower()
+
+
 def validate_desktop(manifest_path: Path, source_sha: str) -> int:
     manifest = _load_manifest(manifest_path)
     fixtures = manifest.get("fixtures")
@@ -63,6 +73,7 @@ def validate_desktop(manifest_path: Path, source_sha: str) -> int:
         state = entry.get("state")
         path_value = entry.get("path")
         entry_sha = entry.get("source_commit")
+        expected_hash = entry.get("sha256")
         width = entry.get("width")
         height = entry.get("height")
         if not isinstance(state, str) or not state:
@@ -81,7 +92,13 @@ def validate_desktop(manifest_path: Path, source_sha: str) -> int:
             )
         if not isinstance(width, int) or width <= 0 or not isinstance(height, int) or height <= 0:
             raise EvidenceError(f"desktop fixture has invalid dimensions: {state}")
-        _require_png(_safe_child(manifest_path.parent, path_value))
+        expected_hash = _require_sha256(expected_hash, label=f"desktop screenshot {state}")
+        data = _require_png(_safe_child(manifest_path.parent, path_value))
+        actual_hash = hashlib.sha256(data).hexdigest()
+        if actual_hash != expected_hash:
+            raise EvidenceError(
+                f"desktop screenshot hash mismatch for {state}: expected {expected_hash}, got {actual_hash}"
+            )
     return len(fixtures)
 
 
@@ -115,8 +132,7 @@ def validate_android(manifest_path: Path, source_sha: str) -> int:
         if file_value in seen_files:
             raise EvidenceError(f"android screenshot filename is duplicated: {file_value}")
         seen_files.add(file_value)
-        if not isinstance(expected_hash, str) or len(expected_hash) != 64:
-            raise EvidenceError(f"android screenshot hash is invalid: {state}")
+        expected_hash = _require_sha256(expected_hash, label=f"android screenshot {state}")
         data = _require_png(_safe_child(manifest_path.parent, file_value))
         actual_hash = hashlib.sha256(data).hexdigest()
         if actual_hash != expected_hash:
