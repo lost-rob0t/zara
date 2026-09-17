@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Signal
@@ -105,10 +104,7 @@ def build_desktop_ui_registry(config) -> UiExtensionRegistry:
         except Exception:
             logger.warning("Could not load %s", loader.path, exc_info=True)
 
-    module_paths = config.get("modules", "search_paths", [])
-    if not isinstance(module_paths, list):
-        module_paths = []
-    plugin_paths = tuple(Path(path).expanduser() for path in module_paths if isinstance(path, str))
+    plugin_paths = tuple(config.get_module_search_paths())
 
     def enabled(plugin_name: str) -> bool:
         value = config.get_plugin_config(plugin_name).get("enabled", True)
