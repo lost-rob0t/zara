@@ -29,11 +29,6 @@ object AndroidAutomationCatalog {
                 % UI/global actions require the user-enabled Zara AccessibilityService.
                 % Raw package names, Intents, shell commands and reflection are not actions.
 
-                automation(open_bixby,
-                    actions([
-                        open_app(bixby)
-                    ])).
-
                 automation(youtube_psytrance,
                     actions([
                         app_search(youtube, "psytrance")
@@ -67,6 +62,21 @@ object AndroidAutomationCatalog {
                     ])).
             """.trimIndent() + "\n",
             query = "automation(youtube_psytrance, Result)",
+        ),
+        PrologExample(
+            title = "Bixby handoff",
+            summary = "Launch Samsung Bixby through Zara's reviewed Android app boundary.",
+            fileName = "zara_bixby.pl",
+            source = """
+                % Zara -> Samsung Bixby handoff.
+                % The semantic alias is resolved by Android; no raw Intent or component is exposed.
+
+                automation(open_bixby,
+                    actions([
+                        open_app(bixby)
+                    ])).
+            """.trimIndent() + "\n",
+            query = "automation(open_bixby, Result)",
         ),
     )
 }
