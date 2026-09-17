@@ -98,10 +98,9 @@ class DesktopUiExtensionHost(QWidget):
         if contribution.kind is UiContributionKind.TOGGLE:
             toggle = QCheckBox(contribution.label, self)
             toggle.setAccessibleName(contribution.label)
-            toggle.toggled.connect(
-                lambda checked, action=contribution.action: self.action_requested.emit(
-                    action.replace("{value}", "true" if checked else "false")
-                )
+            toggle.setEnabled(False)
+            toggle.setToolTip(
+                "State unavailable until the canonical revisioned plugin-settings projection is connected."
             )
             return toggle
         return None
