@@ -335,6 +335,14 @@ class PortableConversationStore(context: Context) : SQLiteOpenHelper(
     }
 
     private fun migrateLegacyLocalRows(db: SQLiteDatabase) {
+        val legacyLocalPredicate = """
+            principal_id = ?
+            OR (
+                substr(principal_id, 1, 4) = 'uid:'
+                AND length(substr(principal_id, 5)) > 0
+                AND substr(principal_id, 5) NOT GLOB '*[^0-9]*'
+            )
+        """.trimIndent()
         listOf("desktop_conversations", "desktop_messages").forEach { table ->
             if (!tableExists(db, table)) return@forEach
             val values = ContentValues().apply {
@@ -343,7 +351,7 @@ class PortableConversationStore(context: Context) : SQLiteOpenHelper(
             db.update(
                 table,
                 values,
-                "principal_id = ?",
+                legacyLocalPredicate,
                 arrayOf(ConversationHistoryContract.legacyLocalPrincipalId),
             )
         }
