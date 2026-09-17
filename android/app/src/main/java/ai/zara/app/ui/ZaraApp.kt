@@ -10,6 +10,7 @@ import ai.zara.app.runtime.LocalServerPhase
 import ai.zara.app.runtime.LocalServerState
 import ai.zara.app.runtime.ServerConnection
 import ai.zara.app.prolog.PrologSource
+import ai.zara.app.prolog.LocalEmbeddingConfiguration
 import ai.zara.app.update.UpdatePhase
 import ai.zara.app.update.UpdateState
 import ai.zara.app.voice.ManualVoiceState
@@ -134,8 +135,10 @@ fun ZaraApp(
     prologQueryResult: LocalQueryResult?,
     updateState: UpdateState,
     runtimeMode: RuntimeMode,
+    localEmbedding: LocalEmbeddingConfiguration,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
+    onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
     onReplaceServerPin: (String) -> Unit,
@@ -250,6 +253,7 @@ fun ZaraApp(
                             localServerState = localServerState,
                             updateState = updateState,
                             runtimeMode = runtimeMode,
+                            localEmbedding = localEmbedding,
                             enrollmentPublicKey = enrollmentPublicKey,
                             pinnedServerPublicKey = pinnedServerPublicKey,
                             operationError = operationError,
@@ -262,6 +266,7 @@ fun ZaraApp(
                             onDownloadUpdate = onDownloadUpdate,
                             onInstallUpdate = onInstallUpdate,
                             onSelectRuntimeMode = onSelectRuntimeMode,
+                            onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
                             padding = padding,
                         )
                         AppSurface.About -> AboutSurface(sourceSha, padding)
@@ -723,6 +728,7 @@ private fun SettingsSurface(
     localServerState: LocalServerState,
     updateState: UpdateState,
     runtimeMode: RuntimeMode,
+    localEmbedding: LocalEmbeddingConfiguration,
     enrollmentPublicKey: String?,
     pinnedServerPublicKey: String?,
     operationError: String?,
@@ -735,6 +741,7 @@ private fun SettingsSurface(
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
+    onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     padding: PaddingValues,
 ) {
     var serverPin by rememberSaveable { mutableStateOf("") }
@@ -773,6 +780,27 @@ private fun SettingsSurface(
                 }
             }
             MutedNotice("Auto prefers an authenticated remote session and falls back to local. Local never sends the turn to the network. Remote fails closed when disconnected.")
+            Text("LOCAL EMBEDDINGS", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .selectable(
+                        selected = localEmbedding.enabled,
+                        onClick = { onSetLocalEmbeddingEnabled(!localEmbedding.enabled) },
+                    )
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StatusDot(if (localEmbedding.enabled) tokens.success else tokens.border)
+                Text(
+                    if (localEmbedding.enabled) "Enabled" else "Disabled",
+                    modifier = Modifier.padding(start = 10.dp),
+                    color = tokens.text,
+                )
+            }
+            KeyValueRow("model", localEmbedding.modelVersion)
+            KeyValueRow("dimensions", localEmbedding.dimensions.toString())
+            MutedNotice("Runs fully on-device. Disabling it returns no vectors and prevents local semantic indexing.")
         }
 
         SectionCard("ASSISTANT") {
