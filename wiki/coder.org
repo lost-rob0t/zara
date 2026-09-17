@@ -1,0 +1,129 @@
+#+title: Zara coder plugin
+
+* Overview
+
+=coder= is a first-party Zara service plugin built on the existing plugin
+manager, LangChain tool registry, principal-scoped tool approval, and RuntimeHost
+lifecycle.  It does not create another AgentManager or plugin subsystem.
+
+The public surface is engine-neutral:
+
+- =coder= :: delegate one coding task.  This tool always carries
+  =zara_requires_approval = True=.
+- =coder_projects= :: list configured project names without exposing host paths.
+- =coder_status= :: report the selected engine and effective execution policy.
+
+The first engine is Pi.  The plugin metadata/configuration remains =coder= so a
+future engine can be added without changing the tool contract used by Zara's
+agent, voice path, or Android client.
+
+* Install Pi
+
+Pi is external to Zara.  Current Pi releases install with:
+
+#+begin_src sh
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+#+end_src
+
+Log in or configure Pi's model-provider credentials independently.  Zara never
+accepts a Pi/model API key as a =coder= tool argument.
+
+The plugin locates =pi= through =PATH= by default.  A fixed executable can be
+configured with =binary=, including a Termux Pi path when Zara's Python runtime
+is running inside Termux.
+
+* Configuration
+
+The plugin ships disabled.  Enable it and register local projects in
+=config.toml=:
+
+#+begin_src toml
+[plugins.coder]
+enabled = true
+engine = "pi"
+default_project = "zara"
+allow_shell = true
+project_trust = false
+timeout_seconds = 900
+max_output_chars = 24000
+# model_provider = "openai"
+# model = "gpt-5.6"
+# thinking = "high"
+
+[plugins.coder.projects]
+zara = "~/Documents/Projects/zara"
+prolog_rlm = "~/Documents/Projects/prolog-rlm"
+#+end_src
+
+Only a configured project *name* is accepted by =coder=.  A model cannot pass an
+arbitrary cwd/path.  Project paths are expanded and resolved when the plugin
+starts, and startup fails if a configured project directory is unavailable.
+If exactly one project exists it becomes the implicit default when
+=default_project= is omitted.
+
+Model provider/model/thinking are operator configuration, not tool arguments.
+This prevents an agent turn from silently selecting another credential-bearing
+provider or changing the configured reasoning budget.
+
+* Pi execution policy
+
+Every invocation uses Pi =--print= and =--no-session=.  The task is sent on
+stdin; Zara never builds =sh -c= from model text.
+
+By default Zara passes both =--no-approve= and =--no-context-files=.  This keeps
+project-local Pi settings/resources and =AGENTS.md=/=CLAUDE.md= context out of an
+untrusted run.  Set =project_trust = true= to use =--approve= and permit the
+normal project context/resource path.
+
+Pi itself is not a sandbox.  Zara therefore constrains Pi's built-in tool
+allowlist by mode:
+
+| mode        | Pi tools |
+|-------------+----------|
+| =review=    | read, grep, find, ls |
+| =plan=      | read, grep, find, ls |
+| =implement= | read, grep, find, ls, edit, write; plus bash only when =allow_shell=true= |
+
+=review= and =plan= stay read-only even when shell execution is enabled for
+implementation tasks.  Only one Pi task may run through a plugin instance at a
+time; an overlapping request fails closed instead of spawning unbounded coder
+processes.
+
+* Example
+
+#+begin_example
+coder(task="Implement the Android alarm adapter and run its tests",
+      project="zara",
+      mode="implement")
+#+end_example
+
+Zara pauses at its normal approval gate before executing =coder=.  Once approved,
+Pi receives the bounded prompt on stdin and runs with the configured project as
+its cwd.
+
+* Android / Termux
+
+Pi supports Android through Termux.  When Zara's Python runtime is hosted in
+Termux, point =binary= at that environment's Pi executable and register only
+Termux-visible project folders.
+
+The native Android app must still use Zara's typed Termux/project capability
+path rather than accepting arbitrary shell strings from remote messages or LLM
+output.  The Android/Wear local-agent E2E gate (#905) owns that device-side
+boundary.
+
+* Security and lifecycle invariants
+
+- =coder= always uses Zara's canonical principal-scoped tool approval.
+- Tool input selects configured project names, never arbitrary host paths.
+- No shell interpolation is used to launch Pi.
+- =bash= is absent unless enabled by operator configuration.
+- =review=/=plan= never get mutating Pi tools.
+- Untrusted-project mode disables project trust and project context files.
+- Pi/model credentials come from Pi's own credential store/environment, not tool
+  arguments or Zara logs.
+- stdout/stderr returned to the agent is bounded.
+- timeout kills the Pi process group on POSIX.
+- RuntimeHost/plugin shutdown terminates any active Pi child.
+- concurrent coder execution is bounded to one active Pi process per plugin
+  instance.
