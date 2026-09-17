@@ -86,8 +86,8 @@ android {
         applicationId = "ai.zara.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.1.2-alpha"
+        versionCode = 5
+        versionName = "0.2.3-alpha"
         buildConfigField("String", "SOURCE_SHA", "\"$sourceSha\"")
         buildConfigField("boolean", "HAS_SAMSUNG_HEALTH_SDK", hasSamsungHealthSdk.toString())
 
