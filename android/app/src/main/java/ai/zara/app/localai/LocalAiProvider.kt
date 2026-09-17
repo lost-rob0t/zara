@@ -4,20 +4,18 @@ import java.io.InputStream
 import java.util.concurrent.CompletableFuture
 
 /**
- * First-class on-device model provider boundary.
+ * First-class on-device language-model provider boundary.
  *
  * The provider API is intentionally model-agnostic: callers select a verified model from the
- * provider catalog and do not depend on the concrete inference runtime. The built-in provider is
- * backed by the app-private LiteRT-LM service today; additional local engines can implement this
- * same contract without changing Zara's Prolog-first routing layer.
+ * provider catalog and do not depend on the concrete inference runtime. Speech is a separate
+ * provider family so an LLM backend never has to pretend it owns TTS, and vice versa.
  */
 data class LocalAiProviderCapabilities(
     val id: String,
     val displayName: String,
     val offlineOnly: Boolean,
     val streaming: Boolean,
-    val speech: Boolean,
-    val modelContainerExtensions: Set<String>,
+    val modelFormats: Set<LocalModelFormat>,
     val accelerators: Set<LocalModelBackend>,
 )
 
@@ -48,12 +46,6 @@ interface LocalAiProvider : AutoCloseable {
     fun cancelGeneration(): CompletableFuture<LocalAiState>
 
     fun unloadModel(): CompletableFuture<LocalAiState>
-
-    fun ttsState(): CompletableFuture<LocalTtsState>
-
-    fun speak(text: String): CompletableFuture<Unit>
-
-    fun stopSpeech()
 }
 
 class EmbeddedLocalAiProvider(
@@ -64,8 +56,7 @@ class EmbeddedLocalAiProvider(
         displayName = "Embedded Local",
         offlineOnly = true,
         streaming = true,
-        speech = true,
-        modelContainerExtensions = setOf(".litertlm"),
+        modelFormats = setOf(LocalModelFormat.LITERT_LM),
         accelerators = LocalModelBackend.entries.toSet(),
     )
 
@@ -93,12 +84,6 @@ class EmbeddedLocalAiProvider(
     override fun cancelGeneration(): CompletableFuture<LocalAiState> = client.cancelGeneration()
 
     override fun unloadModel(): CompletableFuture<LocalAiState> = client.unloadModel()
-
-    override fun ttsState(): CompletableFuture<LocalTtsState> = client.ttsState()
-
-    override fun speak(text: String): CompletableFuture<Unit> = client.speak(text)
-
-    override fun stopSpeech() = client.stopSpeech()
 
     override fun close() = client.close()
 
