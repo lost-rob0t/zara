@@ -19,6 +19,14 @@ class PrologAuthoringTest {
         assertEquals("risk.pl", signature.source)
         assertTrue(signature.detail.contains("entity:atom"))
         assertTrue(signature.detail.contains("risk.pl:"))
+
+        val completion = PrologCompletionEngine.complete("ri", 2, listOf(document)).first()
+        assertEquals("risk/2", completion.label)
+        assertTrue(completion.insertion.contains("Entity"))
+        assertTrue(completion.insertion.contains("Confidence"))
+        assertTrue(completion.detail.contains("entity:atom"))
+        assertTrue(completion.detail.contains("confidence:number"))
+        assertTrue(completion.detail.contains("risk.pl:"))
     }
 
     @Test
@@ -28,7 +36,7 @@ class PrologAuthoringTest {
             PrologFormBuilder.fact("signal", listOf("alice", "[red, amber]", "0.9")),
         )
         try {
-            PrologFormBuilder.fact("signal", listOf("alice). shell('id") ))
+            PrologFormBuilder.fact("signal", listOf("alice).", "shell('id')"))
             throw AssertionError("fact builder accepted clause injection")
         } catch (_: IllegalArgumentException) {
         }
@@ -64,5 +72,17 @@ class PrologAuthoringTest {
         assertEquals(listOf("arg1", "arg2"), signature.arguments.map { it.name })
         assertEquals(listOf("term", "term"), signature.arguments.map { it.type })
         assertEquals(2, signature.line)
+    }
+
+    @Test
+    fun malformedSchemaNeverCrashesSignatureDiscovery() {
+        val document = PrologSourceAnalyzer.analyze(
+            "bad.pl",
+            ":- zara_schema(bad, 1, [mystery]).\nbad(value).\n",
+        )
+
+        val signatures = PrologSignatureCatalog.from(listOf(document))
+
+        assertEquals(listOf("term"), signatures[PredicateRef("bad", 1)]!!.arguments.map { it.type })
     }
 }
