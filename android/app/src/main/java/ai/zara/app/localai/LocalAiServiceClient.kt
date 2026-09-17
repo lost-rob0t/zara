@@ -10,7 +10,17 @@ import java.util.concurrent.CompletableFuture
 
 class LocalAiServiceClient(
     context: Context,
-) : AutoCloseable {
+) : LocalAiProvider {
+    override val capabilities = LocalAiProviderCapabilities(
+        id = EmbeddedLocalAiProvider.ID,
+        displayName = "Embedded Local",
+        offlineOnly = true,
+        streaming = true,
+        speech = true,
+        modelContainerExtensions = setOf(".litertlm"),
+        accelerators = LocalModelBackend.entries.toSet(),
+    )
+
     private val appContext = context.applicationContext
     private val lock = Any()
 
@@ -64,47 +74,47 @@ class LocalAiServiceClient(
         }
     }
 
-    fun state(): CompletableFuture<LocalAiState> = service().thenApply { it.state() }
+    override fun state(): CompletableFuture<LocalAiState> = service().thenApply { it.state() }
 
-    fun models(): CompletableFuture<List<LocalModelSpec>> =
+    override fun models(): CompletableFuture<List<LocalModelSpec>> =
         service().thenCompose { it.models() }
 
-    fun activeModel(): CompletableFuture<LocalModelSpec?> =
+    override fun activeModel(): CompletableFuture<LocalModelSpec?> =
         service().thenCompose { it.activeModel() }
 
     fun loadActiveModel(): CompletableFuture<LocalAiState> =
         service().thenCompose { it.loadActiveModel() }
 
-    fun installModel(
+    override fun installModel(
         source: InputStream,
         metadata: LocalModelMetadata,
     ): CompletableFuture<LocalModelSpec> =
         service().thenCompose { it.installModel(source, metadata) }
 
-    fun selectModel(
+    override fun selectModel(
         id: String,
         version: String,
     ): CompletableFuture<LocalAiState> =
         service().thenCompose { it.selectModel(id, version) }
 
-    fun ttsState(): CompletableFuture<LocalTtsState> = service().thenApply { it.ttsState() }
+    override fun ttsState(): CompletableFuture<LocalTtsState> = service().thenApply { it.ttsState() }
 
-    fun generate(
+    override fun generate(
         request: LocalGenerationRequest,
-        onChunk: (String) -> Unit = {},
+        onChunk: (String) -> Unit,
     ): CompletableFuture<LocalGenerationResult> =
         service().thenCompose { it.generate(request, onChunk) }
 
-    fun cancelGeneration(): CompletableFuture<LocalAiState> =
+    override fun cancelGeneration(): CompletableFuture<LocalAiState> =
         service().thenCompose { it.cancelGeneration() }
 
-    fun unloadModel(): CompletableFuture<LocalAiState> =
+    override fun unloadModel(): CompletableFuture<LocalAiState> =
         service().thenCompose { it.unloadModel() }
 
-    fun speak(text: String): CompletableFuture<Unit> =
+    override fun speak(text: String): CompletableFuture<Unit> =
         service().thenCompose { it.speak(text) }
 
-    fun stopSpeech() {
+    override fun stopSpeech() {
         synchronized(lock) {
             binder?.stopSpeech()
         }
