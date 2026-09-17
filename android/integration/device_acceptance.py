@@ -19,6 +19,7 @@ class Device:
         self.output = output
         self.screenshots: list[dict] = []
         self.profiles: list[dict] = []
+        self.accessibility_semantics: list[dict] = []
         self._size_before_profile: str | None = None
         self._font_scale_before_profile: str | None = None
 
@@ -31,7 +32,9 @@ class Device:
 
     def nodes(self):
         self.adb("shell", "uiautomator", "dump", "/sdcard/zara-acceptance.xml")
-        return ET.fromstring(self.adb("shell", "cat", "/sdcard/zara-acceptance.xml")).iter("node")
+        return ET.fromstring(
+            self.adb("shell", "cat", "/sdcard/zara-acceptance.xml")
+        ).iter("node")
 
     def find(self, label: str):
         return next(
@@ -39,6 +42,19 @@ class Device:
                 node
                 for node in self.nodes()
                 if label in (node.get("text"), node.get("content-desc"))
+            ),
+            None,
+        )
+
+    def find_contains(self, fragment: str):
+        return next(
+            (
+                node
+                for node in self.nodes()
+                if any(
+                    fragment in (node.get(attribute) or "")
+                    for attribute in ("text", "content-desc")
+                )
             ),
             None,
         )
@@ -123,6 +139,12 @@ class Device:
             str((top + bottom) // 2),
         )
 
+    def type_text(self, text: str) -> None:
+        if not re.fullmatch(r"[A-Za-z0-9_]+", text):
+            raise AssertionError("Acceptance text must be adb-input-safe")
+        self.adb("shell", "input", "text", text)
+        time.sleep(0.4)
+
     def await_label(self, label: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -131,6 +153,32 @@ class Device:
             time.sleep(0.2)
         raise AssertionError(f"Screen did not show {label}")
 
+    def await_contains(self, fragment: str, timeout: float = 20.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.find_contains(fragment) is not None:
+                return
+            time.sleep(0.2)
+        raise AssertionError(f"Screen did not retain text containing {fragment}")
+
+    def assert_accessible_targets(self, labels: tuple[str, ...]) -> None:
+        for label in labels:
+            node = self.find(label)
+            if node is None:
+                raise AssertionError(f"Accessibility target is missing: {label}")
+            left, top, right, bottom = self.bounds(node)
+            if right <= left or bottom <= top:
+                raise AssertionError(f"Accessibility target has empty bounds: {label}")
+            self.accessibility_semantics.append(
+                {
+                    "label": label,
+                    "class": node.get("class"),
+                    "bounds": node.get("bounds"),
+                    "clickable": node.get("clickable"),
+                    "enabled": node.get("enabled"),
+                }
+            )
+
     def capture(self, name: str) -> None:
         data = self.adb("exec-out", "screencap", "-p", binary=True)
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -138,7 +186,11 @@ class Device:
         path = self.output / f"{name}.png"
         path.write_bytes(data)
         self.screenshots.append(
-            {"state": name, "file": path.name, "sha256": hashlib.sha256(data).hexdigest()}
+            {
+                "state": name,
+                "file": path.name,
+                "sha256": hashlib.sha256(data).hexdigest(),
+            }
         )
 
     def start(self) -> None:
@@ -151,9 +203,9 @@ class Device:
         time.sleep(0.5)
 
     def recreate(self) -> None:
-        # HOME + am kill preserves the task/saved-state path while killing the app process.
-        # Restarting the existing Activity exercises process recreation rather than merely
-        # rebuilding a composable in the same process.
+        # HOME + am kill keeps the Android task/saved-state path while killing the app
+        # process. This is stronger than a same-process Compose recreation and remains
+        # distinct from a force-stop/new-task smoke.
         self.adb("shell", "input", "keyevent", "3")
         time.sleep(0.5)
         self.adb("shell", "am", "kill", "ai.zara.app")
@@ -161,7 +213,13 @@ class Device:
         self.adb("shell", "am", "start", "-W", "-n", "ai.zara.app/.MainActivity")
         time.sleep(0.8)
 
-    def set_narrow_large_font(self) -> None:
+    def set_display_profile(
+        self,
+        name: str,
+        *,
+        target_width_dp: int,
+        font_scale: float,
+    ) -> None:
         if self._size_before_profile is not None:
             raise AssertionError("Display profile already overridden")
         self._size_before_profile = self.adb("shell", "wm", "size")
@@ -170,16 +228,19 @@ class Device:
         ).strip()
         width, height = self.size()
         density = self.density()
-        target_width = max(1, round(320 * density / 160))
+        target_width = max(1, round(target_width_dp * density / 160))
         target_height = max(target_width, round(height * target_width / width))
+        font_scale_text = f"{font_scale:.2f}"
         self.adb("shell", "wm", "size", f"{target_width}x{target_height}")
-        self.adb("shell", "settings", "put", "system", "font_scale", "1.30")
+        self.adb(
+            "shell", "settings", "put", "system", "font_scale", font_scale_text
+        )
         self.profiles.append(
             {
-                "name": "narrow-large-font",
+                "name": name,
                 "size_px": f"{target_width}x{target_height}",
-                "target_width_dp": 320,
-                "font_scale": "1.30",
+                "target_width_dp": target_width_dp,
+                "font_scale": font_scale_text,
             }
         )
         time.sleep(1.2)
@@ -195,7 +256,9 @@ class Device:
             self.adb("shell", "wm", "size", "reset")
         original_font = self._font_scale_before_profile
         if original_font and original_font != "null":
-            self.adb("shell", "settings", "put", "system", "font_scale", original_font)
+            self.adb(
+                "shell", "settings", "put", "system", "font_scale", original_font
+            )
         else:
             self.adb("shell", "settings", "put", "system", "font_scale", "1.0")
         self._size_before_profile = None
@@ -215,10 +278,12 @@ def open_menu(device: Device, menu: str) -> None:
 def exercise_three_menu_ui(device: Device) -> None:
     device.start()
     device.capture("empty-shell")
+    device.assert_accessible_targets(("Open navigation menu", "Chat", "Voice"))
 
     device.tap("Open navigation menu")
     for menu in ("Chat", "Workspace", "Settings"):
         device.await_label(menu)
+    device.assert_accessible_targets(("Chat", "Workspace", "Settings"))
     device.capture("drawer-open")
     device.tap("Workspace")
     device.await_label("Logic")
@@ -240,6 +305,7 @@ def exercise_three_menu_ui(device: Device) -> None:
         "About",
     ):
         device.tap_tab(tab)
+        device.assert_accessible_targets((tab,))
         time.sleep(0.4)
         device.capture(f"settings-{tab.lower()}")
 
@@ -253,25 +319,43 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.tap("Outrun")
 
     open_menu(device, "Chat")
-    device.set_narrow_large_font()
+    device.set_display_profile(
+        "wide-navigation-rail", target_width_dp=700, font_scale=1.0
+    )
+    device.await_label("Workspace")
+    device.assert_accessible_targets(("Chat", "Workspace", "Settings"))
+    device.capture("wide-navigation-rail")
+    device.restore_profile()
+    device.await_label("Chat")
+
+    device.set_display_profile(
+        "narrow-large-font", target_width_dp=320, font_scale=1.30
+    )
     device.await_label("Chat")
     device.capture("narrow-large-font")
     device.restore_profile()
     device.await_label("Chat")
 
-    # Focusing but never submitting the composer is enough to prove the IME viewport.
+    # Keep a draft only; never submit it. The local chat path must become usable for
+    # this lifecycle acceptance or the screenshot gate fails honestly.
     device.await_label("Ask anything…", timeout=30.0)
     device.tap("Ask anything…")
-    time.sleep(0.8)
+    device.type_text("ui_draft_939")
     device.capture("ime-composer")
     device.press_back()
+    device.recreate()
+    device.await_contains("ui_draft_939")
+    device.capture("recreated-chat-draft")
 
     open_menu(device, "Settings")
-    device.tap_tab("Diagnostics")
-    device.await_label("Diagnostics")
+    device.tap_tab("Connection")
+    device.await_label("tcp://host:port")
+    device.tap("tcp://host:port")
+    device.type_text("ui_connection_draft")
+    device.press_back()
     device.recreate()
-    device.await_label("Diagnostics")
-    device.capture("recreated-settings")
+    device.await_contains("ui_connection_draft")
+    device.capture("recreated-connection-draft")
 
     device.press_back()
     device.await_label("Runtime")
@@ -292,11 +376,17 @@ def main() -> None:
     args.output.mkdir(parents=True, exist_ok=True)
     device = Device(args.serial, args.output)
     result = {
-        "source_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+        "source_sha": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True
+        ).strip(),
         "serial": args.serial,
         "passed": False,
         "screenshots": device.screenshots,
         "profiles": device.profiles,
+        "accessibility_semantics": device.accessibility_semantics,
+        # UIAutomator semantics are useful accessibility evidence, but they are not
+        # proof of real TalkBack spoken traversal. Keep that hardware/service claim false.
+        "talkback_spoken_traversal": False,
     }
     try:
         result["device"] = {
