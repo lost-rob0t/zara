@@ -60,6 +60,30 @@ global_action(notifications).
 Plans are bounded to 32 actions.  Atoms and strings are bounded and parsed as
 data.  Unknown actions fail closed.
 
+* Bixby handoff
+
+Samsung Bixby is exposed as the reviewed semantic app alias =bixby=.  Zara does
+not expose a raw Bixby Intent, component, command receiver, package name, or
+arbitrary command injection surface to Prolog.
+
+The seeded local rule is:
+
+#+begin_src prolog
+automation(open_bixby,
+    actions([
+        open_app(bixby)
+    ])).
+#+end_src
+
+The Automation surface includes a =Bixby= action that runs =open_bixby=.  Android
+resolves the reviewed alias to Samsung's Bixby package and launches its normal
+public app surface.  If Bixby is absent or not launchable on the device, the
+existing typed =Unavailable= path is returned instead of fabricating success.
+No Accessibility permission is needed for this handoff.
+
+This integration intentionally stops at launching Bixby.  Zara does not depend
+on undocumented Samsung receivers to inject text or commands into Bixby.
+
 * YouTube demo
 
 The app seeds =android_automation.pl= only when the user has not already created
