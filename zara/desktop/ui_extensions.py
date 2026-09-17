@@ -90,9 +90,15 @@ class DesktopUiExtensionHost(QWidget):
             button = QPushButton(contribution.label, self)
             button.setObjectName("zaraSecondaryAction")
             button.setAccessibleName(contribution.label)
-            button.clicked.connect(
-                lambda _checked=False, action=contribution.action: self.action_requested.emit(action)
-            )
+            if contribution.action.startswith("plugin:"):
+                button.setEnabled(False)
+                button.setToolTip(
+                    "Unavailable until the typed plugin host dispatcher is connected."
+                )
+            else:
+                button.clicked.connect(
+                    lambda _checked=False, action=contribution.action: self.action_requested.emit(action)
+                )
             return button
 
         if contribution.kind is UiContributionKind.TOGGLE:
