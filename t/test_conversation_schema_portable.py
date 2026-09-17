@@ -1,0 +1,129 @@
+from __future__ import annotations
+
+import sqlite3
+
+from zara.conversation_schema import (
+    CONVERSATION_SCHEMA_VERSION,
+    LEGACY_LOCAL_PRINCIPAL_ID,
+    PORTABLE_LOCAL_PRINCIPAL_ID,
+    conversation_schema_statements,
+)
+from zara.database import DatabaseManager
+from zara.desktop.conversation import ConversationStore
+from zara.principals import PrincipalContext
+
+
+def test_canonical_schema_has_desktop_compatible_tables_and_columns(tmp_path):
+    path = tmp_path / "portable.db"
+    conn = sqlite3.connect(path)
+    try:
+        for statement in conversation_schema_statements():
+            conn.execute(statement)
+        conversation_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(desktop_conversations)")
+        }
+        message_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(desktop_messages)")
+        }
+    finally:
+        conn.close()
+
+    assert CONVERSATION_SCHEMA_VERSION == 2
+    assert conversation_columns == {
+        "id",
+        "title",
+        "created_at",
+        "updated_at",
+        "provider",
+        "model",
+        "principal_id",
+    }
+    assert message_columns == {
+        "id",
+        "conversation_id",
+        "sequence",
+        "turn_id",
+        "role",
+        "content",
+        "status",
+        "error",
+        "tool_run_id",
+        "created_at",
+        "updated_at",
+        "principal_id",
+    }
+
+
+def test_local_owner_rows_use_platform_neutral_principal(tmp_path):
+    db = DatabaseManager(tmp_path / "zara.db")
+    store = ConversationStore(
+        db,
+        principal=PrincipalContext("uid:12345", kind="local-owner"),
+    )
+    conversation = store.create_conversation("Portable")
+
+    row = db.fetch_one(
+        "SELECT principal_id FROM desktop_conversations WHERE id = ?",
+        (conversation.id,),
+    )
+    assert row["principal_id"] == PORTABLE_LOCAL_PRINCIPAL_ID
+    assert store.storage_principal_id == PORTABLE_LOCAL_PRINCIPAL_ID
+
+
+def test_android_style_portable_row_is_readable_by_different_desktop_uid(tmp_path):
+    path = tmp_path / "from-android.db"
+    conn = sqlite3.connect(path)
+    try:
+        for statement in conversation_schema_statements():
+            conn.execute(statement)
+        conn.execute(
+            """
+            INSERT INTO desktop_conversations
+                (id, title, created_at, updated_at, provider, model, principal_id)
+            VALUES (?, ?, ?, ?, '', '', ?)
+            """,
+            (
+                "android-conversation",
+                "Moved from Android",
+                "2026-09-17T01:00:00.000000",
+                "2026-09-17T01:00:00.000000",
+                PORTABLE_LOCAL_PRINCIPAL_ID,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    store = ConversationStore(
+        DatabaseManager(path),
+        principal=PrincipalContext("uid:99999", kind="local-owner"),
+    )
+    record = store.get_conversation("android-conversation")
+    assert record is not None
+    assert record.title == "Moved from Android"
+
+
+def test_legacy_local_principals_migrate_to_portable_owner(tmp_path):
+    path = tmp_path / "legacy.db"
+    owner = PrincipalContext("uid:4242", kind="local-owner")
+    db = DatabaseManager(path)
+    store = ConversationStore(db, principal=owner)
+    first = store.create_conversation("Current UID")
+    second = store.create_conversation("Legacy sentinel")
+    db.execute(
+        "UPDATE desktop_conversations SET principal_id = ? WHERE id = ?",
+        (owner.principal_id, first.id),
+    )
+    db.execute(
+        "UPDATE desktop_conversations SET principal_id = ? WHERE id = ?",
+        (LEGACY_LOCAL_PRINCIPAL_ID, second.id),
+    )
+    db.close()
+
+    reopened_db = DatabaseManager(path)
+    reopened = ConversationStore(reopened_db, principal=owner)
+    rows = reopened_db.fetch_all(
+        "SELECT id, principal_id FROM desktop_conversations ORDER BY id"
+    )
+    assert {row["principal_id"] for row in rows} == {PORTABLE_LOCAL_PRINCIPAL_ID}
+    assert {record.id for record in reopened.list_conversations()} == {first.id, second.id}
