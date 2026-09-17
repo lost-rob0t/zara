@@ -57,7 +57,10 @@ data class OpenRouterProviderPolicy(
     val maxCompletionUsdPerMillion: Double? = null,
 ) {
     fun validated(): OpenRouterProviderPolicy {
-        val safeQuantizations = normalizeTokens(quantizations, "quantization")
+        val safeQuantizations = normalizeTokens(quantizations, "quantization").map { it.lowercase() }
+        require(safeQuantizations.size == safeQuantizations.toSet().size) {
+            "OpenRouter quantization list contains duplicates"
+        }
         require("unknown" !in safeQuantizations) {
             "OpenRouter quantization must be explicit; unknown is not routable"
         }
