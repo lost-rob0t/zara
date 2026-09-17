@@ -26,6 +26,18 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 
 @Composable
+internal fun ProjectBreadcrumb(project: ProjectContext) {
+    val tokens = LocalZaraTokens.current
+    Text(
+        "Chat / ${project.name}",
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp),
+        color = tokens.accentCyan,
+        fontFamily = FontFamily.Monospace,
+        style = MaterialTheme.typography.labelMedium,
+    )
+}
+
+@Composable
 internal fun ProjectsSurface(
     state: ProjectContextState,
     operationBusy: Boolean,
@@ -34,7 +46,6 @@ internal fun ProjectsSurface(
     padding: PaddingValues,
 ) {
     var projectName by rememberSaveable { mutableStateOf("") }
-    val tokens = LocalZaraTokens.current
     ScreenBody(padding) {
         ScreenTitle("Projects", "Persistent app-private work contexts")
         state.loadFailure?.let(::ErrorBanner)
