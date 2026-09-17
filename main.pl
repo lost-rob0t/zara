@@ -9,6 +9,8 @@
 :- use_module('kb/intents').
 :- use_module('modules/config_loader').
 :- use_module('modules/hooks_loader').
+:- use_module('modules/prolog_mode', []).
+:- use_module('modules/output_policy', []).
 :- discontiguous handle_input/1.
 
 :- initialization(config_loader:load_user_config).

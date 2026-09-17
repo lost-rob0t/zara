@@ -1,0 +1,78 @@
+#+title: Native Prolog mode and model-output policy
+
+* Native mode
+Set the existing agent backend in =config.toml=:
+
+#+begin_src toml
+[agent]
+backend = "prolog"
+#+end_src
+
+Native Prolog is registered as =core:prolog= alongside =core:langgraph=.
+It does not require =hooks.allow_override=, an LLM client, provider credentials,
+or an embedding client. This does not change the default LangGraph backend.
+There is no Prolog-RLM dependency. Ordinary conversation history, turn identity,
+and completion events remain owned by AgentManager/RuntimeHost.
+
+The selected backend accepts =member(X, [red, green]).=, =?- member(X, [red, green]).=
+and =/prolog member(X, [red, green]).=. The prefix is syntax within native mode,
+not a global slash-command dispatcher. Responses include bindings and structured
+=mode= / =prolog= metadata, distinguish false from errors, and cap solutions at
+64 without executing a 65th solution. A limit flag means the cap was reached;
+it does not prove more solutions exist. Queries have a two-second and 100,000
+inference budget. Cooperative limits are not process isolation for foreign code.
+
+Only the trusted host principal ="local"= is initially allowed. Additional
+principals require =prolog_mode:allow_principal/1= in trusted consulted Prolog.
+Goals pass SWI's safe-goal analysis unless trusted =prolog_mode:allow_goal/2=
+grants a specific goal. Full executable rules are supported at this extension
+point; permission grants belong in operator-owned source, never model output.
+Do not expose an unrestricted local-principal endpoint to remote clients.
+
+This change adds the runtime backend, not a new Android mode picker or IDE UI.
+
+* Policy extension contract
+=output_policy:advice(Id, Priority, Context, Text, Advice)= is a multifile,
+dynamic predicate. The ID is an atom, priority an integer, Context a dict,
+and Text/Advice strings. Rules are executable Prolog, not a fixed fact format.
+An external service plugin can consult its operator-owned policy source through
+the canonical PrologEngine and wrap the model using =AdvisedModel=.
+
+#+begin_src prolog
+:- multifile output_policy:advice/5.
+
+output_policy:advice(no_preamble, 100, _Context, Text,
+    "Remove the AI preamble and answer the question directly.") :-
+    output_policy:text_matches(icontains("as an ai language model"), Text).
+#+end_src
+
+Helpers: =exact(String)=, =contains(String)=, =icontains(String)=,
+=all(List)=, =any(List)= and =not(Matcher)=. Rule bodies can call other permitted
+Prolog predicates. There is no built-in regular-expression matcher in this slice.
+Advice is sorted by priority then ID; duplicate IDs and invalid advice fail closed.
+Evaluation has a one-second / 100,000 inference budget, at most 32 advice records,
+and bounded input/advice lengths. Text and host context are quoted data, never
+consulted or called as generated code.
+
+* Model behavior
+The existing conversation loop runs once. The plugin wraps only its model client.
+Tool-free final drafts are buffered until accepted, including the graph's chat/TTS
+stream path. On a match, the model receives ephemeral application advice and a
+revision request. The default permits two revisions, with an absolute maximum of
+three. Advice and rejected drafts do not mutate the original history. Exhaustion,
+invalid policies and new tool calls during revision withhold the final draft.
+
+Initial tool-call messages, including attached narration, pass through unchanged
+and retain the existing approval policy. Thus this is a final-answer policy,
+not a tool-argument validator, tool-narration filter, or a universal data-loss
+prevention/security boundary. Hidden reasoning is not inspected. Matching style
+rules does not verify factual correctness. Enabling buffering trades streaming
+latency for withholding rejected final drafts.
+
+* Verification
+The dependency-free Python contracts exercise quoting, deterministic ordering,
+limits, cancellation, malformed results, tool protocol and model revisions.
+=t/test_prolog_mode_manager.py= exercises the real manager when dependencies exist.
+=t/test_prolog_policy_swipl.py= runs both new plunit suites from the existing pytest
+gate. Release still requires the full =nix develop -c bash scripts/test-all.sh=
+and exact-commit CI gate, not just the lightweight tests.

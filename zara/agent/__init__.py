@@ -28,6 +28,7 @@ from .graph import run_conversation_loop, validate_and_clean_messages
 from .hooks import AgentLoopAdviceRegistry, HookDiagnostic
 from .loops import AgentLoopBackendOverrideDisabled, AgentLoopDiagnostic, AgentLoopRegistry
 from .prompting import build_agent_system_prompt
+from .prolog_mode import run_prolog_conversation_loop
 from .tools.registry import ToolRegistry
 from .user_hooks import UserHookLoader
 from ..config import ZaraConfig, get_config
@@ -63,13 +64,16 @@ class AgentManager:
         self.prolog_engine = prolog_engine
         self.principal = principal
 
-        llm_config = self.config.get_llm_config()
-        self.llm_client = self._create_llm_client(llm_config)
+        initial_backend = str(self.config.get_section("agent").get("backend", "langgraph")).strip().lower()
+        self.llm_client = (
+            None if initial_backend == "prolog"
+            else self._create_llm_client(self.config.get_llm_config())
+        )
 
         memory_config = self.config.get_section("memory")
-        self.memory_manager = memory_manager or build_memory_manager(
-            memory_config,
-            principal=principal,
+        self.memory_manager = memory_manager or (
+            None if initial_backend == "prolog"
+            else build_memory_manager(memory_config, principal=principal)
         )
         self.memory_context_limit = int(memory_config.get("max_chars", 1200))
         self.memory_top_k = int(memory_config.get("top_k", 5))
@@ -96,6 +100,9 @@ class AgentManager:
             "langgraph",
             "core:langgraph",
             run_conversation_loop,
+        )
+        self.agent_loop_registry.register(
+            "prolog", "core:prolog", run_prolog_conversation_loop,
         )
         get_hooks_config = getattr(self.config, "get_hooks_config", None)
         hooks_config = (
@@ -227,6 +234,7 @@ class AgentManager:
         if registry is None:
             registry = AgentLoopRegistry()
             registry.register("langgraph", "core:langgraph", run_conversation_loop)
+            registry.register("prolog", "core:prolog", run_prolog_conversation_loop)
             self.agent_loop_registry = registry
         return registry
 
@@ -249,13 +257,20 @@ class AgentManager:
         backend_name = str(agent_config.get("backend", "langgraph"))
         backend = self._get_agent_loop_registry().resolve(backend_name)
         advice_registry = self._get_agent_loop_advice()
-        if backend.name != "langgraph" and not (
+        native_prolog = (
+            backend.name == "prolog" and backend.owner == "core:prolog"
+            and backend.callback is run_prolog_conversation_loop
+        )
+        if backend.name != "langgraph" and not native_prolog and not (
             advice_registry.enabled and advice_registry.allow_override
         ):
             raise AgentLoopBackendOverrideDisabled(
                 "custom agent loop backends require hooks.enabled=true and "
                 "hooks.allow_override=true"
             )
+
+        if not native_prolog and self.llm_client is None:
+            self.llm_client = self._create_llm_client(self.config.get_llm_config())
 
         if turn_id is None:
             if latency_trace is not None:
@@ -293,6 +308,7 @@ class AgentManager:
             "turn_id": turn_id,
             "conversation_id": conversation_id,
             "user_input": user_input,
+            "backend": backend.name,
             "messages": cleaned_history,
             "tool_calls": [],
             "tool_results": [],
@@ -302,7 +318,7 @@ class AgentManager:
             "latency_trace": latency_trace,
         }
 
-        system_prompt = self._build_system_prompt()
+        system_prompt = None if native_prolog else self._build_system_prompt()
 
         if system_prompt:
             if not state["messages"] or not isinstance(state["messages"][0], SystemMessage):
@@ -312,7 +328,7 @@ class AgentManager:
                 logger.info("[AgentManager] System prompt already present")
 
         memory_context_message = None
-        memory_context = self._build_memory_context(user_input)
+        memory_context = None if native_prolog else self._build_memory_context(user_input)
         if memory_context:
             memory_context_message = SystemMessage(
                 content=memory_context,
@@ -361,12 +377,15 @@ class AgentManager:
         if not provided_history:
             self.conversation_manager.conversation_history = result_messages
 
-        return {
+        response_packet = {
             "response": result.get("response", "I'm not sure how to respond to that."),
             "tool_results": result.get("tool_results", []),
             "turn_id": turn_id,
             "conversation_id": conversation_id,
         }
+        if native_prolog:
+            response_packet.update(mode="prolog", prolog=result.get("prolog"))
+        return response_packet
 
     def _build_memory_context(self, user_input: str) -> Optional[str]:
         if self.memory_manager is None:
