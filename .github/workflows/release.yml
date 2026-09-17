@@ -8,6 +8,8 @@ on:
       - 'v*'
     paths:
       - android/app/build.gradle.kts
+      - android/wear-app/build.gradle.kts
+      - android/wear-watchface/build.gradle.kts
 
 permissions:
   contents: write
@@ -76,7 +78,7 @@ jobs:
       - name: Run Android release gate
         run: nix develop ./android -c bash scripts/test-android-release.sh
 
-      - name: Prepare APK and checksum
+      - name: Prepare APKs and checksums
         id: artifact
         shell: bash
         env:
@@ -85,30 +87,49 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          apk="dist/zara-android-${VERSION}.apk"
-          cp android/app/build/outputs/apk/debug/app-debug.apk "$apk"
-          sha256sum "$apk" > "${apk}.sha256"
+          phone_apk="dist/zara-android-${VERSION}.apk"
+          wear_apk="dist/zara-wear-${VERSION}.apk"
+          agenda_apk="dist/zara-agenda-${VERSION}.apk"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$phone_apk"
+          cp android/wear-app/build/outputs/apk/debug/wear-app-debug.apk "$wear_apk"
+          cp android/wear-watchface/build/outputs/apk/debug/wear-watchface-debug.apk "$agenda_apk"
+          sha256sum "$phone_apk" > "${phone_apk}.sha256"
+          sha256sum "$wear_apk" > "${wear_apk}.sha256"
+          sha256sum "$agenda_apk" > "${agenda_apk}.sha256"
           {
-            echo "schema=1"
+            echo "schema=2"
             echo "source_sha=${GITHUB_SHA}"
             echo "version_name=${VERSION}"
             echo "version_code=${VERSION_CODE}"
-            echo "apk=$(basename "$apk")"
-            echo "apk_sha256=$(sha256sum "$apk" | awk '{print $1}')"
+            echo "phone_apk=$(basename "$phone_apk")"
+            echo "phone_sha256=$(sha256sum "$phone_apk" | awk '{print $1}')"
+            echo "wear_apk=$(basename "$wear_apk")"
+            echo "wear_sha256=$(sha256sum "$wear_apk" | awk '{print $1}')"
+            echo "agenda_apk=$(basename "$agenda_apk")"
+            echo "agenda_sha256=$(sha256sum "$agenda_apk" | awk '{print $1}')"
           } > "dist/zara-android-${VERSION}.manifest.txt"
-          echo "apk=$apk" >> "$GITHUB_OUTPUT"
+          echo "phone_apk=$phone_apk" >> "$GITHUB_OUTPUT"
+          echo "wear_apk=$wear_apk" >> "$GITHUB_OUTPUT"
+          echo "agenda_apk=$agenda_apk" >> "$GITHUB_OUTPUT"
           echo "manifest=dist/zara-android-${VERSION}.manifest.txt" >> "$GITHUB_OUTPUT"
 
-      - name: Verify update-compatible Android signing certificate
+      - name: Verify update-compatible Android signing certificates
         env:
-          APK: ${{ steps.artifact.outputs.apk }}
-        run: nix develop ./android -c bash scripts/check-android-apk-signer.sh "$APK"
+          PHONE_APK: ${{ steps.artifact.outputs.phone_apk }}
+          WEAR_APK: ${{ steps.artifact.outputs.wear_apk }}
+          AGENDA_APK: ${{ steps.artifact.outputs.agenda_apk }}
+        run: |
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$PHONE_APK"
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$WEAR_APK"
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$AGENDA_APK"
 
       - name: Publish GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release.outputs.tag }}
-          APK: ${{ steps.artifact.outputs.apk }}
+          PHONE_APK: ${{ steps.artifact.outputs.phone_apk }}
+          WEAR_APK: ${{ steps.artifact.outputs.wear_apk }}
+          AGENDA_APK: ${{ steps.artifact.outputs.agenda_apk }}
           MANIFEST: ${{ steps.artifact.outputs.manifest }}
         shell: bash
         run: |
@@ -120,10 +141,11 @@ jobs:
           fi
 
           gh release create "$TAG" \
-            "$APK" \
-            "${APK}.sha256" \
+            "$PHONE_APK" "${PHONE_APK}.sha256" \
+            "$WEAR_APK" "${WEAR_APK}.sha256" \
+            "$AGENDA_APK" "${AGENDA_APK}.sha256" \
             "$MANIFEST" \
             --target "$GITHUB_SHA" \
             --title "Zara $TAG" \
             --prerelease \
-            --notes "Android alpha preview of Zara. This is a debug-signed APK intended for direct sideloading/testing, not a production Play Store build. Requires Android 10 (API 29) or newer. Verify the APK with the accompanying SHA-256 file. Source commit: $GITHUB_SHA"
+            --notes "Android alpha preview of Zara, Zara Wear, and the Zara Agenda watch face. These are debug-signed APKs intended for direct sideloading/testing. Verify each APK with its SHA-256 file. Source commit: $GITHUB_SHA"
