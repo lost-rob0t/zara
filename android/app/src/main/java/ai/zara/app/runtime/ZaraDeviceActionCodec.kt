@@ -44,6 +44,8 @@ object ZaraDeviceActionCodec {
     private val marker = "ZARA/1".encodeToByteArray()
     private const val maxEnvelopeBytes = 64 * 1024
     private const val maxIdBytes = 128
+    private const val maxRawArguments = 128
+    private const val maxResultTextBytes = 48 * 1024
 
     fun decodeServerMessage(frames: List<ByteArray>): DeviceServerMessage {
         if (frames.size != 2 || !frames[0].contentEquals(marker)) {
@@ -94,13 +96,36 @@ object ZaraDeviceActionCodec {
         sessionId: String,
         actionId: String,
         timestampNs: Long,
-    ): List<ByteArray> = encodeTerminalLike(
-        type = "device.action.result",
-        requestId = requestId,
-        sessionId = sessionId,
-        timestampNs = timestampNs,
-        body = "{\"action_id\":${jsonString(token("action_id", actionId))},\"outcome\":\"completed\"}",
-    )
+        backend: String? = null,
+        identity: String? = null,
+        output: String? = null,
+    ): List<ByteArray> {
+        val body = buildString {
+            append("{\"action_id\":")
+            append(jsonString(token("action_id", actionId)))
+            append(",\"outcome\":\"completed\"")
+            backend?.let {
+                append(",\"backend\":")
+                append(jsonString(rawToken("backend", it, 64)))
+            }
+            identity?.let {
+                append(",\"identity\":")
+                append(jsonString(boundedUtf8("identity", it, 256)))
+            }
+            output?.let {
+                append(",\"output\":")
+                append(jsonString(boundedUtf8("output", it, maxResultTextBytes)))
+            }
+            append('}')
+        }
+        return encodeTerminalLike(
+            type = "device.action.result",
+            requestId = requestId,
+            sessionId = sessionId,
+            timestampNs = timestampNs,
+            body = body,
+        )
+    }
 
     fun encodeError(
         requestId: String,
@@ -110,7 +135,7 @@ object ZaraDeviceActionCodec {
         message: String?,
         timestampNs: Long,
     ): List<ByteArray> {
-        val safeMessage = message?.let { boundedText("message", it, 256) }
+        val safeMessage = message?.let { boundedUtf8("message", it, 1_024) }
         val body = buildString {
             append("{\"action_id\":")
             append(jsonString(token("action_id", actionId)))
@@ -172,7 +197,7 @@ object ZaraDeviceActionCodec {
     ): DeviceServerMessage.Cancel {
         val validKeys = body.keys == setOf("action_id") || body.keys == setOf("action_id", "reason")
         if (!validKeys) throw ZaraWireException("device action cancel body has invalid fields")
-        val reason = optionalString(body, "reason")?.let { boundedText("reason", it, 256) }
+        val reason = optionalString(body, "reason")?.let { boundedUtf8("reason", it, 256) }
         return DeviceServerMessage.Cancel(
             id = id,
             sessionId = sessionId,
@@ -197,6 +222,26 @@ object ZaraDeviceActionCodec {
             if (app.isEmpty()) throw ZaraWireException("app must not be empty")
             DeviceActionArguments.OpenApp(app)
         }
+        DeviceCapability.AndroidRaw -> {
+            requireExactKeys(args, setOf("backend", "operation", "arguments"), "android_raw args")
+            val backend = rawToken("backend", requiredString(args, "backend", 64), 64)
+            val operation = rawOperation(requiredString(args, "operation", 128))
+            val rawArguments = requiredObject(args, "arguments")
+            if (rawArguments.size > maxRawArguments) {
+                throw ZaraWireException("android_raw arguments exceed count limit")
+            }
+            val decoded = linkedMapOf<String, String>()
+            rawArguments.forEach { (key, value) ->
+                val argumentKey = rawArgumentKey(key)
+                val argumentValue = value as? String
+                    ?: throw ZaraWireException("android_raw argument values must be strings")
+                if (argumentValue.encodeToByteArray().size > maxEnvelopeBytes) {
+                    throw ZaraWireException("android_raw argument exceeds byte limit")
+                }
+                decoded[argumentKey] = argumentValue
+            }
+            DeviceActionArguments.AndroidRaw(backend, operation, decoded)
+        }
     }
 
     private fun encodeTerminalLike(
@@ -211,7 +256,9 @@ object ZaraDeviceActionCodec {
             "{\"body\":$body,\"id\":${jsonString(token("id", requestId))},\"payload_count\":0," +
                 "\"session_id\":${jsonString(token("session_id", sessionId))}," +
                 "\"timestamp_ns\":$timestampNs,\"type\":${jsonString(type)}}"
-        return listOf(marker.copyOf(), envelope.encodeToByteArray())
+        val bytes = envelope.encodeToByteArray()
+        require(bytes.size <= maxEnvelopeBytes) { "device action result envelope exceeds byte limit" }
+        return listOf(marker.copyOf(), bytes)
     }
 
     private fun rejectUnknown(
@@ -255,11 +302,37 @@ object ZaraDeviceActionCodec {
         return value
     }
 
+    private fun rawToken(name: String, value: String, maxBytes: Int): String {
+        if (!value.matches(Regex("[a-z][a-z0-9_]{0,63}")) || value.encodeToByteArray().size > maxBytes) {
+            throw ZaraWireException("$name is invalid")
+        }
+        return value
+    }
+
+    private fun rawOperation(value: String): String {
+        if (!value.matches(Regex("[a-z][a-z0-9_.:-]{0,127}"))) {
+            throw ZaraWireException("operation is invalid")
+        }
+        return value
+    }
+
+    private fun rawArgumentKey(value: String): String {
+        if (!value.matches(Regex("[a-zA-Z][a-zA-Z0-9_.:-]{0,127}"))) {
+            throw ZaraWireException("android_raw argument key is invalid")
+        }
+        return value
+    }
+
     private fun boundedText(name: String, value: String, maxBytes: Int): String {
         if (value.encodeToByteArray().size > maxBytes) throw ZaraWireException("$name exceeds byte limit")
         if (value.any { it.code < 0x20 || it.code == 0x7f }) {
             throw ZaraWireException("$name contains control characters")
         }
+        return value
+    }
+
+    private fun boundedUtf8(name: String, value: String, maxBytes: Int): String {
+        if (value.encodeToByteArray().size > maxBytes) throw ZaraWireException("$name exceeds byte limit")
         return value
     }
 
