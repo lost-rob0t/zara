@@ -1,0 +1,78 @@
+#+title: RAGE #895 — full Android Prolog and expert-system IDE
+
+* Iteration 1 — workspace language services and safe authoring
+
+- Consumed issue :: #895
+- RAGE start commit :: =28ecbe344d6d21985b31ba621caa42203da914ad= (PR #894 exact remote head)
+- Parent boundary :: #652 owns read-only runtime/source introspection. #895 adds editing only for the app-private user workspace.
+- Failure evidence :: CI run 35169153487: Android/Wear/native Trealla/APK gate green; repository test job failed only because the new backlog test marked explicit-priority fixture #152 as an idea. 2224 other tests passed.
+
+** Research
+
+- Existing =PrologWorkspace= already provides private-root containment, visible =.pl= basenames, a 512 KiB per-source limit and atomic replacement.
+- Existing =LocalZaraServer= serializes Trealla through one actor and replaces the runtime on reload. It retains no separate editor runtime.
+- Existing analyzer splits clauses and produces source-line graph provenance, but highlighting is regex-only, completion assumes end-of-document, and editing lacks history/search/rename/import/export contracts.
+- Android UI must not gain authority over bundled semantic assets, plugin sources, arbitrary filesystem paths, or effectful Prolog predicates.
+- A deterministic Kotlin lexer/state machine is preferable to regex layers because comments, quoting, directives and operator tokens overlap. Trealla remains the semantic authority; the lexer is editor assistance only.
+
+** Architecture / design
+
+- Keep =PrologWorkspace= as the only writable source store; add rename and bounded text-bundle import/export using the same filename validator.
+- Add a pure =PrologLexer= producing typed offset ranges for rendering, completion context and tests. It never executes Prolog.
+- Add immutable =PrologEditorHistory= with bounded undo/redo and cursor-safe edits.
+- Add =PrologSearch= with bounded literal matches and exact source offsets.
+- Make completion cursor-aware and schema-aware across every workspace document.
+- Preserve save/reload rollback: invalid editor diagnostics block save; runtime consult failure must leave the last good source/runtime generation intact.
+- Reject archive/zip import in this iteration; a line-oriented bounded bundle avoids traversal and decompression bombs while proving the product contract.
+
+** RED test map
+
+1. Lexer distinguishes comments, directives, variables, atoms, numbers, strings and operators with stable offsets.
+2. Completion uses the actual cursor prefix and workspace schema signatures.
+3. History provides bounded undo/redo and drops redo after a new edit.
+4. Search returns bounded source/line/column matches.
+5. Workspace rename remains inside the private root and refuses overwrite/traversal.
+6. Bundle import/export round-trips multiple sources and rejects oversized, malformed and duplicate entries.
+7. Existing query-policy, analyzer, graph and workspace regression tests stay green.
+
+** Verification gate
+
+- Focused Android JVM tests for =PrologStudioTest=.
+- Full Android/Wear/native Trealla/APK gate.
+- Full repository suite and flake/package gates.
+- Exact-head Actions must pass before merge; then deterministic screenshots and a tagged APK release are still required.
+
+* Iteration 2 — local-client expert routing and full KB management
+
+- Starting remote head :: =54e5a9d64368221854f4675fdfe22866833ace5d=.
+- User priority :: prove local clients can use the private Prolog workspace and expert systems effectively before UI expansion.
+
+** Research / gap
+
+- =AndroidAppSession.submitLocalText= sends =?-= text to the bounded query API, but all other text goes only through canonical =resolve_frames/4=.
+- User expert predicates are loaded into the same Trealla generation, yet local chat has no explicit, typed route to invoke them.
+- The Logic surface can create/save sources but cannot rename/delete, import/export the whole KB, or keep several small query consoles.
+
+** Design
+
+- Add a pure parser for =/prolog GOAL= and =/expert PREDICATE ENTITY=. It produces a bounded direct query that must bind =Result= and never uses =call/1=.
+- Validate expert predicate names and expose only predicates ending in =_explain= or =_decision= from the current private workspace catalog.
+- Route parsed commands through the existing =LocalZaraServer.query= actor; plain chat retains =resolve_frames/4=.
+- Add session methods for rename/delete/import/export, each followed by atomic runtime reload and rollback where mutation can fail.
+- Add an Advanced KB pane and reusable mini query boxes; each box has its own query/result state and uses the canonical bounded query callback.
+
+** RED tests
+
+1. Command parser accepts bounded =/prolog= and workspace-declared =/expert= commands.
+2. Unknown/malformed/effectful expert commands fail before Trealla dispatch.
+3. Private workspace catalog distinguishes facts, rules, schemas and expert entry points.
+4. Rename/delete/import reload failures restore the previous sources and generation.
+5. Mini query-box model preserves independent query histories and bounded result rendering.
+
+** Intent helper generation extension
+
+- Input is a bounded list of action words plus an intent name, arity and argument schema.
+- =Deterministic= generation always exists offline and emits =verb_intent/3= plus typed helper predicates.
+- =OnDeviceLlm= and =Remote= are optional draft providers behind the same request/result contract. Remote configuration contains endpoint/model/public metadata only; credentials stay in protected configuration.
+- Model output is never consulted directly. It must parse as a closed draft, pass schema/query/source validation, display a diff/preview, and receive explicit approval before it enters the private workspace.
+- Provider failure falls back only to the deterministic compiler, never silently from local to remote.

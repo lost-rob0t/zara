@@ -38,10 +38,13 @@ import ai.zara.app.prolog.AndroidPortableSemanticAssetSource
 import ai.zara.app.prolog.NativeTreallaBridge
 import ai.zara.app.prolog.PortableSemanticAssetStager
 import ai.zara.app.prolog.PrologDocument
+import ai.zara.app.prolog.LocalPrologCommand
+import ai.zara.app.prolog.LocalNaturalLanguageExpertRouter
 import ai.zara.app.prolog.PrologExampleCatalog
 import ai.zara.app.prolog.PrologSource
 import ai.zara.app.prolog.PrologSourceAnalyzer
 import ai.zara.app.prolog.PrologWorkspace
+import ai.zara.app.prolog.PrologWorkspaceCatalog
 import ai.zara.app.voice.AndroidAudioFocusPlatform
 import ai.zara.app.voice.AndroidAudioRoutePlatform
 import ai.zara.app.voice.AndroidPcmOutput
@@ -191,6 +194,19 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun prologSources(): List<PrologSource> = prologWorkspace.listSources()
 
+    fun exportPrologWorkspace(): String = prologWorkspace.exportBundle()
+
+    fun renamePrologSource(from: String, to: String): CompletableFuture<List<PrologSource>> =
+        mutatePrologWorkspace { prologWorkspace.renameSource(from, to) }
+
+    fun deletePrologSource(name: String): CompletableFuture<List<PrologSource>> =
+        mutatePrologWorkspace {
+            check(prologWorkspace.deleteSource(name)) { "Prolog source could not be deleted" }
+        }
+
+    fun importPrologWorkspace(bundle: String): CompletableFuture<List<PrologSource>> =
+        mutatePrologWorkspace { prologWorkspace.importBundle(bundle) }
+
     fun analyzePrologSource(name: String, text: String): PrologDocument =
         PrologSourceAnalyzer.analyze(name, text)
 
@@ -230,6 +246,38 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun queryLocalProlog(query: String): CompletableFuture<LocalQueryResult> =
         localServer.query(query)
+
+    private fun mutatePrologWorkspace(mutation: () -> Unit): CompletableFuture<List<PrologSource>> {
+        val before = prologWorkspace.listSources()
+        try {
+            mutation()
+        } catch (error: Throwable) {
+            restorePrologWorkspace(before)
+            return CompletableFuture.failedFuture(error)
+        }
+        return localServer.reload().thenCompose { state ->
+            if (state.phase == LocalServerPhase.READY) {
+                CompletableFuture.completedFuture(prologWorkspace.listSources())
+            } else {
+                restorePrologWorkspace(before)
+                localServer.reload().thenCompose { restored ->
+                    val message = state.failure ?: "Prolog workspace failed to load"
+                    if (restored.phase == LocalServerPhase.READY) {
+                        CompletableFuture.failedFuture<List<PrologSource>>(IllegalArgumentException(message))
+                    } else {
+                        CompletableFuture.failedFuture<List<PrologSource>>(
+                            IllegalStateException("$message; previous workspace also failed to restore"),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun restorePrologWorkspace(sources: List<PrologSource>) {
+        prologWorkspace.listSources().forEach { prologWorkspace.deleteSource(it.name) }
+        sources.forEach { prologWorkspace.saveSource(it.name, it.text) }
+    }
 
     fun voiceState(): ManualVoiceState = voice.state()
 
@@ -323,10 +371,19 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     private fun submitLocalText(text: String): CompletableFuture<TextTurnResult> {
         val query = text.trim()
-        val future = if (query.startsWith("?-")) {
-            localServer.query(query)
-        } else {
-            localServer.resolve(query)
+        val catalog = PrologWorkspaceCatalog.from(prologWorkspace.listSources())
+        val future = when {
+            query.startsWith("?-") -> localServer.query(query)
+            query.startsWith("/prolog ") || query.startsWith("/expert ") -> {
+                val command = try {
+                    LocalPrologCommand.parse(query, catalog)
+                } catch (error: Throwable) {
+                    return CompletableFuture.failedFuture(error)
+                }
+                localServer.query(command.query)
+            }
+            else -> LocalNaturalLanguageExpertRouter.query(query, catalog)?.let(localServer::query)
+                ?: localServer.resolve(query)
         }
         return future.thenApply { result ->
             val answer = if (result.terms.isEmpty()) {

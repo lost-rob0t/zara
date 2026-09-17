@@ -432,6 +432,59 @@ class PrologWorkspace(private val root: File) {
         return !file.exists() || file.delete()
     }
 
+    fun renameSource(from: String, to: String): PrologSource {
+        val source = sourceFile(from)
+        check(source.isFile) { "Prolog source does not exist" }
+        val destination = sourceFile(to)
+        require(!destination.exists()) { "Prolog source already exists" }
+        try {
+            Files.move(source.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(source.toPath(), destination.toPath())
+        }
+        return PrologSource(destination.name, destination.readText())
+    }
+
+    fun exportBundle(): String = buildString {
+        append("ZARA-PROLOG-WORKSPACE/1\n")
+        listSources().forEach { source ->
+            val normalized = if (source.text.endsWith('\n')) source.text else source.text + "\n"
+            val bytes = normalized.encodeToByteArray()
+            append("SOURCE ").append(source.name).append(' ').append(bytes.size).append('\n')
+            append(normalized)
+            append("END-SOURCE\n")
+        }
+    }
+
+    fun importBundle(bundle: String): List<PrologSource> {
+        require(bundle.encodeToByteArray().size <= MAX_BUNDLE_BYTES) { "Workspace bundle is too large" }
+        val lines = bundle.lines()
+        require(lines.firstOrNull() == "ZARA-PROLOG-WORKSPACE/1") { "Unsupported workspace bundle" }
+        val imported = mutableListOf<PrologSource>()
+        val names = mutableSetOf<String>()
+        var index = 1
+        while (index < lines.size && lines[index].isNotEmpty()) {
+            val header = BUNDLE_HEADER.matchEntire(lines[index])
+                ?: throw IllegalArgumentException("Malformed workspace bundle header")
+            val name = header.groupValues[1]
+            val expectedBytes = header.groupValues[2].toInt()
+            require(names.add(name)) { "Duplicate workspace source" }
+            sourceFile(name)
+            index += 1
+            val body = mutableListOf<String>()
+            while (index < lines.size && lines[index] != "END-SOURCE") {
+                body += lines[index]
+                index += 1
+            }
+            require(index < lines.size) { "Unterminated workspace source" }
+            val text = body.joinToString("\n") + "\n"
+            require(text.encodeToByteArray().size == expectedBytes) { "Workspace source length mismatch" }
+            imported += saveSource(name, text)
+            index += 1
+        }
+        return imported
+    }
+
     fun sourceFiles(): List<File> = listSources().map { sourceFile(it.name) }
 
     private fun sourceFile(name: String): File {
@@ -447,6 +500,8 @@ class PrologWorkspace(private val root: File) {
     companion object {
         private val SOURCE_NAME = Regex("[a-zA-Z][a-zA-Z0-9_-]{0,63}\\.pl")
         private const val MAX_SOURCE_BYTES = 512 * 1024
+        private const val MAX_BUNDLE_BYTES = 4 * 1024 * 1024
+        private val BUNDLE_HEADER = Regex("SOURCE ([a-zA-Z][a-zA-Z0-9_-]{0,63}\\.pl) ([0-9]{1,7})")
     }
 }
 

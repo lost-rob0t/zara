@@ -17,8 +17,10 @@ import argparse
 import datetime
 import json
 import re
+import shutil
 import subprocess
 import sys
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -139,7 +141,7 @@ def render_backlog(issues: list[GhIssue], phases: list[str], master_last_merge: 
         out.append("\n% Closed issues referenced by dependency edges, phases or epics.\n")
         out.append(" ".join(f"closed({n})." for n in closed_ids) + "\n")
 
-    out.append("\n% Open issues: issue(Id, Priority, Status, ShortTitle).\n")
+    out.append("\n% Open prioritized work: issue(Id, Priority, Status, ShortTitle).\n")
     for issue in open_issues:
         priority = issue.priority
         if priority is None:
@@ -147,6 +149,11 @@ def render_backlog(issues: list[GhIssue], phases: list[str], master_last_merge: 
         out.append(
             f'issue({issue.number}, p{priority}, open, "{_escape(issue.title)}").\n'
         )
+
+    out.append("\n% Open unprioritized ideas: mirrored for discovery, excluded from next/1.\n")
+    for issue in open_issues:
+        if issue.priority is None:
+            out.append(f'idea_issue({issue.number}, "{_escape(issue.title)}").\n')
 
     out.append("\n% Roadmap order: phase(N, OrderedIssueIds). Rank = N*100 + index.\n")
     for line in sorted(phases, key=lambda l: int(re.search(r"\d+", l).group())):
@@ -171,12 +178,27 @@ def render_backlog(issues: list[GhIssue], phases: list[str], master_last_merge: 
 
 
 def fetch_issues(repo: str) -> list[GhIssue]:
-    proc = subprocess.run(
-        ["gh", "api", "--paginate",
-         f"repos/{repo}/issues?state=all&per_page=100"],
-        capture_output=True, text=True, check=True,
-    )
-    entries = json.loads(proc.stdout)
+    if shutil.which("gh"):
+        proc = subprocess.run(
+            ["gh", "api", "--paginate",
+             f"repos/{repo}/issues?state=all&per_page=100"],
+            capture_output=True, text=True, check=True,
+        )
+        entries = json.loads(proc.stdout)
+    else:
+        entries = []
+        page = 1
+        while True:
+            request = urllib.request.Request(
+                f"https://api.github.com/repos/{repo}/issues?state=all&per_page=100&page={page}",
+                headers={"Accept": "application/vnd.github+json", "User-Agent": "zara-backlog-import"},
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                batch = json.load(response)
+            entries.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
     issues = []
     for entry in entries:
         if "pull_request" in entry:
