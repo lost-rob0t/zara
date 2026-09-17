@@ -11,6 +11,7 @@ import android.os.Process
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 class RawIntentBackend(
     private val context: Context,
@@ -196,8 +197,21 @@ private fun executeCommand(
     val process = ProcessBuilder(prefix + command)
         .redirectErrorStream(true)
         .start()
+    val output = ByteArrayOutputStream(minOf(MAX_COMMAND_OUTPUT, 8192))
+    val reader = thread(name = "zara-shell-drain", isDaemon = true) {
+        process.inputStream.use { input ->
+            val buffer = ByteArray(8192)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                val remaining = MAX_COMMAND_OUTPUT - output.size()
+                if (remaining > 0) output.write(buffer, 0, minOf(read, remaining))
+            }
+        }
+    }
     if (!process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
         process.destroyForcibly()
+        reader.join(1_000)
         return AndroidOperationResult.failed(
             AndroidOperationError.FAILED,
             backend = backend,
@@ -205,33 +219,19 @@ private fun executeCommand(
             message = "command timed out",
         )
     }
-    val output = readBounded(process.inputStream.readBytesCompat(MAX_COMMAND_OUTPUT))
+    reader.join(1_000)
+    val text = output.toString(Charsets.UTF_8.name())
     val exit = process.exitValue()
     return if (exit == 0) {
-        AndroidOperationResult.completed(backend, identity, output)
+        AndroidOperationResult.completed(backend, identity, text)
     } else {
         AndroidOperationResult.failed(
             AndroidOperationError.FAILED,
             backend = backend,
             identity = identity,
-            message = "command exited $exit: ${output.take(2048)}",
+            message = "command exited $exit: ${text.take(2048)}",
         )
     }
 }
-
-private fun java.io.InputStream.readBytesCompat(limit: Int): ByteArray {
-    val output = ByteArrayOutputStream(minOf(limit, 8192))
-    val buffer = ByteArray(8192)
-    var remaining = limit
-    while (remaining > 0) {
-        val read = read(buffer, 0, minOf(buffer.size, remaining))
-        if (read < 0) break
-        output.write(buffer, 0, read)
-        remaining -= read
-    }
-    return output.toByteArray()
-}
-
-private fun readBounded(bytes: ByteArray): String = bytes.toString(Charsets.UTF_8)
 
 private const val MAX_COMMAND_OUTPUT = 256 * 1024
