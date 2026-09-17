@@ -16,7 +16,6 @@ from typing import Any, Dict, List, Optional
 DEFAULT_FILE_TOOL_MAX_BYTES = 20000
 DEFAULT_OLLAMA_ENDPOINT = "http://localhost:11434/api/chat"
 
-# Use tomllib (Python 3.11+) or fallback to tomli
 if sys.version_info >= (3, 11):
     import tomllib
 else:
@@ -115,7 +114,7 @@ total_timeout = 30.0
 
 [llm]
 # LLM provider for agent mode
-provider = "ollama"  # "anthropic", "openai", "openrouter", or "ollama"
+provider = "ollama"  # "anthropic", "openai", "openrouter", "ollama", or "llama_cpp"
 model = ""  # Leave empty for provider defaults
 endpoint = ""
 connect_timeout = 5.0
@@ -128,6 +127,26 @@ history_limit = 20
 # anthropic_api_key = ""
 # openai_api_key = ""
 # openrouter_api_key = ""
+
+[local_models]
+# Managed self-hosted model runtime. GGUF discovery never guesses quantization.
+model_dir = "~/.local/share/zarathushtra/models"
+model_path = ""
+binary = "llama-server"
+managed = true
+host = "127.0.0.1"
+port = 11435
+offload_mode = "auto"
+gpu_layers = "auto"
+split_mode = "layer"
+devices = ""
+tensor_split = ""
+main_gpu = 0
+fit = true
+fit_target_mib = "1024"
+context_size = 4096
+parallel = 1
+startup_timeout = 15.0
 
 [agent]
 # Conversational agent settings
@@ -291,7 +310,6 @@ class ZaraConfig:
             self.config_dir = Path(config_path).parent
             self.config_file = Path(config_path)
         else:
-            # Use XDG_CONFIG_HOME or default to ~/.config
             xdg_config = os.getenv("XDG_CONFIG_HOME")
             if xdg_config:
                 self.config_dir = Path(xdg_config) / "zarathushtra"
@@ -300,29 +318,18 @@ class ZaraConfig:
 
             self.config_file = self.config_dir / "config.toml"
 
-        # Initialize config if needed
         self._ensure_config_exists()
-
-        # Load configuration
         self._config = self._load_config()
 
     def _ensure_config_exists(self):
         """Create default config file if it doesn't exist."""
         if not self.config_file.exists():
-            # Create config directory
             self.config_dir.mkdir(parents=True, exist_ok=True)
-
-            # Write default config
             self.config_file.write_text(DEFAULT_CONFIG_TOML)
             print(f"Initialized default config at: {self.config_file}")
 
     def _load_config(self) -> Dict[str, Any]:
-        """
-        Load configuration from TOML file.
-
-        Returns:
-            Parsed configuration dict
-        """
+        """Load configuration from disk."""
         if tomllib is None:
             raise ConfigError("TOML support is unavailable; install tomli or use Python 3.11+")
 
@@ -368,7 +375,7 @@ class ZaraConfig:
         if not isinstance(llm_config, dict):
             raise ConfigError("Invalid [llm] configuration: expected a TOML table")
         llm_provider = llm_config.get("provider", "ollama")
-        if llm_provider not in {"anthropic", "openai", "openrouter", "ollama"}:
+        if llm_provider not in {"anthropic", "openai", "openrouter", "ollama", "llama_cpp"}:
             raise ConfigError(f"Unsupported LLM provider {llm_provider!r}")
         for key in ("connect_timeout", "read_timeout", "total_timeout"):
             value = llm_config.get(key, 1.0)
@@ -378,6 +385,47 @@ class ZaraConfig:
             value = llm_config.get(key, minimum)
             if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
                 raise ConfigError(f"llm.{key} must be an integer of at least {minimum}")
+
+        local_models = config.get("local_models", {})
+        if not isinstance(local_models, dict):
+            raise ConfigError("Invalid [local_models] configuration: expected a TOML table")
+        for key in (
+            "model_dir",
+            "model_path",
+            "binary",
+            "host",
+            "gpu_layers",
+            "devices",
+            "tensor_split",
+            "fit_target_mib",
+        ):
+            if not isinstance(local_models.get(key, ""), str):
+                raise ConfigError(f"local_models.{key} must be a string")
+        for key in ("managed", "fit"):
+            if not isinstance(local_models.get(key, True), bool):
+                raise ConfigError(f"local_models.{key} must be true or false")
+        if local_models.get("offload_mode", "auto") not in {"auto", "cpu", "single", "multi"}:
+            raise ConfigError("local_models.offload_mode must be auto, cpu, single, or multi")
+        if local_models.get("split_mode", "layer") not in {"none", "layer", "row", "tensor"}:
+            raise ConfigError("local_models.split_mode must be none, layer, row, or tensor")
+        port = local_models.get("port", 11435)
+        if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+            raise ConfigError("local_models.port must be an integer from 1 to 65535")
+        main_gpu = local_models.get("main_gpu", 0)
+        if isinstance(main_gpu, bool) or not isinstance(main_gpu, int) or main_gpu < 0:
+            raise ConfigError("local_models.main_gpu must be a non-negative integer")
+        for key, minimum in (("context_size", 128), ("parallel", 1)):
+            value = local_models.get(key, minimum)
+            if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                raise ConfigError(f"local_models.{key} must be an integer of at least {minimum}")
+        startup_timeout = local_models.get("startup_timeout", 15.0)
+        if (
+            isinstance(startup_timeout, bool)
+            or not isinstance(startup_timeout, (int, float))
+            or not math.isfinite(float(startup_timeout))
+            or startup_timeout <= 0
+        ):
+            raise ConfigError("local_models.startup_timeout must be a positive number")
 
         hooks_config = config.get("hooks", {})
         if not isinstance(hooks_config, dict):
@@ -566,43 +614,17 @@ class ZaraConfig:
                 raise ConfigError(f"latency.budgets.{key} must be a positive number")
 
     def get(self, section: str, key: str, default: Any = None) -> Any:
-        """
-        Get configuration value.
-
-        Args:
-            section: Config section (e.g., "llm", "agent")
-            key: Key within section
-            default: Default value if not found
-
-        Returns:
-            Configuration value or default
-        """
+        """Get a configuration value."""
         return self._config.get(section, {}).get(key, default)
 
     def get_section(self, section: str) -> Dict[str, Any]:
-        """
-        Get entire configuration section.
-
-        Args:
-            section: Section name
-
-        Returns:
-            Section dict or empty dict if not found
-        """
+        """Get an entire configuration section."""
         return self._config.get(section, {})
 
     def get_llm_config(self) -> Dict[str, Any]:
-        """
-        Get LLM configuration with environment variable override.
-
-        Environment variables take precedence over config file.
-
-        Returns:
-            LLM configuration dict
-        """
+        """Get LLM configuration with environment variable override."""
         llm_config = self.get_section("llm")
 
-        # Override with environment variables if set
         provider = os.getenv("ZARA_LLM_PROVIDER", llm_config.get("provider", "ollama"))
         model = os.getenv("ZARA_LLM_MODEL", llm_config.get("model", ""))
         endpoint_override = os.getenv("ZARA_LLM_ENDPOINT")
@@ -614,7 +636,6 @@ class ZaraConfig:
         ):
             endpoint = ""
 
-        # Get API keys from config or environment
         anthropic_key = os.getenv("ANTHROPIC_API_KEY", llm_config.get("anthropic_api_key", ""))
         openai_key = os.getenv("OPENAI_API_KEY", llm_config.get("openai_api_key", ""))
         openrouter_key = os.getenv(
@@ -635,6 +656,10 @@ class ZaraConfig:
             "history_limit": int(llm_config.get("history_limit", 20)),
         }
 
+    def get_local_models_config(self) -> Dict[str, Any]:
+        """Return managed self-hosted model runtime settings."""
+        return dict(self.get_section("local_models"))
+
     def get_latency_config(self) -> Dict[str, Any]:
         """Return structured latency metric settings and deterministic budgets."""
         latency_config = self.get_section("latency")
@@ -645,34 +670,21 @@ class ZaraConfig:
         }
 
     def get_module_search_paths(self) -> List[Path]:
-        """
-        Get module search paths with expansion.
-
-        Expands ~ and environment variables in paths.
-        Only returns existing directories.
-
-        Returns:
-            List of expanded Path objects
-        """
+        """Get module search paths with expansion."""
         modules_config = self.get_section("modules")
         search_paths = modules_config.get("search_paths", ["~/.zarathushtra/plugins"])
 
         expanded_paths = []
         for path_str in search_paths:
-            # Expand ~ and environment variables
             expanded = os.path.expanduser(os.path.expandvars(path_str))
             path = Path(expanded)
-
-            # Only include existing directories
             if path.exists() and path.is_dir():
                 expanded_paths.append(path)
             elif not path.exists():
-                # Create directory if it doesn't exist
                 try:
                     path.mkdir(parents=True, exist_ok=True)
                     expanded_paths.append(path)
                 except Exception:
-                    # Skip if we can't create it
                     pass
 
         return expanded_paths
@@ -710,12 +722,7 @@ class ZaraConfig:
         return dict(plugin_config) if isinstance(plugin_config, dict) else {}
 
     def get_autoload_modules(self) -> List[str]:
-        """
-        Get list of modules to auto-load.
-
-        Returns:
-            List of module file names
-        """
+        """Get list of modules to auto-load."""
         modules_config = self.get_section("modules")
         return modules_config.get("autoload", [])
 
@@ -728,12 +735,7 @@ class ZaraConfig:
         }
 
     def get_tool_config(self) -> Dict[str, bool]:
-        """
-        Get tool enable/disable configuration.
-
-        Returns:
-            Dict mapping tool names to enabled status
-        """
+        """Get tool enable/disable configuration."""
         return self.get_section("tools")
 
     def get_file_tool_config(self, repo_root: Path) -> Dict[str, Any]:
@@ -769,11 +771,7 @@ class ZaraConfig:
         }
 
     def get_agent_system_prompt(self) -> Optional[str]:
-        """
-        Get the agent system prompt.
-
-        If the value points to a file, read the prompt from disk.
-        """
+        """Get the agent system prompt, reading a file path when configured."""
         agent_config = self.get_section("agent")
         prompt_value = agent_config.get("system_prompt", "")
         if not prompt_value:
@@ -799,20 +797,11 @@ class ZaraConfig:
         self._config = self._load_config()
 
 
-# Global config instance
 _global_config: Optional[ZaraConfig] = None
 
 
 def get_config(config_path: Optional[str] = None) -> ZaraConfig:
-    """
-    Get global configuration instance.
-
-    Args:
-        config_path: Optional custom config path (only used on first call)
-
-    Returns:
-        ZaraConfig instance
-    """
+    """Get global configuration instance."""
     global _global_config
 
     if _global_config is None:
@@ -822,47 +811,28 @@ def get_config(config_path: Optional[str] = None) -> ZaraConfig:
 
 
 def init_config(config_path: Optional[str] = None) -> ZaraConfig:
-    """
-    Initialize configuration system.
-
-    This should be called once at application startup.
-
-    Args:
-        config_path: Optional custom config path
-
-    Returns:
-        ZaraConfig instance
-    """
+    """Initialize configuration system."""
     global _global_config
     _global_config = ZaraConfig(config_path)
     return _global_config
 
 
 def load_user_modules(config: Optional[ZaraConfig] = None):
-    """
-    Load user modules from configured paths.
-
-    Args:
-        config: Optional config instance (uses global if None)
-    """
+    """Load user modules from configured paths."""
     if config is None:
         config = get_config()
 
-    # Get module search paths
     search_paths = config.get_module_search_paths()
 
     if not search_paths:
         return
 
-    # Import the agent tool loader
     try:
         from .agent.tools.loader import load_plugins
         from .agent.tools.registry import ToolRegistry
     except ImportError:
-        # Agent system not available
         return
 
-    # Load plugins from each search path
     for path in search_paths:
         try:
             load_plugins(str(path))
