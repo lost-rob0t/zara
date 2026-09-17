@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -43,6 +44,25 @@ jobs:
 
       - name: Run all tests
         run: nix develop -c bash scripts/test-all.sh
+
+      - name: Upload Python coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          use_oidc: true
+          files: artifacts/coverage.xml
+          flags: python
+          name: zara-python
+          fail_ci_if_error: false
+
+      - name: Upload Python coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage
+          path: |
+            artifacts/coverage.xml
+            artifacts/coverage.json
+          if-no-files-found: warn
 
       - name: Run flake checks
         run: nix flake check
