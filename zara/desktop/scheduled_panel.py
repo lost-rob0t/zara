@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
 
 from zara.desktop.qt_bridge import QtRuntimeBridge
 
+_STATE_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+
 
 class ScheduledPanel(QWidget):
     rows_ready = Signal(object)
@@ -84,6 +86,7 @@ class ScheduledPanel(QWidget):
         async def load():
             return service.list_schedules()
 
+        self.new_button.setEnabled(True)
         self.status.setText("Loading…")
         self._watch(self._bridge.host.run_coroutine(load()), emit_rows=True)
 
@@ -147,14 +150,14 @@ class ScheduledPanel(QWidget):
                 f"{row.label}  ·  {row.cron}  ·  {row.state.value}\n{next_run}"
             )
             item.setData(Qt.ItemDataRole.UserRole, row.schedule_id)
-            item.setData(Qt.ItemDataRole.UserRole + 1, row.state.value)
+            item.setData(_STATE_ROLE, row.state.value)
             self.list.addItem(item)
         self.status.setText("" if rows else "No scheduled tasks")
         self._sync_controls()
 
     def _sync_controls(self) -> None:
         item = self.list.currentItem()
-        state = item.data(Qt.ItemDataRole.UserRole + 1) if item is not None else None
+        state = item.data(_STATE_ROLE) if item is not None else None
         self.pause_button.setEnabled(state == "active")
         self.resume_button.setEnabled(state == "paused")
         self.cancel_button.setEnabled(state in {"active", "paused"})
