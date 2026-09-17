@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from .. import command_gate
+from ..context import get_context_attachment_store
 from ..latency import LatencyTrace
 from . import events
 
@@ -90,6 +91,16 @@ class RuntimeBackend:
 
     def unregister_agent_loop_advice(self, registration_id: int) -> bool:
         return False
+
+    def set_agent_loop_advice_enabled(self, registration_id: int, enabled: bool) -> bool:
+        raise UnsupportedRuntimeCommand(
+            "agent-loop advice controls are not available in this runtime backend"
+        )
+
+    def set_customization_hooks_enabled(self, enabled: bool) -> None:
+        raise UnsupportedRuntimeCommand(
+            "agent-loop hook controls are not available in this runtime backend"
+        )
 
     def customization_diagnostics(self):
         raise UnsupportedRuntimeCommand(
@@ -176,12 +187,17 @@ class LangGraphRuntimeBackend(RuntimeBackend):
     ) -> RuntimeTurnResult:
         if self._manager is None:
             raise RuntimeError("runtime backend is not started")
-        if context_ids:
-            raise UnsupportedRuntimeCommand(
-                "context attachments are not wired into the runtime backend yet"
-            )
 
-        task_turn = conversation_history is not None or system_context is not None
+        context_store = get_context_attachment_store()
+        attachment_context = context_store.render(context_ids) if context_ids else ""
+        context_parts = [
+            item.strip()
+            for item in (system_context, attachment_context)
+            if isinstance(item, str) and item.strip()
+        ]
+        effective_system_context = "\n\n".join(context_parts) or None
+
+        task_turn = conversation_history is not None or effective_system_context is not None
         command_like = command_gate.looks_like_command(text)
 
         if (
@@ -240,15 +256,20 @@ class LangGraphRuntimeBackend(RuntimeBackend):
                 conversation_manager.enter_conversation()
                 conversation_manager.conversation_history.clear()
 
-        result = await self._manager.process_async(
-            text,
-            turn_id=turn_id,
-            conversation_id=conversation_id,
-            latency_trace=latency_trace,
-            stream_publisher=self._stream_publisher(turn_id, conversation_id),
-            conversation_history=conversation_history,
-            extra_system_context=system_context,
-        )
+        try:
+            result = await self._manager.process_async(
+                text,
+                turn_id=turn_id,
+                conversation_id=conversation_id,
+                latency_trace=latency_trace,
+                stream_publisher=self._stream_publisher(turn_id, conversation_id),
+                conversation_history=conversation_history,
+                extra_system_context=effective_system_context,
+            )
+        finally:
+            if context_ids:
+                context_store.expire_turn(context_ids)
+
         raw_tool_results = result.get("tool_results", [])
         response = str(result.get("response", ""))
         if not task_turn:
@@ -404,6 +425,26 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             return False
         return bool(registry.unregister(registration_id))
 
+    def set_agent_loop_advice_enabled(self, registration_id: int, enabled: bool) -> bool:
+        if self._manager is None:
+            raise RuntimeError("runtime backend is not started")
+        registry = getattr(self._manager, "agent_loop_advice", None)
+        if registry is None:
+            raise UnsupportedRuntimeCommand(
+                "agent-loop advice controls are not available in this runtime backend"
+            )
+        return bool(registry.set_enabled(registration_id, enabled))
+
+    def set_customization_hooks_enabled(self, enabled: bool) -> None:
+        if self._manager is None:
+            raise RuntimeError("runtime backend is not started")
+        registry = getattr(self._manager, "agent_loop_advice", None)
+        if registry is None:
+            raise UnsupportedRuntimeCommand(
+                "agent-loop hook controls are not available in this runtime backend"
+            )
+        registry.set_customization_enabled(enabled)
+
     def customization_diagnostics(self):
         if self._manager is None:
             raise RuntimeError("runtime backend is not started")
@@ -536,6 +577,12 @@ class AgentRuntimeBackend(RuntimeBackend):
 
     def unregister_agent_loop_advice(self, registration_id: int) -> bool:
         return self._delegate.unregister_agent_loop_advice(registration_id)
+
+    def set_agent_loop_advice_enabled(self, registration_id: int, enabled: bool) -> bool:
+        return self._delegate.set_agent_loop_advice_enabled(registration_id, enabled)
+
+    def set_customization_hooks_enabled(self, enabled: bool) -> None:
+        self._delegate.set_customization_hooks_enabled(enabled)
 
     def customization_diagnostics(self):
         return self._delegate.customization_diagnostics()
