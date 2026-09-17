@@ -1,0 +1,269 @@
+#+title: #51 ContextManager + Agent Skills recovery
+#+status: VOTE-GATED-TDD-RED
+#+issue: 51
+#+rage-start: 6cbc73c6f894231e1216df9a5f63e51bfa75cd80
+#+branch: feat/zara-031-context-skills-recovery-red-20260917
+
+* Scope
+Recover #51 from current master instead of reviving stale PR #262. The operator specifically requires:
+
+- an extensive first-class skill system;
+- a Skill Browser in the UI;
+- an explicit chat Compact button;
+- clean interaction with the Android Prolog + LLM tool catalog tracked by #988.
+
+This transaction keeps current ownership boundaries:
+- #260 = existing agent-loop hooks/advice lifecycle;
+- #51 = context assembly/transcript mutation + Agent Skills;
+- PR #961 = shared semantic UI-extension ABI;
+- #988 = Android typed capability/tool catalog;
+- existing ToolRegistry/approval = executable LLM tool authority;
+- MemoryManager = durable derived memory, not transcript authority.
+
+* ANALYZE
+Current master still constructs model context partly by direct list mutation inside =AgentManager.process_async=. =ConversationManager= owns an in-memory =conversation_history= list and conversation-mode state. The backend separately persists user/assistant turns through =MemoryManager=. The closed #260 work already provides the Emacs-grade =AgentLoopAdviceRegistry= and backend override lifecycle.
+
+The old #262 branch implemented a useful ContextManager/SkillRegistry design, but its own closeout explicitly says it predates current runtime/backend/hooks/tasks work and must not be treated as a merge candidate. The correct recovery is to preserve its tested invariants while adapting integration to current #260 and RuntimeBackend ownership.
+
+* RESEARCH / RECOVERED EVIDENCE
+Useful #262 invariants retained as design evidence:
+
+- exactly one canonical base system prompt;
+- transient memory/runtime/skill context never persists into transcript history;
+- context mutation is generation/lease fenced;
+- truncation/compression operates on complete turn/tool-call groups;
+- failed or stale compression cannot destroy history;
+- repeated compression replaces the existing summary instead of stacking summaries;
+- skills use =SKILL.md= with standard YAML frontmatter plus namespaced Zara metadata;
+- duplicate skills, dependency cycles, conflicts and token-budget overflow fail explicitly;
+- selected skills only enter context;
+- =allowed-tools= is compatibility/context metadata, never execution permission.
+
+Current architecture changes that the recovery must honor:
+
+- #260 is complete and remains the only agent-loop hook/advice mechanism;
+- current =RuntimeBackend= owns normal turn submission/cancellation and task-turn separation;
+- #51's latest issue comment requires context/memory/attachment work to register through #260 rather than add another hook engine;
+- PR #961 is already defining =chat.bottom= and plugin/settings semantic UI slots; Skill Browser/Compact UI must consume that shared ABI rather than add a second renderer/registry.
+
+* DESIGN
+** ContextManager authority
+Introduce one =ContextManager= that owns active model-context assembly and transcript mutation. It does not own whether conversation mode is active, durable memory, model execution, or tool approval.
+
+Conceptual boundaries:
+
+#+begin_example
+ConversationManager  -> active/passive conversation state only
+ContextManager       -> canonical transcript + context assembly + mutation/audit
+MemoryManager        -> explicit durable derived memory
+AgentLoopAdviceRegistry (#260)
+                     -> ordered lifecycle hooks for memory/context/skills
+ToolRegistry         -> executable LangChain tools + approval policy
+RuntimeBackend       -> turn/cancel orchestration
+#+end_example
+
+Callers must stop editing canonical transcript lists behind ContextManager once migration is complete.
+
+** Context configuration
+Retain the two explicit continuation policies already specified by #51:
+
+#+begin_src toml
+[context]
+strategy = "truncate" # or "compress"
+max_tokens = 32000
+preserve_recent_turns = 8
+summary_max_tokens = 2000
+skill_max_tokens = 6000
+#+end_src
+
+Provider-specific token counters may be injected, but the ContextManager contract requires one deterministic budget decision before provider invocation.
+
+** Complete turn/tool groups
+A persistent group begins at a user turn and includes all assistant tool-call messages, all corresponding ToolMessages, and the final assistant continuation. Destructive operations remove/replace only whole groups. Provider-valid message ordering is revalidated after each mutation.
+
+** Automatic compression
+When =strategy=compress= and the budget is exceeded:
+
+1. choose the oldest eligible complete prefix while preserving =preserve_recent_turns=;
+2. summarize that prefix plus any prior generated context summary;
+3. validate the bounded summary;
+4. re-check mutation generation/lease;
+5. atomically replace the old prefix/prior summary with exactly one =context:summary= item;
+6. emit a mutation audit with IDs/counts/reason, never raw transcript or tool payloads.
+
+Failure before step 5 leaves history byte-for-byte unchanged.
+
+** Manual Compact operation
+Expose a typed ContextManager mutation used by clients, conceptually:
+
+#+begin_src python
+result = await context_manager.compact(lease, reason="manual")
+#+end_src
+
+Manual compact may run before automatic budget pressure. It still:
+
+- preserves at least =preserve_recent_turns=;
+- compacts only a complete eligible prefix;
+- uses the same bounded summarizer and single-summary invariant;
+- is generation/cancellation fenced;
+- no-ops explicitly when no prefix is eligible;
+- returns safe audit metadata including =changed=, reason, before/after token counts and removed group IDs.
+
+Runtime/client API must invoke this typed operation. The UI must not simulate compaction by sending =/compact= or another prompt to the model.
+
+** Agent Skills
+Recover the Agent Skills open-format approach from #262 with a registry/selector architecture rather than a central if/elif chain.
+
+A discovered skill includes at least:
+
+- stable =name= and =description=;
+- schema version;
+- instruction body;
+- canonical source/provenance;
+- domain/language;
+- selectors/triggers;
+- priority;
+- declared max-token budget;
+- relevant source paths;
+- dependencies/conflicts;
+- always-on state;
+- standard =allowed-tools= metadata where present.
+
+Rules:
+
+- only selected skills are rendered into a turn;
+- dependencies are selected atomically with a requesting skill;
+- conflicts fail explicitly rather than silently choose one;
+- over-budget selection omits whole lower-priority skills, never truncates instruction bodies;
+- malformed/duplicate/future-schema/dependency-cycle configurations fail explicitly;
+- skill text and =allowed-tools= do not register tools, approve tools, grant Android authority, or bypass local Prolog policy.
+
+Selectors are pluggable. A deterministic lexical/path selector is sufficient as the baseline, but the registry API permits later project/symbolic selectors without rewriting discovery.
+
+** #260 hook integration
+Context lifecycle components register as owned ordered advice/hooks around the canonical agent loop. Exact phase naming may follow current #260 APIs, but ownership stays one-per-concern:
+
+- pre-model: resolve transient memory/context attachments + select skills;
+- context build: ContextManager produces provider-valid message set within budget;
+- post-success: ContextManager commits persistent transcript via current generation lease;
+- post-turn memory: MemoryManager capture runs as a separate durable-memory concern;
+- cancel/stale: lease invalidation prevents late transcript mutation.
+
+No second hook registry is added.
+
+** Skill Browser semantic projection
+Context core exposes metadata-only browser entries. A browser entry never contains the skill instruction body unless an explicit trusted source-view action separately requests it.
+
+Safe browser projection includes:
+- name, description, source/provenance;
+- domain/language;
+- priority and token budget;
+- selectors/source paths;
+- dependencies/conflicts;
+- always-on state;
+- declared tool references;
+- selected/available/diagnostic state when applicable.
+
+PR #961 renders that projection natively on Android/Desktop. Browsing/selecting a skill is not an authority grant.
+
+** Android #988 integration
+#988 tool descriptors may project safe tool metadata into relevant Android skills/browser rows. The executable path remains #988 -> canonical Prolog/ToolRegistry/Android device-action authority. Context selection cannot manufacture a missing capability.
+
+* ALTERNATIVES REJECTED
+** Keep direct list mutation in AgentManager
+Rejected because automatic/manual compression, cancellation fencing, context attachments and skills would have multiple mutation owners.
+
+** Put transcript compaction in MemoryManager
+Rejected. Long-term derived memory and active provider context have different lifecycle, retention and privacy contracts.
+
+** Treat Compact as a magic user prompt
+Rejected. It wastes a model turn, contaminates transcript history and cannot provide atomic mutation semantics.
+
+** Load every SKILL.md into every prompt
+Rejected for token cost, conflicting instructions and lack of task relevance.
+
+** Let skill =allowed-tools= grant execution
+Rejected. Skill files are context; ToolRegistry/approval/Android authority remain canonical.
+
+** Add a second Compose Skill plugin registry
+Rejected. PR #961 already owns semantic UI contribution transport/rendering.
+
+* ADVERSARIAL REVIEW
+Required failure coverage:
+
+- duplicate base prompts;
+- orphaned ToolMessages after truncation/compression;
+- one of several tool calls removed without its siblings/results;
+- compaction summarizer exception, cancellation or timeout;
+- stale compact completion after a newer turn begins;
+- two concurrent compactions/turn commits racing;
+- summary larger than configured summary budget;
+- repeated manual/automatic compaction stacking summaries;
+- no eligible old prefix;
+- selected skill body persisting into canonical transcript;
+- memory transient persisting into transcript;
+- duplicate skill name across roots;
+- malformed YAML/frontmatter;
+- unknown Zara skill schema;
+- dependency cycle or missing dependency;
+- conflicting selected skills;
+- per-skill and aggregate budget overflow;
+- malicious =allowed-tools= text attempting to bypass approval;
+- browser metadata leaking full skill bodies, secrets or transient context;
+- stale Skill Browser selection against a reloaded registry generation;
+- #988 unavailable Android tool shown as executable merely because a skill mentions it.
+
+* DECISION
+Recover #51 on current master with one ContextManager, current #260 lifecycle hooks, a versioned Agent Skills registry/selector, metadata-only browser projection and a typed manual compact operation. Present browser/compact controls through PR #961.
+
+This owns durable context state and shared runtime/API semantics. A fresh =VOTE_REQUEST= has been posted to #647; the proposal author does not vote. Production implementation waits for the current vote.
+
+* TDD RED
+This branch intentionally adds current-master-derived RED contracts only:
+
+- =t/test_context_management.py=
+  - one base prompt / transient non-persistence;
+  - whole tool-group truncation;
+  - atomic automatic compression failure;
+  - manual compact before token pressure;
+  - no-op with no eligible prefix;
+  - failure atomicity;
+  - stale manual compact fencing;
+  - repeated compaction replacing rather than stacking the summary;
+  - config validation.
+
+- =t/test_skill_registry.py=
+  - standard Agent Skill discovery;
+  - relevant selection + transitive dependencies;
+  - duplicate detection;
+  - dependency cycles;
+  - selected conflicts;
+  - per-skill and aggregate budgets;
+  - =allowed-tools= non-authority invariant;
+  - metadata-only Skill Browser projection.
+
+Current master does not contain =zara.agent.context= or =zara.agent.skills=, so collection failure is expected RED evidence.
+
+* IMPLEMENTATION ORDER AFTER VOTE
+1. Context data types/config/token budget + group parser.
+2. ContextManager leases/build/commit/truncate/compress + manual compact.
+3. Skill parser/registry/selectors + browser metadata projection.
+4. #260 hook integration into current AgentManager/RuntimeBackend without breaking task turns.
+5. typed RuntimeHost/client compact command + cancellation/audit.
+6. migrate direct history mutations to ContextManager.
+7. built-in Python/Prolog/integration skill corpus recovered/reviewed from #262 and updated for current architecture.
+8. PR #961 stacked UI: Skill Browser + chat-bottom Compact button.
+9. #988 metadata/tool projection integration.
+10. full deterministic context gate, full repo/Nix/UI gates, exact-head #646 review and #919 merge governance.
+
+* GATES
+- #647 vote passes;
+- focused context + skills tests green;
+- existing agent/history/tool approval/task-turn tests remain green;
+- no provider-invalid tool message ordering;
+- no transcript loss on failed/stale/cancelled compaction;
+- no skill/browser path can grant executable authority;
+- Android/Desktop UI consumes one semantic browser/compact API;
+- full =scripts/test-all.sh= and =nix flake check= exact-head green;
+- applicable Android/Desktop tests exact-head green;
+- #646 independent review + #919 final vote/check/head verification.
