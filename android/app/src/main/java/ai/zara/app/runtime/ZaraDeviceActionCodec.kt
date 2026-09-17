@@ -2,6 +2,7 @@ package ai.zara.app.runtime
 
 import ai.zara.app.device.DeviceActionArguments
 import ai.zara.app.device.DeviceActionErrorCode
+import ai.zara.app.device.DeviceActionResultReceipts
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
@@ -26,6 +27,7 @@ sealed interface DeviceServerMessage {
         override val sessionId: String,
         val traceId: String?,
         val actionId: String,
+        val actionSequence: Long,
         val capability: DeviceCapability,
         val arguments: DeviceActionArguments,
         val deadlineNs: Long,
@@ -100,19 +102,23 @@ object ZaraDeviceActionCodec {
         identity: String? = null,
         output: String? = null,
     ): List<ByteArray> {
+        val receipt = DeviceActionResultReceipts.take(actionId)
+        val resolvedBackend = backend ?: receipt?.backend
+        val resolvedIdentity = identity ?: receipt?.identity
+        val resolvedOutput = output ?: receipt?.output
         val body = buildString {
             append("{\"action_id\":")
             append(jsonString(token("action_id", actionId)))
             append(",\"outcome\":\"completed\"")
-            backend?.let {
+            resolvedBackend?.let {
                 append(",\"backend\":")
                 append(jsonString(rawToken("backend", it, 64)))
             }
-            identity?.let {
+            resolvedIdentity?.let {
                 append(",\"identity\":")
                 append(jsonString(boundedUtf8("identity", it, 256)))
             }
-            output?.let {
+            resolvedOutput?.let {
                 append(",\"output\":")
                 append(jsonString(boundedUtf8("output", it, maxResultTextBytes)))
             }
@@ -135,6 +141,7 @@ object ZaraDeviceActionCodec {
         message: String?,
         timestampNs: Long,
     ): List<ByteArray> {
+        DeviceActionResultReceipts.take(actionId)
         val safeMessage = message?.let { boundedUtf8("message", it, 1_024) }
         val body = buildString {
             append("{\"action_id\":")
@@ -164,10 +171,12 @@ object ZaraDeviceActionCodec {
     ): DeviceServerMessage.Request {
         requireExactKeys(
             body,
-            setOf("action_id", "capability", "args", "deadline_ns", "idempotency"),
+            setOf("action_id", "action_seq", "capability", "args", "deadline_ns", "idempotency"),
             "device action request body",
         )
         val actionId = token("action_id", requiredString(body, "action_id", maxIdBytes))
+        val actionSequence = requiredLong(body, "action_seq")
+        if (actionSequence <= 0) throw ZaraWireException("device action sequence must be positive")
         val capability = try {
             DeviceCapability.fromWireId(requiredString(body, "capability", 64))
         } catch (error: IllegalArgumentException) {
@@ -183,6 +192,7 @@ object ZaraDeviceActionCodec {
             sessionId = sessionId,
             traceId = traceId,
             actionId = actionId,
+            actionSequence = actionSequence,
             capability = capability,
             arguments = args,
             deadlineNs = deadlineNs,
