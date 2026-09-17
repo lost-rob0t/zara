@@ -2,7 +2,7 @@ package ai.zara.org.core
 
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFailsWith
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OrgCalendarTest {
@@ -79,12 +79,14 @@ class OrgCalendarTest {
 
     @Test
     fun rejectsInvertedRange() {
-        assertFailsWith<IllegalArgumentException> {
+        val failure = runCatching {
             OrgCalendar.between(
                 emptyList(),
                 LocalDate.of(2026, 9, 18),
                 LocalDate.of(2026, 9, 17),
             )
-        }
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
     }
 }
