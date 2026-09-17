@@ -149,9 +149,11 @@ class SecretRedactor:
     """Mask known secret values before text leaves a trusted boundary.
 
     Values shorter than ``min_scan_length`` are deliberately excluded from
-    automatic free-text scanning to avoid pathological over-redaction.  Typed
-    secret objects/sinks must protect such values structurally rather than by
-    substring scanning.
+    automatic free-text scanning to avoid pathological over-redaction.  Once a
+    value is eligible for scanning, the streaming filter protects prefixes from
+    the first character so chunk boundaries cannot leak a short initial slice.
+    Typed secret objects/sinks must protect excluded short values structurally
+    rather than by substring scanning.
     """
 
     def __init__(
@@ -224,15 +226,16 @@ class SecretRedactor:
         """Length of the longest suffix that may continue into a secret.
 
         Complete values are replaced before this is called, so this method only
-        needs to retain an unresolved prefix.  The retained suffix is bounded by
-        the longest configured scannable secret.
+        retains unresolved prefixes.  For every value admitted to free-text
+        scanning, even a one-character prefix is held rather than emitted.  The
+        retained suffix remains bounded by the longest configured secret.
         """
 
         if not text or not self._entries:
             return 0
 
         max_candidate = min(len(text), self._max_secret_length)
-        for length in range(max_candidate, self._min_scan_length - 1, -1):
+        for length in range(max_candidate, 0, -1):
             suffix = text[-length:]
             if any(entry.value.startswith(suffix) for entry in self._entries):
                 return length
