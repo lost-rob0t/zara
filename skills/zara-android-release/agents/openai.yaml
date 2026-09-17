@@ -1,0 +1,10 @@
+interface:
+  display_name: "Zara Android Release"
+  short_description: "Ship a SemVer Android APK with exact-SHA evidence"
+  default_prompt: "Use $zara-android-release to prepare, verify, and publish the next Zara Android SemVer release through focused branch PRs."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "github"
+      description: "Use GitHub for remote branches, pull requests, Actions, artifacts, tags, and releases."
