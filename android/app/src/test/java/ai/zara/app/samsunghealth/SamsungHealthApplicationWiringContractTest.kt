@@ -35,8 +35,15 @@ class SamsungHealthApplicationWiringContractTest {
     }
 
     private fun projectFile(path: String): File {
-        val direct = File(path)
-        if (direct.exists()) return direct
-        return File("android", path)
+        var base: File? = File(System.getProperty("user.dir")).absoluteFile
+        while (base != null) {
+            val candidates = listOf(
+                File(base, path),
+                File(base, "android/$path"),
+            )
+            candidates.firstOrNull(File::exists)?.let { return it }
+            base = base.parentFile
+        }
+        error("Unable to resolve project file '$path' from ${System.getProperty("user.dir")}")
     }
 }
