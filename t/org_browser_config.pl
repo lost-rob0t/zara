@@ -1,16 +1,17 @@
 :- begin_tests(org_browser_config).
 
 :- use_module('../kb/config').
-:- use_module('../modules/config_loader').
 :- use_module('../modules/zara_hooks').
 
 :- dynamic seen/1.
 
 record(Event) :- assertz(seen(Event)).
 reset_seen :- retractall(seen(_)).
+reset_browser :- kb_config:reset_org_browser_config.
 
 
-test(default_browser_settings_are_queryable_without_becoming_overrides) :-
+test(default_browser_settings_are_queryable_without_becoming_overrides,
+     [setup(reset_browser)]) :-
     kb_config:org_browser_effective_setting(enabled, true),
     kb_config:org_browser_effective_setting(base_font_pt, Font),
     number(Font), Font > 0,
@@ -22,41 +23,29 @@ test(default_browser_settings_are_queryable_without_becoming_overrides) :-
     \+ kb_config:org_browser_setting(base_font_pt, _).
 
 
-test(valid_user_browser_setting_is_accepted) :-
-    config_loader:validate_user_fact(
-        org_browser_setting(base_font_pt, 14.0),
-        kb_config,
-        org_browser_setting(base_font_pt, 14.0)
-    ),
-    config_loader:validate_user_fact(
-        org_browser_root("~/org"),
-        kb_config,
-        org_browser_root("~/org")
-    ),
-    config_loader:validate_user_fact(
-        org_browser_heading_scale(2, 1.5),
-        kb_config,
-        org_browser_heading_scale(2, 1.5)
-    ),
-    config_loader:validate_user_fact(
-        org_browser_help_source("wiki/android.org"),
-        kb_config,
-        org_browser_help_source("wiki/android.org")
-    ).
+test(executable_prolog_api_sets_all_browser_configuration,
+     [setup(reset_browser), cleanup(reset_browser)]) :-
+    kb_config:set_org_browser_setting(base_font_pt, 14.0),
+    kb_config:set_org_browser_setting(show_backlinks, false),
+    kb_config:add_org_browser_root("~/org"),
+    kb_config:set_org_browser_heading_scale(2, 1.5),
+    kb_config:clear_org_browser_help_sources,
+    kb_config:add_org_browser_help_source("wiki/android.org"),
+    kb_config:org_browser_setting(base_font_pt, 14.0),
+    kb_config:org_browser_setting(show_backlinks, false),
+    kb_config:org_browser_root("~/org"),
+    kb_config:org_browser_heading_scale(2, 1.5),
+    kb_config:org_browser_help_source("wiki/android.org").
 
 
-test(invalid_browser_setting_is_rejected, [fail]) :-
-    config_loader:validate_user_fact(
-        org_browser_setting(search_limit, -5),
-        _, _
-    ).
+test(invalid_browser_setting_is_rejected,
+     [setup(reset_browser), throws(error(domain_error(org_browser_setting, _), _))]) :-
+    kb_config:set_org_browser_setting(search_limit, -5).
 
 
-test(unknown_browser_setting_is_rejected, [fail]) :-
-    config_loader:validate_user_fact(
-        org_browser_setting(unknown_setting, 1),
-        _, _
-    ).
+test(unknown_browser_setting_is_rejected,
+     [setup(reset_browser), throws(error(domain_error(org_browser_setting, _), _))]) :-
+    kb_config:set_org_browser_setting(unknown_setting, 1).
 
 
 test(browser_lifecycle_hook_stages_are_registered) :-
