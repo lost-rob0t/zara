@@ -39,6 +39,16 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".watch.WatchSetupActivity"
+            android:exported="true"
+            android:label="Zara Watch Setup">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <service
             android:name=".assistant.ZaraVoiceInteractionService"
             android:exported="true"
