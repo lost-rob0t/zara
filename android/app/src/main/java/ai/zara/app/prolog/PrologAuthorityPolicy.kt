@@ -46,6 +46,7 @@ object PrologAuthorityPolicy {
         "load_foreign_library",
         "make_directory",
         "maplist",
+        "not",
         "once",
         "open",
         "partition",
@@ -102,6 +103,12 @@ object PrologAuthorityPolicy {
     private val dynamicQualifiedGoal = Regex(
         "(?:[A-Z_][A-Za-z0-9_]*\\s*:\\s*[A-Z_][A-Za-z0-9_]*|[a-z][A-Za-z0-9_]*\\s*:\\s*[A-Z_][A-Za-z0-9_]*)",
     )
+    private val dynamicBareGoal = Regex(
+        "(?:^|[,;]|->)\\s*(?:\\\\+\\s*)?([A-Z_][A-Za-z0-9_]*)\\s*(?=(?:[,;]|->|$))",
+    )
+    private val parenthesizedDynamicGoal = Regex(
+        "(?<![A-Za-z0-9_])\\(\\s*[A-Z_][A-Za-z0-9_]*\\s*\\)",
+    )
     private val safeSchemaDirective = Regex(
         "^zara_schema\\(\\s*[a-z][A-Za-z0-9_]*\\s*,\\s*[0-9]{1,3}\\s*,\\s*\\[[^]]*]\\s*\\)$",
     )
@@ -125,6 +132,12 @@ object PrologAuthorityPolicy {
                         diagnostics += PrologDiagnostic(
                             clause.line,
                             "Reserved effectful predicate cannot be defined: ${clause.predicate.indicator}",
+                        )
+                    }
+                    unsafeCalls(clause.text).forEach { name ->
+                        diagnostics += PrologDiagnostic(
+                            clause.line,
+                            "Effectful or executable meta term is not available in private facts: $name",
                         )
                     }
                 }
@@ -203,6 +216,8 @@ object PrologAuthorityPolicy {
         if (bareHaltPattern.containsMatchIn(code)) names += "halt"
         if (dynamicTermConstruction.containsMatchIn(code)) names += "=../2"
         if (dynamicQualifiedGoal.containsMatchIn(code)) names += "dynamic module goal"
+        if (dynamicBareGoal.containsMatchIn(code)) names += "dynamic variable goal"
+        if (parenthesizedDynamicGoal.containsMatchIn(code)) names += "parenthesized dynamic variable goal"
         return names.distinct()
     }
 
