@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Iterable, List, Optional, Union
 
 from .config import get_config
@@ -302,9 +301,9 @@ def _set_todo_status(args: List[Any], status: str, success: str) -> str:
 
 def _load_todo_expert():
     try:
-        from .prolog_engine import PrologEngine
+        from .prolog_engine import PrologEngine, locate_main_pl
 
-        return PrologEngine()
+        return PrologEngine(locate_main_pl())
     except Exception:
         return None
 
