@@ -15,6 +15,7 @@ fun githubPullRequestHeadSha(): String? {
     return head["sha"] as? String
 }
 
+val debugSigningKeystore = providers.environmentVariable("ZARA_ANDROID_DEBUG_KEYSTORE").orNull
 val sourceSha = providers.environmentVariable("ZARA_SOURCE_SHA").orNull
     ?: githubPullRequestHeadSha()
     ?: providers.exec {
@@ -33,13 +34,26 @@ android {
         minSdk = 29
         targetSdk = 36
         versionCode = 1
-        versionName = "0.1.0-alpha"
+        versionName = "0.2.0-alpha"
         buildConfigField("String", "SOURCE_SHA", "\"$sourceSha\"")
     }
 
     buildFeatures {
         buildConfig = true
         compose = true
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            if (debugSigningKeystore != null) {
+                val keyFile = file(debugSigningKeystore)
+                require(keyFile.isFile) { "Zara Android debug signing keystore is missing" }
+                storeFile = keyFile
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
     compileOptions {
