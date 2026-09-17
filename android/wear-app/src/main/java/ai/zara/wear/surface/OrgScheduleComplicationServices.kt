@@ -47,7 +47,7 @@ class OrgSchedule4ComplicationService : OrgScheduleLaneComplicationService(3)
 class OrgSchedule5ComplicationService : OrgScheduleLaneComplicationService(4)
 class OrgSchedule6ComplicationService : OrgScheduleLaneComplicationService(5)
 
-class OrgNextTodoComplicationService : SuspendingComplicationDataSourceService() {
+open class OrgNextTodoComplicationService : SuspendingComplicationDataSourceService() {
     override suspend fun onComplicationRequest(request: ComplicationRequest): ComplicationData? {
         if (request.complicationType != ComplicationType.SHORT_TEXT) return null
         val snapshot = OrgScheduleSnapshotStore.read(this)
