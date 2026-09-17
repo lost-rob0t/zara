@@ -1,11 +1,9 @@
 """Deterministic Prolog-first intent routing for daemon turn execution.
 
-The wake listener historically ran this stack in-process (command gate ->
-Prolog intent resolution -> execution -> LLM agent fallback). Wake now
-streams utterances to the daemon, so the same deterministic routing runs
-here, inside the runtime backend, before any agent turn is created. AGENTS.md
-requires the wake flow to attempt Prolog resolution first and to fall back to
-the LLM conversation only when Prolog fails or returns ``ask``.
+Conversational turns bypass Prolog unless they are explicit command-shaped
+utterances or answers to an active Prolog-owned dialogue. Legacy ``ask``
+intents still delegate to the LLM; Prolog questions reuse the existing
+``pending`` semantic result and are surfaced as typed input requests.
 """
 
 from __future__ import annotations
@@ -17,9 +15,11 @@ from typing import Callable, Optional
 
 from .. import command_gate
 from ..latency import LatencyTrace
+from ..prolog_dialogue import answer_question, get_question
 from ..python_skills import python_skills
 from ..wake_words import WAKE_WORDS, find_wake_span
 from .clarification import (
+    CANCEL_PHRASES,
     ClarificationCoordinator,
     DialogueTemplate,
     OPEN_APP_TEMPLATE,
@@ -55,11 +55,22 @@ _REGISTERED_APP_LIMIT = 256
 
 
 @dataclass(frozen=True)
+class InputRequest:
+    """Typed user-input request that every presentation surface can render."""
+
+    kind: str
+    prompt: str
+    question_id: Optional[str] = None
+    choices: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class RouteDecision:
     """Outcome of deterministic routing for one utterance."""
 
     action: str
     response: str = ""
+    input_request: Optional[InputRequest] = None
 
 
 class PrologFirstRouter:
@@ -83,6 +94,7 @@ class PrologFirstRouter:
             clarifications if clarifications is not None else ClarificationCoordinator()
         )
         self._run_blocking = run_blocking or asyncio.to_thread
+        self._questions: dict[tuple[str, str], InputRequest] = {}
 
     async def route(
         self,
@@ -102,6 +114,15 @@ class PrologFirstRouter:
         if not stripped:
             _record("route_selected", route="greeting")
             return RouteDecision("greeting", GREETING_RESPONSE)
+
+        question_reply = await self._question_reply(
+            stripped,
+            state,
+            conversation,
+            _record,
+        )
+        if question_reply is not None:
+            return question_reply
 
         clarification_reply = await self._clarification_reply(
             stripped,
@@ -140,13 +161,16 @@ class PrologFirstRouter:
         if result is None:
             _record("prolog_result", status="no_match")
             return RouteDecision("delegate")
+        return await self._handle_result(result, state, conversation, _record)
 
+    async def _handle_result(self, result, state: str, conversation: str, _record):
         intent = result.name
         args = list(result.args) if isinstance(result.args, (list, tuple)) else [
             result.args
         ]
 
         if intent == "end_conversation":
+            self._questions.pop((self.principal_id, conversation), None)
             _record("prolog_result", status="resolved")
             _record("route_selected", route="prolog_stop")
             return RouteDecision("end_conversation", CONVERSATION_ENDED_RESPONSE)
@@ -156,7 +180,13 @@ class PrologFirstRouter:
             return RouteDecision("delegate")
 
         if result.kind == "pending":
-            return await self._handle_pending(intent, args, conversation, _record)
+            return await self._handle_pending(
+                intent,
+                args,
+                state,
+                conversation,
+                _record,
+            )
 
         if result.kind == "python":
             def _execute_skill():
@@ -188,6 +218,48 @@ class PrologFirstRouter:
 
         _record("prolog_result", status="execution_failed")
         return RouteDecision("delegate")
+
+    async def _question_reply(self, text: str, state: str, conversation: str, _record):
+        key = (self.principal_id, conversation)
+        request = self._questions.get(key)
+        if request is None:
+            return None
+
+        normalized = " ".join(text.casefold().split())
+        if normalized in CANCEL_PHRASES:
+            self._questions.pop(key, None)
+            _record("route_selected", route="prolog_question_cancelled")
+            return RouteDecision("respond", "Cancelled.")
+
+        if command_gate.looks_like_command(text):
+            self._questions.pop(key, None)
+            _record("route_selected", route="prolog_question_superseded")
+            return None
+
+        def _answer():
+            return answer_question(
+                self.prolog,
+                request.question_id or "",
+                text,
+                state=state,
+            )
+
+        try:
+            result = await self._run_blocking(_answer)
+        except Exception as error:
+            self._questions.pop(key, None)
+            logger.warning("Prolog dialogue answer failed: %s", error)
+            _record("prolog_result", status="question_error")
+            return None
+
+        if result is None:
+            _record("prolog_result", status="question_retry")
+            _record("route_selected", route="prolog_question")
+            return RouteDecision("respond", request.prompt, request)
+
+        self._questions.pop(key, None)
+        _record("prolog_result", status="question_answered")
+        return await self._handle_result(result, state, conversation, _record)
 
     def _strip_wake_span(self, text: str) -> str:
         raw_text = text or ""
@@ -335,7 +407,14 @@ class PrologFirstRouter:
         )
         return str(response)
 
-    async def _handle_pending(self, intent: str, args: list, conversation: str, _record):
+    async def _handle_pending(
+        self,
+        intent: str,
+        args: list,
+        state: str,
+        conversation: str,
+        _record,
+    ) -> RouteDecision:
         template = PENDING_DIALOGUE_TEMPLATES.get(intent)
         if template is not None:
             opened = self.clarifications.open(
@@ -350,6 +429,24 @@ class PrologFirstRouter:
             )
             message = opened.message if opened.kind == "capacity" else opened.question
             return RouteDecision("respond", message or "")
+
+        try:
+            question = await self._run_blocking(lambda: get_question(self.prolog, intent))
+        except Exception as error:
+            logger.warning("Prolog dialogue lookup failed for %s: %s", intent, error)
+            question = None
+        if question is not None:
+            prompt, choices = question
+            request = InputRequest(
+                kind="prolog_question",
+                question_id=intent,
+                prompt=prompt,
+                choices=choices,
+            )
+            self._questions[(self.principal_id, conversation)] = request
+            _record("prolog_result", status="question")
+            _record("route_selected", route="prolog_question")
+            return RouteDecision("respond", prompt, request)
 
         required = ", ".join(str(slot) for slot in args)
         _record("prolog_result", status="pending")
