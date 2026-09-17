@@ -1,0 +1,223 @@
+#+title: Executable Prolog Config API
+
+* Overview
+
+Desktop Zara can load =~/.config/zarathushtra/config.exec.pl= as trusted executable Prolog.
+This is intentionally closer to an Emacs init file than a declarative settings file: it can
+set runtime variables, register hooks, define named commands, load user libraries, provide
+features, call ordinary Prolog code, and use explicit desktop capability APIs.
+
+The executable file is desktop-only and is never loaded by =server_main.pl= or the managed
+fact-only server configuration path.
+
+The config API and clipboard API are imported into =user= before =config.exec.pl= is loaded,
+so normal init files do not need module prefixes.
+
+* Variables
+
+=defvar/2= defines a value only when it is currently unbound.
+
+#+begin_src prolog
+:- defvar(theme, outrun).
+:- setq(theme, red).
+
+my_theme(Theme) :-
+    symbol_value(theme, Theme).
+#+end_src
+
+=defcustom/3= adds metadata while preserving an already-set value.
+
+#+begin_src prolog
+:- defcustom(model, local,
+    [ doc("Preferred inference target"),
+      type(atom),
+      group(llm)
+    ]).
+#+end_src
+
+Available predicates:
+
+- =defvar/2=
+- =defcustom/3=
+- =setq/2=
+- =symbol_value/2=
+- =boundp/1=
+- =makunbound/1=
+- =variable_doc/2=
+- =variable_options/2=
+
+* Hooks
+
+Hooks are named, ordered by registration, and reload-idempotent. Adding the same goal more
+than once does not duplicate it.
+
+#+begin_src prolog
+:- add_hook(after_reload, announce_reload).
+
+announce_reload :-
+    writeln('config reloaded').
+#+end_src
+
+Loader lifecycle hooks currently include:
+
+- =after_init= after the executable config is first loaded
+- =before_reload= before an explicit reload
+- =after_reload= after the executable config has been reconsulted
+
+Other code can define and run arbitrary hook names with =run_hooks/1=.
+
+Available predicates:
+
+- =add_hook/2=
+- =remove_hook/2=
+- =clear_hook/1=
+- =hook_functions/2=
+- =run_hooks/1=
+
+* Named commands
+
+Named commands are the Prolog equivalent of a small =M-x= command namespace. A command is a
+callable goal plus optional documentation. =call_command/2= applies its argument list to the
+stored goal.
+
+#+begin_src prolog
+:- defcommand('copy-star-uri', copy_star_uri,
+              "Copy a star:// URI and push it onto the kill ring").
+
+copy_star_uri(Uri) :-
+    kill_new(Uri).
+
+% Later:
+% ?- call_command('copy-star-uri', ['star://target/example']).
+#+end_src
+
+Available predicates:
+
+- =defcommand/2=
+- =defcommand/3=
+- =undefcommand/1=
+- =commandp/1=
+- =call_command/1=
+- =call_command/2=
+- =commands/1=
+- =command_doc/2=
+
+* Features and user libraries
+
+The loader automatically adds =~/.config/zarathushtra/lisp= to the config load path when the
+directory exists. Additional readable directories can be added explicitly.
+
+#+begin_src prolog
+:- add_load_path('/home/me/.local/share/zara-prolog').
+:- require_feature(my_tools).
+#+end_src
+
+=require_feature(my_tools)= searches load paths for =my_tools.pl= and requires that the loaded
+file calls =provide(my_tools)=.
+
+#+begin_src prolog
+% ~/.config/zarathushtra/lisp/my_tools.pl
+:- config_api:provide(my_tools).
+#+end_src
+
+Available predicates:
+
+- =provide/1=
+- =unprovide/1=
+- =featurep/1=
+- =require_feature/1=
+- =add_load_path/1=
+- =remove_load_path/1=
+- =load_path/1=
+- =load_library/1=
+
+* Clipboard API
+
+Clipboard access is always explicit. Zara does not silently capture the clipboard.
+
+#+begin_src prolog
+copy_text(Text) :-
+    clipboard_write(Text).
+
+paste_text(Text) :-
+    clipboard_read(Text).
+#+end_src
+
+Built-in desktop backends are selected in this order when available:
+
+1. Wayland: =wl-copy= / =wl-paste=
+2. X11: =xclip=
+3. X11: =xsel=
+4. macOS: =pbcopy= / =pbpaste=
+5. Windows: PowerShell
+
+Set =ZARA_CLIPBOARD_BACKEND= or call =set_clipboard_backend/1= to force a backend. External
+commands are invoked directly with argument vectors and pipes; clipboard text is never sent
+through a shell command string.
+
+Available predicates:
+
+- =clipboard_read/1=
+- =clipboard_write/1=
+- =clipboard_clear/0=
+- =clipboard_available/0=
+- =clipboard_backend/1=
+- =current_clipboard_backend/1=
+- =set_clipboard_backend/1=
+- =clear_clipboard_backend/0=
+- =clipboard_backend_available/1=
+
+** Custom clipboard providers
+
+The provider predicates are multifile extension points. A trusted init file can define a
+backend directly.
+
+#+begin_src prolog
+:- multifile clipboard:clipboard_provider_available/1.
+:- multifile clipboard:clipboard_provider_read/2.
+:- multifile clipboard:clipboard_provider_write/2.
+
+clipboard:clipboard_provider_available(my_clipboard).
+clipboard:clipboard_provider_read(my_clipboard, Text) :-
+    my_read(Text).
+clipboard:clipboard_provider_write(my_clipboard, Text) :-
+    my_write(Text).
+
+:- set_clipboard_backend(my_clipboard).
+#+end_src
+
+* Kill ring
+
+The clipboard layer also exposes an Emacs-style in-process kill ring. Writes performed through
+=kill_new/1= and =kill_append/2= update both the kill ring and the selected system clipboard.
+
+#+begin_src prolog
+:- set_kill_ring_max(100).
+
+copy_one :- kill_new("alpha").
+append_two :- kill_append(" beta", false).
+prepend_zero :- kill_append("zero ", true).
+#+end_src
+
+=kill_append(Text, false)= appends to the newest kill. =kill_append(Text, true)= prepends.
+=current_kill(0, Text)= returns the newest entry; positive indexes walk backward through the
+ring.
+
+Available predicates:
+
+- =kill_new/1=
+- =kill_append/2=
+- =current_kill/2=
+- =kill_ring/1=
+- =kill_ring_max/1=
+- =set_kill_ring_max/1=
+
+* Reloading
+
+The existing =reload_config= command reloads managed configuration, executable Prolog config,
+and hooks. Executable directives are intentionally re-run even when the file timestamp is
+unchanged.
+
+Because =config.exec.pl= is arbitrary trusted code, side effects are the user's responsibility.
+Use idempotent directives where possible; =add_hook/2= and =provide/1= already avoid duplicate
+registrations.
