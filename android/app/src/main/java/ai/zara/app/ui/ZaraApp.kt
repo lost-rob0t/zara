@@ -1080,6 +1080,9 @@ private fun AboutSurface(sourceSha: String, padding: PaddingValues) {
             KeyValueRow("design", "frozen 2026-09-07")
             MutedNotice("Chat-first symbolic assistant. Native Compose, shared semantic runtime contracts.")
         }
+        SectionCard("HELP") {
+            RepoOrgHelpPanel()
+        }
     }
 }
 
