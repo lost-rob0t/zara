@@ -8,9 +8,9 @@
 %   nix develop -c swipl -s planning/backlog.pl  % then: next(I). queue(Q). blockers(122, Bs).
 
 % Closed issues referenced by dependency edges, phases or epics.
-closed(2). closed(3). closed(4). closed(5). closed(6). closed(7). closed(8). closed(9). closed(17). closed(28). closed(124). closed(128). closed(129). closed(130). closed(131). closed(132). closed(133). closed(139). closed(154). closed(155). closed(156). closed(157). closed(170). closed(171). closed(191). closed(195). closed(209).
+closed(2). closed(3). closed(4). closed(5). closed(6). closed(7). closed(8). closed(9). closed(17). closed(28). closed(124). closed(128). closed(129). closed(130). closed(131). closed(132). closed(133). closed(139). closed(154). closed(155). closed(156). closed(157). closed(158). closed(159). closed(160). closed(162). closed(163). closed(164). closed(165). closed(170). closed(171). closed(172). closed(173). closed(174). closed(191). closed(195). closed(196). closed(197). closed(209). closed(216). closed(217). closed(218). closed(244). closed(326). closed(327). closed(329). closed(638). closed(639). closed(642). closed(739). closed(747).
 
-% Open issues: issue(Id, Priority, Status, ShortTitle).
+% Open prioritized work: issue(Id, Priority, Status, ShortTitle).
 issue(87, p1, open, "P1 — add Linux global shortcut backends for Wayland and X11").
 issue(88, p1, open, "P1 — add explicit desktop context attachments and permission UI").
 issue(89, p1, open, "P1 — render structured tool execution and user approvals in chat").
@@ -20,24 +20,14 @@ issue(92, p2, open, "P2 — add desktop settings and sanitized diagnostics").
 issue(93, p2, open, "P2 — add an advanced Prolog reasoning inspector").
 issue(94, p2, open, "P2 — unify Zarathushtra Pets with the desktop event stream and tray").
 issue(95, p3, open, "P3 — package Zara Desktop and harden platform lifecycle behavior").
-issue(122, p0, open, "P0 — add a bounded utterance rewriter before Prolog intent resolution").
+issue(122, p0, open, "P0 — harden the bounded utterance rewriter on the current Prolog-RLM direct-mode path").
 issue(134, p0, open, "P0 release gate — prove Zara daemon can replace the core ChatGPT Voice workflow safely").
 issue(149, p1, open, "P1 — publish Nix-built `zara-server` OCI image to GHCR").
-issue(158, p1, open, "P1 — add server `api_service` providers and split semantic/server/device Prolog configuration").
-issue(159, p1, open, "P1 — extend `ZARA/1` with bounded client capability advertisement and typed device action lifecycle").
-issue(160, p1, open, "P1 — make RuntimeHost own semantic command routing and remove duplicated LLM prompt authority").
 issue(161, p1, open, "P1 release gate — adversarially prove semantic dialogue/provider/device routing across reconnect and concurrency").
-issue(162, p1, open, "P1 — define versioned principal-scoped persistence for user-authored semantic commands").
-issue(163, p1, open, "P1 — compile user-authored command definitions into validated `IntentFrame`/capability plans").
-issue(164, p1, open, "P1 — add voice/text command-authoring dialogue for create, inspect, edit, delete, dry-run and undo").
-issue(165, p1, open, "P1 — support parameterized user commands, collisions, revocation and atomic hot reload").
 issue(166, p1, open, "P1 — define one declarative voice-fixture manifest for realistic command/dialogue recordings").
 issue(167, p1, open, "P1 — build `zara-record-voice-fixtures` with guided realistic timing and audio quality validation").
 issue(168, p1, open, "P1 — check in the representative real speech corpus and run VAD/STT -> dialogue/capability regression tests").
 issue(169, p1, open, "P1 human release gate — create and exercise new Zara commands by real voice on live hardware").
-issue(172, p2, open, "P2 — extract and prove a portable shared Prolog semantic core on Linux and Android").
-issue(173, p2, open, "P2 — implement authenticated Android `ZARA/1` client enrollment, reconnect and session continuity").
-issue(174, p2, open, "P2 — implement the closed Android device-capability registry and typed action adapters").
 issue(175, p2, open, "P2 — implement Android microphone/wake/manual activation, streamed playback and cross-process barge-in").
 issue(176, p2, open, "P2 — define Android local/degraded Prolog behavior without duplicating the server assistant").
 issue(177, p2, open, "P2 — prove programmable user commands have Linux/Android semantic parity and provider-specific execution").
@@ -47,8 +37,6 @@ issue(180, p1, open, "P1 — harden container state/config/key volumes, non-root
 issue(181, p1, open, "P1 — add deterministic container lifecycle, readiness, persistence, restart, and upgrade integration gates").
 issue(182, p2, open, "P2 — define container model/cache/plugin policy and maintained Docker/Podman/Compose deployment examples").
 issue(183, p1, open, "P1 release gate — prove container image secrets, listener policy, provenance, and capability placement").
-issue(196, p1, open, "P1 — implement Android Assistant role and voice-interaction service surface").
-issue(197, p1, open, "P1 — build the modern Compose Zara application shell on shared runtime state").
 issue(198, p1, open, "P1 — establish one hot-reloadable Prolog authority for Android semantics and providers").
 issue(199, p1, open, "P1 — add typed Android app, browser, YouTube and ChatGPT adapters").
 issue(200, p1, open, "P1 — implement Android timer, alarm and dual-calendar capability adapters").
@@ -58,14 +46,101 @@ issue(203, p1, open, "P1 — harden Samsung assistant background voice, audio an
 issue(204, p1, open, "P1 gate — prove Prolog-defined cross-component commands without APK rebuild").
 issue(205, p0, open, "P0 gate — adversarial Android and Samsung lifecycle/security integration matrix").
 issue(206, p0, open, "P0 hardware release — real Samsung acceptance and exact downloadable Zara APK").
-issue(216, p1, open, "P1 — define provider-neutral transcript normalization contract and raw/normalized runtime semantics").
-issue(217, p1, open, "P1 — implement local S1-mini transcript normalizer backend").
-issue(218, p1, open, "P1 — add transcript-normalizer configuration, selection, status and diagnostics").
 issue(219, p1, open, "P1 — wire transcript normalization into voice, dictation and semantic routing before #122").
 issue(220, p1, open, "P1 release gate — prove transcript normalization preserves intent, privacy and voice latency").
 issue(238, p2, open, "P2 — implement plugin download and installation from the zara-plugins registry").
 issue(240, p2, open, "P2 — let the Zara flake consume and configure zara-plugins").
-issue(244, p1, open, "P1 — migrate the zara wake listener onto the daemon ZARA/1 voice client with principal-scoped memory").
+issue(324, p0, open, "P0 — collapse Quick/Full Chat into one adaptive Copilot and add screenshot CI").
+issue(325, p1, open, "P1 — make voice conversation mode create durable chats and auto-finalize title/summary").
+issue(761, p1, open, "P1 — build the modern Compose Zara application shell on shared runtime state").
+issue(887, p0, open, "P0 — permission-backed Pi effects across Zara clients and explicit yolo mode").
+
+% Open unprioritized ideas: mirrored for discovery, excluded from next/1.
+idea_issue(1, "[ORDER] ZARA-000 — Repository repair and real-time voice roadmap").
+idea_issue(29, "[P2] ZARA-028 — Stream phrase-sized TTS into a persistent low-latency audio player").
+idea_issue(30, "[P2] ZARA-029 — Optimize warm startup and remove avoidable work from the voice critical path").
+idea_issue(31, "[P2] ZARA-030 — Add the full-duplex soak, interruption, and latency release gate").
+idea_issue(51, "[P1] ZARA-031 — Build extensible context management and Python/Prolog skill files").
+idea_issue(56, "Add Local Recall visual-context intent and client adapter").
+idea_issue(127, "[EPIC] Long-lived Zara daemon, ZeroMQ client protocol, multi-user isolation, and Voice replacement").
+idea_issue(150, "[EPIC] Portable semantic intents, multi-turn slot dialogue, and capability/service routing").
+idea_issue(151, "[EPIC] Principal-scoped programmable voice commands and real speech regression corpus").
+idea_issue(152, "[EPIC] Native Android Zara client with embedded portable Prolog and typed device capabilities").
+idea_issue(153, "[EPIC] Reproducible self-hosted `zara-server` container distribution and GHCR release path").
+idea_issue(194, "EPIC — Samsung Galaxy system-assistant, native application integrations, and SmartThings").
+idea_issue(215, "[EPIC] Selectable post-STT transcript normalization backends, including local S1-mini").
+idea_issue(251, "Security: guest/public principals and tool capability isolation for service-plugin turns").
+idea_issue(323, "EPIC — Unified native Copilot, voice-chat continuity, and visual CI").
+idea_issue(388, "Plugin API: propagate canonical cancellation to running service tools").
+idea_issue(400, "PluginRuntime: canonical capability lookup/invocation for plugin composition").
+idea_issue(622, "[EPIC] Offline-first standalone Android Zara: pure symbolics + optional on-device LLM").
+idea_issue(623, "[WORKER] Core+Android — mobile usability, offline/runtime integration and hardening loop").
+idea_issue(624, "[EPIC] Zara Cognitive Kernel — intent OS, frontier voice parity, and verifiable autonomy").
+idea_issue(625, "[EPIC] Conversational transactions — provisional intent, correction, validation, and commit").
+idea_issue(626, "[EPIC] Universal causal effect journal and cross-capability undo").
+idea_issue(627, "[EPIC] Branchable reality — hypothetical world state with selective merge").
+idea_issue(628, "[EPIC] Conversational policy programming — compile spoken rules to verified Prolog policy").
+idea_issue(629, "[EPIC] Speculative intent branching — defer clarification with bounded hypothesis actors").
+idea_issue(630, "[EPIC] Privacy-preserving ambient perception — ephemeral sensory input to symbolic world facts").
+idea_issue(631, "[EPIC] Epistemic memory — evidence classes, provenance, contradictions, and truth maintenance").
+idea_issue(632, "[EPIC] Action escrow — proof-gated autonomous side effects").
+idea_issue(633, "[EPIC] Model-independent Zara identity and graceful intelligence degradation").
+idea_issue(634, "[EPIC] Behavior debugger — causal explanations, conversational policy patches, and replay").
+idea_issue(635, "[EPIC] Cognitive actor society — specialized symbolic actors, arbitration, and measurable uncertainty").
+idea_issue(637, "[P0][Integration] Pin and consume upstream Prolog-RLM Machine Spirit in Zara").
+idea_issue(640, "[P0][Integration] Bridge upstream Machine Spirit effects through Zara canonical capabilities").
+idea_issue(641, "[P0][Integration] Add upstream Machine Spirit as a Zara TaskRunner executor").
+idea_issue(643, "[P0][Integration gate] Adversarially prove Zara ↔ Prolog-RLM Machine Spirit boundary").
+idea_issue(645, "[WORKER] Frontier Research — capability discovery, mobile/voice/model research loop").
+idea_issue(646, "[WORKER] Cross-Repo Reviewer — exact-head code review, regression and architecture audit").
+idea_issue(647, "[WORKER-FLEET] Zara v2 — staggered research/review/implementation roster and test gates").
+idea_issue(648, "[EPIC] Android UI/UX overhaul — symbolic workspace, drawer navigation, Prolog inspector, and built-in themes").
+idea_issue(650, "[P0][Android UI] Build semantic design system, full-height drawer, and screenshot harness").
+idea_issue(651, "[P0][Android Chat] Implement symbolic empty state, active conversation, and compact composer").
+idea_issue(652, "[P0][Android Logic] Add first-class Logic browser and Prolog source/runtime inspection").
+idea_issue(653, "[P1][Android Projects] Implement persistent project contexts and project-scoped chat").
+idea_issue(654, "[P1][Android Scheduled] Implement scheduled-task list, inspection, and safe controls").
+idea_issue(655, "[P1][Android Plugins] Implement plugin catalog, permissions, configuration, and health surface").
+idea_issue(656, "[P1][Android Themes] Ship six semantic-token themes with preview selector and reduced glow").
+idea_issue(657, "[P1][Android Runtime] Unify Voice, Remote, and Diagnostics around explicit local/offline/degraded state").
+idea_issue(658, "Plugin lifecycle needs an explicit unavailable/disabled startup state").
+idea_issue(662, "PluginRuntime: trusted verifier authority boundary for in-process plugins").
+idea_issue(663, "PluginRuntime: non-reconstructible expert predicate execution authority").
+idea_issue(666, "UX: make Android ↔ Zara server pairing basically one-step").
+idea_issue(667, "BUG: Android says enrollment is Ready before server-side enrollment is verified").
+idea_issue(770, "RAGE #13: fail closed on unknown app executable fallback").
+idea_issue(778, "RAGE #159: typed ZARA/1 device capability and action lifecycle").
+idea_issue(784, "RAGE #264 recovery helper: RuntimeHost task delta").
+idea_issue(785, "RAGE #264 recovery helper: merge task config/host delta").
+idea_issue(801, "RAGE #172: package Android portable semantic assets").
+idea_issue(807, "RAGE #51: first-class context and Agent Skills").
+idea_issue(836, "RAGE #260: load mutable Python user hooks").
+idea_issue(837, "RAGE #172: package canonical resolver for Android parity").
+idea_issue(838, "RAGE #172: stage portable Prolog assets for Trealla").
+idea_issue(839, "RAGE #260: integrate advice with canonical agent loop").
+idea_issue(840, "RAGE #172: add Android native Trealla adapter contract").
+idea_issue(841, "RAGE #260: Python hooks and advice registry").
+idea_issue(842, "RAGE #172: add Android Trealla JNI bridge boundary").
+idea_issue(843, "RAGE #172: add Android Trealla semantic runtime lifecycle").
+idea_issue(844, "RAGE #172: add fail-closed cross-runtime semantic fixture runner").
+idea_issue(845, "RAGE #172: normalize Android semantic parity results").
+idea_issue(846, "RAGE #260: establish canonical Prolog hooks and user hook config").
+idea_issue(850, "[MACHINE-SPIRIT 8/8] Finite v0 acceptance, benchmark, and extraction proof").
+idea_issue(851, "[MACHINE-SPIRIT 7/8] Adversarial, property, and chaos acceptance harness").
+idea_issue(852, "[MACHINE-SPIRIT 6/8] Symbolic context/evidence workspace — the bounded brain").
+idea_issue(853, "[MACHINE-SPIRIT 5/8] TaskRunner executor strategy + one-store persistence/resume").
+idea_issue(854, "[MACHINE-SPIRIT 4/8] Zara capability bridge — Prolog executes task effects through canonical tools").
+idea_issue(855, "[MACHINE-SPIRIT 3/8] Validated planning/graph executive on rlm_plan + rlm_graph").
+idea_issue(856, "[MACHINE-SPIRIT 2/8] Pure symbolic task state machine + finite step protocol").
+idea_issue(857, "[MACHINE-SPIRIT 1/8] Extraction boundary + pinned Prolog-RLM runtime").
+idea_issue(858, "[MACHINE-SPIRIT] EPIC — finite symbolic task executive, extraction-ready for Prolog-RLM").
+idea_issue(867, "[AUTO-RAGE SLOT 2/4] WearOS dedicated Zara Voice app").
+idea_issue(868, "[AUTO-RAGE SLOT 3/4] WearOS Tiles + complications").
+idea_issue(870, "[AUTO-RAGE SLOT 4/4] Core Zara dogfooding + hardening").
+idea_issue(888, "[WORKER] Desktop — unified Copilot, approvals, context and command-surface loop").
+idea_issue(889, "[WORKER] Android UI — product shell, pairing, projects and plugin UX loop").
+idea_issue(892, "Add secure self-update for desktop Nix installs and Android APKs").
+idea_issue(893, "Start service plugins before registering configuration-derived tools").
 
 % Roadmap order: phase(N, OrderedIssueIds). Rank = N*100 + index.
 phase(0, [17]).                                    % regression: always first
@@ -80,27 +155,7 @@ phase(8, [195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206]). % samsun
 phase(9, [87, 88, 89, 90, 91, 92, 93, 94, 95, 56]).% desktop + recall
 
 % Dependency edges (only edges that gate eligibility).
-depends_on(134, 130).
-depends_on(134, 131).
-depends_on(134, 132).
-depends_on(134, 133).
-depends_on(158, 157).
-depends_on(159, 129).
-depends_on(159, 130).
-depends_on(159, 158).
-depends_on(160, 159).
 depends_on(161, 160).
-depends_on(162, 131).
-depends_on(162, 150).
-depends_on(162, 154).
-depends_on(162, 157).
-depends_on(163, 157).
-depends_on(163, 162).
-depends_on(164, 132).
-depends_on(164, 133).
-depends_on(164, 155).
-depends_on(164, 163).
-depends_on(165, 164).
 depends_on(166, 132).
 depends_on(166, 156).
 depends_on(166, 165).
@@ -113,13 +168,6 @@ depends_on(169, 133).
 depends_on(169, 134).
 depends_on(169, 161).
 depends_on(169, 168).
-depends_on(172, 156).
-depends_on(172, 171).
-depends_on(173, 133).
-depends_on(173, 159).
-depends_on(173, 172).
-depends_on(174, 159).
-depends_on(174, 173).
 depends_on(175, 132).
 depends_on(175, 170).
 depends_on(175, 173).
@@ -139,12 +187,6 @@ depends_on(181, 180).
 depends_on(182, 181).
 depends_on(183, 161).
 depends_on(183, 182).
-depends_on(196, 171).
-depends_on(196, 173).
-depends_on(196, 195).
-depends_on(197, 171).
-depends_on(197, 173).
-depends_on(197, 195).
 depends_on(198, 172).
 depends_on(198, 174).
 depends_on(198, 177).
@@ -163,7 +205,8 @@ depends_on(202, 195).
 depends_on(203, 132).
 depends_on(203, 175).
 depends_on(203, 196).
-depends_on(203, 197).
+depends_on(203, 648).
+depends_on(203, 657).
 depends_on(204, 177).
 depends_on(204, 198).
 depends_on(204, 199).
@@ -172,7 +215,6 @@ depends_on(204, 201).
 depends_on(204, 202).
 depends_on(205, 178).
 depends_on(205, 196).
-depends_on(205, 197).
 depends_on(205, 198).
 depends_on(205, 199).
 depends_on(205, 200).
@@ -180,33 +222,63 @@ depends_on(205, 201).
 depends_on(205, 202).
 depends_on(205, 203).
 depends_on(205, 204).
+depends_on(205, 648).
+depends_on(205, 657).
 depends_on(206, 134).
 depends_on(206, 179).
 depends_on(206, 205).
-depends_on(217, 216).
-depends_on(218, 216).
-depends_on(218, 217).
 depends_on(219, 216).
 depends_on(219, 217).
 depends_on(219, 218).
 depends_on(220, 219).
-depends_on(244, 134).
+depends_on(325, 133).
+depends_on(626, 150).
+depends_on(626, 159).
+depends_on(626, 625).
+depends_on(629, 150).
+depends_on(629, 625).
+depends_on(631, 51).
+depends_on(631, 131).
+depends_on(631, 627).
+depends_on(631, 630).
+depends_on(651, 650).
+depends_on(652, 650).
+depends_on(653, 650).
+depends_on(653, 651).
+depends_on(654, 650).
+depends_on(655, 650).
+depends_on(656, 650).
+depends_on(657, 650).
+depends_on(761, 171).
+depends_on(761, 173).
+depends_on(761, 195).
+depends_on(850, 643).
+depends_on(851, 642).
+depends_on(852, 641).
+depends_on(853, 640).
+depends_on(854, 639).
+depends_on(855, 638).
+depends_on(856, 637).
 
 % Epics: epic_children(EpicId, ChildIds).
-epic_children(127, [128,129,130,131,132,133,134,191,209,244]).
+epic_children(122, [327]).
+epic_children(127, [128,129,130,131,132,133,191,209,244,329,739,747]).
 epic_children(150, [154,155,156,157,158,159,160,161]).
 epic_children(151, [162,163,164,165,166,167,168,169]).
-epic_children(152, [170,171,172,173,174,175,176,177,178,179,194]).
+epic_children(152, [170,171,172,173,174,175,176,177,178,179]).
 epic_children(153, [180,181,182,183]).
-epic_children(194, [195,196,197,198,199,200,201,202,203,204,205,206]).
+epic_children(194, [195,196,198,199,200,201,202,203,204,205,206,761]).
 epic_children(215, [216,217,218,219,220]).
+epic_children(323, [324,325,326]).
+epic_children(636, [850,851,852,853,854,855,856,857]).
+epic_children(648, [650,651,652,653,654,655,656,657]).
 
 % Open PRs: pr(Id, Issue, Status, CiDate, Note). CiDate = none | Y-M-D.
 pr(138, none, open,  none,        parked_rebase_post_daemon_factcheck).
 pr(222, none, open,  none,        parked_design_direction_decision_needed).
 pr(223, 127,  open,  none,        parked_rebase_zara1_contract_reconciliation).
 
-master_last_merge(2026-08-31).
+master_last_merge(2026-09-17).
 
 % ---- Rules ----
 open_issue(I) :- issue(I, _, open, _).
