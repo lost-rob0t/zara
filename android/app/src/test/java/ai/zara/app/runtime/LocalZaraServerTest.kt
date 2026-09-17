@@ -65,6 +65,27 @@ class LocalZaraServerTest {
     }
 
     @Test
+    fun cancelAlsoSuppressesAStaleNativeTimeoutOrEvaluationError() {
+        val bridge = BlockingTreallaBridge(failAfterRelease = true)
+        val server = LocalZaraServer(
+            bridge,
+            "/private/core.pl",
+            PrologWorkspace(temporary.newFolder("cancel-error")),
+        )
+        server.start().get(2, TimeUnit.SECONDS)
+
+        val active = server.query("member(Result, [one, two])")
+        assertTrue(bridge.entered.await(2, TimeUnit.SECONDS))
+        assertTrue(server.query(LocalZaraServer.CANCEL_QUERY_COMMAND).get(1, TimeUnit.SECONDS).cancelled)
+        bridge.release.countDown()
+
+        val stale = active.get(2, TimeUnit.SECONDS)
+        assertTrue(stale.cancelled)
+        assertTrue(stale.terms.isEmpty())
+        server.close()
+    }
+
+    @Test
     fun reloadRecreatesRuntimeSoEditedFactsDoNotAccumulate() {
         val bridge = RecordingTreallaBridge()
         val workspace = PrologWorkspace(temporary.newFolder("reload"))
@@ -151,7 +172,9 @@ class LocalZaraServerTest {
         }
     }
 
-    private class BlockingTreallaBridge : TreallaBridge {
+    private class BlockingTreallaBridge(
+        private val failAfterRelease: Boolean = false,
+    ) : TreallaBridge {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
 
@@ -161,6 +184,7 @@ class LocalZaraServerTest {
         override fun evaluate(query: String): List<String> {
             entered.countDown()
             check(release.await(2, TimeUnit.SECONDS)) { "test bridge was not released" }
+            if (failAfterRelease) error("native query timed out")
             return listOf("one")
         }
 
