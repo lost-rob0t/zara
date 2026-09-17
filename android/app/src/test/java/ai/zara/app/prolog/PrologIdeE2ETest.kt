@@ -63,7 +63,7 @@ class PrologIdeE2ETest {
     }
 
     @Test
-    fun composeStudioWiresCursorCompletionBuildersNavigationAndIndependentMiniBoxes() {
+    fun composeStudioWiresCursorCompletionBuildersNavigationCancelAndIndependentMiniBoxes() {
         val studio = File("src/main/java/ai/zara/app/ui/PrologStudioSurface.kt").readText()
         val builder = File("src/main/java/ai/zara/app/ui/PrologStructuredBuilderPane.kt").readText()
 
@@ -78,6 +78,10 @@ class PrologIdeE2ETest {
         assertTrue(studio.contains("moveCursorToLine(diagnostic.line)"))
         assertTrue(studio.contains("GraphPane(workspaceDocuments)"))
         assertTrue(studio.contains("onNavigate(clause.source, clause.line)"))
+        assertTrue(studio.contains("LocalZaraServer.CANCEL_QUERY_COMMAND"))
+        assertTrue(studio.contains("var queryPending by rememberSaveable"))
+        assertTrue(studio.contains("SecondaryAction(\"Cancel query\""))
+        assertTrue(studio.contains("result.cancelled -> \"cancelled.\""))
         assertTrue(studio.contains("var boxOneHistory by rememberSaveable"))
         assertTrue(studio.contains("var boxTwoHistory by rememberSaveable"))
         assertTrue(studio.contains("LaunchedEffect(queryResult)"))
