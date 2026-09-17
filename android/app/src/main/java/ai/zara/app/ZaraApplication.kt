@@ -19,13 +19,4 @@ class ZaraApplication : Application() {
     val updateManager: AndroidUpdateManager by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         AndroidUpdateManager(this, BuildConfig.VERSION_NAME)
     }
-
-    override fun onTerminate() {
-        if ((::androidIntegration.isInitializedCompat())) {
-            androidIntegration.close()
-        }
-        super.onTerminate()
-    }
-
-    private fun <T> Lazy<T>.isInitializedCompat(): Boolean = isInitialized()
 }
