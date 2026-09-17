@@ -1,14 +1,36 @@
 package ai.zara.app.ui.extensions
 
 import ai.zara.app.runtime.LocalQueryResult
-import android.util.JsonReader
 import java.io.File
-import java.io.FileReader
 import java.util.concurrent.CompletableFuture
+
+/**
+ * Trusted host projection for one Android plugin.
+ *
+ * The ZARA-ANDROID-PLUGIN/1 host owns discovery, signer/protocol validation,
+ * enablement and generation fencing. The UI layer only accepts this inert
+ * projection after those checks have been made.
+ */
+data class AndroidPluginUiProjection(
+    val pluginId: String,
+    val trusted: Boolean,
+    val enabled: Boolean,
+    val generation: Long,
+    val contributions: List<UiContribution>,
+) {
+    init {
+        require(pluginId.matches(Regex("[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}"))) {
+            "Android plugin UI id is invalid"
+        }
+        require(generation >= 0) { "Android plugin UI generation must be non-negative" }
+        require(contributions.size <= 256) { "Android plugin UI contribution set is too large" }
+    }
+}
 
 class AndroidUiExtensionRepository(
     private val root: File,
     private val prologQuery: (String) -> CompletableFuture<LocalQueryResult>,
+    private val pluginProjectionProvider: () -> List<AndroidPluginUiProjection> = { emptyList() },
 ) {
     init {
         check(root.mkdirs() || root.isDirectory) { "Android UI config directory is unavailable" }
@@ -17,7 +39,7 @@ class AndroidUiExtensionRepository(
     fun load(): CompletableFuture<List<UiContribution>> {
         val registry = UiExtensionRegistry()
         loadPortablePython(registry)
-        loadPluginManifests(registry)
+        loadPluginProjection(registry)
 
         return prologQuery("zara_ui(Result)").handle { result, error ->
             if (error == null && result != null) {
@@ -39,105 +61,20 @@ class AndroidUiExtensionRepository(
         registry.replaceOwner("user:init.py", contributions)
     }
 
-    private fun loadPluginManifests(registry: UiExtensionRegistry) {
-        val pluginRoot = File(root, "plugins")
-        if (!pluginRoot.isDirectory) return
-        val owners = mutableSetOf<String>()
-        pluginRoot.walkTopDown()
-            .filter { file ->
-                file.isFile && (file.name == "ui.json" || file.name.endsWith(".ui.json"))
-            }
-            .sortedBy(File::getAbsolutePath)
-            .forEach { file ->
-                val manifest = runCatching { readManifest(file) }.getOrNull() ?: return@forEach
-                val owner = "plugin:${manifest.plugin}"
-                if (!owners.add(owner)) return@forEach
-                runCatching { registry.replaceOwner(owner, manifest.contributions) }
-            }
-    }
-
-    private fun readManifest(file: File): PluginUiManifest {
-        require(file.length() <= MAX_MANIFEST_BYTES) { "UI manifest is too large" }
-        FileReader(file).use { reader ->
-            JsonReader(reader).use { json ->
-                var apiVersion: String? = null
-                var plugin: String? = null
-                var contributions = emptyList<UiContribution>()
-                json.beginObject()
-                while (json.hasNext()) {
-                    when (json.nextName()) {
-                        "api_version" -> apiVersion = json.nextString()
-                        "plugin" -> plugin = json.nextString()
-                        "contributions" -> contributions = readContributions(json)
-                        else -> json.skipValue()
-                    }
+    private fun loadPluginProjection(registry: UiExtensionRegistry) {
+        val seen = mutableSetOf<String>()
+        pluginProjectionProvider()
+            .sortedWith(compareBy<AndroidPluginUiProjection> { it.pluginId }.thenBy { it.generation })
+            .forEach { projection ->
+                require(seen.add(projection.pluginId)) {
+                    "duplicate Android plugin UI projection: ${projection.pluginId}"
                 }
-                json.endObject()
-                require(apiVersion == UI_MANIFEST_API_VERSION) { "unsupported UI manifest api_version" }
-                val name = requireNotNull(plugin) { "UI manifest plugin is required" }
-                require(name.matches(Regex("[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}"))) {
-                    "UI manifest plugin name is invalid"
-                }
-                return PluginUiManifest(name, contributions)
+                if (!projection.trusted || !projection.enabled) return@forEach
+                registry.replaceOwner("plugin:${projection.pluginId}", projection.contributions)
             }
-        }
     }
-
-    private fun readContributions(json: JsonReader): List<UiContribution> {
-        val output = mutableListOf<UiContribution>()
-        json.beginArray()
-        while (json.hasNext()) {
-            var id: String? = null
-            var slot: String? = null
-            var kind: String? = null
-            var label: String? = null
-            var action = ""
-            var priority = 100
-            var platforms = listOf("desktop", "android")
-            json.beginObject()
-            while (json.hasNext()) {
-                when (json.nextName()) {
-                    "id" -> id = json.nextString()
-                    "slot" -> slot = json.nextString()
-                    "kind" -> kind = json.nextString()
-                    "label" -> label = json.nextString()
-                    "action" -> action = json.nextString()
-                    "priority" -> priority = json.nextInt()
-                    "platforms" -> platforms = readStringList(json)
-                    else -> json.skipValue()
-                }
-            }
-            json.endObject()
-            output += UiContribution(
-                id = requireNotNull(id) { "UI contribution id is required" },
-                slot = UiSlot.fromWire(requireNotNull(slot) { "UI contribution slot is required" }),
-                kind = UiContributionKind.fromWire(requireNotNull(kind) { "UI contribution kind is required" }),
-                label = requireNotNull(label) { "UI contribution label is required" },
-                action = action,
-                priority = priority,
-                platforms = platforms.map(UiPlatform::fromWire).toSet(),
-            )
-        }
-        json.endArray()
-        return output
-    }
-
-    private fun readStringList(json: JsonReader): List<String> {
-        val values = mutableListOf<String>()
-        json.beginArray()
-        while (json.hasNext()) values += json.nextString()
-        json.endArray()
-        return values
-    }
-
-    private data class PluginUiManifest(
-        val plugin: String,
-        val contributions: List<UiContribution>,
-    )
 
     companion object {
-        private const val UI_MANIFEST_API_VERSION = "1"
         private const val MAX_INIT_BYTES = 256 * 1024
-        private const val MAX_MANIFEST_BYTES = 256 * 1024
     }
 }
