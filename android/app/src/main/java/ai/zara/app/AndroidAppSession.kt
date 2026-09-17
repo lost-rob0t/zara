@@ -10,6 +10,9 @@ import ai.zara.app.auth.EnrollmentState
 import ai.zara.app.auth.JeroMqCurveKeyCodec
 import ai.zara.app.device.AndroidAppLauncher
 import ai.zara.app.device.AndroidUriLauncher
+import ai.zara.app.device.BixbyLocalHandoff
+import ai.zara.app.device.DeviceActionErrorCode
+import ai.zara.app.device.DeviceActionResult
 import ai.zara.app.device.DeviceCapabilityRegistry
 import ai.zara.app.device.OpenAppAdapter
 import ai.zara.app.device.OpenUriAdapter
@@ -86,6 +89,8 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     private val audioRouteController: AudioRouteController
     private val prologWorkspace = PrologWorkspace(File(context.filesDir, "prolog-workspace"))
     private val localServer: LocalZaraServer
+    private val openAppAdapter: OpenAppAdapter
+    private val bixbyHandoff: BixbyLocalHandoff
     private val localAi = LocalAiServiceClient(context)
     @Volatile private var latestVoiceStreamState: VoiceStreamState? = null
     @Volatile private var latestVoiceStreamFailure: String? = null
@@ -115,11 +120,13 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             initial,
             RuntimeEvent.EnrollmentObserved(enrollment.state().toRuntimeReadiness()),
         )
+        openAppAdapter = OpenAppAdapter(AndroidAppLauncher(context))
+        bixbyHandoff = BixbyLocalHandoff(openAppAdapter)
         val deviceActionHandler = RegistryDeviceActionHandler(
             DeviceCapabilityRegistry(
                 listOf(
                     OpenUriAdapter(AndroidUriLauncher(context)),
-                    OpenAppAdapter(AndroidAppLauncher(context)),
+                    openAppAdapter,
                 )
             )
         )
@@ -386,6 +393,8 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         val query = text.trim()
         val catalog = PrologWorkspaceCatalog.from(prologWorkspace.listSources())
         val explicitSymbolic = query.startsWith("?-") || query.startsWith("/prolog ") || query.startsWith("/expert ")
+        val expertQuery = if (explicitSymbolic) null else LocalNaturalLanguageExpertRouter.query(query, catalog)
+        val semanticResolution = !explicitSymbolic && expertQuery == null
         val future = when {
             query.startsWith("?-") -> localServer.query(query)
             query.startsWith("/prolog ") || query.startsWith("/expert ") -> {
@@ -396,10 +405,15 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 }
                 localServer.query(command.query)
             }
-            else -> LocalNaturalLanguageExpertRouter.query(query, catalog)?.let(localServer::query)
-                ?: localServer.resolve(query)
+            expertQuery != null -> localServer.query(expertQuery)
+            else -> localServer.resolve(query)
         }
         return future.thenCompose { result ->
+            if (semanticResolution) {
+                bixbyHandoff.dispatch(result)?.let { outcome ->
+                    return@thenCompose CompletableFuture.completedFuture(bixbyHandoffTurn(outcome))
+                }
+            }
             if (result.terms.isNotEmpty() || explicitSymbolic) {
                 CompletableFuture.completedFuture(localPrologTurn(result))
             } else {
@@ -423,6 +437,25 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 }
             }
         }
+    }
+
+    private fun bixbyHandoffTurn(result: DeviceActionResult): TextTurnResult {
+        val (text, success) = when (result) {
+            DeviceActionResult.Completed -> "Opened Bixby." to true
+            is DeviceActionResult.Error -> when (result.code) {
+                DeviceActionErrorCode.Unavailable -> "Bixby is unavailable on this device." to false
+                DeviceActionErrorCode.PermissionDenied -> "Android denied access to Bixby." to false
+                DeviceActionErrorCode.InvalidArguments -> "The Bixby handoff was rejected." to false
+                DeviceActionErrorCode.Failed -> "Bixby could not be opened." to false
+                DeviceActionErrorCode.Cancelled -> "The Bixby handoff was cancelled." to false
+            }
+        }
+        return TextTurnResult(
+            conversationId = "local-device",
+            turnId = UUID.randomUUID().toString(),
+            text = text,
+            success = success,
+        )
     }
 
     private fun localPrologTurn(result: LocalQueryResult): TextTurnResult =
