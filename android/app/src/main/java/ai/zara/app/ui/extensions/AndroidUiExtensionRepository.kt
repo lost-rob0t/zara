@@ -50,7 +50,6 @@ class AndroidUiExtensionRepository(
             .sortedBy(File::getAbsolutePath)
             .forEach { file ->
                 val manifest = runCatching { readManifest(file) }.getOrNull() ?: return@forEach
-                if (!manifest.enabled) return@forEach
                 val owner = "plugin:${manifest.plugin}"
                 if (!owners.add(owner)) return@forEach
                 runCatching { registry.replaceOwner(owner, manifest.contributions) }
@@ -63,14 +62,12 @@ class AndroidUiExtensionRepository(
             JsonReader(reader).use { json ->
                 var apiVersion: String? = null
                 var plugin: String? = null
-                var enabled = true
                 var contributions = emptyList<UiContribution>()
                 json.beginObject()
                 while (json.hasNext()) {
                     when (json.nextName()) {
                         "api_version" -> apiVersion = json.nextString()
                         "plugin" -> plugin = json.nextString()
-                        "enabled" -> enabled = json.nextBoolean()
                         "contributions" -> contributions = readContributions(json)
                         else -> json.skipValue()
                     }
@@ -81,7 +78,7 @@ class AndroidUiExtensionRepository(
                 require(name.matches(Regex("[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}"))) {
                     "UI manifest plugin name is invalid"
                 }
-                return PluginUiManifest(name, enabled, contributions)
+                return PluginUiManifest(name, contributions)
             }
         }
     }
@@ -135,7 +132,6 @@ class AndroidUiExtensionRepository(
 
     private data class PluginUiManifest(
         val plugin: String,
-        val enabled: Boolean,
         val contributions: List<UiContribution>,
     )
 
