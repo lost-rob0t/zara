@@ -28,3 +28,20 @@ swipl -q \
   -s "$repo_root/t/prolog_config_recovery.pl" \
   -g "(run_tests(prolog_config_recovery) -> halt(0) ; halt(1))" \
   -t "halt(1)"
+
+rm -rf "$XDG_CONFIG_HOME/zarathushtra"
+mkdir -p "$XDG_CONFIG_HOME/zarathushtra"
+
+# Trusted desktop executable configuration is intentionally a separate
+# boundary from the fact-only server/provisioning configuration.
+swipl -q \
+  -s "$repo_root/t/exec_config.pl" \
+  -g "(run_tests(exec_config) -> halt(0) ; halt(1))" \
+  -t "halt(1)"
+
+# Market-data provider normalization and user-defined multifile adapters are
+# completely offline in this gate; CI never requires an API credential.
+swipl -q \
+  -s "$repo_root/t/market_data.pl" \
+  -g "(run_tests(market_data) -> halt(0) ; halt(1))" \
+  -t "halt(1)"
