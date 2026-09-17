@@ -27,7 +27,8 @@ def test_acceptance_captures_each_settings_tab_and_two_theme_states():
         "Diagnostics",
         "About",
     ):
-        assert f'"settings-{tab.lower()}"' in text
+        assert f'"{tab}"' in text
+    assert 'device.capture(f"settings-{tab.lower()}")' in text
     assert '"theme-outrun"' in text
     assert '"theme-light"' in text
 
@@ -45,7 +46,7 @@ def test_acceptance_exercises_small_screen_large_font_ime_and_restore():
 def test_acceptance_manifest_records_profiles_and_never_calls_runtime_actions():
     text = source()
     assert '"profiles": device.profiles' in text
-    assert 'settings put system font_scale' in text
-    assert 'wm size reset' in text
-    assert 'input keyevent 4' in text
+    assert '"settings", "put", "system", "font_scale", "1.30"' in text
+    assert '"wm", "size", "reset"' in text
+    assert '"keyevent", "4"' in text
     assert 'Connect"' not in text.split("def exercise_three_menu_ui", 1)[-1]
