@@ -152,6 +152,10 @@ fun ZaraApp(
     onSavePrologSource: (String, String) -> Unit,
     onReloadLocalServer: () -> Unit,
     onRunPrologQuery: (String) -> Unit,
+    onRenamePrologSource: (String, String) -> Unit,
+    onDeletePrologSource: (String) -> Unit,
+    onImportPrologWorkspace: (String) -> Unit,
+    onExportPrologWorkspace: () -> String,
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
@@ -208,6 +212,10 @@ fun ZaraApp(
                             onSaveSource = onSavePrologSource,
                             onReload = onReloadLocalServer,
                             onRunQuery = onRunPrologQuery,
+                            onRenameSource = onRenamePrologSource,
+                            onDeleteSource = onDeletePrologSource,
+                            onImportWorkspace = onImportPrologWorkspace,
+                            onExportWorkspace = onExportPrologWorkspace,
                             padding = padding,
                         )
                         AppSurface.Voice -> VoiceSurface(
