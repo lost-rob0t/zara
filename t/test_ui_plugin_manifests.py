@@ -71,6 +71,28 @@ def test_manifest_enablement_comes_from_canonical_provider(tmp_path):
     assert registry.snapshot() == ()
 
 
+@pytest.mark.parametrize("layout", ["flat", "directory"])
+def test_manifest_cannot_claim_another_plugin_identity(tmp_path, layout):
+    if layout == "flat":
+        manifest = tmp_path / "notes.ui.json"
+    else:
+        plugin_dir = tmp_path / "notes"
+        plugin_dir.mkdir()
+        manifest = plugin_dir / "ui.json"
+    write_manifest(manifest, plugin="calendar")
+    registry = UiExtensionRegistry()
+    loader = UiManifestLoader(
+        (tmp_path,),
+        registry=registry,
+        enabled_provider=lambda _name: True,
+    )
+
+    with pytest.raises(UiManifestLoadError, match="failed to load"):
+        loader.load()
+
+    assert registry.snapshot() == ()
+
+
 def test_manifest_reload_is_failure_atomic(tmp_path):
     manifest = tmp_path / "notes.ui.json"
     write_manifest(manifest)
