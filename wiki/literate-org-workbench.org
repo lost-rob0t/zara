@@ -1,0 +1,73 @@
+#+title: Zara literate Org workbench
+
+* Authority
+Org files are canonical. Generated Python and Prolog files are derived artifacts.
+The workbench behavior is intentionally modeled after nsaspy's Doom Emacs setup,
+not after a generic notes application.
+
+* Doom parity
+The first shipping profile mirrors these existing behaviors:
+
+- Org root: =~/Documents/Notes/org=.
+- Agenda tree: recursive =agenda/**/*.org=.
+- Capture fields: TODO title, =Effort=, =CATEGORY=, =SCHEDULED=, and =DEADLINE=.
+- Capture effort defaults: =0:30=, =1:00=, =1:30=, =2:00=.
+- Capture categories: Misc, Work, Education, Bug Bounty, Personal Task.
+- Agenda buckets: overdue, today, high priority, StarIntel/Temple, Org parser,
+  hackmode, Emacs, Lisp, work, home, recurring, appointments, waiting,
+  in-progress, ideas, not-doing, inbox, and done.
+- Literal Org heading stars remain visible while headings receive larger Doom-style
+  typography.
+- Python and Prolog are first-class literate configuration languages.
+
+The Android app uses Android Storage Access Framework tree permission instead of
+broad filesystem permission. It edits the selected =.org= files in place; there
+is no second task database.
+
+* Literate configuration
+A config may declare language-specific tangle targets just like the Doom config:
+
+#+begin_src org
+#+property: header-args:python :tangle hooks/config.py
+#+property: header-args:prolog :tangle logic/config.pl
+
+* Python
+#+begin_src python
+# trusted user configuration
+def configure(zara):
+    zara.project = "StarIntel"
+#+end_src
+
+* Prolog
+#+begin_src prolog
+zara_project(starintel).
+#+end_src
+#+end_src
+
+Tangling does not execute either source block. Only explicit =:tangle= targets
+are emitted. Absolute paths and parent traversal are rejected. Actual execution
+still belongs to Zara's existing trusted Python/Prolog configuration runtimes and
+their permission gates.
+
+On desktop/core, use =zara.literate_org.tangle_file=. On Android, Zara exposes
+the shared =LiterateOrgConfig= bridge and the standalone Zara Org app exposes a
+=Tangle Python/Prolog= action in the editor.
+
+* Standalone Android app
+The =:org-app= Gradle module builds a separate =ai.zara.org.app= APK named
+"Zara Org". Its initial surfaces are:
+
+- Agenda: grouped Doom-style task view with direct TODO-state cycling.
+- Files: recursive Org tree browser.
+- Editor: raw Org editing plus rendered preview using Zara's shared Org renderer.
+- Capture: writes a Doom-compatible TODO entry into =agenda/inbox.org=.
+- Tangle: saves the Org source and emits Python/Prolog targets into the selected
+  Org tree.
+
+The app stores only the persisted SAF tree URI. Org text remains the durable
+source of truth.
+
+* CI contract
+=scripts/test-android.sh= must run =org-core= and =org-app= tests, build the Org
+APK, and include it in secret-marker inspection beside the Zara phone and Wear
+APKs. PRs remain unmerged until required checks are green at the exact head.
