@@ -26,6 +26,9 @@ class LiteRtLocalLlmBackend(
     private var activeConversation: Conversation? = null
 
     override fun load(spec: LocalModelSpec) {
+        require(spec.format == LocalModelFormat.LITERT_LM) {
+            "Embedded LiteRT-LM provider cannot execute ${spec.format.wireName} models"
+        }
         check(engine == null) { "LiteRT-LM engine is already loaded" }
         val model = File(spec.path)
         check(model.isFile) { "LiteRT-LM model file is missing" }
