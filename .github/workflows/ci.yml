@@ -174,12 +174,36 @@ jobs:
           path: android/app/build/reports/semantic-parity/
           if-no-files-found: warn
 
-      - name: Upload phone and Wear debug APKs
+      - name: Prepare exact-SHA phone APK artifact
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          artifact_dir="artifacts/android-debug"
+          apk="$artifact_dir/zara-android-debug-${SOURCE_SHA}.apk"
+          mkdir -p "$artifact_dir"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$apk"
+          sha256sum "$apk" > "${apk}.sha256"
+          {
+            echo "schema=1"
+            echo "source_sha=${SOURCE_SHA}"
+            echo "apk=$(basename "$apk")"
+            echo "apk_sha256=$(sha256sum "$apk" | awk '{print $1}')"
+          } > "$artifact_dir/manifest.txt"
+
+      - name: Upload exact-SHA phone debug APK
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: zara-debug-apks
-          path: |
-            android/app/build/outputs/apk/debug/app-debug.apk
-            android/wear-app/build/outputs/apk/debug/wear-app-debug.apk
+          name: zara-android-debug-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/android-debug/
+          if-no-files-found: warn
+
+      - name: Upload Wear debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zara-wear-debug-${{ github.event.pull_request.head.sha || github.sha }}
+          path: android/wear-app/build/outputs/apk/debug/wear-app-debug.apk
           if-no-files-found: warn

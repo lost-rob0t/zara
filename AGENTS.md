@@ -210,6 +210,7 @@ Every iteration is ordered and evidence-driven:
 - Zara-local reusable agent procedures belong under `skills/`.
 - Read the relevant local skill before executing that procedure.
 - The RAGE skill supplements this file; it does not override repository gates or GitHub issue ordering.
+- For Android versioning, release PRs, tags, APK publication, and release verification, use `$zara-android-release` from `skills/zara-android-release/SKILL.md`.
 
 ## Do Not Do
 - Do not add new linters or formatters.
