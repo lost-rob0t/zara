@@ -12,6 +12,9 @@ import ai.zara.app.prolog.PrologSchemaValidator
 import ai.zara.app.prolog.PrologSearch
 import ai.zara.app.prolog.PrologLexer
 import ai.zara.app.prolog.PrologTokenKind
+import ai.zara.app.prolog.DeterministicIntentHelperGenerator
+import ai.zara.app.prolog.IntentArgument
+import ai.zara.app.prolog.IntentHelperRequest
 import ai.zara.app.prolog.PrologTutorialCatalog
 import ai.zara.app.runtime.LocalQueryResult
 import ai.zara.app.runtime.LocalServerPhase
@@ -64,6 +67,7 @@ private enum class StudioPane(val label: String) {
     Editor("IDE"),
     Expert("Expert"),
     Syntax("Syntax"),
+    Advanced("KB"),
     Graph("Graph"),
     Learn("Learn"),
 }
@@ -78,6 +82,10 @@ internal fun PrologStudioSurface(
     onSaveSource: (String, String) -> Unit,
     onReload: () -> Unit,
     onRunQuery: (String) -> Unit,
+    onRenameSource: (String, String) -> Unit,
+    onDeleteSource: (String) -> Unit,
+    onImportWorkspace: (String) -> Unit,
+    onExportWorkspace: () -> String,
     padding: PaddingValues,
 ) {
     val first = sources.firstOrNull()
@@ -147,6 +155,16 @@ internal fun PrologStudioSurface(
                 sources = sources,
                 operationBusy = operationBusy,
                 onSaveSource = onSaveSource,
+            )
+            StudioPane.Advanced -> AdvancedKbPane(
+                sources = sources,
+                queryResult = queryResult,
+                operationBusy = operationBusy,
+                onRunQuery = onRunQuery,
+                onRenameSource = onRenameSource,
+                onDeleteSource = onDeleteSource,
+                onImportWorkspace = onImportWorkspace,
+                onExportWorkspace = onExportWorkspace,
             )
             StudioPane.Graph -> GraphPane(document)
             StudioPane.Learn -> TutorialPane(
@@ -356,9 +374,11 @@ private fun ExpertEditorPane(
     var expertName by rememberSaveable { mutableStateOf("triage") }
     var evidence by rememberSaveable { mutableStateOf("signal, source, confidence") }
     var conclusion by rememberSaveable { mutableStateOf("review") }
+    var actionWords by rememberSaveable { mutableStateOf("triage, inspect, review") }
+    var skillPage by rememberSaveable { mutableStateOf("Review evidence, explain the decision, and return a concise next action.") }
     val tokens = LocalZaraTokens.current
-    val generated = remember(expertName, evidence, conclusion) {
-        expertSystemSource(expertName, evidence, conclusion)
+    val generated = remember(expertName, evidence, conclusion, actionWords, skillPage) {
+        expertSystemSource(expertName, evidence, conclusion, actionWords, skillPage)
     }
     SectionCard("EXPERT SYSTEM BUILDER") {
         MutedNotice("Build a typed, explainable system from schema declarations, evidence facts, a decision rule, and an explanation term. Generated predicates remain ordinary editable Prolog.")
@@ -370,6 +390,21 @@ private fun ExpertEditorPane(
             singleLine = true,
             colors = studioFieldColors(),
         )
+        OutlinedTextField(
+            value = actionWords,
+            onValueChange = { actionWords = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Activation words, comma separated") },
+            colors = studioFieldColors(),
+        )
+        OutlinedTextField(
+            value = skillPage,
+            onValueChange = { if (it.length <= 8_192) skillPage = it },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp),
+            label = { Text("Skill page: purpose, inputs, decisions, response style") },
+            colors = studioFieldColors(),
+        )
+        MutedNotice("The Skill page and activation words form the bounded generation request. Local or remote models may propose a draft, but only validated reviewed Prolog can be saved.")
         OutlinedTextField(
             value = evidence,
             onValueChange = { evidence = it },
@@ -398,6 +433,78 @@ private fun ExpertEditorPane(
                 existing.trimEnd() + "\n\n" + generated
             }
             onSaveSource("expert_system.pl", merged.trimStart())
+        }
+    }
+}
+
+@Composable
+private fun AdvancedKbPane(
+    sources: List<PrologSource>,
+    queryResult: LocalQueryResult?,
+    operationBusy: Boolean,
+    onRunQuery: (String) -> Unit,
+    onRenameSource: (String, String) -> Unit,
+    onDeleteSource: (String) -> Unit,
+    onImportWorkspace: (String) -> Unit,
+    onExportWorkspace: () -> String,
+) {
+    var selected by rememberSaveable { mutableStateOf(sources.firstOrNull()?.name.orEmpty()) }
+    var renameTo by rememberSaveable { mutableStateOf("") }
+    var bundle by rememberSaveable { mutableStateOf("") }
+    var boxOne by rememberSaveable { mutableStateOf("member(Result, [one, two])") }
+    var boxTwo by rememberSaveable { mutableStateOf("triage_explain(alice, Result)") }
+    val tokens = LocalZaraTokens.current
+    SectionCard("KNOWLEDGE BASE MANAGEMENT") {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            sources.forEach { source ->
+                TextButton(onClick = { selected = source.name }) { Text(source.name, fontFamily = FontFamily.Monospace) }
+            }
+        }
+        KeyValueRow("selected", selected.ifBlank { "none" })
+        OutlinedTextField(renameTo, { renameTo = it }, Modifier.fillMaxWidth(), label = { Text("Rename to .pl") }, singleLine = true, colors = studioFieldColors())
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PrimaryAction("Rename", !operationBusy && selected.isNotBlank() && renameTo.isNotBlank()) {
+                onRenameSource(selected, renameTo.trim())
+                selected = renameTo.trim()
+                renameTo = ""
+            }
+            SecondaryAction("Delete", !operationBusy && selected.isNotBlank()) {
+                onDeleteSource(selected)
+                selected = ""
+            }
+        }
+    }
+    SectionCard("WORKSPACE BUNDLE") {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SecondaryAction("Export", !operationBusy) { bundle = onExportWorkspace() }
+            PrimaryAction("Validate & import", !operationBusy && bundle.isNotBlank()) { onImportWorkspace(bundle) }
+        }
+        OutlinedTextField(
+            value = bundle,
+            onValueChange = { if (it.length <= 4 * 1024 * 1024) bundle = it },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp),
+            label = { Text("ZARA-PROLOG-WORKSPACE/1") },
+            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+            colors = studioFieldColors(),
+        )
+    }
+    SectionCard("MINI PROLOG BOXES") {
+        listOf("BOX 1" to boxOne, "BOX 2" to boxTwo).forEach { (label, value) ->
+            Text(label, color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+            OutlinedTextField(
+                value = value,
+                onValueChange = { changed -> if (label == "BOX 1") boxOne = changed else boxTwo = changed },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                colors = studioFieldColors(),
+            )
+            PrimaryAction("Run $label", !operationBusy && value.isNotBlank()) { onRunQuery(value) }
+        }
+        queryResult?.let { result ->
+            SelectionContainer {
+                Text(result.terms.ifEmpty { listOf("false.") }.joinToString("\n"), color = tokens.text, fontFamily = FontFamily.Monospace)
+            }
         }
     }
 }
@@ -533,7 +640,7 @@ private fun firstExampleQuery(fileName: String): String =
     PrologExampleCatalog.examples.firstOrNull { it.fileName == fileName }?.query
         ?: "member(Result, [hello, prolog])"
 
-private fun expertSystemSource(name: String, evidence: String, conclusion: String): String {
+private fun expertSystemSource(name: String, evidence: String, conclusion: String, actionWords: String, skillPage: String): String {
     val safeName = name.trim().lowercase().replace(Regex("[^a-z0-9_]+"), "_")
         .trim('_').take(32)
     val safeConclusion = conclusion.trim().lowercase().replace(Regex("[^a-z0-9_]+"), "_")
@@ -542,9 +649,24 @@ private fun expertSystemSource(name: String, evidence: String, conclusion: Strin
         it.trim().lowercase().replace(Regex("[^a-z0-9_]+"), "_").trim('_').take(32)
     }.filter { it.isNotBlank() }.distinct().take(8)
     if (safeName.isBlank() || safeConclusion.isBlank() || keys.isEmpty()) return ""
+    val actions = actionWords.split(',').map { it.trim().lowercase().replace(Regex("[^a-z0-9_]+"), "_").trim('_') }
+        .filter { it.isNotBlank() }.distinct().take(32)
+    if (actions.isEmpty()) return ""
+    val intentDraft = runCatching {
+        DeterministicIntentHelperGenerator.generate(
+            IntentHelperRequest(safeName, actions, listOf(IntentArgument("entity", "atom"))),
+        ).source
+    }.getOrElse { return "" }
+    val escapedSkillPage = skillPage.take(8_192).replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+    val activationFacts = actions.joinToString("\n") { "expert_activation($safeName, $it)." }
     val goals = keys.joinToString(",\n    ") { "evidence(Entity, $it)" }
     return """
         % generated:$safeName
+        % provider:zara-intent-compiler-1 approval:required
+        expert_skill_page($safeName, '$escapedSkillPage').
+        $activationFacts
+        $intentDraft
+
         :- zara_schema(evidence, 2, [atom, atom]).
         :- zara_schema(${safeName}_decision, 2, [atom, atom]).
         :- zara_schema(${safeName}_explain, 2, [atom, term]).
