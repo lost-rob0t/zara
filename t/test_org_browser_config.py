@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -102,6 +103,40 @@ def configure(org):
     assert config.heading_scale(2) == 1.6
     assert config.heading_scale(3) == 1.3
     assert config.help_sources == ("wiki/customization.org", "wiki/android.org")
+
+
+def test_native_process_reads_owner_local_prolog_snapshot_before_python(tmp_path, monkeypatch):
+    snapshot = tmp_path / "org-browser-prolog.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "settings": {
+                    "base_font_pt": 16.0,
+                    "search_limit": 24,
+                    "show_backlinks": False,
+                    "default_project": "snapshot-project",
+                },
+                "roots": ["~/snapshot-roam"],
+                "heading_scales": [{"level": 1, "scale": 1.9}],
+                "help_sources": ["wiki/org-workspace.org"],
+            }
+        )
+    )
+    monkeypatch.setenv("ZARA_ORG_BROWSER_PROLOG_SNAPSHOT", str(snapshot))
+    (tmp_path / "org_browser.py").write_text(
+        "def configure(org):\n    org.set('base_font_pt', 18.0)\n"
+    )
+
+    runtime = build_org_browser_runtime(FakeConfig(tmp_path), prolog_engine=None)
+
+    assert runtime.config.base_font_pt == 18.0
+    assert runtime.config.search_limit == 24
+    assert runtime.config.show_backlinks is False
+    assert runtime.config.default_project == "snapshot-project"
+    assert runtime.config.roots == ("~/snapshot-roam",)
+    assert runtime.config.heading_scale(1) == 1.9
+    assert runtime.config.help_sources == ("wiki/org-workspace.org",)
 
 
 def test_python_customization_registers_filter_sort_render_help_and_memory_hooks(tmp_path):
