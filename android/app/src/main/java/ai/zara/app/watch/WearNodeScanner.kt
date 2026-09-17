@@ -29,6 +29,11 @@ class WearNodeScanner(
                                             name = node.displayName,
                                             nearby = node.isNearby,
                                             zaraInstalled = node.id in installed,
+                                            transport = if (node.isNearby) {
+                                                "Wear Data Layer · Bluetooth nearby"
+                                            } else {
+                                                "Wear Data Layer"
+                                            },
                                         )
                                     }.sortedByDescending { it.nearby }
                                 )
