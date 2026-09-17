@@ -10,6 +10,7 @@ def test_ci_names_phone_apk_artifact_with_exact_source_sha():
     assert "zara-android-debug-${{ github.event.pull_request.head.sha || github.sha }}" in workflow
     assert "zara-android-debug-${SOURCE_SHA}.apk" in workflow
     assert "source_sha=${SOURCE_SHA}" in workflow
+    assert "zara-agenda-debug-${{ github.event.pull_request.head.sha || github.sha }}" in workflow
 
 
 def test_green_master_uses_update_compatible_signer_and_publishes_direct_latest_apks():
@@ -25,6 +26,8 @@ def test_green_master_uses_update_compatible_signer_and_publishes_direct_latest_
     assert "github.event.workflow_run.head_branch == 'master'" in workflow
     assert "zara-latest.apk" in workflow
     assert "zara-wear-latest.apk" in workflow
+    assert "zara-agenda-latest.apk" in workflow
+    assert "zara-agenda-latest.apk.sha256" in workflow
     assert "android-latest" in workflow
     assert "mutable=true" in workflow
 
@@ -33,6 +36,7 @@ def test_release_assets_use_semver_name_and_record_provenance():
     workflow = (ROOT / ".github/workflows/release.yml").read_text()
 
     assert "zara-android-${VERSION}.apk" in workflow
+    assert "zara-agenda-${VERSION}.apk" in workflow
     assert "zara-android-${VERSION}.manifest.txt" in workflow
     assert "source_sha=${GITHUB_SHA}" in workflow
     assert "version_name=${VERSION}" in workflow
