@@ -42,6 +42,7 @@ class WatchSetupActivity : ComponentActivity() {
                 onPair = controller::pair,
                 onConnect = controller::connect,
                 onInstall = controller::installLatest,
+                onUninstall = controller::uninstallZara,
                 onDisconnect = controller::disconnect,
             )
         }
