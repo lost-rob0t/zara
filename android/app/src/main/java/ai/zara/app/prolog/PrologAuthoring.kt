@@ -174,7 +174,9 @@ object PrologSignatureCatalog {
                 val match = schemaPattern.matchEntire(line) ?: return@forEachIndexed
                 val predicate = PredicateRef(match.groupValues[1], match.groupValues[2].toInt())
                 val types = match.groupValues[3].split(',').map(String::trim).filter(String::isNotBlank)
-                if (types.size != predicate.arity) return@forEachIndexed
+                if (types.size != predicate.arity || types.any { it !in PrologFormArgument.SUPPORTED_TYPES }) {
+                    return@forEachIndexed
+                }
                 val explicit = explicitNames[predicate]?.second.orEmpty()
                 val arguments = types.mapIndexed { argumentIndex, type ->
                     val named = explicit.getOrNull(argumentIndex)?.substringBefore(':')?.trim().orEmpty()
