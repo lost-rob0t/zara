@@ -1,11 +1,24 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 : "${ZARA_TREALLA_SOURCE_DIR:?Pinned Trealla source is required}"
 for tool in swipl make gcc python3 javac java timeout; do command -v "$tool" >/dev/null; done
 policy="$root/android/app/src/main/assets/prolog/policy"
 report="$root/android/app/build/reports/policy-parity"
 mkdir -p "$report"
+report_failure() {
+    local status=$?
+    trap - ERR
+    echo "Native policy gate failed (exit $status); diagnostic tails follow." >&2
+    for diagnostic in "$report"/*.log "$report"/*.stdout "$report"/*.stderr "$report"/*.diff; do
+        if [[ -f "$diagnostic" ]]; then
+            echo "--- $diagnostic" >&2
+            tail -n 35 "$diagnostic" >&2 || true
+        fi
+    done
+    exit "$status"
+}
+trap report_failure ERR
 python3 - "$policy/defaults.pl" <<'PY'
 import hashlib, pathlib, sys
 body = pathlib.Path(sys.argv[1]).read_bytes()

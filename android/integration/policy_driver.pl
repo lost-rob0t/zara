@@ -10,6 +10,8 @@ policy_checks :-
     assertz(zara_policy:option(max_findings,32)),
     findall(Id-P, (zara_policy:default_rule(Id,_,_,any(Ps),_,_),member(P,Ps)), Pairs),
     length(Pairs,291), variant_checks(Pairs,1),
+    check_case(single_report, single_report_check),
+    check_case(repeated_reports, repeated_reports(256)),
     check_case(clean, \+ hit(completion_tests,'The command exited with status 1.')),
     check_case(negation, \+ hit(completion_tests,'Not all tests pass.')),
     check_case(quoted, \+ hit(completion_tests,'"all tests pass"')),
@@ -54,4 +56,18 @@ timeout_check :-
     assertz((zara_policy:user_rule(hang,local,1,phrase(x),x,[local]) :- repeat,fail)),
     catch(zara_policy:advise_codes([120],_),Error,true),
     retractall(zara_policy:user_rule(hang,_,_,_,_,_)),
-    nonvar(Error).
+    Error == time_limit_exceeded.
+
+% Backtracking must never produce another report or retain failed alternatives.
+single_report_check :-
+    atom_codes('all tests pass',Codes),
+    findall(R,zara_policy:advise_terms(Codes,[],R),Reports),
+    Reports = [_],
+    findall(W,zara_policy:advise_codes(Codes,W),Wires),
+    Wires = [[1|Guidance]],Guidance \= [].
+
+repeated_reports(0) :- !.
+repeated_reports(N) :-
+    atom_codes('all tests pass',Codes),
+    zara_policy:advise_terms(Codes,[],Rows),Rows \= [],
+    Next is N-1,repeated_reports(Next).

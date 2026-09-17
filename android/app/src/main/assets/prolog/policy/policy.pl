@@ -20,13 +20,17 @@ rule(I,C,P,M,A,S) :- user_rule(I,C,P,M,A,S).
 rule(I,C,P,M,A,S) :- default_rule(I,C,P,M,A,S), \+ user_rule(I,_,_,_,_,_).
 
 advise_codes(Codes, Result) :-
-    call_with_time_limit(1, advise_codes_bounded(Codes, Result)).
+    call_with_time_limit(1, once(advise_codes_bounded(Codes, Result))).
 
 advise_codes_bounded(Codes, Result) :-
     advise_terms(Codes, [], Rows), setting(mode, Mode),
     (Mode == off -> Result = [0] ; guidance(Rows, Guidance), Result = [1|Guidance]).
 
+% Inspection returns one report; do not retain a choice point per rule or code point.
 advise_terms(Codes, Context, Rows) :-
+    once(advise_terms_bounded(Codes, Context, Rows)).
+
+advise_terms_bounded(Codes, Context, Rows) :-
     checked_codes(Codes,32768), ground(Context), is_list(Context),
     findall(r(I,C,P,M,A,S),rule(I,C,P,M,A,S),Rules),
     length(Rules,Count), Count =< 512, valid_rules(Rules),
@@ -133,7 +137,7 @@ list_codes([X|Xs],[C|Cs]) :- (integer(X) -> C=X ; atom(X),atom_length(X,1),char_
 checked_codes(Codes,Max) :- is_list(Codes),length(Codes,N),N =< Max,unicode_codes(Codes).
 unicode_codes([]).
 unicode_codes([C|Cs]) :- integer(C),C >= 0,C =< 1114111,
-    (C < 55296 ; C > 57343),unicode_codes(Cs).
+    (C < 55296 -> true ; C > 57343),unicode_codes(Cs).
 values([],[]).
 values([_-V|Pairs],[V|Values]) :- values(Pairs,Values).
 take(0,_,[]) :- !.
