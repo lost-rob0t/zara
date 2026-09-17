@@ -40,6 +40,7 @@ internal fun ProjectBreadcrumb(project: ProjectContext) {
 @Composable
 internal fun ProjectsSurface(
     state: ProjectContextState,
+    operationError: String?,
     operationBusy: Boolean,
     onCreateProject: (String) -> Unit,
     onSelectProject: (String?) -> Unit,
@@ -49,6 +50,7 @@ internal fun ProjectsSurface(
     ScreenBody(padding) {
         ScreenTitle("Projects", "Persistent app-private work contexts")
         state.loadFailure?.let(::ErrorBanner)
+        operationError?.takeIf { state.loadFailure == null }?.let(::ErrorBanner)
         SectionCard("ACTIVE CONTEXT") {
             val selected = state.selectedProject
             if (selected == null) {
