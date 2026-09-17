@@ -166,6 +166,16 @@ def test_ci_generates_android_screenshots_and_validates_both_surfaces() -> None:
     assert "scripts/validate-ui-evidence.py" in workflow
 
 
+def test_ci_targets_the_action_managed_emulator_explicitly() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert 'serial="emulator-5554"' in workflow
+    assert 'adb -s "$serial" wait-for-device' in workflow
+    assert 'adb -s "$serial" get-state' in workflow
+    assert 'adb -s "$serial" install -r' in workflow
+    assert 'adb devices | awk' not in workflow
+
+
 def test_ci_adds_independent_deep_regression_matrix() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
