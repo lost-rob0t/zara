@@ -63,8 +63,9 @@ class PrologIdeE2ETest {
     }
 
     @Test
-    fun composeStudioWiresCursorCompletionReplaceDirtyStateAndIndependentMiniBoxes() {
+    fun composeStudioWiresCursorCompletionBuildersNavigationAndIndependentMiniBoxes() {
         val studio = File("src/main/java/ai/zara/app/ui/PrologStudioSurface.kt").readText()
+        val builder = File("src/main/java/ai/zara/app/ui/PrologStructuredBuilderPane.kt").readText()
 
         assertTrue(studio.contains("TextFieldValue(draft, TextRange(draft.length))"))
         assertTrue(studio.contains("PrologCompletionEngine.complete(editorValue.text, cursor, completionDocuments)"))
@@ -72,8 +73,17 @@ class PrologIdeE2ETest {
         assertTrue(studio.contains("KeyValueRow(\"buffer\", if (dirty) \"dirty\" else \"saved\")"))
         assertTrue(studio.contains("PrologReplace.replaceNext"))
         assertTrue(studio.contains("PrologReplace.replaceAll"))
+        assertTrue(studio.contains("PrologStructuredBuilderPane("))
+        assertTrue(studio.contains("PrologAuthorityPolicy.validate(analyzed)"))
+        assertTrue(studio.contains("moveCursorToLine(diagnostic.line)"))
+        assertTrue(studio.contains("GraphPane(workspaceDocuments)"))
+        assertTrue(studio.contains("onNavigate(clause.source, clause.line)"))
         assertTrue(studio.contains("var boxOneHistory by rememberSaveable"))
         assertTrue(studio.contains("var boxTwoHistory by rememberSaveable"))
         assertTrue(studio.contains("LaunchedEffect(queryResult)"))
+        assertTrue(builder.contains("PrologFormBuilder.schema"))
+        assertTrue(builder.contains("PrologFormBuilder.fact"))
+        assertTrue(builder.contains("PrologFormBuilder.rule"))
+        assertTrue(builder.contains("Append, validate & reload"))
     }
 }
