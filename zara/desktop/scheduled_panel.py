@@ -1,37 +1,27 @@
-"""Compact canonical scheduled-task projection for Copilot."""
+"""Compact Copilot controls for the canonical scheduled-task tools."""
 
 from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
-from zara.desktop.qt_bridge import QtRuntimeBridge
-
-_STATE_ROLE = int(Qt.ItemDataRole.UserRole) + 1
-
 
 class ScheduledPanel(QWidget):
-    rows_ready = Signal(object)
-    operation_failed = Signal(str)
+    """Emit schedule-tool requests through Copilot's normal assistant turn path."""
 
-    def __init__(
-        self,
-        bridge: QtRuntimeBridge,
-        parent: Optional[QWidget] = None,
-    ) -> None:
+    prompt_requested = Signal(str)
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._bridge = bridge
         self.setObjectName("zaraScheduledPanel")
 
         layout = QVBoxLayout(self)
@@ -41,60 +31,44 @@ class ScheduledPanel(QWidget):
         header = QHBoxLayout()
         title = QLabel("Scheduled")
         title.setObjectName("zaraSurfaceName")
-        self.new_button = QPushButton("New")
-        self.new_button.setObjectName("zaraSecondaryAction")
+        new_button = QPushButton("New")
+        list_button = QPushButton("List")
+        for button in (new_button, list_button):
+            button.setObjectName("zaraSecondaryAction")
         header.addWidget(title)
         header.addStretch(1)
-        header.addWidget(self.new_button)
+        header.addWidget(new_button)
+        header.addWidget(list_button)
 
-        self.status = QLabel("")
-        self.status.setObjectName("zaraMutedLabel")
-        self.list = QListWidget()
-        self.list.setObjectName("zaraScheduledList")
-        self.list.setMaximumHeight(150)
-        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        hint = QLabel("cron → Prolog → LLM")
+        hint.setObjectName("zaraMutedLabel")
 
         controls = QHBoxLayout()
-        self.pause_button = QPushButton("Pause")
-        self.resume_button = QPushButton("Resume")
-        self.cancel_button = QPushButton("Cancel")
-        for button in (self.pause_button, self.resume_button, self.cancel_button):
+        pause_button = QPushButton("Pause")
+        resume_button = QPushButton("Resume")
+        cancel_button = QPushButton("Cancel")
+        for button in (pause_button, resume_button, cancel_button):
             button.setObjectName("zaraSecondaryAction")
             controls.addWidget(button)
 
         layout.addLayout(header)
-        layout.addWidget(self.status)
-        layout.addWidget(self.list)
+        layout.addWidget(hint)
         layout.addLayout(controls)
 
-        self.rows_ready.connect(self._apply_rows)
-        self.operation_failed.connect(self._show_error)
-        self.new_button.clicked.connect(self.create_schedule)
-        self.pause_button.clicked.connect(lambda: self._control("pause"))
-        self.resume_button.clicked.connect(lambda: self._control("resume"))
-        self.cancel_button.clicked.connect(lambda: self._control("cancel"))
-        self.list.itemSelectionChanged.connect(self._sync_controls)
-        self.refresh()
+        new_button.clicked.connect(self.create_schedule)
+        list_button.clicked.connect(
+            lambda: self.prompt_requested.emit(
+                "Use schedule_list. List schedules concisely with id, label, cron, state, next run, and last outcome."
+            )
+        )
+        pause_button.clicked.connect(lambda: self._control("pause"))
+        resume_button.clicked.connect(lambda: self._control("resume"))
+        cancel_button.clicked.connect(lambda: self._control("cancel"))
 
     def refresh(self) -> None:
-        service = self._bridge.host.scheduled_tasks
-        if service is None:
-            self._set_unavailable("Scheduled tasks are disabled")
-            return
-
-        async def load():
-            return service.list_schedules()
-
-        self.new_button.setEnabled(True)
-        self.status.setText("Loading…")
-        self._watch(self._bridge.host.run_coroutine(load()), emit_rows=True)
+        """Compatibility no-op; schedule state is rendered by the conversation."""
 
     def create_schedule(self) -> None:
-        service = self._bridge.host.scheduled_tasks
-        if service is None:
-            self._set_unavailable("Scheduled tasks are disabled")
-            return
         cron, accepted = QInputDialog.getText(
             self,
             "New scheduled task",
@@ -110,64 +84,19 @@ class ScheduledPanel(QWidget):
         )
         if not accepted or not goal.strip():
             return
-        future = self._bridge.host.run_coroutine(
-            service.create_schedule(cron=cron.strip(), goal=goal.strip(), mode="auto")
+        self.prompt_requested.emit(
+            "Use schedule_create with "
+            f"cron {cron.strip()!r}, mode 'auto', and goal {goal.strip()!r}."
         )
-        self._watch(future)
 
     def _control(self, action: str) -> None:
-        item = self.list.currentItem()
-        service = self._bridge.host.scheduled_tasks
-        if item is None or service is None:
+        schedule_id, accepted = QInputDialog.getText(
+            self,
+            f"{action.title()} scheduled task",
+            "Schedule ID",
+        )
+        if not accepted or not schedule_id.strip():
             return
-        schedule_id = str(item.data(Qt.ItemDataRole.UserRole))
-        operation = {
-            "pause": service.pause_schedule,
-            "resume": service.resume_schedule,
-            "cancel": service.cancel_schedule,
-        }[action]
-        self._watch(self._bridge.host.run_coroutine(operation(schedule_id)))
-
-    def _watch(self, future, *, emit_rows: bool = False) -> None:
-        def done(completed) -> None:
-            try:
-                value = completed.result()
-            except Exception as error:
-                self.operation_failed.emit(str(error))
-                return
-            if emit_rows:
-                self.rows_ready.emit(value)
-            else:
-                self.refresh()
-
-        future.add_done_callback(done)
-
-    def _apply_rows(self, rows) -> None:
-        self.list.clear()
-        for row in rows:
-            next_run = row.next_run_at or "—"
-            item = QListWidgetItem(
-                f"{row.label}  ·  {row.cron}  ·  {row.state.value}\n{next_run}"
-            )
-            item.setData(Qt.ItemDataRole.UserRole, row.schedule_id)
-            item.setData(_STATE_ROLE, row.state.value)
-            self.list.addItem(item)
-        self.status.setText("" if rows else "No scheduled tasks")
-        self._sync_controls()
-
-    def _sync_controls(self) -> None:
-        item = self.list.currentItem()
-        state = item.data(_STATE_ROLE) if item is not None else None
-        self.pause_button.setEnabled(state == "active")
-        self.resume_button.setEnabled(state == "paused")
-        self.cancel_button.setEnabled(state in {"active", "paused"})
-
-    def _set_unavailable(self, message: str) -> None:
-        self.list.clear()
-        self.status.setText(message)
-        self.new_button.setEnabled(False)
-        self._sync_controls()
-
-    def _show_error(self, message: str) -> None:
-        self.status.setText(message)
-        self._sync_controls()
+        self.prompt_requested.emit(
+            f"Use schedule_{action} for schedule id {schedule_id.strip()!r}."
+        )
