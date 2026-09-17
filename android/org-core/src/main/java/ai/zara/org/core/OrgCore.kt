@@ -2,23 +2,17 @@ package ai.zara.org.core
 
 import java.time.LocalDate
 
-/**
- * Native Org semantics derived from nsaspy's Doom config rather than from a
- * second Android-only task model. Org text stays canonical.
- */
+/** Native Org semantics derived from nsaspy's Doom config. Org text stays canonical. */
 object DoomOrgProfile {
     const val orgRoot = "~/Documents/Notes/org"
     const val agendaDirectory = "agenda"
     const val ideasFile = "ideas.org"
 
-    // States referenced by the current capture/super-agenda config. Unknown
-    // states are preserved by the parser instead of rewritten.
     val todoStates = listOf("TODO", "STRT", "LOOP", "WAIT", "IDEA", "PROJ", "DONE", "NO")
     val openStates = todoStates.takeWhile { it != "DONE" }
     val doneStates = setOf("DONE", "NO")
     val effortChoices = listOf("0:30", "1:00", "1:30", "2:00")
     val categoryChoices = listOf("Misc", "Work", "Education", "Bug Bounty", "Personal Task")
-
     val babelLanguages = setOf("python", "prolog")
 
     fun nextTodoState(current: String?): String {
@@ -38,8 +32,8 @@ object DoomOrgProfile {
         append(":Effort: ").append(effort).append('\n')
         append(":CATEGORY: ").append(category).append('\n')
         append(":END:\n")
-        scheduled?.takeIf(String::isNotBlank)?.let { append("SCHEDULED: ").append(toTimestamp(it)).append('\n') }
-        deadline?.takeIf(String::isNotBlank)?.let { append("DEADLINE: ").append(toTimestamp(it)).append('\n') }
+        scheduled?.takeIf { it.isNotBlank() }?.let { append("SCHEDULED: ").append(toTimestamp(it)).append('\n') }
+        deadline?.takeIf { it.isNotBlank() }?.let { append("DEADLINE: ").append(toTimestamp(it)).append('\n') }
     }
 
     private fun toTimestamp(value: String): String {
@@ -129,7 +123,7 @@ object OrgParser {
     private val priority = Regex("^\\[#([A-Z])](?:\\s+|$)")
     private val tags = Regex("\\s+:([A-Za-z0-9_@#%:.-]+):\\s*$")
     private val property = Regex("^:([^:]+):\\s*(.*)$")
-    private val timestamp = Regex("[<[]([0-9]{4}-[0-9]{2}-[0-9]{2})")
+    private val timestamp = Regex("(?:<|\\[)([0-9]{4}-[0-9]{2}-[0-9]{2})")
     private val sourceBegin = Regex("(?i)^#\\+begin_src\\s+(\\S+)(.*)$")
     private val sourceEnd = Regex("(?i)^#\\+end_src\\s*$")
     private val titleLine = Regex("(?i)^#\\+title:\\s*(.*)$")
@@ -145,9 +139,10 @@ object OrgParser {
             val line = lines[index]
             titleLine.matchEntire(line)?.let { documentTitle = it.groupValues[1].trim() }
 
-            sourceBegin.matchEntire(line)?.let { match ->
-                val language = match.groupValues[1].lowercase()
-                val headers = parseHeaders(match.groupValues[2])
+            val sourceMatch = sourceBegin.matchEntire(line)
+            if (sourceMatch != null) {
+                val language = sourceMatch.groupValues[1].lowercase()
+                val headers = parseHeaders(sourceMatch.groupValues[2])
                 val body = StringBuilder()
                 val startLine = index + 1
                 index += 1
@@ -177,7 +172,7 @@ object OrgParser {
                     }
                     var taskTags = emptySet<String>()
                     tags.find(text)?.let { match ->
-                        taskTags = match.groupValues[1].split(':').filter(String::isNotBlank).toSet()
+                        taskTags = match.groupValues[1].split(':').filter { it.isNotBlank() }.toSet()
                         text = text.removeRange(match.range).trimEnd()
                     }
 
