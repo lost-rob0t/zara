@@ -1,5 +1,8 @@
 package ai.zara.app.ui
 
+import ai.zara.app.ZaraApplication
+import ai.zara.app.runtime.RuntimeMode
+import ai.zara.app.runtime.ServerConnection
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -22,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 
@@ -34,6 +38,10 @@ fun ScheduledSurface(
     padding: PaddingValues,
 ) {
     val tokens = LocalZaraTokens.current
+    val appSession = (LocalContext.current.applicationContext as ZaraApplication).appSession
+    val runtimeMode = appSession.runtimeMode()
+    val remoteConnected = appSession.state().server is ServerConnection.Connected
+    val schedulerAvailable = runtimeMode != RuntimeMode.Local && remoteConnected
     var cron by rememberSaveable { mutableStateOf("0 9 * * 1-5") }
     var goal by rememberSaveable { mutableStateOf("") }
     var scheduleId by rememberSaveable { mutableStateOf("") }
@@ -61,6 +69,17 @@ fun ScheduledSurface(
             "Cron → Prolog → LLM escalation. Runs are owned by the canonical Zara runtime.",
             color = tokens.textMuted,
         )
+        Text(
+            when {
+                runtimeMode == RuntimeMode.Local ->
+                    "Local mode: schedule controls are disabled. Switch to Auto or Remote and connect to the canonical Zara runtime."
+                !remoteConnected ->
+                    "Degraded: no authenticated Zara server is connected. Schedules are not executed on Android."
+                else ->
+                    "Remote scheduler connected. Create and control schedules through the canonical runtime."
+            },
+            color = if (schedulerAvailable) tokens.secondary else tokens.error,
+        )
 
         OutlinedTextField(
             value = cron,
@@ -83,7 +102,7 @@ fun ScheduledSurface(
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
-                enabled = !operationBusy && cron.isNotBlank() && goal.isNotBlank(),
+                enabled = schedulerAvailable && !operationBusy && cron.isNotBlank() && goal.isNotBlank(),
                 onClick = {
                     onSendText(
                         "Use schedule_create with cron \"${cron.trim()}\", mode \"auto\", " +
@@ -95,7 +114,7 @@ fun ScheduledSurface(
                 Text("Create schedule")
             }
             TextButton(
-                enabled = !operationBusy,
+                enabled = schedulerAvailable && !operationBusy,
                 onClick = { onSendText("Use schedule_list. List schedules concisely with id, cron, state, next run, and last outcome.") },
             ) {
                 Text("List schedules", color = tokens.secondary)
@@ -113,15 +132,15 @@ fun ScheduledSurface(
         )
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             TextButton(
-                enabled = !operationBusy && scheduleId.isNotBlank(),
+                enabled = schedulerAvailable && !operationBusy && scheduleId.isNotBlank(),
                 onClick = { onSendText("Use schedule_pause for schedule id \"${scheduleId.trim()}\".") },
             ) { Text("Pause", color = tokens.text) }
             TextButton(
-                enabled = !operationBusy && scheduleId.isNotBlank(),
+                enabled = schedulerAvailable && !operationBusy && scheduleId.isNotBlank(),
                 onClick = { onSendText("Use schedule_resume for schedule id \"${scheduleId.trim()}\".") },
             ) { Text("Resume", color = tokens.text) }
             TextButton(
-                enabled = !operationBusy && scheduleId.isNotBlank(),
+                enabled = schedulerAvailable && !operationBusy && scheduleId.isNotBlank(),
                 onClick = { onSendText("Use schedule_cancel for schedule id \"${scheduleId.trim()}\".") },
             ) { Text("Cancel", color = tokens.error) }
         }
