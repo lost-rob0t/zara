@@ -82,7 +82,7 @@ data class LocalModelConfig(
         const val MAX_OUTPUT_TOKENS = 2_048
         const val MIN_DEADLINE_MS = 1_000L
         const val MAX_DEADLINE_MS = 120_000L
-        private val LOOPBACK_HOSTS = setOf("localhost", "127.0.0.1", "::1")
+        private val LOOPBACK_HOSTS = setOf("localhost", "127.0.0.1", "[::1]")
     }
 }
 
