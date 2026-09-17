@@ -21,6 +21,11 @@ class LocalModelTest {
                 .isSuccess
         )
         assertTrue(
+            LocalModelConfig(enabled = true, endpoint = "http://[::1]:8080")
+                .runCatchingValidated()
+                .isSuccess
+        )
+        assertTrue(
             LocalModelConfig(enabled = true, endpoint = "https://example.com:443")
                 .runCatchingValidated()
                 .isFailure
