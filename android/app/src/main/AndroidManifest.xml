@@ -35,6 +35,11 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
+        <property
+            android:name="android.app.appfunctions.app_metadata"
+            android:resource="@xml/app_metadata"
+            tools:targetApi="36" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -59,7 +64,8 @@
             android:name=".integration.surface.ZaraShareActivity"
             android:exported="true"
             android:label="@string/zara_share_label"
-            android:noHistory="true">
+            android:noHistory="true"
+            android:process=":voice">
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -139,6 +145,23 @@
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name=".integration.appfunctions.ZaraAppFunctionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_APP_FUNCTION_SERVICE"
+            android:process=":voice"
+            tools:targetApi="36">
+            <property
+                android:name="android.app.appfunctions.schema"
+                android:value="app_functions_schema.xsd" />
+            <property
+                android:name="android.app.appfunctions.v2"
+                android:value="zara_app_function_service.xml" />
+            <intent-filter>
+                <action android:name="android.app.appfunctions.AppFunctionService" />
             </intent-filter>
         </service>
 
