@@ -38,9 +38,9 @@ fun ScheduledSurface(
     padding: PaddingValues,
 ) {
     val tokens = LocalZaraTokens.current
-    val appSession = (LocalContext.current.applicationContext as ZaraApplication).appSession
-    val runtimeMode = appSession.runtimeMode()
-    val remoteConnected = appSession.state().server is ServerConnection.Connected
+    val appSession = (LocalContext.current.applicationContext as? ZaraApplication)?.appSession
+    val runtimeMode = appSession?.runtimeMode() ?: RuntimeMode.Local
+    val remoteConnected = appSession?.state()?.server is ServerConnection.Connected
     val schedulerAvailable = runtimeMode != RuntimeMode.Local && remoteConnected
     var cron by rememberSaveable { mutableStateOf("0 9 * * 1-5") }
     var goal by rememberSaveable { mutableStateOf("") }
@@ -76,7 +76,7 @@ fun ScheduledSurface(
                 !remoteConnected ->
                     "Degraded: no authenticated Zara server is connected. Schedules are not executed on Android."
                 else ->
-                    "Remote scheduler connected. Create and control schedules through the canonical runtime."
+                    "Canonical runtime connected. Schedule tools use its configured [tasks] service."
             },
             color = if (schedulerAvailable) tokens.secondary else tokens.error,
         )
