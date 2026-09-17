@@ -32,7 +32,7 @@ def test_desktop_settings_renders_shared_settings_slot_and_emits_action(tmp_path
     config_path.with_name("init.py").write_text(
         '''
 def register(ui):
-    ui.add("notes-settings", "settings", "button", "Open Notes UI", "plugin:open notes", 10, ["desktop", "android"])
+    ui.add("notes-settings", "settings", "button", "Open Settings", "route:settings", 10, ["desktop", "android"])
 ''',
         encoding="utf-8",
     )
@@ -51,14 +51,44 @@ def register(ui):
         button = next(
             child
             for child in window.settings_extensions.findChildren(QPushButton)
-            if child.text() == "Open Notes UI"
+            if child.text() == "Open Settings"
         )
         button.click()
-        assert actions == ["plugin:open notes"]
+        assert actions == ["route:settings"]
     finally:
         window.prepare_for_quit()
         window.close()
         window.deleteLater()
+        app().processEvents()
+
+
+def test_plugin_action_is_disabled_until_typed_host_dispatch_exists():
+    app()
+    registry = UiExtensionRegistry()
+    registry.replace_owner(
+        "plugin:notes",
+        [
+            UiContribution(
+                id="sync-now",
+                slot=UiSlot.SETTINGS,
+                kind=UiContributionKind.BUTTON,
+                label="Sync now",
+                action="plugin:sync-now",
+            )
+        ],
+    )
+    host = DesktopUiExtensionHost(registry, UiSlot.SETTINGS)
+    actions: list[str] = []
+    host.action_requested.connect(actions.append)
+    try:
+        button = host.findChild(QPushButton)
+        assert button is not None
+        assert button.isEnabled() is False
+        button.click()
+        assert actions == []
+    finally:
+        host.close()
+        host.deleteLater()
         app().processEvents()
 
 
