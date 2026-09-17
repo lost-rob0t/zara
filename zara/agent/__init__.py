@@ -33,7 +33,8 @@ from .user_hooks import UserHookLoader
 from ..config import ZaraConfig, get_config
 from ..memory import build_memory_manager, MemoryManager
 from ..latency import LatencyTrace
-from ..org_roam import OrgRoamMemoryHook, OrgRoamWorkspace
+from ..org_browser import OrgBrowserRuntime, build_org_browser_runtime
+from ..org_browser_runtime import ConfiguredOrgRoamMemoryHook, ConfiguredOrgRoamWorkspace
 
 
 @dataclass(frozen=True)
@@ -75,27 +76,31 @@ class AgentManager:
         self.memory_context_limit = int(memory_config.get("max_chars", 1200))
         self.memory_top_k = int(memory_config.get("top_k", 5))
 
-        self.org_workspace: Optional[OrgRoamWorkspace] = None
-        self.org_memory_hook: Optional[OrgRoamMemoryHook] = None
-        self.org_project: Optional[str] = None
-        org_config = self.config.get_section("org")
-        roots_value = org_config.get("roots", [])
-        if isinstance(roots_value, str):
-            roots = [roots_value] if roots_value.strip() else []
-        else:
-            roots = [str(root) for root in roots_value if str(root).strip()]
-        if bool(org_config.get("enabled", True)) and roots:
-            self.org_project = str(org_config.get("default_project", "")).strip() or None
-            self.org_workspace = OrgRoamWorkspace(
-                roots,
-                max_files=int(org_config.get("max_files", 2000)),
-                max_file_bytes=int(org_config.get("max_file_bytes", 2_000_000)),
+        browser_prolog = (
+            prolog_engine
+            if callable(getattr(prolog_engine, "query_all", None))
+            else None
+        )
+        self.org_browser_runtime: OrgBrowserRuntime = build_org_browser_runtime(
+            self.config,
+            prolog_engine=browser_prolog,
+        )
+        self.org_workspace: Optional[ConfiguredOrgRoamWorkspace] = None
+        self.org_memory_hook: Optional[ConfiguredOrgRoamMemoryHook] = None
+        self.org_project: Optional[str] = self.org_browser_runtime.config.default_project
+        if self.org_browser_runtime.config.enabled and self.org_browser_runtime.config.roots:
+            self.org_workspace = ConfiguredOrgRoamWorkspace(
+                self.org_browser_runtime.config,
+                self.org_browser_runtime.hooks,
+                prolog_engine=browser_prolog,
             )
-            self.org_memory_hook = OrgRoamMemoryHook(
+            self.org_memory_hook = ConfiguredOrgRoamMemoryHook(
                 self.memory_manager,
-                prolog_engine=prolog_engine,
+                self.org_browser_runtime.config,
+                self.org_browser_runtime.hooks,
+                prolog_engine=browser_prolog,
             )
-            if bool(org_config.get("memory_sync", True)):
+            if self.org_browser_runtime.config.memory_sync:
                 self._refresh_org_memory(force=True)
 
         self.tool_registry = ToolRegistry(prolog_engine, self.config)
@@ -131,16 +136,6 @@ class AgentManager:
             enabled=hooks_config.get("enabled", False),
             allow_override=hooks_config.get("allow_override", False),
         )
-        if self.org_memory_hook is not None and self.org_workspace is not None:
-            self.agent_loop_advice.register(
-                "after",
-                "core:org-roam-memory",
-                50,
-                self.org_memory_hook.python_after_hook(
-                    workspace=self.org_workspace,
-                    project=self.org_project,
-                ),
-            )
         self.user_hook_loader = None
         config_dir = getattr(self.config, "config_dir", None)
         if config_dir is not None:
@@ -265,16 +260,18 @@ class AgentManager:
         return registry
 
     def _refresh_org_memory(self, *, force: bool = False) -> None:
-        if self.org_workspace is None or self.org_memory_hook is None:
+        workspace = getattr(self, "org_workspace", None)
+        memory_hook = getattr(self, "org_memory_hook", None)
+        if workspace is None or memory_hook is None:
             return
         import logging
         logger = logging.getLogger(__name__)
         try:
-            refresh = self.org_workspace.refresh(force=force)
+            refresh = workspace.refresh(force=force)
             if refresh.changed:
-                self.org_memory_hook.sync_index(
+                memory_hook.sync_index(
                     refresh.index,
-                    project=self.org_project,
+                    project=getattr(self, "org_project", None),
                 )
         except Exception as error:
             logger.warning("[AgentManager] Org-roam memory refresh failed: %s", error)
@@ -364,7 +361,7 @@ class AgentManager:
         memory_context_message = None
         memory_context = self._build_memory_context(
             user_input,
-            project=project_context or self.org_project,
+            project=project_context or getattr(self, "org_project", None),
         )
         if memory_context:
             memory_context_message = SystemMessage(
@@ -413,6 +410,7 @@ class AgentManager:
             ]
         if not provided_history:
             self.conversation_manager.conversation_history = result_messages
+        self._refresh_org_memory()
 
         return {
             "response": result.get("response", "I'm not sure how to respond to that."),
@@ -431,12 +429,12 @@ class AgentManager:
             return None
 
         self._refresh_org_memory()
-        if self.org_memory_hook is not None:
-            bundle = self.org_memory_hook.context_bundle(
+        memory_hook = getattr(self, "org_memory_hook", None)
+        if memory_hook is not None:
+            bundle = memory_hook.context_bundle(
                 user_input,
                 project=project,
                 limit=self.memory_top_k,
-                recent_chat_limit=min(self.memory_top_k, 5),
             )
             sections = []
             for title, rows in (
