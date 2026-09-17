@@ -154,6 +154,9 @@ class SecretRedactor:
     the first character so chunk boundaries cannot leak a short initial slice.
     Typed secret objects/sinks must protect excluded short values structurally
     rather than by substring scanning.
+
+    The configured secret set and each value length are bounded so an untrusted
+    caller cannot turn outbound redaction into an unbounded lookup workload.
     """
 
     def __init__(
@@ -162,11 +165,16 @@ class SecretRedactor:
         *,
         min_scan_length: int = 4,
         max_secret_length: int = 4096,
+        max_secret_count: int = 512,
     ) -> None:
         if not isinstance(min_scan_length, int) or min_scan_length < 1:
             raise ValueError("min_scan_length must be a positive integer")
         if not isinstance(max_secret_length, int) or max_secret_length < min_scan_length:
             raise ValueError("max_secret_length must be >= min_scan_length")
+        if not isinstance(max_secret_count, int) or max_secret_count < 1:
+            raise ValueError("max_secret_count must be a positive integer")
+        if len(secrets) > max_secret_count:
+            raise ValueError("secret count exceeds maximum redaction set size")
 
         grouped: dict[str, list[SecretRef]] = {}
         skipped_short = 0
@@ -192,7 +200,6 @@ class SecretRedactor:
         self._entries = tuple(
             sorted(entries, key=lambda entry: len(entry.value), reverse=True)
         )
-        self._min_scan_length = min_scan_length
         self._max_secret_length = max(
             (len(entry.value) for entry in self._entries),
             default=0,
