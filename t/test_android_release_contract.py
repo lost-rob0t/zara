@@ -13,11 +13,12 @@ def test_ci_names_phone_apk_artifact_with_exact_source_sha():
 
 
 def test_green_master_publishes_direct_latest_apks():
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    workflow = (ROOT / ".github/workflows/android-latest.yml").read_text()
 
-    assert "publish-android-latest:" in workflow
-    assert "needs: [test, shared-mic, android]" in workflow
-    assert "github.event_name == 'push' && github.ref == 'refs/heads/master'" in workflow
+    assert "workflow_run:" in workflow
+    assert "github.event.workflow_run.conclusion == 'success'" in workflow
+    assert "github.event.workflow_run.event == 'push'" in workflow
+    assert "github.event.workflow_run.head_branch == 'master'" in workflow
     assert "zara-latest.apk" in workflow
     assert "zara-wear-latest.apk" in workflow
     assert "android-latest" in workflow
