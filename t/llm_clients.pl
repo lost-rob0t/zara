@@ -18,14 +18,16 @@ start_fake_server :-
     asserta(server_port(Port)),
     setenv('ANTHROPIC_API_KEY', 'literal-key'),
     setenv('OPENAI_API_KEY', 'literal-key'),
-    setenv('OPENROUTER_API_KEY', 'literal-key').
+    setenv('OPENROUTER_API_KEY', 'literal-key'),
+    setenv('STAR_LLM_ACTOR_TOKEN', 'literal-key').
 
 stop_fake_server :-
     close_llm_client,
     server_port(Port),
     http_stop_server(Port, []),
     retractall(server_port(_)),
-    unsetenv('ZARA_ANTHROPIC_ENDPOINT').
+    unsetenv('ZARA_ANTHROPIC_ENDPOINT'),
+    unsetenv('STAR_LLM_ACTOR_TOKEN').
 
 configure_provider(Provider, Mode) :-
     server_port(Port),
@@ -78,6 +80,8 @@ success_reply(openai) :-
     reply_json_dict(_{choices:[_{message:_{content:"openai-ok"}}]}).
 success_reply(openrouter) :-
     reply_json_dict(_{choices:[_{message:_{content:"openrouter-ok"}}]}).
+success_reply(starintel) :-
+    reply_json_dict(_{choices:[_{message:_{content:"starintel-ok"}}]}).
 success_reply(llama_cpp) :-
     reply_json_dict(_{choices:[_{message:_{content:"llama-cpp-ok"}}]}).
 success_reply(ollama) :-
@@ -104,13 +108,63 @@ test(openai_golden_request) :-
     assertion(memberchk('Authorization'="Bearer literal-key", Headers)),
     assertion(Request.messages =@= [_{role:system, content:"system"}|Messages]).
 
-test(openrouter_golden_request) :-
+test(openrouter_golden_request_has_explicit_provider_policy_and_exact_model) :-
     Messages = [_{role:user, content:"hello"}],
     serialize_llm_request(
         openrouter, "model", "literal-key", "system", Messages, Headers, Request
     ),
     assertion(memberchk('Authorization'="Bearer literal-key", Headers)),
-    assertion(Request.messages =@= [_{role:system, content:"system"}|Messages]).
+    assertion(Request.model == "model"),
+    assertion(Request.messages =@= [_{role:system, content:"system"}|Messages]),
+    assertion(Request.provider.sort == "price"),
+    assertion(Request.provider.allow_fallbacks == true),
+    assertion(Request.provider.quantizations == ["fp16", "bf16", "fp8"]),
+    assertion(Request.provider.data_collection == "deny"),
+    assertion(Request.provider.require_parameters == true),
+    assertion(\+ get_dict(models, Request, _)).
+
+test(openrouter_policy_layers_normalize_and_add_budget_caps,
+     [setup(asserta(kb_config:llm_openrouter_policy(_{
+         sort:throughput,
+         quantizations:['FP16', "BF16", fp8],
+         zdr:true,
+         only:[anthropic, 'google-vertex'],
+         ignore:[deepinfra],
+         max_price:_{prompt:4, completion:20}
+     }), Ref)),
+      cleanup(erase(Ref))]) :-
+    get_openrouter_policy(Policy),
+    assertion(Policy.sort == "throughput"),
+    assertion(Policy.quantizations == ["fp16", "bf16", "fp8"]),
+    assertion(Policy.zdr == true),
+    assertion(Policy.only == ["anthropic", "google-vertex"]),
+    assertion(Policy.ignore == ["deepinfra"]),
+    assertion(Policy.max_price.prompt == 4),
+    assertion(Policy.max_price.completion == 20),
+    assertion(Policy.allow_fallbacks == true).
+
+test(openrouter_unknown_quantization_fails_closed,
+     [setup(asserta(kb_config:llm_openrouter_policy(_{quantizations:['UNKNOWN']}), Ref)),
+      cleanup(erase(Ref)),
+      throws(error(domain_error(openrouter_quantization, 'UNKNOWN'), _))]) :-
+    get_openrouter_policy(_).
+
+test(openrouter_case_folded_duplicates_fail_closed,
+     [setup(asserta(kb_config:llm_openrouter_policy(_{quantizations:[fp16, 'FP16']}), Ref)),
+      cleanup(erase(Ref)),
+      throws(error(domain_error(openrouter_policy_duplicates(quantizations), _), _))]) :-
+    get_openrouter_policy(_).
+
+test(starintel_golden_request_is_plain_openai_compatible) :-
+    Messages = [_{role:user, content:"hello"}],
+    serialize_llm_request(
+        starintel, "teacher-model", "literal-key", "system", Messages, Headers, Request
+    ),
+    assertion(memberchk('Authorization'="Bearer literal-key", Headers)),
+    assertion(Request.model == "teacher-model"),
+    assertion(Request.messages =@= [_{role:system, content:"system"}|Messages]),
+    assertion(\+ get_dict(provider, Request, _)),
+    assertion(\+ get_dict(models, Request, _)).
 
 test(llama_cpp_golden_request_has_no_auth_header) :-
     Messages = [_{role:user, content:"hello"}],
@@ -131,6 +185,16 @@ test(openrouter_missing_key_is_typed,
     unsetenv('OPENROUTER_API_KEY'),
     llm_client:get_api_key(openrouter, _).
 
+test(starintel_token_comes_from_environment) :-
+    llm_client:get_api_key(starintel, Key),
+    assertion(Key == 'literal-key').
+
+test(starintel_missing_token_is_typed,
+     [throws(error(missing_api_key(starintel), _)),
+      cleanup(setenv('STAR_LLM_ACTOR_TOKEN', 'literal-key'))]) :-
+    unsetenv('STAR_LLM_ACTOR_TOKEN'),
+    llm_client:get_api_key(starintel, _).
+
 test(ollama_golden_request) :-
     Messages = [_{role:user, content:"hello"}],
     serialize_llm_request(
@@ -144,6 +208,7 @@ test(provider_round_trips, [forall(member(Provider-Expected, [
     anthropic-"anthropic-ok",
     openai-"openai-ok",
     openrouter-"openrouter-ok",
+    starintel-"starintel-ok",
     llama_cpp-"llama-cpp-ok",
     ollama-"ollama-ok"
 ]))]) :-
@@ -180,6 +245,14 @@ test(openrouter_does_not_inherit_ollama_default_endpoint) :-
     asserta(kb_config:llm_endpoint("http://localhost:11434/api/chat")),
     llm_client:provider_endpoint(openrouter, Endpoint),
     assertion(Endpoint == "https://openrouter.ai/api/v1/chat/completions").
+
+test(starintel_does_not_inherit_ollama_default_endpoint) :-
+    retractall(kb_config:llm_provider(_)),
+    asserta(kb_config:llm_provider(starintel)),
+    retractall(kb_config:llm_endpoint(_)),
+    asserta(kb_config:llm_endpoint("http://localhost:11434/api/chat")),
+    llm_client:provider_endpoint(starintel, Endpoint),
+    assertion(Endpoint == "https://llm.starintel.actor/v1/chat/completions").
 
 test(llama_cpp_does_not_inherit_ollama_default_endpoint) :-
     retractall(kb_config:llm_provider(_)),
