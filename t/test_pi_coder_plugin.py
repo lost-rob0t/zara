@@ -27,6 +27,7 @@ def _started_plugin(tmp_path, **overrides):
     project = tmp_path / "project"
     project.mkdir()
     configuration = {
+        "engine": "pi",
         "binary": str(_fake_pi(tmp_path)),
         "projects": {"zara": str(project)},
         "allow_shell": False,
@@ -49,6 +50,10 @@ def _tool_list(argv):
     return argv[index + 1].split(",")
 
 
+def test_plugin_identity_is_generic_coder():
+    assert PiCoderPlugin.metadata.name == "coder"
+
+
 def test_coder_tool_requires_canonical_zara_approval():
     coder = _tool(PiCoderPlugin(), "coder")
     assert coder.metadata == {"zara_requires_approval": True}
@@ -67,6 +72,7 @@ def test_coder_runs_pi_in_configured_project_and_uses_stdin(tmp_path):
     assert "--print" in payload["argv"]
     assert "--no-session" in payload["argv"]
     assert "--no-approve" in payload["argv"]
+    assert "--no-context-files" in payload["argv"]
     assert "edit" in _tool_list(payload["argv"])
     assert "write" in _tool_list(payload["argv"])
     assert "bash" not in _tool_list(payload["argv"])
@@ -117,6 +123,25 @@ def test_project_trust_is_explicit(tmp_path):
 
     assert "--approve" in payload["argv"]
     assert "--no-approve" not in payload["argv"]
+    assert "--no-context-files" not in payload["argv"]
+
+
+def test_model_provider_is_operator_configuration_not_tool_input(tmp_path):
+    plugin, _ = _started_plugin(
+        tmp_path,
+        model_provider="openai",
+        model="example-model",
+        thinking="high",
+    )
+
+    result = _tool(plugin, "coder").invoke(
+        {"task": "Plan it", "project": "zara", "mode": "plan"}
+    )
+    argv = json.loads(result)["argv"]
+
+    assert argv[argv.index("--provider") + 1] == "openai"
+    assert argv[argv.index("--model") + 1] == "example-model"
+    assert argv[argv.index("--thinking") + 1] == "high"
 
 
 def test_unknown_project_fails_without_accepting_a_path(tmp_path):
@@ -147,6 +172,22 @@ def test_start_rejects_missing_project_registry(tmp_path):
     )
 
     with pytest.raises(ValueError, match="at least one configured project"):
+        plugin.start(runtime)
+
+
+def test_start_rejects_unknown_coder_engine(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    plugin = PiCoderPlugin()
+    runtime = SimpleNamespace(
+        configuration={
+            "engine": "mystery",
+            "binary": str(_fake_pi(tmp_path)),
+            "projects": {"zara": str(project)},
+        }
+    )
+
+    with pytest.raises(ValueError, match="engine must currently be 'pi'"):
         plugin.start(runtime)
 
 
