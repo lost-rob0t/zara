@@ -87,12 +87,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", default=os.environ.get("ANDROID_SERIAL"))
     parser.add_argument("--output", type=Path, default=Path("android/app/build/reports/device"))
+    parser.add_argument("--source-sha")
     args = parser.parse_args()
     if not args.serial:
         parser.error("Select a test emulator explicitly with --serial or ANDROID_SERIAL")
     args.output.mkdir(parents=True, exist_ok=True)
+    source_sha = args.source_sha or subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     device = Device(args.serial, args.output)
-    result = {"source_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+    result = {"source_sha": source_sha,
               "serial": args.serial, "passed": False, "screenshots": device.screenshots}
     try:
         result["device"] = {
