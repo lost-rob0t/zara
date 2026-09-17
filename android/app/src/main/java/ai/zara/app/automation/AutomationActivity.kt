@@ -16,26 +16,34 @@ import ai.zara.app.prolog.AndroidAutomationRunner
 import ai.zara.app.prolog.GitConfigTemplateImporter
 import ai.zara.app.prolog.PrologSource
 import ai.zara.app.runtime.LocalServerPhase
+import ai.zara.app.ui.ThemePreferenceStore
+import ai.zara.ui.theme.themeTokens
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import java.io.File
 import java.util.concurrent.CompletableFuture
@@ -71,16 +79,40 @@ class AutomationActivity : ComponentActivity() {
             }
         }
 
+        val selectedTheme = ThemePreferenceStore(File(filesDir, "theme.bin")).load()
         setContent {
-            MaterialTheme {
-                AutomationScreen(
-                    status = status,
-                    busy = busy,
-                    access = access,
-                    onRun = ::runAutomation,
-                    onRequestAccess = ::requestAccess,
-                    onImportGit = ::importGitTemplate,
-                )
+            val tokens = themeTokens(
+                selectedTheme,
+                systemDark = isSystemInDarkTheme(),
+                reducedGlow = false,
+            )
+            val colors = darkColorScheme(
+                primary = tokens.primary,
+                secondary = tokens.secondary,
+                background = tokens.background,
+                surface = tokens.surface,
+                surfaceVariant = tokens.surfaceElevated,
+                onPrimary = Color(0xFF160018),
+                onSecondary = Color(0xFF00161A),
+                onBackground = tokens.text,
+                onSurface = tokens.text,
+                onSurfaceVariant = tokens.textMuted,
+                error = tokens.error,
+            )
+            MaterialTheme(colorScheme = colors) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = tokens.background,
+                ) {
+                    AutomationScreen(
+                        status = status,
+                        busy = busy,
+                        access = access,
+                        onRun = ::runAutomation,
+                        onRequestAccess = ::requestAccess,
+                        onImportGit = ::importGitTemplate,
+                    )
+                }
             }
         }
     }
@@ -212,15 +244,26 @@ private fun AutomationScreen(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text("Zara · Prolog Automation", style = MaterialTheme.typography.headlineSmall)
+        Text("Prolog Automation", style = MaterialTheme.typography.headlineSmall)
         Text(status, style = MaterialTheme.typography.bodyMedium)
 
         Text("Demo", style = MaterialTheme.typography.titleMedium)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(enabled = !busy, onClick = { onRun("youtube_psytrance") }) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Button(
+                modifier = Modifier.weight(1f),
+                enabled = !busy,
+                onClick = { onRun("youtube_psytrance") },
+            ) {
                 Text("YouTube · psytrance")
             }
-            Button(enabled = !busy, onClick = { onRun("revanced_psytrance") }) {
+            Button(
+                modifier = Modifier.weight(1f),
+                enabled = !busy,
+                onClick = { onRun("revanced_psytrance") },
+            ) {
                 Text("ReVanced · psytrance")
             }
         }
@@ -232,13 +275,17 @@ private fun AutomationScreen(
         }
 
         Text("Android control access", style = MaterialTheme.typography.titleMedium)
-        Text("Zara asks Android for each special access. Android remains the authority; no rule can self-grant it.")
+        Text("Android grants each special access explicitly. Prolog rules cannot self-grant permissions.")
         AndroidControlAccess.entries.forEach { item ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("${item.name}: ${if (access[item] == true) "granted" else "not granted"}")
+                Text(
+                    "${item.name}: ${if (access[item] == true) "granted" else "not granted"}",
+                    modifier = Modifier.weight(1f),
+                )
                 if (access[item] != true) {
                     Button(onClick = { onRequestAccess(item) }) { Text("Request") }
                 }
