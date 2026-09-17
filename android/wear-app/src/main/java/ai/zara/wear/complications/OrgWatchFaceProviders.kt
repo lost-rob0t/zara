@@ -1,0 +1,12 @@
+package ai.zara.wear.complications
+
+import ai.zara.wear.surface.OrgNextTodoComplicationService as SurfaceNextTodo
+import ai.zara.wear.surface.OrgScheduleLaneComplicationService
+
+class OrgSchedule1ComplicationService : OrgScheduleLaneComplicationService(0)
+class OrgSchedule2ComplicationService : OrgScheduleLaneComplicationService(1)
+class OrgSchedule3ComplicationService : OrgScheduleLaneComplicationService(2)
+class OrgSchedule4ComplicationService : OrgScheduleLaneComplicationService(3)
+class OrgSchedule5ComplicationService : OrgScheduleLaneComplicationService(4)
+class OrgSchedule6ComplicationService : OrgScheduleLaneComplicationService(5)
+class OrgNextTodoComplicationService : SurfaceNextTodo()
