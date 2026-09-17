@@ -46,4 +46,4 @@ reload_user_exec_config :-
     ).
 
 load_exec_file(Path) :-
-    load_files(Path, [silent(true), if(true)]).
+    load_files(user:Path, [silent(true), if(true)]).
