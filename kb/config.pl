@@ -22,8 +22,28 @@
 
         llm_provider/1,             % anthropic | openai | openrouter | ollama
         llm_model/1,                % model name/ID
-        llm_endpoint/1              % API endpoint URL
+        llm_endpoint/1,             % API endpoint URL
+
+        org_browser_setting/2,
+        org_browser_effective_setting/2,
+        set_org_browser_setting/2,
+        clear_org_browser_setting/1,
+        org_browser_root/1,
+        add_org_browser_root/1,
+        clear_org_browser_roots/0,
+        org_browser_heading_scale/2,
+        org_browser_effective_heading_scale/2,
+        set_org_browser_heading_scale/2,
+        clear_org_browser_heading_scales/0,
+        org_browser_help_source/1,
+        org_browser_default_help_source/1,
+        org_browser_effective_help_source/1,
+        add_org_browser_help_source/1,
+        clear_org_browser_help_sources/0,
+        reset_org_browser_config/0
     ]).
+
+:- use_module(library(error)).
 
 :- discontiguous kb_config:todo_destination/1.
 :- discontiguous kb_config:todo_template/2.
@@ -39,6 +59,10 @@
 :- dynamic llm_provider/1.
 :- dynamic llm_model/1.
 :- dynamic llm_endpoint/1.
+:- dynamic org_browser_setting/2.
+:- dynamic org_browser_root/1.
+:- dynamic org_browser_heading_scale/2.
+:- dynamic org_browser_help_source/1.
 
 % ============================================================
 % ZARATHUSTRA DEFAULT CONFIGURATION
@@ -107,6 +131,166 @@ wake_word("hey zara").
 wake_word("zara").
 wake_word("sarah").
 wake_word("sara").
+
+% ---- Org browser defaults and executable Prolog configuration ----
+% org_browser_setting/2, org_browser_root/1, org_browser_heading_scale/2 and
+% org_browser_help_source/1 hold runtime overrides only. This distinction lets
+% Python merge built-ins -> TOML -> Prolog without defaults accidentally
+% overriding explicit TOML values. Trusted hooks.pl may call the setter API.
+
+org_browser_default_setting(enabled, true).
+org_browser_default_setting(memory_sync, true).
+org_browser_default_setting(base_font_pt, 12.0).
+org_browser_default_setting(max_files, 2000).
+org_browser_default_setting(max_file_bytes, 2000000).
+org_browser_default_setting(search_limit, 200).
+org_browser_default_setting(show_backlinks, true).
+org_browser_default_setting(show_properties, true).
+org_browser_default_setting(recent_chat_limit, 5).
+org_browser_default_setting(python_config_enabled, true).
+org_browser_default_setting(default_project, "").
+
+org_browser_default_heading_scale(1, 1.45).
+org_browser_default_heading_scale(2, 1.30).
+org_browser_default_heading_scale(3, 1.18).
+org_browser_default_heading_scale(4, 1.10).
+org_browser_default_heading_scale(5, 1.04).
+
+org_browser_default_help_source("README.org").
+org_browser_default_help_source("docs/README.org").
+org_browser_default_help_source("wiki/android.org").
+org_browser_default_help_source("wiki/customization.org").
+org_browser_default_help_source("wiki/agent-mode.org").
+
+org_browser_effective_setting(Key, Value) :-
+    org_browser_setting(Key, Value),
+    !.
+org_browser_effective_setting(Key, Value) :-
+    org_browser_default_setting(Key, Value).
+
+set_org_browser_setting(Key, Value) :-
+    validate_org_browser_setting(Key, Value),
+    with_mutex(org_browser_config,
+        ( retractall(org_browser_setting(Key, _)),
+          assertz(org_browser_setting(Key, Value))
+        )).
+
+clear_org_browser_setting(Key) :-
+    must_be(atom, Key),
+    with_mutex(org_browser_config,
+        retractall(org_browser_setting(Key, _))).
+
+add_org_browser_root(Path) :-
+    validate_org_browser_text(Path, root),
+    with_mutex(org_browser_config,
+        ( org_browser_root(Path)
+        -> true
+        ; assertz(org_browser_root(Path))
+        )).
+
+clear_org_browser_roots :-
+    with_mutex(org_browser_config,
+        retractall(org_browser_root(_))).
+
+org_browser_effective_heading_scale(Level, Scale) :-
+    org_browser_heading_scale(Level, Scale),
+    !.
+org_browser_effective_heading_scale(Level, Scale) :-
+    org_browser_default_heading_scale(Level, Scale).
+
+set_org_browser_heading_scale(Level, Scale) :-
+    must_be(integer, Level),
+    ( between(1, 32, Level),
+      number(Scale), Scale >= 0.25, Scale =< 4.0
+    -> true
+    ; throw(error(domain_error(org_browser_heading_scale, Level-Scale), _))
+    ),
+    with_mutex(org_browser_config,
+        ( retractall(org_browser_heading_scale(Level, _)),
+          assertz(org_browser_heading_scale(Level, Scale))
+        )).
+
+clear_org_browser_heading_scales :-
+    with_mutex(org_browser_config,
+        retractall(org_browser_heading_scale(_, _))).
+
+org_browser_effective_help_source(Path) :-
+    org_browser_help_source(_),
+    !,
+    org_browser_help_source(Path).
+org_browser_effective_help_source(Path) :-
+    org_browser_default_help_source(Path).
+
+add_org_browser_help_source(Path) :-
+    validate_org_browser_text(Path, help_source),
+    with_mutex(org_browser_config,
+        ( org_browser_help_source(Path)
+        -> true
+        ; assertz(org_browser_help_source(Path))
+        )).
+
+clear_org_browser_help_sources :-
+    with_mutex(org_browser_config,
+        retractall(org_browser_help_source(_))).
+
+reset_org_browser_config :-
+    with_mutex(org_browser_config,
+        ( retractall(org_browser_setting(_, _)),
+          retractall(org_browser_root(_)),
+          retractall(org_browser_heading_scale(_, _)),
+          retractall(org_browser_help_source(_))
+        )).
+
+validate_org_browser_setting(enabled, Value) :- !,
+    validate_org_browser_boolean(Value).
+validate_org_browser_setting(memory_sync, Value) :- !,
+    validate_org_browser_boolean(Value).
+validate_org_browser_setting(show_backlinks, Value) :- !,
+    validate_org_browser_boolean(Value).
+validate_org_browser_setting(show_properties, Value) :- !,
+    validate_org_browser_boolean(Value).
+validate_org_browser_setting(python_config_enabled, Value) :- !,
+    validate_org_browser_boolean(Value).
+validate_org_browser_setting(default_project, Value) :- !,
+    ( atom(Value) ; string(Value) ).
+validate_org_browser_setting(base_font_pt, Value) :- !,
+    validate_org_browser_number(Value, 1.0, 96.0).
+validate_org_browser_setting(max_files, Value) :- !,
+    validate_org_browser_integer(Value, 1, 100000).
+validate_org_browser_setting(max_file_bytes, Value) :- !,
+    validate_org_browser_integer(Value, 1, 100000000).
+validate_org_browser_setting(search_limit, Value) :- !,
+    validate_org_browser_integer(Value, 1, 10000).
+validate_org_browser_setting(recent_chat_limit, Value) :- !,
+    validate_org_browser_integer(Value, 0, 100).
+validate_org_browser_setting(Key, Value) :-
+    throw(error(domain_error(org_browser_setting, Key-Value), _)).
+
+validate_org_browser_boolean(Value) :-
+    ( memberchk(Value, [true, false])
+    -> true
+    ; throw(error(domain_error(org_browser_setting, Value), _))
+    ).
+
+validate_org_browser_number(Value, Minimum, Maximum) :-
+    ( number(Value), Value >= Minimum, Value =< Maximum
+    -> true
+    ; throw(error(domain_error(org_browser_setting, Value), _))
+    ).
+
+validate_org_browser_integer(Value, Minimum, Maximum) :-
+    ( integer(Value), between(Minimum, Maximum, Value)
+    -> true
+    ; throw(error(domain_error(org_browser_setting, Value), _))
+    ).
+
+validate_org_browser_text(Value, Kind) :-
+    ( (atom(Value) ; string(Value)),
+      term_string(Value, Text, [quoted(false)]),
+      Text \= ""
+    -> true
+    ; throw(error(domain_error(org_browser_setting, Kind-Value), _))
+    ).
 
 % ---- LLM Provider Configuration ----
 
