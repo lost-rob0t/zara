@@ -1,5 +1,7 @@
 package ai.zara.app.runtime
 
+import ai.zara.app.policy.PolicyAdvice
+import ai.zara.app.policy.PolicyWire
 import ai.zara.app.prolog.PrologQueryPolicy
 import ai.zara.app.prolog.PrologWorkspace
 import ai.zara.app.prolog.TreallaBridge
@@ -26,6 +28,7 @@ class LocalZaraServer(
     private val bridge: TreallaBridge,
     private val corePath: String,
     private val workspace: PrologWorkspace,
+    private val policyPath: String? = null,
 ) : AutoCloseable {
     private val actor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-local-server").apply { isDaemon = true }
@@ -82,6 +85,19 @@ class LocalZaraServer(
         }
     }
 
+    fun inspectPolicy(text: String): CompletableFuture<PolicyAdvice> {
+        val query = try {
+            PolicyWire.query(text)
+        } catch (error: IllegalArgumentException) {
+            return CompletableFuture.failedFuture(error)
+        }
+        return submit {
+            check(current.phase == LocalServerPhase.READY) { "Local Zara server is not ready" }
+            check(policyPath != null) { "Local output policy is not installed" }
+            PolicyWire.decode(bridge.evaluate(query), current.generation)
+        }
+    }
+
     fun resolve(utterance: String): CompletableFuture<LocalQueryResult> {
         val text = utterance.trim()
         require(text.isNotEmpty()) { "Utterance is required" }
@@ -101,6 +117,7 @@ class LocalZaraServer(
         updateState(current.copy(phase = phase, failure = null))
         return try {
             bridge.initialize(corePath)
+            policyPath?.let(bridge::consult)
             val sources = workspace.sourceFiles()
             sources.forEach { bridge.consult(it.absolutePath) }
             LocalServerState(

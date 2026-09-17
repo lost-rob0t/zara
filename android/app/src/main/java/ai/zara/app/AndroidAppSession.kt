@@ -16,8 +16,10 @@ import ai.zara.app.device.OpenUriAdapter
 import ai.zara.app.device.RegistryDeviceActionHandler
 import ai.zara.app.localai.LocalAiServiceClient
 import ai.zara.app.localai.LocalAiState
-import ai.zara.app.localai.LocalGenerationRequest
 import ai.zara.app.localai.LocalTtsState
+import ai.zara.app.policy.LocalPolicyModel
+import ai.zara.app.policy.PolicyAssets
+import ai.zara.app.policy.PolicyOutcome
 import ai.zara.app.runtime.AndroidTextSessionController
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.AudioOutputFormat
@@ -87,6 +89,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     private val prologWorkspace = PrologWorkspace(File(context.filesDir, "prolog-workspace"))
     private val localServer: LocalZaraServer
     private val localAi = LocalAiServiceClient(context)
+    @Volatile private var latestPolicyOutcome: PolicyOutcome? = null
     @Volatile private var latestVoiceStreamState: VoiceStreamState? = null
     @Volatile private var latestVoiceStreamFailure: String? = null
     @Volatile private var latestAudioRoute: AudioRouteSnapshot? = null
@@ -100,6 +103,10 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     init {
         prologWorkspace.seedExamples(PrologExampleCatalog.examples)
+        val policyFile = PolicyAssets.stage(File(context.noBackupFilesDir, "zara/policy")) { name ->
+            context.assets.open("prolog/policy/$name").use { it.readBytes() }
+        }
+        PolicyAssets.seedConfig(File(context.filesDir, "prolog-workspace/${PolicyAssets.CONFIG_NAME}"))
         val stagedSemanticAssets = PortableSemanticAssetStager(
             File(context.noBackupFilesDir, "zara/prolog-runtime"),
         ).stageAll(AndroidPortableSemanticAssetSource(context.assets))
@@ -107,6 +114,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             bridge = NativeTreallaBridge(),
             corePath = stagedSemanticAssets.coreFile.absolutePath,
             workspace = prologWorkspace,
+            policyPath = policyFile.absolutePath,
         )
         localServer.start()
         val restored = stateStore.load()
@@ -192,6 +200,8 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     }
 
     fun localServerState(): LocalServerState = localServer.state()
+
+    fun localPolicyOutcome(): PolicyOutcome? = latestPolicyOutcome
 
     fun setLocalServerObserver(observer: ((LocalServerState) -> Unit)?) {
         localServer.setStateObserver(observer)
@@ -403,7 +413,11 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             if (result.terms.isNotEmpty() || explicitSymbolic) {
                 CompletableFuture.completedFuture(localPrologTurn(result))
             } else {
-                localAi.generate(LocalGenerationRequest(query, maxOutputTokens = 256)).handle { generated, error ->
+                LocalPolicyModel(
+                    generate = { request -> localAi.generate(request) },
+                    inspect = localServer::inspectPolicy,
+                    observe = { outcome -> latestPolicyOutcome = outcome },
+                ).answer(query).handle { generated, error ->
                     if (error != null) {
                         TextTurnResult(
                             conversationId = "local-device",
@@ -412,7 +426,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                             success = false,
                         )
                     } else {
-                        val answer = generated.text.trim()
+                        val answer = generated.trim()
                         TextTurnResult(
                             conversationId = "local-device",
                             turnId = UUID.randomUUID().toString(),

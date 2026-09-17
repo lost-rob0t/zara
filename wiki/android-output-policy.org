@@ -1,0 +1,37 @@
+#+title: Native Android output-policy integration
+
+* Scope
+This is the Android companion to Zara native Prolog mode (#937) and the zara-policy KB (zara-plugins #817). It uses the existing LocalZaraServer actor and existing embedded model service, not Python, a subprocess, another symbolic engine, another tool loop, or a cloud dependency.
+
+The local chat route stays Prolog-first. Explicit queries and deterministic replies bypass model review. An unresolved local request produces a buffered draft, evaluates Prolog advice, optionally generates one tool-free revision, and rechecks it. Runtime reloads or model identity/generation changes invalidate the revision. Repeated findings are reported internally as UNRESOLVED rather than triggering another revision. Advice is heuristic, not factual verification.
+
+Remote chat is unchanged: the remote server owns its output policy. This client does not intercept already-streamed remote text. No new settings screen, Android plugin installer integration, or Wear OS policy runtime is claimed here.
+
+* Bundled KB and user configuration
+The APK contains 75 rules / 291 phrase alternatives, copied byte-for-byte from lost-rob0t/zara-plugins commit 59b71925f5aa866dc8954eca10f95b839f78a98e, plugins/zara-policy/lib/zara_policy/prolog/defaults.pl. Git blob: 2ffb6c65558e004080203c1dafb74e41208165f0. The native gate fails if the snapshot drifts. Refresh that pin intentionally when updating upstream; this is a reproducible snapshot, not live synchronization.
+
+PolicyAssets stages only packaged policy resources under noBackupFilesDir/zara/policy. The existing Logic workspace exposes filesDir/prolog-workspace/policy-config.pl. The default file is created only when absent; upgrades never replace existing operator edits. Save/reload uses the existing workspace lifecycle. No Android storage permission or desktop home path is required.
+
+#+begin_src prolog
+:- multifile zara_policy:user_rule/6.
+zara_policy:user_rule(local_test_evidence, verification, 99,
+    any(["all tests pass", "ci is green"]),
+    "Give the observed command, exit status and candidate SHA.", [local]).
+
+% Replace the seeded mode fact to disable advice:
+zara_policy:option(mode, off).
+#+end_src
+
+New user_rule/6 IDs extend the catalog; matching IDs replace defaults. disabled/1 disables a rule; suppress/2 takes a matcher. phrase, any, all, unless, count and trusted-context flag matchers are supported. Native advise_terms/3 accepts code-point input and a ground Key-Value context list. The application calls advise_codes/2, which returns [0] for disabled or [1|GuidanceCodes] for enabled. Model text is transported as validated integer code points and never consulted as source.
+
+The portable matcher folds ASCII case for the English starter KB; it is not a general Unicode linguistic classifier. It excludes common quoted, fenced and negated contexts but does not promise zero false positives. Imported policies are trusted executable Prolog, not a sandbox. A one-second Prolog deadline bounds normal policy evaluation; it is not a security boundary against arbitrary foreign calls or operator code that disables limits.
+
+* Failure and cancellation behavior
+Policy errors preserve the original draft and expose UNAVAILABLE through AndroidAppSession.localPolicyOutcome(). This is advisory fail-open behavior, not an enforcement filter. Revision failures also preserve the original. Only trusted rule guidance is added to the revision prompt; authentic uncertainty and justified refusals must remain intact. No raw drafts are added to diagnostics.
+
+The review future cancels its active child and prevents further review steps. Existing outer session/Binder/native cancellation limitations remain: this does not claim that cancelling a future forcibly interrupts every native or model operation. There is no new model-generation deadline in this adapter; the provider retains generation ownership. No device installation is performed by this change.
+
+* Verification gate
+Run =nix develop ./android -c bash scripts/test-android-policy.sh= for all phrase variants, positive/negative contexts, overrides, disabling, runtime timeout, cross-engine attestations and the actual JNI C bridge on a host JVM. No missing-runtime skip is allowed. The normal =android + wear gate= must additionally compile the Kotlin app, run JUnit contracts and produce APKs. The root =test= job and all required checks must pass at the exact PR head before merge. Host JNI evidence is not a physical-device test.
+
+Local development evidence: Kotlin review/wire/assets contracts and the production local actor with workspace/native test doubles were compiled and executed. Expected missing-symbol RED runs preceded their implementations. Shell syntax passed. SWI, Trealla, Nix and the Android SDK were unavailable locally; native execution, full application compilation and APK verification must come from CI, not the local fake-boundary checks.
