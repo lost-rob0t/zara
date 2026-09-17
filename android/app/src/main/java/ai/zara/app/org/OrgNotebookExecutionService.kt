@@ -81,7 +81,9 @@ class OrgNotebookExecutionService : Service() {
                     durationMs = durationMs,
                     runtimeGeneration = result?.generation ?: session.localServerState().generation,
                 )
-            } else if (error != null) {
+                return@whenComplete
+            }
+            if (error != null) {
                 val root = error.cause ?: error
                 sendFailure(
                     reply,
@@ -92,18 +94,31 @@ class OrgNotebookExecutionService : Service() {
                     durationMs,
                     session.localServerState().generation,
                 )
-            } else {
-                sendResult(
-                    reply = reply,
-                    requestId = requestId,
-                    sourceRevision = sourceRevision,
-                    blockHash = blockHash,
-                    status = OrgNotebookIpc.STATUS_SUCCEEDED,
-                    stdout = result.terms.joinToString("\n"),
-                    durationMs = durationMs,
-                    runtimeGeneration = result.generation,
-                )
+                return@whenComplete
             }
+            val completed = result
+            if (completed == null) {
+                sendFailure(
+                    reply,
+                    requestId,
+                    sourceRevision,
+                    blockHash,
+                    "Notebook runtime returned no result",
+                    durationMs,
+                    session.localServerState().generation,
+                )
+                return@whenComplete
+            }
+            sendResult(
+                reply = reply,
+                requestId = requestId,
+                sourceRevision = sourceRevision,
+                blockHash = blockHash,
+                status = OrgNotebookIpc.STATUS_SUCCEEDED,
+                stdout = completed.terms.joinToString("\n"),
+                durationMs = durationMs,
+                runtimeGeneration = completed.generation,
+            )
         }
     }
 
