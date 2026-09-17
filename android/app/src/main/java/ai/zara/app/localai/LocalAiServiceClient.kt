@@ -16,8 +16,7 @@ class LocalAiServiceClient(
         displayName = "Embedded Local",
         offlineOnly = true,
         streaming = true,
-        speech = true,
-        modelContainerExtensions = setOf(".litertlm"),
+        modelFormats = setOf(LocalModelFormat.LITERT_LM),
         accelerators = LocalModelBackend.entries.toSet(),
     )
 
@@ -97,7 +96,7 @@ class LocalAiServiceClient(
     ): CompletableFuture<LocalAiState> =
         service().thenCompose { it.selectModel(id, version) }
 
-    override fun ttsState(): CompletableFuture<LocalTtsState> = service().thenApply { it.ttsState() }
+    fun ttsState(): CompletableFuture<LocalTtsState> = service().thenApply { it.ttsState() }
 
     fun ttsProviders(): CompletableFuture<List<LocalTtsProviderCapabilities>> =
         service().thenApply { it.ttsProviders() }
@@ -117,10 +116,10 @@ class LocalAiServiceClient(
     override fun unloadModel(): CompletableFuture<LocalAiState> =
         service().thenCompose { it.unloadModel() }
 
-    override fun speak(text: String): CompletableFuture<Unit> =
+    fun speak(text: String): CompletableFuture<Unit> =
         service().thenCompose { it.speak(text) }
 
-    override fun stopSpeech() {
+    fun stopSpeech() {
         synchronized(lock) {
             binder?.stopSpeech()
         }
