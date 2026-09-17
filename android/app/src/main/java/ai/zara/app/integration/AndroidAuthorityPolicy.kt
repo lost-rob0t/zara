@@ -20,6 +20,7 @@ enum class AndroidAuthorityLevel(val rank: Int) {
 }
 
 enum class AndroidBackend(val atom: String) {
+    ASSIST("assist"),
     INTENT("intent"),
     ACCESSIBILITY("accessibility"),
     NOTIFICATION("notification"),
