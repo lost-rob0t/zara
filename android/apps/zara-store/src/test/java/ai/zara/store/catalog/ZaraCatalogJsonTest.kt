@@ -36,6 +36,18 @@ class ZaraCatalogJsonTest {
     }
 
     @Test
+    fun rejectsUnknownFieldsWithinCatalogV1() {
+        assertThrows(IllegalArgumentException::class.java) {
+            ZaraCatalogJson.parseUntrusted(
+                validCatalog().replace(
+                    "\"revision\": \"fixture-1\"",
+                    "\"revision\": \"fixture-1\", \"surprise\": true",
+                ),
+            )
+        }
+    }
+
+    @Test
     fun rejectsDuplicatePackageVersionIdentity() {
         val packageJson = validPackage()
         assertThrows(IllegalArgumentException::class.java) {
