@@ -15,6 +15,7 @@ import ai.zara.app.prolog.AndroidAutomationResult
 import ai.zara.app.prolog.AndroidAutomationRunner
 import ai.zara.app.prolog.GitConfigTemplateImporter
 import ai.zara.app.prolog.PrologSource
+import ai.zara.app.runtime.LocalServerPhase
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -99,7 +100,27 @@ class AutomationActivity : ComponentActivity() {
         if (session.prologSources().any { it.name == DEMO.fileName }) {
             return CompletableFuture.completedFuture(Unit)
         }
-        return session.savePrologSource(DEMO.fileName, DEMO.source)
+        return CompletableFuture.supplyAsync(
+            {
+                repeat(100) {
+                    when (val state = session.localServerState()) {
+                        is ai.zara.app.runtime.LocalServerState -> when (state.phase) {
+                            LocalServerPhase.READY -> return@supplyAsync Unit
+                            LocalServerPhase.FAILED -> error(state.failure ?: "Local Prolog runtime failed")
+                            else -> Thread.sleep(25)
+                        }
+                    }
+                }
+                error("Local Prolog runtime did not become ready")
+            },
+            io,
+        ).thenCompose {
+            if (session.prologSources().any { source -> source.name == DEMO.fileName }) {
+                CompletableFuture.completedFuture(Unit)
+            } else {
+                session.savePrologSource(DEMO.fileName, DEMO.source).thenApply { Unit }
+            }
+        }
     }
 
     private fun runAutomation(name: String) {
@@ -166,7 +187,8 @@ class AutomationActivity : ComponentActivity() {
     private fun workspaceBundle(sources: List<PrologSource>): String = buildString {
         append("ZARA-PROLOG-WORKSPACE/1\n")
         sources.sortedBy(PrologSource::name).forEach { source ->
-            val text = if (source.text.endsWith('\n')) source.text else source.text + "\n"
+            val normalized = source.text.replace("\r\n", "\n").replace('\r', '\n')
+            val text = if (normalized.endsWith('\n')) normalized else normalized + "\n"
             append("SOURCE ").append(source.name).append(' ')
                 .append(text.encodeToByteArray().size).append('\n')
             append(text)
