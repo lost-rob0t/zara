@@ -1,0 +1,103 @@
+#+title: Org workspace, Org-roam, and symbolic memory
+#+startup: overview
+
+* What Zara does
+Zara treats Org files as canonical user-owned source. The desktop Copilot can
+render those files with larger outline headings while keeping the literal Org
+stars visible. Org-roam IDs, aliases, tags, links, backlinks, parent/child
+relationships, and project properties are indexed into a rebuildable graph.
+
+The index is a projection only. Zara does not replace your Org files or make a
+private database authoritative.
+
+* Configuration
+Add explicit roots to =config.toml=. Zara never crawls the whole filesystem to
+find notes.
+
+#+begin_src toml
+[org]
+enabled = true
+roots = ["~/org", "~/Documents/roam"]
+default_project = "zara"
+memory_sync = true
+max_files = 2000
+max_file_bytes = 2000000
+#+end_src
+
+Desktop Copilot's expanded view exposes an =Org= button. Search covers title,
+aliases, tags, and body text. Selecting a node renders its source file and shows
+backlinks. =id:= links can jump to the indexed node.
+
+* Doom-style rendering
+The renderer does not replace =*=, =**=, and deeper heading prefixes with
+bullets. It keeps the Org source visible and changes font size/weight by outline
+level. Unknown constructs stay visible. Source blocks are rendered as source;
+rendering and indexing never execute them.
+
+* Org-roam memory hook
+With =[org].memory_sync = true=, nodes carrying an Org =ID= are projected into
+Zara long-term memory. Each memory keeps provenance in =source= using the form
+=org-roam:<ID>= and tags including:
+
+- =org-roam=
+- =symbolic-memory=
+- the node's Org tags
+- =project:<name>= when =PROJECT= / =CATEGORY= or =default_project= supplies a project
+
+Changing a node replaces its projection. Deleting a node removes the projection.
+The Org file remains canonical in every case.
+
+* Context sent to the model
+When Org memory is active, Zara builds bounded context in four explicit groups:
+
+1. Symbolic memories
+2. Project context
+3. Ordinary facts
+4. Recent chat summaries
+
+This separation is presentation/context policy; all rows still obey the existing
+principal-scoped =MemoryManager= ownership rules.
+
+* Python hook
+The Org memory projection exposes a normal Python =after= callback compatible
+with Zara's existing =AgentLoopAdviceRegistry=. Core registers it as
+=core:org-roam-memory= when an Org workspace is configured. User =hooks.py=
+continues to use the same hook/advice system; Zara does not introduce another
+agent loop.
+
+* Prolog hook
+The Prolog hook registry includes the =memory_sync= stage. User =hooks.pl= may
+register a handler just like reply hooks:
+
+#+begin_src prolog
+:- use_module('modules/zara_hooks').
+
+my_memory_sync(org_roam_sync(Created, Updated, Deleted, Unchanged)) :-
+    format('org memory: +~w ~w changed -~w (~w unchanged)~n',
+           [Created, Updated, Deleted, Unchanged]).
+
+install_my_memory_hook :-
+    zara_hooks:register_hook(memory_sync, user_org_memory, 20,
+                             my_memory_sync, _).
+#+end_src
+
+The current Org projection is also queryable through
+=org_roam_memory:org_memory/5= and =org_roam_memory:org_project_context/3=.
+The text is inert data. Embedded Org Prolog/source blocks are not consulted or
+executed during indexing.
+
+* Help sources
+Desktop Help uses the same Org renderer and reads canonical repository sources:
+=README.org= plus =docs/**/*.org= and =wiki/**/*.org=. Relative =file:= links are
+kept inside the repository root.
+
+Android packages those same repository Org files at build time under
+=assets/help/= and uses the shared literal-star Org renderer. This prevents a
+second handwritten mobile help corpus from drifting away from the repo docs.
+
+* Android notes / Org-roam
+Full Android filesystem/workspace mutation remains owned by the separately
+permissioned Zara Notes capability app tracked in =lost-rob0t/zara-plugins#807=.
+The base Zara APK owns the shared renderer and help projection but does not
+silently gain broad note-tree authority. Zara Notes uses SAF grants and keeps
+user files canonical.
