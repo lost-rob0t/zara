@@ -4,7 +4,6 @@ import ai.zara.app.prolog.PrologAuthorityPolicy
 import ai.zara.app.prolog.PrologQueryPolicy
 import ai.zara.app.prolog.PrologWorkspace
 import ai.zara.app.prolog.TreallaBridge
-import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -23,6 +22,7 @@ data class LocalQueryResult(
     val query: String,
     val terms: List<String>,
     val generation: Long,
+    val cancelled: Boolean = false,
 )
 
 class LocalZaraServer(
@@ -91,6 +91,12 @@ class LocalZaraServer(
     }
 
     fun query(rawQuery: String): CompletableFuture<LocalQueryResult> {
+        if (rawQuery == CANCEL_QUERY_COMMAND) {
+            cancelQuery()
+            return CompletableFuture.completedFuture(
+                LocalQueryResult(CANCEL_QUERY_COMMAND, emptyList(), current.generation, cancelled = true),
+            )
+        }
         val query = try {
             PrologAuthorityPolicy.requireSafeQuery(PrologQueryPolicy.requireSafe(rawQuery))
         } catch (error: Throwable) {
@@ -100,8 +106,11 @@ class LocalZaraServer(
         return submit {
             check(current.phase == LocalServerPhase.READY) { "Local Zara server is not ready" }
             val terms = bridge.evaluate(bounded(query))
-            if (ticket != queryEpoch.get()) throw CancellationException("Prolog query cancelled")
-            LocalQueryResult(query, terms, current.generation)
+            if (ticket != queryEpoch.get()) {
+                LocalQueryResult(query, emptyList(), current.generation, cancelled = true)
+            } else {
+                LocalQueryResult(query, terms, current.generation)
+            }
         }
     }
 
@@ -194,6 +203,7 @@ class LocalZaraServer(
     }
 
     companion object {
+        const val CANCEL_QUERY_COMMAND = "__zara_cancel_prolog_query__"
         internal const val QUERY_TIME_LIMIT_SECONDS = 5
     }
 }
