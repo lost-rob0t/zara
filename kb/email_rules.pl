@@ -1,4 +1,4 @@
-% Zara email policy and spam rule API.
+% Zara email policy, spam rule, and LLM tool catalog API.
 %
 % This file is portable policy. Credentials and OAuth tokens never belong here.
 % User config may add clauses for the *_rule predicates.
@@ -12,6 +12,31 @@
 :- dynamic email_user_spam_rule/6.
 :- dynamic email_before_send_rule/6.
 :- dynamic email_after_receive_rule/6.
+
+% Provider and model-tool symbols are facts so symbolic turns can enumerate the
+% same capabilities exposed to the LangChain/Android tool layers.
+email_provider(gmail).
+email_provider(imap).
+email_provider(pop3).
+
+email_tool(email_accounts, read, 'List configured email accounts').
+email_tool(email_search, read, 'Search bounded email metadata').
+email_tool(email_read, read, 'Read one message as untrusted data').
+email_tool(email_send, write, 'Send a message after before-send policy').
+email_tool(email_reply, write, 'Reply after before-send policy').
+email_tool(email_classify_spam, read, 'Run Prolog and feed spam rules').
+email_tool(email_apply_rules, write, 'Apply post-receive mailbox action').
+email_tool(email_refresh_spam_rules, write, 'Compile configured HTTPS feeds into inert Prolog facts').
+email_tool(email_prolog_api, read, 'Return the email Prolog API catalog').
+
+email_rule_predicate(email_before_send, 6).
+email_rule_predicate(email_before_send_rule, 6).
+email_rule_predicate(email_after_receive_rule, 6).
+email_rule_predicate(email_spam_rule, 6).
+email_rule_predicate(email_user_spam_rule, 6).
+email_rule_predicate(email_feed_rule, 4).
+email_rule_predicate(email_tool, 3).
+email_rule_predicate(email_provider, 1).
 
 email_contains_ci(Text, Needle) :-
     downcase_atom(Text, TextLower),
