@@ -36,6 +36,18 @@ def _iter_manifests(paths: Iterable[Path | str]):
             yield resolved
 
 
+def _manifest_plugin_identity(path: Path) -> str:
+    if path.name == "ui.json":
+        identity = path.parent.name
+    elif path.name.endswith(".ui.json"):
+        identity = path.name[: -len(".ui.json")]
+    else:
+        raise ValueError("unsupported UI manifest filename")
+    if not identity:
+        raise ValueError("UI manifest path must identify a plugin")
+    return identity
+
+
 class UiManifestLoader:
     """Project declarative plugin UI manifests without importing plugin code."""
 
@@ -91,6 +103,8 @@ class UiManifestLoader:
         plugin_name = document.get("plugin")
         if not isinstance(plugin_name, str) or not plugin_name:
             raise ValueError("UI manifest plugin must be a non-empty string")
+        if plugin_name != _manifest_plugin_identity(path):
+            raise ValueError("UI manifest plugin identity does not match its path")
         raw_items = document.get("contributions", [])
         if not isinstance(raw_items, list):
             raise ValueError("UI manifest contributions must be a list")
