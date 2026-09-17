@@ -4,6 +4,13 @@ sealed interface DeviceActionArguments {
     data class OpenUri(val uri: String) : DeviceActionArguments
     data class OpenApp(val app: String) : DeviceActionArguments
     data class AppSearch(val app: String, val query: String) : DeviceActionArguments
+    data class CalendarInsert(
+        val title: String,
+        val startMillis: Long,
+        val endMillis: Long,
+        val location: String?,
+        val description: String?,
+    ) : DeviceActionArguments
 }
 
 enum class DeviceActionErrorCode(val wireId: String) {
