@@ -1,6 +1,7 @@
 package ai.zara.ui.org
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -35,10 +36,39 @@ class OrgTextRendererTest {
 
         assertTrue(rendered.text.contains("* TODO Build renderer :ui:org:"))
         assertTrue(rendered.text.contains("** NEXT Add backlinks :graph:"))
-        assertTrue(rendered.text.contains("Project: zara"))
+        assertTrue(rendered.text.contains(":PROJECT: zara"))
         assertTrue(rendered.text.contains("Backlinks: beta-memory"))
         assertTrue(OrgTextRenderer.headingFontSp(1, 16f) > OrgTextRenderer.headingFontSp(2, 16f))
         assertEquals(16f, OrgTextRenderer.headingFontSp(8, 16f), 0.001f)
+    }
+
+    @Test
+    fun typedSnapshotControlsFontsPropertiesAndBacklinks() {
+        val document = OrgRenderDocument(
+            "Configured",
+            listOf(
+                OrgRenderNode(
+                    id = "node",
+                    level = 1,
+                    title = "Configured heading",
+                    project = "zara",
+                    backlinks = listOf("parent"),
+                )
+            ),
+        )
+        val config = OrgRenderConfig(
+            baseFontSp = 18f,
+            headingScales = listOf(2f, 1.25f),
+            showBacklinks = false,
+            showProperties = false,
+        )
+
+        val rendered = OrgTextRenderer.render(document, config)
+
+        assertEquals(36f, OrgTextRenderer.headingFontSp(1, 18f, config.headingScales), 0.001f)
+        assertFalse(rendered.text.contains(":PROPERTIES:"))
+        assertFalse(rendered.text.contains("Backlinks:"))
+        assertTrue(rendered.text.contains("Project: zara"))
     }
 
     @Test
