@@ -92,6 +92,9 @@ class _Supervisor:
     def subscribe(self, principal: PrincipalContext, *, maxsize: int = 0):
         return self.bus.subscribe(maxsize=maxsize)
 
+    def publish(self, principal: PrincipalContext, event):
+        return self.bus.publish(event)
+
     def submit(self, principal: PrincipalContext, command):
         self._turn += 1
         turn_id = f"android-stock-turn-{self._turn}"
