@@ -14,14 +14,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from zara.desktop.qt_bridge import QtRuntimeBridge
+
 
 class ScheduledPanel(QWidget):
-    """Emit schedule-tool requests through Copilot's normal assistant turn path."""
+    """Project scheduler readiness and emit tool requests through Copilot."""
 
     prompt_requested = Signal(str)
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        bridge: QtRuntimeBridge,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         super().__init__(parent)
+        self._bridge = bridge
         self.setObjectName("zaraScheduledPanel")
 
         layout = QVBoxLayout(self)
@@ -42,6 +49,8 @@ class ScheduledPanel(QWidget):
 
         hint = QLabel("cron → Prolog → LLM")
         hint.setObjectName("zaraMutedLabel")
+        self.status_label = QLabel()
+        self.status_label.setObjectName("zaraMutedLabel")
 
         controls = QHBoxLayout()
         pause_button = QPushButton("Pause")
@@ -51,8 +60,17 @@ class ScheduledPanel(QWidget):
             button.setObjectName("zaraSecondaryAction")
             controls.addWidget(button)
 
+        self._action_buttons = (
+            new_button,
+            list_button,
+            pause_button,
+            resume_button,
+            cancel_button,
+        )
+
         layout.addLayout(header)
         layout.addWidget(hint)
+        layout.addWidget(self.status_label)
         layout.addLayout(controls)
 
         new_button.clicked.connect(self.create_schedule)
@@ -64,9 +82,18 @@ class ScheduledPanel(QWidget):
         pause_button.clicked.connect(lambda: self._control("pause"))
         resume_button.clicked.connect(lambda: self._control("resume"))
         cancel_button.clicked.connect(lambda: self._control("cancel"))
+        self.refresh()
 
     def refresh(self) -> None:
-        """Compatibility no-op; schedule state is rendered by the conversation."""
+        """Reflect whether RuntimeHost actually owns a live scheduler service."""
+        available = self._bridge.host.scheduled_tasks is not None
+        self.status_label.setText(
+            "Scheduler ready"
+            if available
+            else "Scheduler disabled — enable [tasks] on the Zara runtime"
+        )
+        for button in self._action_buttons:
+            button.setEnabled(available)
 
     def create_schedule(self) -> None:
         cron, accepted = QInputDialog.getText(
