@@ -1,18 +1,4 @@
-"""Secret references, runtime lease metadata, and outbound redaction primitives.
-
-This module deliberately does not implement a persistent secret store.  It owns
-only the public, plaintext-free reference ABI, the trusted-runtime lease
-contract, and the redaction boundary used by future Android, desktop, server,
-provider, and plugin secret-store adapters.
-
-The agent/operator-facing alias syntax mirrors Agent Zero's useful convention::
-
-    §§secret(NAME)
-
-Aliases are inert references.  Nothing in this module expands an alias into
-secret material, and neither ``SecretRef`` nor ``SecretLease`` contains or
-serializes plaintext.
-"""
+"""Plaintext-free secret references, lease metadata, and outbound redaction."""
 
 from __future__ import annotations
 
@@ -30,6 +16,7 @@ _NAME_RE = re.compile(rf"{_NAME_PATTERN}\Z")
 _ALIAS_RE = re.compile(rf"§§secret\(({_NAME_PATTERN})\)")
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _LEASE_ISSUER = object()
+_MAX_LEASE_TTL_SECONDS = 300.0
 
 
 class SecretAliasError(ValueError):
@@ -60,7 +47,7 @@ class SecretKind(str, Enum):
 
 
 class SecretSink(str, Enum):
-    """Reviewed execution sinks that may later consume materialized secrets."""
+    """Reviewed execution sinks that may later consume secret material."""
 
     HTTP_HEADER = "http_header"
     REQUEST_BODY = "request_body"
@@ -79,35 +66,24 @@ def _canonical_name(name: str) -> str:
     return name.upper()
 
 
-def _bounded_label(
-    value: str,
-    field: str,
-    *,
-    max_length: int = 256,
-    allow_empty: bool = False,
-) -> str:
+def _bounded_label(value: str, field: str, *, max_length: int = 256) -> str:
     if not isinstance(value, str):
         raise TypeError(f"{field} must be str")
-    if (not value and not allow_empty) or len(value) > max_length:
-        qualifier = "possibly-empty " if allow_empty else "non-empty "
-        raise ValueError(f"{field} must be {qualifier}text up to {max_length} chars")
+    if not value or len(value) > max_length:
+        raise ValueError(f"{field} must be non-empty text up to {max_length} chars")
     if _CONTROL_RE.search(value):
         raise ValueError(f"{field} must not contain control characters")
     return value
 
 
 def alias_for_secret(name: str) -> str:
-    """Return the canonical printable alias for ``name``.
-
-    The returned alias is presentation metadata only; it is not a capability
-    and must never imply permission to resolve secret material.
-    """
+    """Return the canonical inert printable alias for a secret name."""
 
     return f"§§secret({_canonical_name(name)})"
 
 
 def parse_secret_alias(alias: str) -> str:
-    """Parse one complete alias and return its canonical secret name."""
+    """Parse one complete alias without resolving any secret material."""
 
     if not isinstance(alias, str):
         raise SecretAliasError("Secret alias must be text")
@@ -118,10 +94,7 @@ def parse_secret_alias(alias: str) -> str:
 
 
 def find_secret_aliases(text: str) -> tuple[str, ...]:
-    """Return canonical secret names referenced by aliases in ``text``.
-
-    This is discovery only.  It intentionally performs no resolution.
-    """
+    """Return canonical names referenced by inert aliases in text."""
 
     if not isinstance(text, str):
         raise TypeError("text must be str")
@@ -130,7 +103,7 @@ def find_secret_aliases(text: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True, slots=True)
 class SecretRef:
-    """Plaintext-free, serializable identity for one secret."""
+    """Plaintext-free serializable identity for one secret."""
 
     id: str
     name: str
@@ -161,8 +134,6 @@ class SecretRef:
         return alias_for_secret(self.name)
 
     def to_public_dict(self) -> dict[str, object]:
-        """Return the bounded public projection; plaintext cannot appear here."""
-
         return {
             "id": self.id,
             "name": self.name,
@@ -178,7 +149,7 @@ class SecretRef:
 
 @dataclass(frozen=True, slots=True)
 class SecretUseContext:
-    """Plaintext-free request context used when resolving a secret reference."""
+    """Plaintext-free context binding one proposed secret use."""
 
     principal: str
     runtime_generation: int
@@ -210,13 +181,7 @@ class SecretUseContext:
 
 
 class SecretLease:
-    """Short-lived plaintext-free authorization metadata for one secret use.
-
-    A lease is intentionally runtime-issued and non-serializable.  It is not a
-    container for secret bytes.  Future stores/materializers must validate the
-    lease against their own live generation/revocation state before revealing
-    material to a reviewed sink.
-    """
+    """Short-lived, non-serializable authorization metadata with no plaintext."""
 
     __slots__ = (
         "_lease_id",
@@ -279,9 +244,8 @@ class SecretLease:
         if not isinstance(ttl_seconds, (int, float)) or isinstance(ttl_seconds, bool):
             raise ValueError("ttl_seconds must be a finite positive number")
         ttl = float(ttl_seconds)
-        if not math.isfinite(ttl) or ttl <= 0:
-            raise ValueError("ttl_seconds must be a finite positive number")
-
+        if not math.isfinite(ttl) or ttl <= 0 or ttl > _MAX_LEASE_TTL_SECONDS:
+            raise ValueError("ttl_seconds must be between 0 and 300 seconds")
         return cls(
             _issuer=_LEASE_ISSUER,
             lease_id=uuid.uuid4().hex,
@@ -354,12 +318,12 @@ class SecretLease:
         self._closed = True
 
     def __repr__(self) -> str:
-        state = "closed" if self._closed else "open"
-        return f"SecretLease(state={state!r})"
+        return f"SecretLease(state={'closed' if self._closed else 'open'!r})"
 
     __str__ = __repr__
 
     def __reduce_ex__(self, protocol: int) -> object:
+        del protocol
         raise TypeError("SecretLease cannot be serialized")
 
     def __getstate__(self) -> object:
@@ -368,12 +332,7 @@ class SecretLease:
 
 @runtime_checkable
 class SecretStore(Protocol):
-    """Plaintext-free store contract visible to Core orchestration.
-
-    Concrete backends may expose a separate runtime-private materializer to
-    trusted provider/tool execution code.  Plaintext retrieval is deliberately
-    absent from this protocol.
-    """
+    """Plaintext-free store contract visible to ordinary Core orchestration."""
 
     def list_refs(self) -> tuple[SecretRef, ...]: ...
 
@@ -405,18 +364,7 @@ class _TrieNode:
 
 
 class SecretRedactor:
-    """Mask known secret values before text leaves a trusted boundary.
-
-    Values shorter than ``min_scan_length`` are deliberately excluded from
-    automatic free-text scanning to avoid pathological over-redaction.  Once a
-    value is eligible for scanning, the streaming filter protects prefixes from
-    the first character so chunk boundaries cannot leak a short initial slice.
-    Typed secret objects/sinks must protect excluded short values structurally
-    rather than by substring scanning.
-
-    Secret count, individual value length, and aggregate scannable material are
-    bounded so redaction cannot become an unbounded lookup/memory workload.
-    """
+    """Mask known secret values before text leaves a trusted boundary."""
 
     def __init__(
         self,
@@ -458,14 +406,11 @@ class SecretRedactor:
                 continue
             grouped.setdefault(value, []).append(secret_ref)
 
-        entries: list[_RedactionEntry] = []
+        entries = []
         for value, refs in grouped.items():
             replacement = refs[0].alias if len(refs) == 1 else "***"
             entries.append(_RedactionEntry(value=value, replacement=replacement))
-
-        self._entries = tuple(
-            sorted(entries, key=lambda entry: len(entry.value), reverse=True)
-        )
+        self._entries = tuple(sorted(entries, key=lambda entry: len(entry.value), reverse=True))
         self._skipped_short = skipped_short
         self._trie = _TrieNode()
         for entry in self._entries:
@@ -485,13 +430,7 @@ class SecretRedactor:
         )
 
     def mask_text(self, text: str) -> str:
-        """Mask complete known values without reprocessing generated aliases.
-
-        Unlike streaming finalization, a full already-complete text value keeps
-        an ordinary suffix that merely happens to be an incomplete secret
-        prefix.  Complete secret matches still use the same leftmost/longest
-        trie semantics as streaming output.
-        """
+        """Mask complete matches in one pass without re-scanning generated aliases."""
 
         if not isinstance(text, str):
             raise TypeError("text must be str")
@@ -504,13 +443,7 @@ class SecretRedactor:
 
 
 class SecretStreamingFilter:
-    """Stateful leftmost-longest redactor for chunked text.
-
-    ``pending`` always contains the earliest not-yet-safe raw text.  A complete
-    secret that is also a prefix of a longer configured secret is retained until
-    the next input disambiguates it.  This prevents eager replacement at a chunk
-    boundary from exposing a longer credential split across chunks.
-    """
+    """Stateful leftmost-longest redactor for chunked text."""
 
     __slots__ = ("_redactor", "_pending")
 
@@ -527,7 +460,6 @@ class SecretStreamingFilter:
             raise TypeError("chunk must be str")
         if not chunk:
             return ""
-
         self._pending += chunk
         return self._drain(final=False, mask_incomplete=True)
 
@@ -537,55 +469,51 @@ class SecretStreamingFilter:
     def _drain(self, *, final: bool, mask_incomplete: bool) -> str:
         output: list[str] = []
         root = self._redactor._trie
-
         while self._pending:
             node = root
-            last_terminal_end = 0
-            last_terminal_replacement: str | None = None
-            mismatch = False
+            last_end = 0
+            last_replacement: str | None = None
 
             for index, character in enumerate(self._pending):
                 next_node = node.children.get(character)
                 if next_node is None:
-                    mismatch = True
+                    if last_end:
+                        assert last_replacement is not None
+                        output.append(last_replacement)
+                        self._pending = self._pending[last_end:]
+                    else:
+                        output.append(self._pending[0])
+                        self._pending = self._pending[1:]
                     break
                 node = next_node
                 if node.replacement is not None:
-                    last_terminal_end = index + 1
-                    last_terminal_replacement = node.replacement
+                    last_end = index + 1
+                    last_replacement = node.replacement
             else:
-                # The entire pending buffer is a valid secret prefix.
-                if node.replacement is not None and (final or not node.children):
+                if not final:
+                    if node.replacement is not None and not node.children:
+                        output.append(node.replacement)
+                        self._pending = ""
+                    break
+
+                if node.replacement is not None:
                     output.append(node.replacement)
                     self._pending = ""
                     continue
 
-                if final:
-                    # No more bytes can arrive.  If a shorter complete secret
-                    # was observed along this path, emit that safe replacement
-                    # and continue classifying the remainder.  Otherwise this is
-                    # either an unresolved stream prefix (mask it) or an ordinary
-                    # incomplete prefix in already-complete text (keep it).
-                    if last_terminal_end:
-                        assert last_terminal_replacement is not None
-                        output.append(last_terminal_replacement)
-                        self._pending = self._pending[last_terminal_end:]
-                        continue
-                    output.append("***" if mask_incomplete else self._pending)
-                    self._pending = ""
-                break
+                if last_end:
+                    assert last_replacement is not None
+                    output.append(last_replacement)
+                    remainder = self._pending[last_end:]
+                    if mask_incomplete and remainder:
+                        output.append("***")
+                        self._pending = ""
+                    else:
+                        self._pending = remainder
+                    continue
 
-            if mismatch and last_terminal_end:
-                assert last_terminal_replacement is not None
-                output.append(last_terminal_replacement)
-                self._pending = self._pending[last_terminal_end:]
-                continue
-
-            # The first pending character cannot begin any configured secret.
-            # It is therefore safe to emit; the remaining suffix is reevaluated
-            # because a secret may start at the next character.
-            output.append(self._pending[0])
-            self._pending = self._pending[1:]
+                output.append("***" if mask_incomplete else self._pending)
+                self._pending = ""
 
         return "".join(output)
 
