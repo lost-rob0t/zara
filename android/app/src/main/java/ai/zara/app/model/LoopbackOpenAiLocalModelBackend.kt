@@ -6,11 +6,13 @@ import java.net.ConnectException
 import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
-import kotlin.math.max
 import org.json.JSONArray
 import org.json.JSONObject
 
 class LoopbackOpenAiLocalModelBackend : LocalModelBackend {
+    @Volatile
+    private var activeConnection: HttpURLConnection? = null
+
     override fun generate(
         config: LocalModelConfig,
         request: LocalModelRequest,
@@ -34,6 +36,7 @@ class LoopbackOpenAiLocalModelBackend : LocalModelBackend {
             setRequestProperty("Accept", "text/event-stream, application/json")
             setRequestProperty("User-Agent", "zara-android-local-model/1")
         }
+        activeConnection = connection
         return try {
             checkActive(cancelled, deadlineNanos)
             val payload = JSONObject()
@@ -86,8 +89,17 @@ class LoopbackOpenAiLocalModelBackend : LocalModelBackend {
             }
             throw LocalModelException(LocalModelFailureReason.UNAVAILABLE, "Local model connection failed", error)
         } finally {
+            if (activeConnection === connection) activeConnection = null
             connection.disconnect()
         }
+    }
+
+    override fun cancel() {
+        activeConnection?.disconnect()
+    }
+
+    override fun close() {
+        cancel()
     }
 
     private fun readEventStream(
