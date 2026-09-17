@@ -1,5 +1,6 @@
 :- begin_tests(exec_config).
 
+:- use_module(library(filesex)).
 :- use_module('../modules/config_loader').
 :- use_module('../modules/exec_config_loader').
 
