@@ -38,8 +38,8 @@ class AndroidUiExtensionRepository(
 
     fun load(): CompletableFuture<List<UiContribution>> {
         val registry = UiExtensionRegistry()
-        loadPortablePython(registry)
-        loadPluginProjection(registry)
+        runCatching { loadPortablePython(registry) }
+        runCatching { loadPluginProjection(registry) }
 
         return prologQuery("zara_ui(Result)").handle { result, error ->
             if (error == null && result != null) {
@@ -62,6 +62,7 @@ class AndroidUiExtensionRepository(
     }
 
     private fun loadPluginProjection(registry: UiExtensionRegistry) {
+        val staged = UiExtensionRegistry()
         val seen = mutableSetOf<String>()
         pluginProjectionProvider()
             .sortedWith(compareBy<AndroidPluginUiProjection> { it.pluginId }.thenBy { it.generation })
@@ -70,7 +71,12 @@ class AndroidUiExtensionRepository(
                     "duplicate Android plugin UI projection: ${projection.pluginId}"
                 }
                 if (!projection.trusted || !projection.enabled) return@forEach
-                registry.replaceOwner("plugin:${projection.pluginId}", projection.contributions)
+                staged.replaceOwner("plugin:${projection.pluginId}", projection.contributions)
+            }
+        staged.snapshot()
+            .groupBy { it.owner }
+            .forEach { (owner, contributions) ->
+                registry.replaceOwner(owner, contributions)
             }
     }
 
