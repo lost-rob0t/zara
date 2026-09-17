@@ -1,6 +1,8 @@
 package ai.zara.app.ui
 
 import ai.zara.app.BuildConfig
+import ai.zara.app.projects.ProjectContext
+import ai.zara.app.projects.ProjectContextState
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.RuntimeState
@@ -145,6 +147,7 @@ fun ZaraApp(
     updateState: UpdateState,
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
+    projectState: ProjectContextState,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
@@ -152,7 +155,9 @@ fun ZaraApp(
     onPinServer: (String) -> Unit,
     onReplaceServerPin: (String) -> Unit,
     onConnect: (String) -> Unit,
-    onSendText: (String) -> Unit,
+    onSendText: (String, ProjectContext?) -> Unit,
+    onCreateProject: (String) -> Unit,
+    onSelectProject: (String?) -> Unit,
     onRequestMicrophonePermission: () -> Unit,
     onRequestAssistantRole: () -> Unit,
     onStartVoice: () -> Unit,
@@ -237,6 +242,7 @@ fun ZaraApp(
                                             AppSurface.Chat -> ChatSurface(
                                                 state = runtimeState,
                                                 localServerState = localServerState,
+                                                project = projectState.selectedProject,
                                                 lastTurn = lastTurn,
                                                 operationError = operationError,
                                                 operationBusy = operationBusy,
@@ -272,7 +278,13 @@ fun ZaraApp(
                                                 onCancelVoice = onCancelVoice,
                                                 padding = padding,
                                             )
-                                            AppSurface.Projects -> GatedSurface(selected, padding)
+                                            AppSurface.Projects -> ProjectsSurface(
+                                                state = projectState,
+                                                operationBusy = operationBusy,
+                                                onCreateProject = onCreateProject,
+                                                onSelectProject = onSelectProject,
+                                                padding = padding,
+                                            )
                                             AppSurface.Scheduled -> GatedSurface(selected, padding)
                                             AppSurface.Plugins -> GatedSurface(selected, padding)
                                             AppSurface.Themes -> ThemesSurface(
@@ -505,10 +517,11 @@ private fun DrawerHistoryRow(title: String, detail: String) {
 private fun ChatSurface(
     state: RuntimeState,
     localServerState: LocalServerState,
+    project: ProjectContext?,
     lastTurn: RenderedTextTurn?,
     operationError: String?,
     operationBusy: Boolean,
-    onSendText: (String) -> Unit,
+    onSendText: (String, ProjectContext?) -> Unit,
     padding: PaddingValues,
 ) {
     var input by rememberSaveable { mutableStateOf("") }
@@ -524,6 +537,7 @@ private fun ChatSurface(
             .padding(padding)
             .padding(horizontal = 16.dp),
     ) {
+        project?.let { ProjectBreadcrumb(it) }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -580,7 +594,7 @@ private fun ChatSurface(
                 val message = input.trim()
                 if (message.isNotEmpty()) {
                     input = ""
-                    onSendText(message)
+                    onSendText(message, project)
                 }
             },
         )
