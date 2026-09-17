@@ -1,0 +1,11 @@
+---
+repo_url: __ZARA_FDROID_REPO_URL__
+repo_name: Zara
+repo_description: >-
+  First-party Zara Android applications and separately permissioned Zara-compatible packages.
+archive_older: 0
+make_current_version_link: false
+
+# This template is intentionally unsigned. Ordinary build/PR CI must never add
+# repo_keyalias, keystore, keystorepass, or keypass here. A separately authorized
+# publication job signs the generated indexes after the unsigned staging gate.
