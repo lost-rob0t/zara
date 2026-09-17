@@ -134,7 +134,7 @@ def test_legacy_local_principals_migrate_to_portable_owner(tmp_path):
     assert {record.id for record in reopened.list_conversations()} == {first.id, second.id}
 
 
-def test_local_owner_claims_history_from_previous_numeric_uid_without_claiming_authenticated_rows(tmp_path):
+def test_local_owner_claims_history_from_previous_numeric_uid_without_claiming_other_principals(tmp_path):
     path = tmp_path / "cross-uid.db"
     current_owner = PrincipalContext("uid:9001", kind="local-owner")
     db = DatabaseManager(path)
@@ -162,20 +162,24 @@ def test_local_owner_claims_history_from_previous_numeric_uid_without_claiming_a
         "UPDATE desktop_messages SET principal_id = ? WHERE id = ?",
         (previous_uid, message.id),
     )
-    db.execute(
-        """
-        INSERT INTO desktop_conversations
-            (id, title, created_at, updated_at, provider, model, principal_id)
-        VALUES (?, ?, ?, ?, '', '', ?)
-        """,
-        (
-            "authenticated-history",
-            "Authenticated history",
-            "2026-09-17T01:00:00.000000",
-            "2026-09-17T01:00:00.000000",
-            "user:alice",
-        ),
-    )
+    for conversation_id, title, principal_id in (
+        ("authenticated-history", "Authenticated history", "user:alice"),
+        ("nonnumeric-uid-history", "Nonnumeric UID history", "uid:service"),
+    ):
+        db.execute(
+            """
+            INSERT INTO desktop_conversations
+                (id, title, created_at, updated_at, provider, model, principal_id)
+            VALUES (?, ?, ?, ?, '', '', ?)
+            """,
+            (
+                conversation_id,
+                title,
+                "2026-09-17T01:00:00.000000",
+                "2026-09-17T01:00:00.000000",
+                principal_id,
+            ),
+        )
     db.close()
 
     reopened_db = DatabaseManager(path)
@@ -188,9 +192,14 @@ def test_local_owner_claims_history_from_previous_numeric_uid_without_claiming_a
         "SELECT principal_id FROM desktop_conversations WHERE id = ?",
         (conversation.id,),
     )
-    foreign = reopened_db.fetch_one(
+    authenticated = reopened_db.fetch_one(
         "SELECT principal_id FROM desktop_conversations WHERE id = ?",
         ("authenticated-history",),
     )
+    nonnumeric_uid = reopened_db.fetch_one(
+        "SELECT principal_id FROM desktop_conversations WHERE id = ?",
+        ("nonnumeric-uid-history",),
+    )
     assert migrated["principal_id"] == PORTABLE_LOCAL_PRINCIPAL_ID
-    assert foreign["principal_id"] == "user:alice"
+    assert authenticated["principal_id"] == "user:alice"
+    assert nonnumeric_uid["principal_id"] == "uid:service"
