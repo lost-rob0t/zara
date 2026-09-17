@@ -4,6 +4,7 @@
 :- use_module('../kb/config').
 :- use_module('../kb/device_providers').
 :- use_module('../modules/config_loader').
+:- use_module('../modules/llm_client').
 
 write_config(Path, Text) :-
     setup_call_cleanup(open(Path, write, Stream), write(Stream, Text), close(Stream)).
@@ -108,6 +109,54 @@ test(openrouter_provider_override_is_accepted) :-
     write_config(Path, 'llm_provider(openrouter).\n'),
     config_loader:reload_user_config,
     once(kb_config:llm_provider(openrouter)).
+
+test(starintel_provider_override_is_accepted) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, 'llm_provider(starintel).\n'),
+    config_loader:reload_user_config,
+    once(kb_config:llm_provider(starintel)).
+
+test(llama_cpp_provider_override_is_accepted) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, 'llm_provider(llama_cpp).\n'),
+    config_loader:reload_user_config,
+    once(kb_config:llm_provider(llama_cpp)).
+
+test(openrouter_policy_layers_base_then_local_and_retain_defaults) :-
+    config_loader:user_config_path(BasePath),
+    config_loader:user_local_config_path(LocalPath),
+    Base = 'llm_openrouter_policy(_{sort:throughput, only:[anthropic]}).\n',
+    Local = 'llm_openrouter_policy(_{sort:latency, zdr:true, max_price:_{prompt:4,completion:20}}).\n',
+    write_config(BasePath, Base),
+    write_config(LocalPath, Local),
+    config_loader:reload_user_config,
+    llm_client:get_openrouter_policy(Policy),
+    assertion(Policy.sort == "latency"),
+    assertion(Policy.zdr == true),
+    assertion(Policy.only == ["anthropic"]),
+    assertion(Policy.quantizations == ["fp16", "bf16", "fp8"]),
+    assertion(Policy.data_collection == "deny"),
+    assertion(Policy.allow_fallbacks == true),
+    assertion(Policy.max_price.prompt == 4),
+    assertion(Policy.max_price.completion == 20).
+
+test(openrouter_unknown_quantization_config_is_rejected,
+     [throws(error(domain_error(zarathushtra_user_config_fact, _), _))]) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, 'llm_openrouter_policy(_{quantizations:["UNKNOWN"]}).\n'),
+    config_loader:reload_user_config.
+
+test(openrouter_empty_max_price_config_is_rejected,
+     [throws(error(domain_error(zarathushtra_user_config_fact, _), _))]) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, 'llm_openrouter_policy(_{max_price:_{}}).\n'),
+    config_loader:reload_user_config.
+
+test(openrouter_provider_allow_block_overlap_is_rejected,
+     [throws(error(domain_error(zarathushtra_user_config_fact, _), _))]) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, 'llm_openrouter_policy(_{only:[openai],ignore:["OPENAI"]}).\n'),
+    config_loader:reload_user_config.
 
 test(unknown_llm_provider_override_is_rejected,
      [throws(error(domain_error(zarathushtra_user_config_fact, _), _))]) :-
