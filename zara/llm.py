@@ -130,9 +130,15 @@ class LLMClient:
                 endpoint or "http://localhost:11434/api/chat",
                 None,
             )
+        if provider == "llama_cpp":
+            return (
+                model or "local",
+                endpoint or "http://127.0.0.1:11435/v1/chat/completions",
+                None,
+            )
         raise ValueError(
             f"Unsupported provider: {provider}. "
-            "Use: anthropic, openai, openrouter, or ollama"
+            "Use: anthropic, openai, openrouter, ollama, or llama_cpp"
         )
 
     async def __aenter__(self) -> "LLMClient":
@@ -192,8 +198,9 @@ class LLMClient:
                 "system": system,
                 "messages": messages,
             }
-        elif self.provider in {"openai", "openrouter"}:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+        elif self.provider in {"openai", "openrouter", "llama_cpp"}:
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
             payload = {
                 "model": self.model,
                 "messages": [{"role": "system", "content": system}, *messages],
@@ -287,7 +294,7 @@ class LLMClient:
                     done = False
                     provider_error = False
                     try:
-                        if self.provider in {"openai", "openrouter"}:
+                        if self.provider in {"openai", "openrouter", "llama_cpp"}:
                             if not line.startswith("data:"):
                                 continue
                             data = line[len("data:"):].strip()
@@ -411,7 +418,7 @@ class LLMClient:
                     and block.get("type") == "text"
                     and block.get("text")
                 )
-            elif self.provider in {"openai", "openrouter"}:
+            elif self.provider in {"openai", "openrouter", "llama_cpp"}:
                 text = data["choices"][0]["message"]["content"]
             else:
                 text = data["message"]["content"]
