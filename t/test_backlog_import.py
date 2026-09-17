@@ -63,6 +63,7 @@ def test_render_backlog_deterministic_and_complete():
 
     assert "closed(133). closed(170). closed(171)." in out
     assert "issue(172, p2, open," in out
+    assert 'idea_issue(152, "EPIC — Android client").' in out
     assert "depends_on(172, 171)." in out
     assert "depends_on(172, 156)." in out
     assert "epic_children(152, [170,171,172])." in out
