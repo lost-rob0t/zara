@@ -24,12 +24,16 @@ class WearFoundationContractTest {
         ).forEach { role ->
             assertTrue("missing semantic role $role", sharedSource.contains("val $role:"))
         }
-        listOf("Outrun", "StarIntel", "Midnight", "Terminal", "Light", "System").forEach { theme ->
+        listOf(
+            "Outrun", "OutrunOled", "StarIntel", "StarIntelOled", "Midnight",
+            "MidnightOled", "Terminal", "TerminalOled", "Light", "System",
+        ).forEach { theme ->
             assertTrue("missing built-in theme $theme", sharedSource.contains(theme))
         }
         assertTrue(sharedSource.contains("0xFF02040B"))
         assertTrue(sharedSource.contains("0xFFE21CF2"))
         assertTrue(sharedSource.contains("0xFF16D9FF"))
+        assertTrue(sharedSource.contains("background = Color.Black"))
 
         val phoneShell = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
         assertTrue(phoneShell.contains("import ai.zara.ui.theme.ZaraSemanticTokens"))
