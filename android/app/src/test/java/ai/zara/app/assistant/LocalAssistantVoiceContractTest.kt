@@ -48,4 +48,14 @@ class LocalAssistantVoiceContractTest {
         assertTrue(source.contains("appSession.submitLocalText(transcript)"))
         assertFalse(source.contains("appSession.submitText(transcript)"))
     }
+
+    @Test
+    fun `hiding assistant session fences pending local completion`() {
+        val source = File(
+            "src/main/java/ai/zara/app/assistant/ZaraVoiceInteractionSession.kt"
+        ).readText()
+        val onHide = source.substringAfter("override fun onHide() {").substringBefore("super.onHide()")
+
+        assertTrue(onHide.contains("localVoice.cancel(notify = false)"))
+    }
 }
