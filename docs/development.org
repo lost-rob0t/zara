@@ -16,8 +16,8 @@ This guide covers the current repository development workflow. Nix is the author
 | =zara/pets/= | Zarathushtra desktop Pet subsystem. |
 | =kb/=, =modules/=, =main.pl= | Core Prolog knowledge/semantic implementation. |
 | =android/= | Native Android client, Trealla bridge, transport/auth, tests. |
-| =docs/= | Architecture, protocol, research, and implementation docs. |
-| =wiki/= | User/feature-facing Org documentation. |
+| =docs/= | Architecture, protocol, testing, research, and implementation docs. |
+| =wiki/= | User/feature-facing book documentation. |
 | =scripts/= | Repository gates and helper scripts. |
 | =t/= | Python/desktop/runtime regression tests. |
 
@@ -27,7 +27,7 @@ This guide covers the current repository development workflow. Nix is the author
 nix develop
 #+end_src
 
-Use the flake environment rather than reconstructing dependency versions manually. The flake is part of the build/test contract.
+Use the flake environment rather than reconstructing dependency versions manually. The flake is part of the build/test contract and includes the pytest coverage tooling used by the canonical gate.
 
 * Main regression gate
 
@@ -36,6 +36,29 @@ nix develop -c bash scripts/test-all.sh
 #+end_src
 
 This is the normal top-level regression command. Focused tests are useful while iterating, but a feature slice should not be called green solely because one local test passed when the repository gate exists.
+
+* Coverage
+
+The full pytest phase records line and branch coverage for =zara/=. It prints missing lines/branches and writes machine-readable reports under =$ARTIFACT_DIR=:
+
+- =junit.xml= — pytest result data;
+- =coverage.xml= — CI/reporting coverage data;
+- =coverage.json= — detailed coverage data for audits and tooling.
+
+CI retains these artifacts and publishes =coverage.xml= to the project coverage reporter. The README badge is a project-level signal; the exact-head XML/JSON report is the evidence to inspect for a PR.
+
+For a focused coverage run:
+
+#+begin_src sh
+nix develop -c python -m pytest \
+  --cov=zara \
+  --cov-branch \
+  --cov-config=.coveragerc \
+  --cov-report=term-missing:skip-covered \
+  t/test_some_contract.py
+#+end_src
+
+Do not optimize for percentage by adding duplicate execution-only tests, weakening the tracked source set, adding exclusions, or testing dead behavior. Cover real contracts and important failure branches; remove dead code when safe. The canonical gate owns the measured baseline and non-regression floor. See [[file:testing.org][testing.org]] for the full policy.
 
 * Running Zara
 
@@ -161,6 +184,8 @@ When a slice changes a public or architectural boundary:
 5. distinguish implemented work from design-ready work;
 6. keep open release gates visible near the relevant claim.
 
+When test or coverage policy changes, keep =docs/testing.org=, =wiki/testing.org=, =AGENTS.md=, and the actual canonical gate aligned. Documentation must describe what CI really does, not an aspirational second workflow.
+
 * Commit / review discipline
 
 Prefer commits that each leave the affected slice internally coherent. For autonomous/RAGE work, maximize useful progress per loop, but do not trade away reproducible gates or make giant undocumented architectural jumps.
@@ -172,13 +197,16 @@ A reviewer should be able to answer from the diff and docs:
 - how is cancellation/shutdown handled?
 - what is the failure mode?
 - what tests prove it?
+- what coverage changed in the affected Python modules?
 - what remains explicitly incomplete?
 
 * Related docs
 
 - [[file:README.org][docs index]]
+- [[file:testing.org][testing and coverage]]
 - [[file:architecture.org][architecture]]
 - [[file:server.org][server / ZARA/1]]
 - [[file:research/002-unified-copilot-voice-visual-ci.md][unified Copilot research]]
+- [[file:../wiki/testing.org][testing chapter]]
 - [[file:../wiki/android.org][Android]]
 - [[file:../wiki/plugins.org][plugins]]
