@@ -18,6 +18,7 @@ class LocalAiProviderContractTest {
         assertTrue(client.contains("override fun selectModel("))
         assertTrue(provider.contains("const val ID = \"embedded\""))
         assertTrue(provider.contains("class LocalAiProviderRegistry"))
+        assertTrue(abi.contains("OP_LIST_PROVIDERS"))
         assertTrue(abi.contains("OP_LIST_MODELS"))
         assertTrue(abi.contains("OP_SELECT_MODEL"))
     }
@@ -55,5 +56,24 @@ class LocalAiProviderContractTest {
         assertTrue(client.contains("modelContainerExtensions = setOf(\".litertlm\")"))
         assertTrue(client.contains("accelerators = LocalModelBackend.entries.toSet()"))
         assertTrue(service.contains("metadata.format == LocalModelFormat.LITERT_LM"))
+    }
+
+    @Test
+    fun ttsIsProviderBackedAndDiscoverableInsteadOfHardCoded() {
+        val contracts = File("src/main/java/ai/zara/app/localai/LocalTtsContracts.kt").readText()
+        val androidTts = File("src/main/java/ai/zara/app/localai/AndroidOfflineTtsBackend.kt").readText()
+        val service = File("src/main/java/ai/zara/app/localai/LocalAiService.kt").readText()
+        val client = File("src/main/java/ai/zara/app/localai/LocalAiServiceClient.kt").readText()
+        val abi = File("src/main/java/ai/zara/app/localai/LocalAiAbi.kt").readText()
+
+        assertTrue(contracts.contains("interface LocalTtsProvider : LocalTtsBackend"))
+        assertTrue(contracts.contains("class LocalTtsProviderRegistry"))
+        assertTrue(androidTts.contains(") : LocalTtsProvider"))
+        assertTrue(androidTts.contains("PROVIDER_ID = \"android-offline\""))
+        assertTrue(service.contains("LocalTtsProviderRegistry"))
+        assertTrue(client.contains("fun ttsProviders()"))
+        assertTrue(client.contains("fun selectTtsProvider(id: String)"))
+        assertTrue(abi.contains("OP_LIST_TTS_PROVIDERS"))
+        assertTrue(abi.contains("OP_SELECT_TTS_PROVIDER"))
     }
 }
