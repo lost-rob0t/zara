@@ -1,8 +1,14 @@
 package ai.zara.app.runtime
 
+import ai.zara.app.model.LocalModelConfig
+import ai.zara.app.model.LocalModelConfigStore
+import ai.zara.app.model.LocalModelCoordinator
+import ai.zara.app.model.LocalModelPhase
+import ai.zara.app.model.LocalModelState
 import ai.zara.app.prolog.PrologQueryPolicy
 import ai.zara.app.prolog.PrologWorkspace
 import ai.zara.app.prolog.TreallaBridge
+import java.io.File
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -26,6 +32,7 @@ class LocalZaraServer(
     private val bridge: TreallaBridge,
     private val corePath: String,
     private val workspace: PrologWorkspace,
+    private val localModel: LocalModelCoordinator = defaultLocalModelCoordinator(corePath),
 ) : AutoCloseable {
     private val actor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-local-server").apply { isDaemon = true }
@@ -38,6 +45,8 @@ class LocalZaraServer(
     private var stateObserver: ((LocalServerState) -> Unit)? = null
 
     fun state(): LocalServerState = current
+
+    fun localModelState(): LocalModelState = localModel.state()
 
     fun setStateObserver(observer: ((LocalServerState) -> Unit)?) {
         stateObserver = observer
@@ -86,15 +95,91 @@ class LocalZaraServer(
         val text = utterance.trim()
         require(text.isNotEmpty()) { "Utterance is required" }
         require(text.length <= 8_192) { "Utterance is too large" }
+        modelCommand(text)?.let { return it }
         val escaped = text
             .replace("\\", "\\\\")
             .replace("\"", "\\\"")
             .replace("\n", "\\n")
         val query = "resolve_frames(\"$escaped\", passive, [], Frames), member(Result, Frames)"
-        return submit {
+        val symbolic = submit {
             check(current.phase == LocalServerPhase.READY) { "Local Zara server is not ready" }
             LocalQueryResult(query, bridge.evaluate(query), current.generation)
         }
+        return symbolic.thenCompose { result ->
+            if (result.terms.isNotEmpty() || !localModel.state().config.enabled) {
+                CompletableFuture.completedFuture(result)
+            } else {
+                localModel.generate(text).handle { modelResult, error ->
+                    when {
+                        modelResult != null -> result.copy(terms = listOf(modelResult.text))
+                        error != null -> result.copy(
+                            terms = listOf(
+                                "Local model unavailable: ${rootMessage(error)}. " +
+                                    "The symbolic runtime is still ready.",
+                            ),
+                        )
+                        else -> result
+                    }
+                }
+            }
+        }
+    }
+
+    private fun modelCommand(text: String): CompletableFuture<LocalQueryResult>? {
+        if (text != "/model" && !text.startsWith("/model ")) return null
+        return try {
+            val arguments = text.split(Regex("\\s+"), limit = 6)
+            val message = when (arguments.getOrNull(1)?.lowercase() ?: "status") {
+                "status" -> describeModelState(localModel.state())
+                "on" -> {
+                    val state = localModel.configure(localModel.state().config.copy(enabled = true))
+                    "Local model enabled: ${describeModelState(state)}"
+                }
+                "off" -> {
+                    val state = localModel.configure(localModel.state().config.copy(enabled = false))
+                    "Local model disabled: ${describeModelState(state)}"
+                }
+                "cancel" -> {
+                    localModel.cancelActive()
+                    "Local model generation cancelled"
+                }
+                "use" -> {
+                    require(arguments.size >= 4) {
+                        "Usage: /model use <loopback-endpoint> <model> [quantization]"
+                    }
+                    val previous = localModel.state().config
+                    val state = localModel.configure(
+                        previous.copy(
+                            enabled = true,
+                            endpoint = arguments[2],
+                            model = arguments[3],
+                            quantization = arguments.getOrNull(4),
+                        )
+                    )
+                    "Local model configured: ${describeModelState(state)}"
+                }
+                else -> error(
+                    "Unknown local model command. Use /model status, /model on, /model off, " +
+                        "/model cancel, or /model use <loopback-endpoint> <model> [quantization]"
+                )
+            }
+            CompletableFuture.completedFuture(
+                LocalQueryResult(
+                    query = text,
+                    terms = listOf(message),
+                    generation = current.generation,
+                )
+            )
+        } catch (error: Throwable) {
+            CompletableFuture.failedFuture(error)
+        }
+    }
+
+    private fun describeModelState(state: LocalModelState): String {
+        val config = state.config
+        val quantization = config.quantization?.let { " · $it" }.orEmpty()
+        val failure = state.message?.let { " · $it" }.orEmpty()
+        return "${state.phase.name.lowercase()} · ${config.model}$quantization · ${config.endpoint}$failure"
     }
 
     private fun boot(phase: LocalServerPhase): LocalServerState {
@@ -140,6 +225,7 @@ class LocalZaraServer(
     override fun close() {
         if (closed) return
         closed = true
+        localModel.close()
         val future = CompletableFuture<Unit>()
         actor.execute {
             try {
@@ -153,5 +239,22 @@ class LocalZaraServer(
         runCatching { future.get() }
         actor.shutdownNow()
         stateObserver = null
+    }
+
+    companion object {
+        private fun defaultLocalModelCoordinator(corePath: String): LocalModelCoordinator {
+            val root = File(corePath).parentFile ?: error("Local runtime directory is unavailable")
+            return LocalModelCoordinator(
+                LocalModelConfigStore(File(root, "local-model.properties"))
+            )
+        }
+
+        private fun rootMessage(error: Throwable): String {
+            var current: Throwable = error
+            while (current.cause != null && current.cause !== current) {
+                current = current.cause!!
+            }
+            return current.message ?: current::class.java.simpleName
+        }
     }
 }
