@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
+import ai.zara.org.core.DoomOrgProfile
 import ai.zara.org.core.OrgParser
 import ai.zara.org.core.OrgTask
 import ai.zara.org.core.OrgTangler
@@ -41,8 +42,7 @@ class OrgTreeRepository(
     fun appendAgendaCapture(text: String, relativePath: String = "agenda/inbox.org"): OrgFileRef {
         val target = ensureFile(relativePath, "text/org")
         resolver.openOutputStream(target.uri, "wa")?.bufferedWriter()?.use { writer ->
-            val existing = target.length() > 0
-            if (existing) writer.append('\n')
+            if (target.length() > 0) writer.append('\n')
             writer.append(text.trimEnd()).append('\n')
         } ?: error("Unable to append $relativePath")
         return OrgFileRef(target.name ?: relativePath.substringAfterLast('/'), relativePath, target.uri)
@@ -50,6 +50,24 @@ class OrgTreeRepository(
 
     fun allTasks(): List<OrgTask> = listOrgFiles().flatMap { file ->
         OrgParser.parse(read(file), file.relativePath).tasks
+    }
+
+    fun cycleTodo(task: OrgTask): OrgTask {
+        val file = listOrgFiles().firstOrNull { it.relativePath == task.path }
+            ?: error("Missing task file ${task.path}")
+        val lines = read(file).lines().toMutableList()
+        val index = task.line - 1
+        require(index in lines.indices) { "Task line is out of range" }
+        val old = task.state
+        val next = DoomOrgProfile.nextTodoState(old)
+        val line = lines[index]
+        val prefix = "*".repeat(task.level) + " "
+        require(line.startsWith(prefix)) { "Task heading changed; refresh agenda" }
+        val afterStars = line.removePrefix(prefix)
+        require(afterStars == old || afterStars.startsWith("$old ")) { "Task state changed; refresh agenda" }
+        lines[index] = prefix + next + afterStars.removePrefix(old)
+        write(file, lines.joinToString("\n"))
+        return task.copy(state = next)
     }
 
     fun tangle(file: OrgFileRef): List<OrgFileRef> {
