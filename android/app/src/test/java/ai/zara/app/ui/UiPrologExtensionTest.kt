@@ -38,4 +38,16 @@ class UiPrologExtensionTest {
         assertTrue(source.contains("Plugins(\"Plugins\", \"⬡\")"))
         assertFalse(source.contains("AppSurface.Plugins -> GatedSurface"))
     }
+
+    @Test
+    fun pluginUiActionDoesNotFallThroughToChatBeforeTypedHostDispatcherExists() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+
+        assertTrue(source.contains("action.startsWith(\"plugin:\") -> Unit"))
+        assertFalse(
+            source.contains(
+                "action.startsWith(\"plugin:\") -> onSendText(action.removePrefix(\"plugin:\"))"
+            )
+        )
+    }
 }
