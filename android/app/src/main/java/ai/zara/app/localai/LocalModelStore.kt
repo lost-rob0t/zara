@@ -16,7 +16,7 @@ class LocalModelStore(
         metadata: LocalModelMetadata,
     ): LocalModelSpec {
         ensureRoot()
-        val safeName = "${metadata.id}-${metadata.version}.litertlm"
+        val safeName = "${metadata.id}-${metadata.version}${metadata.format.extension}"
         val destination = File(root, safeName).canonicalFile
         require(destination.parentFile == root.canonicalFile) { "Model path escaped app-private storage" }
         val temporary = File(root, ".$safeName.part")
@@ -71,14 +71,7 @@ class LocalModelStore(
         id: String,
         version: String,
     ): LocalModelSpec? {
-        LocalModelMetadata(
-            id = id,
-            version = version,
-            quantization = LocalModelQuantization.INT8,
-            sha256 = "0".repeat(64),
-            maxContextTokens = 128,
-            backend = LocalModelBackend.CPU,
-        )
+        validateIdentity(id, version)
         val metadataFile = catalogManifest(id, version)
         if (metadataFile.isFile) return readManifest(metadataFile)
         return activeModel()?.takeIf { it.id == id && it.version == version }
@@ -110,6 +103,11 @@ class LocalModelStore(
         val modelFile = File(root, filename).canonicalFile
         check(modelFile.parentFile == root.canonicalFile) { "Model path escaped app-private storage" }
         check(modelFile.isFile) { "Local model file is missing" }
+        val format = properties.getProperty("format")
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?.let(LocalModelFormat::requireKnown)
+            ?: LocalModelFormat.LITERT_LM
         val metadata = LocalModelMetadata(
             id = requireProperty(properties, "id"),
             version = requireProperty(properties, "version"),
@@ -120,7 +118,11 @@ class LocalModelStore(
             backend = runCatching {
                 LocalModelBackend.valueOf(requireProperty(properties, "backend"))
             }.getOrElse { throw IllegalStateException("Local model backend is invalid") },
+            format = format,
         )
+        check(modelFile.name.endsWith(format.extension, ignoreCase = true)) {
+            "Local model filename does not match declared format"
+        }
         check(sha256(modelFile) == metadata.sha256) { "Local model failed SHA-256 verification" }
         return metadata.toSpec(modelFile.absolutePath)
     }
@@ -144,19 +146,19 @@ class LocalModelStore(
         metadata: LocalModelMetadata,
     ) {
         val properties = Properties().apply {
-            setProperty("schema", "1")
+            setProperty("schema", "2")
             setProperty("filename", filename)
             setProperty("id", metadata.id)
             setProperty("version", metadata.version)
+            setProperty("format", metadata.format.wireName)
             setProperty("quantization", metadata.quantization.wireName)
             setProperty("sha256", metadata.sha256)
             setProperty("max_context_tokens", metadata.maxContextTokens.toString())
             setProperty("backend", metadata.backend.name)
         }
-        check(destination.parentFile?.mkdirs() != false || destination.parentFile?.isDirectory != false) {
-            "Model metadata directory is unavailable"
-        }
-        val temporary = File(destination.parentFile, ".${destination.name}.part")
+        val parent = checkNotNull(destination.parentFile) { "Model metadata directory is unavailable" }
+        check(parent.mkdirs() || parent.isDirectory) { "Model metadata directory is unavailable" }
+        val temporary = File(parent, ".${destination.name}.part")
         temporary.outputStream().buffered().use { properties.store(it, "Zara local model metadata") }
         if (destination.exists()) check(destination.delete()) { "Old model manifest could not be replaced" }
         check(temporary.renameTo(destination)) { "Model manifest could not be finalized" }
@@ -164,6 +166,14 @@ class LocalModelStore(
 
     private fun ensureRoot() {
         check(root.mkdirs() || root.isDirectory) { "Local model directory is unavailable" }
+    }
+
+    private fun validateIdentity(
+        id: String,
+        version: String,
+    ) {
+        require(id.matches(Regex("[A-Za-z0-9._-]{1,96}"))) { "Model id is invalid" }
+        require(version.matches(Regex("[A-Za-z0-9._+-]{1,64}"))) { "Model version is invalid" }
     }
 
     private fun requireProperty(
@@ -180,6 +190,7 @@ class LocalModelStore(
         path = path,
         maxContextTokens = maxContextTokens,
         backend = backend,
+        format = format,
     )
 
     private fun sha256(file: File): String {
