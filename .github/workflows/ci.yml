@@ -300,7 +300,7 @@ jobs:
 
           for attempt in 1 2 3; do
             echo "emulator SDK install attempt ${attempt}/3"
-            rm -rf "$sdk_root/emulator" "$sdk_root/.temp" "$android_cache"
+            rm -rf "$sdk_root/emulator" "$sdk_root/.temp" "$sdk_root/.downloadIntermediates" "$android_cache"
             if "$sdkmanager_bin" --sdk_root="$sdk_root" --install platform-tools --channel=0 \
               && "$sdkmanager_bin" --sdk_root="$sdk_root" --install emulator --channel=0 \
               && test -x "$emulator_bin" \
@@ -308,7 +308,7 @@ jobs:
               exit 0
             fi
             echo "emulator SDK install failed or verification failed; clearing package state" >&2
-            rm -rf "$sdk_root/emulator" "$sdk_root/.temp" "$android_cache"
+            rm -rf "$sdk_root/emulator" "$sdk_root/.temp" "$sdk_root/.downloadIntermediates" "$android_cache"
             sleep "$((attempt * 2))"
           done
           echo "emulator SDK install failed after 3 attempts" >&2
