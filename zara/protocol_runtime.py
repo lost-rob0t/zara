@@ -28,6 +28,7 @@ class RuntimeCodecError(ValueError):
 
 
 _TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+_INPUT_KIND_RE = re.compile(r"^[a-z][a-z0-9_.:-]*$")
 
 
 def _wire_tool_token(name: str, value: Any, *, max_bytes: int) -> str:
@@ -53,6 +54,16 @@ def _wire_tool_text(name: str, value: Any) -> str:
         raise RuntimeCodecError(f"wire tool event {name} exceeds byte limit")
     if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
         raise RuntimeCodecError(f"wire tool event {name} contains control characters")
+    return value
+
+
+def _wire_input_text(name: str, value: Any, *, max_bytes: int) -> str:
+    if not isinstance(value, str):
+        raise RuntimeCodecError(f"wire input event {name} must be a string")
+    if not value or len(value.encode("utf-8")) > max_bytes:
+        raise RuntimeCodecError(f"wire input event {name} is empty or exceeds byte limit")
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
+        raise RuntimeCodecError(f"wire input event {name} contains control characters")
     return value
 
 
@@ -194,6 +205,27 @@ def runtime_event_to_message(
         message_type, body = "assistant.response", {
             "text": event.text,
             "truncated": event.truncated,
+        }
+    elif type(event) is events.UserInputRequired:
+        if not event.turn_id:
+            raise RuntimeCodecError("wire input event requires turn correlation")
+        kind = _wire_input_text("kind", event.kind, max_bytes=64)
+        if _INPUT_KIND_RE.fullmatch(kind) is None:
+            raise RuntimeCodecError("wire input event kind is invalid")
+        question_id = None
+        if event.question_id is not None:
+            question_id = _wire_input_text("question_id", event.question_id, max_bytes=128)
+        if len(event.choices) > 16:
+            raise RuntimeCodecError("wire input event has too many choices")
+        choices = [
+            _wire_input_text("choice", choice, max_bytes=128)
+            for choice in event.choices
+        ]
+        message_type, body = "input.required", {
+            "kind": kind,
+            "prompt": _wire_input_text("prompt", event.prompt, max_bytes=2048),
+            "question_id": question_id,
+            "choices": choices,
         }
     elif type(event) is events.VoiceSpeechStarted:
         message_type, body = "voice.speech.started", {
