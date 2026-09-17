@@ -7,6 +7,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
 
+data class OrgRenderConfig(
+    val baseFontSp: Float = 16f,
+    val headingScales: List<Float> = listOf(1.45f, 1.30f, 1.18f, 1.10f, 1.04f),
+    val showBacklinks: Boolean = true,
+    val showProperties: Boolean = true,
+) {
+    init {
+        require(baseFontSp > 0f) { "baseFontSp must be positive" }
+        require(headingScales.all { it > 0f }) { "headingScales must be positive" }
+    }
+
+    fun headingScale(level: Int): Float {
+        val index = level.coerceAtLeast(1) - 1
+        return headingScales.getOrNull(index) ?: 1f
+    }
+}
+
 data class OrgRenderNode(
     val id: String? = null,
     val level: Int,
@@ -32,20 +49,21 @@ data class OrgRenderedText(val annotated: AnnotatedString) {
 object OrgTextRenderer {
     private val heading = Regex("^(\\*+)\\s+.*$")
 
-    fun headingFontSp(level: Int, baseFontSp: Float = 16f): Float {
-        val ratio = when (level.coerceAtLeast(0)) {
-            0 -> 1.55f
-            1 -> 1.45f
-            2 -> 1.30f
-            3 -> 1.18f
-            4 -> 1.10f
-            5 -> 1.04f
-            else -> 1f
-        }
-        return baseFontSp * ratio
+    fun headingFontSp(
+        level: Int,
+        baseFontSp: Float = 16f,
+        headingScales: List<Float> = OrgRenderConfig().headingScales,
+    ): Float {
+        val config = OrgRenderConfig(baseFontSp = baseFontSp, headingScales = headingScales)
+        return config.baseFontSp * config.headingScale(level)
     }
 
-    fun render(document: OrgRenderDocument, baseFontSp: Float = 16f): OrgRenderedText {
+    fun render(
+        document: OrgRenderDocument,
+        baseFontSp: Float = 16f,
+    ): OrgRenderedText = render(document, OrgRenderConfig(baseFontSp = baseFontSp))
+
+    fun render(document: OrgRenderDocument, config: OrgRenderConfig): OrgRenderedText {
         val source = buildString {
             append("#+title: ")
             append(document.title)
@@ -65,27 +83,29 @@ object OrgTextRenderer {
                     append(':')
                 }
                 append('\n')
-                node.id?.takeIf { it.isNotBlank() }?.let {
-                    append(":PROPERTIES:\n:ID: ")
-                    append(it)
-                    append('\n')
-                    node.project?.takeIf { project -> project.isNotBlank() }?.let { project ->
-                        append(":PROJECT: ")
-                        append(project)
+                if (config.showProperties) {
+                    node.id?.takeIf { it.isNotBlank() }?.let {
+                        append(":PROPERTIES:\n:ID: ")
+                        append(it)
+                        append('\n')
+                        node.project?.takeIf { project -> project.isNotBlank() }?.let { project ->
+                            append(":PROJECT: ")
+                            append(project)
+                            append('\n')
+                        }
+                        append(":END:\n")
+                    } ?: node.project?.takeIf { it.isNotBlank() }?.let {
+                        append("Project: ")
+                        append(it)
                         append('\n')
                     }
-                    append(":END:\n")
-                } ?: node.project?.takeIf { it.isNotBlank() }?.let {
-                    append("Project: ")
-                    append(it)
-                    append('\n')
                 }
-                if (node.project != null && node.id != null) {
+                if (node.project != null && node.id != null && !config.showProperties) {
                     append("Project: ")
                     append(node.project)
                     append('\n')
                 }
-                if (node.backlinks.isNotEmpty()) {
+                if (config.showBacklinks && node.backlinks.isNotEmpty()) {
                     append("Backlinks: ")
                     append(node.backlinks.joinToString(", "))
                     append('\n')
@@ -101,10 +121,13 @@ object OrgTextRenderer {
                 }
             }
         }
-        return renderSource(source, baseFontSp)
+        return renderSource(source, config)
     }
 
-    fun renderSource(source: String, baseFontSp: Float = 16f): OrgRenderedText {
+    fun renderSource(source: String, baseFontSp: Float = 16f): OrgRenderedText =
+        renderSource(source, OrgRenderConfig(baseFontSp = baseFontSp))
+
+    fun renderSource(source: String, config: OrgRenderConfig): OrgRenderedText {
         val annotated = buildAnnotatedString {
             val lines = source.split('\n')
             lines.forEachIndexed { index, line ->
@@ -115,7 +138,7 @@ object OrgTextRenderer {
                     val level = match.groupValues[1].length
                     addStyle(
                         SpanStyle(
-                            fontSize = headingFontSp(level, baseFontSp).sp,
+                            fontSize = (config.baseFontSp * config.headingScale(level)).sp,
                             fontWeight = FontWeight.SemiBold,
                         ),
                         start,
