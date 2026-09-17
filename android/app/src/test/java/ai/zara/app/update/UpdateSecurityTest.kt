@@ -35,7 +35,7 @@ class UpdateSecurityTest {
     }
 
     @Test
-    fun releaseMetadataRequiresHttpsApkAndChecksum() {
+    fun releaseMetadataRequiresTrustedGithubHttpsApkAndChecksum() {
         val valid = UpdateRelease(
             version = "0.2.0",
             sourceSha = "a".repeat(40),
@@ -43,8 +43,26 @@ class UpdateSecurityTest {
             sha256 = "b".repeat(64),
         )
         assertTrue(UpdateSecurity.validate(valid).isSuccess)
-        assertTrue(UpdateSecurity.validate(valid.copy(apkUrl = "http://example.test/zara.apk")).isFailure)
-        assertTrue(UpdateSecurity.validate(valid.copy(apkUrl = "https://example.test/zara.zip")).isFailure)
+        assertTrue(UpdateSecurity.validate(valid.copy(apkUrl = "http://github.com/zara.apk")).isFailure)
+        assertTrue(UpdateSecurity.validate(valid.copy(apkUrl = "https://example.test/zara.apk")).isFailure)
+        assertTrue(UpdateSecurity.validate(valid.copy(apkUrl = "https://github.com:444/zara.apk")).isFailure)
+        assertTrue(UpdateSecurity.validate(valid.copy(apkUrl = "https://user@github.com/zara.apk")).isFailure)
+        assertTrue(UpdateSecurity.validate(valid.copy(apkUrl = "https://github.com/zara.zip")).isFailure)
         assertTrue(UpdateSecurity.validate(valid.copy(sourceSha = "main")).isFailure)
+    }
+
+    @Test
+    fun githubReleaseRedirectHostsAreExplicitlyBounded() {
+        assertTrue(runCatching {
+            UpdateSecurity.requireTrustedTransport("https://api.github.com/repos/lost-rob0t/zara/releases")
+        }.isSuccess)
+        assertTrue(runCatching {
+            UpdateSecurity.requireTrustedTransport(
+                "https://release-assets.githubusercontent.com/github-production-release-asset/zara.apk"
+            )
+        }.isSuccess)
+        assertTrue(runCatching {
+            UpdateSecurity.requireTrustedTransport("https://evil.example/zara.apk")
+        }.isFailure)
     }
 }
