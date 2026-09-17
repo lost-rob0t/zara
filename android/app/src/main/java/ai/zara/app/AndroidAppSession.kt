@@ -14,6 +14,10 @@ import ai.zara.app.device.DeviceCapabilityRegistry
 import ai.zara.app.device.OpenAppAdapter
 import ai.zara.app.device.OpenUriAdapter
 import ai.zara.app.device.RegistryDeviceActionHandler
+import ai.zara.app.localai.LocalAiServiceClient
+import ai.zara.app.localai.LocalAiState
+import ai.zara.app.localai.LocalGenerationRequest
+import ai.zara.app.localai.LocalTtsState
 import ai.zara.app.runtime.AndroidTextSessionController
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.AudioOutputFormat
@@ -64,10 +68,10 @@ import ai.zara.app.voice.VoiceStreamState
 import android.content.Context
 import android.content.Intent
 import java.io.File
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import java.util.UUID
 
 class AndroidAppSession(context: Context) : AutoCloseable {
     private val enrollment: EnrollmentRepository = AndroidEnrollmentRepository.create(context)
@@ -82,6 +86,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     private val audioRouteController: AudioRouteController
     private val prologWorkspace = PrologWorkspace(File(context.filesDir, "prolog-workspace"))
     private val localServer: LocalZaraServer
+    private val localAi = LocalAiServiceClient(context)
     @Volatile private var latestVoiceStreamState: VoiceStreamState? = null
     @Volatile private var latestVoiceStreamFailure: String? = null
     @Volatile private var latestAudioRoute: AudioRouteSnapshot? = null
@@ -191,6 +196,14 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     fun setLocalServerObserver(observer: ((LocalServerState) -> Unit)?) {
         localServer.setStateObserver(observer)
     }
+
+    fun localAiState(): CompletableFuture<LocalAiState> = localAi.state()
+
+    fun localTtsState(): CompletableFuture<LocalTtsState> = localAi.ttsState()
+
+    fun speakLocal(text: String): CompletableFuture<Unit> = localAi.speak(text)
+
+    fun stopLocalSpeech() = localAi.stopSpeech()
 
     fun prologSources(): List<PrologSource> = prologWorkspace.listSources()
 
@@ -372,6 +385,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     private fun submitLocalText(text: String): CompletableFuture<TextTurnResult> {
         val query = text.trim()
         val catalog = PrologWorkspaceCatalog.from(prologWorkspace.listSources())
+        val explicitSymbolic = query.startsWith("?-") || query.startsWith("/prolog ") || query.startsWith("/expert ")
         val future = when {
             query.startsWith("?-") -> localServer.query(query)
             query.startsWith("/prolog ") || query.startsWith("/expert ") -> {
@@ -385,20 +399,43 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             else -> LocalNaturalLanguageExpertRouter.query(query, catalog)?.let(localServer::query)
                 ?: localServer.resolve(query)
         }
-        return future.thenApply { result ->
-            val answer = if (result.terms.isEmpty()) {
-                "No deterministic local rule matched. Remote model capabilities are optional; the local Prolog server is still ready."
+        return future.thenCompose { result ->
+            if (result.terms.isNotEmpty() || explicitSymbolic) {
+                CompletableFuture.completedFuture(localPrologTurn(result))
             } else {
-                result.terms.joinToString("\n")
+                localAi.generate(LocalGenerationRequest(query, maxOutputTokens = 256)).handle { generated, error ->
+                    if (error != null) {
+                        TextTurnResult(
+                            conversationId = "local-device",
+                            turnId = UUID.randomUUID().toString(),
+                            text = "No deterministic local rule matched and no verified local model is ready. Local Prolog is still ready.",
+                            success = false,
+                        )
+                    } else {
+                        val answer = generated.text.trim()
+                        TextTurnResult(
+                            conversationId = "local-device",
+                            turnId = UUID.randomUUID().toString(),
+                            text = answer.ifEmpty { "The local model returned no text." },
+                            success = answer.isNotEmpty(),
+                        )
+                    }
+                }
             }
-            TextTurnResult(
-                conversationId = "local-device",
-                turnId = UUID.randomUUID().toString(),
-                text = answer,
-                success = result.terms.isNotEmpty(),
-            )
         }
     }
+
+    private fun localPrologTurn(result: LocalQueryResult): TextTurnResult =
+        TextTurnResult(
+            conversationId = "local-device",
+            turnId = UUID.randomUUID().toString(),
+            text = if (result.terms.isEmpty()) {
+                "No deterministic local rule matched."
+            } else {
+                result.terms.joinToString("\n")
+            },
+            success = result.terms.isNotEmpty(),
+        )
 
     fun pressToTalk(permissionGranted: Boolean): CompletableFuture<Unit> =
         pressVoice(AssistantVoiceOwnership.Manual, permissionGranted)
@@ -441,6 +478,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         permissionGranted: Boolean,
     ): CompletableFuture<Unit> =
         submitVoiceControl {
+            localAi.stopSpeech()
             voiceStreamSink.interrupt().get()
             voice.press(state(), permissionGranted)
             assistantVoiceGuard.onCaptureStarted(ownership)
@@ -497,6 +535,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     }
 
     private fun interruptVoicePlayback() {
+        localAi.stopSpeech()
         try {
             voiceStreamSink.interrupt()
         } catch (error: Throwable) {
@@ -530,6 +569,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         actor.setVoiceStreamFailureObserver(null)
         localServer.setStateObserver(null)
         assistantVoiceGuard.onCaptureStopped()
+        localAi.stopSpeech()
         val routeFailure = runCatching { audioRouteController.stop() }.exceptionOrNull()
         if (routeFailure != null) reportVoiceStreamFailure(routeFailure)
         try {
@@ -543,6 +583,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             }
         }
         localServer.close()
+        localAi.close()
         if (routeFailure != null) throw routeFailure
     }
 }

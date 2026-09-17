@@ -1,0 +1,44 @@
+#+title: Zara Android Watch Installation
+
+* Transport model
+
+Wear OS 3 and newer do not support Bluetooth ADB. Zara therefore separates the watch workflow into two transports:
+
+- Bluetooth / Wear Data Layer :: discovers the paired Wear OS device and, once Zara Wear is installed with the matching package/signature, provides the normal phone-watch application transport.
+- Wi-Fi ADB :: performs the one-time developer sideload or later direct APK replacement when Zara Wear is not being installed from Google Play.
+
+The phone app must not claim that the APK itself is pushed through Bluetooth. The Watch Setup screen states this limitation explicitly.
+
+* Phone workflow
+
+1. Open =Zara Watch Setup= on the phone.
+2. Tap =Scan paired watch + ADB=. Zara lists Wear Data Layer nodes and any wireless-debugging endpoints advertised through mDNS.
+3. On the watch, enable Developer options and Wireless debugging.
+4. Open =Pair new device= on the watch.
+5. Use the discovered pairing endpoint, or enter the watch IP, pairing port, and six-digit code manually.
+6. Tap =Pair Zara with watch=.
+7. Return to the main Wireless debugging screen. Enter or select the connection port shown there; it is normally different from the pairing port.
+8. Tap =Connect=.
+9. Tap =Install Zara Wear=.
+
+The phone downloads the rolling =zara-wear-latest.apk= asset, verifies its adjacent SHA-256 checksum, pushes it to the watch through ADB sync, runs =pm install -r -t -d=, removes the temporary watch file, then rescans Wear capabilities.
+
+* Release dependency
+
+The installer consumes:
+
+- =https://github.com/lost-rob0t/zara/releases/download/android-latest/zara-wear-latest.apk=
+- the adjacent =zara-wear-latest.apk.sha256=
+
+The =android-latest= channel is intentionally mutable and is published only from green =master= CI. Immutable SemVer releases continue to use =v*= tags.
+
+* Identity invariant
+
+The phone and Wear apps use the same Android application id (=ai.zara.app=) and must be signed with the same certificate for Wear Data Layer identity. Production/latest publishing must preserve an update-compatible signing key across runs.
+
+* Security
+
+- ADB private key and certificate material remain in the phone app's private files directory.
+- The APK is checksum-verified before it is sent to the watch.
+- The user must explicitly enable Wireless debugging and approve the one-time ADB pairing code on the watch.
+- Zara does not silently enable developer options, bypass watch authorization, or expose the ADB key.

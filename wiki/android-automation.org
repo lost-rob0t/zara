@@ -1,0 +1,208 @@
+#+title: Zara Android Prolog Automation
+#+subtitle: Deterministic local rules, typed Android effects, special-access acquisition, and Git config templates
+
+* Architecture
+
+#+begin_example
+user / Android event
+      |
+      v
+Trealla: automation(Name, Result)
+      |
+      v
+AndroidAutomationPlanParser
+      |
+      v
+special-access gate
+      |
+      v
+typed adapter
+      |
+      v
+Android platform effect
+#+end_example
+
+The Prolog runtime selects data.  It does not receive a Java reflection API, a
+raw Intent API, a package-name launcher, or a shell.  Android owns package
+resolution and all physical side effects.
+
+This is deliberately parallel to the existing Zara capability-plan boundary:
+semantic selection is inspectable and adapters execute.
+
+* Prolog API v1
+
+A runnable rule has one public entry point:
+
+#+begin_src prolog
+automation(Name, actions(Actions)).
+#+end_src
+
+Text values use Prolog strings.  This keeps text distinct from atoms when
+Trealla serializes =Result= back through JNI.
+
+The local Android action grammar is closed to:
+
+#+begin_src prolog
+open_app(AppAlias).
+open_uri("https://example.com").
+app_search(AppAlias, "query").
+ui_click(text("Label")).
+ui_click(view_id("package:id/view")).
+ui_click(description("Description")).
+ui_set_text(Selector, "value").
+ui_scroll_forward(Selector).
+global_action(back).
+global_action(home).
+global_action(recents).
+global_action(notifications).
+#+end_src
+
+Plans are bounded to 32 actions.  Atoms and strings are bounded and parsed as
+data.  Unknown actions fail closed.
+
+* YouTube demo
+
+The app seeds =android_automation.pl= only when the user has not already created
+that source.
+
+#+begin_src prolog
+automation(youtube_psytrance,
+    actions([app_search(youtube, "psytrance")])).
+
+automation(revanced_psytrance,
+    actions([app_search(youtube_revanced, "psytrance")])).
+
+automation(psytrance_both,
+    actions([
+        app_search(youtube, "psytrance"),
+        app_search(youtube_revanced, "psytrance")
+    ])).
+#+end_src
+
+=youtube= and =youtube_revanced= are semantic aliases.  Package candidates are
+private Android adapter state.  Stock YouTube currently resolves to Google's
+YouTube package.  ReVanced uses reviewed package candidates known to the app.
+The app first attempts Android's package-targeted search action and falls back
+to a package-targeted YouTube search URL when the target does not expose a
+search activity.
+
+No Accessibility permission is needed for this demo.
+
+* Accessibility automation
+
+Zara declares a private =AccessibilityService=.  It exposes only typed local
+operations:
+
+- click a visible clickable node;
+- set text on a visible editable node;
+- scroll a visible scrollable node forward;
+- global Back, Home, Recents and Notifications actions.
+
+Selectors are =text/1=, =view_id/1=, or =description/1=.  Coordinate clicking is
+not part of v1.
+
+When an automation reaches an accessibility action and the service is disabled,
+the runner returns =NeedsAccess= before execution.  The Automation activity then
+opens Android's Accessibility settings surface.  The user is the only party
+that can grant access; Zara re-checks the platform state on resume.
+
+* Other Android special access
+
+The Automation activity reports and can open the platform request/settings
+surface for:
+
+- Assistant role;
+- Usage access;
+- Modify system settings;
+- Draw over other apps.
+
+These are capabilities, not implied grants.  A future action adapter must name
+its required access and pass the same gate before execution.
+
+* Remote protocol boundary
+
+=app_search= and accessibility actions are local automation capabilities in v1.
+They are intentionally *not* added to the closed ZARA/1 device capability enum.
+Remote protocol expansion requires its own schema/versioning change rather than
+silently inheriting local power.
+
+* Git config template import
+
+The =Zara Automation= surface accepts a public HTTPS Git repository and an
+optional ref.  The Android app uses JGit, performs a shallow clone without
+submodules into private cache, and never invokes repository hooks.
+
+The repository must contain either:
+
+#+begin_example
+zara-template.properties
+.zara/config-template.properties
+#+end_example
+
+Version 1 properties:
+
+#+begin_example
+version=1
+name=my-zara-template
+org=path/to/config.org
+# and/or:
+directory=path/to/prolog
+#+end_example
+
+The importer:
+
+- accepts HTTPS without embedded credentials;
+- bounds refs, source count and bytes;
+- rejects symlink and canonical-path escape;
+- imports only top-level =.pl= sources from a declared directory;
+- tangles only explicit Org =prolog= blocks with =:tangle basename.pl=;
+- rejects arbitrary initialization, process, file, meta-call and dynamic-db
+  predicates at the Git-template boundary;
+- allows only reviewed declarative directives (=zara_schema/3= and =op/3=);
+- analyzes all generated Prolog before import;
+- records the immutable imported HEAD SHA;
+- applies the sources through the existing transactional private-workspace
+  importer, restoring the prior workspace if reload fails.
+
+* Org template
+
+A minimal repository can be:
+
+#+begin_example
+zara-template.properties
+docs/zara.org
+#+end_example
+
+with:
+
+#+begin_example
+version=1
+name=phone-rules
+org=docs/zara.org
+#+end_example
+
+and in =docs/zara.org=:
+
+#+begin_src org
+,#+begin_src prolog :tangle android_automation.pl
+automation(youtube_psytrance,
+    actions([app_search(youtube, "psytrance")])).
+,#+end_src
+#+end_src
+
+* Desktop parity
+
+Android already shares Zara's Prolog-first intent semantics and has the local
+Trealla Studio for source editing, schema validation, expert systems, query
+boxes, graph inspection, workspace import/export and tutorial content.  This
+slice adds the missing mobile execution/config transport side:
+
+- deterministic Android actions;
+- semantic app aliases;
+- special-access acquisition;
+- accessibility adapter;
+- Git/Org config template import.
+
+Desktop executable mappings remain desktop-only.  Android substitutes typed
+platform adapters; it does not turn =app_mapping/2= executable argv into a mobile
+shell.

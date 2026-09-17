@@ -163,6 +163,22 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v31
 
+      - name: Load update-compatible Android signing key for rolling master builds
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        shell: bash
+        env:
+          ZARA_ANDROID_DEBUG_KEYSTORE_B64: ${{ secrets.ZARA_ANDROID_DEBUG_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$ZARA_ANDROID_DEBUG_KEYSTORE_B64" ]]; then
+            echo "Zara Android signing secret is unavailable." >&2
+            exit 1
+          fi
+          keystore="$RUNNER_TEMP/zara-android-debug.keystore"
+          printf '%s' "$ZARA_ANDROID_DEBUG_KEYSTORE_B64" | base64 --decode > "$keystore"
+          chmod 600 "$keystore"
+          echo "ZARA_ANDROID_DEBUG_KEYSTORE=$keystore" >> "$GITHUB_ENV"
+
       - name: Run Android/Wear gate (unit tests + native Trealla + debug APKs + secret inspection)
         run: nix develop ./android -c bash scripts/test-android.sh
 
@@ -174,12 +190,36 @@ jobs:
           path: android/app/build/reports/semantic-parity/
           if-no-files-found: warn
 
-      - name: Upload phone and Wear debug APKs
-        if: always()
+      - name: Prepare exact-SHA phone APK artifact
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          artifact_dir="artifacts/android-debug"
+          apk="$artifact_dir/zara-android-debug-${SOURCE_SHA}.apk"
+          mkdir -p "$artifact_dir"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$apk"
+          sha256sum "$apk" > "${apk}.sha256"
+          {
+            echo "schema=1"
+            echo "source_sha=${SOURCE_SHA}"
+            echo "apk=$(basename "$apk")"
+            echo "apk_sha256=$(sha256sum "$apk" | awk '{print $1}')"
+          } > "$artifact_dir/manifest.txt"
+
+      - name: Upload exact-SHA phone debug APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: zara-debug-apks
-          path: |
-            android/app/build/outputs/apk/debug/app-debug.apk
-            android/wear-app/build/outputs/apk/debug/wear-app-debug.apk
+          name: zara-android-debug-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/android-debug/
+          if-no-files-found: warn
+
+      - name: Upload Wear debug APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zara-wear-debug-${{ github.event.pull_request.head.sha || github.sha }}
+          path: android/wear-app/build/outputs/apk/debug/wear-app-debug.apk
           if-no-files-found: warn
