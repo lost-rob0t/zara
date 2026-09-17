@@ -93,6 +93,7 @@ class LocalAiService : Service() {
         val future = CompletableFuture.supplyAsync(
             {
                 modelStore.activeModel()
+                    ?.also(::requireEmbeddedFormat)
                     ?: throw LocalAiUnavailableException("No verified local model is installed")
             },
             modelIo,
@@ -109,13 +110,17 @@ class LocalAiService : Service() {
     private fun installModel(
         source: InputStream,
         metadata: LocalModelMetadata,
-    ): CompletableFuture<LocalModelSpec> =
-        CompletableFuture.supplyAsync(
+    ): CompletableFuture<LocalModelSpec> {
+        require(metadata.format == LocalModelFormat.LITERT_LM) {
+            "Embedded provider accepts only ${LocalModelFormat.LITERT_LM.wireName} models"
+        }
+        return CompletableFuture.supplyAsync(
             { source.use { modelStore.install(it, metadata) } },
             modelIo,
         ).thenCompose { spec ->
             runtime.load(spec).thenApply { spec }
         }
+    }
 
     private fun selectModel(
         id: String,
@@ -124,6 +129,7 @@ class LocalAiService : Service() {
         CompletableFuture.supplyAsync(
             {
                 modelStore.model(id, version)
+                    ?.also(::requireEmbeddedFormat)
                     ?: throw LocalAiUnavailableException("Local model is not installed: $id@$version")
             },
             modelIo,
@@ -146,6 +152,12 @@ class LocalAiService : Service() {
         loadActiveModel().thenCompose {
             runtime.generate(request, onChunk)
         }
+
+    private fun requireEmbeddedFormat(spec: LocalModelSpec) {
+        require(spec.format == LocalModelFormat.LITERT_LM) {
+            "Embedded provider cannot execute ${spec.format.wireName} models"
+        }
+    }
 }
 
 class LocalAiUnavailableException(message: String) : IllegalStateException(message)
