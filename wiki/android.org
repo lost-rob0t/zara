@@ -107,12 +107,9 @@ It loads the update-compatible debug signing key from the
 =ZARA_ANDROID_DEBUG_KEYSTORE_B64= Actions secret, verifies the APK signing
 certificate before publication, and attaches the APK with its SHA-256 file.
 Advance =versionCode= and =versionName= together in
-=android/app/build.gradle.kts= to publish the next alpha. Agents must follow
-=$zara-android-release= in =skills/zara-android-release/SKILL.md=. Pull-request
-builds publish an exact-SHA =zara-android-debug-<sha>= artifact. Releases attach
-=zara-android-<version>.apk=, its SHA-256 file, and a provenance manifest. The
-release APK is still a sideloaded debug build; hardware and Assistant-role
-acceptance use the downloaded GitHub artifact and remain separate.
+=android/app/build.gradle.kts= to publish the next alpha. The release APK is
+still a sideloaded debug build; hardware and Assistant-role acceptance remain
+separate.
 
 A successful =assembleDebug= is necessary, but it is not acceptance for the whole Android assistant.
 
