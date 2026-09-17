@@ -11,6 +11,7 @@ import org.gradle.api.tasks.TaskAction
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.parcelize)
 }
 
 abstract class GeneratePortableSemanticAssets : DefaultTask() {
@@ -54,6 +55,15 @@ fun githubPullRequestHeadSha(): String? {
     return head["sha"] as? String
 }
 
+val samsungHealthAars = fileTree("libs") {
+    include("samsung-health-data-api-*.aar")
+}
+val samsungHealthAarFiles = samsungHealthAars.files
+require(samsungHealthAarFiles.size <= 1) {
+    "Keep exactly one Samsung Health Data SDK AAR under android/app/libs"
+}
+val hasSamsungHealthSdk = samsungHealthAarFiles.size == 1
+
 val androidNdkVersion = providers.environmentVariable("ZARA_ANDROID_NDK_VERSION").orNull
     ?: error("ZARA_ANDROID_NDK_VERSION must be supplied by the pinned Android Nix toolchain")
 val treallaSourceDir = providers.environmentVariable("ZARA_TREALLA_SOURCE_DIR").orNull ?: ""
@@ -80,6 +90,7 @@ android {
         versionCode = 3
         versionName = "0.1.2-alpha"
         buildConfigField("String", "SOURCE_SHA", "\"$sourceSha\"")
+        buildConfigField("boolean", "HAS_SAMSUNG_HEALTH_SDK", hasSamsungHealthSdk.toString())
 
         ndk {
             abiFilters += setOf("arm64-v8a", "x86_64")
@@ -98,6 +109,10 @@ android {
     buildFeatures {
         buildConfig = true
         compose = true
+    }
+
+    if (hasSamsungHealthSdk) {
+        sourceSets.getByName("main").java.srcDir("src/samsungHealthSdk/java")
     }
 
     signingConfigs {
@@ -166,5 +181,9 @@ dependencies {
     implementation(libs.bcpkix)
     implementation(libs.jgit)
     implementation(libs.litert.lm.android)
+    implementation(libs.gson)
+    if (hasSamsungHealthSdk) {
+        implementation(samsungHealthAars)
+    }
     testImplementation(libs.junit)
 }
