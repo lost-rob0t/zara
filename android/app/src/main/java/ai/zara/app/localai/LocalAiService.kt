@@ -45,6 +45,10 @@ class LocalAiService : Service() {
     inner class LocalBinder : Binder() {
         fun state(): LocalAiState = runtime.state()
 
+        fun models(): CompletableFuture<List<LocalModelSpec>> = this@LocalAiService.models()
+
+        fun activeModel(): CompletableFuture<LocalModelSpec?> = this@LocalAiService.activeModel()
+
         fun ttsState(): LocalTtsState = tts.state()
 
         fun loadActiveModel(): CompletableFuture<LocalAiState> = this@LocalAiService.loadActiveModel()
@@ -53,6 +57,11 @@ class LocalAiService : Service() {
             source: InputStream,
             metadata: LocalModelMetadata,
         ): CompletableFuture<LocalModelSpec> = this@LocalAiService.installModel(source, metadata)
+
+        fun selectModel(
+            id: String,
+            version: String,
+        ): CompletableFuture<LocalAiState> = this@LocalAiService.selectModel(id, version)
 
         fun generate(
             request: LocalGenerationRequest,
@@ -68,6 +77,12 @@ class LocalAiService : Service() {
 
         fun stopSpeech() = tts.stop()
     }
+
+    private fun models(): CompletableFuture<List<LocalModelSpec>> =
+        CompletableFuture.supplyAsync(modelStore::installedModels, modelIo)
+
+    private fun activeModel(): CompletableFuture<LocalModelSpec?> =
+        CompletableFuture.supplyAsync(modelStore::activeModel, modelIo)
 
     @Synchronized
     private fun loadActiveModel(): CompletableFuture<LocalAiState> {
@@ -100,6 +115,28 @@ class LocalAiService : Service() {
             modelIo,
         ).thenCompose { spec ->
             runtime.load(spec).thenApply { spec }
+        }
+
+    private fun selectModel(
+        id: String,
+        version: String,
+    ): CompletableFuture<LocalAiState> =
+        CompletableFuture.supplyAsync(
+            {
+                modelStore.model(id, version)
+                    ?: throw LocalAiUnavailableException("Local model is not installed: $id@$version")
+            },
+            modelIo,
+        ).thenCompose { spec ->
+            runtime.load(spec).thenCompose { state ->
+                CompletableFuture.supplyAsync(
+                    {
+                        modelStore.activate(spec)
+                        state
+                    },
+                    modelIo,
+                )
+            }
         }
 
     private fun generate(
