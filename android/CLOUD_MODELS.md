@@ -10,8 +10,11 @@ Supported profiles:
 
 - **Generic OpenAI-compatible** — any HTTPS base URL implementing `POST <base>/chat/completions`.
 - **StarIntel** — preset for `https://llm.starintel.actor/v1`; this is the same generic OpenAI-compatible transport.
+- **StatIntel** — preset for `https://llm.statintel.actor/v1`; this also uses the generic OpenAI-compatible transport.
 - **OpenRouter** — `https://openrouter.ai/api/v1`; Zara sends the configured/effective app identity as `X-Title`.
 - **Z.AI Coding Plan** — `https://api.z.ai/api/coding/paas/v4`; hard-gated to explicit coding requests.
+
+The StarIntel/StatIntel presets are protocol configuration only: the endpoint must actually expose an OpenAI-compatible `chat/completions` API and accept the configured model/API key.
 
 The Z.AI Coding Plan endpoint is intentionally not interchangeable with Z.AI's general prepaid endpoint. See the current ZCode endpoint documentation and usage policy before changing that gate:
 
@@ -34,6 +37,12 @@ Provider metadata can be changed from chat without exposing secrets:
 /provider on
 /provider off
 /provider cancel
+```
+
+For the exact StatIntel host from the Android provider picker, the generic command equivalent is:
+
+```text
+/provider use openai https://llm.statintel.actor/v1 <model>
 ```
 
 API keys are never accepted through chat commands. Store or clear them only from **Model Providers**.
