@@ -42,6 +42,14 @@ def test_configured_daemon_endpoint_is_default(monkeypatch):
     assert daemon_client.resolve_daemon_endpoint(config) == "tcp://127.0.0.1:7731"
 
 
+def test_global_config_is_used_when_config_is_not_supplied(monkeypatch):
+    clear_daemon_env(monkeypatch)
+    config = FakeConfig({"endpoint": "tcp://127.0.0.1:8842"})
+    monkeypatch.setattr(daemon_client, "get_config", lambda: config)
+
+    assert daemon_client.resolve_daemon_endpoint() == "tcp://127.0.0.1:8842"
+
+
 def test_environment_endpoint_overrides_mutable_config(monkeypatch):
     clear_daemon_env(monkeypatch)
     monkeypatch.setenv(daemon_client.DAEMON_ENDPOINT_ENV, "tcp://10.0.0.8:7731")
@@ -119,9 +127,34 @@ def test_complete_curve_configuration_is_trimmed(monkeypatch):
     assert curve.server_public_key == "server"
 
 
-def test_curve_environment_values_override_config_per_field(monkeypatch):
+@pytest.mark.parametrize(
+    ("env_name", "env_value", "expected"),
+    [
+        (
+            daemon_client.CURVE_PUBLIC_KEY_ENV,
+            "env-public",
+            ("env-public", "config-secret", "config-server"),
+        ),
+        (
+            daemon_client.CURVE_SECRET_KEY_ENV,
+            "env-secret",
+            ("config-public", "env-secret", "config-server"),
+        ),
+        (
+            daemon_client.CURVE_SERVER_PUBLIC_KEY_ENV,
+            "env-server",
+            ("config-public", "config-secret", "env-server"),
+        ),
+    ],
+)
+def test_curve_environment_values_override_config_per_field(
+    monkeypatch,
+    env_name,
+    env_value,
+    expected,
+):
     clear_daemon_env(monkeypatch)
-    monkeypatch.setenv(daemon_client.CURVE_PUBLIC_KEY_ENV, "env-public")
+    monkeypatch.setenv(env_name, env_value)
     config = FakeConfig(
         {
             "curve_public_key": "config-public",
@@ -133,9 +166,7 @@ def test_curve_environment_values_override_config_per_field(monkeypatch):
     curve = daemon_client.curve_client_config(config)
 
     assert curve is not None
-    assert curve.public_key == "env-public"
-    assert curve.secret_key == "config-secret"
-    assert curve.server_public_key == "config-server"
+    assert (curve.public_key, curve.secret_key, curve.server_public_key) == expected
 
 
 def test_partial_curve_configuration_fails_closed(monkeypatch):
