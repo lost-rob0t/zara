@@ -17,10 +17,11 @@ Do not turn a research document into a feature claim just because the design is 
 
 | Document | Purpose |
 |----------+---------|
-| [[file:../README.org][README.org]] | Project overview, commands, current platform status. |
+| [[file:../README.org][README.org]] | Project overview, commands, current platform status, CI/coverage badges. |
 | [[file:architecture.org][architecture.org]] | Runtime/client/server architecture and invariants. |
 | [[file:server.org][server.org]] | =zara-server=, =ZARA/1=, principal ownership, authentication, voice transport. |
-| [[file:development.org][development.org]] | Nix shells, test gates, Android build, docs rules. |
+| [[file:development.org][development.org]] | Nix shells, repository gates, Android build, docs rules. |
+| [[file:testing.org][testing.org]] | Canonical test layers, Python branch coverage, artifacts, and non-regression policy. |
 | [[file:STT.md][STT.md]] | Speech-to-text pipeline and tuning. |
 | [[file:intentframe-contract.md][intentframe-contract.md]] | Symbolic IntentFrame contract. |
 | [[file:pets.md][pets.md]] | Zarathushtra Pet runtime/event integration. |
@@ -29,12 +30,13 @@ Do not turn a research document into a feature claim just because the design is 
 
 * Wiki / feature documentation
 
-The repository's =wiki/= directory holds user- and feature-facing Org documentation.
+The repository's =wiki/= directory is the user- and feature-facing book layer. Keep it readable as a coherent manual while =docs/= carries deeper implementation contracts.
 
 Important entry points:
 
 - [[file:../wiki/install.org][install.org]] — installation.
 - [[file:../wiki/customization.org][customization.org]] — configuration/customization.
+- [[file:../wiki/testing.org][testing.org]] — running Zara's gates and interpreting coverage without gaming it.
 - [[file:../wiki/android.org][android.org]] — Android client architecture and status.
 - [[file:../wiki/plugins.org][plugins.org]] — plugin lifecycle and API.
 - [[file:../wiki/mcp.org][mcp.org]] — MCP integration.
@@ -78,9 +80,11 @@ See [[file:../wiki/android.org][wiki/android.org]].
 
 - Prefer links to canonical docs instead of duplicating entire specifications.
 - Keep implementation docs concise enough to audit against code.
+- Keep the wiki/book layer task-oriented and link to implementation contracts for deeper detail.
 - Keep research docs appendable and explicit about their baseline/date/status.
 - Mark superseded architectural assumptions rather than silently leaving two conflicting "current" designs.
 - Never describe a security property as complete solely because a happy-path feature landed.
 - When a release gate remains open, say so near the feature claim.
+- When test or coverage policy changes, update =docs/testing.org=, =wiki/testing.org=, and =AGENTS.md= together so CI, maintainers, and agents follow the same contract.
 - For Android, distinguish portable symbolic/runtime foundations from complete assistant UX.
 - For desktop, distinguish the currently shipped two-window code from the design-ready adaptive-window target until consolidation lands.
