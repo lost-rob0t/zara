@@ -112,11 +112,28 @@ def test_stream_filter_never_emits_secret_prefix_split_across_chunks() -> None:
     assert stream.finalize() == ""
 
 
+def test_stream_filter_does_not_leak_even_a_short_prefix_of_scannable_secret() -> None:
+    secret = ref("PROVIDER_KEY")
+    stream = SecretRedactor({secret: "sk-prod-AbC123456"}).streaming_filter()
+
+    assert stream.process_chunk("prefix s") == "prefix "
+    assert stream.process_chunk("k-prod-AbC123456") == "§§secret(PROVIDER_KEY)"
+    assert stream.finalize() == ""
+
+
 def test_stream_finalize_masks_unresolved_secret_prefix() -> None:
     secret = ref("PROVIDER_KEY")
     stream = SecretRedactor({secret: "sk-prod-AbC123456"}).streaming_filter()
 
     assert stream.process_chunk("value=sk-prod-AbC") == "value="
+    assert stream.finalize() == "***"
+
+
+def test_stream_finalize_masks_one_character_prefix_of_scannable_secret() -> None:
+    secret = ref("PROVIDER_KEY")
+    stream = SecretRedactor({secret: "sk-prod-AbC123456"}).streaming_filter()
+
+    assert stream.process_chunk("value=s") == "value="
     assert stream.finalize() == "***"
 
 
