@@ -46,12 +46,10 @@ class AndroidAutomationRunnerTest {
         )
 
         val outcome = runner.run("click_play").get()
+        val needsAccess = outcome as AndroidAutomationResult.NeedsAccess
 
-        assertEquals(
-            AndroidControlAccess.Accessibility,
-            (outcome as AndroidAutomationResult.NeedsAccess).access,
-        )
-        assertEquals(0, outcome.actionIndex)
+        assertEquals(AndroidControlAccess.Accessibility, needsAccess.access)
+        assertEquals(0, needsAccess.actionIndex)
     }
 
     private fun runner(
