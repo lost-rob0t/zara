@@ -78,6 +78,11 @@ class AndroidTextSessionController(
     }
 
     fun submitText(text: String): CompletableFuture<TextTurnResult> {
+        val conversationId = synchronized(lock) { runtimeState.selectedConversationId }
+        return submitText(text, conversationId)
+    }
+
+    fun submitText(text: String, conversationId: String?): CompletableFuture<TextTurnResult> {
         require(text.isNotBlank()) { "text turn must not be blank" }
         val request = synchronized(lock) {
             check(!closed) { "Android text session controller is closed" }
@@ -88,7 +93,7 @@ class AndroidTextSessionController(
             TurnRequest(
                 generation = connected.generation,
                 sessionId = sessionId,
-                conversationId = runtimeState.selectedConversationId,
+                conversationId = conversationId,
             )
         }
 
