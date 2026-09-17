@@ -14,16 +14,28 @@ def _ref(name: str) -> SecretRef:
     )
 
 
-def test_stream_eof_masks_partial_longer_secret_after_complete_short_secret() -> None:
-    stream = SecretRedactor(
+def test_stream_eof_masks_every_partial_longer_secret_after_complete_short_secret() -> None:
+    short = "token-123"
+    long = "token-123-more"
+    redactor = SecretRedactor(
         {
-            _ref("SHORT"): "token-123",
-            _ref("LONG"): "token-123-more",
+            _ref("SHORT"): short,
+            _ref("LONG"): long,
         }
-    ).streaming_filter()
+    )
 
-    assert stream.process_chunk("token-123-m") == ""
-    final = stream.finalize()
+    for cut in range(1, len(long)):
+        prefix = long[:cut]
+        stream = redactor.streaming_filter()
 
-    assert final == "§§secret(SHORT)***"
-    assert "-m" not in final
+        assert stream.process_chunk(prefix) == ""
+        final = stream.finalize()
+
+        if cut < len(short):
+            assert final == "***", f"cut={cut}"
+        elif cut == len(short):
+            assert final == "§§secret(SHORT)", f"cut={cut}"
+        else:
+            assert final == "§§secret(SHORT)***", f"cut={cut}"
+
+        assert prefix not in final, f"raw prefix leaked at cut={cut}"
