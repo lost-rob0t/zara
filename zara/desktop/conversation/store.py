@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from zara.conversation_schema import (
-    CONVERSATION_SCHEMA_VERSION,
     LEGACY_LOCAL_PRINCIPAL_ID,
     PORTABLE_LOCAL_PRINCIPAL_ID,
     conversation_schema_statements,
@@ -55,7 +54,6 @@ class ConversationStore:
             else self._principal.principal_id
         )
         self._ensure_schema()
-        self._ensure_principal_schema()
         self._claim_legacy_rows_for_local_owner()
 
     @property
@@ -73,45 +71,33 @@ class ConversationStore:
         return self._storage_principal_id
 
     def _ensure_schema(self) -> None:
-        try:
-            self._db.register_migration(
-                CONVERSATION_SCHEMA_VERSION,
-                conversation_schema_statements(),
-            )
-        except ValueError:
-            # Multiple desktop surfaces may share one DatabaseManager instance.
-            # Registration is process-local; the migration itself is idempotent.
-            pass
+        """Install the conversation ABI without consuming a global migration slot.
+
+        ``DatabaseManager.schema_migrations`` is shared by unrelated Zara
+        subsystems, several of which historically used the same integer
+        versions. Android also uses SQLite ``user_version`` for its app-local
+        database lifecycle. Conversation history therefore owns an idempotent
+        table/index ABI instead of claiming a process-global migration number.
+        This is what lets a database produced by either platform be opened by
+        the other regardless of which unrelated stores were initialized first.
+        """
+
         self._db.connect()
-
-    def _ensure_principal_schema(self) -> None:
-        """Repair pre-portable v2 databases while holding the write reservation."""
-
         with self._db.transaction(immediate=True) as conn:
-            conversation_columns = {
-                row["name"]
-                for row in conn.execute("PRAGMA table_info(desktop_conversations)")
-            }
-            message_columns = {
-                row["name"] for row in conn.execute("PRAGMA table_info(desktop_messages)")
-            }
-            if "principal_id" not in conversation_columns:
-                conn.execute(
-                    "ALTER TABLE desktop_conversations "
-                    f"ADD COLUMN principal_id TEXT NOT NULL DEFAULT '{PORTABLE_LOCAL_PRINCIPAL_ID}'"
-                )
-            if "principal_id" not in message_columns:
-                conn.execute(
-                    "ALTER TABLE desktop_messages "
-                    f"ADD COLUMN principal_id TEXT NOT NULL DEFAULT '{PORTABLE_LOCAL_PRINCIPAL_ID}'"
-                )
+            self._repair_principal_column(conn, "desktop_conversations")
+            self._repair_principal_column(conn, "desktop_messages")
+            for statement in conversation_schema_statements():
+                conn.execute(statement)
+
+    @staticmethod
+    def _repair_principal_column(conn, table: str) -> None:
+        columns = {
+            row["name"] for row in conn.execute(f"PRAGMA table_info({table})")
+        }
+        if columns and "principal_id" not in columns:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_desktop_conversations_principal_updated "
-                "ON desktop_conversations(principal_id, updated_at DESC)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_desktop_messages_principal_conversation "
-                "ON desktop_messages(principal_id, conversation_id, sequence)"
+                f"ALTER TABLE {table} "
+                f"ADD COLUMN principal_id TEXT NOT NULL DEFAULT '{PORTABLE_LOCAL_PRINCIPAL_ID}'"
             )
 
     def _claim_legacy_rows_for_local_owner(self) -> None:
