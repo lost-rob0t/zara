@@ -12,6 +12,7 @@ conscrypt = "2.5.3"
 bcpkix = "1.81"
 jgit = "7.8.0.202609011348-r"
 litertLm = "0.17.0"
+gson = "2.13.2"
 angusMail = "2.0.4"
 angusActivation = "2.0.3"
 jakartaActivation = "2.1.4"
@@ -32,6 +33,7 @@ conscrypt-android = { group = "org.conscrypt", name = "conscrypt-android", versi
 bcpkix = { group = "org.bouncycastle", name = "bcpkix-jdk15to18", version.ref = "bcpkix" }
 jgit = { group = "org.eclipse.jgit", name = "org.eclipse.jgit", version.ref = "jgit" }
 litert-lm-android = { group = "com.google.ai.edge.litertlm", name = "litertlm-android", version.ref = "litertLm" }
+gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 angus-mail = { group = "org.eclipse.angus", name = "jakarta.mail", version.ref = "angusMail" }
 angus-activation = { group = "org.eclipse.angus", name = "angus-activation", version.ref = "angusActivation" }
 jakarta-activation-api = { group = "jakarta.activation", name = "jakarta.activation-api", version.ref = "jakartaActivation" }
@@ -42,3 +44,4 @@ android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-parcelize = { id = "org.jetbrains.kotlin.plugin.parcelize", version.ref = "kotlin" }
