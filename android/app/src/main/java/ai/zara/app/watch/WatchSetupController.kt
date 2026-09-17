@@ -10,6 +10,7 @@ class WatchSetupController(
 ) {
     private val appContext = context.applicationContext
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val bluetoothScanner = BluetoothWatchScanner(appContext)
     private val nodeScanner = WearNodeScanner(appContext)
     private val debugDiscovery = WatchDebugDiscovery(appContext)
     private val apkRepository = WearApkRepository(appContext)
@@ -46,24 +47,42 @@ class WatchSetupController(
     }
 
     fun scan() {
-        update { it.copy(phase = WatchSetupPhase.SCANNING, status = "Scanning paired watches and wireless ADB endpoints…") }
+        update {
+            it.copy(
+                phase = WatchSetupPhase.SCANNING,
+                watches = emptyList(),
+                debugEndpoints = emptyList(),
+                status = "Scanning Bluetooth-paired watches, Wear Data Layer, and wireless ADB endpoints…",
+            )
+        }
+
+        bluetoothScanner.scan()
+            .onSuccess { watches -> update { it.copy(watches = mergeWatches(it.watches, watches)) } }
+            .onFailure { error ->
+                update { it.copy(status = "Bluetooth scan unavailable: ${message(error)}") }
+            }
+
         nodeScanner.scan { result ->
             result.onSuccess { watches ->
-                update { it.copy(watches = watches) }
+                update { it.copy(watches = mergeWatches(it.watches, watches)) }
             }.onFailure { error ->
                 update { it.copy(status = "Wear discovery unavailable: ${message(error)}") }
             }
         }
+
         debugDiscovery.scan(
             onUpdate = { endpoints -> update { it.copy(debugEndpoints = endpoints) } },
             onDone = {
                 update {
                     it.copy(
                         phase = WatchSetupPhase.IDLE,
-                        status = if (it.debugEndpoints.isEmpty()) {
-                            "No wireless-debugging endpoint found. Open Watch Settings → Developer options → Wireless debugging, then scan again."
-                        } else {
-                            "Watch endpoints found. Pair once, then connect using the separate connection port."
+                        status = when {
+                            it.debugEndpoints.isNotEmpty() ->
+                                "Watch endpoints found. Pair once, then connect using the separate connection port."
+                            it.watches.isNotEmpty() ->
+                                "Watch detected over Bluetooth/Data Layer. Enable watch Wireless debugging to sideload Zara Wear."
+                            else ->
+                                "No watch endpoint found. Enable watch Wireless debugging, then scan again."
                         },
                     )
                 }
@@ -166,7 +185,9 @@ class WatchSetupController(
                     )
                 }
                 nodeScanner.scan { result ->
-                    result.onSuccess { watches -> update { it.copy(watches = watches) } }
+                    result.onSuccess { watches ->
+                        update { it.copy(watches = mergeWatches(it.watches, watches)) }
+                    }
                 }
             }.onFailure { error -> fail(message(error)) }
         }
@@ -185,6 +206,25 @@ class WatchSetupController(
             }
         }
     }
+
+    private fun mergeWatches(
+        existing: List<NearbyWatch>,
+        incoming: List<NearbyWatch>,
+    ): List<NearbyWatch> =
+        (existing + incoming)
+            .groupBy { it.name.trim().lowercase() }
+            .values
+            .map { group ->
+                val preferred = group.firstOrNull { it.zaraInstalled }
+                    ?: group.firstOrNull { it.transport.startsWith("Wear Data Layer") }
+                    ?: group.first()
+                preferred.copy(
+                    nearby = group.any { it.nearby },
+                    zaraInstalled = group.any { it.zaraInstalled },
+                    transport = group.map { it.transport }.distinct().joinToString(" + "),
+                )
+            }
+            .sortedWith(compareByDescending<NearbyWatch> { it.nearby }.thenBy { it.name.lowercase() })
 
     private fun fail(reason: String) {
         update { it.copy(phase = WatchSetupPhase.ERROR, progress = null, status = reason) }
