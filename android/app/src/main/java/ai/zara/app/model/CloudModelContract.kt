@@ -86,6 +86,7 @@ data class CloudModelConfig(
 
     companion object {
         const val DEFAULT_STARINTEL_ENDPOINT = "https://llm.starintel.actor/v1"
+        const val STATINTEL_ENDPOINT = "https://llm.statintel.actor/v1"
         const val OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1"
         const val ZAI_CODING_ENDPOINT = "https://api.z.ai/api/coding/paas/v4"
         const val DEFAULT_APP_NAME = "Zara Android"
