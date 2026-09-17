@@ -1,10 +1,17 @@
 package ai.zara.app.runtime
 
+import ai.zara.app.model.AndroidCloudModelStorage
+import ai.zara.app.model.CloudModelConfig
+import ai.zara.app.model.CloudModelCoordinator
+import ai.zara.app.model.CloudModelProvider
+import ai.zara.app.model.CloudModelPurpose
+import ai.zara.app.model.CloudModelState
 import ai.zara.app.model.LocalModelConfig
 import ai.zara.app.model.LocalModelConfigStore
 import ai.zara.app.model.LocalModelCoordinator
 import ai.zara.app.model.LocalModelPhase
 import ai.zara.app.model.LocalModelState
+import ai.zara.app.prolog.PrologProjectIdentityResolver
 import ai.zara.app.prolog.PrologQueryPolicy
 import ai.zara.app.prolog.PrologWorkspace
 import ai.zara.app.prolog.TreallaBridge
@@ -33,6 +40,7 @@ class LocalZaraServer(
     private val corePath: String,
     private val workspace: PrologWorkspace,
     private val localModel: LocalModelCoordinator = defaultLocalModelCoordinator(corePath),
+    private val cloudModel: CloudModelCoordinator = defaultCloudModelCoordinator(corePath),
 ) : AutoCloseable {
     private val actor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-local-server").apply { isDaemon = true }
@@ -47,6 +55,8 @@ class LocalZaraServer(
     fun state(): LocalServerState = current
 
     fun localModelState(): LocalModelState = localModel.state()
+
+    fun cloudModelState(): CloudModelState = cloudModel.reloadConfig()
 
     fun setStateObserver(observer: ((LocalServerState) -> Unit)?) {
         stateObserver = observer
@@ -94,7 +104,9 @@ class LocalZaraServer(
     fun resolve(utterance: String): CompletableFuture<LocalQueryResult> {
         val text = utterance.trim()
         require(text.isNotEmpty()) { "Utterance is required" }
-        require(text.length <= 8_192) { "Utterance is too large" }
+        require(text.length <= 65_536) { "Utterance is too large" }
+        providerCommand(text)?.let { return it }
+        codingCommand(text)?.let { return it }
         modelCommand(text)?.let { return it }
         val escaped = text
             .replace("\\", "\\\\")
@@ -106,10 +118,13 @@ class LocalZaraServer(
             LocalQueryResult(query, bridge.evaluate(query), current.generation)
         }
         return symbolic.thenCompose { result ->
-            if (result.terms.isNotEmpty() || !localModel.state().config.enabled) {
-                CompletableFuture.completedFuture(result)
-            } else {
-                localModel.generate(text).handle { modelResult, error ->
+            if (result.terms.isNotEmpty()) return@thenCompose CompletableFuture.completedFuture(result)
+            val identity = PrologProjectIdentityResolver.resolve(workspace.listSources())
+            if (localModel.state().config.enabled) {
+                return@thenCompose localModel.generate(
+                    text,
+                    systemPrompt = localSystemPrompt(identity.effectiveLlmAppName()),
+                ).handle { modelResult, error ->
                     when {
                         modelResult != null -> result.copy(terms = listOf(modelResult.text))
                         error != null -> result.copy(
@@ -122,7 +137,151 @@ class LocalZaraServer(
                     }
                 }
             }
+            val cloud = cloudModel.reloadConfig()
+            if (!cloud.config.enabled || cloud.config.provider.codingOnly) {
+                return@thenCompose CompletableFuture.completedFuture(result)
+            }
+            val appName = identity.effectiveLlmAppName(cloud.config.appName)
+            cloudModel.generate(
+                text,
+                purpose = CloudModelPurpose.GENERAL,
+                effectiveAppName = appName,
+            ).handle { modelResult, error ->
+                when {
+                    modelResult != null -> result.copy(terms = listOf(modelResult.text))
+                    error != null -> result.copy(
+                        terms = listOf(
+                            "Cloud model unavailable: ${rootMessage(error)}. " +
+                                "The symbolic runtime is still ready.",
+                        ),
+                    )
+                    else -> result
+                }
+            }
         }
+    }
+
+    private fun codingCommand(text: String): CompletableFuture<LocalQueryResult>? {
+        if (text != "/code" && !text.startsWith("/code ")) return null
+        return try {
+            val prompt = text.removePrefix("/code").trim()
+            require(prompt.isNotEmpty()) { "Usage: /code <coding task>" }
+            val cloud = cloudModel.reloadConfig()
+            require(cloud.config.enabled) { "Cloud model is disabled" }
+            val identity = PrologProjectIdentityResolver.resolve(workspace.listSources())
+            val appName = identity.effectiveLlmAppName(cloud.config.appName)
+            cloudModel.generate(
+                prompt,
+                purpose = CloudModelPurpose.CODING,
+                effectiveAppName = appName,
+            ).thenApply { modelResult ->
+                LocalQueryResult(
+                    query = text,
+                    terms = listOf(modelResult.text),
+                    generation = current.generation,
+                )
+            }
+        } catch (error: Throwable) {
+            CompletableFuture.failedFuture(error)
+        }
+    }
+
+    private fun providerCommand(text: String): CompletableFuture<LocalQueryResult>? {
+        if (text != "/provider" && !text.startsWith("/provider ")) return null
+        return try {
+            val arguments = text.split(Regex("\\s+"))
+            val message = when (arguments.getOrNull(1)?.lowercase() ?: "status") {
+                "status" -> describeCloudModelState(cloudModel.reloadConfig())
+                "on" -> {
+                    val current = cloudModel.reloadConfig().config
+                    val state = cloudModel.configure(current.copy(enabled = true))
+                    "Cloud model enabled: ${describeCloudModelState(state)}"
+                }
+                "off" -> {
+                    val current = cloudModel.reloadConfig().config
+                    val state = cloudModel.configure(current.copy(enabled = false))
+                    "Cloud model disabled: ${describeCloudModelState(state)}"
+                }
+                "cancel" -> {
+                    cloudModel.cancelActive()
+                    "Cloud model generation cancelled"
+                }
+                "use" -> configureProvider(arguments)
+                "app" -> {
+                    val appName = text.substringAfter("/provider app", "").trim()
+                    require(appName.isNotEmpty()) { "Usage: /provider app <LLM app name>" }
+                    val current = cloudModel.reloadConfig().config
+                    val state = cloudModel.configure(current.copy(appName = appName))
+                    "Cloud LLM app name updated: ${state.config.appName}"
+                }
+                else -> error(
+                    "Unknown provider command. Use /provider status, /provider on, /provider off, " +
+                        "/provider cancel, /provider use <preset>, or /provider app <name>. " +
+                        "Store API keys in the Model Providers settings screen, never in chat."
+                )
+            }
+            CompletableFuture.completedFuture(
+                LocalQueryResult(
+                    query = text,
+                    terms = listOf(message),
+                    generation = current.generation,
+                )
+            )
+        } catch (error: Throwable) {
+            CompletableFuture.failedFuture(error)
+        }
+    }
+
+    private fun configureProvider(arguments: List<String>): String {
+        val preset = arguments.getOrNull(2)?.lowercase()
+            ?: throw IllegalArgumentException(
+                "Usage: /provider use openrouter <model> | zai <model> | starintel <model> | openai <base-url> <model>"
+            )
+        val previous = cloudModel.reloadConfig().config
+        val configured = when (preset) {
+            "openrouter" -> {
+                val model = arguments.getOrNull(3) ?: error("Usage: /provider use openrouter <model>")
+                previous.copy(
+                    enabled = true,
+                    provider = CloudModelProvider.OPENROUTER,
+                    endpoint = CloudModelConfig.OPENROUTER_ENDPOINT,
+                    model = model,
+                )
+            }
+            "zai", "z-ai", "z-ai-code", "zai-coding" -> {
+                val model = arguments.getOrNull(3) ?: error("Usage: /provider use zai <model>")
+                previous.copy(
+                    enabled = true,
+                    provider = CloudModelProvider.ZAI_CODING_PLAN,
+                    endpoint = CloudModelConfig.ZAI_CODING_ENDPOINT,
+                    model = model,
+                )
+            }
+            "starintel" -> {
+                val model = arguments.getOrNull(3) ?: error("Usage: /provider use starintel <model>")
+                previous.copy(
+                    enabled = true,
+                    provider = CloudModelProvider.OPENAI_COMPATIBLE,
+                    endpoint = CloudModelConfig.DEFAULT_STARINTEL_ENDPOINT,
+                    model = model,
+                )
+            }
+            "openai", "generic" -> {
+                val endpoint = arguments.getOrNull(3)
+                    ?: error("Usage: /provider use openai <base-url> <model>")
+                val model = arguments.getOrNull(4)
+                    ?: error("Usage: /provider use openai <base-url> <model>")
+                previous.copy(
+                    enabled = true,
+                    provider = CloudModelProvider.OPENAI_COMPATIBLE,
+                    endpoint = endpoint,
+                    model = model,
+                )
+            }
+            else -> error("Unknown provider preset: $preset")
+        }
+        val state = cloudModel.configure(configured)
+        return "Cloud model configured: ${describeCloudModelState(state)}"
     }
 
     private fun modelCommand(text: String): CompletableFuture<LocalQueryResult>? {
@@ -182,6 +341,19 @@ class LocalZaraServer(
         return "${state.phase.name.lowercase()} · ${config.model}$quantization · ${config.endpoint}$failure"
     }
 
+    private fun describeCloudModelState(state: CloudModelState): String {
+        val config = state.config
+        val key = if (state.apiKeyConfigured) "key=stored" else "key=missing"
+        val scope = if (config.provider.codingOnly) "coding-only" else "general"
+        val failure = state.message?.let { " · $it" }.orEmpty()
+        return "${state.phase.name.lowercase()} · ${config.provider.wireName} · $scope · ${config.model.ifBlank { "no-model" }} · ${config.endpoint} · $key$failure"
+    }
+
+    private fun localSystemPrompt(appName: String): String =
+        "You are $appName's local conversational model. Answer the user directly. " +
+            "Do not claim to execute tools, device actions, timers, apps, URLs, or other side effects. " +
+            "Those actions are owned by the symbolic runtime."
+
     private fun boot(phase: LocalServerPhase): LocalServerState {
         updateState(current.copy(phase = phase, failure = null))
         return try {
@@ -226,6 +398,7 @@ class LocalZaraServer(
         if (closed) return
         closed = true
         localModel.close()
+        cloudModel.close()
         val future = CompletableFuture<Unit>()
         actor.execute {
             try {
@@ -247,6 +420,11 @@ class LocalZaraServer(
             return LocalModelCoordinator(
                 LocalModelConfigStore(File(root, "local-model.properties"))
             )
+        }
+
+        private fun defaultCloudModelCoordinator(corePath: String): CloudModelCoordinator {
+            val root = File(corePath).parentFile ?: error("Local runtime directory is unavailable")
+            return AndroidCloudModelStorage.coordinator(root)
         }
 
         private fun rootMessage(error: Throwable): String {
