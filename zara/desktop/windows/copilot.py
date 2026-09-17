@@ -90,7 +90,7 @@ class CopilotWindow(QuickCopilotWindow):
         self.history_list.setObjectName("zaraConversationHistory")
         self.history_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.history_list.setTextElideMode(Qt.TextElideMode.ElideRight)
-        self.scheduled_panel = ScheduledPanel(self.history_panel)
+        self.scheduled_panel = ScheduledPanel(bridge, self.history_panel)
 
         history_layout.addWidget(self.sidebar_new_chat_button)
         history_layout.addLayout(history_header)
