@@ -197,6 +197,7 @@ fun ZaraApp(
                         AppSurface.Chat -> ChatSurface(
                             state = runtimeState,
                             localServerState = localServerState,
+                            runtimeMode = runtimeMode,
                             lastTurn = lastTurn,
                             operationError = operationError,
                             operationBusy = operationBusy,
@@ -251,6 +252,7 @@ fun ZaraApp(
                             state = runtimeState,
                             sourceSha = sourceSha,
                             localServerState = localServerState,
+                            runtimeMode = runtimeMode,
                             voiceStreamState = voiceStreamState,
                             voiceStreamFailure = voiceStreamFailure,
                             operationError = operationError,
@@ -456,6 +458,7 @@ private fun DrawerHistoryRow(title: String, detail: String) {
 private fun ChatSurface(
     state: RuntimeState,
     localServerState: LocalServerState,
+    runtimeMode: RuntimeMode,
     lastTurn: RenderedTextTurn?,
     operationError: String?,
     operationBusy: Boolean,
@@ -466,7 +469,12 @@ private fun ChatSurface(
     val remoteReady = state.server is ServerConnection.Connected &&
         state.enrollment == EnrollmentReadiness.Ready
     val localReady = localServerState.phase == LocalServerPhase.READY
-    val ready = remoteReady || localReady
+    val ready = when (runtimeMode) {
+        RuntimeMode.Local -> localReady
+        RuntimeMode.Remote -> remoteReady
+        RuntimeMode.Auto -> remoteReady || localReady
+    }
+    val backend = activeRuntimeBackendLabel(runtimeMode, localServerState, state)
     val tokens = LocalZaraTokens.current
 
     Column(
@@ -508,8 +516,20 @@ private fun ChatSurface(
                             modifier = Modifier.padding(top = 18.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            StatusPill(enrollmentLabel(state.enrollment))
-                            StatusPill(connectionLabel(state.server))
+                            when (runtimeMode) {
+                                RuntimeMode.Local -> {
+                                    StatusPill("local ${localServerState.phase.name.lowercase()}")
+                                    StatusPill("private")
+                                }
+                                RuntimeMode.Remote -> {
+                                    StatusPill(enrollmentLabel(state.enrollment))
+                                    StatusPill(connectionLabel(state.server))
+                                }
+                                RuntimeMode.Auto -> {
+                                    StatusPill(backend)
+                                    StatusPill(if (remoteReady) "authenticated" else "private")
+                                }
+                            }
                         }
                     }
                 }
@@ -537,9 +557,10 @@ private fun ChatSurface(
         )
         Text(
             when {
-                remoteReady -> "REMOTE  •  AUTHENTICATED  •  SYMBOLIC"
-                localReady -> "LOCAL  •  SYMBOLIC  •  PRIVATE"
-                else -> "LOCAL RUNTIME STARTING"
+                backend == "remote" -> "REMOTE  •  AUTHENTICATED  •  SYMBOLIC"
+                backend == "local" || backend == "local fallback" ->
+                    "LOCAL  •  SYMBOLIC  •  PRIVATE"
+                else -> "RUNTIME UNAVAILABLE"
             },
             modifier = Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 10.dp),
             color = tokens.textMuted,
@@ -568,7 +589,7 @@ private fun CompactComposer(
         singleLine = true,
         placeholder = {
             Text(
-                if (ready) "Ask anything…" else "Connect in Remote to chat",
+                if (ready) "Ask anything…" else "Runtime unavailable",
                 color = tokens.textMuted,
             )
         },
@@ -670,7 +691,7 @@ private fun VoiceSurface(
                 onRequestMicrophonePermission,
             )
             !canStartManualVoice(state, microphonePermissionGranted) && !capturing ->
-                MutedNotice("Voice becomes available after an authenticated Remote session connects.")
+                MutedNotice("In-app Voice currently uses the authenticated Remote stream. Local system-assistant voice works through the Android Assistant surface.")
             capturing -> {
                 PrimaryAction("Stop & send", !operationBusy, onStopVoice)
                 SecondaryAction("Cancel", !operationBusy, onCancelVoice)
@@ -943,6 +964,7 @@ private fun DiagnosticsSurface(
     state: RuntimeState,
     sourceSha: String,
     localServerState: LocalServerState,
+    runtimeMode: RuntimeMode,
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
     operationError: String?,
@@ -954,15 +976,25 @@ private fun DiagnosticsSurface(
             KeyValueRow("source", sourceSha.take(12))
         }
         SectionCard("RUNTIME") {
-            KeyValueRow("local server", localServerState.phase.name.lowercase())
-            KeyValueRow("local generation", localServerState.generation.toString())
-            KeyValueRow("local sources", localServerState.loadedSources.size.toString())
+            KeyValueRow("mode", runtimeMode.name.lowercase())
+            KeyValueRow("active backend", activeRuntimeBackendLabel(runtimeMode, localServerState, state))
+            KeyValueRow("assistant role", assistantRoleLabel(state.assistantRole))
+        }
+        SectionCard("LOCAL") {
+            KeyValueRow("server", localServerState.phase.name.lowercase())
+            KeyValueRow("generation", localServerState.generation.toString())
+            KeyValueRow("sources", localServerState.loadedSources.size.toString())
+            localServerState.failure?.let { ErrorBanner(it) }
+        }
+        SectionCard("REMOTE") {
             KeyValueRow("connection", connectionLabel(state.server))
             KeyValueRow("generation", state.generation.toString())
             KeyValueRow("session", state.sessionId ?: "none")
             KeyValueRow("conversation", state.selectedConversationId ?: "none")
             KeyValueRow("enrollment", enrollmentLabel(state.enrollment))
-            KeyValueRow("assistant role", assistantRoleLabel(state.assistantRole))
+            if (runtimeMode == RuntimeMode.Local) {
+                MutedNotice("Remote state is informational in Local mode and is not required for local chat or Android Assistant voice.")
+            }
         }
         voiceStreamState?.let { stream ->
             SectionCard("VOICE") {
@@ -1305,6 +1337,26 @@ internal fun canStartManualVoice(
         state.enrollment == EnrollmentReadiness.Ready &&
         state.server is ServerConnection.Connected &&
         state.sessionId != null
+
+internal fun activeRuntimeBackendLabel(
+    mode: RuntimeMode,
+    localState: LocalServerState,
+    state: RuntimeState,
+): String {
+    val localReady = localState.phase == LocalServerPhase.READY
+    val remoteReady = state.enrollment == EnrollmentReadiness.Ready &&
+        state.server is ServerConnection.Connected &&
+        state.sessionId != null
+    return when (mode) {
+        RuntimeMode.Local -> if (localReady) "local" else "local (${localState.phase.name.lowercase()})"
+        RuntimeMode.Remote -> if (remoteReady) "remote" else "remote (not ready)"
+        RuntimeMode.Auto -> when {
+            remoteReady -> "remote"
+            localReady -> "local fallback"
+            else -> "unavailable"
+        }
+    }
+}
 
 internal fun connectionLabel(connection: ServerConnection): String = when (connection) {
     ServerConnection.Disconnected -> "disconnected"

@@ -1,0 +1,107 @@
+package ai.zara.app.assistant
+
+import ai.zara.app.runtime.AssistantRole
+import ai.zara.app.runtime.EnrollmentReadiness
+import ai.zara.app.runtime.LocalServerPhase
+import ai.zara.app.runtime.LocalServerState
+import ai.zara.app.runtime.RuntimeMode
+import ai.zara.app.runtime.RuntimeState
+import ai.zara.app.runtime.ServerConnection
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class AssistantCapturePlanTest {
+    @Test
+    fun `strict local mode uses embedded runtime without remote enrollment or connection`() {
+        val state = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Unenrolled,
+            assistantRole = AssistantRole.Held,
+            server = ServerConnection.Disconnected,
+            sessionId = null,
+        )
+
+        assertEquals(
+            AssistantCapturePlan.Local,
+            planAssistantCapture(
+                mode = RuntimeMode.Local,
+                localState = readyLocalState(),
+                runtimeState = state,
+            ),
+        )
+    }
+
+    @Test
+    fun `auto mode falls back to embedded runtime while remote is disconnected`() {
+        val state = RuntimeState.initial().copy(
+            assistantRole = AssistantRole.Held,
+            server = ServerConnection.Disconnected,
+            sessionId = null,
+        )
+
+        assertEquals(
+            AssistantCapturePlan.Local,
+            planAssistantCapture(
+                mode = RuntimeMode.Auto,
+                localState = readyLocalState(),
+                runtimeState = state,
+            ),
+        )
+    }
+
+    @Test
+    fun `auto mode keeps authenticated remote session when one is active`() {
+        val state = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Ready,
+            assistantRole = AssistantRole.Held,
+            server = ServerConnection.Connected(7),
+            sessionId = "session-7",
+        )
+
+        assertEquals(
+            AssistantCapturePlan.Remote,
+            planAssistantCapture(
+                mode = RuntimeMode.Auto,
+                localState = readyLocalState(),
+                runtimeState = state,
+            ),
+        )
+    }
+
+    @Test
+    fun `strict local mode fails honestly when embedded runtime is not ready`() {
+        val state = RuntimeState.initial().copy(assistantRole = AssistantRole.Held)
+
+        assertEquals(
+            AssistantCapturePlan.Reject("Local Zara server is not ready"),
+            planAssistantCapture(
+                mode = RuntimeMode.Local,
+                localState = LocalServerState(
+                    phase = LocalServerPhase.STARTING,
+                    generation = 0,
+                    loadedSources = emptyList(),
+                ),
+                runtimeState = state,
+            ),
+        )
+    }
+
+    @Test
+    fun `assistant role remains required for local capture`() {
+        val state = RuntimeState.initial().copy(assistantRole = AssistantRole.NotHeld)
+
+        assertEquals(
+            AssistantCapturePlan.Reject("Zara does not hold the Android Assistant role"),
+            planAssistantCapture(
+                mode = RuntimeMode.Local,
+                localState = readyLocalState(),
+                runtimeState = state,
+            ),
+        )
+    }
+
+    private fun readyLocalState() = LocalServerState(
+        phase = LocalServerPhase.READY,
+        generation = 1,
+        loadedSources = listOf("core", "workspace"),
+    )
+}
