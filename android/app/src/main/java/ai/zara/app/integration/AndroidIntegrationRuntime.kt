@@ -18,9 +18,8 @@ import java.util.concurrent.CompletableFuture
 
 class AndroidIntegrationRuntime(context: Context) : AutoCloseable {
     private val appContext = context.applicationContext
-    private val authorityPolicy = AndroidAuthorityPolicy.fromWorkspace(
-        File(appContext.filesDir, "prolog-workspace"),
-    )
+    private val authorityRoot = File(appContext.filesDir, "prolog-workspace").also(::seedOwnerAuthority)
+    private val authorityPolicy = AndroidAuthorityPolicy.fromWorkspace(authorityRoot)
     private val accessibility = AccessibilityBackend()
     private val notifications = NotificationBackend()
     private val ime = ImeBackend()
@@ -72,4 +71,27 @@ class AndroidIntegrationRuntime(context: Context) : AutoCloseable {
     fun clearAssistantContext() = assist.clear()
 
     override fun close() = actor.close()
+
+    private fun seedOwnerAuthority(root: File) {
+        root.mkdirs()
+        val alreadyConfigured = root.listFiles()
+            .orEmpty()
+            .asSequence()
+            .filter { it.isFile && it.extension == "pl" }
+            .any { file ->
+                val source = runCatching(file::readText).getOrDefault("")
+                source.contains("android_authority(") || source.contains("android_backend(")
+            }
+        if (alreadyConfigured) return
+
+        val target = File(root, "android-authority.pl")
+        target.writeText(
+            """
+            % Zara Android owner authority. Edit live in Prolog Studio.
+            % locked | standard | elevated | unrestricted
+            android_authority(unrestricted).
+            android_confirmation(unrestricted, none).
+            """.trimIndent() + "\n",
+        )
+    }
 }
