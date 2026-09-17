@@ -45,6 +45,17 @@ jobs:
             exit 1
           fi
 
+          store_version="$(sed -nE 's/^[[:space:]]*versionName = "([^"]+)".*/\1/p' android/apps/zara-store/build.gradle.kts)"
+          store_version_code="$(sed -nE 's/^[[:space:]]*versionCode = ([0-9]+).*/\1/p' android/apps/zara-store/build.gradle.kts)"
+          if [[ "$store_version" != "$version" ]]; then
+            echo "Store/version mismatch: phone=$version store=$store_version" >&2
+            exit 1
+          fi
+          if [[ -z "$store_version_code" || "$store_version_code" -lt 1 ]]; then
+            echo "Could not resolve a positive Zara Store versionCode." >&2
+            exit 1
+          fi
+
           tag="v${version}"
           if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "$tag" ]]; then
             echo "Tag/version mismatch: ref=${GITHUB_REF_NAME}, app=${tag}" >&2
@@ -53,6 +64,7 @@ jobs:
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+          echo "store_version_code=$store_version_code" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Install Nix
@@ -76,33 +88,58 @@ jobs:
       - name: Run Android release gate
         run: nix develop ./android -c bash scripts/test-android-release.sh
 
-      - name: Prepare APK and checksum
+      - name: Prepare APKs and checksums
         id: artifact
         shell: bash
         env:
           VERSION: ${{ steps.release.outputs.version }}
           VERSION_CODE: ${{ steps.release.outputs.version_code }}
+          STORE_VERSION_CODE: ${{ steps.release.outputs.store_version_code }}
         run: |
           set -euo pipefail
           mkdir -p dist
+
           apk="dist/zara-android-${VERSION}.apk"
           cp android/app/build/outputs/apk/debug/app-debug.apk "$apk"
           sha256sum "$apk" > "${apk}.sha256"
           {
             echo "schema=1"
             echo "source_sha=${GITHUB_SHA}"
+            echo "package_name=ai.zara.app"
             echo "version_name=${VERSION}"
             echo "version_code=${VERSION_CODE}"
             echo "apk=$(basename "$apk")"
             echo "apk_sha256=$(sha256sum "$apk" | awk '{print $1}')"
           } > "dist/zara-android-${VERSION}.manifest.txt"
+
+          store_apk="dist/zara-store-${VERSION}.apk"
+          cp android/apps/zara-store/build/outputs/apk/debug/zara-store-debug.apk "$store_apk"
+          sha256sum "$store_apk" > "${store_apk}.sha256"
+          {
+            echo "schema=1"
+            echo "source_sha=${GITHUB_SHA}"
+            echo "package_name=ai.zara.store"
+            echo "version_name=${VERSION}"
+            echo "version_code=${STORE_VERSION_CODE}"
+            echo "release_status=experimental"
+            echo "apk=$(basename "$store_apk")"
+            echo "apk_sha256=$(sha256sum "$store_apk" | awk '{print $1}')"
+          } > "dist/zara-store-${VERSION}.manifest.txt"
+
           echo "apk=$apk" >> "$GITHUB_OUTPUT"
           echo "manifest=dist/zara-android-${VERSION}.manifest.txt" >> "$GITHUB_OUTPUT"
+          echo "store_apk=$store_apk" >> "$GITHUB_OUTPUT"
+          echo "store_manifest=dist/zara-store-${VERSION}.manifest.txt" >> "$GITHUB_OUTPUT"
 
       - name: Verify update-compatible Android signing certificate
         env:
           APK: ${{ steps.artifact.outputs.apk }}
         run: nix develop ./android -c bash scripts/check-android-apk-signer.sh "$APK"
+
+      - name: Verify update-compatible Zara Store signing certificate
+        env:
+          STORE_APK: ${{ steps.artifact.outputs.store_apk }}
+        run: nix develop ./android -c bash scripts/check-android-apk-signer.sh "$STORE_APK"
 
       - name: Publish GitHub prerelease
         env:
@@ -110,6 +147,8 @@ jobs:
           TAG: ${{ steps.release.outputs.tag }}
           APK: ${{ steps.artifact.outputs.apk }}
           MANIFEST: ${{ steps.artifact.outputs.manifest }}
+          STORE_APK: ${{ steps.artifact.outputs.store_apk }}
+          STORE_MANIFEST: ${{ steps.artifact.outputs.store_manifest }}
         shell: bash
         run: |
           set -euo pipefail
@@ -123,7 +162,10 @@ jobs:
             "$APK" \
             "${APK}.sha256" \
             "$MANIFEST" \
+            "$STORE_APK" \
+            "${STORE_APK}.sha256" \
+            "$STORE_MANIFEST" \
             --target "$GITHUB_SHA" \
             --title "Zara $TAG" \
             --prerelease \
-            --notes "Android alpha preview of Zara. This is a debug-signed APK intended for direct sideloading/testing, not a production Play Store build. Requires Android 10 (API 29) or newer. Verify the APK with the accompanying SHA-256 file. Source commit: $GITHUB_SHA"
+            --notes "Android alpha preview of Zara plus the experimental Zara Store foundation. These are debug-signed APKs intended for direct sideloading/testing, not production Play Store builds. Zara Store does not yet enable repository trust promotion or APK installation. Requires Android 10 (API 29) or newer. Verify each APK with its accompanying SHA-256 and provenance manifest. Source commit: $GITHUB_SHA"
