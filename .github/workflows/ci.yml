@@ -260,9 +260,28 @@ jobs:
         run: |
           set -euo pipefail
           sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?ANDROID SDK root is unavailable}}"
+          sdkmanager_bin="$(
+            find "$sdk_root/cmdline-tools" \
+              -path '*/bin/sdkmanager' \
+              -executable \
+              -print \
+              | sort -V \
+              | tail -n 1
+          )"
+          test -n "$sdkmanager_bin" && test -x "$sdkmanager_bin" || {
+            echo "sdkmanager is unavailable under host SDK root: $sdk_root" >&2
+            exit 1
+          }
+          case "$sdkmanager_bin" in
+            "$sdk_root"/*) ;;
+            *)
+              echo "refusing sdkmanager outside host SDK root: $sdkmanager_bin" >&2
+              exit 1
+              ;;
+          esac
           for attempt in 1 2 3; do
             echo "emulator SDK install attempt ${attempt}/3"
-            if sdkmanager --install emulator --channel=0; then
+            if "$sdkmanager_bin" --install emulator --channel=0; then
               exit 0
             fi
             echo "emulator SDK install failed; clearing transient package state" >&2
