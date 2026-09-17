@@ -38,18 +38,18 @@ class FakeConfig:
 
 class FakeProlog:
     def query_all(self, goal: str, max_solutions: int = 100):
-        if goal == "kb_config:org_browser_setting(Key, Value)":
+        if goal == "org_browser_config:setting(Key, Value)":
             return [
                 {"Key": "base_font_pt", "Value": 15.0},
                 {"Key": "search_limit", "Value": 25},
                 {"Key": "show_backlinks", "Value": "false"},
                 {"Key": "default_project", "Value": "prolog-project"},
             ]
-        if goal == "kb_config:org_browser_root(Path)":
+        if goal == "org_browser_config:root(Path)":
             return [{"Path": "~/prolog-roam"}]
-        if goal == "kb_config:org_browser_heading_scale(Level, Scale)":
+        if goal == "org_browser_config:heading_scale(Level, Scale)":
             return [{"Level": 1, "Scale": 1.8}, {"Level": 3, "Scale": 1.3}]
-        if goal == "kb_config:org_browser_help_source(Path)":
+        if goal == "org_browser_config:help_source(Path)":
             return [{"Path": "wiki/customization.org"}]
         return []
 
