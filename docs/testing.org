@@ -1,0 +1,107 @@
+#+title: Zara testing and coverage
+
+* Purpose
+
+Zara treats tests and coverage as implementation evidence, not release decoration. The canonical repository gate is =scripts/test-all.sh= and the Python coverage report is produced by the full pytest phase inside that gate. Do not maintain a second "coverage test suite" with different behavior.
+
+Coverage is a map of exercised Python code. It is useful for finding untested branches, but a higher percentage does not replace adversarial, integration, protocol, packaging, Android, Prolog, or visual evidence.
+
+* Canonical commands
+
+Run the whole repository gate:
+
+#+begin_src sh
+nix develop -c bash scripts/test-all.sh
+#+end_src
+
+Run only the Python suite with the same coverage scope while iterating:
+
+#+begin_src sh
+nix develop -c python -m pytest \
+  --cov=zara \
+  --cov-branch \
+  --cov-config=.coveragerc \
+  --cov-report=term-missing:skip-covered \
+  t/
+#+end_src
+
+Focused tests are encouraged during implementation. Before a PR is considered complete, run the canonical repository gate and use exact-head CI as the merge evidence.
+
+* Coverage scope
+
+The tracked Python source is =zara/= with line and branch coverage enabled. Tests, generated artifacts, Prolog sources, Android/Kotlin, shell helpers, and third-party code are not included in the Python percentage.
+
+Those surfaces still have real gates:
+
+- Prolog modules and resolver behavior are exercised by the Prolog phases in =scripts/test-all.sh=.
+- Android and Wear use =scripts/test-android.sh= and their Gradle/native gates.
+- packaging and Nix behavior use the packaging phase plus =nix flake check= and =nix build= in CI.
+- desktop presentation changes require deterministic screenshot evidence in addition to behavioral tests.
+
+Do not expand or shrink the Python measurement scope merely to move the percentage.
+
+* Coverage artifacts
+
+The full gate writes these files under =$ARTIFACT_DIR=:
+
+| Artifact | Purpose |
+|----------+---------|
+| =junit.xml= | machine-readable pytest results |
+| =coverage.xml= | portable line/branch coverage report for CI/reporters |
+| =coverage.json= | detailed machine-readable coverage data for audits and tooling |
+
+CI uploads the coverage files independently and also retains them in the normal regression artifact bundle. Codecov receives =coverage.xml= as a reporting surface; Codecov availability is not a substitute for the repository's own coverage gate.
+
+* Coverage policy
+
+1. New or changed reachable Python behavior needs meaningful tests for the behavior and important failure branches.
+2. Do not add duplicate execution-only tests just to make lines green. Prefer tests that assert a contract, boundary, state transition, failure mode, or security property.
+3. Do not add =pragma: no cover=, omit patterns, source exclusions, or threshold reductions merely to merge a PR.
+4. A coverage increase is useful only when the tests would catch a plausible regression.
+5. When coverage exposes a genuinely dead branch, remove dead code when safe instead of writing a test for behavior Zara should not have.
+6. The repository floor is based on a measured exact-head baseline. Raise it when sustained improvements make a higher floor honest; never lower it casually.
+7. A PR that changes covered Python code should inspect the coverage diff or the affected module report even when the global percentage stays above the floor.
+
+* How to use the report
+
+Start with uncovered branch-heavy modules touched by the PR. Ask whether each missing path represents:
+
+- a real supported behavior that needs a test;
+- a failure/security path that needs adversarial coverage;
+- platform/hardware behavior that belongs in a different test layer;
+- unreachable or obsolete code that should be removed;
+- intentionally unmeasurable glue that needs explicit review rather than a fake unit test.
+
+Prioritize correctness risk over raw line count. A five-line authentication failure path is more important than fifty lines of passive data declarations.
+
+* Changing the coverage floor
+
+The coverage floor belongs in the canonical pytest invocation, not in a developer-local alias. Change it only with evidence from the exact candidate SHA:
+
+1. run the full gate with line and branch coverage;
+2. inspect the total and affected modules;
+3. add meaningful tests or remove dead code;
+4. set the floor at or below the proven exact-head result with enough rounding headroom to avoid platform noise;
+5. rerun the full exact-head gate;
+6. document the new measured baseline in the PR.
+
+A threshold change that hides a regression is a failing review outcome even if CI is green.
+
+* Test design
+
+Prefer the smallest layer that proves the contract, then add a second independent layer where the risk justifies it. Useful patterns include:
+
+- pure unit tests for parsing, validation, state machines, and deterministic policy;
+- integration tests for adapters, storage, protocol boundaries, actor lifecycles, and cancellation;
+- adversarial tests for malformed input, stale generations, authorization, secret handling, and races;
+- end-to-end tests for cross-component user-visible workflows;
+- screenshot/device evidence for UI behavior that assertions cannot prove visually.
+
+Mocks and fakes are acceptable only when they isolate an external boundary while the test still proves real Zara logic. Do not mock the behavior being claimed.
+
+* Related documents
+
+- [[file:development.org][development guide]]
+- [[file:architecture.org][architecture]]
+- [[file:../AGENTS.md][agent/reviewer rules]]
+- [[file:../wiki/testing.org][testing chapter]]
