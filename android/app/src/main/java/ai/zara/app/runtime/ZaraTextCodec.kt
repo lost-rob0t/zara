@@ -75,6 +75,18 @@ sealed interface TextServerMessage {
         val truncated: Boolean,
     ) : TextServerMessage
 
+    data class InputRequired(
+        override val id: String,
+        override val sessionId: String,
+        val conversationId: String?,
+        val turnId: String,
+        val sequence: Long,
+        val kind: String,
+        val prompt: String,
+        val questionId: String?,
+        val choices: List<String>,
+    ) : TextServerMessage
+
     data class ProtocolError(
         override val id: String,
         val replyTo: String?,
@@ -90,6 +102,7 @@ object ZaraTextCodec {
     private const val maxEnvelopeBytes = 64 * 1024
     private const val maxIdBytes = 128
     private const val maxTextBytes = 1024 * 1024
+    private val inputKindRegex = Regex("^[a-z][a-z0-9_.:-]*$")
     private val envelopeKeys = setOf(
         "type", "id", "reply_to", "session_id", "conversation_id", "turn_id",
         "stream_id", "seq", "timestamp_ns", "trace_id", "content_type",
@@ -238,6 +251,28 @@ object ZaraTextCodec {
                     truncated = requireBoolean(body, "truncated"),
                 )
             }
+            "input.required" -> {
+                rejectUnknown(
+                    body,
+                    setOf("kind", "prompt", "question_id", "choices"),
+                    "input.required body",
+                )
+                val kind = requireString(body, "kind", 64)
+                if (!inputKindRegex.matches(kind)) throw ZaraWireException("input.required kind is invalid")
+                val prompt = requireString(body, "prompt", 2048)
+                if (prompt.isBlank()) throw ZaraWireException("input.required prompt is required")
+                TextServerMessage.InputRequired(
+                    id = id,
+                    sessionId = wireRequired(sessionId, "input.required requires session_id"),
+                    conversationId = conversationId,
+                    turnId = wireRequired(turnId, "input.required requires turn_id"),
+                    sequence = wireRequired(sequence, "input.required requires seq"),
+                    kind = kind,
+                    prompt = prompt,
+                    questionId = optionalBodyToken(body, "question_id"),
+                    choices = requireStringList(body, "choices", 16, 128),
+                )
+            }
             "protocol.error" -> {
                 rejectUnknown(body, setOf("code", "message", "retryable"), "protocol.error body")
                 TextServerMessage.ProtocolError(
@@ -319,6 +354,29 @@ object ZaraTextCodec {
         val value = objectValue[key] ?: return null
         if (value !is String) throw ZaraWireException("$key must be a string")
         return wireToken(key, value)
+    }
+
+    private fun optionalBodyToken(objectValue: Map<String, Any?>, key: String): String? {
+        val value = objectValue[key] ?: return null
+        if (value !is String) throw ZaraWireException("$key must be a string or null")
+        return wireToken(key, value)
+    }
+
+    private fun requireStringList(
+        objectValue: Map<String, Any?>,
+        key: String,
+        maximumItems: Int,
+        maximumBytes: Int,
+    ): List<String> {
+        val raw = objectValue[key] as? List<*> ?: throw ZaraWireException("$key must be a list")
+        if (raw.size > maximumItems) throw ZaraWireException("$key exceeds item limit")
+        return raw.map { item ->
+            val value = item as? String ?: throw ZaraWireException("$key must contain strings")
+            if (value.isBlank() || value.encodeToByteArray().size > maximumBytes) {
+                throw ZaraWireException("$key contains invalid text")
+            }
+            value
+        }
     }
 
     private fun requireTimestamp(value: Long) {
