@@ -23,7 +23,9 @@ from zara.desktop.conversation import ConversationService
 from zara.desktop.org_widgets import OrgHelpWindow, OrgWorkspaceWidget
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.windows.quick import QuickCopilotWindow
-from zara.org_roam import OrgRoamIndex, OrgRoamWorkspace
+from zara.org_browser import OrgBrowserConfig, OrgBrowserHookRegistry, OrgBrowserRuntime, build_org_browser_runtime
+from zara.org_browser_runtime import ConfiguredOrgRoamWorkspace
+from zara.org_roam import OrgRoamIndex
 
 
 class CopilotPresentation(str, Enum):
@@ -39,24 +41,16 @@ _GEOMETRY_KEYS = {
 }
 
 
-def _configured_org_index() -> OrgRoamIndex:
+def _configured_org_runtime() -> tuple[OrgBrowserRuntime, OrgRoamIndex]:
     try:
-        config = get_config().get_section("org")
-        if not bool(config.get("enabled", True)):
-            return OrgRoamIndex.empty()
-        roots_value = config.get("roots", [])
-        roots = [roots_value] if isinstance(roots_value, str) else list(roots_value)
-        roots = [str(root) for root in roots if str(root).strip()]
-        if not roots:
-            return OrgRoamIndex.empty()
-        workspace = OrgRoamWorkspace(
-            roots,
-            max_files=int(config.get("max_files", 2000)),
-            max_file_bytes=int(config.get("max_file_bytes", 2_000_000)),
-        )
-        return workspace.refresh(force=True).index
+        runtime = build_org_browser_runtime(get_config())
+        if not runtime.config.enabled or not runtime.config.roots:
+            return runtime, OrgRoamIndex.empty()
+        workspace = ConfiguredOrgRoamWorkspace(runtime.config, runtime.hooks)
+        return runtime, workspace.refresh(force=True).index
     except Exception:
-        return OrgRoamIndex.empty()
+        runtime = OrgBrowserRuntime(OrgBrowserConfig(), OrgBrowserHookRegistry())
+        return runtime, OrgRoamIndex.empty()
 
 
 class CopilotWindow(QuickCopilotWindow):
@@ -74,6 +68,7 @@ class CopilotWindow(QuickCopilotWindow):
         initial_conversation_id: Optional[str] = None,
         settings: Optional[QSettings] = None,
         org_index: Optional[OrgRoamIndex] = None,
+        org_runtime: Optional[OrgBrowserRuntime] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(
@@ -87,6 +82,15 @@ class CopilotWindow(QuickCopilotWindow):
         self._org_visible = False
         self._help_window: Optional[OrgHelpWindow] = None
         self.setObjectName("zaraCopilot")
+
+        if org_runtime is not None:
+            self.org_runtime = org_runtime
+            resolved_index = org_index or OrgRoamIndex.empty()
+        elif org_index is not None:
+            self.org_runtime = OrgBrowserRuntime(OrgBrowserConfig(), OrgBrowserHookRegistry())
+            resolved_index = org_index
+        else:
+            self.org_runtime, resolved_index = _configured_org_runtime()
 
         self.help_button = QPushButton("Help")
         self.help_button.setObjectName("zaraSecondaryAction")
@@ -148,7 +152,12 @@ class CopilotWindow(QuickCopilotWindow):
             chat_layout.addWidget(widget)
         chat_layout.setStretchFactor(self.message_scroll, 1)
 
-        self.org_workspace = OrgWorkspaceWidget(org_index or _configured_org_index(), self)
+        self.org_workspace = OrgWorkspaceWidget(
+            resolved_index,
+            config=self.org_runtime.config,
+            hooks=self.org_runtime.hooks,
+            parent=self,
+        )
         self.org_workspace.setMinimumWidth(420)
         self.org_workspace.hide()
 
@@ -209,7 +218,11 @@ class CopilotWindow(QuickCopilotWindow):
 
     def show_help(self) -> None:
         if self._help_window is None:
-            self._help_window = OrgHelpWindow(parent=self)
+            self._help_window = OrgHelpWindow(
+                config=self.org_runtime.config,
+                hooks=self.org_runtime.hooks,
+                parent=self,
+            )
             self._help_window.setWindowFlag(Qt.WindowType.Window, True)
         self.help_requested.emit()
         self._help_window.show()
