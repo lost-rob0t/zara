@@ -36,6 +36,7 @@ def _write_desktop_evidence(root: Path, source_sha: str) -> Path:
                 "height": 460,
                 "theme": "signal-cabin",
                 "source_commit": source_sha,
+                "sha256": hashlib.sha256(payload).hexdigest(),
             }
         ],
     }
@@ -126,6 +127,18 @@ def test_dual_surface_validator_rejects_failed_android_acceptance(tmp_path: Path
 
     assert result.returncode != 0
     assert "passed" in result.stderr.lower()
+
+
+def test_dual_surface_validator_rejects_tampered_desktop_png(tmp_path: Path) -> None:
+    source_sha = "0123456789abcdef0123456789abcdef01234567"
+    desktop = _write_desktop_evidence(tmp_path, source_sha)
+    android = _write_android_evidence(tmp_path, source_sha)
+    (desktop.parent / "copilot-empty-compact.png").write_bytes(_png_bytes("tampered"))
+
+    result = _run_validator(source_sha, desktop, android)
+
+    assert result.returncode != 0
+    assert "desktop screenshot hash mismatch" in result.stderr.lower()
 
 
 def test_dual_surface_validator_rejects_tampered_android_png(tmp_path: Path) -> None:
