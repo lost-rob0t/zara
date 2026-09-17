@@ -71,6 +71,7 @@ if ! gradle --no-daemon \
   diagnostics_dir="app/build/reports/semantic-parity"
   mkdir -p "$diagnostics_dir"
   tail -n 240 "$gradle_log" > "$diagnostics_dir/gradle-failure-tail.log"
+  cp "$interop_log" "$diagnostics_dir/stock-zara-server.log"
   cat "$interop_log" >&2
   echo "stock ZaraServer Android/Wear interop gate failed" >&2
   exit 1
