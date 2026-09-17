@@ -2,6 +2,8 @@ import groovy.json.JsonSlurper
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
@@ -41,6 +43,40 @@ abstract class GeneratePortableSemanticAssets : DefaultTask() {
                 into("prolog/shared/kb")
             }
         }
+    }
+}
+
+abstract class GenerateRepoOrgHelpAssets : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val sourceFiles: ConfigurableFileCollection
+
+    @get:Input
+    abstract val repoRootPath: Property<String>
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val root = project.file(repoRootPath.get()).canonicalFile
+        val output = outputDirectory.get().asFile
+        val helpRoot = output.resolve("help")
+        output.deleteRecursively()
+        helpRoot.mkdirs()
+
+        val relativePaths = sourceFiles.files
+            .filter { it.isFile && it.extension.equals("org", ignoreCase = true) }
+            .map { source ->
+                val relative = root.toPath().relativize(source.canonicalFile.toPath()).toString()
+                val destination = helpRoot.resolve(relative)
+                destination.parentFile.mkdirs()
+                source.copyTo(destination, overwrite = true)
+                relative.replace('\\', '/')
+            }
+            .sorted()
+
+        helpRoot.resolve("index.txt").writeText(relativePaths.joinToString("\n", postfix = "\n"))
     }
 }
 
@@ -134,8 +170,9 @@ android {
 
 androidComponents {
     onVariants(selector().all()) { variant ->
-        val taskName = "generate${variant.name.replaceFirstChar(Char::uppercaseChar)}PortableSemanticAssets"
-        val generateAssets = tasks.register<GeneratePortableSemanticAssets>(taskName) {
+        val capitalized = variant.name.replaceFirstChar(Char::uppercaseChar)
+        val semanticTaskName = "generate${capitalized}PortableSemanticAssets"
+        val generateAssets = tasks.register<GeneratePortableSemanticAssets>(semanticTaskName) {
             sourceFiles.from(
                 layout.projectDirectory.file("../../modules/intent_frames.pl"),
                 layout.projectDirectory.file("../../modules/normalizer.pl"),
@@ -148,6 +185,24 @@ androidComponents {
         variant.sources.assets?.addGeneratedSourceDirectory(
             generateAssets,
             GeneratePortableSemanticAssets::outputDirectory
+        )
+
+        val helpTaskName = "generate${capitalized}RepoOrgHelpAssets"
+        val generateHelp = tasks.register<GenerateRepoOrgHelpAssets>(helpTaskName) {
+            val root = layout.projectDirectory.dir("../..")
+            repoRootPath.set(root.asFile.absolutePath)
+            sourceFiles.from(
+                root.file("README.org"),
+                project.fileTree(root.dir("docs")) { include("**/*.org") },
+                project.fileTree(root.dir("wiki")) { include("**/*.org") },
+            )
+            outputDirectory.convention(
+                layout.buildDirectory.dir("generated/repoOrgHelpAssets/${variant.name}")
+            )
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(
+            generateHelp,
+            GenerateRepoOrgHelpAssets::outputDirectory
         )
     }
 }
