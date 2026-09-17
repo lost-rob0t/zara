@@ -73,7 +73,10 @@ def build_schedule_tools(schedule_service):
         StructuredTool.from_function(
             coroutine=list_schedules,
             name="schedule_list",
-            description="List this user's scheduled tasks with state, next run, and last outcome.",
+            description=(
+                "List this user's scheduled tasks with bounded labels, state, next run, "
+                "and last outcome. Full task payloads are intentionally omitted."
+            ),
             args_schema=ScheduleListArgs,
         ),
         StructuredTool.from_function(
@@ -100,12 +103,14 @@ def build_schedule_tools(schedule_service):
 def _format_row(row) -> str:
     fields = [
         row.schedule_id,
+        f"label={row.label}",
         f"state={row.state.value}",
         f"cron={row.cron}",
         f"mode={row.mode.value}",
-        f"goal={row.goal}",
         f"next={row.next_run_at or '-'}",
     ]
+    if row.last_run_at:
+        fields.append(f"last_run={row.last_run_at}")
     if row.last_status:
         fields.append(f"last={row.last_status}")
     if row.last_route:
