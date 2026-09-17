@@ -9,6 +9,7 @@ enum class WatchSetupPhase {
     CONNECTED,
     DOWNLOADING,
     INSTALLING,
+    REMOVING,
     INSTALLED,
     ERROR,
 }
