@@ -157,6 +157,9 @@ def test_secret_lease_is_runtime_issued_non_serializable_and_plaintext_free() ->
     assert not lease.closed
     lease.assert_usable(now=lease.expires_at_monotonic - 0.001)
 
+    for forbidden in ("value", "material", "plaintext", "secret_value"):
+        assert not hasattr(lease, forbidden)
+
     rendered = repr(lease)
     assert secret.id not in rendered
     assert secret.name not in rendered
@@ -201,8 +204,8 @@ def test_secret_store_protocol_exposes_refs_and_leases_not_plaintext_getter() ->
 
     store = FakeStore()
     assert isinstance(store, SecretStore)
-    assert not hasattr(store, "get_secret_value")
-    assert not hasattr(store, "materialize")
+    assert not hasattr(SecretStore, "get_secret_value")
+    assert not hasattr(SecretStore, "materialize")
 
 
 def test_redactor_masks_complete_values_longest_first() -> None:
