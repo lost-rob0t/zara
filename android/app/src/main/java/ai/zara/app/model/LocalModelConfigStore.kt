@@ -1,6 +1,9 @@
 package ai.zara.app.model
 
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.Properties
 
 class LocalModelConfigStore(
@@ -30,7 +33,10 @@ class LocalModelConfigStore(
 
     fun save(config: LocalModelConfig): LocalModelConfig {
         val safe = config.validated()
-        check(file.parentFile?.mkdirs() != false) { "Local model config directory is unavailable" }
+        val parent = file.parentFile
+        check(parent == null || parent.mkdirs() || parent.isDirectory) {
+            "Local model config directory is unavailable"
+        }
         val properties = Properties().apply {
             setProperty("enabled", safe.enabled.toString())
             setProperty("endpoint", safe.endpoint)
@@ -39,10 +45,26 @@ class LocalModelConfigStore(
             setProperty("max_output_tokens", safe.maxOutputTokens.toString())
             setProperty("deadline_ms", safe.deadlineMs.toString())
         }
-        val temporary = File(file.parentFile, "${file.name}.tmp")
-        temporary.outputStream().use { properties.store(it, "Zara local model") }
-        if (file.exists()) check(file.delete()) { "Old local model config could not be replaced" }
-        check(temporary.renameTo(file)) { "Local model config could not be committed" }
+        val temporary = File(parent, "${file.name}.tmp")
+        try {
+            temporary.outputStream().use { properties.store(it, "Zara local model") }
+            try {
+                Files.move(
+                    temporary.toPath(),
+                    file.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(
+                    temporary.toPath(),
+                    file.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            }
+        } finally {
+            temporary.delete()
+        }
         return safe
     }
 }
