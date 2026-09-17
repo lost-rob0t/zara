@@ -201,5 +201,6 @@ dependencies {
     implementation(libs.conscrypt.android)
     implementation(libs.bcpkix)
     implementation(libs.jgit)
+    implementation(libs.litert.lm.android)
     testImplementation(libs.junit)
 }
