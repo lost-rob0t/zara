@@ -22,6 +22,11 @@ cleanup_exec_probe :-
     ; true
     ).
 
+cleanup_exec_api_probe :-
+    catch(config_api:makunbound(exec_theme), _, true),
+    catch(config_api:clear_hook(exec_test_hook), _, true),
+    catch(config_api:undefcommand(exec_test_command), _, true).
+
 cleanup_server_probe :-
     ( current_predicate(user:server_exec_probe/1)
     -> retractall(user:server_exec_probe(_))
@@ -48,6 +53,20 @@ test(exec_config_executes_arbitrary_prolog,
     write_text(Path, ':- assertz(user:exec_probe(ran)).\n'),
     exec_config_loader:load_user_exec_config,
     user:exec_probe(ran).
+
+test(exec_config_imports_emacs_and_clipboard_api_unqualified,
+     [cleanup(cleanup_exec_api_probe)]) :-
+    exec_config_loader:user_exec_config_path(Path),
+    write_text(Path, ':- defvar(exec_theme, outrun).\n:- setq(exec_theme, red).\n'),
+    exec_config_loader:load_user_exec_config,
+    user:symbol_value(exec_theme, red),
+    current_predicate(user:defcustom/3),
+    current_predicate(user:add_hook/2),
+    current_predicate(user:defcommand/2),
+    current_predicate(user:provide/1),
+    current_predicate(user:clipboard_read/1),
+    current_predicate(user:clipboard_write/1),
+    current_predicate(user:kill_new/1).
 
 test(exec_config_reload_reexecutes_directives,
      [cleanup(cleanup_exec_probe)]) :-
