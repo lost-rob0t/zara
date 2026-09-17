@@ -366,6 +366,7 @@ optional_policy_price(Policy) :-
     ( get_dict(max_price, Policy, Price)
     -> is_dict(Price),
        dict_pairs(Price, _, Pairs),
+       Pairs \== [],
        forall(member(Key-_, Pairs), memberchk(Key, [prompt, completion])),
        optional_nonnegative_finite_number(Price, prompt),
        optional_nonnegative_finite_number(Price, completion)
@@ -375,9 +376,8 @@ optional_policy_price(Policy) :-
 optional_nonnegative_finite_number(Dict, Key) :-
     ( get_dict(Key, Dict, Value)
     -> number(Value),
-       float(Value, Float),
-       Float >= 0.0,
-       Float =< 1000000.0
+       Value >= 0,
+       Value =< 1000000
     ; true
     ).
 
