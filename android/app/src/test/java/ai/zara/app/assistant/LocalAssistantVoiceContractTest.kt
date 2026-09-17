@@ -38,4 +38,14 @@ class LocalAssistantVoiceContractTest {
         assertTrue(source.contains("LocalAssistantVoiceController"))
         assertTrue(source.contains("appSession.startAssistantVoice"))
     }
+
+    @Test
+    fun `local capture remains pinned to local submission after recognition`() {
+        val source = File(
+            "src/main/java/ai/zara/app/assistant/LocalAssistantVoiceController.kt"
+        ).readText()
+
+        assertTrue(source.contains("appSession.submitLocalText(transcript)"))
+        assertFalse(source.contains("appSession.submitText(transcript)"))
+    }
 }
