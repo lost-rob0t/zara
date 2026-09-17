@@ -15,9 +15,17 @@ object AndroidAutomationCatalog {
                 %
                 % Closed action syntax in v1:
                 %   open_app(AppAlias)
-                %   app_search(AppAlias, QueryText)
+                %   open_uri('https://example.com')
+                %   app_search(AppAlias, 'query text')
+                %   ui_click(text('Visible label'))
+                %   ui_click(view_id('package:id/view'))
+                %   ui_click(description('Accessibility description'))
+                %   ui_set_text(Selector, 'text')
+                %   ui_scroll_forward(Selector)
+                %   global_action(back|home|recents|notifications)
                 %
                 % AppAlias is semantic data. Android owns package resolution.
+                % UI/global actions require the user-enabled Zara AccessibilityService.
                 % Raw package names, Intents, shell commands and reflection are not actions.
 
                 automation(youtube_psytrance,
@@ -44,6 +52,12 @@ object AndroidAutomationCatalog {
                 automation(open_revanced,
                     actions([
                         open_app(youtube_revanced)
+                    ])).
+
+                automation(accessibility_demo,
+                    actions([
+                        ui_click(text('Search')),
+                        ui_set_text(view_id('com.example:id/query'), 'psytrance')
                     ])).
             """.trimIndent() + "\n",
             query = "automation(youtube_psytrance, Result)",
