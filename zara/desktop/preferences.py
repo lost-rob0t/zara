@@ -45,6 +45,14 @@ def _number_between(low: float, high: float) -> Callable[[Any], bool]:
     )
 
 
+def _integer_between(low: int, high: int) -> Callable[[Any], bool]:
+    return lambda value: (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and low <= value <= high
+    )
+
+
 def _choice(*values: str) -> Callable[[Any], bool]:
     allowed = set(values)
     return lambda value: isinstance(value, str) and value in allowed
@@ -60,7 +68,7 @@ def _boolean(value: Any) -> bool:
 
 SETTING_VALIDATORS: Mapping[str, Callable[[Any], bool]] = {
     "desktop.theme": _choice(*THEME_REGISTRY),
-    "llm.provider": _choice("ollama", "openai", "anthropic", "openrouter"),
+    "llm.provider": _choice("ollama", "openai", "anthropic", "openrouter", "llama_cpp"),
     "llm.model": _string,
     "llm.endpoint": _string,
     "llm.connect_timeout": _positive_number,
@@ -68,6 +76,23 @@ SETTING_VALIDATORS: Mapping[str, Callable[[Any], bool]] = {
     "llm.total_timeout": _positive_number,
     "llm.max_retries": _non_negative_integer,
     "llm.history_limit": _positive_integer,
+    "local_models.model_dir": _string,
+    "local_models.model_path": _string,
+    "local_models.binary": _string,
+    "local_models.managed": _boolean,
+    "local_models.host": _string,
+    "local_models.port": _integer_between(1, 65535),
+    "local_models.offload_mode": _choice("auto", "cpu", "single", "multi"),
+    "local_models.gpu_layers": _string,
+    "local_models.split_mode": _choice("none", "layer", "row", "tensor"),
+    "local_models.devices": _string,
+    "local_models.tensor_split": _string,
+    "local_models.main_gpu": _non_negative_integer,
+    "local_models.fit": _boolean,
+    "local_models.fit_target_mib": _string,
+    "local_models.context_size": _positive_integer,
+    "local_models.parallel": _positive_integer,
+    "local_models.startup_timeout": _positive_number,
     "agent.conversation_timeout": _positive_number,
     "agent.post_tts_silence_seconds": _positive_number,
     "agent.max_steps": _positive_integer,
