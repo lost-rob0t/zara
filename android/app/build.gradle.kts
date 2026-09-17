@@ -11,6 +11,7 @@ import org.gradle.api.tasks.TaskAction
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
 }
 
 abstract class GeneratePortableSemanticAssets : DefaultTask() {
@@ -155,6 +156,8 @@ androidComponents {
 
 dependencies {
     implementation(project(":shared-ui"))
+    implementation(libs.appfunctions)
+    ksp(libs.appfunctions.compiler)
     implementation(platform(libs.compose.bom))
     implementation(libs.activity.compose)
     implementation(libs.compose.ui)
