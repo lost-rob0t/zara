@@ -1,6 +1,7 @@
 package ai.zara.app.ui
 
 import ai.zara.app.runtime.LocalQueryResult
+import ai.zara.app.ui.extensions.AndroidPluginUiHealth
 import ai.zara.app.ui.extensions.AndroidPluginUiProjection
 import ai.zara.app.ui.extensions.AndroidUiExtensionRepository
 import ai.zara.app.ui.extensions.PortablePythonUiInitParser
@@ -86,7 +87,7 @@ class UiExtensionContractTest {
             slot = UiSlot.SETTINGS,
             kind = UiContributionKind.BUTTON,
             label = "Open settings",
-            action = "plugin:settings",
+            action = "route:settings",
             platforms = setOf(UiPlatform.ANDROID),
         )
         try {
@@ -97,9 +98,30 @@ class UiExtensionContractTest {
                 },
                 pluginProjectionProvider = {
                     listOf(
-                        AndroidPluginUiProjection("disabled", true, false, 4, listOf(contribution)),
-                        AndroidPluginUiProjection("untrusted", false, true, 7, listOf(contribution)),
-                        AndroidPluginUiProjection("ready", true, true, 9, listOf(contribution)),
+                        AndroidPluginUiProjection(
+                            "disabled",
+                            true,
+                            false,
+                            4,
+                            listOf(contribution),
+                            AndroidPluginUiHealth.READY,
+                        ),
+                        AndroidPluginUiProjection(
+                            "untrusted",
+                            false,
+                            true,
+                            7,
+                            listOf(contribution),
+                            AndroidPluginUiHealth.READY,
+                        ),
+                        AndroidPluginUiProjection(
+                            "ready",
+                            true,
+                            true,
+                            9,
+                            listOf(contribution),
+                            AndroidPluginUiHealth.READY,
+                        ),
                     )
                 },
             )
@@ -107,6 +129,52 @@ class UiExtensionContractTest {
             val projected = repository.load().get()
             assertEquals(listOf("plugin:ready"), projected.map { it.owner })
             assertEquals(listOf("settings"), projected.map { it.id })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun nonReadyPluginProjectionCannotExposeActions() {
+        val root = Files.createTempDirectory("zara-ui-health").toFile()
+        val status = UiContribution(
+            id = "health",
+            slot = UiSlot.PLUGINS,
+            kind = UiContributionKind.STATUS,
+            label = "Permission required",
+            platforms = setOf(UiPlatform.ANDROID),
+        )
+        val action = UiContribution(
+            id = "open",
+            slot = UiSlot.PLUGINS,
+            kind = UiContributionKind.BUTTON,
+            label = "Open",
+            action = "route:settings",
+            platforms = setOf(UiPlatform.ANDROID),
+        )
+        try {
+            val repository = AndroidUiExtensionRepository(
+                root = root,
+                prologQuery = { query ->
+                    CompletableFuture.completedFuture(LocalQueryResult(query, emptyList(), 1))
+                },
+                pluginProjectionProvider = {
+                    listOf(
+                        AndroidPluginUiProjection(
+                            "notes",
+                            true,
+                            true,
+                            12,
+                            listOf(status, action),
+                            AndroidPluginUiHealth.PERMISSION_REQUIRED,
+                        )
+                    )
+                },
+            )
+
+            val projected = repository.load().get()
+            assertEquals(listOf("health"), projected.map { it.id })
+            assertEquals(listOf("plugin:notes"), projected.map { it.owner })
         } finally {
             root.deleteRecursively()
         }
@@ -135,7 +203,16 @@ class UiExtensionContractTest {
                     CompletableFuture.completedFuture(LocalQueryResult(query, emptyList(), 1))
                 },
                 pluginProjectionProvider = {
-                    listOf(AndroidPluginUiProjection("notes", true, true, 3, listOf(contribution)))
+                    listOf(
+                        AndroidPluginUiProjection(
+                            "notes",
+                            true,
+                            true,
+                            3,
+                            listOf(contribution),
+                            AndroidPluginUiHealth.READY,
+                        )
+                    )
                 },
             )
 
