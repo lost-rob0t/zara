@@ -107,7 +107,7 @@ class WatchSetupController(
                 if (!manager.connect(input.host, input.port)) throw IOException("The watch refused the ADB connection")
                 val model = WatchAdbTransfer.shell(manager, "getprop ro.product.model").trim()
                 val release = WatchAdbTransfer.shell(manager, "getprop ro.build.version.release").trim()
-                listOf(model, release.takeIf(String::isNotBlank)?.let { "Android $it" })
+                listOf(model, release.takeIf { it.isNotBlank() }?.let { "Android $it" })
                     .filterNotNull()
                     .filter(String::isNotBlank)
                     .joinToString(" · ")
@@ -151,6 +151,11 @@ class WatchSetupController(
                 runCatching { WatchAdbTransfer.shell(manager, "rm -f $remotePath") }
                 if (!output.contains("Success", ignoreCase = true)) {
                     throw IOException(output.ifBlank { "Watch package manager returned no result" })
+                }
+
+                val legacyPackage = WatchAdbTransfer.shell(manager, "pm path ai.zara.wear").trim()
+                if (legacyPackage.startsWith("package:")) {
+                    runCatching { WatchAdbTransfer.shell(manager, "pm uninstall ai.zara.wear") }
                 }
             }.onSuccess {
                 update {
