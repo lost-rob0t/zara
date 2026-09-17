@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import pickle
+
 import pytest
 
 from zara.secrets import (
     SecretAliasError,
     SecretKind,
+    SecretLease,
+    SecretLeaseError,
     SecretRedactor,
     SecretRef,
     SecretScope,
+    SecretSink,
+    SecretStore,
+    SecretUseContext,
     alias_for_secret,
     find_secret_aliases,
     parse_secret_alias,
@@ -24,6 +31,17 @@ def ref(name: str, *, secret_id: str | None = None) -> SecretRef:
         revision=1,
         generation=1,
         configured=True,
+    )
+
+
+def use_context() -> SecretUseContext:
+    return SecretUseContext(
+        principal="local:owner",
+        runtime_generation=7,
+        consumer="provider:elevenlabs",
+        purpose="tts.synthesize",
+        sink=SecretSink.HTTP_HEADER,
+        request_id="request-123",
     )
 
 
@@ -47,6 +65,32 @@ def test_alias_round_trip_is_canonical_and_plaintext_free() -> None:
     }
 
 
+def test_secret_ref_rejects_bool_as_revision_or_generation() -> None:
+    with pytest.raises(ValueError):
+        SecretRef(
+            id="secret:x",
+            name="X",
+            scope=SecretScope.DEVICE,
+            owner="test",
+            kind=SecretKind.GENERIC,
+            revision=True,
+            generation=1,
+            configured=True,
+        )
+
+    with pytest.raises(ValueError):
+        SecretRef(
+            id="secret:x",
+            name="X",
+            scope=SecretScope.DEVICE,
+            owner="test",
+            kind=SecretKind.GENERIC,
+            revision=1,
+            generation=False,
+            configured=True,
+        )
+
+
 def test_alias_parser_is_strict_and_does_not_treat_arbitrary_text_as_secret() -> None:
     assert find_secret_aliases(
         "Bearer §§secret(API_TOKEN); ssh §§secret(SSH_KEY)"
@@ -68,6 +112,97 @@ def test_invalid_secret_names_fail_closed() -> None:
         ref("bad-name")
     with pytest.raises(SecretAliasError):
         alias_for_secret("1BAD")
+
+
+def test_use_context_has_bounded_plaintext_free_public_projection() -> None:
+    context = use_context()
+
+    assert context.to_public_dict() == {
+        "principal": "local:owner",
+        "runtime_generation": 7,
+        "consumer": "provider:elevenlabs",
+        "purpose": "tts.synthesize",
+        "sink": "http_header",
+        "request_id": "request-123",
+    }
+
+    with pytest.raises(ValueError):
+        SecretUseContext(
+            principal="local:owner\nforged",
+            runtime_generation=7,
+            consumer="provider:elevenlabs",
+            purpose="tts.synthesize",
+            sink=SecretSink.HTTP_HEADER,
+        )
+
+
+def test_secret_lease_is_runtime_issued_non_serializable_and_plaintext_free() -> None:
+    secret = ref("ELEVENLABS_API_KEY")
+    context = use_context()
+
+    with pytest.raises(SecretLeaseError, match="runtime-issued"):
+        SecretLease()
+
+    lease = SecretLease._issue(
+        secret,
+        context,
+        ttl_seconds=30.0,
+    )
+
+    assert lease.secret_id == secret.id
+    assert lease.secret_revision == secret.revision
+    assert lease.secret_generation == secret.generation
+    assert lease.consumer == context.consumer
+    assert lease.sink is SecretSink.HTTP_HEADER
+    assert not lease.closed
+    lease.assert_usable(now=lease.expires_at_monotonic - 0.001)
+
+    rendered = repr(lease)
+    assert secret.id not in rendered
+    assert secret.name not in rendered
+    assert context.consumer not in rendered
+    assert "SecretLease" in rendered
+
+    with pytest.raises(TypeError, match="serialized"):
+        pickle.dumps(lease)
+
+    lease.close()
+    assert lease.closed
+    with pytest.raises(SecretLeaseError, match="closed"):
+        lease.assert_usable(now=lease.expires_at_monotonic - 0.001)
+
+
+def test_secret_lease_expiry_is_fail_closed() -> None:
+    lease = SecretLease._issue(ref("TOKEN"), use_context(), ttl_seconds=1.0)
+
+    with pytest.raises(SecretLeaseError, match="expired"):
+        lease.assert_usable(now=lease.expires_at_monotonic + 0.001)
+
+
+def test_secret_store_protocol_exposes_refs_and_leases_not_plaintext_getter() -> None:
+    class FakeStore:
+        def list_refs(self) -> tuple[SecretRef, ...]:
+            return ()
+
+        def get_ref(self, secret_id: str) -> SecretRef | None:
+            return None
+
+        def resolve(
+            self,
+            secret: SecretRef,
+            context: SecretUseContext,
+            *,
+            ttl_seconds: float = 30.0,
+        ) -> SecretLease:
+            return SecretLease._issue(secret, context, ttl_seconds=ttl_seconds)
+
+        def close_lease(self, lease: SecretLease) -> None:
+            lease.close()
+
+    store = FakeStore()
+    assert isinstance(store, SecretStore)
+    assert not hasattr(store, "get_secret_value")
+    assert not hasattr(store, "materialize")
 
 
 def test_redactor_masks_complete_values_longest_first() -> None:
