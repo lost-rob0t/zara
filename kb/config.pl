@@ -20,9 +20,10 @@
         search_engine/1,
         wake_word/1,                % wake phrase accepted by the listener
 
-        llm_provider/1,             % anthropic | openai | openrouter | ollama
+        llm_provider/1,             % anthropic | openai | openrouter | starintel | ollama | llama_cpp
         llm_model/1,                % model name/ID
-        llm_endpoint/1              % API endpoint URL
+        llm_endpoint/1,             % API endpoint URL
+        llm_openrouter_policy/1     % layered OpenRouter provider-routing dict
     ]).
 
 :- discontiguous kb_config:todo_destination/1.
@@ -30,6 +31,7 @@
 :- discontiguous kb_config:llm_provider/1.
 :- discontiguous kb_config:llm_model/1.
 :- discontiguous kb_config:llm_endpoint/1.
+:- discontiguous kb_config:llm_openrouter_policy/1.
 :- discontiguous kb_config:wake_word/1.
 :- dynamic todo_destination/1.
 :- dynamic todo_destination_md/1.
@@ -39,9 +41,10 @@
 :- dynamic llm_provider/1.
 :- dynamic llm_model/1.
 :- dynamic llm_endpoint/1.
+:- dynamic llm_openrouter_policy/1.
 
 % ============================================================
-% ZARATHUSTRA DEFAULT CONFIGURATION
+% ZARATHUSHTRA DEFAULT CONFIGURATION
 % ============================================================
 % This configuration provides sensible defaults that work across
 % most Linux distributions. Provisioned/base overrides may live in
@@ -110,19 +113,37 @@ wake_word("sara").
 
 % ---- LLM Provider Configuration ----
 
-% Used by Python wake listener for conversational queries.
-% Options: anthropic | openai | openrouter | ollama
+% Used by Python wake listener and the Prolog client for conversational queries.
+% Options: anthropic | openai | openrouter | starintel | ollama | llama_cpp
 llm_provider(ollama).
 
 % Model name (provider-specific)
 % Ollama: llama3.2, mistral, neural-chat, etc.
-% OpenAI: gpt-4o-mini, gpt-4, gpt-4-turbo
+% OpenAI/OpenRouter/StarIntel: exact provider/gateway model ID
 % Anthropic: claude-sonnet-4-20250514, claude-opus-4-5-20251101
 llm_model("llama3.2:latest").
 
 % API endpoint (optional, uses provider defaults if not specified)
 % Ollama default: http://localhost:11434/api/chat
+% llama.cpp default: http://127.0.0.1:11435/v1/chat/completions
 % OpenAI default: https://api.openai.com/v1/chat/completions
 % OpenRouter default: https://openrouter.ai/api/v1/chat/completions
-% Anthropic: handled by SDK (don't override)
+% StarIntel default: https://llm.starintel.actor/v1/chat/completions
+% Anthropic default: https://api.anthropic.com/v1/messages
 llm_endpoint("http://localhost:11434/api/chat").
+
+% OpenRouter provider routing. This is deliberately separate from model
+% selection: no `models` fallback list is generated, so provider failover may
+% move between hosts serving the same exact model but never silently changes
+% the configured model ID.
+%
+% User config layers may provide a partial dict. Effective policy is merged in
+% precedence order: built-in < config.pl < config.local.pl.
+llm_openrouter_policy(_{
+    sort: price,
+    allow_fallbacks: true,
+    quantizations: [fp16, bf16, fp8],
+    data_collection: deny,
+    zdr: false,
+    require_parameters: true
+}).
