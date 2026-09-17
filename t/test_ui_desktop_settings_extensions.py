@@ -4,11 +4,17 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtWidgets import QApplication, QCheckBox, QPushButton
 
 from zara.config import DEFAULT_CONFIG_TOML, ZaraConfig
+from zara.desktop.ui_extensions import DesktopUiExtensionHost
 from zara.desktop.windows import SettingsWindow
-from zara.ui.extensions import UiSlot
+from zara.ui.extensions import (
+    UiContribution,
+    UiContributionKind,
+    UiExtensionRegistry,
+    UiSlot,
+)
 
 
 def app() -> QApplication:
@@ -53,4 +59,36 @@ def register(ui):
         window.prepare_for_quit()
         window.close()
         window.deleteLater()
+        app().processEvents()
+
+
+def test_toggle_is_read_only_until_canonical_setting_state_exists():
+    app()
+    registry = UiExtensionRegistry()
+    registry.replace_owner(
+        "plugin:notes",
+        [
+            UiContribution(
+                id="sync",
+                slot=UiSlot.SETTINGS,
+                kind=UiContributionKind.TOGGLE,
+                label="Sync notes",
+                action="plugin:set sync {value}",
+            )
+        ],
+    )
+    host = DesktopUiExtensionHost(registry, UiSlot.SETTINGS)
+    actions: list[str] = []
+    host.action_requested.connect(actions.append)
+    try:
+        toggle = host.findChild(QCheckBox)
+        assert toggle is not None
+        assert toggle.isEnabled() is False
+        assert toggle.isChecked() is False
+        toggle.click()
+        assert toggle.isChecked() is False
+        assert actions == []
+    finally:
+        host.close()
+        host.deleteLater()
         app().processEvents()
