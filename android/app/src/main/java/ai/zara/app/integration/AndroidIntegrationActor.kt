@@ -224,6 +224,7 @@ class AndroidIntegrationActor(
             AndroidBackend.ACCESSIBILITY,
             AndroidBackend.NOTIFICATION,
             AndroidBackend.IME,
+            AndroidBackend.ASSIST,
             AndroidBackend.INTENT,
             AndroidBackend.SHELL,
             AndroidBackend.APP_FUNCTIONS,
