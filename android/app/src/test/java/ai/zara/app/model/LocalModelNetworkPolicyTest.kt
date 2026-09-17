@@ -15,6 +15,7 @@ class LocalModelNetworkPolicyTest {
         assertTrue(policy.contains("<base-config cleartextTrafficPermitted=\"false\""))
         assertTrue(policy.contains(">localhost</domain>"))
         assertTrue(policy.contains(">127.0.0.1</domain>"))
+        assertTrue(policy.contains(">[::1]</domain>"))
         assertFalse(policy.contains("includeSubdomains=\"true\""))
     }
 
