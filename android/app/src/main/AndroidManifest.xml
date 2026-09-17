@@ -32,6 +32,17 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".CloudModelSettingsActivity"
+            android:exported="true"
+            android:label="Model Providers"
+            android:process=":voice">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <service
             android:name=".assistant.ZaraVoiceInteractionService"
             android:exported="true"
