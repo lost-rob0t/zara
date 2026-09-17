@@ -128,11 +128,11 @@ internal fun PluginExtensionsSurface(
         UiPlatform.ANDROID in it.platforms && it.owner.startsWith("plugin:")
     }
     ScreenBody(padding) {
-        ScreenTitle("Plugins", "Installed UI extensions")
+        ScreenTitle("Plugins", "Trusted plugin UI extensions")
         if (pluginItems.isEmpty()) {
             SectionCard("NO UI EXTENSIONS") {
                 MutedNotice(
-                    "Plugin manifests can contribute drawer items, controls, status text, and settings without loading plugin code into the UI process."
+                    "Trusted and enabled Android plugins can contribute bounded native UI through the ZARA-ANDROID-PLUGIN/1 host. Plugin code is not loaded into Zara's UI process."
                 )
             }
         } else {
