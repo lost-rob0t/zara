@@ -266,7 +266,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            set -euo pipefail
+            bash -euo pipefail <<'BASH'
             adb install -r android/app/build/outputs/apk/debug/app-debug.apk
             serial="$(adb devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')"
             test -n "$serial"
@@ -274,6 +274,7 @@ jobs:
               --serial "$serial" \
               --source-sha "$SOURCE_SHA" \
               --output android/app/build/reports/device
+            BASH
 
       - name: Upload Android UI evidence
         if: always()
