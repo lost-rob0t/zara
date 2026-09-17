@@ -21,6 +21,16 @@ class WearSurfaceContractTest {
     }
 
     @Test
+    fun tileDescriptionUsesAndroidStringResource() {
+        val manifest = File("src/main/AndroidManifest.xml").readText()
+        val resources = File("src/main/res/values/wear.xml").readText()
+
+        assertTrue(manifest.contains("android:description=\"@string/zara_tile_description\""))
+        assertFalse(manifest.contains("android:description=\"Zara status and actions\""))
+        assertTrue(resources.contains("<string name=\"zara_tile_description\">Zara status and actions</string>"))
+    }
+
+    @Test
     fun providersShareOneExplicitLaunchContract() {
         val build = File("build.gradle.kts").readText()
         assertTrue(build.contains("applicationId = \"ai.zara.app\""))
