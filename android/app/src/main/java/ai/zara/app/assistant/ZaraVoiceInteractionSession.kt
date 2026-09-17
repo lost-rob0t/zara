@@ -78,6 +78,7 @@ class ZaraVoiceInteractionSession(
 
     override fun onHide() {
         executeFinish(invocationGate.hide())
+        localVoice.cancel(notify = false)
         super.onHide()
     }
 
