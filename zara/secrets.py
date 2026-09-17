@@ -374,6 +374,7 @@ class SecretRedactor:
         max_secret_length: int = 4096,
         max_secret_count: int = 512,
         max_total_secret_chars: int = 262_144,
+        reveal_aliases: bool = True,
     ) -> None:
         if not isinstance(min_scan_length, int) or min_scan_length < 1:
             raise ValueError("min_scan_length must be a positive integer")
@@ -383,6 +384,8 @@ class SecretRedactor:
             raise ValueError("max_secret_count must be a positive integer")
         if not isinstance(max_total_secret_chars, int) or max_total_secret_chars < 1:
             raise ValueError("max_total_secret_chars must be a positive integer")
+        if not isinstance(reveal_aliases, bool):
+            raise TypeError("reveal_aliases must be bool")
         if len(secrets) > max_secret_count:
             raise ValueError("secret count exceeds maximum redaction set size")
 
@@ -408,7 +411,7 @@ class SecretRedactor:
 
         entries = []
         for value, refs in grouped.items():
-            replacement = refs[0].alias if len(refs) == 1 else "***"
+            replacement = refs[0].alias if reveal_aliases and len(refs) == 1 else "***"
             entries.append(_RedactionEntry(value=value, replacement=replacement))
         self._entries = tuple(sorted(entries, key=lambda entry: len(entry.value), reverse=True))
         self._skipped_short = skipped_short
