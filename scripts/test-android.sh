@@ -61,6 +61,7 @@ fi
 chmod 600 "$interop_fixture"
 export ZARA_STOCK_FIXTURE="$interop_fixture"
 
+gradle_log="$(mktemp)"
 if ! gradle --no-daemon \
   :app:testDebugUnitTest \
   :shared-ui:testDebugUnitTest \
@@ -68,11 +69,15 @@ if ! gradle --no-daemon \
   :zara-store:testDebugUnitTest \
   :app:assembleDebug \
   :wear-app:assembleDebug \
-  :zara-store:assembleDebug; then
+  :zara-store:assembleDebug 2>&1 | tee "$gradle_log"; then
+  diagnostics_dir="app/build/reports/semantic-parity"
+  mkdir -p "$diagnostics_dir"
+  tail -n 240 "$gradle_log" > "$diagnostics_dir/gradle-failure-tail.log"
   cat "$interop_log" >&2
   echo "stock ZaraServer Android/Wear/Store gate failed" >&2
   exit 1
 fi
+rm -f "$gradle_log"
 
 printf 'STOP\n' >&9
 wait "$interop_pid"
