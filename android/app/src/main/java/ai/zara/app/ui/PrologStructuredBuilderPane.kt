@@ -105,7 +105,7 @@ internal fun PrologStructuredBuilderPane(
             }.onFailure { builderError = it.message }.getOrDefault("")
             if (generated.isNotBlank()) builderError = null
         }
-        builderError?.let(::ErrorBanner)
+        builderError?.let { message -> ErrorBanner(message) }
     }
 
     if (generated.isNotBlank()) {
