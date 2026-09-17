@@ -211,14 +211,19 @@ get_openrouter_policy(Policy) :-
     normalize_openrouter_policy(Merged, Policy).
 
 merge_policy_layer(Override, Base, Merged) :-
-    is_dict(Override),
-    put_dict(Override, Base, Merged).
+    ( is_dict(Override)
+    -> put_dict(Override, Base, Merged)
+    ; throw(error(type_error(dict, Override), _))
+    ).
 
 normalize_openrouter_policy(Raw, Policy) :-
     normalize_policy_enum(Raw, sort, ["price", "throughput", "latency"], Sort),
     normalize_policy_boolean(Raw, allow_fallbacks, AllowFallbacks),
     normalize_policy_list(Raw, quantizations, quantization, Quantizations),
-    Quantizations \== [],
+    ( Quantizations == []
+    -> throw(error(domain_error(openrouter_quantizations, Quantizations), _))
+    ; true
+    ),
     normalize_policy_enum(Raw, data_collection, ["allow", "deny"], DataCollection),
     normalize_policy_boolean(Raw, zdr, Zdr),
     normalize_policy_boolean(Raw, require_parameters, RequireParameters),
@@ -330,6 +335,10 @@ normalize_max_price(Raw, Price) :-
     ; throw(error(type_error(dict, Raw), _))
     ),
     dict_pairs(Raw, _, Pairs),
+    ( Pairs == []
+    -> throw(error(domain_error(openrouter_max_price, Raw), _))
+    ; true
+    ),
     forall(
         member(Key-_, Pairs),
         ( memberchk(Key, [prompt, completion])
@@ -341,11 +350,7 @@ normalize_max_price(Raw, Price) :-
     normalize_optional_price(Raw, completion, Completion),
     Price0 = _{},
     put_optional_price(prompt, Prompt, Price0, Price1),
-    put_optional_price(completion, Completion, Price1, Price),
-    ( Price == _{}
-    -> throw(error(domain_error(openrouter_max_price, Raw), _))
-    ; true
-    ).
+    put_optional_price(completion, Completion, Price1, Price).
 
 normalize_optional_price(Dict, Key, Value) :-
     ( get_dict(Key, Dict, Raw)
