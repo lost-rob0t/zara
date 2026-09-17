@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication, QPushButton
 
 from zara.config import DEFAULT_CONFIG_TOML, ZaraConfig
 from zara.desktop.windows import SettingsWindow
+from zara.ui.extensions import UiSlot
 
 
 def app() -> QApplication:
@@ -40,7 +41,7 @@ def register(ui):
     actions: list[str] = []
     window.ui_action_requested.connect(actions.append)
     try:
-        assert window.settings_extensions.isVisibleTo(window.stack.widget(5))
+        assert window.settings_extensions.slot is UiSlot.SETTINGS
         button = next(
             child
             for child in window.settings_extensions.findChildren(QPushButton)
