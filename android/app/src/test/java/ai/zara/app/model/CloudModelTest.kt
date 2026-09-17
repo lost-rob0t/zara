@@ -119,6 +119,25 @@ class CloudModelTest {
     }
 
     @Test
+    fun openRouterQuantizationsNormalizeCaseAndRejectUnknownOrDuplicates() {
+        val normalized = OpenRouterProviderPolicy(
+            quantizations = listOf("FP16", "BF16", "FP8"),
+        ).validated()
+        assertEquals(listOf("fp16", "bf16", "fp8"), normalized.quantizations)
+
+        assertTrue(
+            runCatching {
+                OpenRouterProviderPolicy(quantizations = listOf("UNKNOWN")).validated()
+            }.isFailure
+        )
+        assertTrue(
+            runCatching {
+                OpenRouterProviderPolicy(quantizations = listOf("fp16", "FP16")).validated()
+            }.isFailure
+        )
+    }
+
+    @Test
     fun openRouterPolicyFailsClosedOnUnknownQuantizationAndConflictingProviders() {
         assertTrue(
             runCatching {
