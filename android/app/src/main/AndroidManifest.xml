@@ -29,11 +29,11 @@
 
     <application
         android:name=".ZaraApplication"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="Zara"
         android:roundIcon="@mipmap/ic_launcher"
-        android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
-        android:allowBackup="false">
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
         <activity
             android:name=".MainActivity"
@@ -52,6 +52,23 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".integration.surface.ZaraShareActivity"
+            android:exported="true"
+            android:label="@string/zara_share_label"
+            android:noHistory="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
 
@@ -74,6 +91,69 @@
             android:exported="false"
             android:permission="android.permission.BIND_VOICE_INTERACTION"
             android:process=":voice" />
+
+        <service
+            android:name=".integration.accessibility.ZaraAccessibilityService"
+            android:exported="true"
+            android:label="@string/zara_accessibility_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:process=":voice">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/zara_accessibility_service" />
+        </service>
+
+        <service
+            android:name=".integration.notification.ZaraNotificationListenerService"
+            android:exported="true"
+            android:label="@string/zara_notification_listener_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:process=":voice">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name=".integration.ime.ZaraInputMethodService"
+            android:exported="true"
+            android:label="@string/zara_ime_label"
+            android:permission="android.permission.BIND_INPUT_METHOD"
+            android:process=":voice">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/zara_input_method" />
+        </service>
+
+        <service
+            android:name=".integration.surface.ZaraQuickTileService"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/zara_quick_tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".integration.admin.ZaraDeviceAdminReceiver"
+            android:exported="true"
+            android:label="@string/zara_device_admin_label"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/zara_device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
 
         <receiver
             android:name=".update.UpdateInstallReceiver"
