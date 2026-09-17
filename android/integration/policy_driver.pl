@@ -1,8 +1,10 @@
 :- use_module('../app/src/main/assets/prolog/policy/policy.pl').
 
 policy_driver_main :-
-    catch((policy_checks -> halt(0) ; write(failed), nl, halt(2)),
-          Error, (write_canonical(Error), nl, halt(3))).
+    % Keep process shutdown outside catch/3: newer SWI releases unwind halt/1.
+    catch((policy_checks -> Status = 0 ; write(failed), nl, Status = 2),
+          Error, (write_canonical(Error), nl, Status = 3)),
+    halt(Status).
 
 policy_checks :-
     findall(Id, zara_policy:default_rule(Id,_,_,_,_,_), Ids), length(Ids,75),
