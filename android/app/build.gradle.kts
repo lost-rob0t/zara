@@ -96,6 +96,7 @@ android {
     }
 
     buildFeatures {
+        aidl = true
         buildConfig = true
         compose = true
     }
@@ -162,6 +163,8 @@ dependencies {
     implementation(libs.jeromq)
     implementation(libs.play.services.wearable)
     implementation(libs.libadb.android)
+    implementation(libs.shizuku.api)
+    implementation(libs.shizuku.provider)
     implementation(libs.conscrypt.android)
     implementation(libs.bcpkix)
     testImplementation(libs.junit)
