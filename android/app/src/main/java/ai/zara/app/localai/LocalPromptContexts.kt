@@ -9,21 +9,28 @@ object LocalPromptContexts {
 
     private val contexts = ConcurrentHashMap<String, String>()
 
+    @Synchronized
     fun register(name: String, context: String) {
         require(name.matches(Regex("[A-Za-z0-9._-]{1,64}"))) { "Prompt context name is invalid" }
         val bounded = context.trim()
         require(bounded.isNotEmpty()) { "Prompt context is empty" }
         require(bounded.length <= MAX_CONTEXT_CHARS) { "Prompt context is too large" }
-        if (!contexts.containsKey(name)) {
+        val previous = contexts[name]
+        if (previous == null) {
             require(contexts.size < MAX_CONTEXTS) { "Prompt context limit reached" }
         }
         contexts[name] = bounded
-        require(totalCharacters() <= MAX_TOTAL_CHARS) {
-            contexts.remove(name, bounded)
-            "Aggregate prompt context limit reached"
+        if (totalCharacters() > MAX_TOTAL_CHARS) {
+            if (previous == null) {
+                contexts.remove(name, bounded)
+            } else {
+                contexts[name] = previous
+            }
+            throw IllegalArgumentException("Aggregate prompt context limit reached")
         }
     }
 
+    @Synchronized
     fun unregister(name: String): Boolean = contexts.remove(name) != null
 
     fun snapshot(): Map<String, String> = contexts.toSortedMap()
@@ -38,6 +45,7 @@ object LocalPromptContexts {
         return request.copy(prompt = prompt)
     }
 
+    @Synchronized
     internal fun clearForTests() {
         contexts.clear()
     }
