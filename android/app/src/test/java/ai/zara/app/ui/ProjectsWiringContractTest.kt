@@ -10,6 +10,7 @@ class ProjectsWiringContractTest {
         val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
 
         assertTrue(source.contains("AppSurface.Projects -> ProjectsSurface("))
+        assertTrue(source.contains("operationError = operationError"))
         assertFalse(source.contains("AppSurface.Projects -> GatedSurface"))
     }
 
@@ -21,6 +22,14 @@ class ProjectsWiringContractTest {
         assertTrue(app.contains("project?.let { ProjectBreadcrumb(it) }"))
         assertTrue(app.contains("onSendText(message, project)"))
         assertTrue(projects.contains("\"Chat / ${'$'}{project.name}\""))
+    }
+
+    @Test fun `projects surface renders host operation failures`() {
+        val source = File("src/main/java/ai/zara/app/ui/ProjectsSurface.kt").readText()
+
+        assertTrue(source.contains("operationError: String?"))
+        assertTrue(source.contains("operationError?.takeIf"))
+        assertTrue(source.contains("ErrorBanner"))
     }
 
     @Test fun `host isolates last turn projection by selected project`() {
