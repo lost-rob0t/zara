@@ -3,8 +3,6 @@ package ai.zara.wear.surface
 import android.app.PendingIntent
 import androidx.wear.watchface.complications.data.ComplicationData
 import androidx.wear.watchface.complications.data.ComplicationType
-import androidx.wear.watchface.complications.data.PlainComplicationText
-import androidx.wear.watchface.complications.data.ShortTextComplicationData
 import androidx.wear.watchface.complications.datasource.ComplicationRequest
 import androidx.wear.watchface.complications.datasource.SuspendingComplicationDataSourceService
 
@@ -19,17 +17,16 @@ class ZaraVoiceComplicationService : SuspendingComplicationDataSourceService() {
         buildVoiceComplicationData(type)
 }
 
+internal fun voiceComplicationPayload(type: ComplicationType): ZaraShortTextComplicationPayload? {
+    if (type != ComplicationType.SHORT_TEXT) return null
+    return ZaraShortTextComplicationPayload(
+        text = "Voice",
+        title = "Zara",
+        contentDescription = "Open Zara Voice",
+    )
+}
+
 internal fun buildVoiceComplicationData(
     type: ComplicationType,
     tapAction: PendingIntent? = null,
-): ComplicationData? {
-    if (type != ComplicationType.SHORT_TEXT) return null
-
-    val builder = ShortTextComplicationData.Builder(
-        text = PlainComplicationText.Builder("Voice").build(),
-        contentDescription = PlainComplicationText.Builder("Open Zara Voice").build(),
-    ).setTitle(PlainComplicationText.Builder("Zara").build())
-
-    if (tapAction != null) builder.setTapAction(tapAction)
-    return builder.build()
-}
+): ComplicationData? = voiceComplicationPayload(type)?.toComplicationData(tapAction)
