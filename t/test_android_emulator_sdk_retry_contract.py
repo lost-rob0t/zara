@@ -7,8 +7,13 @@ WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.y
 def test_android_screenshot_gate_retries_transient_emulator_package_downloads() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
+    host_runtime_step = "Install Android emulator host runtime"
     step_name = "Prime Android emulator SDK with current command-line tools"
+    assert host_runtime_step in workflow
     assert step_name in workflow
+    assert 'sudo apt-get install -y --no-install-recommends libpulse0' in workflow
+    assert "ldconfig -p | grep -F 'libpulse.so.0' >/dev/null" in workflow
+    assert workflow.index(host_runtime_step) < workflow.index(step_name)
     assert 'sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?ANDROID SDK root is unavailable}}"' in workflow
     assert 'emulator_bin="$sdk_root/emulator/emulator"' in workflow
     assert 'android_cache="${HOME:?HOME is unavailable}/.android/cache"' in workflow
