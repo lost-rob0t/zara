@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="zara_accessibility_description">Allows Zara to inspect and control the current Android interface according to the local Prolog authority policy.</string>
+    <string name="zara_accessibility_label">Zara Android control</string>
+    <string name="zara_notification_listener_label">Zara notification access</string>
+    <string name="zara_ime_label">Zara keyboard</string>
+    <string name="zara_quick_tile_label">Zara</string>
+    <string name="zara_share_label">Ask Zara</string>
+    <string name="zara_device_admin_label">Zara device administration</string>
+</resources>
