@@ -4,6 +4,10 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+### Added
+
+- Zara Bench can run ten direct-provider GLM rollout workers and held-out-gated evolution for prompts, Prolog skills, and KB resources without requiring `zara-server`; configured OpenAI-compatible gateways can use a generic LLM API key.
+
 ### Fixed
 
 - Wear Voice no longer requests direct Internet access; the focused watch voice shell stays network-free and leaves runtime transport to the shared Wear/phone authority path.

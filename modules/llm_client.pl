@@ -70,6 +70,9 @@ get_api_key(openai, Key) :-
     getenv('OPENAI_API_KEY', Key), Key \== '', !.
 get_api_key(openrouter, Key) :-
     getenv('OPENROUTER_API_KEY', Key), Key \== '', !.
+get_api_key(Provider, Key) :-
+    memberchk(Provider, [anthropic, openai, openrouter]),
+    getenv('ZARA_LLM_API_KEY', Key), Key \== '', !.
 get_api_key(Provider, _) :-
     throw(error(missing_api_key(Provider), _)).
 

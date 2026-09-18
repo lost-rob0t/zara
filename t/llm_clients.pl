@@ -18,7 +18,8 @@ start_fake_server :-
     asserta(server_port(Port)),
     setenv('ANTHROPIC_API_KEY', 'literal-key'),
     setenv('OPENAI_API_KEY', 'literal-key'),
-    setenv('OPENROUTER_API_KEY', 'literal-key').
+    setenv('OPENROUTER_API_KEY', 'literal-key'),
+    unsetenv('ZARA_LLM_API_KEY').
 
 stop_fake_server :-
     close_llm_client,
@@ -114,10 +115,20 @@ test(openrouter_key_comes_from_environment) :-
     llm_client:get_api_key(openrouter, Key),
     assertion(Key == 'literal-key').
 
+test(openrouter_key_falls_back_to_generic_environment,
+     [ setup((unsetenv('OPENROUTER_API_KEY'),
+              setenv('ZARA_LLM_API_KEY', 'gateway-key'))),
+       cleanup((setenv('OPENROUTER_API_KEY', 'literal-key'),
+                unsetenv('ZARA_LLM_API_KEY'))) ]) :-
+    llm_client:get_api_key(openrouter, Key),
+    assertion(Key == 'gateway-key').
+
 test(openrouter_missing_key_is_typed,
      [throws(error(missing_api_key(openrouter), _)),
-      cleanup(setenv('OPENROUTER_API_KEY', 'literal-key'))]) :-
+      cleanup((setenv('OPENROUTER_API_KEY', 'literal-key'),
+               unsetenv('ZARA_LLM_API_KEY')))]) :-
     unsetenv('OPENROUTER_API_KEY'),
+    unsetenv('ZARA_LLM_API_KEY'),
     llm_client:get_api_key(openrouter, _).
 
 test(ollama_golden_request) :-

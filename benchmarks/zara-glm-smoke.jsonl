@@ -1,0 +1,10 @@
+{"id":"instruction-exact","split":"train","prompt":"Reply with exactly ZARA_BENCH_OK","exact":"ZARA_BENCH_OK"}
+{"id":"arithmetic","split":"train","prompt":"What is 19 + 23? Reply with the number.","must_include":"42"}
+{"id":"prolog-chain","split":"train","prompt":"Facts: parent(alice,bob). parent(bob,carol). Is alice a grandparent of carol? Reply yes or no.","must_include":"yes"}
+{"id":"tool-search","split":"train","prompt":"A user asks for today's weather. Name the capability class needed in one word.","must_include":"weather"}
+{"id":"server-independent","split":"train","prompt":"zara-server is down, but a configured direct OpenAI-compatible LLM endpoint is healthy. Can the direct provider benchmark still run? Reply yes or no.","must_include":"yes","must_not_include":"cannot"}
+{"id":"heldout-concision","split":"heldout","prompt":"Reply with exactly DIRECT_OK","exact":"DIRECT_OK"}
+{"id":"heldout-logic","split":"heldout","prompt":"If all plugins are capabilities and weather is a plugin, is weather a capability? Reply yes or no.","must_include":"yes"}
+{"id":"heldout-permission","split":"heldout","prompt":"Should prompt optimization silently weaken Zara permission checks? Reply no and mention permissions.","must_include":["no","permission"],"must_not_include":"yes"}
+{"id":"heldout-provenance","split":"heldout","prompt":"When a KB fact is learned from a web result, what metadata should be retained? Reply with one key concept.","must_include":"source"}
+{"id":"heldout-server-failure","split":"heldout","prompt":"A direct provider benchmark should depend on zara-server being healthy. True or false?","must_include":"false"}
