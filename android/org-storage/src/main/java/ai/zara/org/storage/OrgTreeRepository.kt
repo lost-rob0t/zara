@@ -6,7 +6,6 @@ import ai.zara.org.core.OrgTask
 import ai.zara.org.core.OrgTangler
 import android.content.ContentResolver
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 
@@ -59,21 +58,25 @@ class OrgTreeRepository(
         val lines = read(file).lines().toMutableList()
         val index = task.line - 1
         require(index in lines.indices) { "Task line is out of range" }
+
         val old = task.state
         val next = DoomOrgProfile.nextTodoState(old)
         val line = lines[index]
         val prefix = "*".repeat(task.level) + " "
         require(line.startsWith(prefix)) { "Task heading changed; refresh agenda" }
+
         val afterStars = line.removePrefix(prefix)
-        require(afterStars == old || afterStars.startsWith("$old ")) { "Task state changed; refresh agenda" }
+        require(afterStars == old || afterStars.startsWith("$old ")) {
+            "Task state changed; refresh agenda"
+        }
+
         lines[index] = prefix + next + afterStars.removePrefix(old)
         write(file, lines.joinToString("\n"))
         return task.copy(state = next)
     }
 
     fun tangle(file: OrgFileRef): List<OrgFileRef> {
-        val source = read(file)
-        val result = OrgTangler.tangle(source, file.relativePath)
+        val result = OrgTangler.tangle(read(file), file.relativePath)
         return result.outputs.map { output ->
             val target = ensureFile(output.path, mimeType(output.language))
             resolver.openOutputStream(target.uri, "wt")?.bufferedWriter()?.use { it.write(output.content) }
@@ -88,7 +91,8 @@ class OrgTreeRepository(
             val path = if (prefix.isBlank()) name else "$prefix/$name"
             when {
                 child.isDirectory -> walk(child, path, sink)
-                child.isFile && name.endsWith(".org", ignoreCase = true) -> sink += OrgFileRef(name, path, child.uri)
+                child.isFile && name.endsWith(".org", ignoreCase = true) ->
+                    sink += OrgFileRef(name, path, child.uri)
             }
         }
     }
@@ -98,14 +102,17 @@ class OrgTreeRepository(
         require(normalized.isNotBlank()) { "Empty relative path" }
         require(!normalized.startsWith('/')) { "Absolute paths are not allowed" }
         require(normalized.split('/').none { it == ".." }) { "Parent traversal is not allowed" }
+
         val pieces = normalized.split('/').filter { it.isNotBlank() }
         require(pieces.isNotEmpty()) { "Invalid relative path" }
+
         var directory = root
         pieces.dropLast(1).forEach { segment ->
             directory = directory.findFile(segment)?.takeIf { it.isDirectory }
                 ?: directory.createDirectory(segment)
                 ?: error("Unable to create directory $segment")
         }
+
         val leaf = pieces.last()
         return directory.findFile(leaf)
             ?: directory.createFile(mimeType, leaf)
@@ -124,18 +131,18 @@ object OrgTreePermission {
     private const val KEY_URI = "tree-uri"
 
     fun remember(context: Context, uri: Uri) {
-        context.contentResolver.takePersistableUriPermission(
-            uri,
-            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-        )
+        val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+            android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+
+        context.contentResolver.takePersistableUriPermission(uri, flags)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_URI, uri.toString())
             .apply()
     }
 
-    fun remembered(context: Context): Uri? = context
-        .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        .getString(KEY_URI, null)
-        ?.let(Uri::parse)
+    fun remembered(context: Context): Uri? =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_URI, null)
+            ?.let(Uri::parse)
 }
