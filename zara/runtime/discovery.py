@@ -26,6 +26,7 @@ BUILTIN_RUNTIME_ID = "zara-python"
 PROLOG_RLM_RUNTIME_ID = "prolog-rlm"
 DEFAULT_PROLOG_RLM_ENDPOINT = "http://127.0.0.1:18765"
 _MAX_DISCOVERY_BYTES = 64 * 1024
+_AGENTPROLOG_PROFILE = "agentprolog"
 
 
 class RuntimeDiscoveryError(RuntimeError):
@@ -125,7 +126,12 @@ def runtime_descriptor_from_wire(value: Mapping[str, Any]) -> RuntimeDescriptor:
                 )
             ),
             capabilities=_bounded_string_list(value.get("capabilities", ()), "capabilities", 64),
-            profiles=_bounded_string_list(value.get("profiles", ()), "profiles", 32),
+            profiles=_bounded_string_list(
+                value.get("profiles", ()),
+                "profiles",
+                32,
+                allowed={_AGENTPROLOG_PROFILE},
+            ),
             provider_control=ControlOwner(
                 _bounded_choice(value, "provider_control", {"runtime", "zara", "mixed"})
             ),
@@ -258,12 +264,24 @@ def _optional_bounded_string(value: Mapping[str, Any], key: str, maximum: int) -
     return item
 
 
-def _bounded_string_list(value: Any, field: str, maximum_items: int) -> tuple[str, ...]:
+def _bounded_string_list(
+    value: Any,
+    field: str,
+    maximum_items: int,
+    *,
+    allowed: set[str] | None = None,
+) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)) or len(value) > maximum_items:
         raise RuntimeDiscoveryError(f"runtime descriptor field {field} is invalid")
     items: list[str] = []
     for item in value:
-        if not isinstance(item, str) or not item or len(item) > 96:
+        if (
+            not isinstance(item, str)
+            or not item
+            or len(item) > 96
+            or any(ord(char) < 0x20 for char in item)
+            or (allowed is not None and item not in allowed)
+        ):
             raise RuntimeDiscoveryError(f"runtime descriptor field {field} is invalid")
         items.append(item)
     if len(items) != len(set(items)):
