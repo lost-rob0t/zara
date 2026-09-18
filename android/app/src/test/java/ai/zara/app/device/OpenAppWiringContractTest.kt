@@ -6,9 +6,10 @@ import org.junit.Test
 
 class OpenAppWiringContractTest {
     @Test
-    fun `application session registers executable open_app beside open_uri`() {
+    fun `application session registers executable app_search open_app and open_uri`() {
         val session = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
 
+        assertTrue(session.contains("AppSearchAdapter(AndroidAppSearchLauncher(context))"))
         assertTrue(session.contains("OpenUriAdapter(AndroidUriLauncher(context))"))
         assertTrue(session.contains("OpenAppAdapter(AndroidAppLauncher(context))"))
     }
