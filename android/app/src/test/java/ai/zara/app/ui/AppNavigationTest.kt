@@ -2,31 +2,25 @@ package ai.zara.app.ui
 
 import org.junit.Test
 
-class AppNavigationTest {
+class AppNavigationPluginInstallTest {
     @Test
-    fun pluginInstallationIsNotADrawerDestination() {
-        val destinations = drawerSurfaces()
-        check(AppSurface.Plugins !in destinations)
-        check(destinations == AppSurface.entries.filter { it != AppSurface.Plugins })
-        check(destinations.count { it == AppSurface.Settings } == 1)
+    fun pluginsIsASettingsRouteNotAPrimaryMenu() {
+        check(AppRoute.Plugins.menu == AppMenu.Settings)
+        check(AppRoute.Plugins in routesFor(AppMenu.Settings))
+        check(AppMenu.entries == listOf(AppMenu.Chat, AppMenu.Workspace, AppMenu.Settings))
     }
 
     @Test
-    fun aRestoredPluginRouteOpensTheSettingsPluginTab() {
-        check(displaySurface(AppSurface.Plugins) == AppSurface.Settings)
-        check(initialSettingsTab(AppSurface.Plugins) == SettingsTab.Plugins)
+    fun selectingPluginsPreservesCanonicalSettingsNavigation() {
+        val navigation = AppNavigation().selectRoute(AppRoute.Plugins)
+        check(navigation.menu == AppMenu.Settings)
+        check(navigation.route == AppRoute.Plugins)
+        check(navigation.settings == AppRoute.Plugins)
     }
 
     @Test
-    fun otherRoutesAndDefaultSettingsStayUnchanged() {
-        drawerSurfaces().forEach { destination ->
-            check(displaySurface(destination) == destination)
-            check(initialSettingsTab(destination) == SettingsTab.General)
-        }
-    }
-
-    @Test
-    fun settingsTabsKeepGeneralFirstAndPluginsSecondary() {
-        check(SettingsTab.entries == listOf(SettingsTab.General, SettingsTab.Plugins))
+    fun restoredPluginsRouteSurvivesSavedState() {
+        val navigation = AppNavigation().selectRoute(AppRoute.Plugins)
+        check(AppNavigation.restore(navigation.save()) == navigation)
     }
 }
