@@ -39,6 +39,17 @@ class OrgTreeRepository(
             ?: error("Unable to write ${file.relativePath}")
     }
 
+    override fun writeRelative(relativePath: String, text: String): OrgFileRef {
+        val target = ensureFile(relativePath, "text/org")
+        resolver.openOutputStream(target.uri, "wt")?.bufferedWriter()?.use { it.write(text) }
+            ?: error("Unable to write $relativePath")
+        return OrgFileRef(
+            name = target.name ?: relativePath.substringAfterLast('/'),
+            relativePath = relativePath,
+            uri = target.uri,
+        )
+    }
+
     override fun appendAgendaCapture(text: String, relativePath: String = "agenda/inbox.org"): OrgFileRef {
         val target = ensureFile(relativePath, "text/org")
         resolver.openOutputStream(target.uri, "wa")?.bufferedWriter()?.use { writer ->
