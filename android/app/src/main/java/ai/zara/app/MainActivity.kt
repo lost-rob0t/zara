@@ -1,5 +1,11 @@
 package ai.zara.app
 
+import ai.zara.app.context.AndroidChatContextImporter
+import ai.zara.app.context.ChatContextAttachmentStore
+import ai.zara.app.context.ORDINARY_CHAT_CONTEXT_SCOPE
+import ai.zara.app.context.PendingChatContextAttachment
+import ai.zara.app.context.contextualizeUserText
+import ai.zara.app.context.projectChatContextScope
 import ai.zara.app.projects.ProjectContextStore
 import ai.zara.app.ui.RenderedTextTurn
 import ai.zara.app.ui.LocalEmbeddingPreferenceStore
@@ -66,6 +72,11 @@ class MainActivity : ComponentActivity() {
         var localEmbedding by mutableStateOf(embeddingPreferenceStore.load())
         val projectStore = ProjectContextStore(File(filesDir, "projects.bin"))
         var projectState by mutableStateOf(projectStore.state())
+        val contextStore = ChatContextAttachmentStore(File(filesDir, "chat-context.bin"))
+        var contextState by mutableStateOf(contextStore.state())
+        fun contextScope(projectId: String?): String =
+            projectId?.let(::projectChatContextScope) ?: ORDINARY_CHAT_CONTEXT_SCOPE
+        contextState.loadFailure?.let { operationError = it }
         appSession.setRuntimeMode(runtimeMode)
 
         val microphonePermission = registerForActivityResult(
@@ -73,6 +84,20 @@ class MainActivity : ComponentActivity() {
         ) { granted ->
             reconcileMicrophonePermission(granted)
             if (!granted) operationError = "Microphone permission denied"
+        }
+        val contextFilePicker = registerForActivityResult(
+            ActivityResultContracts.OpenMultipleDocuments()
+        ) { uris ->
+            operationError = null
+            try {
+                val imported = AndroidChatContextImporter.importAll(contentResolver, uris)
+                contextState = contextStore.addAll(
+                    contextScope(projectState.selectedProjectId),
+                    imported,
+                )
+            } catch (error: Exception) {
+                operationError = UiOperationFailure.summarize(error)
+            }
         }
         val assistantRoleRequest = registerForActivityResult(
             ActivityResultContracts.StartActivityForResult()
@@ -111,6 +136,9 @@ class MainActivity : ComponentActivity() {
             }
             val visibleLastTurn = projectState.selectedProjectId?.let { projectTurns[it] }
                 ?: if (projectState.selectedProjectId == null) unscopedLastTurn else null
+            val visibleContextAttachments = contextState.forScope(
+                contextScope(projectState.selectedProjectId)
+            )
             SideEffect {
                 val style = if (resolvedSystemBarDark) {
                     SystemBarStyle.dark(Color.TRANSPARENT)
@@ -142,6 +170,7 @@ class MainActivity : ComponentActivity() {
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
                 projectState = projectState,
+                contextAttachments = visibleContextAttachments,
                 onSelectTheme = { theme ->
                     selectedTheme = theme
                     themePreferenceStore.save(theme)
@@ -201,10 +230,16 @@ class MainActivity : ComponentActivity() {
                     operationError = null
                     operationBusy = true
                     try {
+                        val attachments = contextState.forScope(contextScope(project?.id))
+                        val contextualizedText = contextualizeUserText(text, attachments)
                         val future = if (project == null) {
-                            appSession.submitText(text)
+                            appSession.submitText(contextualizedText)
                         } else {
-                            appSession.submitProjectText(text, project.id, project.conversationId)
+                            appSession.submitProjectText(
+                                contextualizedText,
+                                project.id,
+                                project.conversationId,
+                            )
                         }
                         future.whenComplete { result, error ->
                             runOnUiThread {
@@ -255,6 +290,59 @@ class MainActivity : ComponentActivity() {
                     operationError = null
                     try {
                         projectState = projectStore.select(projectId)
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onPickContextFiles = {
+                    operationError = null
+                    contextFilePicker.launch(arrayOf("*/*"))
+                },
+                onAddTextContext = { text ->
+                    operationError = null
+                    try {
+                        contextState = contextStore.add(
+                            contextScope(projectState.selectedProjectId),
+                            PendingChatContextAttachment(
+                                name = "Text context",
+                                mimeType = "text/plain",
+                                text = text,
+                            ),
+                        )
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onRemoveContextAttachment = { attachmentId ->
+                    operationError = null
+                    try {
+                        contextState = contextStore.remove(
+                            contextScope(projectState.selectedProjectId),
+                            attachmentId,
+                        )
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onAddChatToProject = { projectId ->
+                    operationError = null
+                    try {
+                        val target = projectState.project(projectId)
+                            ?: throw IllegalArgumentException("Unknown project: $projectId")
+                        val conversationId = runtimeState.selectedConversationId
+                            ?.trim()
+                            ?.takeIf { it.isNotEmpty() && !it.startsWith("local-project:") }
+                        if (conversationId != null) {
+                            projectState = projectStore.bindConversation(target.id, conversationId)
+                        }
+                        contextState = contextStore.copyScope(
+                            ORDINARY_CHAT_CONTEXT_SCOPE,
+                            projectChatContextScope(target.id),
+                        )
+                        unscopedLastTurn?.let { turn ->
+                            projectTurns = projectTurns + (target.id to turn)
+                        }
+                        projectState = projectStore.select(target.id)
                     } catch (error: Exception) {
                         operationError = UiOperationFailure.summarize(error)
                     }
