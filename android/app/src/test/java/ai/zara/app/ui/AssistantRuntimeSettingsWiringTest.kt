@@ -37,6 +37,8 @@ class AssistantRuntimeSettingsWiringTest {
         check(rows.contains("selectedRuntime = runtime.id == selectedAssistantRuntimeId"))
         check(rows.contains("enabled = runtime.selectable"))
         check(rows.contains("onSelectAssistantRuntime(runtime.id)"))
+        check(!rows.contains("selectedRuntime = runtime.displayName"))
+        check(!rows.contains("onSelectAssistantRuntime(runtime.displayName)"))
         check(!rows.contains("enabled = selectedRuntime"))
         check(!rows.contains("onSelectAssistantRuntime(\""))
     }
