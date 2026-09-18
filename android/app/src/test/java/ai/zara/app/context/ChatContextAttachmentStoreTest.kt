@@ -37,7 +37,8 @@ class ChatContextAttachmentStoreTest {
     fun addingChatToProjectCopiesContextWithoutDeletingOrdinaryChatContext() {
         val root = Files.createTempDirectory("zara-context-copy").toFile()
         val file = File(root, "context.bin")
-        val store = ChatContextAttachmentStore(file) { "ctx-a" }
+        val ids = ArrayDeque(listOf("ctx-a", "ctx-b"))
+        val store = ChatContextAttachmentStore(file) { ids.removeFirst() }
 
         store.add(
             ORDINARY_CHAT_CONTEXT_SCOPE,
@@ -50,10 +51,12 @@ class ChatContextAttachmentStoreTest {
 
         assertEquals(1, copied.forScope(ORDINARY_CHAT_CONTEXT_SCOPE).size)
         assertEquals(1, copied.forScope(projectChatContextScope("project-9")).size)
-        assertEquals(
-            copied.forScope(ORDINARY_CHAT_CONTEXT_SCOPE).single().id,
-            copied.forScope(projectChatContextScope("project-9")).single().id,
+        assertTrue(
+            copied.forScope(ORDINARY_CHAT_CONTEXT_SCOPE).single().id !=
+                copied.forScope(projectChatContextScope("project-9")).single().id,
         )
+        val recovered = ChatContextAttachmentStore(file).state()
+        assertEquals(1, recovered.forScope(projectChatContextScope("project-9")).size)
     }
 
     @Test
