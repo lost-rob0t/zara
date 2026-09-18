@@ -919,7 +919,7 @@ private fun SettingsSurface(
                         )
                         Column(Modifier.weight(1f)) {
                             Text(
-                                if (remoteEnabled) "Remote API profile enabled" else "Remote API profile disabled",
+                                if (remoteEnabled) "Remote profile enabled" else "Remote profile disabled",
                                 color = tokens.text,
                                 style = MaterialTheme.typography.titleSmall,
                             )
