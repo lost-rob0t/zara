@@ -154,6 +154,22 @@ def test_context_handles_fail_closed_until_runtime_advertises_capability() -> No
         run(scenario())
 
 
+def test_context_handles_are_forwarded_when_runtime_advertises_capability() -> None:
+    client = FakeClient(runtime=descriptor(supports_context_handles=True))
+    backend = PrologRlmRuntimeBackend(client=client)
+
+    async def scenario():
+        await backend.start()
+        await backend.submit_turn(
+            "question",
+            turn_id="turn-context",
+            context_ids=("ctx-1", "ctx-2"),
+        )
+
+    run(scenario())
+    assert client.generated[0]["context_handles"] == ["ctx-1", "ctx-2"]
+
+
 def test_cancel_maps_to_sidecar_request_id() -> None:
     client = FakeClient()
     backend = PrologRlmRuntimeBackend(client=client)
