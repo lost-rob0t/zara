@@ -34,6 +34,20 @@ class AssistantRuntimeSettingsWiringTest {
     }
 
     @Test
+    fun discoveredButUnselectableRuntimesRemainVisibleForDiagnostics() {
+        val runtime = runtimeSettings()
+        val installed = runtime
+            .substringAfter("INSTALLED ASSISTANT RUNTIMES")
+            .substringBefore("ROUTING POLICY")
+        val rows = runtimeRows()
+
+        check(installed.contains("installedAssistantRuntimes.forEach { runtime ->"))
+        check(!installed.contains("installedAssistantRuntimes.filter"))
+        check(!installed.contains("filter { runtime -> runtime.selectable"))
+        check(rows.contains("enabled = runtime.selectable"))
+    }
+
+    @Test
     fun selectionUsesStableRuntimeIdAndCurrentSelectability() {
         val rows = runtimeRows()
 
@@ -55,7 +69,10 @@ class AssistantRuntimeSettingsWiringTest {
         check(rows.contains("\"starting\", \"busy\", \"degraded\" -> tokens.warning"))
         check(rows.contains("\"failed\" -> tokens.error"))
         check(rows.contains("\"stopped\" -> tokens.textMuted"))
+        check(rows.contains("else -> tokens.warning"))
         check(!rows.contains("selectedRuntime -> tokens.success"))
+        check(!rows.contains("runtime.selectable -> tokens.success"))
+        check(!rows.contains("else -> tokens.success"))
     }
 
     @Test
