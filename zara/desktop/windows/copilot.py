@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from zara.desktop.conversation import ConversationService
 from zara.desktop.qt_bridge import QtRuntimeBridge
+from zara.desktop.scheduled_panel import ScheduledPanel
 from zara.desktop.windows.quick import QuickCopilotWindow
 
 
@@ -89,11 +90,13 @@ class CopilotWindow(QuickCopilotWindow):
         self.history_list.setObjectName("zaraConversationHistory")
         self.history_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.history_list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.scheduled_panel = ScheduledPanel(bridge, self.history_panel)
 
         history_layout.addWidget(self.sidebar_new_chat_button)
         history_layout.addLayout(history_header)
         history_layout.addWidget(self.search_edit)
-        history_layout.addWidget(self.history_list)
+        history_layout.addWidget(self.history_list, 1)
+        history_layout.addWidget(self.scheduled_panel)
 
         root_layout = self.layout()
         self.chat_column = QWidget(self)
@@ -123,6 +126,7 @@ class CopilotWindow(QuickCopilotWindow):
         self.history_list.itemActivated.connect(self._activate_history_item)
         self.rename_button.clicked.connect(lambda _checked=False: self.rename_current())
         self.sidebar_new_chat_button.clicked.connect(self.new_chat)
+        self.scheduled_panel.prompt_requested.connect(self._submit_schedule_prompt)
 
         self.expand_button.clicked.disconnect()
         self.expand_button.clicked.connect(self.toggle_presentation)
@@ -206,6 +210,10 @@ class CopilotWindow(QuickCopilotWindow):
         if conversation_id:
             self.bind_conversation(str(conversation_id))
 
+    def _submit_schedule_prompt(self, prompt: str) -> None:
+        self.composer.setPlainText(prompt)
+        self.submit_current_text()
+
     def _sync_conversation_title(self) -> None:
         state = self.conversations.get_state(self.current_conversation_id)
         self.title_label.setText(state.conversation.title)
@@ -234,4 +242,5 @@ class CopilotWindow(QuickCopilotWindow):
         self._apply_header_density()
         if expanded:
             self.refresh_history()
+            self.scheduled_panel.refresh()
         self.setWindowTitle("Zara — Copilot" if expanded else "Ask Zara")
