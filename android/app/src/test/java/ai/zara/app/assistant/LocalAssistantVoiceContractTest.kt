@@ -112,11 +112,16 @@ class LocalAssistantVoiceContractTest {
         val session = File(
             "src/main/java/ai/zara/app/assistant/ZaraVoiceInteractionSession.kt"
         ).readText()
+        val normalizedSession = session.replace(Regex("\\s+"), " ")
 
         assertTrue(controller.contains("private val lifecycleFence: AssistantLifecycleFence"))
         assertTrue(controller.contains("val lifecycleToken = lifecycleFence.beginStart()"))
         assertTrue(controller.contains("lifecycleFence.isCurrent(lifecycleToken)"))
-        assertTrue(session.contains("LocalAssistantVoiceController(context, appSession, lifecycleFence"))
+        assertTrue(
+            normalizedSession.contains(
+                "LocalAssistantVoiceController( context, appSession, lifecycleFence,"
+            )
+        )
     }
 
     @Test
