@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Changed
 
+- Every pull request merged into `master` must now update the canonical changelog, so humans can follow both user-facing and internal changes as they land.
 - Every `master` push now starts a fresh signed rolling Android/Wear build without waiting for unrelated repository CI jobs.
 - Versioned releases now require canonical changelog notes, wait for exact-source CI, install and exercise the exact release APK on an emulator before publication, publish those notes on the GitHub release page, and verify the downloaded APK/checksum/manifest/signer against the gated build.
 
