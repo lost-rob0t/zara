@@ -456,11 +456,22 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.tap_tab("Runtime")
     for mode in ("Auto", "Local", "Remote"):
         device.await_contains(f"Runtime mode {mode};")
-    for mode in ("Auto", "Remote", "Local"):
-        device.tap_contains(f"Runtime mode {mode};")
-        device.await_label(f"Runtime mode {mode}; selected")
-        time.sleep(0.4)
-        device.capture(f"runtime-mode-{mode.lower()}")
+    device.tap_contains("Runtime mode Auto;")
+    device.await_label("Runtime mode Auto; selected")
+    device.capture("runtime-mode-auto")
+
+    device.tap_contains("Runtime mode Remote;")
+    device.await_label("Runtime mode Remote; selected")
+    device.capture("runtime-mode-remote")
+    open_menu(device, "Chat")
+    device.await_label("Degraded")
+    device.capture("runtime-mode-remote-chat")
+
+    open_menu(device, "Settings")
+    device.tap_tab("Runtime")
+    device.tap_contains("Runtime mode Local;")
+    device.await_label("Runtime mode Local; selected")
+    device.capture("runtime-mode-local")
 
     # The user's routing choice is durable, not a one-composition toggle.
     device.recreate()
