@@ -77,6 +77,14 @@ internal object ConversationHistoryContract {
         val end = singleLine.offsetByCodePoints(0, 57)
         return singleLine.substring(0, end).trimEnd() + "…"
     }
+
+    fun canPersistTransition(
+        current: HistoryMessageStatus,
+        requested: HistoryMessageStatus,
+    ): Boolean =
+        current == HistoryMessageStatus.Pending ||
+            current == HistoryMessageStatus.Streaming ||
+            current == requested
 }
 
 class PortableConversationStore(context: Context) : SQLiteOpenHelper(
@@ -229,11 +237,16 @@ class PortableConversationStore(context: Context) : SQLiteOpenHelper(
         val db = writableDatabase
         db.beginTransaction()
         try {
-            val existing = db.rawQuery(
-                "SELECT id FROM desktop_messages WHERE id = ? AND principal_id = ? LIMIT 1",
+            val existingStatus = db.rawQuery(
+                "SELECT status FROM desktop_messages WHERE id = ? AND principal_id = ? LIMIT 1",
                 arrayOf(message.id, ConversationHistoryContract.localPrincipalId),
-            ).use { it.moveToFirst() }
-            if (existing) {
+            ).use { cursor ->
+                if (!cursor.moveToFirst()) null else HistoryMessageStatus.fromWire(cursor.getString(0))
+            }
+            if (existingStatus != null) {
+                check(ConversationHistoryContract.canPersistTransition(existingStatus, message.status)) {
+                    "Stale terminal message update rejected: ${existingStatus.wireName} -> ${message.status.wireName}"
+                }
                 val changed = db.update(
                     "desktop_messages",
                     values,
