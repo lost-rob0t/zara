@@ -6,6 +6,9 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android strict Local Assistant capture uses Android's on-device speech recognizer and non-network TTS voices without requiring remote enrollment or a remote session.
+- Ending or cancelling a local Assistant session fences stale recognition, local-model, and speech output so old work cannot publish afterward.
+- Android Assistant shutdown now runs every registered local cancellation hook even if one hook fails, so stale local recognition/model/speech work is still fenced.
 - Plugin capability compositions now re-check a tool's live approval policy immediately before invocation, preventing approval-policy changes after registration from bypassing approval.
 
 ## 0.2.2-alpha
