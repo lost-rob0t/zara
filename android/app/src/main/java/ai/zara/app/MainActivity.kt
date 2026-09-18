@@ -329,17 +329,21 @@ class MainActivity : ComponentActivity() {
                     try {
                         val target = projectState.project(projectId)
                             ?: throw IllegalArgumentException("Unknown project: $projectId")
-                        val conversationId = runtimeState.selectedConversationId
+                        val sourceProject = projectState.selectedProject
+                        val conversationId = (sourceProject?.conversationId
+                            ?: runtimeState.selectedConversationId)
                             ?.trim()
                             ?.takeIf { it.isNotEmpty() && !it.startsWith("local-project:") }
                         if (conversationId != null) {
                             projectState = projectStore.bindConversation(target.id, conversationId)
                         }
                         contextState = contextStore.copyScope(
-                            ORDINARY_CHAT_CONTEXT_SCOPE,
+                            contextScope(sourceProject?.id),
                             projectChatContextScope(target.id),
                         )
-                        unscopedLastTurn?.let { turn ->
+                        val sourceTurn = sourceProject?.id?.let { projectTurns[it] }
+                            ?: unscopedLastTurn
+                        sourceTurn?.let { turn ->
                             projectTurns = projectTurns + (target.id to turn)
                         }
                         projectState = projectStore.select(target.id)
