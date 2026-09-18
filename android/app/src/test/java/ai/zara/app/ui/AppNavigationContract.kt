@@ -6,7 +6,7 @@ object AppNavigationContract {
     }
 
     fun completeRouteInventory() {
-        check(routesFor(AppMenu.Chat) == listOf(AppRoute.Chat, AppRoute.Voice))
+        check(routesFor(AppMenu.Chat) == listOf(AppRoute.Chat))
         check(routesFor(AppMenu.Workspace) == listOf(AppRoute.Logic, AppRoute.Projects, AppRoute.Scheduled))
         check(routesFor(AppMenu.Settings) == listOf(
             AppRoute.Runtime, AppRoute.Connection, AppRoute.Permissions, AppRoute.Appearance,
@@ -27,9 +27,9 @@ object AppNavigationContract {
     }
 
     fun menuSelectionsAreIndependent() {
-        val state = AppNavigation().selectRoute(AppRoute.Voice)
+        val state = AppNavigation().selectRoute(AppRoute.Chat)
             .selectRoute(AppRoute.Scheduled).selectRoute(AppRoute.Permissions)
-        check(state.selectMenu(AppMenu.Chat).route == AppRoute.Voice)
+        check(state.selectMenu(AppMenu.Chat).route == AppRoute.Chat)
         check(state.selectMenu(AppMenu.Workspace).route == AppRoute.Scheduled)
         check(state.selectMenu(AppMenu.Settings).route == AppRoute.Permissions)
         check(state.selectMenu(AppMenu.Settings) == state)
@@ -67,8 +67,7 @@ object AppNavigationContract {
 
     fun backReturnsThroughMenuRootThenChat() {
         check(AppNavigation().back() == null)
-        check(AppNavigation().selectRoute(AppRoute.Voice).back()?.route == AppRoute.Chat)
-        check(AppNavigation().selectRoute(AppRoute.Updates).back()?.route == AppRoute.Runtime)
+                check(AppNavigation().selectRoute(AppRoute.Updates).back()?.route == AppRoute.Runtime)
         check(AppNavigation().selectRoute(AppRoute.Scheduled).back()?.route == AppRoute.Logic)
         for (route in AppRoute.entries) {
             var state: AppNavigation? = AppNavigation().selectRoute(route)
