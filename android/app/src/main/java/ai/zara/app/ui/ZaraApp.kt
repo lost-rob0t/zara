@@ -3,6 +3,7 @@ package ai.zara.app.ui
 import ai.zara.app.BuildConfig
 import ai.zara.app.projects.ProjectContext
 import ai.zara.app.projects.ProjectContextState
+import ai.zara.app.runtime.AssistantRuntimeDescriptor
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.RuntimeState
@@ -150,10 +151,14 @@ fun ZaraApp(
     changelogText: String?,
     showChangelog: Boolean,
     runtimeMode: RuntimeMode,
+    installedAssistantRuntimes: List<AssistantRuntimeDescriptor>,
+    selectedAssistantRuntimeId: String,
     localEmbedding: LocalEmbeddingConfiguration,
     projectState: ProjectContextState,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
+    onSelectAssistantRuntime: (String) -> Unit,
+    onRefreshAssistantRuntimes: () -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
@@ -339,6 +344,8 @@ fun ZaraApp(
                                                 localServerState = localServerState,
                                                 updateState = updateState,
                                                 runtimeMode = runtimeMode,
+                                                installedAssistantRuntimes = installedAssistantRuntimes,
+                                                selectedAssistantRuntimeId = selectedAssistantRuntimeId,
                                                 localEmbedding = localEmbedding,
                                                 enrollmentPublicKey = enrollmentPublicKey,
                                                 pinnedServerPublicKey = pinnedServerPublicKey,
@@ -353,6 +360,8 @@ fun ZaraApp(
                                                 onDownloadUpdate = onDownloadUpdate,
                                                 onInstallUpdate = onInstallUpdate,
                                                 onSelectRuntimeMode = onSelectRuntimeMode,
+                                                onSelectAssistantRuntime = onSelectAssistantRuntime,
+                                                onRefreshAssistantRuntimes = onRefreshAssistantRuntimes,
                                                 onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
                                                 padding = padding,
                                             )
@@ -822,6 +831,8 @@ private fun SettingsSurface(
     localServerState: LocalServerState,
     updateState: UpdateState,
     runtimeMode: RuntimeMode,
+    installedAssistantRuntimes: List<AssistantRuntimeDescriptor>,
+    selectedAssistantRuntimeId: String,
     localEmbedding: LocalEmbeddingConfiguration,
     enrollmentPublicKey: String?,
     pinnedServerPublicKey: String?,
@@ -836,6 +847,8 @@ private fun SettingsSurface(
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
+    onSelectAssistantRuntime: (String) -> Unit,
+    onRefreshAssistantRuntimes: () -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     padding: PaddingValues,
 ) {
@@ -855,7 +868,66 @@ private fun SettingsSurface(
                     KeyValueRow("knowledge sources", localServerState.loadedSources.size.toString())
                     MutedNotice("Runs inside Zara with no account or network. The Logic workspace is app-private and never syncs to a remote server implicitly.")
                     localServerState.failure?.let { ErrorBanner(it) }
-                    Text("CHAT BACKEND", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+                    Text(
+                        "INSTALLED ASSISTANT RUNTIMES",
+                        color = tokens.accentCyan,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    installedAssistantRuntimes.forEach { runtime ->
+                        val selectedRuntime = runtime.id == selectedAssistantRuntimeId
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = selectedRuntime,
+                                    enabled = runtime.selectable,
+                                    onClick = { onSelectAssistantRuntime(runtime.id) },
+                                )
+                                .padding(vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            StatusDot(
+                                when {
+                                    selectedRuntime -> tokens.success
+                                    runtime.selectable -> tokens.borderActive
+                                    else -> tokens.warning
+                                }
+                            )
+                            Column(Modifier.padding(start = 10.dp).weight(1f)) {
+                                Text(
+                                    runtime.displayName,
+                                    color = if (selectedRuntime) tokens.text else tokens.textMuted,
+                                )
+                                Text(
+                                    buildString {
+                                        append(runtime.id)
+                                        append(" · ")
+                                        append(runtime.runtimeVersion)
+                                        append(" · ")
+                                        append(runtime.health)
+                                        if (runtime.profiles.isNotEmpty()) {
+                                            append(" · ")
+                                            append(runtime.profiles.joinToString(", "))
+                                        }
+                                    },
+                                    color = tokens.textMuted,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                )
+                            }
+                        }
+                    }
+                    TextButton(
+                        onClick = onRefreshAssistantRuntimes,
+                        enabled = !operationBusy,
+                    ) {
+                        Text("Refresh installed runtimes")
+                    }
+                    MutedNotice(
+                        "Prolog-RLM is optional and appears only after a compatible local sidecar is discovered. " +
+                            "When selected, Prolog-RLM owns model/provider reasoning; Zara remains the context/plugin host."
+                    )
+                    Text("ROUTING POLICY", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
                     RuntimeMode.entries.forEach { mode ->
                         Row(
                             modifier = Modifier
@@ -875,7 +947,7 @@ private fun SettingsSurface(
                             )
                         }
                     }
-                    MutedNotice("Auto prefers an authenticated remote session and falls back to local. Local never sends the turn to the network. Remote fails closed when disconnected.")
+                    MutedNotice("Auto tries the selected local assistant runtime first and falls back to an authenticated remote session. Local never sends the turn to a Zara server. Remote fails closed when disconnected.")
                     Text("LOCAL EMBEDDINGS", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
                     Row(
                         modifier = Modifier
