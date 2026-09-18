@@ -95,10 +95,41 @@ def test_current_version_has_publishable_canonical_release_notes() -> None:
     assert "- " in notes
 
 
-def test_ci_only_invokes_versioned_changelog_gate_for_version_context_changes() -> None:
+def test_ordinary_master_change_requires_changelog_update(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    monkeypatch.setattr(
+        module,
+        "load_version_context",
+        lambda _path: SimpleNamespace(release_ready=False, version="1.2.3"),
+    )
+    monkeypatch.setattr(module, "version_context_changed", lambda _base: False)
+    monkeypatch.setattr(module, "changelog_changed", lambda _base: False)
+
+    with pytest.raises(module.ReleaseChangelogError, match="every master-bound change"):
+        module.validate(base="base")
+
+
+def test_ordinary_master_change_accepts_changelog_update_without_release_promotion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    monkeypatch.setattr(
+        module,
+        "load_version_context",
+        lambda _path: SimpleNamespace(release_ready=False, version="1.2.3"),
+    )
+    monkeypatch.setattr(module, "version_context_changed", lambda _base: False)
+    monkeypatch.setattr(module, "changelog_changed", lambda _base: True)
+
+    assert module.validate(base="base") is None
+
+
+def test_ci_requires_canonical_changelog_for_every_master_bound_change() -> None:
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
-    assert "Validate versioned release changelog" in workflow
+    assert "Validate master changelog and versioned release notes" in workflow
     assert 'python scripts/release-changelog.py --base "$BASE_SHA"' in workflow
     assert "github.event.pull_request.base.sha || github.event.before" in workflow
 
