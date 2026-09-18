@@ -169,11 +169,33 @@ class Device:
         self.adb("shell", "input", "text", text)
         time.sleep(0.4)
 
+    def dismiss_pixel_launcher_anr(self) -> bool:
+        # The hosted Pixel emulator can surface a launcher ANR over an otherwise
+        # healthy Zara activity. Dismiss only that OS-owned dialog; never hide a
+        # Zara crash/ANR or weaken the app assertions below.
+        if self.find_contains("Pixel Launcher isn't responding") is None:
+            return False
+        wait = self.find("Wait")
+        if wait is None:
+            raise AssertionError("Pixel Launcher ANR did not expose a Wait action")
+        left, top, right, bottom = self.bounds(wait)
+        self.adb(
+            "shell",
+            "input",
+            "tap",
+            str((left + right) // 2),
+            str((top + bottom) // 2),
+        )
+        time.sleep(0.2)
+        return True
+
     def await_label(self, label: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.find(label) is not None:
                 return
+            if self.dismiss_pixel_launcher_anr():
+                continue
             time.sleep(0.2)
         raise AssertionError(f"Screen did not show {label}")
 
@@ -182,6 +204,8 @@ class Device:
         while time.monotonic() < deadline:
             if self.find_contains(fragment) is not None:
                 return
+            if self.dismiss_pixel_launcher_anr():
+                continue
             time.sleep(0.2)
         raise AssertionError(f"Screen did not retain text containing {fragment}")
 
