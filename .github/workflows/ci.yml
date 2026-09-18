@@ -224,6 +224,30 @@ jobs:
           path: android/org-app/build/outputs/apk/debug/org-app-debug.apk
           if-no-files-found: warn
 
+      - name: Upload Org Todo debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zara-org-todo-debug-${{ github.event.pull_request.head.sha || github.sha }}
+          path: android/org-todo/build/outputs/apk/debug/org-todo-debug.apk
+          if-no-files-found: warn
+
+      - name: Upload Org Sync debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zara-org-sync-debug-${{ github.event.pull_request.head.sha || github.sha }}
+          path: android/org-sync/build/outputs/apk/debug/org-sync-debug.apk
+          if-no-files-found: warn
+
+      - name: Upload Org Notebook debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zara-org-notebook-debug-${{ github.event.pull_request.head.sha || github.sha }}
+          path: android/org-notebook/build/outputs/apk/debug/org-notebook-debug.apk
+          if-no-files-found: warn
+
       - name: Upload Wear debug APK
         if: always()
         uses: actions/upload-artifact@v4
