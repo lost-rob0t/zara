@@ -235,24 +235,38 @@ class ConversationStore(
             return degradedState()
         }
         return try {
-            DataInputStream(FileInputStream(file).buffered()).use { input ->
-                require(input.readUTF() == CONVERSATION_STORE_MAGIC)
-                val selectedConversationId = input.readBoundedString(MAX_CONVERSATION_ID_CHARS).ifEmpty { null }
-                val count = input.readInt()
-                require(count in 0..MAX_CONVERSATIONS)
-                val conversations = buildList(count) {
-                    repeat(count) {
-                        add(input.readConversation().recoverInterrupted())
+            val (loaded, recoveredRunningTurn) =
+                DataInputStream(FileInputStream(file).buffered()).use { input ->
+                    require(input.readUTF() == CONVERSATION_STORE_MAGIC)
+                    val selectedConversationId =
+                        input.readBoundedString(MAX_CONVERSATION_ID_CHARS).ifEmpty { null }
+                    val count = input.readInt()
+                    require(count in 0..MAX_CONVERSATIONS)
+                    var recoveredRunningTurn = false
+                    val conversations = buildList(count) {
+                        repeat(count) {
+                            val conversation = input.readConversation()
+                            if (conversation.status == ConversationStatus.Running) {
+                                recoveredRunningTurn = true
+                            }
+                            add(conversation.recoverInterrupted())
+                        }
                     }
+                    require(conversations.map { it.id }.toSet().size == conversations.size)
+                    require(
+                        selectedConversationId == null ||
+                            conversations.any { it.id == selectedConversationId }
+                    )
+                    require(input.read() == -1)
+                    ConversationState(
+                        conversations = conversations,
+                        selectedConversationId = selectedConversationId,
+                    ) to recoveredRunningTurn
                 }
-                require(conversations.map { it.id }.toSet().size == conversations.size)
-                require(selectedConversationId == null || conversations.any { it.id == selectedConversationId })
-                require(input.read() == -1)
-                ConversationState(
-                    conversations = conversations,
-                    selectedConversationId = selectedConversationId,
-                )
+            if (recoveredRunningTurn) {
+                persist(loaded)
             }
+            loaded
         } catch (_: Exception) {
             degradedState()
         }
