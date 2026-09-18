@@ -26,6 +26,7 @@ class LocalZaraServer(
     private val bridge: TreallaBridge,
     private val corePath: String,
     private val workspace: PrologWorkspace,
+    private val diagnostics: (String, Map<String, Any?>, Throwable?) -> Unit = { _, _, _ -> },
 ) : AutoCloseable {
     private val actor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-local-server").apply { isDaemon = true }
@@ -46,6 +47,11 @@ class LocalZaraServer(
 
     fun start(): CompletableFuture<LocalServerState> = submit {
         check(current.phase == LocalServerPhase.STOPPED) { "Local Zara server is already started" }
+        diagnostics(
+            "local_server.start",
+            mapOf("generation" to current.generation),
+            null,
+        )
         boot(LocalServerPhase.STARTING)
     }
 
@@ -78,7 +84,27 @@ class LocalZaraServer(
         }
         return submit {
             check(current.phase == LocalServerPhase.READY) { "Local Zara server is not ready" }
-            LocalQueryResult(query, bridge.evaluate(query), current.generation)
+            diagnostics(
+                "local_server.query.begin",
+                mapOf("query_length" to query.length, "generation" to current.generation),
+                null,
+            )
+            try {
+                val terms = bridge.evaluate(query)
+                diagnostics(
+                    "local_server.query.complete",
+                    mapOf("terms" to terms.size, "generation" to current.generation),
+                    null,
+                )
+                LocalQueryResult(query, terms, current.generation)
+            } catch (error: Throwable) {
+                diagnostics(
+                    "local_server.query.failed",
+                    mapOf("generation" to current.generation),
+                    error,
+                )
+                throw error
+            }
         }
     }
 
@@ -93,22 +119,75 @@ class LocalZaraServer(
         val query = "resolve_frames(\"$escaped\", passive, [], Frames), member(Result, Frames)"
         return submit {
             check(current.phase == LocalServerPhase.READY) { "Local Zara server is not ready" }
-            LocalQueryResult(query, bridge.evaluate(query), current.generation)
+            diagnostics(
+                "local_server.resolve.begin",
+                mapOf("utterance_length" to text.length, "generation" to current.generation),
+                null,
+            )
+            try {
+                val terms = bridge.evaluate(query)
+                diagnostics(
+                    "local_server.resolve.complete",
+                    mapOf("terms" to terms.size, "generation" to current.generation),
+                    null,
+                )
+                LocalQueryResult(query, terms, current.generation)
+            } catch (error: Throwable) {
+                diagnostics(
+                    "local_server.resolve.failed",
+                    mapOf("generation" to current.generation),
+                    error,
+                )
+                throw error
+            }
         }
     }
 
     private fun boot(phase: LocalServerPhase): LocalServerState {
         updateState(current.copy(phase = phase, failure = null))
+        diagnostics(
+            "local_server.boot.begin",
+            mapOf("phase" to phase.name.lowercase(), "generation" to current.generation),
+            null,
+        )
         return try {
             bridge.initialize(corePath)
+            diagnostics("local_server.native.ready", emptyMap(), null)
             val sources = workspace.sourceFiles()
-            sources.forEach { bridge.consult(it.absolutePath) }
+            sources.forEachIndexed { index, source ->
+                diagnostics(
+                    "local_server.consult.begin",
+                    mapOf("source" to source.name, "index" to index, "total" to sources.size),
+                    null,
+                )
+                bridge.consult(source.absolutePath)
+                diagnostics(
+                    "local_server.consult.complete",
+                    mapOf("source" to source.name, "index" to index),
+                    null,
+                )
+            }
             LocalServerState(
                 phase = LocalServerPhase.READY,
                 generation = current.generation + 1,
                 loadedSources = sources.map { it.name },
-            ).also(::updateState)
+            ).also { state ->
+                updateState(state)
+                diagnostics(
+                    "local_server.ready",
+                    mapOf(
+                        "generation" to state.generation,
+                        "sources" to state.loadedSources.size,
+                    ),
+                    null,
+                )
+            }
         } catch (error: Throwable) {
+            diagnostics(
+                "local_server.boot.failed",
+                mapOf("phase" to phase.name.lowercase(), "generation" to current.generation),
+                error,
+            )
             runCatching { bridge.shutdown() }
             LocalServerState(
                 phase = LocalServerPhase.FAILED,

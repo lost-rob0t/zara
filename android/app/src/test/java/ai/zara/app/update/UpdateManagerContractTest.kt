@@ -7,6 +7,19 @@ import org.junit.Test
 
 class UpdateManagerContractTest {
     @Test
+    fun `updater exposes master fast lane and selectable version catalog`() {
+        val source = File(
+            "src/main/java/ai/zara/app/update/AndroidUpdateManager.kt"
+        ).readText()
+
+        assertTrue(source.contains("zara-latest.manifest.txt"))
+        assertTrue(source.contains("UpdateChannel.Master"))
+        assertTrue(source.contains("fun select("))
+        assertTrue(source.contains("choices ="))
+        assertTrue(source.contains("Master (fastest green)"))
+    }
+
+    @Test
     fun `install request queues package copy on updater worker`() {
         val source = File(
             "src/main/java/ai/zara/app/update/AndroidUpdateManager.kt"

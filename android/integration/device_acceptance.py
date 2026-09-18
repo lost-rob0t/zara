@@ -169,11 +169,33 @@ class Device:
         self.adb("shell", "input", "text", text)
         time.sleep(0.4)
 
+    def dismiss_pixel_launcher_anr(self) -> bool:
+        # The hosted Pixel emulator can surface a launcher ANR over an otherwise
+        # healthy Zara activity. Dismiss only that OS-owned dialog; never hide a
+        # Zara crash/ANR or weaken the app assertions below.
+        if self.find_contains("Pixel Launcher isn't responding") is None:
+            return False
+        wait = self.find("Wait")
+        if wait is None:
+            raise AssertionError("Pixel Launcher ANR did not expose a Wait action")
+        left, top, right, bottom = self.bounds(wait)
+        self.adb(
+            "shell",
+            "input",
+            "tap",
+            str((left + right) // 2),
+            str((top + bottom) // 2),
+        )
+        time.sleep(0.2)
+        return True
+
     def await_label(self, label: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.find(label) is not None:
                 return
+            if self.dismiss_pixel_launcher_anr():
+                continue
             time.sleep(0.2)
         raise AssertionError(f"Screen did not show {label}")
 
@@ -182,6 +204,8 @@ class Device:
         while time.monotonic() < deadline:
             if self.find_contains(fragment) is not None:
                 return
+            if self.dismiss_pixel_launcher_anr():
+                continue
             time.sleep(0.2)
         raise AssertionError(f"Screen did not retain text containing {fragment}")
 
@@ -217,10 +241,38 @@ class Device:
             }
         )
 
+    def launch_surface(self, component: str, label: str) -> None:
+        self.adb(
+            "shell",
+            "am",
+            "start",
+            "-W",
+            "-a",
+            "android.intent.action.MAIN",
+            "-c",
+            "android.intent.category.LAUNCHER",
+            "-f",
+            "0x10200000",
+            "-n",
+            component,
+        )
+        self.await_label(label)
+
+    def assert_launcher_task_isolation(self) -> None:
+        sequence = (
+            ("ai.zara.app/.automation.AutomationActivity", "Prolog Automation", "launcher-automation"),
+            ("ai.zara.app/.watch.WatchSetupActivity", "ZARA WATCH SETUP", "launcher-watch-setup"),
+            ("ai.zara.app/.automation.AutomationActivity", "Prolog Automation", None),
+            ("ai.zara.app/.MainActivity", "Chat", "launcher-main-return"),
+        )
+        for component, label, screenshot in sequence:
+            self.launch_surface(component, label)
+            if screenshot is not None:
+                self.capture(screenshot)
+
     def start(self) -> None:
         self.adb("shell", "am", "force-stop", "ai.zara.app")
-        self.adb("shell", "am", "start", "-W", "-n", "ai.zara.app/.MainActivity")
-        self.await_label("Chat")
+        self.launch_surface("ai.zara.app/.MainActivity", "Chat")
 
     def press_back(self) -> None:
         self.adb("shell", "input", "keyevent", "4")
@@ -301,6 +353,7 @@ def open_menu(device: Device, menu: str) -> None:
 
 def exercise_three_menu_ui(device: Device) -> None:
     device.start()
+    device.assert_launcher_task_isolation()
     device.capture("empty-shell")
     device.assert_accessible_targets(("Open navigation menu", "Chat", "Voice"))
 
