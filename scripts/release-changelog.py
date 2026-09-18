@@ -56,12 +56,27 @@ def _git(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def version_context_changed(base: str) -> bool:
+def _path_changed(base: str, path: Path) -> bool:
     if not base or set(base) == {"0"}:
         return True
     if _git("rev-parse", "--verify", f"{base}^{{commit}}").returncode != 0:
         return True
-    return _git("diff", "--quiet", base, "HEAD", "--", str(VERSION_FILE.relative_to(ROOT))).returncode != 0
+    return _git(
+        "diff",
+        "--quiet",
+        base,
+        "HEAD",
+        "--",
+        str(path.relative_to(ROOT)),
+    ).returncode != 0
+
+
+def changelog_changed(base: str) -> bool:
+    return _path_changed(base, CHANGELOG)
+
+
+def version_context_changed(base: str) -> bool:
+    return _path_changed(base, VERSION_FILE)
 
 
 def existing_version_tag(version: str) -> str | None:
@@ -86,8 +101,12 @@ def validate(
     context = load_version_context(ROOT / "version.properties")
 
     if base is not None:
+        if not changelog_changed(base):
+            raise ReleaseChangelogError(
+                "CHANGELOG.md must change on every master-bound change so humans can follow master"
+            )
         if not version_context_changed(base):
-            print("versioned changelog gate: version context unchanged; skipped")
+            print("master changelog gate: CHANGELOG.md updated; version context unchanged")
             return None
         if not context.release_ready:
             print("versioned changelog gate: release target is staged but not promoted; skipped")
