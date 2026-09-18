@@ -98,7 +98,7 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
             (item for item in descriptors if item.id == PROLOG_RLM_RUNTIME_ID),
             None,
         )
-        if descriptor is None or not descriptor.selectable:
+        if descriptor is None:
             raise PrologRlmRuntimeError(
                 "Prolog-RLM is not an available installed runtime",
                 kind="unavailable",
@@ -107,6 +107,11 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
             raise PrologRlmRuntimeError(
                 "Prolog-RLM runtime protocol is incompatible",
                 kind="incompatible_protocol",
+            )
+        if not descriptor.selectable:
+            raise PrologRlmRuntimeError(
+                "Prolog-RLM is not an available installed runtime",
+                kind="unavailable",
             )
         self._generation += 1
         self._cancelled_turns.clear()
