@@ -61,13 +61,13 @@ object AppNavigationContract {
 
     fun invalidConstructionIsRejected() {
         check(runCatching { AppNavigation(chat = AppRoute.Logic) }.exceptionOrNull() is IllegalArgumentException)
-        check(runCatching { AppNavigation(workspace = AppRoute.Voice) }.exceptionOrNull() is IllegalArgumentException)
+        check(runCatching { AppNavigation(workspace = AppRoute.Chat) }.exceptionOrNull() is IllegalArgumentException)
         check(runCatching { AppNavigation(settings = AppRoute.Chat) }.exceptionOrNull() is IllegalArgumentException)
     }
 
     fun backReturnsThroughMenuRootThenChat() {
         check(AppNavigation().back() == null)
-                check(AppNavigation().selectRoute(AppRoute.Updates).back()?.route == AppRoute.Runtime)
+        check(AppNavigation().selectRoute(AppRoute.Updates).back()?.route == AppRoute.Runtime)
         check(AppNavigation().selectRoute(AppRoute.Scheduled).back()?.route == AppRoute.Logic)
         for (route in AppRoute.entries) {
             var state: AppNavigation? = AppNavigation().selectRoute(route)
