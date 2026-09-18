@@ -7,6 +7,8 @@ import ai.zara.app.ui.RuntimeModePreferenceStore
 import ai.zara.app.ui.ThemePreferenceStore
 import ai.zara.app.ui.UiOperationFailure
 import ai.zara.app.ui.ZaraApp
+import ai.zara.app.update.Changelog
+import ai.zara.app.update.ChangelogSeenStore
 import ai.zara.app.voice.ManualVoiceState
 import ai.zara.ui.theme.ZaraTheme
 import android.Manifest
@@ -36,6 +38,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         appSession = (application as ZaraApplication).appSession
         val updateManager = (application as ZaraApplication).updateManager
+        val changelogSeenStore = ChangelogSeenStore(this)
+        val currentChangelog = Changelog.load(this, BuildConfig.VERSION_NAME)
+        var showCurrentChangelog by mutableStateOf(
+            changelogSeenStore.shouldShow(BuildConfig.VERSION_NAME, currentChangelog)
+        )
         microphonePermissionGranted = hasMicrophonePermission()
         voiceState = appSession.voiceState()
 
@@ -129,6 +136,9 @@ class MainActivity : ComponentActivity() {
                 prologSources = prologSources,
                 prologQueryResult = prologQueryResult,
                 updateState = updateState,
+                changelogVersion = BuildConfig.VERSION_NAME,
+                changelogText = currentChangelog,
+                showChangelog = showCurrentChangelog,
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
                 projectState = projectState,
@@ -381,6 +391,10 @@ class MainActivity : ComponentActivity() {
                 onInstallUpdate = {
                     operationError = updateManager.requestInstall().exceptionOrNull()
                         ?.let(UiOperationFailure::summarize)
+                },
+                onDismissChangelog = {
+                    changelogSeenStore.markShown(BuildConfig.VERSION_NAME)
+                    showCurrentChangelog = false
                 },
             )
         }

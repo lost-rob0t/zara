@@ -48,6 +48,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DrawerValue
@@ -145,6 +146,9 @@ fun ZaraApp(
     prologSources: List<PrologSource>,
     prologQueryResult: LocalQueryResult?,
     updateState: UpdateState,
+    changelogVersion: String,
+    changelogText: String?,
+    showChangelog: Boolean,
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
     projectState: ProjectContextState,
@@ -173,6 +177,7 @@ fun ZaraApp(
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
+    onDismissChangelog: () -> Unit,
 ) {
     var navigation by rememberSaveable(stateSaver = AppNavigationSaver) {
         mutableStateOf(AppNavigation())
@@ -190,6 +195,22 @@ fun ZaraApp(
 
     CompositionLocalProvider(LocalZaraTokens provides tokens) {
         MaterialTheme(colorScheme = tokensColorScheme(tokens)) {
+            if (showChangelog && !changelogText.isNullOrBlank()) {
+                AlertDialog(
+                    onDismissRequest = onDismissChangelog,
+                    confirmButton = {
+                        TextButton(onClick = onDismissChangelog) { Text("Continue") }
+                    },
+                    title = { Text("What's new in Zara $changelogVersion") },
+                    text = {
+                        Column(
+                            Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())
+                        ) {
+                            Text(changelogText)
+                        }
+                    },
+                )
+            }
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val showRail = usesNavigationRail(maxWidth.value)
                 ModalNavigationDrawer(
