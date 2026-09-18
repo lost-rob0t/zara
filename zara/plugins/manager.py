@@ -49,7 +49,6 @@ class _PluginRecord:
     path: Path
     metadata: PluginMetadata
     instance: object
-    enabled: bool = True
     state: PluginState = PluginState.LOADED
     error: str = ""
     runtime: Optional[PluginRuntime] = None
@@ -101,6 +100,7 @@ class PluginManager:
         self._max_workers = max_workers
         self._records: list[_PluginRecord] = []
         self._diagnostics: list[PluginDiagnostic] = []
+        self._enabled_by_name: dict[str, bool] = {}
         self._discovered = False
         self._started = False
         self._stopped = False
@@ -115,7 +115,7 @@ class PluginManager:
                     plugin_type=record.metadata.plugin_type,
                     state=record.state,
                     error=record.error,
-                    enabled=record.enabled,
+                    enabled=self._enabled_by_name.get(record.metadata.name, True),
                     description=record.metadata.description,
                     capabilities=record.tool_names,
                 )
@@ -179,7 +179,6 @@ class PluginManager:
                     path=file_path,
                     metadata=metadata,
                     instance=instance,
-                    enabled=enabled,
                     state=PluginState.LOADED if enabled else PluginState.INSTALLED,
                 )
                 if metadata.api_version != PLUGIN_API_VERSION:
@@ -189,6 +188,7 @@ class PluginManager:
                         f"with {PLUGIN_API_VERSION!r}"
                     )
                 with self._lock:
+                    self._enabled_by_name[metadata.name] = enabled
                     self._records.append(record)
             except Exception as error:
                 diagnostic = PluginDiagnostic(
@@ -210,7 +210,7 @@ class PluginManager:
         self.discover()
 
         for record in tuple(self._records):
-            if not record.enabled or record.state is PluginState.INCOMPATIBLE:
+            if record.state in (PluginState.INSTALLED, PluginState.INCOMPATIBLE):
                 continue
             await self._start_record(record)
 
