@@ -1,6 +1,9 @@
 package ai.zara.app.ui
 
 import ai.zara.app.BuildConfig
+import ai.zara.app.model.CloudModelConfig
+import ai.zara.app.model.CloudModelProvider
+import ai.zara.app.model.CloudModelState
 import ai.zara.app.projects.ProjectContext
 import ai.zara.app.projects.ProjectContextState
 import ai.zara.app.runtime.AssistantRole
@@ -83,6 +86,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -148,6 +152,7 @@ fun ZaraApp(
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
     projectState: ProjectContextState,
+    remoteApiState: CloudModelState,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
@@ -170,6 +175,8 @@ fun ZaraApp(
     onDeletePrologSource: (String) -> Unit,
     onImportPrologWorkspace: (String) -> Unit,
     onExportPrologWorkspace: () -> String,
+    onSaveRemoteApi: (CloudModelConfig, String) -> Unit,
+    onClearRemoteApiKey: () -> Unit,
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
@@ -312,6 +319,7 @@ fun ZaraApp(
                                                 updateState = updateState,
                                                 runtimeMode = runtimeMode,
                                                 localEmbedding = localEmbedding,
+                                                remoteApiState = remoteApiState,
                                                 enrollmentPublicKey = enrollmentPublicKey,
                                                 pinnedServerPublicKey = pinnedServerPublicKey,
                                                 operationError = operationError,
@@ -320,6 +328,8 @@ fun ZaraApp(
                                                 onPinServer = onPinServer,
                                                 onReplaceServerPin = onReplaceServerPin,
                                                 onRequestAssistantRole = onRequestAssistantRole,
+                                                onSaveRemoteApi = onSaveRemoteApi,
+                                                onClearRemoteApiKey = onClearRemoteApiKey,
                                                 onCheckForUpdate = onCheckForUpdate,
                                                 onDownloadUpdate = onDownloadUpdate,
                                                 onInstallUpdate = onInstallUpdate,
@@ -351,7 +361,7 @@ internal fun AppRoute.surface(): AppSurface = when (this) {
     AppRoute.Plugins -> AppSurface.Plugins
     AppRoute.Diagnostics -> AppSurface.Diagnostics
     AppRoute.About -> AppSurface.About
-    AppRoute.Runtime, AppRoute.Permissions, AppRoute.Updates -> AppSurface.Settings
+    AppRoute.Runtime, AppRoute.RemoteApis, AppRoute.Permissions, AppRoute.Updates -> AppSurface.Settings
 }
 
 @Composable
@@ -794,6 +804,7 @@ private fun SettingsSurface(
     updateState: UpdateState,
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
+    remoteApiState: CloudModelState,
     enrollmentPublicKey: String?,
     pinnedServerPublicKey: String?,
     operationError: String?,
@@ -802,6 +813,8 @@ private fun SettingsSurface(
     onPinServer: (String) -> Unit,
     onReplaceServerPin: (String) -> Unit,
     onRequestAssistantRole: () -> Unit,
+    onSaveRemoteApi: (CloudModelConfig, String) -> Unit,
+    onClearRemoteApiKey: () -> Unit,
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
@@ -813,6 +826,22 @@ private fun SettingsSurface(
     var replacementServerPin by rememberSaveable { mutableStateOf("") }
     var showServerPinReplacement by rememberSaveable { mutableStateOf(false) }
     var showAssistantHelp by rememberSaveable { mutableStateOf(false) }
+    var remoteEnabled by rememberSaveable(remoteApiState.generation) {
+        mutableStateOf(remoteApiState.config.enabled)
+    }
+    var remoteProvider by rememberSaveable(remoteApiState.generation) {
+        mutableStateOf(remoteApiState.config.provider.wireName)
+    }
+    var remoteEndpoint by rememberSaveable(remoteApiState.generation) {
+        mutableStateOf(remoteApiState.config.endpoint)
+    }
+    var remoteModel by rememberSaveable(remoteApiState.generation) {
+        mutableStateOf(remoteApiState.config.model)
+    }
+    var remoteAppName by rememberSaveable(remoteApiState.generation) {
+        mutableStateOf(remoteApiState.config.appName)
+    }
+    var remoteApiKey by rememberSaveable(remoteApiState.generation) { mutableStateOf("") }
     val tokens = LocalZaraTokens.current
 
     ScreenBody(padding) {
@@ -867,6 +896,182 @@ private fun SettingsSurface(
                     KeyValueRow("model", localEmbedding.modelVersion)
                     KeyValueRow("dimensions", localEmbedding.dimensions.toString())
                     MutedNotice("Runs fully on-device. Disabling it returns no vectors and prevents local semantic indexing.")
+                }
+            }
+            AppRoute.RemoteApis -> {
+                SectionCard("REMOTE APIs") {
+                    KeyValueRow("runtime", remoteApiState.phase.name.lowercase())
+                    KeyValueRow(
+                        "API key",
+                        if (remoteApiState.apiKeyConfigured) "stored in Android Keystore" else "not configured",
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = remoteEnabled,
+                                onClick = { remoteEnabled = !remoteEnabled },
+                            )
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        StatusDot(if (remoteEnabled) tokens.success else tokens.border)
+                        Text(
+                            if (remoteEnabled) "Remote API fallback enabled" else "Remote API fallback disabled",
+                            modifier = Modifier.padding(start = 10.dp),
+                            color = tokens.text,
+                        )
+                    }
+
+                    Text("PROVIDER", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+                    val presets = listOf(
+                        Triple("OpenRouter", CloudModelProvider.OPENROUTER, CloudModelConfig.OPENROUTER_ENDPOINT),
+                        Triple(
+                            "StarIntel",
+                            CloudModelProvider.OPENAI_COMPATIBLE,
+                            CloudModelConfig.DEFAULT_STARINTEL_ENDPOINT,
+                        ),
+                        Triple(
+                            "StatIntel",
+                            CloudModelProvider.OPENAI_COMPATIBLE,
+                            CloudModelConfig.STATINTEL_ENDPOINT,
+                        ),
+                        Triple(
+                            "Z.AI Coding Plan",
+                            CloudModelProvider.ZAI_CODING_PLAN,
+                            CloudModelConfig.ZAI_CODING_ENDPOINT,
+                        ),
+                    )
+                    presets.forEach { (label, provider, endpoint) ->
+                        val selected = remoteProvider == provider.wireName && remoteEndpoint == endpoint
+                        SecondaryAction(
+                            label = if (selected) "✓ $label" else label,
+                            enabled = !operationBusy,
+                        ) {
+                            remoteProvider = provider.wireName
+                            remoteEndpoint = endpoint
+                        }
+                    }
+                    SecondaryAction(
+                        label = if (
+                            remoteProvider == CloudModelProvider.OPENAI_COMPATIBLE.wireName &&
+                            remoteEndpoint !in setOf(
+                                CloudModelConfig.DEFAULT_STARINTEL_ENDPOINT,
+                                CloudModelConfig.STATINTEL_ENDPOINT,
+                            )
+                        ) "✓ Generic OpenAI-compatible" else "Generic OpenAI-compatible",
+                        enabled = !operationBusy,
+                    ) {
+                        remoteProvider = CloudModelProvider.OPENAI_COMPATIBLE.wireName
+                        if (remoteEndpoint in setOf(
+                                CloudModelConfig.DEFAULT_STARINTEL_ENDPOINT,
+                                CloudModelConfig.STATINTEL_ENDPOINT,
+                            )) {
+                            remoteEndpoint = "https://api.openai.com/v1"
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = remoteEndpoint,
+                        onValueChange = { remoteEndpoint = it.take(CloudModelConfig.MAX_ENDPOINT_CHARS) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("HTTPS API base URL") },
+                        enabled = !operationBusy,
+                        singleLine = true,
+                        colors = fieldColors(),
+                    )
+                    OutlinedTextField(
+                        value = remoteModel,
+                        onValueChange = { remoteModel = it.take(CloudModelConfig.MAX_MODEL_CHARS) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Model") },
+                        enabled = !operationBusy,
+                        singleLine = true,
+                        colors = fieldColors(),
+                    )
+                    OutlinedTextField(
+                        value = remoteAppName,
+                        onValueChange = { remoteAppName = it.take(CloudModelConfig.MAX_APP_NAME_CHARS) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("LLM app name") },
+                        enabled = !operationBusy,
+                        singleLine = true,
+                        colors = fieldColors(),
+                    )
+                    OutlinedTextField(
+                        value = remoteApiKey,
+                        onValueChange = { remoteApiKey = it.take(4_096) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = {
+                            Text(
+                                if (remoteApiState.apiKeyConfigured) {
+                                    "API key (leave blank to keep stored key)"
+                                } else {
+                                    "API key"
+                                }
+                            )
+                        },
+                        enabled = !operationBusy,
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        colors = fieldColors(),
+                    )
+
+                    val selectedProvider = runCatching {
+                        CloudModelProvider.fromWireName(remoteProvider)
+                    }.getOrDefault(CloudModelProvider.OPENAI_COMPATIBLE)
+                    if (selectedProvider == CloudModelProvider.OPENROUTER) {
+                        KeyValueRow(
+                            "quantization",
+                            remoteApiState.config.openRouterPolicy.quantizations.joinToString(", "),
+                        )
+                        KeyValueRow(
+                            "data collection",
+                            remoteApiState.config.openRouterPolicy.dataCollection.wireName,
+                        )
+                        MutedNotice(
+                            "OpenRouter defaults to explicit fp16/bf16/fp8 routing. Unknown quantization is rejected."
+                        )
+                    }
+                    if (selectedProvider.codingOnly) {
+                        MutedNotice(
+                            "Z.AI Coding Plan is restricted to explicit coding requests and cannot become ordinary assistant fallback."
+                        )
+                    }
+
+                    PrimaryAction(
+                        "Save Remote API",
+                        !operationBusy &&
+                            remoteEndpoint.isNotBlank() &&
+                            remoteAppName.isNotBlank() &&
+                            (!remoteEnabled || remoteModel.isNotBlank()),
+                    ) {
+                        onSaveRemoteApi(
+                            CloudModelConfig(
+                                enabled = remoteEnabled,
+                                provider = selectedProvider,
+                                endpoint = remoteEndpoint,
+                                model = remoteModel,
+                                appName = remoteAppName,
+                                maxOutputTokens = remoteApiState.config.maxOutputTokens,
+                                deadlineMs = remoteApiState.config.deadlineMs,
+                                openRouterPolicy = remoteApiState.config.openRouterPolicy,
+                            ),
+                            remoteApiKey,
+                        )
+                        remoteApiKey = ""
+                    }
+                    if (remoteApiState.apiKeyConfigured) {
+                        SecondaryAction(
+                            "Clear stored API key",
+                            !operationBusy,
+                            onClearRemoteApiKey,
+                        )
+                    }
+                    remoteApiState.message?.let { MutedNotice(it) }
+                    MutedNotice(
+                        "Remote API keys are wrapped by Android Keystore and are never written to Prolog/config metadata."
+                    )
                 }
             }
             AppRoute.Permissions -> {
