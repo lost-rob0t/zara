@@ -13,7 +13,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import androidx.core.app.NotificationCompat
+import android.app.Notification
 import java.time.LocalDateTime
 import java.time.ZoneId
 
@@ -200,13 +200,19 @@ private object ReminderNotifications {
             }
         }
 
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(context, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(context)
+        }
+
         manager.notify(
             notificationId,
-            NotificationCompat.Builder(context, CHANNEL_ID)
+            builder
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentTitle(title)
                 .setContentText(detail)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
                 .setContentIntent(open)
                 .build(),
