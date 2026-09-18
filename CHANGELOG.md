@@ -7,6 +7,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 ### Fixed
 
 - Plugin capability compositions now re-check a tool's live approval policy immediately before invocation, preventing approval-policy changes after registration from bypassing approval.
+- Cancelling a plugin turn now cooperatively signals active composed tool invocations before stale-result fencing, so opted-in plugin work can stop promptly instead of continuing after cancellation.
 
 ## 0.2.2-alpha
 
