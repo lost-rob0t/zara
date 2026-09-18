@@ -1117,6 +1117,9 @@ private fun SettingsSurface(
                         visualTransformation = PasswordVisualTransformation(),
                         colors = fieldColors(),
                     )
+                    MutedNotice(
+                        "Stored only after you save. Leaving this field blank keeps the existing credential."
+                    )
                     if (remoteApiState.apiKeyConfigured) {
                         SecondaryAction(
                             "Clear stored API key",
