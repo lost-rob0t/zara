@@ -1,0 +1,15 @@
+#+title: Zara Ideas
+#+startup: overview
+
+* IDEA Inbox :IDEA:
+:PROPERTIES:
+:DESCRIPTION: Non-urgent ideas captured by the Zara Todo Manager so they do not crowd the current daily plan.
+:END:
+
+# Capture format:
+# ** IDEA <short title> :IDEA:
+# SCHEDULED/DEADLINE are intentionally omitted unless the idea is promoted into active work.
+# - Captured: YYYY-MM-DD HH:MM America/New_York
+# - Source: <issue/PR/chat reference when available>
+# - Why deferred: <one sentence>
+# - Next proof: <smallest thing that would justify promotion>
