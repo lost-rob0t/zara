@@ -127,6 +127,7 @@ class RuntimeHost:
         self._last_plugin_diagnostics: tuple[PluginDiagnostic, ...] = ()
         self._api_service = None
         self._task_runner = None
+        self._scheduled_tasks = None
 
     @property
     def state(self) -> RuntimeHostState:
@@ -164,6 +165,11 @@ class RuntimeHost:
     def task_runner(self):
         """The long-horizon task runner, or None when disabled."""
         return self._task_runner
+
+    @property
+    def scheduled_tasks(self):
+        """The canonical cron scheduled-task service, or None when disabled."""
+        return self._scheduled_tasks
 
     def run_coroutine(self, coroutine) -> concurrent.futures.Future:
         """Schedule one coroutine on the runtime loop from any thread."""
@@ -413,12 +419,15 @@ class RuntimeHost:
                 return
 
             from zara.agent.tools.builtin_tools import build_task_tools
+            from zara.agent.tools.schedule_tools import build_schedule_tools
+            from zara.database import get_database
+            from zara.tasks.prolog import ScheduledTaskProlog
             from zara.tasks.runner import TaskRunner
+            from zara.tasks.schedule import ScheduledTaskService, ScheduledTaskStore
             from zara.tasks.store import TaskStore
 
             store = self._task_store
             if store is None:
-                from zara.database import get_database
                 store = TaskStore(
                     get_database(),
                     step_log_chars=tasks_config["step_log_chars"],
@@ -437,11 +446,26 @@ class RuntimeHost:
             )
             await runner.start()
             backend = self._require_backend()
-            backend.register_tools(build_task_tools(runner))
+            manager = getattr(backend, "_manager", None)
+            engine = getattr(manager, "prolog_engine", None)
+            prolog = ScheduledTaskProlog(engine) if engine is not None else None
+            scheduler = ScheduledTaskService(
+                store=ScheduledTaskStore(get_database()),
+                task_runner=runner,
+                prolog_engine=prolog,
+                principal_id=backend.principal_id,
+            )
+            await scheduler.start()
+            backend.register_tools(build_task_tools(runner) + build_schedule_tools(scheduler))
             backend.bind_event_publisher(runner.observing_publisher(self._publisher))
             self._task_runner = runner
-            logger.info("[TaskRunner] started (max_concurrent=%d)", tasks_config["max_concurrent"])
+            self._scheduled_tasks = scheduler
+            logger.info(
+                "[TaskRunner] started (max_concurrent=%d, scheduler=cron)",
+                tasks_config["max_concurrent"],
+            )
         except Exception as error:
+            self._scheduled_tasks = None
             self._task_runner = None
             logger.warning("Task runner startup failed", exc_info=True)
             self._publisher(
@@ -453,15 +477,24 @@ class RuntimeHost:
             )
 
     async def _stop_task_runner(self) -> None:
+        scheduler = self._scheduled_tasks
+        self._scheduled_tasks = None
+        if scheduler is not None:
+            try:
+                await scheduler.stop()
+            except Exception:
+                logger.warning("Scheduled task service stop failed", exc_info=True)
+
         runner = self._task_runner
         self._task_runner = None
         if runner is None:
             return
         try:
             from zara.agent.tools.builtin_tools import TASK_TOOL_NAMES
+            from zara.agent.tools.schedule_tools import SCHEDULE_TOOL_NAMES
             backend = self._backend
             if backend is not None:
-                backend.unregister_tools(list(TASK_TOOL_NAMES))
+                backend.unregister_tools(list(TASK_TOOL_NAMES) + list(SCHEDULE_TOOL_NAMES))
                 backend.bind_event_publisher(self._publisher)
         except Exception:
             logger.debug("Task tool unregistration failed", exc_info=True)

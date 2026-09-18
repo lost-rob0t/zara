@@ -19,6 +19,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Android Local mode now records bounded, redacted runtime diagnostics that can be copied, shared, or cleared from Diagnostics.
 - Release CI now requires exact-source Android and Desktop screenshot evidence plus deeper adversarial regression gates.
 - Zara's strict version context separates the currently built version from the active release target and validates immutable release provenance.
+- Android Settings → Plugins is a real surface with checksum-verified APK selection, review, install-source permission handling, and native PackageInstaller confirmation instead of a gated placeholder.
+- Scheduled is a real cross-platform feature: the runtime owns persistent cron schedules with Prolog-first execution and typed tools, desktop exposes scheduler controls, and Android projects the canonical remote scheduler without creating a second phone-only scheduler.
 
 ### Fixed
 

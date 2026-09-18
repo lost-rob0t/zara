@@ -141,6 +141,10 @@
         <receiver
             android:name=".update.UpdateInstallReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".plugins.PluginInstallReceiver"
+            android:exported="false"
+            android:process=":voice" />
     </application>
 
 </manifest>
