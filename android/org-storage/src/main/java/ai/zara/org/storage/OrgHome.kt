@@ -91,8 +91,9 @@ object OrgHome {
             .apply()
     }
 
-    fun open(context: Context): OrgRepository? = when (val home = selection(context)) {
-        is OrgHomeSelection -> when (home.mode) {
+    fun open(context: Context): OrgRepository? {
+        val home = selection(context)
+        return when (home.mode) {
             OrgHomeMode.SHARED -> if (sharedAvailable(context)) SharedOrgRepository(context) else null
             OrgHomeMode.CUSTOM_SAF -> home.customTreeUri?.let { OrgTreeRepository(context, it) }
         }
