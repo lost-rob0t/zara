@@ -103,7 +103,7 @@ def test_agent_mode_store_claims_due_tasks_and_persists_private_state(tmp_path):
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
 
 
-def test_agent_mode_is_not_loaded_without_explicit_enable(tmp_path):
+def test_agent_mode_is_installed_but_not_started_without_explicit_enable(tmp_path):
     backend = RecordingBackend()
     host = RuntimeHost(
         lambda: backend,
@@ -113,7 +113,13 @@ def test_agent_mode_is_not_loaded_without_explicit_enable(tmp_path):
     try:
         host.start().result(timeout=5)
         assert backend.tools == []
-        assert host.plugin_diagnostics() == ()
+        diagnostics = host.plugin_diagnostics()
+        assert len(diagnostics) == 1
+        diagnostic = diagnostics[0]
+        assert diagnostic.name == "agent-mode"
+        assert diagnostic.state is PluginState.INSTALLED
+        assert diagnostic.enabled is False
+        assert diagnostic.capabilities == ()
     finally:
         stop_host(host)
 
