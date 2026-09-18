@@ -51,7 +51,7 @@ jobs:
             git diff --check HEAD^..HEAD
           fi
 
-      - name: Validate versioned release changelog
+      - name: Validate master changelog and versioned release notes
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
