@@ -67,13 +67,15 @@ class LocalAssistantVoiceContractTest {
         val turn = CompletableFuture<String>()
 
         pending.track(turn)
+        assertTrue(pending.isCurrent(turn))
         pending.cancel()
 
         assertTrue(turn.isCancelled)
+        assertFalse(pending.isCurrent(turn))
     }
 
     @Test
-    fun `starting a replacement local turn cancels the superseded future`() {
+    fun `starting a replacement local turn cancels and fences the superseded future`() {
         val pending = PendingLocalTurn()
         val first = CompletableFuture<String>()
         val replacement = CompletableFuture<String>()
@@ -82,22 +84,26 @@ class LocalAssistantVoiceContractTest {
         pending.track(replacement)
 
         assertTrue(first.isCancelled)
+        assertFalse(pending.isCurrent(first))
+        assertTrue(pending.isCurrent(replacement))
         assertFalse(replacement.isDone)
         pending.cancel()
         assertTrue(replacement.isCancelled)
     }
 
     @Test
-    fun `clearing a completed turn does not cancel it`() {
+    fun `clearing a completed turn removes callback authority without cancelling it`() {
         val pending = PendingLocalTurn()
         val turn = CompletableFuture.completedFuture("done")
 
         pending.track(turn)
+        assertTrue(pending.isCurrent(turn))
         pending.clear(turn)
         pending.cancel()
 
         assertTrue(turn.isDone)
         assertFalse(turn.isCancelled)
+        assertFalse(pending.isCurrent(turn))
     }
 
     @Test
