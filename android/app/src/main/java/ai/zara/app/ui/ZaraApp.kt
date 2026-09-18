@@ -166,6 +166,7 @@ fun ZaraApp(
     onImportPrologWorkspace: (String) -> Unit,
     onExportPrologWorkspace: () -> String,
     onCheckForUpdate: () -> Unit,
+    onSelectUpdate: (String) -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onCopyDiagnostics: () -> Unit,
@@ -314,6 +315,7 @@ fun ZaraApp(
                                                 onReplaceServerPin = onReplaceServerPin,
                                                 onRequestAssistantRole = onRequestAssistantRole,
                                                 onCheckForUpdate = onCheckForUpdate,
+                                                onSelectUpdate = onSelectUpdate,
                                                 onDownloadUpdate = onDownloadUpdate,
                                                 onInstallUpdate = onInstallUpdate,
                                                 onSelectRuntimeMode = onSelectRuntimeMode,
@@ -794,6 +796,7 @@ private fun SettingsSurface(
     onReplaceServerPin: (String) -> Unit,
     onRequestAssistantRole: () -> Unit,
     onCheckForUpdate: () -> Unit,
+    onSelectUpdate: (String) -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
@@ -977,10 +980,31 @@ private fun SettingsSurface(
             AppRoute.Updates -> {
                 SectionCard("SELF UPDATE") {
                     KeyValueRow("installed", BuildConfig.VERSION_NAME)
+                    KeyValueRow("source", BuildConfig.SOURCE_SHA.take(12))
                     KeyValueRow("status", updateState.phase.name.lowercase())
+
+                    if (updateState.choices.isNotEmpty()) {
+                        Text(
+                            "VERSION / CHANNEL",
+                            color = tokens.accentCyan,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                        updateState.choices.forEach { release ->
+                            val selected = updateState.selectedId == release.selectionId
+                            SecondaryAction(
+                                label = if (selected) "✓ ${release.displayName}" else release.displayName,
+                                enabled = updateState.phase !in setOf(
+                                    UpdatePhase.CHECKING,
+                                    UpdatePhase.DOWNLOADING,
+                                    UpdatePhase.INSTALLING,
+                                ),
+                            ) { onSelectUpdate(release.selectionId) }
+                        }
+                    }
+
                     updateState.release?.let { release ->
-                        KeyValueRow("available", release.version)
-                        KeyValueRow("source", release.sourceSha.take(12))
+                        KeyValueRow("selected", release.displayName)
+                        KeyValueRow("selected source", release.sourceSha.take(12))
                     }
                     updateState.progressPercent?.let { progress ->
                         KeyValueRow("download", "$progress%")
@@ -989,11 +1013,14 @@ private fun SettingsSurface(
                     when (updateState.phase) {
                         UpdatePhase.AVAILABLE -> PrimaryAction("Download verified APK", true, onDownloadUpdate)
                         UpdatePhase.READY -> PrimaryAction("Install update", true, onInstallUpdate)
-                        UpdatePhase.CHECKING, UpdatePhase.DOWNLOADING ->
+                        UpdatePhase.CHECKING, UpdatePhase.DOWNLOADING, UpdatePhase.INSTALLING ->
                             PrimaryAction("Working…", false) { }
-                        else -> PrimaryAction("Check GitHub Releases", true, onCheckForUpdate)
+                        else -> PrimaryAction("Refresh versions", true, onCheckForUpdate)
                     }
-                    MutedNotice("Zara verifies the release SHA-256 before handing the APK to Android. Android then verifies the signing certificate and requires your install confirmation.")
+                    MutedNotice(
+                        "Master (fastest green) tracks the newest fully green master APK through the mutable android-latest channel. " +
+                            "Versioned entries are immutable releases. Zara verifies the exact source SHA and SHA-256 before Android installation."
+                    )
                 }
             }
             else -> error("Not a settings form: $section")
