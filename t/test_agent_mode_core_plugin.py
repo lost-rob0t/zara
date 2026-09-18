@@ -113,7 +113,12 @@ def test_agent_mode_is_not_loaded_without_explicit_enable(tmp_path):
     try:
         host.start().result(timeout=5)
         assert backend.tools == []
-        assert host.plugin_diagnostics() == ()
+        diagnostics = host.plugin_diagnostics()
+        assert len(diagnostics) == 1
+        diagnostic = diagnostics[0]
+        assert diagnostic.name == "agent-mode"
+        assert diagnostic.enabled is False
+        assert diagnostic.state is PluginState.INSTALLED
     finally:
         stop_host(host)
 
