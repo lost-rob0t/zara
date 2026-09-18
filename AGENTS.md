@@ -68,6 +68,14 @@ Prioritize tests for:
 
 Do not game coverage. Never weaken assertions, add meaningless execution-only tests, exclude relevant code, or preserve untested reachable branches solely to improve a percentage. If changed reachable behavior remains untested, keep adding useful tests until the practical coverage ceiling is reached or document the specific reason a path cannot be deterministically exercised.
 
+## Strict Version Context
+
+- `version.properties` is the canonical Zara product/release version state.
+- Run `python scripts/version-context.py --format json` before consequential version, release, tag, APK-channel, or updater decisions.
+- `zara.version` and `android.versionCode` describe the source being built. `release.target` and `release.targetAndroidVersionCode` describe the active release line. Do not conflate current source, active target, latest immutable release, or mutable `android-latest`.
+- Python packaging, Android phone, Wear, and versioned release CI must consume or validate that canonical context; hard-coded competing product versions are a regression.
+- Immutable versioned publication requires an explicit matching `v*` tag. Master pushes validate context and may update the separate fully-green `android-latest` channel, but do not mint immutable versioned releases.
+
 ## CI/CD Test Gate
 - Always run the focused red/green TDD cycle before the full test suite for behavior changes.
 - Always run the full test suite after any code, configuration, test, or documentation change.

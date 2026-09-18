@@ -7,6 +7,7 @@ never connects to a daemon/provider, and never reads the user's XDG state.
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import json
 import tempfile
 from pathlib import Path
@@ -217,6 +218,7 @@ def _render_one(
         target = output_dir / filename
         if not pixmap.save(str(target), "PNG"):
             raise RuntimeError(f"failed to save Copilot fixture: {target}")
+        screenshot_sha256 = hashlib.sha256(target.read_bytes()).hexdigest()
         return {
             "state": state,
             "path": filename,
@@ -224,6 +226,7 @@ def _render_one(
             "height": pixmap.height(),
             "theme": _THEME,
             "source_commit": source_commit,
+            "sha256": screenshot_sha256,
         }
     finally:
         window.prepare_for_quit()
