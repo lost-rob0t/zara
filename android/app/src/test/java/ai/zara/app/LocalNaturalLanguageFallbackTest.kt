@@ -2,6 +2,7 @@ package ai.zara.app
 
 import ai.zara.app.runtime.LocalQueryResult
 import ai.zara.app.runtime.TextTurnResult
+import java.io.File
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
@@ -12,6 +13,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LocalNaturalLanguageFallbackTest {
+    @Test
+    fun autoRuntimeIsLocalFirstBeforeRemoteFallback() {
+        val source = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
+        val submit = source.substringAfter("fun submitText(text: String)")
+            .substringBefore("private fun submitLocalText")
+
+        assertTrue(submit.contains("RuntimeMode.Auto -> return submitAutoLocalFirst(text, remoteConnected)"))
+        assertFalse(submit.contains("RuntimeMode.Auto -> if (!remoteConnected) return submitLocalText(text)"))
+    }
+
     @Test
     fun symbolicFailureFallsThroughInsteadOfEscaping() {
         val symbolic = CompletableFuture.failedFuture<LocalQueryResult>(
