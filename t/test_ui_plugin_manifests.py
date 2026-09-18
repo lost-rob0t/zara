@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from zara.ui.extensions import UiExtensionRegistry, UiPlatform, UiSlot
-from zara.ui.plugin_manifests import UiManifestLoadError, UiManifestLoader
+from zara.ui.plugin_manifests import (
+    MAX_UI_MANIFEST_BYTES,
+    UiManifestLoadError,
+    UiManifestLoader,
+)
 
 
 def write_manifest(path, *, plugin="notes", action="route:plugins"):
@@ -107,6 +113,28 @@ def test_manifest_symlink_cannot_escape_configured_plugin_root(tmp_path):
     with pytest.raises(UiManifestLoadError, match="failed to load"):
         loader.load()
 
+    assert registry.snapshot() == ()
+
+
+def test_manifest_size_limit_is_enforced_on_bytes_read(tmp_path, monkeypatch):
+    manifest = (tmp_path / "notes.ui.json").resolve()
+    manifest.write_bytes(b" " * (MAX_UI_MANIFEST_BYTES + 1))
+    real_stat = Path.stat
+
+    def lying_stat(path, *args, **kwargs):
+        result = real_stat(path, *args, **kwargs)
+        if path == manifest:
+            return SimpleNamespace(st_size=1)
+        return result
+
+    monkeypatch.setattr(Path, "stat", lying_stat)
+    registry = UiExtensionRegistry()
+    loader = UiManifestLoader((tmp_path,), registry=registry)
+
+    with pytest.raises(UiManifestLoadError, match="failed to load") as exc_info:
+        loader.load()
+
+    assert "too large" in str(exc_info.value.__cause__)
     assert registry.snapshot() == ()
 
 
