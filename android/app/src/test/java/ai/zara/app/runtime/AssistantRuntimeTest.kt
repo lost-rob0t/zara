@@ -94,7 +94,7 @@ class AssistantRuntimeTest {
     }
 
     @Test
-    fun cancellationIsNotSerializedBehindBlockedGeneration() {
+    fun cancellationIsNotSerializedBehindBlockedGenerationAndStaysTerminal() {
         val generateEntered = CountDownLatch(1)
         val releaseGenerate = CountDownLatch(1)
         val cancelObserved = CountDownLatch(1)
@@ -128,7 +128,14 @@ class AssistantRuntimeTest {
             assertTrue(cancelObserved.await(1, TimeUnit.SECONDS))
 
             releaseGenerate.countDown()
-            assertEquals("from Prolog", generation.get(2, TimeUnit.SECONDS).text)
+            val failure = try {
+                generation.get(2, TimeUnit.SECONDS)
+                null
+            } catch (error: ExecutionException) {
+                error.cause
+            }
+            assertTrue(failure is AssistantRuntimeException)
+            assertTrue(failure?.message?.contains("Cancelled Prolog-RLM request") == true)
         }
     }
 
