@@ -45,23 +45,20 @@ def test_only_scoped_installer_visibility_is_added():
     assert "android.permission.MANAGE_EXTERNAL_STORAGE" not in permissions
 
 
-def test_plugin_route_is_nested_and_legacy_selection_is_preserved():
+def test_plugin_route_uses_canonical_three_menu_settings_tab():
     app = (MAIN / "java/ai/zara/app/ui/ZaraApp.kt").read_text()
-    assert "AppSurface.entries.filter { it != AppSurface.Plugins }.forEach" in app
-    assert "AppSurface.Settings, AppSurface.Plugins -> SettingsTabLayout(" in app
-    assert "initiallyPlugins = selected == AppSurface.Plugins" in app
-    assert "if (selected == AppSurface.Plugins) AppSurface.Settings else selected" in app
+    navigation = (MAIN / "java/ai/zara/app/ui/AppNavigation.kt").read_text()
+    assert 'Plugins(AppMenu.Settings, "Plugins")' in navigation
+    assert "AppSurface.Plugins -> PluginSettingsSurface(pluginInstallUi, padding)" in app
     assert "AppSurface.Plugins -> GatedSurface" not in app
 
 
-def test_install_callbacks_outlive_tab_and_route_switching():
+def test_install_callbacks_outlive_route_switching():
     app = (MAIN / "java/ai/zara/app/ui/ZaraApp.kt").read_text()
     assert app.index("val pluginInstallUi = rememberPluginInstallUi()") < app.index("when (selected)")
-    assert "pluginUi = pluginInstallUi" in app
     ui = (MAIN / "java/ai/zara/app/ui/PluginSettings.kt").read_text()
-    tabs = ui.split("internal fun SettingsTabLayout(", 1)[1].split("internal data class", 1)[0]
-    assert "rememberPluginInstallUi()" not in tabs
-    assert "rememberSaveable(initiallyPlugins)" in tabs
+    assert "internal enum class SettingsTab" not in ui
+    assert "SettingsTabLayout" not in ui
     assert "mutableStateOf<StagedPluginApk?>(null)" in ui
     assert "Activity.RESULT_OK && completed != null" in ui
     assert "Activity.RESULT_CANCELED" in ui
