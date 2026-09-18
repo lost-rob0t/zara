@@ -27,9 +27,14 @@ def _iter_manifests(paths: Iterable[Path | str]):
         root = Path(raw_path).expanduser()
         if not root.is_dir():
             continue
+        resolved_root = root.resolve()
         candidates = list(root.glob("*.ui.json")) + list(root.glob("*/ui.json"))
         for candidate in sorted(candidates):
             resolved = candidate.resolve()
+            try:
+                resolved.relative_to(resolved_root)
+            except ValueError as error:
+                raise ValueError("UI manifest path escapes configured plugin root") from error
             if resolved in seen:
                 continue
             seen.add(resolved)
