@@ -117,6 +117,10 @@ def test_versioned_release_uses_canonical_notes_and_exact_green_source() -> None
     assert "sync existing release page from tagged changelog" in workflow
     assert 'git show "${TAG}:CHANGELOG.md"' in workflow
     assert 'gh release edit "$TAG" --notes-file "$notes"' in workflow
+    assert "Exercise exact release APK before publication" in workflow
+    assert 'adb -s "$serial" install -r "$APK"' in workflow
+    assert "android/integration/device_acceptance.py" in workflow
+    assert "versioned-release-device-${{ github.sha }}" in workflow
     assert "Verify published release bytes, metadata, signer, and notes" in workflow
     assert 'gh release download "$TAG"' in workflow
     assert 'cmp "$APK" "$published_apk"' in workflow
