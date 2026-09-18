@@ -185,6 +185,15 @@ object ZaraDeviceActionCodec {
         capability: DeviceCapability,
         args: Map<String, Any?>,
     ): DeviceActionArguments = when (capability) {
+        DeviceCapability.AppSearch -> {
+            requireExactKeys(args, setOf("app", "query"), "app_search args")
+            val app = boundedText("app", requiredString(args, "app", 128), 128)
+            val query = boundedText("query", requiredString(args, "query", 512), 512)
+            if (app.isEmpty() || query.isEmpty()) {
+                throw ZaraWireException("app_search arguments must not be empty")
+            }
+            DeviceActionArguments.AppSearch(app, query)
+        }
         DeviceCapability.OpenUri -> {
             requireExactKeys(args, setOf("uri"), "open_uri args")
             val uri = boundedText("uri", requiredString(args, "uri", 2_048), 2_048)
