@@ -1,17 +1,22 @@
 package ai.zara.app.device
 
+import ai.zara.app.runtime.DeviceCapability
+
 class AppSearchAdapter(
     private val launcher: AppSearchLauncher,
-) {
-    fun isAvailable(): Boolean = try {
+) : DeviceCapabilityAdapter {
+    override val capability: DeviceCapability = DeviceCapability.AppSearch
+    override fun isAvailable(): Boolean = try {
         SEARCHABLE_ALIASES.any(launcher::isAvailable)
     } catch (_: Throwable) {
         false
     }
 
-    fun execute(arguments: DeviceActionArguments.AppSearch): DeviceActionResult {
-        val alias = arguments.app.trim().lowercase()
-        val query = arguments.query.trim()
+    override fun execute(arguments: DeviceActionArguments): DeviceActionResult {
+        val search = arguments as? DeviceActionArguments.AppSearch
+            ?: return DeviceActionResult.Error(DeviceActionErrorCode.InvalidArguments)
+        val alias = search.app.trim().lowercase()
+        val query = search.query.trim()
         if (alias !in SEARCHABLE_ALIASES || query.isEmpty() || query.encodeToByteArray().size > 512) {
             return DeviceActionResult.Error(DeviceActionErrorCode.InvalidArguments)
         }
