@@ -324,6 +324,43 @@ def test_android_acceptance_launch_surface_clears_release_notes_before_waiting(
     assert events == ["launch", "dismiss-release-notes", "await:Chat"]
 
 
+def test_android_acceptance_recreate_relaunches_saved_launcher_task(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    adb_calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(
+        device,
+        "adb",
+        lambda *arguments, **kwargs: adb_calls.append(arguments) or "",
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    device.recreate()
+
+    assert adb_calls == [
+        ("shell", "input", "keyevent", "3"),
+        ("shell", "am", "kill", "ai.zara.app"),
+        (
+            "shell",
+            "am",
+            "start",
+            "-W",
+            "-a",
+            "android.intent.action.MAIN",
+            "-c",
+            "android.intent.category.LAUNCHER",
+            "-f",
+            "0x10200000",
+            "-n",
+            "ai.zara.app/.MainActivity",
+        ),
+    ]
+
+
 def test_android_acceptance_rejects_claimed_sha_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_device_acceptance_module()
     actual_source_sha = "a" * 40
