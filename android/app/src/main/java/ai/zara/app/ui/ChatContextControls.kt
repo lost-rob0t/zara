@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -225,6 +226,7 @@ internal fun ChatPlusButton(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(max = 360.dp)
                             .padding(top = 8.dp)
                             .verticalScroll(rememberScrollState()),
                     ) {
