@@ -155,6 +155,7 @@ fun ZaraApp(
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
+    onScanPairingQr: () -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
     onReplaceServerPin: (String) -> Unit,
@@ -933,6 +934,15 @@ private fun SettingsSurface(
             AppRoute.Connection -> {
                 SectionCard("IDENTITY") {
                     KeyValueRow("enrollment", enrollmentLabel(state.enrollment))
+                    PrimaryAction(
+                        "Scan pairing QR",
+                        !operationBusy,
+                        onScanPairingQr,
+                    )
+                    MutedNotice(
+                        "Recommended setup: run zara pair on the server, then scan its QR here. " +
+                            "Manual keys below are repair/admin fallback."
+                    )
                     enrollmentPublicKey?.let {
                         Text("CLIENT PUBLIC KEY", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
                         SelectionContainer {

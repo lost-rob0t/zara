@@ -148,6 +148,23 @@ class ZaraAppProjectionTest {
     }
 
     @Test
+    fun connectionSurfaceOffersInAppQrPairingWithoutCameraPermission() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val host = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+        val manifest = File("src/main/AndroidManifest.xml").readText()
+        val build = File("build.gradle.kts").readText()
+        val catalog = File("../gradle/libs.versions.toml").readText()
+
+        assertTrue(source.contains("\"Scan pairing QR\""))
+        assertTrue(host.contains("GmsBarcodeScanning"))
+        assertTrue(host.contains("Barcode.FORMAT_QR_CODE"))
+        assertTrue(build.contains("libs.play.services.code.scanner"))
+        assertTrue(catalog.contains("play-services-code-scanner"))
+        assertTrue(manifest.contains("com.google.mlkit.vision.DEPENDENCIES"))
+        assertFalse(manifest.contains("android.permission.CAMERA"))
+    }
+
+    @Test
     fun androidHostDoesNotRenderPlatformLightActionBarOverComposeShell() {
         val manifest = File("src/main/AndroidManifest.xml").readText()
 
