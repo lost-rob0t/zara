@@ -316,6 +316,11 @@ def _turn_result_from_reply(
         # escape the runtime-owned trace boundary.
         metadata: dict[str, Any] = {"runtime": PROLOG_RLM_RUNTIME_ID}
         return RuntimeTurnResult(response=text, metadata=metadata)
+    if status == "cancelled":
+        raise PrologRlmRuntimeError(
+            "Prolog-RLM turn was cancelled",
+            kind="cancelled",
+        )
 
     error = reply.get("error")
     kind = error.get("kind") if isinstance(error, Mapping) else "runtime_error"
