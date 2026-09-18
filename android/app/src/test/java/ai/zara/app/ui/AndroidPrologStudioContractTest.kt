@@ -28,8 +28,10 @@ class AndroidPrologStudioContractTest {
 
         assertTrue(session.contains("LocalZaraServer("))
         assertTrue(session.contains("RuntimeMode.Local -> return submitLocalText"))
-        assertTrue(session.contains("RuntimeMode.Auto -> if (!remoteConnected) return submitLocalText"))
-        assertTrue(session.contains("RuntimeMode.Remote -> if (!remoteConnected)"))
+        assertTrue(session.contains("RuntimeMode.Auto -> return submitAutoLocalFirst(text, remoteConnected)"))
+        assertTrue(session.contains("private fun submitAutoLocalFirst("))
+        assertTrue(session.contains("RuntimeMode.Remote ->"))
+        assertTrue(session.contains("Remote mode requires an authenticated Zara server"))
         assertTrue(activity.contains("RuntimeModePreferenceStore"))
     }
 

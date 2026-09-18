@@ -6,8 +6,10 @@ import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QSettings, Qt
+from PySide6.QtWidgets import QApplication, QMessageBox
 
+from zara.changelog import current_release_notes
 from zara.client import InProcessZaraClient, ZaraClient
 from zara.config import ZaraConfig, get_config
 from zara.daemon_client import create_daemon_client, resolve_daemon_endpoint
@@ -24,6 +26,28 @@ from zara.server import ServerLease
 
 _CONTROLLER_ATTR = "_zara_desktop_controller"
 _CONTROL_ATTR = "_zara_desktop_control_server"
+_CHANGELOG_KEY = "desktop/changelog/last-shown-version"
+
+
+def _show_current_changelog(parent=None, *, settings: Optional[QSettings] = None) -> bool:
+    """Show the installed version's changelog once per version."""
+    version, notes = current_release_notes()
+    if not version or not notes:
+        return False
+    active_settings = settings or QSettings()
+    if str(active_settings.value(_CHANGELOG_KEY, "")) == version:
+        return False
+
+    dialog = QMessageBox(parent)
+    dialog.setWindowTitle(f"What's new in Zara {version}")
+    dialog.setTextFormat(Qt.TextFormat.PlainText)
+    dialog.setText(f"What's new in Zara {version}")
+    dialog.setInformativeText(notes)
+    dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
+    dialog.exec()
+    active_settings.setValue(_CHANGELOG_KEY, version)
+    active_settings.sync()
+    return True
 
 
 def _default_daemon_endpoint(config: Optional[ZaraConfig] = None) -> str:
@@ -139,6 +163,7 @@ def main(
 
     controller.start()
     controller.apply_desktop_control(initial_command)
+    _show_current_changelog(controller.window)
     return int(app.exec())
 
 
