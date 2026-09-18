@@ -36,6 +36,10 @@ class TurnCapabilityLease:
             yield
 
 
+# Missing ContextVar state is security-significant: a plugin can cross a plain
+# thread/executor boundary that does not propagate contextvars. Represent that
+# state with one permanently stale Core-owned lease so composition fails closed
+# instead of silently becoming an uncorrelated/background invocation.
 _MISSING_TURN_CAPABILITY_LEASE = TurnCapabilityLease("__missing_turn_context__")
 _MISSING_TURN_CAPABILITY_LEASE.invalidate()
 

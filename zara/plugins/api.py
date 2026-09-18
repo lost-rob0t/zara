@@ -255,6 +255,8 @@ class PluginRuntime:
         priority: int,
         callback: Callable[..., Any],
     ) -> int:
+        """Register advice owned by this plugin against the canonical agent loop."""
+
         with self._lock:
             if self._closed:
                 raise RuntimeError("plugin runtime is closed")
