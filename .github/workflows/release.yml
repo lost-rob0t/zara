@@ -14,7 +14,6 @@ on:
       - android/app/build.gradle.kts
       - android/wear-app/build.gradle.kts
       - .github/workflows/release.yml
-      - CHANGELOG.md
       - scripts/release-changelog.py
 
 permissions:
