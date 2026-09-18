@@ -9,7 +9,9 @@ import ai.zara.app.auth.EnrollmentRepository
 import ai.zara.app.auth.EnrollmentState
 import ai.zara.app.auth.JeroMqCurveKeyCodec
 import ai.zara.app.device.AndroidAppLauncher
+import ai.zara.app.device.AndroidAppSearchLauncher
 import ai.zara.app.device.AndroidUriLauncher
+import ai.zara.app.device.AppSearchAdapter
 import ai.zara.app.device.DeviceCapabilityRegistry
 import ai.zara.app.device.OpenAppAdapter
 import ai.zara.app.device.OpenUriAdapter
@@ -152,6 +154,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         val deviceActionHandler = RegistryDeviceActionHandler(
             DeviceCapabilityRegistry(
                 listOf(
+                    AppSearchAdapter(AndroidAppSearchLauncher(context)),
                     OpenUriAdapter(AndroidUriLauncher(context)),
                     OpenAppAdapter(AndroidAppLauncher(context)),
                 )
