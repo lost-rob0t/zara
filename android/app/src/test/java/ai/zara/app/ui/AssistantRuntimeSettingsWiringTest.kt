@@ -22,6 +22,9 @@ class AssistantRuntimeSettingsWiringTest {
         check(rows.contains("append(runtime.id)"))
         check(rows.contains("append(runtime.runtimeVersion)"))
         check(rows.contains("append(runtime.health)"))
+        check(rows.contains("append(runtime.locality)"))
+        check(rows.contains("runtime.supportsStreaming"))
+        check(rows.contains("runtime.supportsCancel"))
         check(rows.contains("runtime.profiles.isNotEmpty()"))
         check(rows.contains("runtime.profiles.joinToString"))
         check(!rows.contains("PROLOG_RLM_RUNTIME_ID"))
@@ -44,11 +47,24 @@ class AssistantRuntimeSettingsWiringTest {
     }
 
     @Test
+    fun runtimeHealthDrivesStatusAccentInsteadOfSelection() {
+        val rows = runtimeRows()
+
+        check(rows.contains("when (runtime.health)"))
+        check(rows.contains("\"ready\" -> tokens.success"))
+        check(rows.contains("\"starting\", \"busy\", \"degraded\" -> tokens.warning"))
+        check(rows.contains("\"failed\" -> tokens.error"))
+        check(rows.contains("\"stopped\" -> tokens.textMuted"))
+        check(!rows.contains("selectedRuntime -> tokens.success"))
+    }
+
+    @Test
     fun runtimeMetadataAndProfilesAreNeverManufacturedByTheUi() {
         val rows = runtimeRows()
 
         check(rows.contains("append(runtime.runtimeVersion)"))
         check(rows.contains("append(runtime.health)"))
+        check(rows.contains("append(runtime.locality)"))
         check(rows.contains("runtime.profiles.joinToString"))
         check(!rows.contains("append(\"ready\")"))
         check(!rows.contains("append(\"agentprolog\")"))
