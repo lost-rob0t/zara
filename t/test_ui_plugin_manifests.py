@@ -93,6 +93,23 @@ def test_manifest_cannot_claim_another_plugin_identity(tmp_path, layout):
     assert registry.snapshot() == ()
 
 
+def test_manifest_symlink_cannot_escape_configured_plugin_root(tmp_path):
+    plugin_root = tmp_path / "plugins"
+    plugin_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target = outside / "notes.ui.json"
+    write_manifest(target)
+    (plugin_root / "notes.ui.json").symlink_to(target)
+    registry = UiExtensionRegistry()
+    loader = UiManifestLoader((plugin_root,), registry=registry)
+
+    with pytest.raises(UiManifestLoadError, match="failed to load"):
+        loader.load()
+
+    assert registry.snapshot() == ()
+
+
 def test_manifest_reload_is_failure_atomic(tmp_path):
     manifest = tmp_path / "notes.ui.json"
     write_manifest(manifest)
