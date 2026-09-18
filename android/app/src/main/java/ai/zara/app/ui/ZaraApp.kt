@@ -159,6 +159,9 @@ fun ZaraApp(
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
+    onCopyDiagnostics: () -> Unit,
+    onShareDiagnostics: () -> Unit,
+    onClearDiagnostics: () -> Unit,
 ) {
     var selected by rememberSaveable { mutableStateOf(AppSurface.Chat) }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -254,6 +257,9 @@ fun ZaraApp(
                             voiceStreamState = voiceStreamState,
                             voiceStreamFailure = voiceStreamFailure,
                             operationError = operationError,
+                            onCopyDiagnostics = onCopyDiagnostics,
+                            onShareDiagnostics = onShareDiagnostics,
+                            onClearDiagnostics = onClearDiagnostics,
                             padding = padding,
                         )
                         AppSurface.Settings -> SettingsSurface(
@@ -946,6 +952,9 @@ private fun DiagnosticsSurface(
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
     operationError: String?,
+    onCopyDiagnostics: () -> Unit,
+    onShareDiagnostics: () -> Unit,
+    onClearDiagnostics: () -> Unit,
     padding: PaddingValues,
 ) {
     ScreenBody(padding) {
@@ -957,12 +966,22 @@ private fun DiagnosticsSurface(
             KeyValueRow("local server", localServerState.phase.name.lowercase())
             KeyValueRow("local generation", localServerState.generation.toString())
             KeyValueRow("local sources", localServerState.loadedSources.size.toString())
+            KeyValueRow("local failure", localServerState.failure ?: "none")
             KeyValueRow("connection", connectionLabel(state.server))
             KeyValueRow("generation", state.generation.toString())
             KeyValueRow("session", state.sessionId ?: "none")
             KeyValueRow("conversation", state.selectedConversationId ?: "none")
             KeyValueRow("enrollment", enrollmentLabel(state.enrollment))
             KeyValueRow("assistant role", assistantRoleLabel(state.assistantRole))
+        }
+        SectionCard("LOCAL LOG") {
+            MutedNotice(
+                "The log is stored only in app-private storage and records runtime stages, bounded exception chains, build/source identity, and model/runtime state. Prompt text, credentials, private keys, and model bytes are not logged."
+            )
+            PrimaryAction("Copy diagnostics", true, onCopyDiagnostics)
+            SecondaryAction("Share diagnostics", true, onShareDiagnostics)
+            SecondaryAction("Clear diagnostics", true, onClearDiagnostics)
+            MutedNotice("For support: tap Copy diagnostics, return to ChatGPT, and paste the block into this chat.")
         }
         voiceStreamState?.let { stream ->
             SectionCard("VOICE") {
