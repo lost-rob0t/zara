@@ -242,3 +242,32 @@ def test_symbols_can_be_filtered_by_kind_without_exposing_values():
 
     assert registry.symbols() == ("zara:home/open", "zara:theme")
     assert registry.symbols(kind="command") == ("zara:home/open",)
+
+
+def test_separate_application_registries_do_not_share_package_state():
+    editor = ProgrammableSymbolRegistry()
+    todo = ProgrammableSymbolRegistry()
+
+    editor.register(
+        symbol="org:daily/open",
+        kind="command",
+        owner="plugin:logseq-daily",
+        layer="package",
+        value="editor-daily",
+    )
+    todo.register(
+        symbol="org:daily/open",
+        kind="command",
+        owner="core:todo",
+        layer="core",
+        value="todo-daily",
+    )
+
+    assert editor.get("org:daily/open") == "editor-daily"
+    assert todo.get("org:daily/open") == "todo-daily"
+
+    editor.clear_owner("plugin:logseq-daily")
+
+    with pytest.raises(SymbolLookupError):
+        editor.resolve("org:daily/open")
+    assert todo.get("org:daily/open") == "todo-daily"
