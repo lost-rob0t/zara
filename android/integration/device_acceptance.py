@@ -206,6 +206,24 @@ class Device:
         self.adb("shell", "input", "text", text)
         time.sleep(0.4)
 
+    def dismiss_pixel_launcher_anr(self) -> bool:
+        dialog = self.find_contains("Pixel Launcher isn't responding")
+        if dialog is None:
+            return False
+        wait_button = self.find("Wait")
+        if wait_button is None:
+            return False
+        left, top, right, bottom = self.bounds(wait_button)
+        self.adb(
+            "shell",
+            "input",
+            "tap",
+            str((left + right) // 2),
+            str((top + bottom) // 2),
+        )
+        time.sleep(0.5)
+        return True
+
     def dismiss_unrelated_system_dialogs(self) -> bool:
         nodes = list(self.nodes())
         titles = [
