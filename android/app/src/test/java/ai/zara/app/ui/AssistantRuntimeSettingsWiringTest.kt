@@ -118,6 +118,22 @@ class AssistantRuntimeSettingsWiringTest {
     }
 
     @Test
+    fun routingPolicyCannotSelectOrSynthesizeConcreteRuntimes() {
+        val routing = runtimeSettings()
+            .substringAfter("ROUTING POLICY")
+            .substringBefore("LOCAL EMBEDDINGS")
+
+        check(routing.contains("RuntimeMode.entries.forEach { mode ->"))
+        check(routing.contains("onSelectRuntimeMode(mode)"))
+        check(!routing.contains("onSelectAssistantRuntime"))
+        check(!routing.contains("AssistantRuntimeDescriptor("))
+        check(!routing.contains("PROLOG_RLM_RUNTIME_ID"))
+        check(!routing.contains("EMBEDDED_LOCAL_RUNTIME_ID"))
+        check(!routing.contains("prolog-rlm"))
+        check(!routing.contains("embedded-local"))
+    }
+
+    @Test
     fun refreshActsOnDiscoveryInsteadOfRoutingPolicy() {
         val runtime = runtimeSettings()
         val refreshIndex = runtime.indexOf("onClick = onRefreshAssistantRuntimes")
@@ -134,5 +150,20 @@ class AssistantRuntimeSettingsWiringTest {
 
         check(acceptance.contains("\"Runtime\","))
         check(acceptance.contains("device.capture(f\"settings-{tab.lower()}\")"))
+    }
+
+    @Test
+    fun runtimeScreenshotFlowNeverAssumesAConcreteInstalledRuntime() {
+        val acceptance = File("../integration/device_acceptance.py").readText()
+        val settingsFlow = acceptance
+            .substringAfter("open_menu(device, \"Settings\")")
+            .substringBefore("device.tap_tab(\"Appearance\")")
+
+        check(settingsFlow.contains("\"Runtime\","))
+        check(settingsFlow.contains("device.capture(f\"settings-{tab.lower()}\")"))
+        check(!settingsFlow.contains("Prolog-RLM"))
+        check(!settingsFlow.contains("Embedded Local"))
+        check(!settingsFlow.contains("prolog-rlm"))
+        check(!settingsFlow.contains("embedded-local"))
     }
 }
