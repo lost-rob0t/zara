@@ -392,6 +392,7 @@ class PluginManager:
                     cancellation=cancellation,
                 )
                 self._active_capability_invocations[invocation_id] = invocation
+                self._invocation_condition.notify_all()
 
         if lease is None:
             register_invocation()
