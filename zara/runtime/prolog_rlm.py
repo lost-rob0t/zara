@@ -154,6 +154,8 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
                 conversation_id,
                 "conversation_id",
             )
+        if context_ids:
+            request["context_handles"] = _bounded_context_handles(context_ids)
         if system_context:
             request["inline_context"] = _bounded_text(
                 system_context,
@@ -317,6 +319,12 @@ def _turn_result_from_reply(
         "Prolog-RLM runtime request failed",
         kind=kind,
     )
+
+
+def _bounded_context_handles(context_ids) -> list[str]:
+    if len(context_ids) > 256:
+        raise ValueError("context handles exceed runtime bound")
+    return [_bounded_id(value, "context handle") for value in context_ids]
 
 
 def _bounded_text(value: str, maximum: int, field: str) -> str:
