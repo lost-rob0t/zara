@@ -1,4 +1,4 @@
-"""Deterministic offscreen screenshot fixtures for the adaptive Copilot.
+"""Deterministic offscreen screenshot fixtures for desktop review evidence.
 
 This module is deliberately UI-only: it uses temporary conversation/config state,
 never connects to a daemon/provider, and never reads the user's XDG state.
@@ -17,15 +17,27 @@ from PySide6.QtCore import QSettings
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication
 
+from zara.config import DEFAULT_CONFIG_TOML, ZaraConfig
 from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationService, ConversationStore
 from zara.desktop.theme import apply_desktop_theme
-from zara.desktop.windows import CopilotPresentation, CopilotWindow
+from zara.desktop.windows import CopilotPresentation, CopilotWindow, SettingsWindow
+import zara.desktop.windows.settings as settings_window_module
 from zara.runtime import events
+from zara.runtime.discovery import builtin_runtime_descriptor
+from zara.runtime.registry import (
+    ControlOwner,
+    RuntimeDescriptor,
+    RuntimeHealth,
+    RuntimeLocality,
+    RuntimeTransport,
+    ZARA_RUNTIME_PROTOCOL,
+)
 
 _COMPACT_SIZE = (680, 460)
 _EXPANDED_SIZE = (960, 680)
 _MINIMUM_SIZE = (480, 320)
+_SETTINGS_SIZE = (1120, 760)
 _THEME = "signal-cabin"
 
 _FIXTURES: tuple[tuple[str, str], ...] = (
@@ -234,8 +246,94 @@ def _render_one(
         settings.sync()
 
 
+def _fixture_prolog_runtime() -> RuntimeDescriptor:
+    return RuntimeDescriptor(
+        id="prolog-rlm",
+        display_name="Prolog-RLM",
+        protocol=ZARA_RUNTIME_PROTOCOL,
+        runtime_version="fixture-1",
+        implementation_version="fixture-1",
+        installed=True,
+        available=True,
+        health=RuntimeHealth.READY,
+        locality=RuntimeLocality.LOCAL_SIDECAR,
+        transport=RuntimeTransport.LOOPBACK_HTTP,
+        capabilities=("direct", "rlm", "cancel"),
+        profiles=(),
+        provider_control=ControlOwner.RUNTIME,
+        model_control=ControlOwner.RUNTIME,
+        supports_streaming=False,
+        supports_cancel=True,
+        supports_context_handles=True,
+        supports_host_tools=False,
+        provenance="prolog-rlm:fixture",
+    )
+
+
+def _render_runtime_settings(
+    output_dir: Path,
+    *,
+    source_commit: str,
+    root: Path,
+) -> dict[str, object]:
+    """Render the Assistant settings with one actually discovered fixture runtime.
+
+    Discovery is replaced only inside this deterministic fixture so evidence never
+    probes the machine running CI. The UI still consumes canonical descriptors and
+    exercises the same discovery-driven population path as production.
+    """
+
+    app = _application()
+    fixture_root = root / "runtime-settings"
+    config_path = fixture_root / "xdg" / "config.toml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(DEFAULT_CONFIG_TOML, encoding="utf-8")
+    repo_root = fixture_root / "repo"
+    (repo_root / "kb").mkdir(parents=True)
+    (repo_root / "modules").mkdir()
+    (repo_root / "main.pl").write_text("main :- true.\n", encoding="utf-8")
+    (repo_root / "kb" / "intents.pl").write_text("intent(ok).\n", encoding="utf-8")
+    (repo_root / "modules" / "logic.pl").write_text("logic(ok).\n", encoding="utf-8")
+
+    original_discovery: Callable[..., object] = settings_window_module.discover_installed_runtimes
+    settings_window_module.discover_installed_runtimes = lambda _config: (
+        builtin_runtime_descriptor(),
+        _fixture_prolog_runtime(),
+    )
+    window: SettingsWindow | None = None
+    try:
+        window = SettingsWindow(ZaraConfig(str(config_path)), repo_root=repo_root)
+        window.resize(*_SETTINGS_SIZE)
+        window.category_list.setCurrentRow(1)
+        window.show()
+        app.processEvents()
+        pixmap = window.grab()
+        if pixmap.isNull():
+            raise RuntimeError("failed to render runtime Settings fixture")
+        filename = "settings-runtime-prolog-rlm.png"
+        target = output_dir / filename
+        if not pixmap.save(str(target), "PNG"):
+            raise RuntimeError(f"failed to save runtime Settings fixture: {target}")
+        return {
+            "state": "settings-runtime-prolog-rlm",
+            "path": filename,
+            "width": pixmap.width(),
+            "height": pixmap.height(),
+            "theme": _THEME,
+            "source_commit": source_commit,
+            "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        }
+    finally:
+        settings_window_module.discover_installed_runtimes = original_discovery
+        if window is not None:
+            window.prepare_for_quit()
+            window.close()
+            window.deleteLater()
+            app.processEvents()
+
+
 def render_copilot_fixtures(output_dir: Path | str, *, source_commit: str) -> dict[str, object]:
-    """Render the closed #324 fixture matrix without touching user state or I/O.
+    """Render deterministic Desktop review evidence without touching user state or I/O.
 
     ``source_commit`` is evidence supplied by the caller; rendering does not invoke
     Git, the daemon, providers, microphones, or the network.
@@ -264,6 +362,13 @@ def render_copilot_fixtures(output_dir: Path | str, *, source_commit: str) -> di
                 )
                 for state, filename in _FIXTURES
             ]
+            fixtures.append(
+                _render_runtime_settings(
+                    target,
+                    source_commit=source_commit,
+                    root=root,
+                )
+            )
     finally:
         app.setStyle(previous_style_name)
         app.setPalette(previous_palette)
