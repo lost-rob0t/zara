@@ -8,11 +8,9 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -25,19 +23,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun SettingsTabBar(selected: SettingsTab, onSelect: (SettingsTab) -> Unit) {
-    val tokens = LocalZaraTokens.current
-    TabRow(selectedTabIndex = selected.ordinal, containerColor = tokens.surface, contentColor = tokens.text) {
-        SettingsTab.entries.forEach { tab ->
-            Tab(
-                selected = selected == tab,
-                onClick = { onSelect(tab) },
-                text = { Text(tab.label) },
-                modifier = Modifier.testTag("settings-tab-${tab.name.lowercase()}"),
-            )
-        }
+internal fun PluginInstallSurface(padding: PaddingValues) {
+    ScreenBody(padding) {
+        ScreenTitle("Plugins", "Install Android plugin APKs")
+        PluginInstallSettings()
     }
 }
 
