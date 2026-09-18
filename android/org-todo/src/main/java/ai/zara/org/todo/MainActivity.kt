@@ -4,8 +4,9 @@ import ai.zara.org.core.AgendaGroup
 import ai.zara.org.core.DoomAgenda
 import ai.zara.org.core.DoomOrgProfile
 import ai.zara.org.core.OrgTask
-import ai.zara.org.storage.OrgTreePermission
-import ai.zara.org.storage.OrgTreeRepository
+import ai.zara.org.storage.OrgHome
+import ai.zara.org.storage.OrgHomeMode
+import ai.zara.org.storage.OrgRepository
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -64,13 +65,14 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun OrgTodoApp() {
     val context = LocalContext.current
-    var treeUri by remember { mutableStateOf(OrgTreePermission.remembered(context)) }
+    var homeRevision by rememberSaveable { mutableStateOf(0) }
+    val homeSelection = remember(homeRevision) { OrgHome.selection(context) }
     var tasks by remember { mutableStateOf(emptyList<OrgTask>()) }
     var status by remember { mutableStateOf("") }
     var captureTitle by rememberSaveable { mutableStateOf("") }
 
-    val repository = remember(treeUri) {
-        treeUri?.let { uri -> runCatching { OrgTreeRepository(context, uri) }.getOrNull() }
+    val repository: OrgRepository? = remember(homeRevision) {
+        runCatching { OrgHome.open(context) }.getOrNull()
     }
 
     fun refresh() {
@@ -89,10 +91,10 @@ private fun OrgTodoApp() {
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
-            runCatching { OrgTreePermission.remember(context, uri) }
+            runCatching { OrgHome.useCustomSaf(context, uri) }
                 .onSuccess {
-                    treeUri = uri
-                    status = "Org workspace connected"
+                    homeRevision += 1
+                    status = "Custom Org home connected"
                 }
                 .onFailure { status = it.message ?: "Unable to retain workspace permission" }
         }
@@ -113,15 +115,31 @@ private fun OrgTodoApp() {
                 Text("Org Todo", style = MaterialTheme.typography.titleLarge)
                 Text(status.ifBlank { DoomOrgProfile.orgRoot }, style = MaterialTheme.typography.labelSmall)
             }
-            TextButton(onClick = { picker.launch(treeUri) }) {
-                Text(if (treeUri == null) "Open Org tree" else "Change tree")
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = {
+                    OrgHome.useShared(context)
+                    homeRevision += 1
+                    status = "Using shared Org home"
+                }) { Text("Shared home") }
+                TextButton(onClick = { picker.launch(homeSelection.customTreeUri) }) {
+                    Text("Custom dir")
+                }
             }
         }
 
         if (repository == null) {
-            Text("Choose the same Org workspace used by the main Org app. No private todo database is created.")
-            Button(onClick = { picker.launch(null) }) {
-                Text("Choose Org workspace")
+            if (homeSelection.mode == OrgHomeMode.SHARED) {
+                Text("Shared Org home is the default. Install/open Org Sync, or choose a custom directory only for Org Todo.")
+                Button(onClick = { picker.launch(null) }) { Text("Choose custom directory") }
+            } else {
+                Text("The custom Org directory is unavailable.")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { picker.launch(homeSelection.customTreeUri) }) { Text("Re-grant directory") }
+                    TextButton(onClick = {
+                        OrgHome.useShared(context)
+                        homeRevision += 1
+                    }) { Text("Use shared home") }
+                }
             }
             return@Column
         }
