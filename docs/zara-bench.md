@@ -54,7 +54,7 @@ zara-bench --config ~/.config/zarathushtra/config.toml --workers 10 \
 
 Each generation keeps the candidate text, per-case results, lineage,
 held-out score, policy failures, and latency. Rejected generations do not
-become the parent of later generations. Prolog-skill and KB candidates must
+become the parent of later generations. Mutation receives bounded train-case prompts/responses for useful failure analysis; held-out prompts are never exposed to the optimizer. Prolog-skill and KB candidates must
 pass an SWI-Prolog syntax-only parse before evaluation or promotion.
 
 Promotion is opt-in:
