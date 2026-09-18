@@ -908,96 +908,123 @@ private fun SettingsSurface(
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        StatusDot(
+                            when {
+                                !remoteEnabled -> tokens.border
+                                remoteApiState.phase.name == "DEGRADED" -> tokens.error
+                                else -> tokens.success
+                            }
+                        )
+                        Column(Modifier.weight(1f)) {
                             Text(
-                                if (remoteEnabled) "Remote profile ready" else "Remote profile off",
+                                if (remoteEnabled) "Remote API profile enabled" else "Remote API profile disabled",
                                 color = tokens.text,
-                                style = MaterialTheme.typography.titleMedium,
+                                style = MaterialTheme.typography.titleSmall,
                             )
                             Text(
-                                when {
-                                    selectedProvider == CloudModelProvider.OPENROUTER -> "OpenRouter"
-                                    selectedProvider == CloudModelProvider.ZAI_CODING_PLAN -> "Z.AI Coding Plan"
-                                    remoteEndpoint == CloudModelConfig.DEFAULT_STARINTEL_ENDPOINT -> "StarIntel"
-                                    remoteEndpoint == CloudModelConfig.STATINTEL_ENDPOINT -> "StatIntel"
-                                    else -> "OpenAI-compatible"
-                                },
-                                color = tokens.secondary,
+                                "${selectedProvider.wireName} · ${remoteApiState.phase.name.lowercase()}",
+                                color = tokens.textMuted,
+                                fontFamily = FontFamily.Monospace,
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
-                        Switch(
-                            checked = remoteEnabled,
-                            onCheckedChange = { remoteEnabled = it },
-                            enabled = !operationBusy,
-                        )
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        StatusPill(remoteApiState.phase.name.lowercase())
                         StatusPill(
-                            if (remoteApiState.apiKeyConfigured) "key secured" else "key needed"
+                            if (remoteApiState.apiKeyConfigured) "key stored" else "no key"
                         )
                     }
-                    if (remoteModel.isNotBlank()) {
-                        KeyValueRow("model", remoteModel)
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = remoteEnabled,
+                                onClick = { remoteEnabled = !remoteEnabled },
+                            ),
+                        color = if (remoteEnabled) tokens.surfaceElevated else tokens.surfaceInput,
+                        border = BorderStroke(
+                            1.dp,
+                            if (remoteEnabled) tokens.borderActive else tokens.border,
+                        ),
+                        shape = MaterialTheme.shapes.extraLarge,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            StatusDot(if (remoteEnabled) tokens.success else tokens.border)
+                            Text(
+                                if (remoteEnabled) "Enabled for explicit remote use" else "Disabled",
+                                modifier = Modifier.padding(start = 10.dp).weight(1f),
+                                color = tokens.text,
+                            )
+                            Text(
+                                if (remoteEnabled) "ON" else "OFF",
+                                color = if (remoteEnabled) tokens.secondary else tokens.textMuted,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                            )
+                        }
                     }
                 }
 
                 SectionCard("PROVIDER") {
-                    RemoteProviderCard(
-                        title = "OpenRouter",
-                        subtitle = "Multi-provider routing · explicit quantization policy",
+                    RemoteApiProviderCard(
+                        label = "OpenRouter",
+                        detail = "Multi-provider routing · privacy and quantization policy",
+                        badge = "ROUTER",
                         selected = selectedProvider == CloudModelProvider.OPENROUTER,
                         enabled = !operationBusy,
                     ) {
                         remoteProvider = CloudModelProvider.OPENROUTER.wireName
                         remoteEndpoint = CloudModelConfig.OPENROUTER_ENDPOINT
                     }
-                    RemoteProviderCard(
-                        title = "StarIntel",
-                        subtitle = "OpenAI-compatible · llm.starintel.actor",
+                    RemoteApiProviderCard(
+                        label = "StarIntel",
+                        detail = "llm.starintel.actor · OpenAI-compatible",
+                        badge = "STAR",
                         selected =
                             selectedProvider == CloudModelProvider.OPENAI_COMPATIBLE &&
-                                remoteEndpoint == CloudModelConfig.DEFAULT_STARINTEL_ENDPOINT,
+                            remoteEndpoint == CloudModelConfig.DEFAULT_STARINTEL_ENDPOINT,
                         enabled = !operationBusy,
                     ) {
                         remoteProvider = CloudModelProvider.OPENAI_COMPATIBLE.wireName
                         remoteEndpoint = CloudModelConfig.DEFAULT_STARINTEL_ENDPOINT
                     }
-                    RemoteProviderCard(
-                        title = "StatIntel",
-                        subtitle = "OpenAI-compatible · llm.statintel.actor",
+                    RemoteApiProviderCard(
+                        label = "StatIntel",
+                        detail = "llm.statintel.actor · OpenAI-compatible",
+                        badge = "STAT",
                         selected =
                             selectedProvider == CloudModelProvider.OPENAI_COMPATIBLE &&
-                                remoteEndpoint == CloudModelConfig.STATINTEL_ENDPOINT,
+                            remoteEndpoint == CloudModelConfig.STATINTEL_ENDPOINT,
                         enabled = !operationBusy,
                     ) {
                         remoteProvider = CloudModelProvider.OPENAI_COMPATIBLE.wireName
                         remoteEndpoint = CloudModelConfig.STATINTEL_ENDPOINT
                     }
-                    RemoteProviderCard(
-                        title = "Z.AI Coding Plan",
-                        subtitle = "Coding-only subscription endpoint",
+                    RemoteApiProviderCard(
+                        label = "Z.AI Coding Plan",
+                        detail = "Coding-only subscription endpoint",
+                        badge = "CODE",
                         selected = selectedProvider == CloudModelProvider.ZAI_CODING_PLAN,
                         enabled = !operationBusy,
                     ) {
                         remoteProvider = CloudModelProvider.ZAI_CODING_PLAN.wireName
                         remoteEndpoint = CloudModelConfig.ZAI_CODING_ENDPOINT
                     }
-                    RemoteProviderCard(
-                        title = "Generic OpenAI-compatible",
-                        subtitle = "Bring your own HTTPS API base",
+                    RemoteApiProviderCard(
+                        label = "Generic OpenAI-compatible",
+                        detail = "Any validated HTTPS /v1-style API base",
+                        badge = "API",
                         selected =
                             selectedProvider == CloudModelProvider.OPENAI_COMPATIBLE &&
-                                remoteEndpoint !in setOf(
-                                    CloudModelConfig.DEFAULT_STARINTEL_ENDPOINT,
-                                    CloudModelConfig.STATINTEL_ENDPOINT,
-                                ),
+                            remoteEndpoint !in setOf(
+                                CloudModelConfig.DEFAULT_STARINTEL_ENDPOINT,
+                                CloudModelConfig.STATINTEL_ENDPOINT,
+                            ),
                         enabled = !operationBusy,
                     ) {
                         remoteProvider = CloudModelProvider.OPENAI_COMPATIBLE.wireName
@@ -1025,7 +1052,7 @@ private fun SettingsSurface(
                         value = remoteEndpoint,
                         onValueChange = { remoteEndpoint = it.take(CloudModelConfig.MAX_ENDPOINT_CHARS) },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("HTTPS API base") },
+                        label = { Text("HTTPS API base URL") },
                         enabled = !operationBusy,
                         singleLine = true,
                         colors = fieldColors(),
@@ -1035,33 +1062,11 @@ private fun SettingsSurface(
                         onValueChange = { remoteAppName = it.take(CloudModelConfig.MAX_APP_NAME_CHARS) },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("App identity") },
+                        supportingText = { Text("Used for provider-visible client identity such as OpenRouter X-Title") },
                         enabled = !operationBusy,
                         singleLine = true,
                         colors = fieldColors(),
                     )
-
-                    if (selectedProvider == CloudModelProvider.OPENROUTER) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            remoteApiState.config.openRouterPolicy.quantizations.forEach { quantization ->
-                                StatusPill(quantization)
-                            }
-                        }
-                        KeyValueRow(
-                            "data collection",
-                            remoteApiState.config.openRouterPolicy.dataCollection.wireName,
-                        )
-                        MutedNotice(
-                            "Unknown quantization is rejected. Routing defaults to fp16 / bf16 / fp8."
-                        )
-                    }
-                    if (selectedProvider.codingOnly) {
-                        MutedNotice(
-                            "Coding-only: this profile cannot become ordinary assistant fallback."
-                        )
-                    }
                 }
 
                 SectionCard("CREDENTIAL") {
@@ -1069,17 +1074,20 @@ private fun SettingsSurface(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                if (remoteApiState.apiKeyConfigured) "API key secured" else "No API key stored",
+                                color = tokens.text,
+                                style = MaterialTheme.typography.titleSmall,
+                            )
+                            Text(
+                                "Android Keystore · app-private sealed storage",
+                                color = tokens.textMuted,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                         StatusDot(
                             if (remoteApiState.apiKeyConfigured) tokens.success else tokens.warning
-                        )
-                        Text(
-                            if (remoteApiState.apiKeyConfigured) {
-                                "Stored securely in Android Keystore"
-                            } else {
-                                "No API key stored"
-                            },
-                            modifier = Modifier.padding(start = 10.dp),
-                            color = tokens.text,
                         )
                     }
                     OutlinedTextField(
@@ -1098,9 +1106,9 @@ private fun SettingsSurface(
                         placeholder = {
                             Text(
                                 if (remoteApiState.apiKeyConfigured) {
-                                    "Leave blank to keep current key"
+                                    "Leave blank to keep the stored key"
                                 } else {
-                                    "Stored only after you save"
+                                    "Paste provider key"
                                 }
                             )
                         },
@@ -1109,9 +1117,6 @@ private fun SettingsSurface(
                         visualTransformation = PasswordVisualTransformation(),
                         colors = fieldColors(),
                     )
-                    MutedNotice(
-                        "Changing provider or endpoint fences the old credential before the new profile is accepted."
-                    )
                     if (remoteApiState.apiKeyConfigured) {
                         SecondaryAction(
                             "Clear stored API key",
@@ -1119,36 +1124,65 @@ private fun SettingsSurface(
                             onClearRemoteApiKey,
                         )
                     }
-                }
-
-                SectionCard("APPLY") {
-                    PrimaryAction(
-                        "Save Remote API",
-                        !operationBusy &&
-                            remoteEndpoint.isNotBlank() &&
-                            remoteAppName.isNotBlank() &&
-                            (!remoteEnabled || remoteModel.isNotBlank()),
-                    ) {
-                        onSaveRemoteApi(
-                            CloudModelConfig(
-                                enabled = remoteEnabled,
-                                provider = selectedProvider,
-                                endpoint = remoteEndpoint,
-                                model = remoteModel,
-                                appName = remoteAppName,
-                                maxOutputTokens = remoteApiState.config.maxOutputTokens,
-                                deadlineMs = remoteApiState.config.deadlineMs,
-                                openRouterPolicy = remoteApiState.config.openRouterPolicy,
-                            ),
-                            remoteApiKey,
-                        )
-                        remoteApiKey = ""
-                    }
-                    remoteApiState.message?.let { MutedNotice(it) }
                     MutedNotice(
-                        "Local mode remains network-free. Remote API keys never enter Prolog or normal config files."
+                        "Changing provider or endpoint fences the previous credential so a key is never silently reused against a different API."
                     )
                 }
+
+                SectionCard("POLICY") {
+                    when (selectedProvider) {
+                        CloudModelProvider.OPENROUTER -> {
+                            KeyValueRow(
+                                "quantization",
+                                remoteApiState.config.openRouterPolicy.quantizations.joinToString(", "),
+                            )
+                            KeyValueRow(
+                                "data collection",
+                                remoteApiState.config.openRouterPolicy.dataCollection.wireName,
+                            )
+                            KeyValueRow(
+                                "fallbacks",
+                                if (remoteApiState.config.openRouterPolicy.allowFallbacks) "allowed" else "disabled",
+                            )
+                            MutedNotice(
+                                "Unknown quantization is rejected. Default routing accepts only fp16, bf16, and fp8."
+                            )
+                        }
+                        CloudModelProvider.ZAI_CODING_PLAN ->
+                            MutedNotice(
+                                "Z.AI Coding Plan is restricted to explicit coding requests and cannot become ordinary assistant fallback."
+                            )
+                        CloudModelProvider.OPENAI_COMPATIBLE ->
+                            MutedNotice(
+                                "Generic providers must use validated HTTPS endpoints. Remote model output does not grant Android action authority."
+                            )
+                    }
+                    MutedNotice("Local runtime mode remains network-free.")
+                }
+
+                PrimaryAction(
+                    "Save Remote API",
+                    !operationBusy &&
+                        remoteEndpoint.isNotBlank() &&
+                        remoteAppName.isNotBlank() &&
+                        (!remoteEnabled || remoteModel.isNotBlank()),
+                ) {
+                    onSaveRemoteApi(
+                        CloudModelConfig(
+                            enabled = remoteEnabled,
+                            provider = selectedProvider,
+                            endpoint = remoteEndpoint,
+                            model = remoteModel,
+                            appName = remoteAppName,
+                            maxOutputTokens = remoteApiState.config.maxOutputTokens,
+                            deadlineMs = remoteApiState.config.deadlineMs,
+                            openRouterPolicy = remoteApiState.config.openRouterPolicy,
+                        ),
+                        remoteApiKey,
+                    )
+                    remoteApiKey = ""
+                }
+                remoteApiState.message?.let { MutedNotice(it) }
             }
             AppRoute.Permissions -> {
                 SectionCard("ASSISTANT") {
@@ -1517,6 +1551,75 @@ internal fun ScreenTitle(title: String, subtitle: String) {
         color = tokens.textMuted,
         style = MaterialTheme.typography.bodySmall,
     )
+}
+
+@Composable
+private fun RemoteApiProviderCard(
+    label: String,
+    detail: String,
+    badge: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val tokens = LocalZaraTokens.current
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectable(
+                selected = selected,
+                enabled = enabled,
+                onClick = onClick,
+            ),
+        color = if (selected) tokens.surfaceElevated else tokens.surfaceInput,
+        border = BorderStroke(
+            width = if (selected) 2.dp else 1.dp,
+            color = if (selected) tokens.borderActive else tokens.border,
+        ),
+        shape = MaterialTheme.shapes.extraLarge,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Surface(
+                color = if (selected) tokens.primary else tokens.surface,
+                border = BorderStroke(1.dp, if (selected) tokens.primary else tokens.border),
+                shape = MaterialTheme.shapes.medium,
+            ) {
+                Text(
+                    badge,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    color = if (selected) Color(0xFF160018) else tokens.textMuted,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.8.sp,
+                )
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    label,
+                    color = tokens.text,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                )
+                Text(
+                    detail,
+                    color = tokens.textMuted,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Text(
+                if (selected) "SELECTED" else "SELECT",
+                color = if (selected) tokens.secondary else tokens.textMuted,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+                letterSpacing = 0.8.sp,
+            )
+        }
+    }
 }
 
 @Composable
