@@ -1,5 +1,13 @@
 import groovy.json.JsonSlurper
 import java.util.Properties
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
 
 fun loadZaraVersionProperties(projectRoot: java.io.File): Properties {
     val versionFile = projectRoot.resolve("../version.properties")
@@ -26,15 +34,6 @@ require(zaraVersionName.matches(Regex(
 require(zaraAndroidVersionCode in 1..2100000000) {
     "version.properties android.versionCode is outside Android's valid range"
 }
-
-import org.gradle.api.DefaultTask
-import org.gradle.api.file.ConfigurableFileCollection
-import org.gradle.api.file.DirectoryProperty
-import org.gradle.api.tasks.InputFiles
-import org.gradle.api.tasks.OutputDirectory
-import org.gradle.api.tasks.PathSensitive
-import org.gradle.api.tasks.PathSensitivity
-import org.gradle.api.tasks.TaskAction
 
 plugins {
     alias(libs.plugins.android.application)

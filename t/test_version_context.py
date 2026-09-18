@@ -86,6 +86,7 @@ def test_versioned_release_publication_requires_an_explicit_tag():
 
     assert "github.ref_type == 'tag'" in workflow
     assert "gh release create" in workflow
+    assert "Release tag refused: current source is not promoted to release.target" in workflow
 
 
 def test_agent_and_release_skill_require_live_version_context():
@@ -97,3 +98,11 @@ def test_agent_and_release_skill_require_live_version_context():
     assert "version.properties" in skill
     assert "release_ready=true" in skill
     assert "include version.properties" in manifest
+
+
+def test_android_gradle_imports_precede_version_declarations():
+    gradle = (ROOT / "android/app/build.gradle.kts").read_text()
+
+    last_import = gradle.rfind("import ")
+    first_declaration = gradle.index("fun loadZaraVersionProperties")
+    assert last_import < first_declaration

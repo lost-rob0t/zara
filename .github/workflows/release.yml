@@ -26,6 +26,7 @@ jobs:
       version: ${{ steps.release.outputs.version }}
       version_code: ${{ steps.release.outputs.version_code }}
       tag: ${{ steps.release.outputs.tag }}
+      release_ready: ${{ steps.release.outputs.release_ready }}
 
     steps:
       - name: Check out repository
@@ -41,10 +42,16 @@ jobs:
 
           python scripts/version-context.py --format github-output >> "$GITHUB_OUTPUT"
 
-          version="$(python scripts/version-context.py --format json | python -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+          context="$(python scripts/version-context.py --format json)"
+          version="$(printf '%s' "$context" | python -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+          release_ready="$(printf '%s' "$context" | python -c 'import json,sys; print(str(json.load(sys.stdin)["release_ready"]).lower())')"
           tag="v${version}"
           if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "$tag" ]]; then
             echo "Tag/version mismatch: ref=${GITHUB_REF_NAME}, product=$tag" >&2
+            exit 1
+          fi
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "$release_ready" != "true" ]]; then
+            echo "Release tag refused: current source is not promoted to release.target" >&2
             exit 1
           fi
 
