@@ -19,8 +19,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-import pykka
 
+from zara.actors import BoundedActor
 from zara.config import ZaraConfig
 from zara.llm import LLMClient, LLMResult
 
@@ -144,8 +144,11 @@ def resolve_api_key(provider: str, config: dict[str, Any]) -> Optional[str]:
     return None
 
 
-class RolloutWorker(pykka.ThreadingActor):
-    """One isolated rollout actor. No shared mutable score state."""
+class RolloutWorker(BoundedActor):
+    """One isolated bounded rollout actor. No shared mutable score state."""
+
+    mailbox_size = 64
+    mailbox_overflow = "block"
 
     def __init__(
         self,
