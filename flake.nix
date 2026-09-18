@@ -289,6 +289,7 @@
                   cp -r $src/kb $out/share/zarathushtra/
                   cp -r $src/modules $out/share/zarathushtra/
                   cp -r $src/assets $out/share/zarathushtra/
+                  cp -r $src/browser-addon $out/share/zarathushtra/
                 '' else ""}
 
                 # Create wrapper with correct Python interpreter and environment
@@ -355,6 +356,7 @@
               cp -r $src/scripts $out/share/zarathushtra/
               cp -r $src/zara $out/share/zarathushtra/
               cp -r $src/assets $out/share/zarathushtra/
+              cp -r $src/browser-addon $out/share/zarathushtra/
 
               # zara-console (Python wrapper)
               makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara-console \
