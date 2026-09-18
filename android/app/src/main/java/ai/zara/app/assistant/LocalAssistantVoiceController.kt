@@ -132,6 +132,7 @@ internal class LocalAssistantVoiceController(
             pendingTurn.track(turn)
             turn.whenComplete { result, error ->
                 appContext.mainExecutor.execute {
+                    if (!pendingTurn.isCurrent(turn)) return@execute
                     pendingTurn.clear(turn)
                     if (!isCurrent(token, lifecycleToken)) return@execute
                     if (error != null) {
@@ -187,6 +188,10 @@ internal class PendingLocalTurn {
             old
         }
         if (previous !== next) previous?.cancel(true)
+    }
+
+    fun isCurrent(turn: CompletableFuture<*>): Boolean = synchronized(lock) {
+        active === turn
     }
 
     fun clear(completed: CompletableFuture<*>) {
