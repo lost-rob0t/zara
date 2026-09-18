@@ -15,7 +15,8 @@ class RemoteApiMenuContractTest {
         val keyStore = File("src/main/java/ai/zara/app/model/CloudApiKeyStore.kt").readText()
 
         assertTrue(navigation.contains("RemoteApis(AppMenu.Settings, \"Remote APIs\")"))
-        assertTrue(ui.contains("SectionCard(\"REMOTE APIS\")"))
+        assertTrue(ui.contains("AppRoute.RemoteApis ->"))
+        assertTrue(ui.contains("\"REMOTE APIS\""))
         assertTrue(ui.contains("\"OpenRouter\""))
         assertTrue(ui.contains("\"Generic OpenAI-compatible\""))
         assertTrue(ui.contains("\"StarIntel\""))
