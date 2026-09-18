@@ -113,6 +113,14 @@ connect_timeout = 5.0
 read_timeout = 20.0
 total_timeout = 30.0
 
+[runtime]
+# Backend-neutral assistant runtime. Optional runtimes appear only after live
+# ZARA-RUNTIME/1 discovery; this default requires no sidecar.
+backend = "zara-python"
+prolog_rlm_endpoint = "http://127.0.0.1:18765"
+discovery_timeout = 0.35
+request_timeout = 30.0
+
 [llm]
 # LLM provider for agent mode
 provider = "ollama"  # "anthropic", "openai", "openrouter", or "ollama"
@@ -364,6 +372,51 @@ class ZaraConfig:
                 fields = ", ".join(f"tts.{key}" for key in missing)
                 raise ConfigError(f"11labs TTS requires {fields}")
 
+        runtime_config = config.get("runtime", {})
+        if not isinstance(runtime_config, dict):
+            raise ConfigError("Invalid [runtime] configuration: expected a TOML table")
+        runtime_backend = runtime_config.get("backend", "zara-python")
+        if (
+            not isinstance(runtime_backend, str)
+            or re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", runtime_backend) is None
+        ):
+            raise ConfigError("runtime.backend must be a bounded runtime id")
+        runtime_endpoint = runtime_config.get(
+            "prolog_rlm_endpoint",
+            "http://127.0.0.1:18765",
+        )
+        if not isinstance(runtime_endpoint, str) or not runtime_endpoint.strip():
+            raise ConfigError("runtime.prolog_rlm_endpoint must be a non-empty string")
+        from urllib.parse import urlsplit
+
+        parsed_runtime_endpoint = urlsplit(runtime_endpoint)
+        if (
+            parsed_runtime_endpoint.scheme != "http"
+            or parsed_runtime_endpoint.hostname not in {"127.0.0.1", "localhost", "::1"}
+            or parsed_runtime_endpoint.username is not None
+            or parsed_runtime_endpoint.password is not None
+            or parsed_runtime_endpoint.query
+            or parsed_runtime_endpoint.fragment
+        ):
+            raise ConfigError(
+                "runtime.prolog_rlm_endpoint must be explicit loopback HTTP without credentials"
+            )
+        try:
+            runtime_port = parsed_runtime_endpoint.port
+        except ValueError as error:
+            raise ConfigError("runtime.prolog_rlm_endpoint has an invalid port") from error
+        if runtime_port is None or not 1 <= runtime_port <= 65535:
+            raise ConfigError("runtime.prolog_rlm_endpoint requires a valid port")
+        for key, maximum in (("discovery_timeout", 5.0), ("request_timeout", 300.0)):
+            value = runtime_config.get(key, 0.35 if key == "discovery_timeout" else 30.0)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or not 0 < float(value) <= maximum
+            ):
+                raise ConfigError(f"runtime.{key} must be positive and at most {maximum}")
+
         llm_config = config.get("llm", {})
         if not isinstance(llm_config, dict):
             raise ConfigError("Invalid [llm] configuration: expected a TOML table")
@@ -590,6 +643,19 @@ class ZaraConfig:
             Section dict or empty dict if not found
         """
         return self._config.get(section, {})
+
+    def get_runtime_config(self) -> Dict[str, Any]:
+        """Return the selected backend-neutral runtime and local sidecar bounds."""
+        runtime_config = self.get_section("runtime")
+        return {
+            "backend": runtime_config.get("backend", "zara-python"),
+            "prolog_rlm_endpoint": runtime_config.get(
+                "prolog_rlm_endpoint",
+                "http://127.0.0.1:18765",
+            ),
+            "discovery_timeout": float(runtime_config.get("discovery_timeout", 0.35)),
+            "request_timeout": float(runtime_config.get("request_timeout", 30.0)),
+        }
 
     def get_llm_config(self) -> Dict[str, Any]:
         """
