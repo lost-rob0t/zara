@@ -125,6 +125,7 @@ max_retries = 2
 history_limit = 20
 
 # API keys (can also be set via environment variables)
+# api_key = ""  # generic OpenAI-compatible gateway key; prefer ZARA_LLM_API_KEY
 # anthropic_api_key = ""
 # openai_api_key = ""
 # openrouter_api_key = ""
@@ -614,12 +615,32 @@ class ZaraConfig:
         ):
             endpoint = ""
 
-        # Get API keys from config or environment
-        anthropic_key = os.getenv("ANTHROPIC_API_KEY", llm_config.get("anthropic_api_key", ""))
-        openai_key = os.getenv("OPENAI_API_KEY", llm_config.get("openai_api_key", ""))
-        openrouter_key = os.getenv(
-            "OPENROUTER_API_KEY", llm_config.get("openrouter_api_key", "")
+        # Provider-specific environment variables win, followed by the
+        # generic OpenAI-compatible gateway credential, provider config, then
+        # the generic config key. This lets a private gateway such as
+        # llm.starintel.actor use normal Zara configuration without inventing
+        # a provider protocol.
+        generic_env_key = os.getenv("ZARA_LLM_API_KEY")
+        generic_config_key = llm_config.get("api_key", "")
+        anthropic_key = (
+            os.getenv("ANTHROPIC_API_KEY")
+            or generic_env_key
+            or llm_config.get("anthropic_api_key", "")
+            or generic_config_key
         )
+        openai_key = (
+            os.getenv("OPENAI_API_KEY")
+            or generic_env_key
+            or llm_config.get("openai_api_key", "")
+            or generic_config_key
+        )
+        openrouter_key = (
+            os.getenv("OPENROUTER_API_KEY")
+            or generic_env_key
+            or llm_config.get("openrouter_api_key", "")
+            or generic_config_key
+        )
+        generic_key = generic_env_key or generic_config_key
 
         return {
             "provider": provider,
@@ -628,6 +649,7 @@ class ZaraConfig:
             "anthropic_api_key": anthropic_key if anthropic_key else None,
             "openai_api_key": openai_key if openai_key else None,
             "openrouter_api_key": openrouter_key if openrouter_key else None,
+            "api_key": generic_key if generic_key else None,
             "connect_timeout": float(llm_config.get("connect_timeout", 5.0)),
             "read_timeout": float(llm_config.get("read_timeout", 20.0)),
             "total_timeout": float(llm_config.get("total_timeout", 30.0)),
