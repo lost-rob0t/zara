@@ -524,9 +524,17 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             }
         }
 
-        return future.handle { result, error -> result to error }.thenCompose { (result, error) ->
-            when {
-                error != null -> {
+        return recoverLocalNaturalLanguageTurn(
+            symbolic = future,
+            onMatch = { result ->
+                diagnostics.record(
+                    "local_symbolic.matched",
+                    mapOf("route" to route, "terms" to result.terms.size),
+                )
+                localPrologTurn(result)
+            },
+            onFallback = { error ->
+                if (error != null) {
                     diagnostics.record(
                         "local_symbolic.failed_fallback",
                         mapOf(
@@ -535,24 +543,15 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                         ),
                         error,
                     )
-                    generateLocalModelTurn(query, symbolicFailure = error)
-                }
-                result != null && result.terms.isNotEmpty() -> {
-                    diagnostics.record(
-                        "local_symbolic.matched",
-                        mapOf("route" to route, "terms" to result.terms.size),
-                    )
-                    CompletableFuture.completedFuture(localPrologTurn(result))
-                }
-                else -> {
+                } else {
                     diagnostics.record(
                         "local_symbolic.no_match",
                         mapOf("route" to route),
                     )
-                    generateLocalModelTurn(query, symbolicFailure = null)
                 }
-            }
-        }
+                generateLocalModelTurn(query, symbolicFailure = error)
+            },
+        )
     }
 
     private fun generateLocalModelTurn(
@@ -774,3 +773,18 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         if (routeFailure != null) throw routeFailure
     }
 }
+
+internal fun recoverLocalNaturalLanguageTurn(
+    symbolic: CompletableFuture<LocalQueryResult>,
+    onMatch: (LocalQueryResult) -> TextTurnResult,
+    onFallback: (Throwable?) -> CompletableFuture<TextTurnResult>,
+): CompletableFuture<TextTurnResult> =
+    symbolic.handle { result, error -> result to error }.thenCompose { (result, error) ->
+        when {
+            error != null -> onFallback(error)
+            result != null && result.terms.isNotEmpty() ->
+                CompletableFuture.completedFuture(onMatch(result))
+            else -> onFallback(null)
+        }
+    }
+
