@@ -26,6 +26,7 @@ from zara.plugins.manager import PluginDiagnostic, PluginManager
 from . import bridge, events
 from .backend import AgentRuntimeBackend, RuntimeBackend, RuntimeTurnResult, UnsupportedRuntimeCommand
 from .clarification import ClarificationCoordinator, SessionCloseReason
+from .symbols import ProgrammableSymbolRegistry
 from .commands import (
     ApproveTool,
     CancelTurn,
@@ -123,6 +124,7 @@ class RuntimeHost:
         self._clarifications = ClarificationCoordinator()
         self._plugin_manager: Optional[PluginManager] = None
         self._last_plugin_diagnostics: tuple[PluginDiagnostic, ...] = ()
+        self._symbol_registry = ProgrammableSymbolRegistry()
         self._api_service = None
         self._task_runner = None
 
@@ -152,6 +154,18 @@ class RuntimeHost:
 
     def customization_diagnostics(self):
         return self._require_backend().customization_diagnostics()
+
+    def resolve_symbol(self, symbol: str):
+        """Resolve the active programmable definition for one canonical symbol."""
+        return self._symbol_registry.resolve(symbol)
+
+    def symbol_diagnostics(self, symbol: str):
+        """Return the complete override chain without exposing registered values."""
+        return self._symbol_registry.describe(symbol)
+
+    def programmable_symbols(self, *, kind: Optional[str] = None) -> tuple[str, ...]:
+        """List canonical programmable symbols, optionally filtered by kind."""
+        return self._symbol_registry.symbols(kind=kind)
 
     @property
     def plan_service(self):
@@ -534,6 +548,8 @@ class RuntimeHost:
                 max_workers=plugin_config["max_managed_workers"],
                 advice_registrar=backend.register_agent_loop_advice,
                 advice_unregistrar=backend.unregister_agent_loop_advice,
+                symbol_registrar=self._symbol_registry.register,
+                symbol_unregistrar=self._symbol_registry.unregister,
             )
             self._plugin_manager = manager
             self._last_plugin_diagnostics = ()
