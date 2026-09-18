@@ -220,6 +220,62 @@ class AssistantRuntimeTest {
         }
     }
 
+    @Test
+    fun discoveryRequestHasBoundedTotalDeadline() {
+        val neverRelease = CountDownLatch(1)
+        val client = PrologRlmSidecarClient(
+            discoveryTimeoutMs = 75,
+            requestOverride = { _, path, _, _ ->
+                assertEquals("/zara-runtime/v1/discover", path)
+                neverRelease.await()
+                discoveryPayload()
+            },
+        )
+
+        val failure = try {
+            client.discover()
+            null
+        } catch (error: AssistantRuntimeException) {
+            error
+        }
+
+        assertTrue(failure?.message?.contains("total deadline") == true)
+    }
+
+    @Test
+    fun nonLoopbackSidecarEndpointIsRejected() {
+        var rejected = false
+        try {
+            PrologRlmSidecarClient(endpoint = "http://192.168.1.10:18765")
+        } catch (_: IllegalArgumentException) {
+            rejected = true
+        }
+        assertTrue(rejected)
+    }
+
+    @Test
+    fun inlineContextBoundIsEnforcedBeforeTransport() {
+        val transportCalls = AtomicInteger(0)
+        val client = PrologRlmSidecarClient(requestOverride = { _, _, _, _ ->
+            transportCalls.incrementAndGet()
+            completedPayload("context-bound")
+        })
+        var rejected = false
+        try {
+            client.generate(
+                text = "question",
+                requestId = "context-bound",
+                conversationId = "conversation-1",
+                inlineContext = "x".repeat(262_145),
+            )
+        } catch (_: IllegalArgumentException) {
+            rejected = true
+        }
+
+        assertTrue(rejected)
+        assertEquals(0, transportCalls.get())
+    }
+
     private fun discoveryPayload(): JsonObject = JsonObject().apply {
         add(
             "runtimes",
