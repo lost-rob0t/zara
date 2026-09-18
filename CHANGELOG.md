@@ -23,6 +23,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Android Local chat now falls back to the verified on-device model when symbolic/Prolog resolution fails, while explicit Prolog commands still report their own failures.
 - Android Runtime settings now makes Auto, Local, and Remote explicit user-selectable modes; the choice persists on-device, Local never falls back to a server, and Remote fails closed when unavailable.
 - Android Runtime settings and Diagnostics now show the canonical local-model phase, model/version, format, quantization, and accelerator instead of inferring local AI readiness.
+- Android local-model status refreshes now ignore stale asynchronous completions, so older provider/model state cannot overwrite newer on-device runtime truth after mode changes or Activity teardown.
 - Android Chat now reports the active runtime honestly as Online Remote, Offline Symbolic, Offline Local model, Connecting, or Degraded instead of hard-coding symbolic status.
 - Android Local mode keeps chat usable when the local runtime is ready without requiring a server account/session, and Diagnostics separates Local state from informational Remote state.
 - Android launcher entries use distinct task identities so opening Automation or Watch Setup cannot reuse another Zara launcher surface's task state.
