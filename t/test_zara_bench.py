@@ -172,3 +172,45 @@ def test_mutation_evidence_excludes_heldout_prompts(monkeypatch, tmp_path):
     assert all(row["prompt"] != "HELDOUT_SECRET" for row in seen["failures"])
     assert lineage[-1].accepted is True
     assert lineage[-1].parent_id == "gen-000"
+
+
+def test_run_rollouts_starts_and_stops_exact_worker_count(monkeypatch):
+    started = []
+    stopped = []
+
+    class FakeFuture:
+        def __init__(self, message):
+            self.message = message
+
+        def get(self, timeout):
+            return {"case_id": self.message["case"]["case_id"], "timeout": timeout}
+
+    class FakeRef:
+        def ask(self, message, block):
+            assert block is False
+            return FakeFuture(message)
+
+        def stop(self, block):
+            assert block is True
+            stopped.append(self)
+
+    def fake_start(**kwargs):
+        ref = FakeRef()
+        started.append((ref, kwargs))
+        return ref
+
+    monkeypatch.setattr(bench.RolloutWorker, "start", fake_start)
+    rows = bench.run_rollouts(
+        [bench.BenchmarkCase("one", "hello", split="heldout")],
+        system_prompt="test",
+        provider="openrouter",
+        model=bench.DEFAULT_GLM_MODEL,
+        endpoint="https://example.test/v1/chat/completions",
+        api_key="test-key",
+        workers=10,
+        timeout=1.0,
+    )
+
+    assert len(rows) == 1
+    assert len(started) == 10
+    assert len(stopped) == 10
