@@ -39,6 +39,7 @@ class MainActivity : ComponentActivity() {
     private var operationError by mutableStateOf<String?>(null)
     private var voiceState by mutableStateOf<ManualVoiceState>(ManualVoiceState.Idle)
     private var localAiState by mutableStateOf<LocalAiState?>(null)
+    private var localAiRefreshGeneration = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -442,6 +443,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        localAiRefreshGeneration += 1
         if (::appSession.isInitialized) {
             appSession.setStateObserver(null)
             appSession.setVoiceStreamObserver(null)
@@ -453,8 +455,10 @@ class MainActivity : ComponentActivity() {
 
     private fun refreshLocalAiState() {
         if (!::appSession.isInitialized) return
+        val generation = ++localAiRefreshGeneration
         appSession.localAiState().whenComplete { state, error ->
             runOnUiThread {
+                if (generation != localAiRefreshGeneration || isDestroyed) return@runOnUiThread
                 localAiState = if (error == null) state else null
             }
         }
