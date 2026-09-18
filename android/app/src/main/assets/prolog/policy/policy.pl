@@ -87,7 +87,7 @@ positive(Needle,Tokens) :-
     \+ (member(N,[not,never,cannot,false,avoid,without]),memberchk(N,Window)),
     \+ append(_,[t,don|_],Window), \+ append(_,[t,can|_],Window).
 
-tokens(Codes,Tokens) :- normalize(Codes,Clean),split(Clean,[32],Parts),token_atoms(Parts,Tokens).
+tokens(Codes,Tokens) :- normalize(Codes,Clean),split_codes(Clean,[32],Parts),token_atoms(Parts,Tokens).
 normalize([],[]).
 normalize([C|Cs],[L|Ls]) :-
     (C >= 65,C =< 90 -> L is C+32
@@ -97,8 +97,8 @@ token_atoms([],[]).
 token_atoms([[]|Parts],Tokens) :- !,token_atoms(Parts,Tokens).
 token_atoms([Codes|Parts],[Atom|Tokens]) :- atom_codes(Atom,Codes),token_atoms(Parts,Tokens).
 
-prose(Codes,Segments) :- split(Codes,[10],Lines),prose_lines(Lines,none,Kept),
-    join_lines(Kept,Joined),visible(Joined,Visible),split(Visible,[46,33,63,10],Segments).
+prose(Codes,Segments) :- split_codes(Codes,[10],Lines),prose_lines(Lines,none,Kept),
+    join_lines(Kept,Joined),visible(Joined,Visible),split_codes(Visible,[46,33,63,10],Segments).
 prose_lines([],_,[]).
 prose_lines([Line|Lines],Fence,[Kept|Rest]) :-
     trim_start(Line,Trim),
@@ -124,11 +124,12 @@ skip_quote([],_,[]).
 skip_quote([End|Rest],End,Rest) :- !.
 skip_quote([_|Cs],End,Rest) :- skip_quote(Cs,End,Rest).
 
-split(Codes,Separators,Parts) :- split(Codes,Separators,[],Parts).
-split([],_,Reversed,[Part]) :- reverse(Reversed,Part).
-split([C|Cs],Seps,Reversed,[Part|Parts]) :- memberchk(C,Seps),!,
-    reverse(Reversed,Part),split(Cs,Seps,[],Parts).
-split([C|Cs],Seps,Reversed,Parts) :- split(Cs,Seps,[C|Reversed],Parts).
+% Keep the code-list splitter namespace private; Trealla provides split/4 for atoms.
+split_codes(Codes,Separators,Parts) :- split_codes(Codes,Separators,[],Parts).
+split_codes([],_,Reversed,[Part]) :- reverse(Reversed,Part).
+split_codes([C|Cs],Seps,Reversed,[Part|Parts]) :- memberchk(C,Seps),!,
+    reverse(Reversed,Part),split_codes(Cs,Seps,[],Parts).
+split_codes([C|Cs],Seps,Reversed,Parts) :- split_codes(Cs,Seps,[C|Reversed],Parts).
 text_codes(Text,Codes) :- atom(Text),!,atom_codes(Text,Codes).
 text_codes(Text,Codes) :- is_list(Text),!,list_codes(Text,Codes).
 text_codes(Text,Codes) :- string_codes(Text,Codes).
