@@ -15,6 +15,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Android Local mode now records bounded, redacted runtime diagnostics that can be copied, shared, or cleared from Diagnostics.
 - Release CI now requires exact-source Android and Desktop screenshot evidence plus deeper adversarial regression gates.
 - Zara's strict version context separates the currently built version from the active release target and validates immutable release provenance.
+- Android Settings → Plugins is a real surface with checksum-verified APK selection, review, install-source permission handling, and native PackageInstaller confirmation instead of a gated placeholder.
+- Scheduled is a real cross-platform feature: the runtime owns persistent cron schedules with Prolog-first execution and typed tools, desktop exposes scheduler controls, and Android projects the canonical remote scheduler without creating a second phone-only scheduler.
 
 ### Fixed
 
@@ -25,6 +27,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Android emulator release evidence is more deterministic through explicit host-runtime and SDK provisioning checks.
 - Release-note sections render consistently on Desktop and Android without extra blank lines between a subsection heading and its first item.
 - Immutable alpha publication now keys off canonical version readiness plus actual GitHub release absence instead of push-event changed-file metadata, so protected-branch promotion merges cannot silently skip APK publication.
+- The mutable `android-latest` channel now starts a fresh signed Android/Wear build on every `master` push instead of waiting for the entire repository CI workflow, preserving an exact-SHA APK payload for each successful master build and rolling the direct-download release forward promptly.
 
 ### Changed
 
