@@ -43,6 +43,7 @@ class BenchmarkCase:
 class RolloutResult:
     case_id: str
     split: str
+    prompt: str
     success: bool
     score: float
     latency_ms: float
@@ -179,6 +180,7 @@ class RolloutWorker(BoundedActor):
             RolloutResult(
                 case_id=case.case_id,
                 split=case.split,
+                prompt=case.prompt,
                 success=result.success and not policy_failure,
                 score=score,
                 latency_ms=latency_ms,
@@ -287,6 +289,8 @@ async def propose_mutation(
             {
                 "case_id": row["case_id"],
                 "split": row["split"],
+                "prompt": str(row.get("prompt", ""))[:2000],
+                "response": str(row.get("text", ""))[:2000],
                 "score": row["score"],
                 "error_type": row.get("error_type", ""),
             }
@@ -445,7 +449,8 @@ def evolve(
         failures = [
             row
             for row in source_results
-            if float(row["score"]) < 1.0 or row.get("policy_failure")
+            if row.get("split") == "train"
+            and (float(row["score"]) < 1.0 or row.get("policy_failure"))
         ]
         next_text = asyncio.run(
             propose_mutation(
