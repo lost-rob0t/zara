@@ -24,6 +24,7 @@ sealed interface GitSyncResult {
 class GitOrgWorkspace(
     private val root: File,
 ) {
+    @Synchronized
     fun initialize(): GitWorkspaceStatus {
         root.mkdirs()
         if (!File(root, ".git").isDirectory) {
@@ -32,6 +33,7 @@ class GitOrgWorkspace(
         return status()
     }
 
+    @Synchronized
     fun clone(remote: String, branch: String): GitWorkspaceStatus {
         validateRemote(remote)
         require(branch.isNotBlank()) { "Git branch is required" }
@@ -48,6 +50,7 @@ class GitOrgWorkspace(
         return status()
     }
 
+    @Synchronized
     fun configureRemote(remote: String, branch: String) {
         validateRemote(remote)
         require(branch.isNotBlank()) { "Git branch is required" }
@@ -79,6 +82,7 @@ class GitOrgWorkspace(
         }
     }
 
+    @Synchronized
     fun sync(): GitSyncResult = runCatching {
         open().use { git ->
             var raw = git.status().call()
