@@ -282,6 +282,7 @@ def _render_settings_extensions(
         target = output_dir / filename
         if not pixmap.save(str(target), "PNG"):
             raise RuntimeError(f"failed to save Settings extension fixture: {target}")
+        screenshot_sha256 = hashlib.sha256(target.read_bytes()).hexdigest()
         return {
             "state": "settings-extensions",
             "path": filename,
@@ -289,6 +290,7 @@ def _render_settings_extensions(
             "height": pixmap.height(),
             "theme": _THEME,
             "source_commit": source_commit,
+            "sha256": screenshot_sha256,
         }
     finally:
         window.prepare_for_quit()
