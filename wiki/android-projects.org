@@ -1,0 +1,83 @@
+#+title: Zara Android Projects
+
+* Status
+
+The Android Projects surface is implemented incrementally by issue #653.
+The first slice is intentionally metadata- and conversation-scoped. It does not grant filesystem authority or recursively index a directory.
+
+* User model
+
+A project is a persistent app-private work context with:
+
+- a stable project id,
+- a bounded display name,
+- an explicit source scope,
+- an optional remote conversation id.
+
+One project may be selected at a time. Selection survives process recreation. Selecting no project returns Chat to its ordinary conversation scope.
+
+* Conversation isolation
+
+Project chat and ordinary chat are separate scopes.
+
+- A new remote project begins with no conversation id.
+- The server-returned conversation id is bound only to that project.
+- Switching project A -> B -> A restores each project's own conversation binding.
+- A project response does not replace Android's ordinary selected conversation.
+- Local project turns use an in-process identity of =local-project:<project-id>=; that local identity is never persisted as a remote conversation binding.
+- Last-turn UI projection is isolated by project id, so switching projects does not display another project's latest turn.
+
+* Source authority
+
+The initial model exposes only =ProjectSourceScope.AppPrivate=.
+There is deliberately no path, URI, directory, recursive-crawl flag, or ambient filesystem permission in =ProjectContext=.
+
+A string that looks like a path is still only a project name. Future source attachment must be explicit and separately permissioned; selecting a project must never imply access to nearby files.
+
+* Persistence and degradation
+
+=ProjectContextStore= uses a versioned bounded binary file in Android app-private storage.
+Writes use a temporary file and atomic replacement where supported.
+
+Limits are intentionally small:
+
+- 64 projects,
+- 80 characters per project name,
+- 128 characters per project id,
+- 256 characters per remote conversation id,
+- 64 KiB maximum metadata file.
+
+Malformed, unsupported, oversized, or inconsistent metadata enters an explicit degraded state. Zara does not invent replacement projects or silently overwrite the damaged file; project mutations remain blocked so recovery remains possible.
+
+* UI
+
+=Workspace -> Projects= provides:
+
+- active context summary,
+- registered-project list,
+- project creation,
+- explicit project selection,
+- explicit return to unscoped Chat.
+
+When a project is active, Chat renders a compact =Chat / <project>= breadcrumb.
+
+* Verification
+
+Focused tests cover:
+
+- create/select/list persistence across a new store instance,
+- A/B conversation isolation and switching,
+- missing project rejection,
+- bounded names and control-character rejection,
+- corrupt-state degradation,
+- clearing selection without deleting projects,
+- explicit scoped controller routing,
+- project -> ordinary-chat contamination regression,
+- Projects route/UI/host wiring contracts,
+- absence of filesystem authority in the project model.
+
+Real Android screenshot evidence remains a merge gate for the Projects list, selected-project details, active project breadcrumb, and degraded/empty presentation.
+
+* Stack
+
+The initial implementation is stacked on PR #939 because that PR establishes the canonical three-menu Android navigation and places Projects under =Workspace=. The Projects PR should be retargeted/reconciled after #939 lands, then rerun exact-head Android and repository gates before merge.
