@@ -16,7 +16,7 @@ class AutomationManifestContractTest {
             ".watch.WatchSetupActivity",
         ).map { name ->
             manifest
-                .substringAfter("android:name=\\"$name\\"")
+                .substringAfter("android:name=\"$name\"")
                 .substringBefore("</activity>")
         }
 
