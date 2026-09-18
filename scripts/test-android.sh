@@ -67,7 +67,7 @@ fi
 chmod 600 "$interop_fixture"
 export ZARA_STOCK_FIXTURE="$interop_fixture"
 
-if ! gradle --no-daemon   :app:testDebugUnitTest   :shared-ui:testDebugUnitTest   :org-core:testDebugUnitTest   :org-storage:testDebugUnitTest   :org-app:testDebugUnitTest   :org-todo:testDebugUnitTest   :wear-app:testDebugUnitTest   :app:assembleDebug   :org-app:assembleDebug   :org-todo:assembleDebug   :wear-app:assembleDebug; then
+if ! gradle --no-daemon   :app:testDebugUnitTest   :shared-ui:testDebugUnitTest   :org-core:testDebugUnitTest   :org-storage:testDebugUnitTest   :org-app:testDebugUnitTest   :org-todo:testDebugUnitTest   :org-sync-core:testDebugUnitTest   :wear-app:testDebugUnitTest   :app:assembleDebug   :org-app:assembleDebug   :org-todo:assembleDebug   :org-sync:assembleDebug   :wear-app:assembleDebug; then
   cat "$interop_log" >&2
   echo "stock ZaraServer Android/Wear/Org interop gate failed" >&2
   exit 1
@@ -81,17 +81,19 @@ unset ZARA_STOCK_FIXTURE
 phone_apk="app/build/outputs/apk/debug/app-debug.apk"
 org_apk="org-app/build/outputs/apk/debug/org-app-debug.apk"
 org_todo_apk="org-todo/build/outputs/apk/debug/org-todo-debug.apk"
+org_sync_apk="org-sync/build/outputs/apk/debug/org-sync-debug.apk"
 wear_apk="wear-app/build/outputs/apk/debug/wear-app-debug.apk"
 test -f "$phone_apk"
 test -f "$org_apk"
 test -f "$org_todo_apk"
+test -f "$org_sync_apk"
 test -f "$wear_apk"
 
-for apk in "$phone_apk" "$org_apk" "$org_todo_apk" "$wear_apk"; do
+for apk in "$phone_apk" "$org_apk" "$org_todo_apk" "$org_sync_apk" "$wear_apk"; do
   if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET"; then
     echo "APK secret-marker inspection FAILED: private/secret material found in $apk" >&2
     exit 1
   fi
 done
 
-echo "android/wear/org gate ok: $phone_apk $org_apk $org_todo_apk $wear_apk"
+echo "android/wear/org gate ok: $phone_apk $org_apk $org_todo_apk $org_sync_apk $wear_apk"
