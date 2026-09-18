@@ -27,6 +27,7 @@ MAX_READ_CHARS = 100_000
 READ_ACTIONS = {
     "tabs.list",
     "page.read",
+    "page.elements",
     "page.extract",
     "page.screenshot",
 }
@@ -101,6 +102,13 @@ class BrowserBridgePlugin(ServicePlugin):
                 description="Read visible text and page metadata from a browser tab.",
             ),
             StructuredTool.from_function(
+                self.browser_elements,
+                name="browser_elements",
+                description=(
+                    "List interactive page elements with generated CSS selectors."
+                ),
+            ),
+            StructuredTool.from_function(
                 self.browser_extract,
                 name="browser_extract",
                 description="Extract bounded text and attributes from a CSS selector.",
@@ -156,6 +164,15 @@ class BrowserBridgePlugin(ServicePlugin):
         args = self._tab_args(tab_id)
         args["max_chars"] = self._bounded_chars(max_chars)
         return self._rpc_sync("page.read", args)
+
+    def browser_elements(
+        self,
+        tab_id: Optional[int] = None,
+        max_items: int = 100,
+    ) -> dict[str, Any]:
+        args = self._tab_args(tab_id)
+        args["max_items"] = self._bounded_items(max_items)
+        return self._rpc_sync("page.elements", args)
 
     def browser_extract(
         self,
@@ -483,6 +500,16 @@ class BrowserBridgePlugin(ServicePlugin):
                 f"selector must contain 1 to {MAX_SELECTOR_CHARS} characters"
             )
         return selector
+
+    @staticmethod
+    def _bounded_items(value: Any) -> int:
+        try:
+            count = int(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError("max_items must be an integer") from error
+        if not 1 <= count <= 500:
+            raise ValueError("max_items must be between 1 and 500")
+        return count
 
     @staticmethod
     def _bounded_chars(value: Any) -> int:
