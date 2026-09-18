@@ -1,5 +1,7 @@
 package ai.zara.app.runtime
 
+import ai.zara.app.policy.PolicyAdvice
+import ai.zara.app.policy.PolicyWire
 import ai.zara.app.prolog.PrologQueryPolicy
 import ai.zara.app.prolog.PrologWorkspace
 import ai.zara.app.prolog.TreallaBridge
@@ -26,6 +28,7 @@ class LocalZaraServer(
     private val bridge: TreallaBridge,
     private val corePath: String,
     private val workspace: PrologWorkspace,
+    private val policyPath: String? = null,
     private val diagnostics: (String, Map<String, Any?>, Throwable?) -> Unit = { _, _, _ -> },
 ) : AutoCloseable {
     private val actor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
@@ -108,6 +111,39 @@ class LocalZaraServer(
         }
     }
 
+    fun inspectPolicy(text: String): CompletableFuture<PolicyAdvice> {
+        val query = try {
+            PolicyWire.query(text)
+        } catch (error: IllegalArgumentException) {
+            return CompletableFuture.failedFuture(error)
+        }
+        return submit {
+            check(current.phase == LocalServerPhase.READY) { "Local Zara server is not ready" }
+            check(policyPath != null) { "Local output policy is not installed" }
+            diagnostics(
+                "local_server.policy.begin",
+                mapOf("text_length" to text.length, "generation" to current.generation),
+                null,
+            )
+            try {
+                val advice = PolicyWire.decode(bridge.evaluate(query), current.generation)
+                diagnostics(
+                    "local_server.policy.complete",
+                    mapOf("generation" to current.generation),
+                    null,
+                )
+                advice
+            } catch (error: Throwable) {
+                diagnostics(
+                    "local_server.policy.failed",
+                    mapOf("generation" to current.generation),
+                    error,
+                )
+                throw error
+            }
+        }
+    }
+
     fun resolve(utterance: String): CompletableFuture<LocalQueryResult> {
         val text = utterance.trim()
         require(text.isNotEmpty()) { "Utterance is required" }
@@ -153,6 +189,11 @@ class LocalZaraServer(
         return try {
             bridge.initialize(corePath)
             diagnostics("local_server.native.ready", emptyMap(), null)
+            policyPath?.let { path ->
+                diagnostics("local_server.policy.consult.begin", mapOf("path" to path), null)
+                bridge.consult(path)
+                diagnostics("local_server.policy.consult.complete", mapOf("path" to path), null)
+            }
             val sources = workspace.sourceFiles()
             sources.forEachIndexed { index, source ->
                 diagnostics(
@@ -206,13 +247,18 @@ class LocalZaraServer(
     private fun <T> submit(block: () -> T): CompletableFuture<T> {
         if (closed) return CompletableFuture.failedFuture(IllegalStateException("Local Zara server is closed"))
         val future = CompletableFuture<T>()
-        actor.execute {
+        val task = actor.submit {
+            if (future.isCancelled) return@submit
             try {
                 future.complete(block())
             } catch (error: Throwable) {
                 future.completeExceptionally(error)
             }
         }
+        future.whenComplete { _, _ ->
+            if (future.isCancelled) task.cancel(false)
+        }
+        if (future.isCancelled) task.cancel(false)
         return future
     }
 

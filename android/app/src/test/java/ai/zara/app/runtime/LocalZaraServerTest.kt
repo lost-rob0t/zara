@@ -2,6 +2,7 @@ package ai.zara.app.runtime
 
 import ai.zara.app.prolog.PrologWorkspace
 import ai.zara.app.prolog.TreallaBridge
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -89,6 +90,31 @@ class LocalZaraServerTest {
         server.close()
     }
 
+    @Test
+    fun cancelledQueuedQueryNeverReachesNativeRuntime() {
+        val bridge = BlockingTreallaBridge()
+        val server = LocalZaraServer(
+            bridge,
+            "/private/core.pl",
+            PrologWorkspace(temporary.newFolder("cancelled")),
+        )
+        server.start().get(2, TimeUnit.SECONDS)
+
+        val first = server.query("first(Result)")
+        assertTrue(bridge.firstQueryEntered.await(2, TimeUnit.SECONDS))
+
+        val cancelled = server.query("second(Result)")
+        assertTrue(cancelled.cancel(true))
+
+        bridge.releaseFirstQuery.countDown()
+        first.get(2, TimeUnit.SECONDS)
+        server.query("third(Result)").get(2, TimeUnit.SECONDS)
+
+        assertTrue(cancelled.isCancelled)
+        assertEquals(listOf("first(Result)", "third(Result)"), bridge.queries)
+        server.close()
+    }
+
     private class RecordingTreallaBridge : TreallaBridge {
         val initialized = mutableListOf<String>()
         val consulted = mutableListOf<String>()
@@ -121,5 +147,26 @@ class LocalZaraServerTest {
             shutdownCount += 1
             threadNames += Thread.currentThread().name
         }
+    }
+
+    private class BlockingTreallaBridge : TreallaBridge {
+        val firstQueryEntered = CountDownLatch(1)
+        val releaseFirstQuery = CountDownLatch(1)
+        val queries = mutableListOf<String>()
+
+        override fun initialize(coreAssetPath: String) = Unit
+
+        override fun consult(sourcePath: String) = Unit
+
+        override fun evaluate(query: String): List<String> {
+            queries += query
+            if (query == "first(Result)") {
+                firstQueryEntered.countDown()
+                check(releaseFirstQuery.await(2, TimeUnit.SECONDS)) { "Timed out waiting to release first query" }
+            }
+            return listOf("ok")
+        }
+
+        override fun shutdown() = Unit
     }
 }
