@@ -463,6 +463,8 @@ private fun ZaraDrawer(
     onMoveConversationToProject: (String, String?) -> Unit,
 ) {
     val tokens = LocalZaraTokens.current
+    var showAllPinned by rememberSaveable { mutableStateOf(false) }
+    var showAllRecents by rememberSaveable { mutableStateOf(false) }
     ModalDrawerSheet(
         modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 360.dp),
         drawerContainerColor = tokens.surfaceElevated,
@@ -532,7 +534,12 @@ private fun ZaraDrawer(
             if (conversationState.pinnedConversations.isEmpty()) {
                 DrawerHistoryEmpty("No pinned conversations", "Pin a chat from its ⋮ menu")
             } else {
-                conversationState.pinnedConversations.take(6).forEach { conversation ->
+                val pinned = if (showAllPinned) {
+                    conversationState.pinnedConversations
+                } else {
+                    conversationState.pinnedConversations.take(6)
+                }
+                pinned.forEach { conversation ->
                     key(conversation.id) {
                         ConversationDrawerRow(
                             conversation = conversation,
@@ -545,6 +552,9 @@ private fun ZaraDrawer(
                         )
                     }
                 }
+                if (conversationState.pinnedConversations.size > 6) {
+                    HistoryExpansionAction(showAllPinned) { showAllPinned = !showAllPinned }
+                }
             }
 
             Spacer(Modifier.size(10.dp))
@@ -552,7 +562,12 @@ private fun ZaraDrawer(
             if (conversationState.recentConversations.isEmpty()) {
                 DrawerHistoryEmpty("No recent conversations", "Start a new chat")
             } else {
-                conversationState.recentConversations.take(10).forEach { conversation ->
+                val recents = if (showAllRecents) {
+                    conversationState.recentConversations
+                } else {
+                    conversationState.recentConversations.take(10)
+                }
+                recents.forEach { conversation ->
                     key(conversation.id) {
                         ConversationDrawerRow(
                             conversation = conversation,
@@ -564,6 +579,9 @@ private fun ZaraDrawer(
                             onMoveConversationToProject = onMoveConversationToProject,
                         )
                     }
+                }
+                if (conversationState.recentConversations.size > 10) {
+                    HistoryExpansionAction(showAllRecents) { showAllRecents = !showAllRecents }
                 }
             }
 
@@ -621,6 +639,25 @@ private fun DrawerHistoryEmpty(title: String, detail: String) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp)) {
         Text(title, color = tokens.textMuted, style = MaterialTheme.typography.bodySmall)
         Text(detail, color = tokens.borderActive, style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+@Composable
+private fun HistoryExpansionAction(
+    expanded: Boolean,
+    onClick: () -> Unit,
+) {
+    val tokens = LocalZaraTokens.current
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+    ) {
+        Text(
+            if (expanded) "Show less" else "See all…",
+            modifier = Modifier.fillMaxWidth(),
+            color = tokens.textMuted,
+            textAlign = TextAlign.Start,
+        )
     }
 }
 
