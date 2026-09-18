@@ -6,5 +6,22 @@ import Qt or any other concrete UI implementation.
 """
 
 from . import bridge, events
+from .symbols import (
+    ProgrammableSymbolRegistry,
+    SymbolDiagnostic,
+    SymbolLookupError,
+    SymbolRegistration,
+    SymbolRegistrationError,
+    SymbolSpec,
+)
 
-__all__ = ["bridge", "events"]
+__all__ = [
+    "ProgrammableSymbolRegistry",
+    "SymbolDiagnostic",
+    "SymbolLookupError",
+    "SymbolRegistration",
+    "SymbolRegistrationError",
+    "SymbolSpec",
+    "bridge",
+    "events",
+]
