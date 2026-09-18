@@ -194,7 +194,7 @@ class RuntimeDiagnosticsProjectionTest {
         assertTrue(chat.contains("Connecting…"))
         assertTrue(chat.contains("Degraded"))
         assertTrue(chat.contains("localAiState?.model"))
-        assertTrue(chat.contains("Runtime status $runtimeStatus"))
+        assertTrue(chat.contains("Runtime status \$runtimeStatus"))
     }
 
 }
