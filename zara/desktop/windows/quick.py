@@ -17,7 +17,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from zara.desktop.chat_widgets import ChatComposer, ComposerActionButton, ComposerVoiceButton, MessageWidget
+from zara.desktop.chat_widgets import (
+    ChatComposer,
+    ComposerActionButton,
+    ComposerVoiceButton,
+    MessageWidget,
+)
 from zara.desktop.conversation import ConversationService, ConversationUpdate
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.state import DesktopStatus, INITIAL_STATUS
