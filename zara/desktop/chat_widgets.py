@@ -151,7 +151,6 @@ class ComposerVoiceButton(QPushButton):
         refresh_dynamic_style(self)
 
 
-
 class MessageWidget(QFrame):
     """Render one message without requiring WebEngine or rebuilding its siblings."""
 
