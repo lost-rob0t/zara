@@ -95,3 +95,10 @@ The book is simultaneously:
 - a symbolic-AI textbook;
 - a build-your-own-personal-assistant project;
 - a clean-room implementation of a small but real Zara clone.
+
+
+## Relationship to the canonical Zara user book
+
+Issue #911 and `docs/book.org` remain the canonical end-user/operator Zara Book. **Zara from First Principles** is a separate implementation textbook: it teaches Prolog, symbolic AI, and a clean-room teaching clone from the ground up.
+
+The implementation textbook may link to the canonical user book for current shipped behavior, but it must not compete with or silently redefine the user guide's feature-status authority.
