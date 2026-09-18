@@ -20,6 +20,9 @@ import ai.zara.app.localai.LocalAiState
 import ai.zara.app.localai.LocalGenerationRequest
 import ai.zara.app.localai.LocalTtsState
 import ai.zara.app.runtime.AndroidTextSessionController
+import ai.zara.app.runtime.AssistantRuntimeDescriptor
+import ai.zara.app.runtime.AssistantRuntimeRegistry
+import ai.zara.app.runtime.PROLOG_RLM_RUNTIME_ID
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.AudioOutputFormat
 import ai.zara.app.runtime.ClientStateStore
@@ -91,6 +94,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     )
     private val localServer: LocalZaraServer
     private val localAi = LocalAiServiceClient(context)
+    private val assistantRuntimes = AssistantRuntimeRegistry()
     @Volatile private var latestVoiceStreamState: VoiceStreamState? = null
     @Volatile private var latestVoiceStreamFailure: String? = null
     @Volatile private var latestAudioRoute: AudioRouteSnapshot? = null
@@ -230,6 +234,38 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         )
     }
 
+    fun discoverAssistantRuntimes(): CompletableFuture<List<AssistantRuntimeDescriptor>> =
+        assistantRuntimes.discover().whenComplete { runtimes, error ->
+            if (error != null) {
+                diagnostics.record("assistant_runtime.discovery.failed", emptyMap(), error)
+            } else if (runtimes != null) {
+                diagnostics.record(
+                    "assistant_runtime.discovery.complete",
+                    mapOf(
+                        "installed" to runtimes.joinToString(",") { it.id },
+                        "selected" to assistantRuntimes.selectedRuntimeId(),
+                    ),
+                )
+            }
+        }
+
+    fun installedAssistantRuntimes(): List<AssistantRuntimeDescriptor> =
+        assistantRuntimes.discovered()
+
+    fun selectedAssistantRuntimeId(): String = assistantRuntimes.selectedRuntimeId()
+
+    fun selectAssistantRuntime(runtimeId: String) {
+        val previous = assistantRuntimes.selectedRuntimeId()
+        assistantRuntimes.select(runtimeId)
+        diagnostics.record(
+            "assistant_runtime.changed",
+            mapOf("from" to previous, "to" to assistantRuntimes.selectedRuntimeId()),
+        )
+    }
+
+    fun cancelAssistantTurn(requestId: String): CompletableFuture<Unit> =
+        assistantRuntimes.cancel(requestId)
+
     fun localServerState(): LocalServerState = localServer.state()
 
     fun setLocalServerObserver(observer: ((LocalServerState) -> Unit)?) {
@@ -263,6 +299,9 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 "version_code" to BuildConfig.VERSION_CODE,
                 "source_sha" to BuildConfig.SOURCE_SHA,
                 "runtime_mode" to runtimeMode.name.lowercase(),
+                "assistant_runtime" to assistantRuntimes.selectedRuntimeId(),
+                "installed_assistant_runtimes" to
+                    assistantRuntimes.discovered().joinToString(",") { it.id },
                 "local_server_phase" to server.phase.name.lowercase(),
                 "local_server_generation" to server.generation,
                 "local_server_sources" to server.loadedSources.joinToString(","),
@@ -547,9 +586,12 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         conversationId: String = "local-device",
     ): CompletableFuture<TextTurnResult> {
         val query = text.trim()
-        val catalog = PrologWorkspaceCatalog.from(prologWorkspace.listSources())
         val explicitSymbolic =
             query.startsWith("?-") || query.startsWith("/prolog ") || query.startsWith("/expert ")
+        if (!explicitSymbolic && assistantRuntimes.selectedRuntimeId() == PROLOG_RLM_RUNTIME_ID) {
+            return generatePrologRlmTurn(query, conversationId)
+        }
+        val catalog = PrologWorkspaceCatalog.from(prologWorkspace.listSources())
         val route: String
         val future = when {
             query.startsWith("?-") -> {
@@ -634,6 +676,58 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 )
             },
         )
+    }
+
+    private fun generatePrologRlmTurn(
+        query: String,
+        conversationId: String,
+    ): CompletableFuture<TextTurnResult> {
+        val requestId = UUID.randomUUID().toString()
+        diagnostics.record(
+            "prolog_rlm.generate.begin",
+            mapOf(
+                "request_id" to requestId,
+                "prompt_length" to query.length,
+                "conversation_id" to conversationId,
+            ),
+        )
+        return assistantRuntimes.generatePrologRlm(
+            text = query,
+            requestId = requestId,
+            conversationId = conversationId,
+        ).handle { generated, error ->
+            if (error != null || generated == null) {
+                val failure = error ?: IllegalStateException("Prolog-RLM returned no result")
+                diagnostics.record(
+                    "prolog_rlm.generate.failed",
+                    mapOf("request_id" to requestId),
+                    failure,
+                )
+                // Re-probe after a sidecar failure. The registry fails back to the
+                // embedded runtime if Prolog-RLM is no longer installed/reachable.
+                assistantRuntimes.discover()
+                TextTurnResult(
+                    conversationId = conversationId,
+                    turnId = requestId,
+                    text = "The selected Prolog-RLM runtime is unavailable. Zara rechecked installed runtimes; choose another runtime in Settings → Runtime.",
+                    success = false,
+                )
+            } else {
+                diagnostics.record(
+                    "prolog_rlm.generate.complete",
+                    mapOf(
+                        "request_id" to requestId,
+                        "output_length" to generated.text.length,
+                    ),
+                )
+                TextTurnResult(
+                    conversationId = conversationId,
+                    turnId = requestId,
+                    text = generated.text.ifEmpty { "Prolog-RLM returned no text." },
+                    success = generated.text.isNotEmpty(),
+                )
+            }
+        }
     }
 
     private fun generateLocalModelTurn(
@@ -853,6 +947,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 voiceStreamSink.close()
             }
         }
+        assistantRuntimes.close()
         localServer.close()
         localAi.close()
         if (routeFailure != null) throw routeFailure
