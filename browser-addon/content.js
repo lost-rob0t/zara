@@ -9,6 +9,7 @@
   const MAX_CHARS = 100000;
   const MAX_SELECTOR_CHARS = 2048;
   const MAX_TYPED_CHARS = 100000;
+  const MAX_ITEMS = 500;
 
   function boundedChars(value, fallback = DEFAULT_MAX_CHARS) {
     const number = Number(value ?? fallback);
@@ -63,6 +64,117 @@
     } else {
       element.value = value;
     }
+  }
+
+  function cssPath(element) {
+    if (element.id) {
+      return `#${CSS.escape(element.id)}`;
+    }
+
+    const parts = [];
+    let node = element;
+    while (node && node.nodeType === Node.ELEMENT_NODE && parts.length < 8) {
+      let part = node.localName;
+      if (!part) {
+        break;
+      }
+
+      if (node === document.body) {
+        parts.unshift("body");
+        break;
+      }
+
+      const parent = node.parentElement;
+      if (parent) {
+        const siblings = Array.from(parent.children).filter(
+          (candidate) => candidate.localName === node.localName
+        );
+        if (siblings.length > 1) {
+          const index = siblings.indexOf(node) + 1;
+          part += `:nth-of-type(${index})`;
+        }
+      }
+
+      parts.unshift(part);
+      node = parent;
+    }
+
+    return parts.join(" > ");
+  }
+
+  function isVisible(element) {
+    const style = globalThis.getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden") {
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function boundedItems(value) {
+    const number = Number(value ?? 100);
+    if (!Number.isInteger(number) || number < 1 || number > MAX_ITEMS) {
+      throw new Error(`max_items must be between 1 and ${MAX_ITEMS}`);
+    }
+    return number;
+  }
+
+  function compactText(value, max = 300) {
+    return String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
+  }
+
+  function interactiveElementView(element) {
+    const label = element.labels?.length
+      ? compactText(element.labels[0].innerText || element.labels[0].textContent)
+      : "";
+    return {
+      selector: cssPath(element),
+      tag: element.tagName.toLowerCase(),
+      type: compactText(element.getAttribute("type"), 80),
+      name: compactText(element.getAttribute("name"), 200),
+      role: compactText(element.getAttribute("role"), 80),
+      text: compactText(element.innerText || element.textContent),
+      label,
+      placeholder: compactText(element.getAttribute("placeholder")),
+      aria_label: compactText(element.getAttribute("aria-label")),
+      disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
+    };
+  }
+
+  function elementsPage(args) {
+    const maxItems = boundedItems(args.max_items);
+    const candidates = Array.from(
+      document.querySelectorAll(
+        [
+          "a[href]",
+          "button",
+          "input",
+          "textarea",
+          "select",
+          "[role='button']",
+          "[role='link']",
+          "[contenteditable='true']",
+        ].join(",")
+      )
+    );
+
+    const elements = [];
+    for (const element of candidates) {
+      if (!isVisible(element)) {
+        continue;
+      }
+      elements.push(interactiveElementView(element));
+      if (elements.length >= maxItems) {
+        break;
+      }
+    }
+
+    return {
+      url: location.href,
+      count: elements.length,
+      truncated: elements.length >= maxItems,
+      elements,
+    };
   }
 
   function readPage(args) {
@@ -183,6 +295,8 @@
         return { ready: true, url: location.href };
       case "read":
         return readPage(message.args || {});
+      case "elements":
+        return elementsPage(message.args || {});
       case "extract":
         return extractPage(message.args || {});
       case "click":
