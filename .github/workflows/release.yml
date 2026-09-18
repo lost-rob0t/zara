@@ -57,7 +57,11 @@ jobs:
 
   android-alpha-release:
     name: build and publish Android alpha
-    if: github.ref_type == 'tag'
+    if: >-
+      github.ref_type == 'tag' ||
+      (github.ref == 'refs/heads/master' &&
+       needs.validate-version-context.outputs.release_ready == 'true' &&
+       contains(github.event.head_commit.modified, 'version.properties'))
     needs:
       - validate-version-context
     runs-on: ubuntu-latest
@@ -129,6 +133,10 @@ jobs:
           set -euo pipefail
 
           if gh release view "$TAG" >/dev/null 2>&1; then
+            if [[ "${GITHUB_REF_TYPE}" == "branch" ]]; then
+              echo "Release $TAG already exists; canonical promotion is already published."
+              exit 0
+            fi
             echo "Release $TAG already exists; refusing to overwrite it." >&2
             exit 1
           fi
