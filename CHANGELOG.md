@@ -4,6 +4,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+- Assistant runtimes are backend-neutral: Desktop and Android discover installed runtimes, expose Prolog-RLM as an optional runtime when present, and keep model/provider reasoning inside Prolog-RLM when selected.
 - Keep this section for work that is merged but not yet assigned to a release.
 
 ## 0.2.2-alpha
