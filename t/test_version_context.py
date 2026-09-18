@@ -36,11 +36,21 @@ def test_version_context_is_machine_readable_and_strict():
     )
 
 
-def test_active_release_target_is_0_2_2_alpha():
-    properties = _properties()
+def test_release_target_is_monotonic_from_current_source():
+    from zara.version_context import compare_semver
 
-    assert properties["release.target"] == "0.2.2-alpha"
-    assert properties["release.targetAndroidVersionCode"] == "4"
+    properties = _properties()
+    precedence = compare_semver(
+        properties["release.target"],
+        properties["zara.version"],
+    )
+    assert precedence >= 0
+    if precedence == 0:
+        assert properties["release.targetAndroidVersionCode"] == properties["android.versionCode"]
+    else:
+        assert int(properties["release.targetAndroidVersionCode"]) > int(
+            properties["android.versionCode"]
+        )
 
 
 def test_version_context_cli_projects_the_canonical_contract():
@@ -56,8 +66,10 @@ def test_version_context_cli_projects_the_canonical_contract():
     assert context["schema"] == 1
     assert context["version"] == _properties()["zara.version"]
     assert context["android_version_code"] == int(_properties()["android.versionCode"])
-    assert context["release_target"] == "0.2.2-alpha"
-    assert context["release_target_android_version_code"] == 4
+    assert context["release_target"] == _properties()["release.target"]
+    assert context["release_target_android_version_code"] == int(
+        _properties()["release.targetAndroidVersionCode"]
+    )
     assert context["tag"] == f"v{context['version']}"
 
 
@@ -106,3 +118,61 @@ def test_android_gradle_imports_precede_version_declarations():
     last_import = gradle.rfind("import ")
     first_declaration = gradle.index("fun loadZaraVersionProperties")
     assert last_import < first_declaration
+
+
+def test_version_context_rejects_regression_and_unknown_keys(tmp_path):
+    import pytest
+
+    from zara.version_context import VersionContextError, load_version_context
+
+    bad_contexts = (
+        """schema=1
+zara.version=0.2.2-alpha
+android.versionCode=4
+release.target=0.2.1-alpha
+release.targetAndroidVersionCode=5
+""",
+        """schema=1
+zara.version=0.1.2-alpha
+android.versionCode=3
+release.target=0.2.2-alpha
+release.targetAndroidVersionCode=3
+""",
+        """schema=1
+zara.version=0.1.2-alpha
+android.versionCode=3
+release.target=0.2.2-alpha
+release.targetAndroidVersionCode=4
+surprise.key=nope
+""",
+    )
+    for index, content in enumerate(bad_contexts):
+        path = tmp_path / f"bad-{index}.properties"
+        path.write_text(content)
+        with pytest.raises(VersionContextError):
+            load_version_context(path)
+
+
+def test_release_ready_only_after_exact_target_promotion(tmp_path):
+    from zara.version_context import load_version_context
+
+    current = load_version_context(ROOT / "version.properties")
+    assert current.release_ready is (
+        current.version == current.release_target
+        and current.android_version_code == current.release_target_android_version_code
+    )
+
+    promoted = tmp_path / "promoted.properties"
+    promoted.write_text(
+        "\n".join(
+            (
+                "schema=1",
+                "zara.version=0.2.2-alpha",
+                "android.versionCode=4",
+                "release.target=0.2.2-alpha",
+                "release.targetAndroidVersionCode=4",
+                "",
+            )
+        )
+    )
+    assert load_version_context(promoted).release_ready is True
