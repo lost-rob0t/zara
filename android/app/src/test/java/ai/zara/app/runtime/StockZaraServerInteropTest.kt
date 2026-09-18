@@ -92,6 +92,8 @@ private class FixtureJeroMqDealer(
     init {
         socket.setLinger(0)
         socket.setHandshakeIvl(2_000)
+        check(socket.setImmediate(false))
+        check(socket.setSendTimeOut(2_000))
         check(socket.setCurveServerKey(JeroMqCurveKeyCodec.decode(serverPublic)))
         check(socket.setCurvePublicKey(JeroMqCurveKeyCodec.decode(clientPublic)))
         check(socket.setCurveSecretKey(JeroMqCurveKeyCodec.decode(clientSecret)))

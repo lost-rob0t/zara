@@ -57,7 +57,11 @@ jobs:
 
   android-alpha-release:
     name: build and publish Android alpha
-    if: github.ref_type == 'tag'
+    if: >-
+      github.ref_type == 'tag' ||
+      (github.ref == 'refs/heads/master' &&
+       needs.validate-version-context.outputs.release_ready == 'true' &&
+       contains(github.event.head_commit.modified, 'version.properties'))
     needs:
       - validate-version-context
     runs-on: ubuntu-latest
@@ -122,6 +126,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.validate-version-context.outputs.tag }}
+          VERSION: ${{ needs.validate-version-context.outputs.version }}
+          VERSION_CODE: ${{ needs.validate-version-context.outputs.version_code }}
           APK: ${{ steps.artifact.outputs.apk }}
           MANIFEST: ${{ steps.artifact.outputs.manifest }}
         shell: bash
@@ -129,6 +135,47 @@ jobs:
           set -euo pipefail
 
           if gh release view "$TAG" >/dev/null 2>&1; then
+            if [[ "${GITHUB_REF_TYPE}" == "branch" ]]; then
+              existing_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq '.sha')"
+              if [[ "$existing_sha" != "$GITHUB_SHA" ]]; then
+                echo "Release $TAG already exists at $existing_sha; expected promoted source $GITHUB_SHA." >&2
+                exit 1
+              fi
+
+              assets="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+              for required in \
+                "$(basename "$APK")" \
+                "$(basename "${APK}.sha256")" \
+                "$(basename "$MANIFEST")"
+              do
+                if ! grep -Fxq "$required" <<< "$assets"; then
+                  echo "Release $TAG is missing required asset $required." >&2
+                  exit 1
+                fi
+              done
+
+              existing_dir="$RUNNER_TEMP/existing-release-${TAG}"
+              mkdir -p "$existing_dir"
+              gh release download "$TAG" \
+                --dir "$existing_dir" \
+                --pattern "$(basename "$MANIFEST")"
+              existing_manifest="$existing_dir/$(basename "$MANIFEST")"
+              grep -Fxq "source_sha=${GITHUB_SHA}" "$existing_manifest" || {
+                echo "Release $TAG manifest source_sha does not match $GITHUB_SHA." >&2
+                exit 1
+              }
+              grep -Fxq "version_name=${VERSION}" "$existing_manifest" || {
+                echo "Release $TAG manifest version_name does not match $VERSION." >&2
+                exit 1
+              }
+              grep -Fxq "version_code=${VERSION_CODE}" "$existing_manifest" || {
+                echo "Release $TAG manifest version_code does not match $VERSION_CODE." >&2
+                exit 1
+              }
+
+              echo "Release $TAG already exists and matches canonical promotion $GITHUB_SHA."
+              exit 0
+            fi
             echo "Release $TAG already exists; refusing to overwrite it." >&2
             exit 1
           fi

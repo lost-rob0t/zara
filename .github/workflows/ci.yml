@@ -127,7 +127,7 @@ jobs:
             image: ubuntu:24.04
             python: python3
           - name: Arch Linux
-            image: archlinux:latest
+            image: ghcr.io/archlinux/archlinux:latest
             python: python
 
     container:
