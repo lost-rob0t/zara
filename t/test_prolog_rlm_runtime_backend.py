@@ -166,6 +166,29 @@ def test_cancel_maps_to_sidecar_request_id() -> None:
     assert client.cancelled == ["turn-3"]
 
 
+def test_cancelled_turn_cannot_publish_late_completion() -> None:
+    client = BlockingClient()
+    backend = PrologRlmRuntimeBackend(client=client)
+
+    async def scenario():
+        await backend.start()
+        turn = asyncio.create_task(
+            backend.submit_turn("question", turn_id="turn-cancelled")
+        )
+        assert await asyncio.to_thread(client.started.wait, 1.0)
+
+        await backend.cancel_turn("turn-cancelled")
+        client.release.set()
+
+        with pytest.raises(PrologRlmRuntimeError) as raised:
+            await turn
+        assert raised.value.kind == "cancelled"
+        assert str(raised.value) == "cancelled: Prolog-RLM turn was cancelled"
+
+    run(scenario())
+    assert client.cancelled == ["turn-cancelled"]
+
+
 def test_incompatible_runtime_identity_is_not_started() -> None:
     client = FakeClient(runtime=descriptor(id="different-runtime"))
     backend = PrologRlmRuntimeBackend(client=client)
