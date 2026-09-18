@@ -53,6 +53,7 @@ def test_browser_tools_mark_mutations_for_approval():
     assert set(tools) == {
         "browser_tabs",
         "browser_read",
+        "browser_elements",
         "browser_extract",
         "browser_screenshot",
         "browser_open",
@@ -65,6 +66,7 @@ def test_browser_tools_mark_mutations_for_approval():
     for name in (
         "browser_tabs",
         "browser_read",
+        "browser_elements",
         "browser_extract",
         "browser_screenshot",
     ):
