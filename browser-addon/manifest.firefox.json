@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "Zara Browser Bridge",
+  "version": "0.1.0",
+  "description": "Connects Zara and Prolog-RLM to Firefox through an authenticated local bridge.",
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "action": {
+    "default_title": "Zara Browser Bridge"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "zara-browser@starintel.actor",
+      "strict_min_version": "128.0"
+    }
+  }
+}
