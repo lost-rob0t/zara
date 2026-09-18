@@ -25,5 +25,7 @@ rootProject.name = "zara-android"
 include(":app")
 include(":shared-ui")
 include(":org-core")
+include(":org-storage")
 include(":org-app")
+include(":org-todo")
 include(":wear-app")
