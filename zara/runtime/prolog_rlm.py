@@ -77,6 +77,7 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
         self._generation = 0
         self._publisher = None
         self._registered_tools: dict[str, object] = {}
+        self._cancelled_turns: set[str] = set()
 
     @property
     def principal_id(self) -> str:
@@ -108,6 +109,7 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
                 kind="incompatible_protocol",
             )
         self._generation += 1
+        self._cancelled_turns.clear()
         self._descriptor = descriptor
 
     async def submit_turn(
@@ -132,9 +134,15 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
         messages = _normalized_messages(conversation_history or ())
         messages.append({"role": "user", "content": _bounded_text(text, 131072, "turn text")})
 
+        request_id = _bounded_id(turn_id, "turn_id")
+        if request_id in self._cancelled_turns:
+            raise PrologRlmRuntimeError(
+                "Prolog-RLM turn was cancelled",
+                kind="cancelled",
+            )
         request: dict[str, Any] = {
             "protocol": ZARA_RUNTIME_PROTOCOL,
-            "request_id": _bounded_id(turn_id, "turn_id"),
+            "request_id": request_id,
             "mode": "rlm",
             "messages": messages,
             "metadata": {
@@ -162,14 +170,22 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
             ) from None
         if runtime_generation != self._generation or self._descriptor is not descriptor:
             raise PrologRlmRuntimeError("Prolog-RLM runtime generation changed")
-        return _turn_result_from_reply(reply, request_id=request["request_id"])
+        if request_id in self._cancelled_turns:
+            self._cancelled_turns.discard(request_id)
+            raise PrologRlmRuntimeError(
+                "Prolog-RLM turn was cancelled",
+                kind="cancelled",
+            )
+        return _turn_result_from_reply(reply, request_id=request_id)
 
     async def cancel_turn(self, turn_id: str) -> None:
         self._require_started()
+        request_id = _bounded_id(turn_id, "turn_id")
+        self._cancelled_turns.add(request_id)
         try:
             await asyncio.to_thread(
                 self._client.cancel,
-                _bounded_id(turn_id, "turn_id"),
+                request_id,
             )
         except RuntimeDiscoveryError:
             raise PrologRlmRuntimeError(
@@ -222,6 +238,7 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
         self._generation += 1
         self._descriptor = None
         self._registered_tools.clear()
+        self._cancelled_turns.clear()
 
     def _require_started(self):
         if self._descriptor is None:
