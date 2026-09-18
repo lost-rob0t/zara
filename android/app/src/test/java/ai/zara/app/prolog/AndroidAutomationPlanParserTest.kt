@@ -22,6 +22,32 @@ class AndroidAutomationPlanParserTest {
     }
 
     @Test
+    fun `trealla canonical chars list round trips as bounded text`() {
+        val plan = AndroidAutomationPlanParser.parse(
+            "youtube_psytrance",
+            "actions([app_search(youtube, [p,s,y,t,r,a,n,c,e])])",
+        )
+
+        assertEquals(
+            listOf(AndroidAutomationAction.SearchApp("youtube", "psytrance")),
+            plan.actions,
+        )
+    }
+
+    @Test
+    fun `trealla chars list preserves quoted punctuation`() {
+        val plan = AndroidAutomationPlanParser.parse(
+            "uri_demo",
+            "actions([open_uri([h,t,t,p,s,':','/','/',e,x,a,m,p,l,e,'.',c,o,m])])",
+        )
+
+        assertEquals(
+            listOf(AndroidAutomationAction.OpenUri("https://example.com")),
+            plan.actions,
+        )
+    }
+
+    @Test
     fun `revanced remains a semantic alias not a package id`() {
         val plan = AndroidAutomationPlanParser.parse(
             "revanced_psytrance",
@@ -67,10 +93,11 @@ class AndroidAutomationPlanParserTest {
     }
 
     @Test
-    fun `unknown actions raw intents and unquoted data fail closed`() {
+    fun `unknown actions raw intents and unquoted multi-character data fail closed`() {
         assertRejected("actions([shell('id')])")
         assertRejected("actions([intent('android.intent.action.VIEW')])")
         assertRejected("actions([app_search(youtube, psytrance)])")
+        assertRejected("actions([app_search(youtube, [psytrance])])")
         assertRejected("actions([global_action(power_off)])")
     }
 

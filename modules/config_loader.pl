@@ -78,6 +78,12 @@ write_default_config(Stream) :-
     writeln(Stream, '%'),
     writeln(Stream, '% Uncomment and modify as needed.'),
     writeln(Stream, ''),
+    writeln(Stream, '% ---- Project Identity ----'),
+    writeln(Stream, '% Rename the assistant/project. Default wake words follow this name:'),
+    writeln(Stream, '% project_name("Mara").'),
+    writeln(Stream, '% Optional separate identity presented to LLM providers:'),
+    writeln(Stream, '% llm_app_name("Mara Android").'),
+    writeln(Stream, ''),
     writeln(Stream, '% ---- Custom TODO Settings ----'),
     writeln(Stream, '% todo_destination("~/my-custom-org/tasks.org").'),
     writeln(Stream, '% todo_context_mode(llm_only).  % Options: infer, infer_with_llm, llm_only'),
@@ -102,7 +108,7 @@ write_default_config(Stream) :-
     writeln(Stream, '% dictation_command(["zara-dictate", "small", "cpu", "16", "2"]).'),
     writeln(Stream, ''),
     writeln(Stream, '% ---- Wake Words ----'),
-    writeln(Stream, '% Wake phrases for the voice listener (edit-distance matched):'),
+    writeln(Stream, '% Optional explicit wake phrases replace project-name-derived defaults:'),
     writeln(Stream, '% wake_word("jarvis").'),
     writeln(Stream, ''),
     writeln(Stream, '% ---- Timer and Alarm Sounds ----'),
@@ -276,10 +282,12 @@ validate_user_fact(alarm_sound(Setting), kb_device_providers, alarm_sound(Settin
     sound_setting(Setting).
 validate_user_fact(search_engine(Template), kb_config, search_engine(Template)) :-
     text_value(Template).
+validate_user_fact(project_name(Name), kb_config, project_name(Name)) :-
+    nonempty_text(Name).
+validate_user_fact(llm_app_name(Name), kb_config, llm_app_name(Name)) :-
+    nonempty_text(Name).
 validate_user_fact(wake_word(Word), kb_config, wake_word(Word)) :-
-    text_value(Word),
-    text_string(Word, Text),
-    Text \= "".
+    nonempty_text(Word).
 validate_user_fact(llm_provider(Provider), kb_config, llm_provider(Provider)) :-
     memberchk(Provider, [ollama, openai, openrouter, anthropic]).
 validate_user_fact(llm_model(Model), kb_config, llm_model(Model)) :-
@@ -298,6 +306,11 @@ validate_user_fact(verb_intent(Surface, Intent, Arity), kb_intents,
 
 text_value(Value) :-
     atom(Value) ; string(Value).
+
+nonempty_text(Value) :-
+    text_value(Value),
+    text_string(Value, Text),
+    Text \= "".
 
 sound_setting(disabled).
 sound_setting(Path) :-
@@ -372,10 +385,12 @@ validate_server_user_fact(Module:Term, Module, Fact) :-
     validate_server_user_fact(Term, Module, Fact).
 validate_server_user_fact(search_engine(Template), kb_config, search_engine(Template)) :-
     text_value(Template).
+validate_server_user_fact(project_name(Name), kb_config, project_name(Name)) :-
+    nonempty_text(Name).
+validate_server_user_fact(llm_app_name(Name), kb_config, llm_app_name(Name)) :-
+    nonempty_text(Name).
 validate_server_user_fact(wake_word(Word), kb_config, wake_word(Word)) :-
-    text_value(Word),
-    text_string(Word, Text),
-    Text \= "".
+    nonempty_text(Word).
 validate_server_user_fact(llm_provider(Provider), kb_config, llm_provider(Provider)) :-
     memberchk(Provider, [ollama, openai, openrouter, anthropic]).
 validate_server_user_fact(llm_model(Model), kb_config, llm_model(Model)) :-

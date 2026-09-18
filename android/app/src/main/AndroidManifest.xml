@@ -30,6 +30,9 @@
         <package android:name="com.google.android.youtube" />
         <package android:name="app.revanced.android.youtube" />
         <package android:name="app.rvx.android.youtube" />
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
     </queries>
 
     <application
@@ -39,6 +42,13 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
         android:allowBackup="false">
+
+        <uses-native-library
+            android:name="libvndksupport.so"
+            android:required="false" />
+        <uses-native-library
+            android:name="libOpenCL.so"
+            android:required="false" />
 
         <activity
             android:name=".MainActivity"
@@ -72,6 +82,11 @@
         </activity>
 
         <service
+            android:name=".localai.LocalAiService"
+            android:exported="false"
+            android:process=":voice" />
+
+        <service
             android:name=".assistant.ZaraVoiceInteractionService"
             android:exported="true"
             android:label="Zara"
@@ -92,6 +107,21 @@
             android:process=":voice" />
 
         <service
+            android:name=".assistant.ZaraRecognitionService"
+            android:exported="true"
+            android:label="Zara speech recognition"
+            android:permission="android.permission.BIND_SPEECH_RECOGNITION_SERVICE"
+            android:process=":voice">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.speech"
+                android:resource="@xml/recognition_service" />
+        </service>
+
+        <service
             android:name=".accessibility.ZaraAccessibilityService"
             android:exported="true"
             android:label="Zara automation"
@@ -108,11 +138,11 @@
         <receiver
             android:name=".update.UpdateInstallReceiver"
             android:exported="false" />
-
         <receiver
             android:name=".plugins.PluginInstallReceiver"
             android:exported="false"
             android:process=":voice" />
+
     </application>
 
 </manifest>

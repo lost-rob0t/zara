@@ -9,11 +9,45 @@ mkdir -p "$tmp/bin"
 cat > "$tmp/bin/qrencode" <<'QR'
 #!/usr/bin/env bash
 set -euo pipefail
-payload="${@: -1}"
-printf '%s\n' "$payload" > "${PAIR_TEST_STATE}/payload"
-printf '[mock qr]\n'
+state="${PAIR_TEST_STATE}"
+args=("$@")
+last_index=$((${#args[@]} - 1))
+payload="${args[$last_index]}"
+format=""
+output=""
+
+for ((i = 0; i < ${#args[@]}; i++)); do
+  case "${args[$i]}" in
+    -t)
+      i=$((i + 1))
+      format="${args[$i]}"
+      ;;
+    -o)
+      i=$((i + 1))
+      output="${args[$i]}"
+      ;;
+  esac
+done
+
+printf '%s\n' "$payload" > "$state/payload"
+printf '%s\n' "${format:-unknown}" >> "$state/qr-formats"
+
+if [[ -n "$output" ]]; then
+  printf 'mock png\n' > "$output"
+else
+  printf '[mock qr]\n'
+fi
 QR
 chmod +x "$tmp/bin/qrencode"
+
+cat > "$tmp/bin/xdg-open" <<'OPEN'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $# -eq 1 ]]
+[[ -s "$1" ]]
+printf '%s\n' "$1" > "${PAIR_TEST_STATE}/png-opened"
+OPEN
+chmod +x "$tmp/bin/xdg-open"
 
 cat > "$tmp/bin/adb" <<'ADB'
 #!/usr/bin/env bash
@@ -70,7 +104,15 @@ ZARA_ADB_QR_TIMEOUT=2 \
 
 payload="$(cat "$tmp/payload")"
 [[ "$payload" =~ ^WIFI:T:ADB\;S:studio-[0-9a-f]{10}\;P:[0-9a-f]{24}\;\;$ ]]
+grep -Fxq 'PNG' "$tmp/qr-formats"
+grep -Fxq 'UTF8i' "$tmp/qr-formats"
+[[ -s "$tmp/png-opened" ]]
+grep -Fq 'PNG QR opened in image viewer; scan it with the Wireless debugging scanner.' "$tmp/output"
 grep -Fq 'Discovered pairing endpoint: 10.50.50.69:39625' "$tmp/output"
 grep -Fq 'Android device connected for Zara development: 10.50.50.69:42177' "$tmp/output"
+if grep -Fq "$payload" "$tmp/output"; then
+  echo "pairing payload leaked to stdout" >&2
+  exit 1
+fi
 
 echo "Zara pair-android QR flow test passed"
