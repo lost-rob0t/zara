@@ -131,12 +131,34 @@ object AndroidAutomationPlanParser {
                 unescape(value.substring(1, value.length - 1), '\'')
             value.length >= 2 && value.first() == '"' && value.last() == '"' ->
                 unescape(value.substring(1, value.length - 1), '"')
+            value.startsWith('[') && value.endsWith(']') -> parseTreallaCharList(value)
             else -> throw IllegalArgumentException("automation text must be quoted")
         }
         require(decoded.isNotBlank()) { "automation text must not be blank" }
         require(decoded.encodeToByteArray().size <= maxBytes) { "automation text exceeds byte limit" }
         require(decoded.none { it.code < 0x20 }) { "automation text contains control characters" }
         return decoded
+    }
+
+    private fun parseTreallaCharList(value: String): String {
+        val body = value.substring(1, value.length - 1).trim()
+        if (body.isEmpty()) return ""
+        return buildString {
+            splitTopLevel(body).forEach { raw ->
+                val item = raw.trim()
+                val decoded = when {
+                    item.length >= 2 && item.first() == '\'' && item.last() == '\'' ->
+                        unescape(item.substring(1, item.length - 1), '\'')
+                    item.length >= 2 && item.first() == '"' && item.last() == '"' ->
+                        unescape(item.substring(1, item.length - 1), '"')
+                    else -> item
+                }
+                require(decoded.codePointCount(0, decoded.length) == 1) {
+                    "automation text character list contains a non-character term"
+                }
+                append(decoded)
+            }
+        }
     }
 
     private fun unescape(value: String, quote: Char): String = buildString {

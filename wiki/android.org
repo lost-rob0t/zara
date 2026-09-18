@@ -102,14 +102,28 @@ The debug APK is produced at the standard Gradle location:
 android/app/build/outputs/apk/debug/app-debug.apk
 #+end_example
 
-The versioned GitHub alpha release runs the Android release gate on =master=.
-It loads the update-compatible debug signing key from the
-=ZARA_ANDROID_DEBUG_KEYSTORE_B64= Actions secret, verifies the APK signing
-certificate before publication, and attaches the APK with its SHA-256 file.
-Advance =versionCode= and =versionName= together in
-=android/app/build.gradle.kts= to publish the next alpha. The release APK is
-still a sideloaded debug build; hardware and Assistant-role acceptance remain
-separate.
+Zara product/version state is centralized in the repository-root
+=version.properties=. =zara.version= and =android.versionCode= identify the
+source currently being built; =release.target= and
+=release.targetAndroidVersionCode= identify the active release line. Inspect
+the validated machine-readable context with:
+
+#+begin_src sh
+python scripts/version-context.py --format json
+#+end_src
+
+Python packaging, the phone APK, and the Wear APK consume the current values
+from that file. A =master= push validates the context but does not mint an
+immutable versioned release. The separately gated =android-latest= channel
+remains mutable and points at the latest fully green master artifact.
+
+An immutable alpha is published only from an explicit =v*= tag whose name
+matches the current product version *and* only after the current version/code
+have been promoted to the active target (=release_ready=true=). The release
+workflow loads the update-compatible debug signing key from
+=ZARA_ANDROID_DEBUG_KEYSTORE_B64=, verifies the APK signing certificate, and
+attaches the APK, checksum, and provenance manifest. The release APK remains a
+sideloaded debug build; hardware and Assistant-role acceptance remain separate.
 
 A successful =assembleDebug= is necessary, but it is not acceptance for the whole Android assistant.
 

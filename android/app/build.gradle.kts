@@ -1,4 +1,5 @@
 import groovy.json.JsonSlurper
+import java.util.Properties
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
@@ -11,6 +12,32 @@ import org.gradle.api.tasks.TaskAction
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+}
+
+fun loadZaraVersionProperties(projectRoot: java.io.File): Properties {
+    val versionFile = projectRoot.resolve("../version.properties")
+    require(versionFile.isFile) {
+        "Canonical Zara version context is missing: " + versionFile.absolutePath
+    }
+    return Properties().apply {
+        versionFile.inputStream().use { load(it) }
+    }
+}
+
+val zaraVersionProperties = loadZaraVersionProperties(rootProject.projectDir)
+val zaraVersionName = requireNotNull(zaraVersionProperties.getProperty("zara.version")) {
+    "version.properties is missing zara.version"
+}
+val zaraAndroidVersionCode =
+    zaraVersionProperties.getProperty("android.versionCode")?.toIntOrNull()
+        ?: error("version.properties android.versionCode must be an integer")
+require(zaraVersionName.matches(Regex(
+    """^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$"""
+))) {
+    "version.properties zara.version must be SemVer"
+}
+require(zaraAndroidVersionCode in 1..2100000000) {
+    "version.properties android.versionCode is outside Android's valid range"
 }
 
 abstract class GeneratePortableSemanticAssets : DefaultTask() {
@@ -27,6 +54,7 @@ abstract class GeneratePortableSemanticAssets : DefaultTask() {
         val intentFrames = checkNotNull(sources["intent_frames.pl"]) { "intent_frames.pl input is required" }
         val normalizer = checkNotNull(sources["normalizer.pl"]) { "normalizer.pl input is required" }
         val intents = checkNotNull(sources["intents.pl"]) { "intents.pl input is required" }
+        val changelog = checkNotNull(sources["CHANGELOG.md"]) { "CHANGELOG.md input is required" }
         val output = outputDirectory.get().asFile
         output.deleteRecursively()
         project.copy {
@@ -40,6 +68,7 @@ abstract class GeneratePortableSemanticAssets : DefaultTask() {
             from(intents) {
                 into("prolog/shared/kb")
             }
+            from(changelog)
         }
     }
 }
@@ -53,6 +82,15 @@ fun githubPullRequestHeadSha(): String? {
     val head = pullRequest["head"] as? Map<*, *> ?: return null
     return head["sha"] as? String
 }
+
+val samsungHealthAars = fileTree("libs") {
+    include("samsung-health-data-api-*.aar")
+}
+val samsungHealthAarFiles = samsungHealthAars.files
+require(samsungHealthAarFiles.size <= 1) {
+    "Keep exactly one Samsung Health Data SDK AAR under android/app/libs"
+}
+val hasSamsungHealthSdk = samsungHealthAarFiles.size == 1
 
 val androidNdkVersion = providers.environmentVariable("ZARA_ANDROID_NDK_VERSION").orNull
     ?: error("ZARA_ANDROID_NDK_VERSION must be supplied by the pinned Android Nix toolchain")
@@ -77,9 +115,10 @@ android {
         applicationId = "ai.zara.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.1.2-alpha"
+        versionCode = zaraAndroidVersionCode
+        versionName = zaraVersionName
         buildConfigField("String", "SOURCE_SHA", "\"$sourceSha\"")
+        buildConfigField("boolean", "HAS_SAMSUNG_HEALTH_SDK", hasSamsungHealthSdk.toString())
 
         ndk {
             abiFilters += setOf("arm64-v8a", "x86_64")
@@ -98,6 +137,10 @@ android {
     buildFeatures {
         buildConfig = true
         compose = true
+    }
+
+    if (hasSamsungHealthSdk) {
+        sourceSets.getByName("main").java.srcDir("src/samsungHealthSdk/java")
     }
 
     signingConfigs {
@@ -139,7 +182,8 @@ androidComponents {
             sourceFiles.from(
                 layout.projectDirectory.file("../../modules/intent_frames.pl"),
                 layout.projectDirectory.file("../../modules/normalizer.pl"),
-                layout.projectDirectory.file("../../kb/intents.pl")
+                layout.projectDirectory.file("../../kb/intents.pl"),
+                layout.projectDirectory.file("../../CHANGELOG.md")
             )
             outputDirectory.convention(
                 layout.buildDirectory.dir("generated/portableSemanticAssets/${variant.name}")
@@ -165,5 +209,10 @@ dependencies {
     implementation(libs.conscrypt.android)
     implementation(libs.bcpkix)
     implementation(libs.jgit)
+    implementation(libs.litert.lm.android)
+    if (hasSamsungHealthSdk) {
+        implementation(libs.gson)
+        implementation(samsungHealthAars)
+    }
     testImplementation(libs.junit)
 }
