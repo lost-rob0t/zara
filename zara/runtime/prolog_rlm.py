@@ -310,10 +310,11 @@ def _turn_result_from_reply(
         text = reply.get("text", "")
         if not isinstance(text, str):
             raise PrologRlmRuntimeError("Prolog-RLM completed without normalized text")
+        # Prolog-RLM owns provider/model traces and raw result payloads. Zara's
+        # host/UI seam receives only normalized answer text plus bounded runtime
+        # identity; copying `result` here would let provider payloads or secrets
+        # escape the runtime-owned trace boundary.
         metadata: dict[str, Any] = {"runtime": PROLOG_RLM_RUNTIME_ID}
-        result = reply.get("result")
-        if isinstance(result, (dict, list, str, int, float, bool)) or result is None:
-            metadata["result"] = result
         return RuntimeTurnResult(response=text, metadata=metadata)
 
     error = reply.get("error")
