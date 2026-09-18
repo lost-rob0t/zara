@@ -25,6 +25,19 @@ class AppSearchAdapterTest {
     }
 
     @Test
+    fun `adapter rejects wrong typed capability arguments`() {
+        val launcher = FakeAppSearchLauncher(setOf("youtube"))
+        val adapter: DeviceCapabilityAdapter = AppSearchAdapter(launcher)
+
+        assertEquals(DeviceCapability.AppSearch, adapter.capability)
+        assertEquals(
+            DeviceActionResult.Error(DeviceActionErrorCode.InvalidArguments),
+            adapter.execute(DeviceActionArguments.OpenApp("youtube")),
+        )
+        assertTrue(launcher.searches.isEmpty())
+    }
+
+    @Test
     fun `raw package names and unknown aliases fail closed`() {
         val launcher = FakeAppSearchLauncher(setOf("youtube", "youtube_revanced"))
         val adapter = AppSearchAdapter(launcher)
