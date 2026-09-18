@@ -223,6 +223,42 @@ def test_ci_checks_out_exact_reviewed_source_and_success_gates_candidate_apks() 
     assert "name: Upload Wear debug APK\n        if: success()" in workflow
 
 
+def test_android_acceptance_dismisses_only_pixel_launcher_anr(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    launcher_anr = module.ET.fromstring(
+        '<node text="Pixel Launcher isn\'t responding" bounds="[10,10][90,90]" />'
+    )
+    wait = module.ET.fromstring('<node text="Wait" bounds="[20,30][80,70]" />')
+    adb_calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(
+        device,
+        "find_contains",
+        lambda fragment: launcher_anr
+        if fragment == "Pixel Launcher isn't responding"
+        else None,
+    )
+    monkeypatch.setattr(device, "find", lambda label: wait if label == "Wait" else None)
+    monkeypatch.setattr(
+        device,
+        "adb",
+        lambda *arguments, **kwargs: adb_calls.append(arguments) or "",
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    assert device.dismiss_pixel_launcher_anr() is True
+    assert adb_calls == [("shell", "input", "tap", "50", "50")]
+
+    monkeypatch.setattr(device, "find_contains", lambda _fragment: None)
+    adb_calls.clear()
+    assert device.dismiss_pixel_launcher_anr() is False
+    assert adb_calls == []
+
+
 def test_android_acceptance_rejects_claimed_sha_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_device_acceptance_module()
     actual_source_sha = "a" * 40
