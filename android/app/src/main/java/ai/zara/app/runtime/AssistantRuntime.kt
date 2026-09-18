@@ -310,7 +310,13 @@ class AssistantRuntimeRegistry(
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-assistant-runtime").apply { isDaemon = true }
     },
+    private val controlExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "zara-assistant-runtime-control").apply { isDaemon = true }
+    },
 ) : AutoCloseable {
+    private val stateLock = Any()
+    private var generation: Long = 0L
+
     @Volatile
     private var discovered: List<AssistantRuntimeDescriptor> =
         listOf(embeddedLocalRuntimeDescriptor())
@@ -326,11 +332,14 @@ class AssistantRuntimeRegistry(
                     add(embeddedLocalRuntimeDescriptor())
                     if (optional != null) add(optional)
                 }
-                discovered = next
-                if (next.none { it.id == selectedId && it.selectable }) {
-                    selectedId = EMBEDDED_LOCAL_RUNTIME_ID
+                synchronized(stateLock) {
+                    discovered = next
+                    if (next.none { it.id == selectedId && it.selectable }) {
+                        selectedId = EMBEDDED_LOCAL_RUNTIME_ID
+                        generation += 1L
+                    }
+                    next.toList()
                 }
-                next
             },
             executor,
         )
@@ -340,10 +349,15 @@ class AssistantRuntimeRegistry(
     fun selectedRuntimeId(): String = selectedId
 
     fun select(runtimeId: String) {
-        require(discovered.any { it.id == runtimeId && it.selectable }) {
-            "Assistant runtime is not currently installed and selectable"
+        synchronized(stateLock) {
+            require(discovered.any { it.id == runtimeId && it.selectable }) {
+                "Assistant runtime is not currently installed and selectable"
+            }
+            if (selectedId != runtimeId) {
+                selectedId = runtimeId
+                generation += 1L
+            }
         }
-        selectedId = runtimeId
     }
 
     fun generatePrologRlm(
@@ -352,14 +366,31 @@ class AssistantRuntimeRegistry(
         conversationId: String,
         inlineContext: String? = null,
     ): CompletableFuture<AssistantRuntimeTurn> {
-        check(selectedId == PROLOG_RLM_RUNTIME_ID) {
-            "Prolog-RLM is not the selected assistant runtime"
-        }
-        check(discovered.any { it.id == PROLOG_RLM_RUNTIME_ID && it.selectable }) {
-            "Prolog-RLM is no longer an available installed runtime"
+        val requestGeneration = synchronized(stateLock) {
+            check(selectedId == PROLOG_RLM_RUNTIME_ID) {
+                "Prolog-RLM is not the selected assistant runtime"
+            }
+            check(discovered.any { it.id == PROLOG_RLM_RUNTIME_ID && it.selectable }) {
+                "Prolog-RLM is no longer an available installed runtime"
+            }
+            generation
         }
         return CompletableFuture.supplyAsync(
-            { prologRlm.generate(text, requestId, conversationId, inlineContext) },
+            {
+                val turn = prologRlm.generate(text, requestId, conversationId, inlineContext)
+                synchronized(stateLock) {
+                    if (
+                        generation != requestGeneration ||
+                        selectedId != PROLOG_RLM_RUNTIME_ID ||
+                        discovered.none { it.id == PROLOG_RLM_RUNTIME_ID && it.selectable }
+                    ) {
+                        throw AssistantRuntimeException(
+                            "Stale Prolog-RLM runtime generation cannot publish a result",
+                        )
+                    }
+                }
+                turn
+            },
             executor,
         )
     }
@@ -367,14 +398,18 @@ class AssistantRuntimeRegistry(
     fun cancel(requestId: String): CompletableFuture<Unit> =
         CompletableFuture.supplyAsync(
             {
-                if (selectedId == PROLOG_RLM_RUNTIME_ID) {
-                    prologRlm.cancel(requestId)
-                }
+                prologRlm.cancel(requestId)
             },
-            executor,
+            controlExecutor,
         )
 
     override fun close() {
+        synchronized(stateLock) {
+            generation += 1L
+            selectedId = EMBEDDED_LOCAL_RUNTIME_ID
+            discovered = listOf(embeddedLocalRuntimeDescriptor())
+        }
+        controlExecutor.shutdownNow()
         executor.shutdownNow()
     }
 }
