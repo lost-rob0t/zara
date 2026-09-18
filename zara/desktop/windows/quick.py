@@ -17,12 +17,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from zara.desktop.chat_widgets import ChatComposer, ComposerActionButton, MessageWidget
+from zara.desktop.chat_widgets import ChatComposer, ComposerActionButton, ComposerVoiceButton, MessageWidget
 from zara.desktop.conversation import ConversationService, ConversationUpdate
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.state import DesktopStatus, INITIAL_STATUS
 from zara.desktop.theme import refresh_dynamic_style
-from zara.runtime.commands import CancelTurn, SubmitTurn
+from zara.runtime.commands import CancelTurn, StartVoice, StopVoice, SubmitTurn
 
 _DEFAULT_SIZE = QSize(680, 460)
 _GEOMETRY_KEY = "desktop/quick-copilot/geometry"
@@ -119,6 +119,9 @@ class QuickCopilotWindow(QWidget):
         self._cancel_request_id: Optional[str] = None
         self._cancel_conversation_id: Optional[str] = None
         self._submit_request_id: Optional[str] = None
+        self._voice_request_id: Optional[str] = None
+        self._voice_target_active: Optional[bool] = None
+        self._voice_active = False
 
         self.setObjectName("zaraQuickCopilot")
         self.setWindowTitle("Ask Zara")
@@ -216,12 +219,15 @@ class QuickCopilotWindow(QWidget):
         self.composer.setMinimumHeight(32)
         self.composer.setMaximumHeight(80)
         self.setFocusProxy(self.composer)
+        self.voice_button = ComposerVoiceButton()
         self.action_button = ComposerActionButton()
         self.action_button.setEnabled(False)
 
-        buttons = QVBoxLayout()
-        buttons.addWidget(self.action_button)
-        buttons.addStretch(1)
+        composer_controls = QHBoxLayout()
+        composer_controls.setContentsMargins(0, 0, 0, 0)
+        composer_controls.setSpacing(4)
+        composer_controls.addWidget(self.voice_button)
+        composer_controls.addWidget(self.action_button)
 
         self.composer_shell = QFrame()
         self.composer_shell.setObjectName("zaraComposerShell")
@@ -230,7 +236,7 @@ class QuickCopilotWindow(QWidget):
         composer_row.setContentsMargins(8, 8, 8, 8)
         composer_row.setSpacing(8)
         composer_row.addWidget(self.composer, 1)
-        composer_row.addLayout(buttons)
+        composer_row.addLayout(composer_controls)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 18)
@@ -244,6 +250,7 @@ class QuickCopilotWindow(QWidget):
         self.composer.textChanged.connect(self._sync_controls)
         self.composer.escape_requested.connect(self.hide)
         self.action_button.clicked.connect(self._activate_composer_action)
+        self.voice_button.clicked.connect(self._toggle_voice)
         self.new_chat_button.clicked.connect(self.new_chat)
         self.expand_button.clicked.connect(self._request_expand)
         self.settings_button.clicked.connect(self.settings_requested.emit)
@@ -353,6 +360,12 @@ class QuickCopilotWindow(QWidget):
             self._clear_owned_cancellation()
         if request_id == self._submit_request_id:
             self._submit_request_id = None
+        if request_id == self._voice_request_id:
+            if self._voice_target_active is not None:
+                self._voice_active = self._voice_target_active
+            self._voice_request_id = None
+            self._voice_target_active = None
+            self.command_error_label.hide()
         self.sync_from_shared_state()
 
     def handle_command_failed(self, request_id: str, message: str) -> None:
@@ -362,6 +375,10 @@ class QuickCopilotWindow(QWidget):
             relevant = True
         if request_id == self._submit_request_id:
             self._submit_request_id = None
+            relevant = True
+        if request_id == self._voice_request_id:
+            self._voice_request_id = None
+            self._voice_target_active = None
             relevant = True
         if relevant:
             self.command_error_label.setText(message or "Runtime command failed")
@@ -489,6 +506,21 @@ class QuickCopilotWindow(QWidget):
             active and state.cancel_request_id is None
             or has_text and not pending and not active
         )
+        voice_pending = self._voice_request_id is not None
+        self.voice_button.set_voice_state(self._voice_active, pending=voice_pending)
+        self.voice_button.setEnabled(
+            not voice_pending and self._status.state.value not in {"starting", "disconnected"}
+        )
+
+    def _toggle_voice(self) -> None:
+        if self._voice_request_id is not None:
+            return
+        target_active = not self._voice_active
+        command = StartVoice() if target_active else StopVoice()
+        self._voice_request_id = command.request_id
+        self._voice_target_active = target_active
+        self._sync_controls()
+        self.bridge.submit(command)
 
     def _activate_composer_action(self) -> None:
         if self.action_button.action_mode == "stop":
