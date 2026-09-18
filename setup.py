@@ -15,7 +15,10 @@ from setuptools import setup, find_packages
 from pathlib import Path
 import os
 
+from zara.version_context import load_version_context
+
 ROOT = Path(__file__).resolve().parent
+VERSION_CONTEXT = load_version_context(ROOT / "version.properties")
 
 readme = ROOT / "README.org"
 long_description = readme.read_text() if readme.exists() else ""
@@ -63,7 +66,7 @@ def _prolog_data_files():
 
 setup(
     name="zara",
-    version="2.0.0",
+    version=VERSION_CONTEXT.python_version,
     author="nsaspy",
     description="Hybrid Python/Prolog voice assistant",
     long_description=long_description,
