@@ -1,5 +1,6 @@
 package ai.zara.app
 
+import ai.zara.app.projects.ProjectContextStore
 import ai.zara.app.ui.RenderedTextTurn
 import ai.zara.app.ui.LocalEmbeddingPreferenceStore
 import ai.zara.app.ui.RuntimeModePreferenceStore
@@ -41,7 +42,8 @@ class MainActivity : ComponentActivity() {
         var runtimeState by mutableStateOf(appSession.state())
         var enrollmentPublicKey by mutableStateOf(appSession.enrollmentPublicKeyZ85())
         var pinnedServerPublicKey by mutableStateOf(appSession.pinnedServerPublicKeyZ85())
-        var lastTurn by mutableStateOf<RenderedTextTurn?>(null)
+        var unscopedLastTurn by mutableStateOf<RenderedTextTurn?>(null)
+        var projectTurns by mutableStateOf<Map<String, RenderedTextTurn>>(emptyMap())
         var operationBusy by mutableStateOf(false)
         var voiceStreamState by mutableStateOf(appSession.voiceStreamState())
         var voiceStreamFailure by mutableStateOf(appSession.voiceStreamFailure())
@@ -55,6 +57,8 @@ class MainActivity : ComponentActivity() {
         var runtimeMode by mutableStateOf(runtimeModeStore.load())
         val embeddingPreferenceStore = LocalEmbeddingPreferenceStore(File(filesDir, "local-embedding.bin"))
         var localEmbedding by mutableStateOf(embeddingPreferenceStore.load())
+        val projectStore = ProjectContextStore(File(filesDir, "projects.bin"))
+        var projectState by mutableStateOf(projectStore.state())
         appSession.setRuntimeMode(runtimeMode)
 
         val microphonePermission = registerForActivityResult(
@@ -98,6 +102,8 @@ class MainActivity : ComponentActivity() {
                 ZaraTheme.Light -> false
                 else -> true
             }
+            val visibleLastTurn = projectState.selectedProjectId?.let { projectTurns[it] }
+                ?: if (projectState.selectedProjectId == null) unscopedLastTurn else null
             SideEffect {
                 val style = if (resolvedSystemBarDark) {
                     SystemBarStyle.dark(Color.TRANSPARENT)
@@ -111,7 +117,7 @@ class MainActivity : ComponentActivity() {
                 sourceSha = BuildConfig.SOURCE_SHA,
                 enrollmentPublicKey = enrollmentPublicKey,
                 pinnedServerPublicKey = pinnedServerPublicKey,
-                lastTurn = lastTurn,
+                lastTurn = visibleLastTurn,
                 operationError = operationError,
                 operationBusy = operationBusy,
                 microphonePermissionGranted = microphonePermissionGranted,
@@ -125,6 +131,7 @@ class MainActivity : ComponentActivity() {
                 updateState = updateState,
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
+                projectState = projectState,
                 onSelectTheme = { theme ->
                     selectedTheme = theme
                     themePreferenceStore.save(theme)
@@ -180,26 +187,65 @@ class MainActivity : ComponentActivity() {
                         operationError = UiOperationFailure.summarize(error)
                     }
                 },
-                onSendText = { text ->
+                onSendText = { text, project ->
                     operationError = null
                     operationBusy = true
                     try {
-                        appSession.submitText(text).whenComplete { result, error ->
+                        val future = if (project == null) {
+                            appSession.submitText(text)
+                        } else {
+                            appSession.submitProjectText(text, project.id, project.conversationId)
+                        }
+                        future.whenComplete { result, error ->
                             runOnUiThread {
                                 operationBusy = false
                                 if (error != null) {
                                     operationError = UiOperationFailure.summarize(error)
                                 } else if (result != null) {
-                                    lastTurn = RenderedTextTurn(
+                                    val rendered = RenderedTextTurn(
                                         userText = text,
                                         assistantText = result.text,
                                         success = result.success,
                                     )
+                                    if (project == null) {
+                                        unscopedLastTurn = rendered
+                                    } else {
+                                        projectTurns = projectTurns + (project.id to rendered)
+                                        val remoteConversationId = result.conversationId
+                                            ?.takeUnless { it.startsWith("local-project:") }
+                                        if (remoteConversationId != null) {
+                                            try {
+                                                projectState = projectStore.bindConversation(
+                                                    project.id,
+                                                    remoteConversationId,
+                                                )
+                                            } catch (bindError: Exception) {
+                                                operationError = UiOperationFailure.summarize(bindError)
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
                     } catch (error: Exception) {
                         operationBusy = false
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onCreateProject = { name ->
+                    operationError = null
+                    try {
+                        val created = projectStore.create(name)
+                        projectState = projectStore.select(created.id)
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onSelectProject = { projectId ->
+                    operationError = null
+                    try {
+                        projectState = projectStore.select(projectId)
+                    } catch (error: Exception) {
                         operationError = UiOperationFailure.summarize(error)
                     }
                 },

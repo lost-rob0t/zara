@@ -382,7 +382,33 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         return future
     }
 
-    private fun submitLocalText(text: String): CompletableFuture<TextTurnResult> {
+    fun submitProjectText(
+        text: String,
+        projectId: String,
+        conversationId: String?,
+    ): CompletableFuture<TextTurnResult> {
+        val normalizedProjectId = projectId.trim()
+        require(normalizedProjectId.isNotEmpty()) { "Project id is required" }
+        require(normalizedProjectId.length <= 128) { "Project id is too long" }
+        require(normalizedProjectId.none(Char::isISOControl)) { "Project id contains control characters" }
+        val localConversationId = "local-project:$normalizedProjectId"
+        val remoteConnected = state().server is ServerConnection.Connected
+        when (runtimeMode) {
+            RuntimeMode.Local -> return submitLocalText(text, localConversationId)
+            RuntimeMode.Remote -> if (!remoteConnected) {
+                return CompletableFuture.failedFuture(
+                    IllegalStateException("Remote mode requires an authenticated Zara server"),
+                )
+            }
+            RuntimeMode.Auto -> if (!remoteConnected) return submitLocalText(text, localConversationId)
+        }
+        return controller.submitText(text, conversationId)
+    }
+
+    private fun submitLocalText(
+        text: String,
+        conversationId: String = "local-device",
+    ): CompletableFuture<TextTurnResult> {
         val query = text.trim()
         val catalog = PrologWorkspaceCatalog.from(prologWorkspace.listSources())
         val explicitSymbolic = query.startsWith("?-") || query.startsWith("/prolog ") || query.startsWith("/expert ")
@@ -401,12 +427,12 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         }
         return future.thenCompose { result ->
             if (result.terms.isNotEmpty() || explicitSymbolic) {
-                CompletableFuture.completedFuture(localPrologTurn(result))
+                CompletableFuture.completedFuture(localPrologTurn(result, conversationId))
             } else {
                 localAi.generate(LocalGenerationRequest(query, maxOutputTokens = 256)).handle { generated, error ->
                     if (error != null) {
                         TextTurnResult(
-                            conversationId = "local-device",
+                            conversationId = conversationId,
                             turnId = UUID.randomUUID().toString(),
                             text = "No deterministic local rule matched and no verified local model is ready. Local Prolog is still ready.",
                             success = false,
@@ -414,7 +440,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                     } else {
                         val answer = generated.text.trim()
                         TextTurnResult(
-                            conversationId = "local-device",
+                            conversationId = conversationId,
                             turnId = UUID.randomUUID().toString(),
                             text = answer.ifEmpty { "The local model returned no text." },
                             success = answer.isNotEmpty(),
@@ -425,17 +451,19 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         }
     }
 
-    private fun localPrologTurn(result: LocalQueryResult): TextTurnResult =
-        TextTurnResult(
-            conversationId = "local-device",
-            turnId = UUID.randomUUID().toString(),
-            text = if (result.terms.isEmpty()) {
-                "No deterministic local rule matched."
-            } else {
-                result.terms.joinToString("\n")
-            },
-            success = result.terms.isNotEmpty(),
-        )
+    private fun localPrologTurn(
+        result: LocalQueryResult,
+        conversationId: String,
+    ): TextTurnResult = TextTurnResult(
+        conversationId = conversationId,
+        turnId = UUID.randomUUID().toString(),
+        text = if (result.terms.isEmpty()) {
+            "No deterministic local rule matched."
+        } else {
+            result.terms.joinToString("\n")
+        },
+        success = result.terms.isNotEmpty(),
+    )
 
     fun pressToTalk(permissionGranted: Boolean): CompletableFuture<Unit> =
         pressVoice(AssistantVoiceOwnership.Manual, permissionGranted)
