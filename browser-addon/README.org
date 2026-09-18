@@ -12,6 +12,7 @@ The bridge supports:
 - list tabs
 - open/navigate HTTP(S) tabs
 - read visible page text
+- list visible interactive elements with CSS selectors
 - extract one CSS-selected element
 - click
 - type
