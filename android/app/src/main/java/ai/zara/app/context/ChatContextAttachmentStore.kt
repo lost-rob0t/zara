@@ -153,15 +153,27 @@ class ChatContextAttachmentStore(
         if (source.isEmpty()) return current
 
         val target = current.forScope(to)
-        val existingIds = target.map { it.id }.toSet()
-        val additions = source.filterNot { it.id in existingIds }
-        if (additions.isEmpty()) return current
+        val sourceMissingFromTarget = source.filter { candidate ->
+            target.none {
+                it.name == candidate.name &&
+                    it.mimeType == candidate.mimeType &&
+                    it.text == candidate.text
+            }
+        }
+        if (sourceMissingFromTarget.isEmpty()) return current
 
-        check(target.size + additions.size <= ChatContextLimits.MAX_ATTACHMENTS_PER_SCOPE) {
+        check(target.size + sourceMissingFromTarget.size <= ChatContextLimits.MAX_ATTACHMENTS_PER_SCOPE) {
             "Target project context attachment limit reached"
         }
-        check((target + additions).sumOf { it.byteCount } <= ChatContextLimits.MAX_SCOPE_BYTES) {
+        check((target + sourceMissingFromTarget).sumOf { it.byteCount } <= ChatContextLimits.MAX_SCOPE_BYTES) {
             "Target project context exceeds ${ChatContextLimits.MAX_SCOPE_BYTES} bytes"
+        }
+
+        val ids = current.attachmentsByScope.values.flatten().map { it.id }.toMutableSet()
+        val additions = sourceMissingFromTarget.map { attachment ->
+            val id = normalizeAttachmentId(idFactory())
+            require(ids.add(id)) { "Context attachment id already exists" }
+            attachment.copy(id = id)
         }
 
         val nextMap = current.attachmentsByScope.toMutableMap()
