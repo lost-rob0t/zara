@@ -165,4 +165,21 @@ class RuntimeDiagnosticsProjectionTest {
         assertTrue(activity.contains("appSession.setRuntimeMode(mode)"))
     }
 
+    @Test
+    fun `runtime settings renders canonical local model truth without invented readiness`() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val runtimeSettings = source.substringAfter("AppRoute.Runtime ->")
+            .substringBefore("AppRoute.Permissions ->")
+        val activity = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+
+        assertTrue(runtimeSettings.contains("val localModel = localAiState?.model"))
+        assertTrue(runtimeSettings.contains("localAiState?.phase?.name?.lowercase() ?: \"unavailable\""))
+        assertTrue(runtimeSettings.contains("localModel?.format?.wireName ?: \"none\""))
+        assertTrue(runtimeSettings.contains("localModel?.quantization?.wireName ?: \"none\""))
+        assertTrue(runtimeSettings.contains("localModel?.backend?.name?.lowercase() ?: \"none\""))
+        assertTrue(runtimeSettings.contains("Zara never invents local-model readiness"))
+        assertTrue(activity.contains("appSession.localAiState()"))
+        assertTrue(activity.contains("onRefreshLocalAiState = ::refreshLocalAiState"))
+    }
+
 }

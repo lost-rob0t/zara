@@ -470,6 +470,9 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.reveal_contains("Runtime mode Local; selected")
     device.capture("runtime-mode-local-recreated")
 
+    device.reveal("LOCAL MODEL")
+    device.capture("runtime-local-model-state")
+
     for tab in (
         "Runtime",
         "Connection",

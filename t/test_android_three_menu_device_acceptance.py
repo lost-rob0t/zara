@@ -83,3 +83,8 @@ def test_acceptance_switches_all_runtime_modes_and_leaves_local_selected():
     assert 'device.recreate()' in text
     assert 'device.reveal_contains("Runtime mode Local; selected")' in text
     assert 'device.capture("runtime-mode-local-recreated")' in text
+
+def test_acceptance_captures_truthful_local_model_state():
+    text = source()
+    assert 'device.reveal("LOCAL MODEL")' in text
+    assert 'device.capture("runtime-local-model-state")' in text

@@ -1,6 +1,7 @@
 package ai.zara.app
 
 import ai.zara.app.projects.ProjectContextStore
+import ai.zara.app.localai.LocalAiState
 import ai.zara.app.ui.RenderedTextTurn
 import ai.zara.app.ui.LocalEmbeddingPreferenceStore
 import ai.zara.app.ui.RuntimeModePreferenceStore
@@ -37,6 +38,7 @@ class MainActivity : ComponentActivity() {
     private var microphonePermissionGranted by mutableStateOf(false)
     private var operationError by mutableStateOf<String?>(null)
     private var voiceState by mutableStateOf<ManualVoiceState>(ManualVoiceState.Idle)
+    private var localAiState by mutableStateOf<LocalAiState?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -137,6 +139,7 @@ class MainActivity : ComponentActivity() {
                 voiceStreamFailure = voiceStreamFailure,
                 selectedTheme = selectedTheme,
                 localServerState = localServerState,
+                localAiState = localAiState,
                 prologSources = prologSources,
                 prologQueryResult = prologQueryResult,
                 updateState = updateState,
@@ -154,7 +157,9 @@ class MainActivity : ComponentActivity() {
                     runtimeMode = mode
                     runtimeModeStore.save(mode)
                     appSession.setRuntimeMode(mode)
+                    refreshLocalAiState()
                 },
+                onRefreshLocalAiState = ::refreshLocalAiState,
                 onSetLocalEmbeddingEnabled = { enabled ->
                     localEmbedding = localEmbedding.copy(enabled = enabled)
                     embeddingPreferenceStore.save(localEmbedding)
@@ -419,6 +424,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         if (!::appSession.isInitialized) return
         appSession.assessAssistantRole()
+        refreshLocalAiState()
         reconcileMicrophonePermission(hasMicrophonePermission())
     }
 
@@ -442,6 +448,15 @@ class MainActivity : ComponentActivity() {
             (application as ZaraApplication).updateManager.setObserver(null)
         }
         super.onDestroy()
+    }
+
+    private fun refreshLocalAiState() {
+        if (!::appSession.isInitialized) return
+        appSession.localAiState().whenComplete { state, error ->
+            runOnUiThread {
+                localAiState = if (error == null) state else null
+            }
+        }
     }
 
     private fun reconcileMicrophonePermission(granted: Boolean) {

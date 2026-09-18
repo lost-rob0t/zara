@@ -3,6 +3,7 @@ package ai.zara.app.ui
 import ai.zara.app.BuildConfig
 import ai.zara.app.projects.ProjectContext
 import ai.zara.app.projects.ProjectContextState
+import ai.zara.app.localai.LocalAiState
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.RuntimeState
@@ -67,6 +68,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -143,6 +145,7 @@ fun ZaraApp(
     voiceStreamFailure: String?,
     selectedTheme: ZaraTheme,
     localServerState: LocalServerState,
+    localAiState: LocalAiState?,
     prologSources: List<PrologSource>,
     prologQueryResult: LocalQueryResult?,
     updateState: UpdateState,
@@ -154,6 +157,7 @@ fun ZaraApp(
     projectState: ProjectContextState,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
+    onRefreshLocalAiState: () -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
@@ -323,6 +327,7 @@ fun ZaraApp(
                                                 state = runtimeState,
                                                 sourceSha = sourceSha,
                                                 localServerState = localServerState,
+                                                localAiState = localAiState,
                                                 runtimeMode = runtimeMode,
                                                 voiceStreamState = voiceStreamState,
                                                 voiceStreamFailure = voiceStreamFailure,
@@ -339,6 +344,7 @@ fun ZaraApp(
                                                 onConnect = onConnect,
                                                 state = runtimeState,
                                                 localServerState = localServerState,
+                                                localAiState = localAiState,
                                                 updateState = updateState,
                                                 runtimeMode = runtimeMode,
                                                 localEmbedding = localEmbedding,
@@ -355,6 +361,7 @@ fun ZaraApp(
                                                 onDownloadUpdate = onDownloadUpdate,
                                                 onInstallUpdate = onInstallUpdate,
                                                 onSelectRuntimeMode = onSelectRuntimeMode,
+                                                onRefreshLocalAiState = onRefreshLocalAiState,
                                                 onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
                                                 padding = padding,
                                             )
@@ -834,6 +841,7 @@ private fun SettingsSurface(
     onConnect: (String) -> Unit,
     state: RuntimeState,
     localServerState: LocalServerState,
+    localAiState: LocalAiState?,
     updateState: UpdateState,
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
@@ -850,6 +858,7 @@ private fun SettingsSurface(
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
+    onRefreshLocalAiState: () -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     padding: PaddingValues,
 ) {
@@ -858,6 +867,10 @@ private fun SettingsSurface(
     var showServerPinReplacement by rememberSaveable { mutableStateOf(false) }
     var showAssistantHelp by rememberSaveable { mutableStateOf(false) }
     val tokens = LocalZaraTokens.current
+
+    LaunchedEffect(section) {
+        if (section == AppRoute.Runtime) onRefreshLocalAiState()
+    }
 
     ScreenBody(padding) {
         ScreenTitle(section.label, "Settings")
@@ -908,6 +921,15 @@ private fun SettingsSurface(
                         }
                     }
                     MutedNotice("Mode selection is saved on this device and applies to new turns immediately. Auto, Local, and Remote are routing choices; they do not change which concrete optional runtime is installed.")
+                    val localModel = localAiState?.model
+                    Text("LOCAL MODEL", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+                    KeyValueRow("phase", localAiState?.phase?.name?.lowercase() ?: "unavailable")
+                    KeyValueRow("model", localModel?.let { "${it.id}@${it.version}" } ?: "none")
+                    KeyValueRow("format", localModel?.format?.wireName ?: "none")
+                    KeyValueRow("quantization", localModel?.quantization?.wireName ?: "none")
+                    KeyValueRow("accelerator", localModel?.backend?.name?.lowercase() ?: "none")
+                    localAiState?.failure?.let { ErrorBanner(it) }
+                    MutedNotice("Read directly from the local AI service. 'none' means no local model is loaded; Zara never invents local-model readiness.")
                     Text("LOCAL EMBEDDINGS", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
                     Row(
                         modifier = Modifier
@@ -1107,6 +1129,7 @@ private fun DiagnosticsSurface(
     state: RuntimeState,
     sourceSha: String,
     localServerState: LocalServerState,
+    localAiState: LocalAiState?,
     runtimeMode: RuntimeMode,
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
@@ -1133,6 +1156,15 @@ private fun DiagnosticsSurface(
             KeyValueRow("generation", localServerState.generation.toString())
             KeyValueRow("sources", localServerState.loadedSources.size.toString())
             KeyValueRow("failure", localServerState.failure ?: "none")
+        }
+        SectionCard("LOCAL MODEL") {
+            val localModel = localAiState?.model
+            KeyValueRow("phase", localAiState?.phase?.name?.lowercase() ?: "unavailable")
+            KeyValueRow("model", localModel?.let { "${it.id}@${it.version}" } ?: "none")
+            KeyValueRow("format", localModel?.format?.wireName ?: "none")
+            KeyValueRow("quantization", localModel?.quantization?.wireName ?: "none")
+            KeyValueRow("accelerator", localModel?.backend?.name?.lowercase() ?: "none")
+            localAiState?.failure?.let { ErrorBanner(it) }
         }
         SectionCard("REMOTE") {
             KeyValueRow("connection", connectionLabel(state.server))
