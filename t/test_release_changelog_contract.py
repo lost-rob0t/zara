@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -63,6 +64,22 @@ def test_release_notes_reject_missing_duplicate_or_entryless_sections(markdown: 
 
     with pytest.raises(module.ReleaseChangelogError):
         module.extract_version_notes(markdown, "1.2.3")
+
+
+def test_version_change_rejects_reusing_an_existing_immutable_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    monkeypatch.setattr(module, "version_context_changed", lambda _base: True)
+    monkeypatch.setattr(
+        module,
+        "load_version_context",
+        lambda _path: SimpleNamespace(release_ready=True, version="1.2.3"),
+    )
+    monkeypatch.setattr(module, "existing_version_tag", lambda _version: "a" * 40)
+
+    with pytest.raises(module.ReleaseChangelogError, match="already tagged"):
+        module.validate(base="base")
 
 
 def test_current_version_has_publishable_canonical_release_notes() -> None:
