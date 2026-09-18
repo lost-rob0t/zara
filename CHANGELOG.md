@@ -20,6 +20,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Android audio-focus release failures keep the focus lease retryable instead of silently losing ownership.
 - Android Assistant qualification and lifecycle handling were replayed onto the current runtime/navigation foundation.
 - Android emulator release evidence is more deterministic through explicit host-runtime and SDK provisioning checks.
+- Release-note sections render consistently on Desktop and Android without extra blank lines between a subsection heading and its first item.
 
 ### Changed
 
