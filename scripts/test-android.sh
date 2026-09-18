@@ -13,6 +13,20 @@ cd "$repo_root/android"
 bash "$repo_root/scripts/test-pair-android-qr.sh"
 bash "$repo_root/scripts/test-android-semantic-parity.sh"
 
+# Focused Org apps share one parser/task model. No app-local OrgParser/OrgTask forks.
+duplicate_org_semantics="$(
+  grep -R -n -E '^[[:space:]]*(object[[:space:]]+OrgParser|data[[:space:]]+class[[:space:]]+OrgTask)' \
+    "$repo_root/android" \
+    --include='*.kt' \
+    --exclude-dir=build \
+    | grep -v '/org-core/' || true
+)"
+if [[ -n "$duplicate_org_semantics" ]]; then
+  echo "duplicate Android Org parser/task semantics found outside :org-core" >&2
+  printf '%s\n' "$duplicate_org_semantics" >&2
+  exit 1
+fi
+
 export ZARA_TREALLA_LIBRARY_ROOT="$PWD/app/build/trealla"
 bash ./build-trealla.sh
 
@@ -67,10 +81,12 @@ if ! gradle --no-daemon \
   :org-core:testDebugUnitTest \
   :org-storage:testDebugUnitTest \
   :org-app:testDebugUnitTest \
+  :org-todo:testDebugUnitTest \
   :org-notebook:testDebugUnitTest \
   :wear-app:testDebugUnitTest \
   :app:assembleDebug \
   :org-app:assembleDebug \
+  :org-todo:assembleDebug \
   :org-notebook:assembleDebug \
   :wear-app:assembleDebug; then
   cat "$interop_log" >&2
@@ -85,18 +101,20 @@ unset ZARA_STOCK_FIXTURE
 
 phone_apk="app/build/outputs/apk/debug/app-debug.apk"
 org_apk="org-app/build/outputs/apk/debug/org-app-debug.apk"
+org_todo_apk="org-todo/build/outputs/apk/debug/org-todo-debug.apk"
 notebook_apk="org-notebook/build/outputs/apk/debug/org-notebook-debug.apk"
 wear_apk="wear-app/build/outputs/apk/debug/wear-app-debug.apk"
 test -f "$phone_apk"
 test -f "$org_apk"
+test -f "$org_todo_apk"
 test -f "$notebook_apk"
 test -f "$wear_apk"
 
-for apk in "$phone_apk" "$org_apk" "$notebook_apk" "$wear_apk"; do
+for apk in "$phone_apk" "$org_apk" "$org_todo_apk" "$notebook_apk" "$wear_apk"; do
   if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET"; then
     echo "APK secret-marker inspection FAILED: private/secret material found in $apk" >&2
     exit 1
   fi
 done
 
-echo "android/wear/org/notebook gate ok: $phone_apk $org_apk $notebook_apk $wear_apk"
+echo "android/wear/org/todo/notebook gate ok: $phone_apk $org_apk $org_todo_apk $notebook_apk $wear_apk"
