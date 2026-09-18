@@ -15,6 +15,7 @@ import ai.zara.app.update.UpdatePhase
 import ai.zara.app.update.UpdateState
 import ai.zara.app.voice.ManualVoiceState
 import ai.zara.app.voice.VoiceStreamState
+import ai.zara.app.widget.WidgetStyleStatus
 import ai.zara.ui.theme.ZaraSemanticTokens
 import ai.zara.ui.theme.ZaraTheme
 import ai.zara.ui.theme.themeTokens
@@ -60,6 +61,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -136,6 +138,9 @@ fun ZaraApp(
     updateState: UpdateState,
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
+    requestedSurface: AppSurface?,
+    widgetNavigationSequence: Long,
+    widgetStyleStatus: WidgetStyleStatus,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
@@ -156,11 +161,17 @@ fun ZaraApp(
     onDeletePrologSource: (String) -> Unit,
     onImportPrologWorkspace: (String) -> Unit,
     onExportPrologWorkspace: () -> String,
+    onImportWidgetStyle: () -> Unit,
+    onExportWidgetStyle: () -> Unit,
+    onResetWidgetStyle: () -> Unit,
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
 ) {
-    var selected by rememberSaveable { mutableStateOf(AppSurface.Chat) }
+    var selected by rememberSaveable { mutableStateOf(requestedSurface ?: AppSurface.Chat) }
+    LaunchedEffect(requestedSurface, widgetNavigationSequence) {
+        requestedSurface?.let { selected = it }
+    }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val systemDark = isSystemInDarkTheme()
@@ -244,7 +255,11 @@ fun ZaraApp(
                         AppSurface.Plugins -> GatedSurface(selected, padding)
                         AppSurface.Themes -> ThemesSurface(
                             selected = selectedTheme,
+                            widgetStyleStatus = widgetStyleStatus,
                             onSelectTheme = onSelectTheme,
+                            onImportWidgetStyle = onImportWidgetStyle,
+                            onExportWidgetStyle = onExportWidgetStyle,
+                            onResetWidgetStyle = onResetWidgetStyle,
                             padding = padding,
                         )
                         AppSurface.Diagnostics -> DiagnosticsSurface(
@@ -979,7 +994,11 @@ private fun DiagnosticsSurface(
 @Composable
 private fun ThemesSurface(
     selected: ZaraTheme,
+    widgetStyleStatus: WidgetStyleStatus,
     onSelectTheme: (ZaraTheme) -> Unit,
+    onImportWidgetStyle: () -> Unit,
+    onExportWidgetStyle: () -> Unit,
+    onResetWidgetStyle: () -> Unit,
     padding: PaddingValues,
 ) {
     val systemDark = isSystemInDarkTheme()
@@ -993,6 +1012,34 @@ private fun ThemesSurface(
                     systemDark = systemDark,
                     onClick = { onSelectTheme(theme) },
                 )
+            }
+        }
+        SectionCard("HOME-SCREEN WIDGETS") {
+            KeyValueRow("source", if (widgetStyleStatus.imported) "IMPORTED PROLOG" else "BUILT-IN PROLOG")
+            KeyValueRow("style", widgetStyleStatus.name)
+            KeyValueRow("theme", widgetStyleStatus.theme.name)
+            MutedNotice(
+                "Assistant, Runtime, and Quick Actions widgets share one validated Prolog stylesheet. " +
+                    "Imports replace styling only; actions remain bounded Zara routes.",
+            )
+            Button(
+                onClick = onImportWidgetStyle,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Import .pl")
+            }
+            Button(
+                onClick = onExportWidgetStyle,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Export .pl")
+            }
+            TextButton(
+                onClick = onResetWidgetStyle,
+                enabled = widgetStyleStatus.imported,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Reset widget style")
             }
         }
     }
