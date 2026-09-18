@@ -13,8 +13,9 @@ import ai.zara.org.core.OrgNotebookBlocks
 import ai.zara.org.core.OrgNotebookResults
 import ai.zara.org.core.OrgResultApplyResult
 import ai.zara.org.storage.OrgFileRef
-import ai.zara.org.storage.OrgTreePermission
-import ai.zara.org.storage.OrgTreeRepository
+import ai.zara.org.storage.OrgHome
+import ai.zara.org.storage.OrgHomeMode
+import ai.zara.org.storage.OrgRepository
 import ai.zara.ui.org.OrgTextRenderer
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -82,7 +83,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun NotebookWorkbench() {
     val context = LocalContext.current
-    var treeUri by remember { mutableStateOf(OrgTreePermission.remembered(context)) }
+    var homeRevision by remember { mutableStateOf(0) }
+    val homeSelection = remember(homeRevision) { OrgHome.selection(context) }
     var files by remember { mutableStateOf(emptyList<OrgFileRef>()) }
     var selected by remember { mutableStateOf<OrgFileRef?>(null) }
     var source by remember { mutableStateOf("") }
@@ -103,8 +105,8 @@ private fun NotebookWorkbench() {
         )
     }
 
-    val repository = remember(treeUri) {
-        treeUri?.let { uri -> runCatching { OrgTreeRepository(context, uri) }.getOrNull() }
+    val repository: OrgRepository? = remember(homeRevision) {
+        runCatching { OrgHome.open(context) }.getOrNull()
     }
 
     fun refreshFiles() {
@@ -189,13 +191,13 @@ private fun NotebookWorkbench() {
 
     val projectPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
-            runCatching { OrgTreePermission.remember(context, uri) }
+            runCatching { OrgHome.useCustomSaf(context, uri) }
                 .onSuccess {
-                    treeUri = uri
+                    homeRevision += 1
                     selected = null
                     source = ""
                     sourceRevision = 0
-                    status = "Org workspace connected"
+                    status = "Custom Org home connected"
                 }
                 .onFailure { status = it.message ?: "Unable to retain Org workspace permission" }
         }
@@ -224,8 +226,18 @@ private fun NotebookWorkbench() {
                     style = MaterialTheme.typography.labelSmall,
                 )
             }
-            TextButton(onClick = { projectPicker.launch(treeUri) }) {
-                Text(if (treeUri == null) "Open Org tree" else "Change tree")
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = {
+                    OrgHome.useShared(context)
+                    homeRevision += 1
+                    selected = null
+                    source = ""
+                    sourceRevision = 0
+                    status = "Using shared Org home"
+                }) { Text("Shared home") }
+                TextButton(onClick = { projectPicker.launch(homeSelection.customTreeUri) }) {
+                    Text("Custom dir")
+                }
             }
         }
 
@@ -281,8 +293,14 @@ private fun NotebookWorkbench() {
 
         Text(status, color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.labelSmall)
 
-        if (selected == null) {
-            Text("Choose your Org tree, then open a .org file. Source blocks never execute on open or render.")
+        if (repository == null) {
+            if (homeSelection.mode == OrgHomeMode.SHARED) {
+                Text("Shared Org home is the default. Install/open Org Sync, or choose a custom directory only for Notebook.")
+            } else {
+                Text("The custom Org directory is unavailable; re-grant it or switch back to the shared home.")
+            }
+        } else if (selected == null) {
+            Text("Open a .org file. Source blocks never execute on open or render.")
         } else {
             when (tab) {
                 NotebookTab.EDIT -> OutlinedTextField(
