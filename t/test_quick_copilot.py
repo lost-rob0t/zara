@@ -22,7 +22,7 @@ from zara.desktop.state import DesktopRuntimeState
 from zara.desktop.windows import QuickCopilotWindow
 from zara.desktop.windows.quick import recover_quick_geometry
 from zara.runtime import events
-from zara.runtime.commands import CancelTurn, CommandReceipt, RestartRuntime, SubmitTurn
+from zara.runtime.commands import CancelTurn, CommandReceipt, RestartRuntime, StartVoice, StopVoice, SubmitTurn
 
 
 def app() -> QApplication:
@@ -222,6 +222,42 @@ def test_quick_copilot_exposes_signal_cabin_visual_hierarchy(tmp_path):
         assert quick.action_button.objectName() == "zaraComposerAction"
         assert quick.action_button.action_mode == "send"
         assert quick.action_button.accessibleName() == "Send message"
+    finally:
+        dispose_controller(controller)
+
+
+def test_voice_mode_is_controlled_from_the_chat_composer(tmp_path):
+    qt_app, controller, bridge, _, _, _ = make_controller(tmp_path)
+    quick = controller.quick_window
+    assert quick is not None
+    try:
+        assert quick.voice_button.objectName() == "zaraComposerVoice"
+        assert quick.voice_button.accessibleName() == "Start voice mode"
+
+        quick.set_status(DesktopStatus(DesktopRuntimeState.IDLE, "ready"))
+        quick.voice_button.click()
+        qt_app.processEvents()
+        start = bridge.commands[-1]
+        assert isinstance(start, StartVoice)
+        assert quick.voice_button.isEnabled() is False
+
+        bridge.command_completed.emit(
+            CommandReceipt(request_id=start.request_id, detail="voice started")
+        )
+        qt_app.processEvents()
+        assert quick.voice_button.property("voiceActive") is True
+        assert quick.voice_button.accessibleName() == "Stop voice mode"
+
+        quick.voice_button.click()
+        qt_app.processEvents()
+        stop = bridge.commands[-1]
+        assert isinstance(stop, StopVoice)
+        bridge.command_completed.emit(
+            CommandReceipt(request_id=stop.request_id, detail="voice stopped")
+        )
+        qt_app.processEvents()
+        assert quick.voice_button.property("voiceActive") is False
+        assert quick.voice_button.accessibleName() == "Start voice mode"
     finally:
         dispose_controller(controller)
 
