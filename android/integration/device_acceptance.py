@@ -261,7 +261,7 @@ class Device:
         # A fresh install legitimately opens the versioned changelog before Chat.
         # Dismiss only Zara's exact release-notes dialog so acceptance still fails
         # on crashes, permission dialogs, or unrelated overlays.
-        if self.find_contains("What's new in Zara ") is None:
+        if self.find_contains("What's new in Zara") is None:
             return False
         continue_button = self.find("Continue")
         if continue_button is None:
@@ -282,6 +282,8 @@ class Device:
         while time.monotonic() < deadline:
             if self.find(label) is not None:
                 return
+            if self.dismiss_release_notes():
+                continue
             if self.dismiss_unrelated_system_dialogs():
                 continue
             time.sleep(0.2)
