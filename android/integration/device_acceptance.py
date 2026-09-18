@@ -169,6 +169,26 @@ class Device:
         self.adb("shell", "input", "text", text)
         time.sleep(0.4)
 
+    def dismiss_zara_release_notes(self) -> bool:
+        # Fresh installs/version promotions can show Zara's own release-notes modal
+        # before the requested surface is inspectable. Dismiss only that bounded
+        # app-owned dialog; never dismiss arbitrary dialogs.
+        if self.find_contains("What's new in Zara") is None:
+            return False
+        continue_button = self.find("Continue")
+        if continue_button is None:
+            raise AssertionError("Zara release notes did not expose a Continue action")
+        left, top, right, bottom = self.bounds(continue_button)
+        self.adb(
+            "shell",
+            "input",
+            "tap",
+            str((left + right) // 2),
+            str((top + bottom) // 2),
+        )
+        time.sleep(0.2)
+        return True
+
     def dismiss_pixel_launcher_anr(self) -> bool:
         # The hosted Pixel emulator can surface a launcher ANR over an otherwise
         # healthy Zara activity. Dismiss only that OS-owned dialog; never hide a
@@ -194,6 +214,8 @@ class Device:
         while time.monotonic() < deadline:
             if self.find(label) is not None:
                 return
+            if self.dismiss_zara_release_notes():
+                continue
             if self.dismiss_pixel_launcher_anr():
                 continue
             time.sleep(0.2)
@@ -204,6 +226,8 @@ class Device:
         while time.monotonic() < deadline:
             if self.find_contains(fragment) is not None:
                 return
+            if self.dismiss_zara_release_notes():
+                continue
             if self.dismiss_pixel_launcher_anr():
                 continue
             time.sleep(0.2)
