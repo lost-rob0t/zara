@@ -25,21 +25,26 @@ def test_android_release_candidate_apk_uploads_require_green_gate():
         assert "if: always()" not in step
 
 
-def test_green_master_uses_update_compatible_signer_and_publishes_direct_latest_apks():
-    ci = (ROOT / ".github/workflows/ci.yml").read_text()
+def test_each_master_push_builds_and_rolls_direct_latest_apks():
     workflow = (ROOT / ".github/workflows/android-latest.yml").read_text()
 
-    assert "ZARA_ANDROID_DEBUG_KEYSTORE_B64" in ci
-    assert "github.event_name == 'push' && github.ref == 'refs/heads/master'" in ci
-    assert "ZARA_ANDROID_DEBUG_KEYSTORE=$keystore" in ci
-    assert "workflow_run:" in workflow
-    assert "github.event.workflow_run.conclusion == 'success'" in workflow
-    assert "github.event.workflow_run.event == 'push'" in workflow
-    assert "github.event.workflow_run.head_branch == 'master'" in workflow
+    assert "push:" in workflow
+    assert "branches:\n      - master" in workflow
+    assert "workflow_run:" not in workflow
+    assert "github.event.workflow_run" not in workflow
+    assert "ref: ${{ github.sha }}" in workflow
+    assert "ZARA_ANDROID_DEBUG_KEYSTORE_B64" in workflow
+    assert "ZARA_ANDROID_DEBUG_KEYSTORE=$keystore" in workflow
+    assert "scripts/test-android.sh" in workflow
+    assert "android-master-${{ github.sha }}" in workflow
+    assert "group: android-latest-publish" in workflow
+    assert "cancel-in-progress: false" in workflow
     assert "zara-latest.apk" in workflow
     assert "zara-wear-latest.apk" in workflow
     assert "android-latest" in workflow
     assert "mutable=true" in workflow
+    assert "version_name=${VERSION}" in workflow
+    assert "version_code=${VERSION_CODE}" in workflow
 
 
 def test_release_assets_use_semver_name_and_record_provenance():
