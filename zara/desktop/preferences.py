@@ -54,12 +54,23 @@ def _string(value: Any) -> bool:
     return isinstance(value, str)
 
 
+def _runtime_id(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", value) is not None
+    )
+
+
 def _boolean(value: Any) -> bool:
     return isinstance(value, bool)
 
 
 SETTING_VALIDATORS: Mapping[str, Callable[[Any], bool]] = {
     "desktop.theme": _choice(*THEME_REGISTRY),
+    "runtime.backend": _runtime_id,
+    "runtime.prolog_rlm_endpoint": _string,
+    "runtime.discovery_timeout": _positive_number,
+    "runtime.request_timeout": _positive_number,
     "llm.provider": _choice("ollama", "openai", "anthropic", "openrouter"),
     "llm.model": _string,
     "llm.endpoint": _string,
