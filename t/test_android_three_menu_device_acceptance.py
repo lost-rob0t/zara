@@ -62,3 +62,24 @@ def test_acceptance_manifest_records_profiles_and_never_calls_runtime_actions():
     assert '"wm", "size", "reset"' in text
     assert '"keyevent", "4"' in text
     assert 'Connect"' not in text.split("def exercise_three_menu_ui", 1)[-1]
+
+def test_acceptance_recovers_from_unrelated_system_anr_without_hiding_zara_anr():
+    text = source()
+    assert "def dismiss_unrelated_system_dialogs" in text
+    assert 'title.startswith("Zara")' in text
+    assert 'button_text = "Wait"' in text
+    assert '== button_text' in text
+    assert "self.dismiss_unrelated_system_dialogs()" in text
+
+def test_acceptance_switches_all_runtime_modes_and_leaves_local_selected():
+    text = source()
+    assert 'for mode in ("Auto", "Local", "Remote")' in text
+    assert 'for mode in ("Auto", "Remote", "Local")' in text
+    assert 'def reveal_contains(self, fragment: str)' in text
+    assert 'def tap_contains(self, fragment: str)' in text
+    assert 'device.tap_contains(f"Runtime mode {mode};")' in text
+    assert 'device.await_label(f"Runtime mode {mode}; selected")' in text
+    assert 'device.capture(f"runtime-mode-{mode.lower()}")' in text
+    assert 'device.recreate()' in text
+    assert 'device.reveal_contains("Runtime mode Local; selected")' in text
+    assert 'device.capture("runtime-mode-local-recreated")' in text

@@ -144,6 +144,43 @@ class Device:
         self.reveal(label)
         self._tap_found(label)
 
+    def reveal_contains(self, fragment: str) -> None:
+        width, height = self.size()
+        for direction in (1, -1):
+            for _ in range(6):
+                if self.find_contains(fragment) is not None:
+                    return
+                start, end = (height * 3 // 4, height // 3)
+                if direction < 0:
+                    start, end = end, start
+                self.adb(
+                    "shell",
+                    "input",
+                    "swipe",
+                    str(width // 3),
+                    str(start),
+                    str(width // 3),
+                    str(end),
+                    "250",
+                )
+        raise AssertionError(f"Control containing label is not reachable: {fragment}")
+
+    def tap_contains(self, fragment: str) -> None:
+        self.reveal_contains(fragment)
+        node = self.find_contains(fragment)
+        if node is None:
+            raise AssertionError(f"Control containing label is not reachable: {fragment}")
+        left, top, right, bottom = self.bounds(node)
+        if right <= left or bottom <= top:
+            raise AssertionError(f"Control containing label has empty bounds: {fragment}")
+        self.adb(
+            "shell",
+            "input",
+            "tap",
+            str((left + right) // 2),
+            str((top + bottom) // 2),
+        )
+
     def tap_tab(self, label: str) -> None:
         self.reveal_horizontal(label)
         self._tap_found(label)
@@ -169,16 +206,27 @@ class Device:
         self.adb("shell", "input", "text", text)
         time.sleep(0.4)
 
-    def dismiss_pixel_launcher_anr(self) -> bool:
-        # The hosted Pixel emulator can surface a launcher ANR over an otherwise
-        # healthy Zara activity. Dismiss only that OS-owned dialog; never hide a
-        # Zara crash/ANR or weaken the app assertions below.
-        if self.find_contains("Pixel Launcher isn't responding") is None:
+    def dismiss_unrelated_system_dialogs(self) -> bool:
+        nodes = list(self.nodes())
+        titles = [
+            (node.get("text") or "")
+            for node in nodes
+            if (node.get("text") or "").endswith(" isn't responding")
+        ]
+        if not titles:
             return False
-        wait = self.find("Wait")
-        if wait is None:
-            raise AssertionError("Pixel Launcher ANR did not expose a Wait action")
-        left, top, right, bottom = self.bounds(wait)
+        if any(title.startswith("Zara") for title in titles):
+            return False
+        button_text = "Wait"
+        button = next(
+            (node for node in nodes if (node.get("text") or "") == button_text),
+            None,
+        )
+        if button is None:
+            return False
+        left, top, right, bottom = self.bounds(button)
+        if right <= left or bottom <= top:
+            return False
         self.adb(
             "shell",
             "input",
@@ -186,7 +234,7 @@ class Device:
             str((left + right) // 2),
             str((top + bottom) // 2),
         )
-        time.sleep(0.2)
+        time.sleep(0.5)
         return True
 
     def dismiss_release_notes(self) -> bool:
@@ -214,7 +262,7 @@ class Device:
         while time.monotonic() < deadline:
             if self.find(label) is not None:
                 return
-            if self.dismiss_pixel_launcher_anr():
+            if self.dismiss_unrelated_system_dialogs():
                 continue
             time.sleep(0.2)
         raise AssertionError(f"Screen did not show {label}")
@@ -224,7 +272,7 @@ class Device:
         while time.monotonic() < deadline:
             if self.find_contains(fragment) is not None:
                 return
-            if self.dismiss_pixel_launcher_anr():
+            if self.dismiss_unrelated_system_dialogs():
                 continue
             time.sleep(0.2)
         raise AssertionError(f"Screen did not retain text containing {fragment}")
@@ -405,6 +453,23 @@ def exercise_three_menu_ui(device: Device) -> None:
         device.capture(f"workspace-{tab.lower()}")
 
     open_menu(device, "Settings")
+    device.tap_tab("Runtime")
+    for mode in ("Auto", "Local", "Remote"):
+        device.await_contains(f"Runtime mode {mode};")
+    for mode in ("Auto", "Remote", "Local"):
+        device.tap_contains(f"Runtime mode {mode};")
+        device.await_label(f"Runtime mode {mode}; selected")
+        time.sleep(0.4)
+        device.capture(f"runtime-mode-{mode.lower()}")
+
+    # The user's routing choice is durable, not a one-composition toggle.
+    device.recreate()
+    device.await_label("Chat")
+    open_menu(device, "Settings")
+    device.tap_tab("Runtime")
+    device.reveal_contains("Runtime mode Local; selected")
+    device.capture("runtime-mode-local-recreated")
+
     for tab in (
         "Runtime",
         "Connection",

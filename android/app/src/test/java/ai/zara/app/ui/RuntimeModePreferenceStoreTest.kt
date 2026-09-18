@@ -25,14 +25,16 @@ class RuntimeModePreferenceStoreTest {
     }
 
     @Test
-    fun `versioned remote preference remains explicit`() {
+    fun `every explicit runtime mode round trips without coercion`() {
         val root = Files.createTempDirectory("zara-runtime-mode").toFile()
         val file = File(root, "runtime-mode.bin")
         val store = RuntimeModePreferenceStore(file)
 
-        store.save(RuntimeMode.Remote)
+        RuntimeMode.entries.forEach { mode ->
+            store.save(mode)
 
-        assertEquals(RuntimeMode.Remote, store.load())
-        assertEquals("v2:Remote", file.readText())
+            assertEquals(mode, store.load())
+            assertEquals("v2:${mode.name}", file.readText())
+        }
     }
 }

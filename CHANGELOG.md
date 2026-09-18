@@ -21,6 +21,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 ### Fixed
 
 - Android Local chat now falls back to the verified on-device model when symbolic/Prolog resolution fails, while explicit Prolog commands still report their own failures.
+- Android Runtime settings now makes Auto, Local, and Remote explicit user-selectable modes; the choice persists on-device, Local never falls back to a server, and Remote fails closed when unavailable.
+- Android Local mode keeps chat usable when the local runtime is ready without requiring a server account/session, and Diagnostics separates Local state from informational Remote state.
 - Android launcher entries use distinct task identities so opening Automation or Watch Setup cannot reuse another Zara launcher surface's task state.
 - Android audio-focus release failures keep the focus lease retryable instead of silently losing ownership.
 - Android Assistant qualification and lifecycle handling were replayed onto the current runtime/navigation foundation.
