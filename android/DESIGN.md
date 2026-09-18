@@ -1,12 +1,14 @@
 # Zara Android — canonical symbolic workspace design
 
-Status: **FROZEN IMPLEMENTATION TARGET**
+Status: **FROZEN IMPLEMENTATION TARGET**, with the user-requested navigation revision below.
 
 Canonical visual reference: [`design/reference-2026-09-07.svg`](design/reference-2026-09-07.svg)
 
 Tracking epic: [#648](https://github.com/lost-rob0t/zara/issues/648)
 
 This document and the reference image are the Android UI authority. The current plain Material `ZaraApp.kt` is an implementation baseline, **not** the target design.
+
+Navigation revision, 2026-09-17: [#934](https://github.com/lost-rob0t/zara/issues/934) supersedes the reference's flat eleven-destination drawer with three left menus and tab bars. The visual language, real-feature requirement, shared runtime boundaries, and screenshot/CI gates remain unchanged. See [`../wiki/android-navigation.org`](../wiki/android-navigation.org) for the route map and verification matrix.
 
 ## Product shape
 
@@ -77,7 +79,7 @@ Every built-in must render the same component hierarchy. Reduced-glow mode must 
 The shell owns:
 
 - compact top bar;
-- left full-height drawer;
+- left full-height drawer and adaptive navigation rail;
 - route/breadcrumb presentation where useful;
 - conversation/history selection;
 - local/remote status presentation;
@@ -94,32 +96,36 @@ The primary chat surface uses:
 
 Do not put a giant product title above every route.
 
-### Drawer
+### Drawer and navigation bars
 
-Ordered destinations:
+Exactly three ordered primary destinations:
 
 ```text
 Chat
-Logic
-Voice
-Projects
-Remote
-Scheduled
-Plugins
-Themes
-Diagnostics
+Workspace
 Settings
-About
 ```
 
-Below primary destinations:
+Each primary menu has a horizontally scrollable, labeled tab bar:
+
+```text
+Chat:      Chat | Voice
+Workspace: Logic | Projects | Scheduled
+Settings:  Runtime | Connection | Permissions | Appearance | Plugins | Updates | Diagnostics | About
+```
+
+Compact windows use the left modal drawer. At an available window width of at least 600dp, a persistent left navigation rail exposes the same three menus. The menu button still opens history on wide windows. Do not add a competing bottom navigation bar.
+
+Keep the last selected tab independently for each menu. Route-keyed saved state preserves existing saveable form values, chat drafts, and scroll positions across tab changes and recreation; it is not a new runtime or durable history database. Back closes the drawer first, otherwise returns from a secondary tab to its menu root, then to Chat, then delegates app exit to Android.
+
+Below primary destinations in the drawer:
 
 - Pinned conversations with `See all`;
 - Recent conversations with `See all`;
 - new-chat affordance;
 - small local/remote runtime state.
 
-Pinned and recent conversations never permanently consume main-chat vertical space.
+Pinned and recent conversations never permanently consume main-chat vertical space. Unimplemented history or feature operations must keep their explicit unavailable state; reorganizing navigation does not implement their backends.
 
 ## Chat surface
 
@@ -168,7 +174,7 @@ Keep it compact. Do not turn it into a thick multi-row slab unless content expan
 
 ## Logic
 
-Logic is a first-class product surface. It exposes the symbolic runtime instead of hiding Prolog as an implementation detail.
+Logic is a first-class product surface, directly available as the Workspace menu's first tab. It exposes the symbolic runtime instead of hiding Prolog as an implementation detail.
 
 Minimum views:
 
@@ -224,7 +230,7 @@ If the reusable symbolic runtime lacks a generic project/source contract, implem
 
 ## Remote
 
-Remote is broader than a single connection settings page.
+Remote setup now lives in Settings > Connection, with runtime details in Runtime and Diagnostics. Keep identity, server trust/pinning, endpoint entry, and Connect together rather than requiring users to alternate between a Remote route and Settings.
 
 Expose:
 
@@ -254,7 +260,7 @@ When a generic reusable scheduler/task protocol is missing upstream, prove it in
 
 ## Plugins
 
-Plugins are first-class in the drawer.
+Plugins are a dedicated Settings tab, not another primary drawer destination.
 
 Minimum Android contract:
 
@@ -271,7 +277,7 @@ Zara remains the first implementation/proving ground. Generic Prolog-owned plugi
 
 ## Themes
 
-Themes screen provides preview cards and immediate semantic-token switching. Theme state survives process recreation and restart.
+Themes screen, reached through Settings > Appearance, provides preview cards and immediate semantic-token switching. Theme state survives process recreation and restart.
 
 Do not ship six divergent component implementations. One component system, six token sets.
 
@@ -295,9 +301,11 @@ Never expose credentials, raw private plugin config, transcripts by default, or 
 
 ## Settings
 
-Settings owns user-controlled configuration. Runtime facts and source code belong under Logic/Diagnostics unless they are directly editable user settings.
+Settings groups user-controlled configuration and links to dedicated diagnostic/about surfaces. Runtime facts and source code belong under Logic/Diagnostics unless they are directly editable user settings.
 
-Use grouped mobile forms with the same tokens and compact hierarchy as the rest of the app.
+Render only the selected tab's content rather than one long form. Runtime owns local/remote routing and embeddings. Connection owns identity, server trust and connection. Permissions owns Assistant-role onboarding and microphone access. Appearance, Plugins, Updates, Diagnostics, and About remain separate tabs with the same semantic tokens and compact hierarchy.
+
+Opening a tab must not request permissions, begin capture, change trust, connect, or install an update. Those operations remain explicit actions using the existing callbacks and authority boundaries.
 
 ## Implementation boundary and reuse rule
 
@@ -335,14 +343,16 @@ Every visual implementation issue must produce deterministic screenshot evidence
 - smallest supported layout with IME/composer visible;
 - one representative alternate theme.
 
-Compare screenshots against the canonical reference for hierarchy, density, geometry and visual language. Pixel identity is not required; structural drift is.
+For #934, additionally capture the three-menu drawer, wide-window rail, every Settings tab, and tab/form restoration at narrow widths and increased font scale. Source-wiring tests and pure navigation tests do not satisfy this visual gate.
+
+Compare screenshots against the canonical reference for hierarchy, density, geometry and visual language, with the explicit #934 navigation revision above. Pixel identity is not required; unapproved structural drift is.
 
 ## Acceptance gate
 
 The Android UI overhaul is not complete until:
 
 - the canonical reference is represented by native Compose components;
-- the drawer and chat behavior match the frozen hierarchy;
+- the drawer and chat behavior match the hierarchy, including the #934 navigation revision;
 - all required routes are real surfaces or explicitly gated placeholders tied to implementation issues;
 - empty-state symbolic content collapses after the first real turn;
 - local/offline symbolic capability remains usable where supported;
