@@ -81,9 +81,9 @@ Do not game coverage. Never weaken assertions, add meaningless execution-only te
 ## Changelog Contract
 
 - `CHANGELOG.md` at the repository root is Zara's canonical user-facing changelog.
-- Every worker that lands a user-visible feature, behavior change, bug fix, compatibility change, packaging change, updater change, or release-facing CI/provenance change on `master` must update `CHANGELOG.md` in the same PR/commit.
-- Add normal merged work to `Unreleased`. Once an immutable version tag exists, never append later master work to that released version section.
-- Release/promotion workers reconcile `Unreleased` into the exact version section before publication. Version-changing CI validates that the promoted version has a non-empty canonical section; ordinary non-version PRs are not blocked by this release-only check.
+- Every pull request targeting `master` must update `CHANGELOG.md` in the same PR so humans can follow master as it changes. This includes internal/refactor/test/CI-only merges; summarize those briefly and plainly rather than omitting them.
+- Add ordinary merged work to `Unreleased`. Once an immutable version tag exists, never append later master work to that released version section.
+- CI rejects a master-bound PR whose canonical changelog is unchanged. Release/promotion workers additionally reconcile `Unreleased` into the exact version section before publication, and version-changing CI validates that the promoted version has a non-empty canonical section.
 - Keep entries short, concrete, and user-facing. Do not dump commit messages, internal worker coordination, or speculative/unmerged work into the changelog.
 - Re-fetch current `master` before editing the changelog, preserve concurrent entries, and deduplicate semantically equivalent notes rather than overwriting another worker's entry.
 - GitHub release pages, Desktop, and Android all derive release notes from the matching canonical version section. Desktop and Android surface it on first launch after a version changes; breaking any of the three surfaces or omitting the current release section is a release regression.
