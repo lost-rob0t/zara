@@ -1,3 +1,5 @@
+val debugSigningKeystore = providers.environmentVariable("ZARA_ANDROID_DEBUG_KEYSTORE").orNull
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -17,6 +19,19 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            if (debugSigningKeystore != null) {
+                val keyFile = file(debugSigningKeystore)
+                require(keyFile.isFile) { "Zara Android debug signing keystore is missing" }
+                storeFile = keyFile
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
     compileOptions {
