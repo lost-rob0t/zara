@@ -14,8 +14,11 @@ on:
       - android/app/build.gradle.kts
       - android/wear-app/build.gradle.kts
       - .github/workflows/release.yml
+      - CHANGELOG.md
+      - scripts/release-changelog.py
 
 permissions:
+  actions: read
   contents: write
 
 jobs:
@@ -66,8 +69,64 @@ jobs:
           fi
           echo "publish_needed=$publish_needed" >> "$GITHUB_OUTPUT"
 
-  android-alpha-release:
-    name: build and publish Android alpha
+      - name: Validate canonical release notes
+        if: steps.release.outputs.release_ready == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          python scripts/release-changelog.py --version "$VERSION"
+
+  sync-existing-release-notes:
+    name: sync existing release page from tagged changelog
+    if: >-
+      github.ref == 'refs/heads/master' &&
+      needs.validate-version-context.outputs.release_ready == 'true' &&
+      needs.validate-version-context.outputs.publish_needed == 'false'
+    needs:
+      - validate-version-context
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository and tags
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync GitHub release notes from the exact tagged changelog
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate-version-context.outputs.tag }}
+          VERSION: ${{ needs.validate-version-context.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}" --force
+          tag_sha="$(git rev-list -n 1 "$TAG")"
+          test -n "$tag_sha"
+
+          tagged_changelog="$RUNNER_TEMP/${TAG}-CHANGELOG.md"
+          notes="$RUNNER_TEMP/${TAG}-release-notes.md"
+          git show "${TAG}:CHANGELOG.md" > "$tagged_changelog"
+          python scripts/release-changelog.py \
+            --version "$VERSION" \
+            --changelog "$tagged_changelog" \
+            --output "$notes"
+
+          current="$RUNNER_TEMP/${TAG}-current-release-body.md"
+          gh release view "$TAG" --json body --jq '.body' > "$current"
+          if ! diff -u "$notes" "$current"; then
+            gh release edit "$TAG" --notes-file "$notes"
+            echo "Synced $TAG release page from tagged CHANGELOG.md at $tag_sha."
+          else
+            echo "$TAG release page already matches tagged CHANGELOG.md."
+          fi
+
+  android-versioned-release:
+    name: build and publish versioned Android release
     if: >-
       github.ref_type == 'tag' ||
       (github.ref == 'refs/heads/master' &&
@@ -76,7 +135,10 @@ jobs:
     needs:
       - validate-version-context
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
+    concurrency:
+      group: versioned-release-${{ needs.validate-version-context.outputs.tag }}
+      cancel-in-progress: false
 
     steps:
       - name: Check out repository
@@ -86,6 +148,35 @@ jobs:
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
+
+      - name: Wait for exact-source CI
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          for attempt in $(seq 1 180); do
+            run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&event=push&per_page=10")"
+            status="$(printf '%s' "$run_json" | python -c 'import json,sys; runs=json.load(sys.stdin)["workflow_runs"]; print(runs[0]["status"] if runs else "")')"
+            conclusion="$(printf '%s' "$run_json" | python -c 'import json,sys; runs=json.load(sys.stdin)["workflow_runs"]; print((runs[0]["conclusion"] or "") if runs else "")')"
+            url="$(printf '%s' "$run_json" | python -c 'import json,sys; runs=json.load(sys.stdin)["workflow_runs"]; print(runs[0]["html_url"] if runs else "")')"
+
+            if [[ "$status" == "completed" ]]; then
+              if [[ "$conclusion" != "success" ]]; then
+                echo "Exact-source CI did not pass: conclusion=$conclusion url=$url" >&2
+                exit 1
+              fi
+              echo "Exact-source CI passed: $url"
+              break
+            fi
+
+            if [[ "$attempt" == "180" ]]; then
+              echo "Timed out waiting for exact-source CI for $GITHUB_SHA" >&2
+              exit 1
+            fi
+            sleep 20
+          done
 
       - name: Load update-compatible Android signing key
         shell: bash
@@ -104,6 +195,18 @@ jobs:
 
       - name: Run Android release gate
         run: nix develop ./android -c bash scripts/test-android-release.sh
+
+      - name: Materialize canonical release notes
+        id: notes
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate-version-context.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          notes="dist/zara-${VERSION}-release-notes.md"
+          python scripts/release-changelog.py --version "$VERSION" --output "$notes"
+          echo "notes=$notes" >> "$GITHUB_OUTPUT"
 
       - name: Prepare APK and checksum
         id: artifact
@@ -141,6 +244,7 @@ jobs:
           VERSION_CODE: ${{ needs.validate-version-context.outputs.version_code }}
           APK: ${{ steps.artifact.outputs.apk }}
           MANIFEST: ${{ steps.artifact.outputs.manifest }}
+          NOTES: ${{ steps.notes.outputs.notes }}
         shell: bash
         run: |
           set -euo pipefail
@@ -157,7 +261,8 @@ jobs:
               for required in \
                 "$(basename "$APK")" \
                 "$(basename "${APK}.sha256")" \
-                "$(basename "$MANIFEST")"
+                "$(basename "$MANIFEST")" \
+                "$(basename "$NOTES")"
               do
                 if ! grep -Fxq "$required" <<< "$assets"; then
                   echo "Release $TAG is missing required asset $required." >&2
@@ -184,6 +289,13 @@ jobs:
                 exit 1
               }
 
+              existing_notes="$RUNNER_TEMP/existing-release-notes.md"
+              gh release view "$TAG" --json body --jq '.body' > "$existing_notes"
+              if ! diff -u "$NOTES" "$existing_notes"; then
+                echo "Refreshing $TAG release page from canonical CHANGELOG.md."
+                gh release edit "$TAG" --notes-file "$NOTES"
+              fi
+
               echo "Release $TAG already exists and matches canonical promotion $GITHUB_SHA."
               exit 0
             fi
@@ -199,11 +311,65 @@ jobs:
             fi
           fi
 
+          release_flags=()
+          if [[ "$VERSION" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
+
           gh release create "$TAG" \
             "$APK" \
             "${APK}.sha256" \
             "$MANIFEST" \
+            "$NOTES" \
             --target "$GITHUB_SHA" \
             --title "Zara $TAG" \
-            --prerelease \
-            --notes "Android alpha preview of Zara. This is a debug-signed APK intended for direct sideloading/testing, not a production Play Store build. Requires Android 10 (API 29) or newer. Verify the APK with the accompanying SHA-256 file. Source commit: $GITHUB_SHA"
+            --notes-file "$NOTES" \
+            "${release_flags[@]}"
+
+      - name: Verify published release bytes, metadata, signer, and notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate-version-context.outputs.tag }}
+          VERSION: ${{ needs.validate-version-context.outputs.version }}
+          VERSION_CODE: ${{ needs.validate-version-context.outputs.version_code }}
+          APK: ${{ steps.artifact.outputs.apk }}
+          MANIFEST: ${{ steps.artifact.outputs.manifest }}
+          NOTES: ${{ steps.notes.outputs.notes }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          verify_dir="$RUNNER_TEMP/published-${TAG}"
+          rm -rf "$verify_dir"
+          mkdir -p "$verify_dir"
+          gh release download "$TAG" \
+            --dir "$verify_dir" \
+            --pattern "$(basename "$APK")" \
+            --pattern "$(basename "${APK}.sha256")" \
+            --pattern "$(basename "$MANIFEST")" \
+            --pattern "$(basename "$NOTES")"
+
+          published_apk="$verify_dir/$(basename "$APK")"
+          published_checksum="$verify_dir/$(basename "${APK}.sha256")"
+          published_manifest="$verify_dir/$(basename "$MANIFEST")"
+          published_notes="$verify_dir/$(basename "$NOTES")"
+
+          cmp "$APK" "$published_apk"
+          cmp "$MANIFEST" "$published_manifest"
+          cmp "$NOTES" "$published_notes"
+
+          expected_sha="$(awk '{print $1}' "$published_checksum")"
+          actual_sha="$(sha256sum "$published_apk" | awk '{print $1}')"
+          test "$actual_sha" = "$expected_sha"
+
+          grep -Fxq "source_sha=${GITHUB_SHA}" "$published_manifest"
+          grep -Fxq "version_name=${VERSION}" "$published_manifest"
+          grep -Fxq "version_code=${VERSION_CODE}" "$published_manifest"
+          grep -Fxq "apk=$(basename "$published_apk")" "$published_manifest"
+          grep -Fxq "apk_sha256=${actual_sha}" "$published_manifest"
+
+          release_body="$RUNNER_TEMP/published-release-body.md"
+          gh release view "$TAG" --json body --jq '.body' > "$release_body"
+          diff -u "$NOTES" "$release_body"
+
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$published_apk"
