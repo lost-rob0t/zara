@@ -34,6 +34,20 @@ class AssistantRuntimeSettingsWiringTest {
     }
 
     @Test
+    fun runtimeRowsNeverSynthesizeFallbackRuntimeEntries() {
+        val installed = runtimeSettings()
+            .substringAfter("INSTALLED ASSISTANT RUNTIMES")
+            .substringBefore("ROUTING POLICY")
+
+        check(installed.contains("installedAssistantRuntimes.forEach { runtime ->"))
+        check(!installed.contains("installedAssistantRuntimes.ifEmpty"))
+        check(!installed.contains("AssistantRuntimeDescriptor("))
+        check(!installed.contains("embeddedLocalRuntimeDescriptor("))
+        check(!installed.contains("PROLOG_RLM_RUNTIME_ID"))
+        check(!installed.contains("EMBEDDED_LOCAL_RUNTIME_ID"))
+    }
+
+    @Test
     fun discoveredButUnselectableRuntimesRemainVisibleForDiagnostics() {
         val runtime = runtimeSettings()
         val installed = runtime
