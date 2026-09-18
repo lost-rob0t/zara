@@ -1,6 +1,7 @@
 package ai.zara.app.assistant
 
 import java.io.File
+import java.util.concurrent.CompletableFuture
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -58,6 +59,45 @@ class LocalAssistantVoiceContractTest {
         val onHide = source.substringAfter("override fun onHide() {").substringBefore("super.onHide()")
 
         assertTrue(onHide.contains("localVoice.cancel(notify = false)"))
+    }
+
+    @Test
+    fun `pending local assistant turn is actively cancelled`() {
+        val pending = PendingLocalTurn()
+        val turn = CompletableFuture<String>()
+
+        pending.track(turn)
+        pending.cancel()
+
+        assertTrue(turn.isCancelled)
+    }
+
+    @Test
+    fun `starting a replacement local turn cancels the superseded future`() {
+        val pending = PendingLocalTurn()
+        val first = CompletableFuture<String>()
+        val replacement = CompletableFuture<String>()
+
+        pending.track(first)
+        pending.track(replacement)
+
+        assertTrue(first.isCancelled)
+        assertFalse(replacement.isDone)
+        pending.cancel()
+        assertTrue(replacement.isCancelled)
+    }
+
+    @Test
+    fun `clearing a completed turn does not cancel it`() {
+        val pending = PendingLocalTurn()
+        val turn = CompletableFuture.completedFuture("done")
+
+        pending.track(turn)
+        pending.clear(turn)
+        pending.cancel()
+
+        assertTrue(turn.isDone)
+        assertFalse(turn.isCancelled)
     }
 
     @Test
