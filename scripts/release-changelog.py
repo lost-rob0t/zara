@@ -64,6 +64,18 @@ def version_context_changed(base: str) -> bool:
     return _git("diff", "--quiet", base, "HEAD", "--", str(VERSION_FILE.relative_to(ROOT))).returncode != 0
 
 
+def existing_version_tag(version: str) -> str | None:
+    result = _git(
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        f"refs/tags/v{version}^{{commit}}",
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
 def validate(
     *,
     version: str | None = None,
@@ -80,6 +92,11 @@ def validate(
         if not context.release_ready:
             print("versioned changelog gate: release target is staged but not promoted; skipped")
             return None
+        tagged_sha = existing_version_tag(context.version)
+        if tagged_sha is not None:
+            raise ReleaseChangelogError(
+                f"version {context.version!r} is already tagged at {tagged_sha}; choose a new version"
+            )
 
     requested = version or context.version
     if requested != context.version:
