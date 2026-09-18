@@ -5,6 +5,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 ## Unreleased
 
 - Keep this section for work that is merged but not yet assigned to a release.
+- ZeroMQ transport now bounds stalled requests and backpressure, rejects oversized frames before decode, and fails saturated routes closed instead of silently dropping protocol events.
 
 ## 0.2.2-alpha
 
