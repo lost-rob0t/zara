@@ -166,20 +166,32 @@ function tabView(tab) {
   };
 }
 
+function unwrapPageResult(result) {
+  if (result && typeof result.__zara_error === "string") {
+    throw new Error(result.__zara_error);
+  }
+  if (!result || typeof result !== "object") {
+    throw new Error("browser page returned an invalid result");
+  }
+  return result;
+}
+
 async function sendPageCommand(tab, action, args) {
   if (!tab?.id) {
     throw new Error("tab has no id");
   }
 
   try {
-    return await ext.tabs.sendMessage(tab.id, { source: "zara", action, args });
+    const result = await ext.tabs.sendMessage(tab.id, { source: "zara", action, args });
+    return unwrapPageResult(result);
   } catch (firstError) {
     try {
       await ext.scripting.executeScript({
         target: { tabId: tab.id },
         files: ["content.js"],
       });
-      return await ext.tabs.sendMessage(tab.id, { source: "zara", action, args });
+      const result = await ext.tabs.sendMessage(tab.id, { source: "zara", action, args });
+      return unwrapPageResult(result);
     } catch {
       throw firstError;
     }
