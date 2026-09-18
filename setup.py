@@ -41,9 +41,10 @@ def _prolog_data_files():
     base = pathlib.PurePosixPath("share/zarathushtra")
     sources: list[str] = []
 
-    main_pl = ROOT / "main.pl"
-    if main_pl.exists():
-        sources.append("main.pl")
+    for root_file in ("main.pl", "version.properties", "CHANGELOG.md"):
+        path = ROOT / root_file
+        if path.exists():
+            sources.append(root_file)
 
     for sub in ("kb", "modules", "assets"):
         sub_root = ROOT / sub
