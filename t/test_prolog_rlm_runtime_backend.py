@@ -205,6 +205,27 @@ def test_cancelled_turn_cannot_publish_late_completion() -> None:
     assert client.cancelled == ["turn-cancelled"]
 
 
+def test_runtime_cancelled_terminal_maps_to_typed_cancelled() -> None:
+    client = FakeClient(
+        reply={
+            "protocol": "ZARA-RUNTIME/1",
+            "runtime_id": "prolog-rlm",
+            "status": "cancelled",
+        }
+    )
+    backend = PrologRlmRuntimeBackend(client=client)
+
+    async def scenario():
+        await backend.start()
+        await backend.submit_turn("question", turn_id="turn-runtime-cancelled")
+
+    with pytest.raises(PrologRlmRuntimeError) as raised:
+        run(scenario())
+
+    assert raised.value.kind == "cancelled"
+    assert str(raised.value) == "cancelled: Prolog-RLM turn was cancelled"
+
+
 def test_incompatible_runtime_identity_is_not_started() -> None:
     client = FakeClient(runtime=descriptor(id="different-runtime"))
     backend = PrologRlmRuntimeBackend(client=client)
