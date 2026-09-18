@@ -316,7 +316,9 @@ class AssistantRuntimeRegistry(
 ) : AutoCloseable {
     private val stateLock = Any()
     private val activePrologRequests = mutableSetOf<String>()
+    private val cancelledPrologRequests = mutableSetOf<String>()
     private var generation: Long = 0L
+    private var closed: Boolean = false
 
     @Volatile
     private var discovered: List<AssistantRuntimeDescriptor> =
@@ -325,8 +327,11 @@ class AssistantRuntimeRegistry(
     @Volatile
     private var selectedId: String = EMBEDDED_LOCAL_RUNTIME_ID
 
-    fun discover(): CompletableFuture<List<AssistantRuntimeDescriptor>> =
-        CompletableFuture.supplyAsync(
+    fun discover(): CompletableFuture<List<AssistantRuntimeDescriptor>> {
+        synchronized(stateLock) {
+            check(!closed) { "Assistant runtime registry is closed" }
+        }
+        return CompletableFuture.supplyAsync(
             {
                 val optional = runCatching { prologRlm.discover() }.getOrNull()
                 val next = buildList {
@@ -334,6 +339,7 @@ class AssistantRuntimeRegistry(
                     if (optional != null) add(optional)
                 }
                 synchronized(stateLock) {
+                    check(!closed) { "Assistant runtime registry is closed" }
                     discovered = next
                     if (next.none { it.id == selectedId && it.selectable }) {
                         selectedId = EMBEDDED_LOCAL_RUNTIME_ID
@@ -344,6 +350,7 @@ class AssistantRuntimeRegistry(
             },
             executor,
         )
+    }
 
     fun discovered(): List<AssistantRuntimeDescriptor> = discovered.toList()
 
@@ -351,6 +358,7 @@ class AssistantRuntimeRegistry(
 
     fun select(runtimeId: String) {
         synchronized(stateLock) {
+            check(!closed) { "Assistant runtime registry is closed" }
             require(discovered.any { it.id == runtimeId && it.selectable }) {
                 "Assistant runtime is not currently installed and selectable"
             }
@@ -368,6 +376,7 @@ class AssistantRuntimeRegistry(
         inlineContext: String? = null,
     ): CompletableFuture<AssistantRuntimeTurn> {
         val requestGeneration = synchronized(stateLock) {
+            check(!closed) { "Assistant runtime registry is closed" }
             check(selectedId == PROLOG_RLM_RUNTIME_ID) {
                 "Prolog-RLM is not the selected assistant runtime"
             }
@@ -377,6 +386,7 @@ class AssistantRuntimeRegistry(
             check(activePrologRequests.add(requestId)) {
                 "Prolog-RLM request id is already active"
             }
+            cancelledPrologRequests.remove(requestId)
             generation
         }
         return CompletableFuture.supplyAsync(
@@ -384,7 +394,13 @@ class AssistantRuntimeRegistry(
                 try {
                     val turn = prologRlm.generate(text, requestId, conversationId, inlineContext)
                     synchronized(stateLock) {
+                        if (requestId in cancelledPrologRequests) {
+                            throw AssistantRuntimeException(
+                                "Cancelled Prolog-RLM request cannot publish a result",
+                            )
+                        }
                         if (
+                            closed ||
                             generation != requestGeneration ||
                             selectedId != PROLOG_RLM_RUNTIME_ID ||
                             discovered.none { it.id == PROLOG_RLM_RUNTIME_ID && it.selectable }
@@ -398,6 +414,7 @@ class AssistantRuntimeRegistry(
                 } finally {
                     synchronized(stateLock) {
                         activePrologRequests.remove(requestId)
+                        cancelledPrologRequests.remove(requestId)
                     }
                 }
             },
@@ -407,7 +424,12 @@ class AssistantRuntimeRegistry(
 
     fun cancel(requestId: String): CompletableFuture<Unit> {
         val active = synchronized(stateLock) {
-            requestId in activePrologRequests
+            if (closed || requestId !in activePrologRequests) {
+                false
+            } else {
+                cancelledPrologRequests.add(requestId)
+                true
+            }
         }
         if (!active) return CompletableFuture.completedFuture(Unit)
         return CompletableFuture.supplyAsync(
@@ -420,6 +442,9 @@ class AssistantRuntimeRegistry(
 
     override fun close() {
         synchronized(stateLock) {
+            if (closed) return
+            closed = true
+            cancelledPrologRequests.addAll(activePrologRequests)
             generation += 1L
             selectedId = EMBEDDED_LOCAL_RUNTIME_ID
             discovered = listOf(embeddedLocalRuntimeDescriptor())
