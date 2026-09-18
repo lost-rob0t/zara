@@ -13,6 +13,7 @@ class PortableResolverPackagingContractTest {
             listOf(
                 "prolog/shared/modules/intent_frames.pl",
                 "prolog/shared/modules/normalizer.pl",
+                "prolog/shared/modules/android_tools.pl",
                 "prolog/shared/kb/intents.pl"
             ),
             PortableSemanticCore.resolverDependencies
