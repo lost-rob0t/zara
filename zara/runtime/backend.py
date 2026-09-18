@@ -427,17 +427,33 @@ class LangGraphRuntimeBackend(RuntimeBackend):
 
 
 def create_runtime_backend(config=None, *, semantic_first: bool = False) -> RuntimeBackend:
-    """Create Zara's canonical conversational backend."""
+    """Create the selected backend-neutral Zara conversational runtime."""
 
     if config is None:
         from zara.config import get_config
 
         config = get_config()
 
-    backend_name = str(config.get("agent", "backend", "langgraph")).strip().lower()
-    if backend_name != "langgraph":
+    runtime_name = (
+        str(config.get("runtime", "backend", "zara-python"))
+        .strip()
+        .lower()
+        .replace("_", "-")
+    )
+    if runtime_name == "prolog-rlm":
+        from .prolog_rlm import PrologRlmRuntimeBackend
+
+        return PrologRlmRuntimeBackend(config=config)
+
+    if runtime_name not in {"zara-python", "python"}:
         raise ValueError(
-            f"Unsupported agent backend {backend_name!r}; choose 'langgraph'"
+            f"Unsupported runtime backend {runtime_name!r}; select an installed runtime"
+        )
+
+    agent_backend = str(config.get("agent", "backend", "langgraph")).strip().lower()
+    if agent_backend != "langgraph":
+        raise ValueError(
+            f"Unsupported Python agent backend {agent_backend!r}; choose 'langgraph'"
         )
 
     def manager_factory():
