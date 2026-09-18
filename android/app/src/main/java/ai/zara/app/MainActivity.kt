@@ -9,9 +9,13 @@ import ai.zara.app.ui.ZaraApp
 import ai.zara.app.voice.ManualVoiceState
 import ai.zara.ui.theme.ZaraTheme
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -336,6 +340,9 @@ class MainActivity : ComponentActivity() {
                     operationError = updateManager.requestInstall().exceptionOrNull()
                         ?.let(UiOperationFailure::summarize)
                 },
+                onCopyDiagnostics = ::copyDiagnostics,
+                onShareDiagnostics = ::shareDiagnostics,
+                onClearDiagnostics = ::clearDiagnostics,
             )
         }
     }
@@ -377,6 +384,28 @@ class MainActivity : ComponentActivity() {
                 voiceState = appSession.voiceState()
             }
         }
+    }
+
+    private fun copyDiagnostics() {
+        val text = appSession.exportDiagnostics()
+        val clipboard = getSystemService(ClipboardManager::class.java)
+        clipboard.setPrimaryClip(ClipData.newPlainText("Zara local diagnostics", text))
+        Toast.makeText(this, "Diagnostics copied — paste them into ChatGPT", Toast.LENGTH_LONG).show()
+    }
+
+    private fun shareDiagnostics() {
+        val text = appSession.exportDiagnostics()
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Zara local diagnostics")
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        startActivity(Intent.createChooser(intent, "Share Zara diagnostics"))
+    }
+
+    private fun clearDiagnostics() {
+        appSession.clearDiagnostics()
+        Toast.makeText(this, "Diagnostics cleared", Toast.LENGTH_SHORT).show()
     }
 
     private fun hasMicrophonePermission(): Boolean =
