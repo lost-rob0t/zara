@@ -234,3 +234,7 @@ Plugins menu.
 - non-ready Android plugin projections expose passive status only;
 - =plugin:= actions and mutable toggles remain disabled until their canonical
   typed host/settings authorities are connected.
+
+* Android navigation ownership
+
+Android UI extensions consume Zara's canonical three-menu =AppNavigation=/=AppRoute= state. =route:= actions resolve to an existing native route/menu and never create a fourth primary navigation authority. The Plugins presentation remains under =Settings > Plugins=. Typed =plugin:= actions remain disabled until the canonical host dispatcher owns their authority.
