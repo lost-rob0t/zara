@@ -49,8 +49,8 @@ internal fun ProjectsSurface(
     var projectName by rememberSaveable { mutableStateOf("") }
     ScreenBody(padding) {
         ScreenTitle("Projects", "Persistent app-private work contexts")
-        state.loadFailure?.let(::ErrorBanner)
-        operationError?.takeIf { state.loadFailure == null }?.let(::ErrorBanner)
+        state.loadFailure?.let { ErrorBanner(it) }
+        operationError?.takeIf { state.loadFailure == null }?.let { ErrorBanner(it) }
         SectionCard("ACTIVE CONTEXT") {
             val selected = state.selectedProject
             if (selected == null) {
