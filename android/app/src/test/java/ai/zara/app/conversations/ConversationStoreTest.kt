@@ -112,17 +112,26 @@ class ConversationStoreTest {
         assertEquals("Remote request failed", restored.turns.single().assistantText)
     }
 
-    @Test fun `running turn is recovered as interrupted after restart`() {
+    @Test fun `running turn recovery is persisted after restart`() {
         val root = Files.createTempDirectory("zara-conversation-interrupted").toFile()
         val file = File(root, "conversations.bin")
         val store = ConversationStore(file, { "chat-a" }, { 100L })
         val chat = store.create()
         store.beginTurn(chat.id, "work that never completed")
+        val runningBytes = file.readBytes()
 
         val restored = ConversationStore(file).state().selectedConversation!!
         assertEquals(ConversationStatus.Interrupted, restored.status)
         assertEquals(false, restored.turns.single().success)
         assertNotNull(restored.turns.single().assistantText)
+
+        val recoveredBytes = file.readBytes()
+        assertFalse(runningBytes.contentEquals(recoveredBytes))
+
+        val restoredAgain = ConversationStore(file).state().selectedConversation!!
+        assertEquals(ConversationStatus.Interrupted, restoredAgain.status)
+        assertEquals(false, restoredAgain.turns.single().success)
+        assertTrue(recoveredBytes.contentEquals(file.readBytes()))
     }
 
     @Test fun `remote identity is optional bounded and preserved across local completions`() {
