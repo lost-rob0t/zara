@@ -1,5 +1,7 @@
 package ai.zara.app
 
+import ai.zara.app.model.AndroidCloudModelStorage
+import ai.zara.app.model.CloudModelCoordinator
 import ai.zara.app.projects.ProjectContextStore
 import ai.zara.app.ui.RenderedTextTurn
 import ai.zara.app.ui.LocalEmbeddingPreferenceStore
@@ -28,6 +30,7 @@ import java.io.File
 
 class MainActivity : ComponentActivity() {
     private lateinit var appSession: AndroidAppSession
+    private lateinit var cloudModel: CloudModelCoordinator
     private var microphonePermissionGranted by mutableStateOf(false)
     private var operationError by mutableStateOf<String?>(null)
     private var voiceState by mutableStateOf<ManualVoiceState>(ManualVoiceState.Idle)
@@ -35,6 +38,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         appSession = (application as ZaraApplication).appSession
+        cloudModel = AndroidCloudModelStorage.coordinator(
+            File(noBackupFilesDir, "zara/cloud-model"),
+        )
         val updateManager = (application as ZaraApplication).updateManager
         microphonePermissionGranted = hasMicrophonePermission()
         voiceState = appSession.voiceState()
@@ -51,6 +57,7 @@ class MainActivity : ComponentActivity() {
         var prologSources by mutableStateOf(appSession.prologSources())
         var prologQueryResult by mutableStateOf<ai.zara.app.runtime.LocalQueryResult?>(null)
         var updateState by mutableStateOf(updateManager.state())
+        var remoteApiState by mutableStateOf(cloudModel.state())
         val themePreferenceStore = ThemePreferenceStore(File(filesDir, "theme.bin"))
         var selectedTheme by mutableStateOf(themePreferenceStore.load())
         val runtimeModeStore = RuntimeModePreferenceStore(File(filesDir, "runtime-mode.bin"))
@@ -93,6 +100,9 @@ class MainActivity : ComponentActivity() {
         updateManager.setObserver { state ->
             runOnUiThread { updateState = state }
         }
+        cloudModel.setObserver { state ->
+            runOnUiThread { remoteApiState = state }
+        }
         appSession.assessAssistantRole()
 
         setContent {
@@ -132,6 +142,7 @@ class MainActivity : ComponentActivity() {
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
                 projectState = projectState,
+                remoteApiState = remoteApiState,
                 onSelectTheme = { theme ->
                     selectedTheme = theme
                     themePreferenceStore.save(theme)
@@ -362,6 +373,26 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 onExportPrologWorkspace = appSession::exportPrologWorkspace,
+                onSaveRemoteApi = { config, apiKey ->
+                    operationError = null
+                    try {
+                        var next = cloudModel.configure(config)
+                        if (apiKey.isNotBlank()) {
+                            next = cloudModel.setApiKey(apiKey)
+                        }
+                        remoteApiState = next
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onClearRemoteApiKey = {
+                    operationError = null
+                    try {
+                        remoteApiState = cloudModel.clearApiKey()
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
                 onCheckForUpdate = {
                     operationError = null
                     updateManager.check().whenComplete { _, error ->
@@ -411,6 +442,10 @@ class MainActivity : ComponentActivity() {
             appSession.setVoiceStreamObserver(null)
             appSession.setLocalServerObserver(null)
             (application as ZaraApplication).updateManager.setObserver(null)
+        }
+        if (::cloudModel.isInitialized) {
+            cloudModel.setObserver(null)
+            cloudModel.close()
         }
         super.onDestroy()
     }
