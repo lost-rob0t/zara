@@ -1,19 +1,24 @@
 package ai.zara.app
 
-import ai.zara.app.runtime.RuntimeMode
-import ai.zara.app.runtime.ServerConnection
+import ai.zara.app.projects.ProjectContextStore
 import ai.zara.app.ui.RenderedTextTurn
 import ai.zara.app.ui.LocalEmbeddingPreferenceStore
 import ai.zara.app.ui.RuntimeModePreferenceStore
 import ai.zara.app.ui.ThemePreferenceStore
 import ai.zara.app.ui.UiOperationFailure
 import ai.zara.app.ui.ZaraApp
+import ai.zara.app.update.Changelog
+import ai.zara.app.update.ChangelogSeenStore
 import ai.zara.app.voice.ManualVoiceState
 import ai.zara.ui.theme.ZaraTheme
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -37,15 +42,19 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         appSession = (application as ZaraApplication).appSession
         val updateManager = (application as ZaraApplication).updateManager
+        val changelogSeenStore = ChangelogSeenStore(this)
+        val currentChangelog = Changelog.load(this, BuildConfig.VERSION_NAME)
+        var showCurrentChangelog by mutableStateOf(
+            changelogSeenStore.shouldShow(BuildConfig.VERSION_NAME, currentChangelog)
+        )
         microphonePermissionGranted = hasMicrophonePermission()
         voiceState = appSession.voiceState()
 
         var runtimeState by mutableStateOf(appSession.state())
         var enrollmentPublicKey by mutableStateOf(appSession.enrollmentPublicKeyZ85())
         var pinnedServerPublicKey by mutableStateOf(appSession.pinnedServerPublicKeyZ85())
-        var lastTurn by mutableStateOf<RenderedTextTurn?>(null)
-        var localConversations by mutableStateOf(appSession.localConversations(limit = 20))
-        var localConversation by mutableStateOf(appSession.selectedLocalConversation())
+        var unscopedLastTurn by mutableStateOf<RenderedTextTurn?>(null)
+        var projectTurns by mutableStateOf<Map<String, RenderedTextTurn>>(emptyMap())
         var operationBusy by mutableStateOf(false)
         var voiceStreamState by mutableStateOf(appSession.voiceStreamState())
         var voiceStreamFailure by mutableStateOf(appSession.voiceStreamFailure())
@@ -59,21 +68,9 @@ class MainActivity : ComponentActivity() {
         var runtimeMode by mutableStateOf(runtimeModeStore.load())
         val embeddingPreferenceStore = LocalEmbeddingPreferenceStore(File(filesDir, "local-embedding.bin"))
         var localEmbedding by mutableStateOf(embeddingPreferenceStore.load())
+        val projectStore = ProjectContextStore(File(filesDir, "projects.bin"))
+        var projectState by mutableStateOf(projectStore.state())
         appSession.setRuntimeMode(runtimeMode)
-
-        fun refreshLocalHistory() {
-            localConversations = appSession.localConversations(limit = 20)
-            localConversation = appSession.selectedLocalConversation()
-        }
-
-        fun activateLocalMode() {
-            if (runtimeMode != RuntimeMode.Local) {
-                runtimeMode = RuntimeMode.Local
-                runtimeModeStore.save(RuntimeMode.Local)
-                appSession.setRuntimeMode(RuntimeMode.Local)
-            }
-            lastTurn = null
-        }
 
         val microphonePermission = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
@@ -116,6 +113,8 @@ class MainActivity : ComponentActivity() {
                 ZaraTheme.Light -> false
                 else -> true
             }
+            val visibleLastTurn = projectState.selectedProjectId?.let { projectTurns[it] }
+                ?: if (projectState.selectedProjectId == null) unscopedLastTurn else null
             SideEffect {
                 val style = if (resolvedSystemBarDark) {
                     SystemBarStyle.dark(Color.TRANSPARENT)
@@ -129,9 +128,7 @@ class MainActivity : ComponentActivity() {
                 sourceSha = BuildConfig.SOURCE_SHA,
                 enrollmentPublicKey = enrollmentPublicKey,
                 pinnedServerPublicKey = pinnedServerPublicKey,
-                lastTurn = lastTurn,
-                localConversations = localConversations,
-                localConversation = localConversation,
+                lastTurn = visibleLastTurn,
                 operationError = operationError,
                 operationBusy = operationBusy,
                 microphonePermissionGranted = microphonePermissionGranted,
@@ -143,8 +140,12 @@ class MainActivity : ComponentActivity() {
                 prologSources = prologSources,
                 prologQueryResult = prologQueryResult,
                 updateState = updateState,
+                changelogVersion = BuildConfig.VERSION_NAME,
+                changelogText = currentChangelog,
+                showChangelog = showCurrentChangelog,
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
+                projectState = projectState,
                 onSelectTheme = { theme ->
                     selectedTheme = theme
                     themePreferenceStore.save(theme)
@@ -200,48 +201,65 @@ class MainActivity : ComponentActivity() {
                         operationError = UiOperationFailure.summarize(error)
                     }
                 },
-                onNewLocalConversation = {
-                    operationError = null
-                    activateLocalMode()
-                    localConversation = appSession.newLocalConversation()
-                    localConversations = appSession.localConversations(limit = 20)
-                },
-                onSelectLocalConversation = { conversationId ->
-                    operationError = null
-                    activateLocalMode()
-                    try {
-                        localConversation = appSession.selectLocalConversation(conversationId)
-                        localConversations = appSession.localConversations(limit = 20)
-                    } catch (error: Exception) {
-                        operationError = UiOperationFailure.summarize(error)
-                    }
-                },
-                onSendText = { text ->
+                onSendText = { text, project ->
                     operationError = null
                     operationBusy = true
-                    val localTurn = runtimeMode == RuntimeMode.Local ||
-                        (runtimeMode == RuntimeMode.Auto && runtimeState.server !is ServerConnection.Connected)
                     try {
-                        val future = appSession.submitText(text)
-                        if (localTurn) refreshLocalHistory()
+                        val future = if (project == null) {
+                            appSession.submitText(text)
+                        } else {
+                            appSession.submitProjectText(text, project.id, project.conversationId)
+                        }
                         future.whenComplete { result, error ->
                             runOnUiThread {
                                 operationBusy = false
-                                if (localTurn) refreshLocalHistory()
                                 if (error != null) {
                                     operationError = UiOperationFailure.summarize(error)
-                                } else if (result != null && !localTurn) {
-                                    lastTurn = RenderedTextTurn(
+                                } else if (result != null) {
+                                    val rendered = RenderedTextTurn(
                                         userText = text,
                                         assistantText = result.text,
                                         success = result.success,
                                     )
+                                    if (project == null) {
+                                        unscopedLastTurn = rendered
+                                    } else {
+                                        projectTurns = projectTurns + (project.id to rendered)
+                                        val remoteConversationId = result.conversationId
+                                            ?.takeUnless { it.startsWith("local-project:") }
+                                        if (remoteConversationId != null) {
+                                            try {
+                                                projectState = projectStore.bindConversation(
+                                                    project.id,
+                                                    remoteConversationId,
+                                                )
+                                            } catch (bindError: Exception) {
+                                                operationError = UiOperationFailure.summarize(bindError)
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
                     } catch (error: Exception) {
                         operationBusy = false
-                        if (localTurn) refreshLocalHistory()
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onCreateProject = { name ->
+                    operationError = null
+                    try {
+                        val created = projectStore.create(name)
+                        projectState = projectStore.select(created.id)
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onSelectProject = { projectId ->
+                    operationError = null
+                    try {
+                        projectState = projectStore.select(projectId)
+                    } catch (error: Exception) {
                         operationError = UiOperationFailure.summarize(error)
                     }
                 },
@@ -366,6 +384,14 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 },
+                onSelectUpdate = { selectionId ->
+                    operationError = null
+                    updateManager.select(selectionId).whenComplete { _, error ->
+                        runOnUiThread {
+                            operationError = error?.let(UiOperationFailure::summarize)
+                        }
+                    }
+                },
                 onDownloadUpdate = {
                     operationError = null
                     updateManager.download().whenComplete { _, error ->
@@ -377,6 +403,13 @@ class MainActivity : ComponentActivity() {
                 onInstallUpdate = {
                     operationError = updateManager.requestInstall().exceptionOrNull()
                         ?.let(UiOperationFailure::summarize)
+                },
+                onCopyDiagnostics = ::copyDiagnostics,
+                onShareDiagnostics = ::shareDiagnostics,
+                onClearDiagnostics = ::clearDiagnostics,
+                onDismissChangelog = {
+                    changelogSeenStore.markShown(BuildConfig.VERSION_NAME)
+                    showCurrentChangelog = false
                 },
             )
         }
@@ -419,6 +452,28 @@ class MainActivity : ComponentActivity() {
                 voiceState = appSession.voiceState()
             }
         }
+    }
+
+    private fun copyDiagnostics() {
+        val text = appSession.exportDiagnostics()
+        val clipboard = getSystemService(ClipboardManager::class.java)
+        clipboard.setPrimaryClip(ClipData.newPlainText("Zara local diagnostics", text))
+        Toast.makeText(this, "Diagnostics copied — paste them into ChatGPT", Toast.LENGTH_LONG).show()
+    }
+
+    private fun shareDiagnostics() {
+        val text = appSession.exportDiagnostics()
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Zara local diagnostics")
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        startActivity(Intent.createChooser(intent, "Share Zara diagnostics"))
+    }
+
+    private fun clearDiagnostics() {
+        appSession.clearDiagnostics()
+        Toast.makeText(this, "Diagnostics cleared", Toast.LENGTH_SHORT).show()
     }
 
     private fun hasMicrophonePermission(): Boolean =

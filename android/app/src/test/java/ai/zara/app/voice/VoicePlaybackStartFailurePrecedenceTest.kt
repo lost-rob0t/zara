@@ -1,9 +1,9 @@
 package ai.zara.app.voice
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class VoicePlaybackStartFailurePrecedenceTest {
@@ -23,7 +23,7 @@ class VoicePlaybackStartFailurePrecedenceTest {
         assertEquals(1, error.suppressed.size)
         assertEquals("focus abandon failed", error.suppressed.single().message)
         assertNull(controller.state().audio)
-        assertFalse(focus.isHeld())
+        assertTrue(focus.isHeld())
     }
 }
 

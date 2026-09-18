@@ -6,7 +6,7 @@ Nix is the authoritative install surface (see flake.nix and wiki/install.org).
 The wheel/sdist produced by this file is a best-effort companion that installs
 the Python modules and console scripts plus the Prolog resources under
 ``<sys.prefix>/share/zarathushtra/``. The runtime looks for ``main.pl`` in the
-project root, the Nix store, ``<sys.prefix>/share/zarathushtra/`` location, and
+project root, the Nix store, ``<sys.prefix>/share/zarathushtra/``, and
 ``/usr/share/zarathushtra`` so the same code path works for ``pip install`` and
 ``nix build``.
 """
@@ -135,7 +135,7 @@ setup(
     },
     include_package_data=True,
     package_data={
-        "zara": ["py.typed", "conversation_schema.sql"],
+        "zara": ["py.typed"],
     },
     data_files=_prolog_data_files(),
 )

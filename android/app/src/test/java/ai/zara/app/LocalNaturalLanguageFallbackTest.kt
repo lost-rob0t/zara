@@ -1,0 +1,117 @@
+package ai.zara.app
+
+import ai.zara.app.runtime.LocalQueryResult
+import ai.zara.app.runtime.TextTurnResult
+import java.io.File
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class LocalNaturalLanguageFallbackTest {
+    @Test
+    fun autoRuntimeIsLocalFirstBeforeRemoteFallback() {
+        val source = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
+        val submit = source.substringAfter("fun submitText(text: String)")
+            .substringBefore("private fun submitLocalText")
+
+        assertTrue(submit.contains("RuntimeMode.Auto -> return submitAutoLocalFirst(text, remoteConnected)"))
+        assertFalse(submit.contains("RuntimeMode.Auto -> if (!remoteConnected) return submitLocalText(text)"))
+    }
+
+    @Test
+    fun symbolicFailureFallsThroughInsteadOfEscaping() {
+        val symbolic = CompletableFuture.failedFuture<LocalQueryResult>(
+            IllegalStateException("Trealla native evaluation failed"),
+        )
+        var fallbackError: Throwable? = null
+
+        val result = recoverLocalNaturalLanguageTurn(
+            symbolic = symbolic,
+            onMatch = { error("symbolic result must not win") },
+            onFallback = { error ->
+                fallbackError = error
+                CompletableFuture.completedFuture(
+                    TextTurnResult(
+                        conversationId = "local-device",
+                        turnId = "turn-fallback",
+                        text = "fallback",
+                        success = false,
+                    )
+                )
+            },
+        ).get(2, TimeUnit.SECONDS)
+
+        assertEquals("fallback", result.text)
+        assertFalse(result.success)
+        assertNotNull(fallbackError)
+    }
+
+    @Test
+    fun emptySymbolicResultFallsThroughWithoutPretendingFailure() {
+        val symbolic = CompletableFuture.completedFuture(
+            LocalQueryResult(
+                query = "resolve_frames(...)",
+                terms = emptyList(),
+                generation = 4,
+            )
+        )
+        var fallbackError: Throwable? = IllegalStateException("not called")
+
+        val result = recoverLocalNaturalLanguageTurn(
+            symbolic = symbolic,
+            onMatch = { error("empty symbolic result must not win") },
+            onFallback = { error ->
+                fallbackError = error
+                CompletableFuture.completedFuture(
+                    TextTurnResult(
+                        conversationId = "local-device",
+                        turnId = "turn-no-match",
+                        text = "model",
+                        success = true,
+                    )
+                )
+            },
+        ).get(2, TimeUnit.SECONDS)
+
+        assertEquals("model", result.text)
+        assertTrue(result.success)
+        assertNull(fallbackError)
+    }
+
+    @Test
+    fun symbolicMatchDoesNotInvokeFallback() {
+        val symbolic = CompletableFuture.completedFuture(
+            LocalQueryResult(
+                query = "parent(alice, Result)",
+                terms = listOf("bob"),
+                generation = 2,
+            )
+        )
+        var fallbackCalled = false
+
+        val result = recoverLocalNaturalLanguageTurn(
+            symbolic = symbolic,
+            onMatch = { matched ->
+                TextTurnResult(
+                    conversationId = "local-device",
+                    turnId = "turn-symbolic",
+                    text = matched.terms.single(),
+                    success = true,
+                )
+            },
+            onFallback = {
+                fallbackCalled = true
+                CompletableFuture.failedFuture(AssertionError("fallback must not run"))
+            },
+        ).get(2, TimeUnit.SECONDS)
+
+        assertEquals("bob", result.text)
+        assertTrue(result.success)
+        assertFalse(fallbackCalled)
+    }
+}

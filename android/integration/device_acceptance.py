@@ -13,6 +13,30 @@ import time
 import xml.etree.ElementTree as ET
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SOURCE_SHA_RE = re.compile(r"[0-9a-f]{40}")
+
+
+def verified_source_sha(claimed_source_sha: str | None) -> str:
+    actual_source_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=REPO_ROOT,
+        text=True,
+    ).strip()
+    if not SOURCE_SHA_RE.fullmatch(actual_source_sha):
+        raise RuntimeError(f"Repository HEAD is not an immutable source SHA: {actual_source_sha!r}")
+    if claimed_source_sha is None:
+        return actual_source_sha
+    if not SOURCE_SHA_RE.fullmatch(claimed_source_sha):
+        raise ValueError(f"Claimed source SHA is invalid: {claimed_source_sha!r}")
+    if claimed_source_sha != actual_source_sha:
+        raise RuntimeError(
+            "Claimed source SHA does not match the checked-out repository: "
+            f"claimed={claimed_source_sha} actual={actual_source_sha}"
+        )
+    return actual_source_sha
+
+
 class Device:
     def __init__(self, serial: str, output: Path) -> None:
         self.serial = serial
@@ -145,11 +169,53 @@ class Device:
         self.adb("shell", "input", "text", text)
         time.sleep(0.4)
 
+    def dismiss_pixel_launcher_anr(self) -> bool:
+        # The hosted Pixel emulator can surface a launcher ANR over an otherwise
+        # healthy Zara activity. Dismiss only that OS-owned dialog; never hide a
+        # Zara crash/ANR or weaken the app assertions below.
+        if self.find_contains("Pixel Launcher isn't responding") is None:
+            return False
+        wait = self.find("Wait")
+        if wait is None:
+            raise AssertionError("Pixel Launcher ANR did not expose a Wait action")
+        left, top, right, bottom = self.bounds(wait)
+        self.adb(
+            "shell",
+            "input",
+            "tap",
+            str((left + right) // 2),
+            str((top + bottom) // 2),
+        )
+        time.sleep(0.2)
+        return True
+
+    def dismiss_release_notes(self) -> bool:
+        # A fresh install legitimately opens the versioned changelog before Chat.
+        # Dismiss only Zara's exact release-notes dialog so acceptance still fails
+        # on crashes, permission dialogs, or unrelated overlays.
+        if self.find_contains("What's new in Zara ") is None:
+            return False
+        continue_button = self.find("Continue")
+        if continue_button is None:
+            raise AssertionError("Zara release notes did not expose Continue")
+        left, top, right, bottom = self.bounds(continue_button)
+        self.adb(
+            "shell",
+            "input",
+            "tap",
+            str((left + right) // 2),
+            str((top + bottom) // 2),
+        )
+        time.sleep(0.2)
+        return True
+
     def await_label(self, label: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.find(label) is not None:
                 return
+            if self.dismiss_pixel_launcher_anr():
+                continue
             time.sleep(0.2)
         raise AssertionError(f"Screen did not show {label}")
 
@@ -158,6 +224,8 @@ class Device:
         while time.monotonic() < deadline:
             if self.find_contains(fragment) is not None:
                 return
+            if self.dismiss_pixel_launcher_anr():
+                continue
             time.sleep(0.2)
         raise AssertionError(f"Screen did not retain text containing {fragment}")
 
@@ -193,10 +261,39 @@ class Device:
             }
         )
 
+    def launch_surface(self, component: str, label: str) -> None:
+        self.adb(
+            "shell",
+            "am",
+            "start",
+            "-W",
+            "-a",
+            "android.intent.action.MAIN",
+            "-c",
+            "android.intent.category.LAUNCHER",
+            "-f",
+            "0x10200000",
+            "-n",
+            component,
+        )
+        self.dismiss_release_notes()
+        self.await_label(label)
+
+    def assert_launcher_task_isolation(self) -> None:
+        sequence = (
+            ("ai.zara.app/.automation.AutomationActivity", "Prolog Automation", "launcher-automation"),
+            ("ai.zara.app/.watch.WatchSetupActivity", "ZARA WATCH SETUP", "launcher-watch-setup"),
+            ("ai.zara.app/.automation.AutomationActivity", "Prolog Automation", None),
+            ("ai.zara.app/.MainActivity", "Chat", "launcher-main-return"),
+        )
+        for component, label, screenshot in sequence:
+            self.launch_surface(component, label)
+            if screenshot is not None:
+                self.capture(screenshot)
+
     def start(self) -> None:
         self.adb("shell", "am", "force-stop", "ai.zara.app")
-        self.adb("shell", "am", "start", "-W", "-n", "ai.zara.app/.MainActivity")
-        self.await_label("Chat")
+        self.launch_surface("ai.zara.app/.MainActivity", "Chat")
 
     def press_back(self) -> None:
         self.adb("shell", "input", "keyevent", "4")
@@ -210,7 +307,20 @@ class Device:
         time.sleep(0.5)
         self.adb("shell", "am", "kill", "ai.zara.app")
         time.sleep(0.8)
-        self.adb("shell", "am", "start", "-W", "-n", "ai.zara.app/.MainActivity")
+        self.adb(
+            "shell",
+            "am",
+            "start",
+            "-W",
+            "-a",
+            "android.intent.action.MAIN",
+            "-c",
+            "android.intent.category.LAUNCHER",
+            "-f",
+            "0x10200000",
+            "-n",
+            "ai.zara.app/.MainActivity",
+        )
         time.sleep(0.8)
 
     def set_display_profile(
@@ -277,6 +387,7 @@ def open_menu(device: Device, menu: str) -> None:
 
 def exercise_three_menu_ui(device: Device) -> None:
     device.start()
+    device.assert_launcher_task_isolation()
     device.capture("empty-shell")
     device.assert_accessible_targets(("Open navigation menu", "Chat", "Voice"))
 
@@ -370,15 +481,15 @@ def main() -> None:
     parser.add_argument(
         "--output", type=Path, default=Path("android/app/build/reports/device")
     )
+    parser.add_argument("--source-sha")
     args = parser.parse_args()
     if not args.serial:
         parser.error("Select a test emulator explicitly with --serial or ANDROID_SERIAL")
+    source_sha = verified_source_sha(args.source_sha)
     args.output.mkdir(parents=True, exist_ok=True)
     device = Device(args.serial, args.output)
     result = {
-        "source_sha": subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True
-        ).strip(),
+        "source_sha": source_sha,
         "serial": args.serial,
         "passed": False,
         "screenshots": device.screenshots,

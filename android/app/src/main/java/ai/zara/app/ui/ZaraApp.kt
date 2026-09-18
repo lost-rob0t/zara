@@ -1,10 +1,8 @@
 package ai.zara.app.ui
 
 import ai.zara.app.BuildConfig
-import ai.zara.app.history.HistoryConversation
-import ai.zara.app.history.HistoryConversationState
-import ai.zara.app.history.HistoryMessageRole
-import ai.zara.app.history.HistoryMessageStatus
+import ai.zara.app.projects.ProjectContext
+import ai.zara.app.projects.ProjectContextState
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.RuntimeState
@@ -50,6 +48,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DrawerValue
@@ -136,8 +135,6 @@ fun ZaraApp(
     enrollmentPublicKey: String?,
     pinnedServerPublicKey: String?,
     lastTurn: RenderedTextTurn?,
-    localConversations: List<HistoryConversation>,
-    localConversation: HistoryConversationState?,
     operationError: String?,
     operationBusy: Boolean,
     microphonePermissionGranted: Boolean,
@@ -149,8 +146,12 @@ fun ZaraApp(
     prologSources: List<PrologSource>,
     prologQueryResult: LocalQueryResult?,
     updateState: UpdateState,
+    changelogVersion: String,
+    changelogText: String?,
+    showChangelog: Boolean,
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
+    projectState: ProjectContextState,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
@@ -158,9 +159,9 @@ fun ZaraApp(
     onPinServer: (String) -> Unit,
     onReplaceServerPin: (String) -> Unit,
     onConnect: (String) -> Unit,
-    onNewLocalConversation: () -> Unit,
-    onSelectLocalConversation: (String) -> Unit,
-    onSendText: (String) -> Unit,
+    onSendText: (String, ProjectContext?) -> Unit,
+    onCreateProject: (String) -> Unit,
+    onSelectProject: (String?) -> Unit,
     onRequestMicrophonePermission: () -> Unit,
     onRequestAssistantRole: () -> Unit,
     onStartVoice: () -> Unit,
@@ -174,8 +175,13 @@ fun ZaraApp(
     onImportPrologWorkspace: (String) -> Unit,
     onExportPrologWorkspace: () -> String,
     onCheckForUpdate: () -> Unit,
+    onSelectUpdate: (String) -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
+    onCopyDiagnostics: () -> Unit,
+    onShareDiagnostics: () -> Unit,
+    onClearDiagnostics: () -> Unit,
+    onDismissChangelog: () -> Unit,
 ) {
     var navigation by rememberSaveable(stateSaver = AppNavigationSaver) {
         mutableStateOf(AppNavigation())
@@ -193,6 +199,22 @@ fun ZaraApp(
 
     CompositionLocalProvider(LocalZaraTokens provides tokens) {
         MaterialTheme(colorScheme = tokensColorScheme(tokens)) {
+            if (showChangelog && !changelogText.isNullOrBlank()) {
+                AlertDialog(
+                    onDismissRequest = onDismissChangelog,
+                    confirmButton = {
+                        TextButton(onClick = onDismissChangelog) { Text("Continue") }
+                    },
+                    title = { Text("What's new in Zara $changelogVersion") },
+                    text = {
+                        Column(
+                            Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())
+                        ) {
+                            Text(changelogText)
+                        }
+                    },
+                )
+            }
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val showRail = usesNavigationRail(maxWidth.value)
                 ModalNavigationDrawer(
@@ -202,20 +224,8 @@ fun ZaraApp(
                             selected = navigation.menu,
                             state = runtimeState,
                             localState = localServerState,
-                            localConversations = localConversations,
-                            selectedLocalConversationId = localConversation?.conversation?.id,
                             onSelect = { destination ->
                                 navigation = navigation.selectMenu(destination)
-                                scope.launch { drawerState.close() }
-                            },
-                            onNewLocalConversation = {
-                                onNewLocalConversation()
-                                navigation = navigation.selectRoute(AppRoute.Chat)
-                                scope.launch { drawerState.close() }
-                            },
-                            onSelectLocalConversation = { conversationId ->
-                                onSelectLocalConversation(conversationId)
-                                navigation = navigation.selectRoute(AppRoute.Chat)
                                 scope.launch { drawerState.close() }
                             },
                         )
@@ -257,9 +267,8 @@ fun ZaraApp(
                                             AppSurface.Chat -> ChatSurface(
                                                 state = runtimeState,
                                                 localServerState = localServerState,
+                                                project = projectState.selectedProject,
                                                 lastTurn = lastTurn,
-                                                localConversation = localConversation,
-                                                runtimeMode = runtimeMode,
                                                 operationError = operationError,
                                                 operationBusy = operationBusy,
                                                 onSendText = onSendText,
@@ -294,7 +303,14 @@ fun ZaraApp(
                                                 onCancelVoice = onCancelVoice,
                                                 padding = padding,
                                             )
-                                            AppSurface.Projects -> GatedSurface(selected, padding)
+                                            AppSurface.Projects -> ProjectsSurface(
+                                                state = projectState,
+                                                operationError = operationError,
+                                                operationBusy = operationBusy,
+                                                onCreateProject = onCreateProject,
+                                                onSelectProject = onSelectProject,
+                                                padding = padding,
+                                            )
                                             AppSurface.Scheduled -> GatedSurface(selected, padding)
                                             AppSurface.Plugins -> GatedSurface(selected, padding)
                                             AppSurface.Themes -> ThemesSurface(
@@ -309,6 +325,9 @@ fun ZaraApp(
                                                 voiceStreamState = voiceStreamState,
                                                 voiceStreamFailure = voiceStreamFailure,
                                                 operationError = operationError,
+                                                onCopyDiagnostics = onCopyDiagnostics,
+                                                onShareDiagnostics = onShareDiagnostics,
+                                                onClearDiagnostics = onClearDiagnostics,
                                                 padding = padding,
                                             )
                                             AppSurface.Remote, AppSurface.Settings -> SettingsSurface(
@@ -330,6 +349,7 @@ fun ZaraApp(
                                                 onReplaceServerPin = onReplaceServerPin,
                                                 onRequestAssistantRole = onRequestAssistantRole,
                                                 onCheckForUpdate = onCheckForUpdate,
+                                                onSelectUpdate = onSelectUpdate,
                                                 onDownloadUpdate = onDownloadUpdate,
                                                 onInstallUpdate = onInstallUpdate,
                                                 onSelectRuntimeMode = onSelectRuntimeMode,
@@ -409,11 +429,7 @@ private fun ZaraDrawer(
     selected: AppMenu,
     state: RuntimeState,
     localState: LocalServerState,
-    localConversations: List<HistoryConversation>,
-    selectedLocalConversationId: String?,
     onSelect: (AppMenu) -> Unit,
-    onNewLocalConversation: () -> Unit,
-    onSelectLocalConversation: (String) -> Unit,
 ) {
     val tokens = LocalZaraTokens.current
     ModalDrawerSheet(
@@ -467,27 +483,8 @@ private fun ZaraDrawer(
             DrawerDividerLabel("PINNED")
             DrawerHistoryRow("No pinned conversations", "nothing is synced implicitly")
             Spacer(Modifier.size(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(Modifier.weight(1f)) { DrawerDividerLabel("RECENTS") }
-                TextButton(onClick = onNewLocalConversation) {
-                    Text("New", color = tokens.secondary, style = MaterialTheme.typography.labelSmall)
-                }
-            }
-            if (localConversations.isEmpty()) {
-                DrawerHistoryRow("No saved conversations", "local history is empty")
-            } else {
-                localConversations.take(8).forEach { conversation ->
-                    DrawerHistoryRow(
-                        title = conversation.title,
-                        detail = "local · saved",
-                        selected = conversation.id == selectedLocalConversationId,
-                        onClick = { onSelectLocalConversation(conversation.id) },
-                    )
-                }
-            }
+            DrawerDividerLabel("RECENTS")
+            DrawerHistoryRow("No saved conversations", "local history is not enabled yet")
             Spacer(Modifier.weight(1f))
 
             Surface(
@@ -538,35 +535,11 @@ private fun DrawerDividerLabel(label: String) {
 }
 
 @Composable
-private fun DrawerHistoryRow(
-    title: String,
-    detail: String,
-    selected: Boolean = false,
-    onClick: (() -> Unit)? = null,
-) {
+private fun DrawerHistoryRow(title: String, detail: String) {
     val tokens = LocalZaraTokens.current
-    val content: @Composable () -> Unit = {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp)) {
-            Text(
-                title,
-                color = if (selected) tokens.text else tokens.textMuted,
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 2,
-            )
-            Text(detail, color = tokens.borderActive, style = MaterialTheme.typography.labelSmall)
-        }
-    }
-    if (onClick == null) {
-        content()
-    } else {
-        Surface(
-            onClick = onClick,
-            modifier = Modifier.fillMaxWidth(),
-            color = if (selected) tokens.ambientGlow else Color.Transparent,
-            shape = MaterialTheme.shapes.medium,
-        ) {
-            content()
-        }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp)) {
+        Text(title, color = tokens.textMuted, style = MaterialTheme.typography.bodySmall)
+        Text(detail, color = tokens.borderActive, style = MaterialTheme.typography.labelSmall)
     }
 }
 
@@ -574,27 +547,18 @@ private fun DrawerHistoryRow(
 private fun ChatSurface(
     state: RuntimeState,
     localServerState: LocalServerState,
+    project: ProjectContext?,
     lastTurn: RenderedTextTurn?,
-    localConversation: HistoryConversationState?,
-    runtimeMode: RuntimeMode,
     operationError: String?,
     operationBusy: Boolean,
-    onSendText: (String) -> Unit,
+    onSendText: (String, ProjectContext?) -> Unit,
     padding: PaddingValues,
 ) {
     var input by rememberSaveable { mutableStateOf("") }
     val remoteReady = state.server is ServerConnection.Connected &&
         state.enrollment == EnrollmentReadiness.Ready
     val localReady = localServerState.phase == LocalServerPhase.READY
-    val localActive = runtimeMode == RuntimeMode.Local ||
-        (runtimeMode == RuntimeMode.Auto && !remoteReady)
-    val ready = when (runtimeMode) {
-        RuntimeMode.Local -> localReady
-        RuntimeMode.Remote -> remoteReady
-        RuntimeMode.Auto -> remoteReady || localReady
-    }
-    val localMessages = if (localActive) localConversation?.messages.orEmpty() else emptyList()
-    val hasMessages = if (localActive) localMessages.isNotEmpty() else lastTurn != null
+    val ready = remoteReady || localReady
     val tokens = LocalZaraTokens.current
 
     Column(
@@ -603,13 +567,14 @@ private fun ChatSurface(
             .padding(padding)
             .padding(horizontal = 16.dp),
     ) {
+        project?.let { ProjectBreadcrumb(it) }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
                 .verticalScroll(rememberScrollState()),
         ) {
-            if (!hasMessages) {
+            if (lastTurn == null) {
                 Box(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 360.dp),
                     contentAlignment = Alignment.Center,
@@ -641,24 +606,7 @@ private fun ChatSurface(
                         }
                     }
                 }
-            } else if (localActive) {
-                Spacer(Modifier.size(18.dp))
-                localMessages.forEachIndexed { index, message ->
-                    when (message.role) {
-                        HistoryMessageRole.User -> UserMessage(message.content)
-                        HistoryMessageRole.Assistant -> AssistantMessage(
-                            message.content,
-                            message.status == HistoryMessageStatus.Complete,
-                        )
-                        HistoryMessageRole.System, HistoryMessageRole.Tool -> SystemMessage(
-                            text = if (message.error.isEmpty()) message.content
-                                else "${message.content}\n${message.error}",
-                            isError = message.status == HistoryMessageStatus.Error,
-                        )
-                    }
-                    if (index != localMessages.lastIndex) Spacer(Modifier.size(12.dp))
-                }
-            } else if (lastTurn != null) {
+            } else {
                 Spacer(Modifier.size(18.dp))
                 UserMessage(lastTurn.userText)
                 Spacer(Modifier.size(12.dp))
@@ -676,17 +624,14 @@ private fun ChatSurface(
                 val message = input.trim()
                 if (message.isNotEmpty()) {
                     input = ""
-                    onSendText(message)
+                    onSendText(message, project)
                 }
             },
         )
         Text(
             when {
-                runtimeMode == RuntimeMode.Remote && remoteReady -> "REMOTE  •  AUTHENTICATED  •  SYMBOLIC"
-                runtimeMode == RuntimeMode.Remote -> "REMOTE  •  DISCONNECTED"
-                runtimeMode == RuntimeMode.Local && localReady -> "LOCAL  •  SYMBOLIC  •  PRIVATE  •  SAVED"
-                runtimeMode == RuntimeMode.Auto && remoteReady -> "AUTO  •  REMOTE  •  AUTHENTICATED"
-                localReady -> "AUTO  •  LOCAL FALLBACK  •  PRIVATE  •  SAVED"
+                remoteReady -> "REMOTE  •  AUTHENTICATED  •  SYMBOLIC"
+                localReady -> "LOCAL  •  SYMBOLIC  •  PRIVATE"
                 else -> "LOCAL RUNTIME STARTING"
             },
             modifier = Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 10.dp),
@@ -771,24 +716,6 @@ private fun AssistantMessage(text: String, success: Boolean) {
             }
             Text(text, modifier = Modifier.padding(top = 12.dp), color = tokens.text)
         }
-    }
-}
-
-@Composable
-private fun SystemMessage(text: String, isError: Boolean) {
-    val tokens = LocalZaraTokens.current
-    Surface(
-        color = tokens.surface,
-        border = BorderStroke(1.dp, if (isError) tokens.error else tokens.border),
-        shape = MaterialTheme.shapes.medium,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Text(
-            text,
-            modifier = Modifier.padding(12.dp),
-            color = if (isError) tokens.error else tokens.textMuted,
-            style = MaterialTheme.typography.bodySmall,
-        )
     }
 }
 
@@ -905,6 +832,7 @@ private fun SettingsSurface(
     onReplaceServerPin: (String) -> Unit,
     onRequestAssistantRole: () -> Unit,
     onCheckForUpdate: () -> Unit,
+    onSelectUpdate: (String) -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
@@ -1088,10 +1016,31 @@ private fun SettingsSurface(
             AppRoute.Updates -> {
                 SectionCard("SELF UPDATE") {
                     KeyValueRow("installed", BuildConfig.VERSION_NAME)
+                    KeyValueRow("source", BuildConfig.SOURCE_SHA.take(12))
                     KeyValueRow("status", updateState.phase.name.lowercase())
+
+                    if (updateState.choices.isNotEmpty()) {
+                        Text(
+                            "VERSION / CHANNEL",
+                            color = tokens.accentCyan,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                        updateState.choices.forEach { release ->
+                            val selected = updateState.selectedId == release.selectionId
+                            SecondaryAction(
+                                label = if (selected) "✓ ${release.displayName}" else release.displayName,
+                                enabled = updateState.phase !in setOf(
+                                    UpdatePhase.CHECKING,
+                                    UpdatePhase.DOWNLOADING,
+                                    UpdatePhase.INSTALLING,
+                                ),
+                            ) { onSelectUpdate(release.selectionId) }
+                        }
+                    }
+
                     updateState.release?.let { release ->
-                        KeyValueRow("available", release.version)
-                        KeyValueRow("source", release.sourceSha.take(12))
+                        KeyValueRow("selected", release.displayName)
+                        KeyValueRow("selected source", release.sourceSha.take(12))
                     }
                     updateState.progressPercent?.let { progress ->
                         KeyValueRow("download", "$progress%")
@@ -1100,11 +1049,14 @@ private fun SettingsSurface(
                     when (updateState.phase) {
                         UpdatePhase.AVAILABLE -> PrimaryAction("Download verified APK", true, onDownloadUpdate)
                         UpdatePhase.READY -> PrimaryAction("Install update", true, onInstallUpdate)
-                        UpdatePhase.CHECKING, UpdatePhase.DOWNLOADING ->
+                        UpdatePhase.CHECKING, UpdatePhase.DOWNLOADING, UpdatePhase.INSTALLING ->
                             PrimaryAction("Working…", false) { }
-                        else -> PrimaryAction("Check GitHub Releases", true, onCheckForUpdate)
+                        else -> PrimaryAction("Refresh versions", true, onCheckForUpdate)
                     }
-                    MutedNotice("Zara verifies the release SHA-256 before handing the APK to Android. Android then verifies the signing certificate and requires your install confirmation.")
+                    MutedNotice(
+                        "Master (fastest green) tracks the newest fully green master APK through the mutable android-latest channel. " +
+                            "Versioned entries are immutable releases. Zara verifies the exact source SHA and SHA-256 before Android installation."
+                    )
                 }
             }
             else -> error("Not a settings form: $section")
@@ -1126,6 +1078,9 @@ private fun DiagnosticsSurface(
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
     operationError: String?,
+    onCopyDiagnostics: () -> Unit,
+    onShareDiagnostics: () -> Unit,
+    onClearDiagnostics: () -> Unit,
     padding: PaddingValues,
 ) {
     ScreenBody(padding) {
@@ -1137,12 +1092,22 @@ private fun DiagnosticsSurface(
             KeyValueRow("local server", localServerState.phase.name.lowercase())
             KeyValueRow("local generation", localServerState.generation.toString())
             KeyValueRow("local sources", localServerState.loadedSources.size.toString())
+            KeyValueRow("local failure", localServerState.failure ?: "none")
             KeyValueRow("connection", connectionLabel(state.server))
             KeyValueRow("generation", state.generation.toString())
             KeyValueRow("session", state.sessionId ?: "none")
             KeyValueRow("conversation", state.selectedConversationId ?: "none")
             KeyValueRow("enrollment", enrollmentLabel(state.enrollment))
             KeyValueRow("assistant role", assistantRoleLabel(state.assistantRole))
+        }
+        SectionCard("LOCAL LOG") {
+            MutedNotice(
+                "The log is stored only in app-private storage and records runtime stages, bounded exception chains, build/source identity, and model/runtime state. Prompt text, credentials, private keys, and model bytes are not logged."
+            )
+            PrimaryAction("Copy diagnostics", true, onCopyDiagnostics)
+            SecondaryAction("Share diagnostics", true, onShareDiagnostics)
+            SecondaryAction("Clear diagnostics", true, onClearDiagnostics)
+            MutedNotice("For support: tap Copy diagnostics, return to ChatGPT, and paste the block into this chat.")
         }
         voiceStreamState?.let { stream ->
             SectionCard("VOICE") {
