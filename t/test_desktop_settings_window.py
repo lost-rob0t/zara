@@ -6,9 +6,19 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
+import zara.desktop.windows.settings as settings_window_module
 from zara.config import DEFAULT_CONFIG_TOML, ZaraConfig
 from zara.desktop.theme import apply_desktop_theme
 from zara.desktop.windows import SettingsWindow
+from zara.runtime.discovery import builtin_runtime_descriptor
+from zara.runtime.registry import (
+    ControlOwner,
+    RuntimeDescriptor,
+    RuntimeHealth,
+    RuntimeLocality,
+    RuntimeTransport,
+    ZARA_RUNTIME_PROTOCOL,
+)
 
 
 def app() -> QApplication:
@@ -49,6 +59,34 @@ def dispose(window: SettingsWindow) -> None:
     window.close()
     window.deleteLater()
     app().processEvents()
+
+
+def prolog_runtime(
+    *,
+    protocol: str = ZARA_RUNTIME_PROTOCOL,
+    available: bool = True,
+) -> RuntimeDescriptor:
+    return RuntimeDescriptor(
+        id="prolog-rlm",
+        display_name="Prolog-RLM",
+        protocol=protocol,
+        runtime_version="0.1.0-dev",
+        implementation_version="0.1.0-dev",
+        installed=True,
+        available=available,
+        health=RuntimeHealth.READY,
+        locality=RuntimeLocality.LOCAL_SIDECAR,
+        transport=RuntimeTransport.LOOPBACK_HTTP,
+        capabilities=("direct", "rlm", "cancel"),
+        profiles=(),
+        provider_control=ControlOwner.RUNTIME,
+        model_control=ControlOwner.RUNTIME,
+        supports_streaming=False,
+        supports_cancel=True,
+        supports_context_handles=True,
+        supports_host_tools=False,
+        provenance="prolog-rlm:loopback",
+    )
 
 
 def test_settings_has_complete_navigation_and_many_real_controls(tmp_path):
@@ -93,6 +131,60 @@ def test_settings_has_complete_navigation_and_many_real_controls(tmp_path):
             "dracula",
             "chatgpt-neutral",
         ]
+    finally:
+        dispose(window)
+
+
+def test_runtime_settings_only_offer_live_selectable_runtimes(tmp_path, monkeypatch):
+    incompatible = prolog_runtime(protocol="ZARA-RUNTIME/99")
+    unavailable = prolog_runtime(available=False)
+    monkeypatch.setattr(
+        settings_window_module,
+        "discover_installed_runtimes",
+        lambda _config: (
+            builtin_runtime_descriptor(),
+            incompatible,
+            unavailable,
+        ),
+    )
+
+    window, _, _, _ = make_window(tmp_path)
+    try:
+        runtime = window.setting_widgets["runtime.backend"]
+        assert [runtime.itemData(index) for index in range(runtime.count())] == [
+            "zara-python"
+        ]
+        assert runtime.findData("prolog-rlm") == -1
+        assert runtime.currentData() == "zara-python"
+        assert runtime.accessibleName() == "Installed assistant runtime"
+    finally:
+        dispose(window)
+
+
+def test_runtime_settings_persist_discovered_prolog_rlm_selection(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        settings_window_module,
+        "discover_installed_runtimes",
+        lambda _config: (
+            builtin_runtime_descriptor(),
+            prolog_runtime(),
+        ),
+    )
+
+    window, config_path, _, _ = make_window(tmp_path)
+    try:
+        runtime = window.setting_widgets["runtime.backend"]
+        assert [runtime.itemData(index) for index in range(runtime.count())] == [
+            "zara-python",
+            "prolog-rlm",
+        ]
+        prolog_index = runtime.findData("prolog-rlm")
+        assert prolog_index >= 0
+        runtime.setCurrentIndex(prolog_index)
+        window.save_settings()
+
+        persisted = config_path.read_text(encoding="utf-8")
+        assert 'backend = "prolog-rlm"' in persisted
     finally:
         dispose(window)
 
