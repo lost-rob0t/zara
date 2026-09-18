@@ -1,4 +1,32 @@
 import groovy.json.JsonSlurper
+import java.util.Properties
+
+fun loadZaraVersionProperties(projectRoot: java.io.File): Properties {
+    val versionFile = projectRoot.resolve("../version.properties")
+    require(versionFile.isFile) {
+        "Canonical Zara version context is missing: " + versionFile.absolutePath
+    }
+    return Properties().apply {
+        versionFile.inputStream().use { load(it) }
+    }
+}
+
+val zaraVersionProperties = loadZaraVersionProperties(rootProject.projectDir)
+val zaraVersionName = requireNotNull(zaraVersionProperties.getProperty("zara.version")) {
+    "version.properties is missing zara.version"
+}
+val zaraAndroidVersionCode =
+    zaraVersionProperties.getProperty("android.versionCode")?.toIntOrNull()
+        ?: error("version.properties android.versionCode must be an integer")
+require(zaraVersionName.matches(Regex(
+    """^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"""
+))) {
+    "version.properties zara.version must be SemVer"
+}
+require(zaraAndroidVersionCode in 1..2100000000) {
+    "version.properties android.versionCode is outside Android's valid range"
+}
+
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
@@ -86,8 +114,8 @@ android {
         applicationId = "ai.zara.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.1.2-alpha"
+        versionCode = zaraAndroidVersionCode
+        versionName = zaraVersionName
         buildConfigField("String", "SOURCE_SHA", "\"$sourceSha\"")
         buildConfigField("boolean", "HAS_SAMSUNG_HEALTH_SDK", hasSamsungHealthSdk.toString())
 

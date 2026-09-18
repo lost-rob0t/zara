@@ -7,14 +7,52 @@ on:
     tags:
       - 'v*'
     paths:
+      - version.properties
+      - zara/version_context.py
+      - scripts/version-context.py
+      - setup.py
       - android/app/build.gradle.kts
+      - android/wear-app/build.gradle.kts
+      - .github/workflows/release.yml
 
 permissions:
   contents: write
 
 jobs:
+  validate-version-context:
+    name: validate strict version context
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      version_code: ${{ steps.release.outputs.version_code }}
+      tag: ${{ steps.release.outputs.tag }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve canonical version context
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python scripts/version-context.py --format github-output >> "$GITHUB_OUTPUT"
+
+          version="$(python scripts/version-context.py --format json | python -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+          tag="v${version}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "$tag" ]]; then
+            echo "Tag/version mismatch: ref=${GITHUB_REF_NAME}, product=$tag" >&2
+            exit 1
+          fi
+
   android-alpha-release:
     name: build and publish Android alpha
+    if: github.ref_type == 'tag'
+    needs:
+      - validate-version-context
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -23,37 +61,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Resolve release version
-        id: release
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          version="$(sed -nE 's/^[[:space:]]*versionName = "([^"]+)".*/\1/p' android/app/build.gradle.kts)"
-          if [[ -z "$version" ]]; then
-            echo "Could not resolve Android versionName." >&2
-            exit 1
-          fi
-          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Android versionName is not SemVer: $version" >&2
-            exit 1
-          fi
-          version_code="$(sed -nE 's/^[[:space:]]*versionCode = ([0-9]+).*/\1/p' android/app/build.gradle.kts)"
-          if [[ -z "$version_code" || "$version_code" -lt 1 ]]; then
-            echo "Could not resolve a positive Android versionCode." >&2
-            exit 1
-          fi
-
-          tag="v${version}"
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "$tag" ]]; then
-            echo "Tag/version mismatch: ref=${GITHUB_REF_NAME}, app=${tag}" >&2
-            exit 1
-          fi
-
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
@@ -80,8 +87,8 @@ jobs:
         id: artifact
         shell: bash
         env:
-          VERSION: ${{ steps.release.outputs.version }}
-          VERSION_CODE: ${{ steps.release.outputs.version_code }}
+          VERSION: ${{ needs.validate-version-context.outputs.version }}
+          VERSION_CODE: ${{ needs.validate-version-context.outputs.version_code }}
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -107,7 +114,7 @@ jobs:
       - name: Publish GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.release.outputs.tag }}
+          TAG: ${{ needs.validate-version-context.outputs.tag }}
           APK: ${{ steps.artifact.outputs.apk }}
           MANIFEST: ${{ steps.artifact.outputs.manifest }}
         shell: bash

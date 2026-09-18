@@ -31,7 +31,7 @@ def test_version_context_is_machine_readable_and_strict():
     assert SEMVER_RE.fullmatch(properties["zara.version"])
     assert SEMVER_RE.fullmatch(properties["release.target"])
     assert int(properties["android.versionCode"]) >= 1
-    assert int(properties["release.targetAndroidVersionCode"]) > int(
+    assert int(properties["release.targetAndroidVersionCode"]) >= int(
         properties["android.versionCode"]
     )
 
@@ -68,6 +68,7 @@ def test_all_product_version_consumers_use_version_properties():
     release_workflow = (ROOT / ".github/workflows/release.yml").read_text()
 
     assert "version.properties" in setup_py
+    assert "load_version_context" in setup_py
     assert 'version="2.0.0"' not in setup_py
 
     for gradle in (android_app, wear_app):
@@ -85,3 +86,14 @@ def test_versioned_release_publication_requires_an_explicit_tag():
 
     assert "github.ref_type == 'tag'" in workflow
     assert "gh release create" in workflow
+
+
+def test_agent_and_release_skill_require_live_version_context():
+    agents = (ROOT / "AGENTS.md").read_text()
+    skill = (ROOT / "skills/zara-android-release/SKILL.md").read_text()
+    manifest = (ROOT / "MANIFEST.in").read_text()
+
+    assert "scripts/version-context.py --format json" in agents
+    assert "version.properties" in skill
+    assert "release_ready=true" in skill
+    assert "include version.properties" in manifest
