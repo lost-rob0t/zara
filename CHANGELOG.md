@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 - Keep this section for work that is merged but not yet assigned to a release.
 - Plugin UI manifest discovery now rejects manifests that resolve outside the configured plugin root.
+- Plugin UI manifests now enforce the 256 KiB limit on the bytes actually read, so a manifest cannot bypass the bound by changing after an earlier size check.
 
 ## 0.2.2-alpha
 
