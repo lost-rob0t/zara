@@ -63,7 +63,12 @@ timeout_check :-
     zara_policy:assertz((user_rule(hang,local,1,phrase(x),x,[local]) :- repeat,fail)),
     catch(zara_policy:advise_codes([120],_),Error,true),
     zara_policy:retractall(user_rule(hang,_,_,_,_,_)),
-    Error == time_limit_exceeded.
+    timeout_error(Error).
+
+timeout_error(time_limit_exceeded).
+timeout_error(error(Reason,_)) :-
+    nonvar(Reason),
+    functor(Reason,time_limit_exceeded,_).
 
 % Backtracking must never produce another report or retain failed alternatives.
 single_report_check :-
