@@ -165,7 +165,7 @@ def test_external_service_plugin_lifecycle_tools_events_config_and_diagnostics(t
     assert module.STOP_COUNT == 1
     assert module.SUBSCRIPTION.closed is True
     assert backend.tools == []
-    assert host.plugin_diagnostics()[0].state is PluginState.STOPPED
+    assert plugin_diagnostic(host, "test-service").state is PluginState.STOPPED
 
 
 def test_disabled_service_plugin_remains_visible_but_never_starts(tmp_path):
