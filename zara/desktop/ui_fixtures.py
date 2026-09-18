@@ -15,17 +15,19 @@ from typing import Callable
 
 from PySide6.QtCore import QSettings
 from PySide6.QtGui import QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QScrollArea
 
+from zara.config import DEFAULT_CONFIG_TOML, ZaraConfig
 from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationService, ConversationStore
 from zara.desktop.theme import apply_desktop_theme
-from zara.desktop.windows import CopilotPresentation, CopilotWindow
+from zara.desktop.windows import CopilotPresentation, CopilotWindow, SettingsWindow
 from zara.runtime import events
 
 _COMPACT_SIZE = (680, 460)
 _EXPANDED_SIZE = (960, 680)
 _MINIMUM_SIZE = (480, 320)
+_SETTINGS_SIZE = (1120, 760)
 _THEME = "signal-cabin"
 
 _FIXTURES: tuple[tuple[str, str], ...] = (
@@ -234,8 +236,71 @@ def _render_one(
         settings.sync()
 
 
+def _render_settings_extensions(
+    output_dir: Path,
+    *,
+    source_commit: str,
+    root: Path,
+) -> dict[str, object]:
+    """Render the shared Settings slot from trusted-local fixture declarations."""
+    app = _application()
+    config_dir = root / "settings-extension-config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path = config_dir / "config.toml"
+    config_path.write_text(DEFAULT_CONFIG_TOML, encoding="utf-8")
+    config_path.with_name("config.pl").write_text("% fixture user config\n", encoding="utf-8")
+    config_path.with_name("init.py").write_text(
+        "def register(ui):\n"
+        "    ui.add(\"notes-settings\", \"settings\", \"button\", "
+        "\"Open Notes UI\", \"plugin:open notes\", 10, [\"desktop\", \"android\"])\n",
+        encoding="utf-8",
+    )
+
+    repo_root = root / "settings-extension-repo"
+    (repo_root / "kb").mkdir(parents=True)
+    (repo_root / "modules").mkdir()
+    (repo_root / "main.pl").write_text("main :- true.\n", encoding="utf-8")
+    (repo_root / "kb" / "intents.pl").write_text("intent(ok).\n", encoding="utf-8")
+    (repo_root / "modules" / "logic.pl").write_text("logic(ok).\n", encoding="utf-8")
+
+    window = SettingsWindow(ZaraConfig(str(config_path)), repo_root=repo_root)
+    window.resize(*_SETTINGS_SIZE)
+    window.category_list.setCurrentRow(5)
+
+    try:
+        window.show()
+        app.processEvents()
+        page = window.stack.currentWidget()
+        if isinstance(page, QScrollArea):
+            scrollbar = page.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+            app.processEvents()
+        pixmap = window.grab()
+        if pixmap.isNull():
+            raise RuntimeError("failed to render Settings extension fixture")
+        filename = "settings-extensions.png"
+        target = output_dir / filename
+        if not pixmap.save(str(target), "PNG"):
+            raise RuntimeError(f"failed to save Settings extension fixture: {target}")
+        screenshot_sha256 = hashlib.sha256(target.read_bytes()).hexdigest()
+        return {
+            "state": "settings-extensions",
+            "path": filename,
+            "width": pixmap.width(),
+            "height": pixmap.height(),
+            "theme": _THEME,
+            "source_commit": source_commit,
+            "sha256": screenshot_sha256,
+        }
+    finally:
+        window.prepare_for_quit()
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def render_copilot_fixtures(output_dir: Path | str, *, source_commit: str) -> dict[str, object]:
-    """Render the closed #324 fixture matrix without touching user state or I/O.
+    """Render the deterministic desktop fixture matrix without touching user state or I/O.
 
     ``source_commit`` is evidence supplied by the caller; rendering does not invoke
     Git, the daemon, providers, microphones, or the network.
@@ -264,6 +329,13 @@ def render_copilot_fixtures(output_dir: Path | str, *, source_commit: str) -> di
                 )
                 for state, filename in _FIXTURES
             ]
+            fixtures.append(
+                _render_settings_extensions(
+                    target,
+                    source_commit=source_commit,
+                    root=root,
+                )
+            )
     finally:
         app.setStyle(previous_style_name)
         app.setPalette(previous_palette)

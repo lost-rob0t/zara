@@ -11,6 +11,8 @@ import ai.zara.app.runtime.LocalServerState
 import ai.zara.app.runtime.ServerConnection
 import ai.zara.app.prolog.PrologSource
 import ai.zara.app.prolog.LocalEmbeddingConfiguration
+import ai.zara.app.ui.extensions.UiContribution
+import ai.zara.app.ui.extensions.UiSlot
 import ai.zara.app.update.UpdatePhase
 import ai.zara.app.update.UpdateState
 import ai.zara.app.voice.ManualVoiceState
@@ -94,7 +96,7 @@ enum class AppSurface(val label: String, val glyph: String, val gatedIssue: Stri
     Projects("Projects", "◇", "#653"),
     Remote("Remote", "⇄"),
     Scheduled("Scheduled", "◷", "#654"),
-    Plugins("Plugins", "⬡", "#655"),
+    Plugins("Plugins", "⬡"),
     Themes("Themes", "◐"),
     Diagnostics("Diagnostics", "⌁"),
     Settings("Settings", "⚙"),
@@ -178,6 +180,29 @@ fun ZaraApp(
     val scope = rememberCoroutineScope()
     val systemDark = isSystemInDarkTheme()
     val tokens = themeTokens(selectedTheme, systemDark, reducedGlow = false)
+    val uiContributions = rememberAndroidUiContributions(localServerState.generation)
+    val onUiAction: (String) -> Unit = { action ->
+        when {
+            action.startsWith("route:") -> {
+                val target = action.removePrefix("route:")
+                val route = AppRoute.entries.firstOrNull {
+                    it.name.equals(target, ignoreCase = true) ||
+                        it.label.equals(target, ignoreCase = true)
+                }
+                if (route != null) {
+                    navigation = navigation.selectRoute(route)
+                } else {
+                    AppMenu.entries.firstOrNull {
+                        it.name.equals(target, ignoreCase = true) ||
+                            it.label.equals(target, ignoreCase = true)
+                    }?.let { menu -> navigation = navigation.selectMenu(menu) }
+                }
+            }
+            action.startsWith("submit:") -> onSendText(action.removePrefix("submit:"))
+            action.startsWith("prompt:") -> onSendText(action.removePrefix("prompt:"))
+            action.startsWith("plugin:") -> Unit
+        }
+    }
 
     BackHandler(enabled = !drawerState.isOpen && navigation.back() != null) {
         navigation.back()?.let { navigation = it }
@@ -194,8 +219,13 @@ fun ZaraApp(
                             selected = navigation.menu,
                             state = runtimeState,
                             localState = localServerState,
+                            uiContributions = uiContributions,
                             onSelect = { destination ->
                                 navigation = navigation.selectMenu(destination)
+                                scope.launch { drawerState.close() }
+                            },
+                            onExtensionAction = { action ->
+                                onUiAction(action)
                                 scope.launch { drawerState.close() }
                             },
                         )
@@ -240,6 +270,8 @@ fun ZaraApp(
                                                 lastTurn = lastTurn,
                                                 operationError = operationError,
                                                 operationBusy = operationBusy,
+                                                uiContributions = uiContributions,
+                                                onExtensionAction = onUiAction,
                                                 onSendText = onSendText,
                                                 padding = padding,
                                             )
@@ -274,7 +306,11 @@ fun ZaraApp(
                                             )
                                             AppSurface.Projects -> GatedSurface(selected, padding)
                                             AppSurface.Scheduled -> GatedSurface(selected, padding)
-                                            AppSurface.Plugins -> GatedSurface(selected, padding)
+                                            AppSurface.Plugins -> PluginExtensionsSurface(
+                                                contributions = uiContributions,
+                                                onAction = onUiAction,
+                                                padding = padding,
+                                            )
                                             AppSurface.Themes -> ThemesSurface(
                                                 selected = selectedTheme,
                                                 onSelectTheme = onSelectTheme,
@@ -303,6 +339,8 @@ fun ZaraApp(
                                                 pinnedServerPublicKey = pinnedServerPublicKey,
                                                 operationError = operationError,
                                                 operationBusy = operationBusy,
+                                                uiContributions = uiContributions,
+                                                onExtensionAction = onUiAction,
                                                 onCreateIdentity = onCreateIdentity,
                                                 onPinServer = onPinServer,
                                                 onReplaceServerPin = onReplaceServerPin,
@@ -387,7 +425,9 @@ private fun ZaraDrawer(
     selected: AppMenu,
     state: RuntimeState,
     localState: LocalServerState,
+    uiContributions: List<UiContribution>,
     onSelect: (AppMenu) -> Unit,
+    onExtensionAction: (String) -> Unit,
 ) {
     val tokens = LocalZaraTokens.current
     ModalDrawerSheet(
@@ -437,6 +477,7 @@ private fun ZaraDrawer(
                 )
             }
 
+            AndroidDrawerUiExtensions(uiContributions, onExtensionAction)
             Spacer(Modifier.size(12.dp))
             DrawerDividerLabel("PINNED")
             DrawerHistoryRow("No pinned conversations", "nothing is synced implicitly")
@@ -508,6 +549,8 @@ private fun ChatSurface(
     lastTurn: RenderedTextTurn?,
     operationError: String?,
     operationBusy: Boolean,
+    uiContributions: List<UiContribution>,
+    onExtensionAction: (String) -> Unit,
     onSendText: (String) -> Unit,
     padding: PaddingValues,
 ) {
@@ -524,6 +567,7 @@ private fun ChatSurface(
             .padding(padding)
             .padding(horizontal = 16.dp),
     ) {
+        AndroidUiExtensionSlot(uiContributions, UiSlot.CHAT_TOP, onExtensionAction)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -571,6 +615,7 @@ private fun ChatSurface(
             operationError?.let { ErrorBanner(it) }
         }
 
+        AndroidUiExtensionSlot(uiContributions, UiSlot.CHAT_BOTTOM, onExtensionAction)
         CompactComposer(
             value = input,
             onValueChange = { input = it },
@@ -783,6 +828,8 @@ private fun SettingsSurface(
     pinnedServerPublicKey: String?,
     operationError: String?,
     operationBusy: Boolean,
+    uiContributions: List<UiContribution>,
+    onExtensionAction: (String) -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
     onReplaceServerPin: (String) -> Unit,
@@ -992,6 +1039,7 @@ private fun SettingsSurface(
             }
             else -> error("Not a settings form: $section")
         }
+        AndroidUiExtensionSlot(uiContributions, UiSlot.SETTINGS, onExtensionAction)
         operationError?.let { failure ->
             ErrorBanner(failure)
             if (section == AppRoute.Connection && failure == "server_hello_timeout") {

@@ -39,6 +39,9 @@ class PluginDiagnostic:
     plugin_type: str
     state: PluginState
     error: str = ""
+    enabled: bool = True
+    description: str = ""
+    capabilities: tuple[str, ...] = ()
 
 
 @dataclass
@@ -46,6 +49,7 @@ class _PluginRecord:
     path: Path
     metadata: PluginMetadata
     instance: object
+    enabled: bool = True
     state: PluginState = PluginState.LOADED
     error: str = ""
     runtime: Optional[PluginRuntime] = None
@@ -111,6 +115,9 @@ class PluginManager:
                     plugin_type=record.metadata.plugin_type,
                     state=record.state,
                     error=record.error,
+                    enabled=record.enabled,
+                    description=record.metadata.description,
+                    capabilities=record.tool_names,
                 )
                 for record in self._records
             ]
@@ -164,8 +171,6 @@ class PluginManager:
                 enabled = configuration.get("enabled", default_enabled)
                 if not isinstance(enabled, bool):
                     raise TypeError("plugin enabled setting must be a boolean")
-                if not enabled:
-                    continue
 
                 if metadata.name in names:
                     raise ValueError(f"duplicate service plugin name {metadata.name!r}")
@@ -174,6 +179,8 @@ class PluginManager:
                     path=file_path,
                     metadata=metadata,
                     instance=instance,
+                    enabled=enabled,
+                    state=PluginState.LOADED if enabled else PluginState.INSTALLED,
                 )
                 if metadata.api_version != PLUGIN_API_VERSION:
                     record.state = PluginState.INCOMPATIBLE
@@ -203,7 +210,7 @@ class PluginManager:
         self.discover()
 
         for record in tuple(self._records):
-            if record.state is PluginState.INCOMPATIBLE:
+            if not record.enabled or record.state is PluginState.INCOMPATIBLE:
                 continue
             await self._start_record(record)
 

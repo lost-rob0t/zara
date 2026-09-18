@@ -62,6 +62,10 @@ def stop_host(host):
     host.join(timeout=5)
 
 
+def plugin_diagnostic(host, name):
+    return next(item for item in host.plugin_diagnostics() if item.name == name)
+
+
 def write_service_plugin(path, *, start_body="pass", stop_body="pass", api_version="1"):
     path.write_text(
         textwrap.dedent(
@@ -144,10 +148,16 @@ def test_external_service_plugin_lifecycle_tools_events_config_and_diagnostics(t
         assert [tool.name for tool in backend.tools] == ["service_echo"]
         assert isinstance(module.SUBSCRIPTION.get(timeout=1).event, events.RuntimeStarted)
 
-        diagnostics = host.plugin_diagnostics()
-        assert [(item.name, item.version, item.plugin_type, item.state) for item in diagnostics] == [
-            ("test-service", "1.2.3", "service", PluginState.RUNNING)
-        ]
+        diagnostic = plugin_diagnostic(host, "test-service")
+        assert (diagnostic.name, diagnostic.version, diagnostic.plugin_type, diagnostic.state) == (
+            "test-service",
+            "1.2.3",
+            "service",
+            PluginState.RUNNING,
+        )
+        assert diagnostic.enabled is True
+        assert diagnostic.description == "test service"
+        assert diagnostic.capabilities == ("service_echo",)
     finally:
         stop_host(host)
 
@@ -155,7 +165,35 @@ def test_external_service_plugin_lifecycle_tools_events_config_and_diagnostics(t
     assert module.STOP_COUNT == 1
     assert module.SUBSCRIPTION.closed is True
     assert backend.tools == []
-    assert host.plugin_diagnostics()[0].state is PluginState.STOPPED
+    assert plugin_diagnostic(host, "test-service").state is PluginState.STOPPED
+
+
+def test_disabled_service_plugin_remains_visible_but_never_starts(tmp_path):
+    plugin_path = tmp_path / "disabled_plugin.py"
+    write_service_plugin(plugin_path)
+    backend = PluginBackend()
+    host = RuntimeHost(
+        lambda: backend,
+        plugin_paths=(tmp_path,),
+        config=PluginTestConfig({"test-service": {"enabled": False, "token": "do-not-project"}}),
+    )
+
+    try:
+        host.start().result(timeout=5)
+        module = load_plugin_module(plugin_path)
+        diagnostic = plugin_diagnostic(host, "test-service")
+
+        assert module.CREATE_COUNT == 1
+        assert module.START_COUNT == 0
+        assert backend.tools == []
+        assert diagnostic.name == "test-service"
+        assert diagnostic.enabled is False
+        assert diagnostic.state is PluginState.INSTALLED
+        assert diagnostic.description == "test service"
+        assert diagnostic.capabilities == ()
+        assert "do-not-project" not in repr(diagnostic)
+    finally:
+        stop_host(host)
 
 
 def test_service_worker_dispatches_on_runtime_thread_and_is_cleaned_up(tmp_path):
@@ -263,7 +301,7 @@ def test_service_lifecycle_failures_are_contained(
 
     assert module.START_COUNT == 1
     assert module.STOP_COUNT == 1
-    diagnostic = host.plugin_diagnostics()[0]
+    diagnostic = plugin_diagnostic(host, "test-service")
     assert diagnostic.state is PluginState.FAILED
     assert error_text in diagnostic.error
     assert any(
@@ -294,15 +332,16 @@ WORKER = runtime.start_worker("broken", worker)
         host.start().result(timeout=5)
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
-            diagnostics = host.plugin_diagnostics()
-            if diagnostics and diagnostics[0].state is PluginState.FAILED:
+            diagnostic = plugin_diagnostic(host, "test-service")
+            if diagnostic.state is PluginState.FAILED:
                 break
             time.sleep(0.01)
 
         assert host.state is RuntimeHostState.RUNNING
         assert host.is_alive is True
-        assert host.plugin_diagnostics()[0].state is PluginState.FAILED
-        assert "worker boom" in host.plugin_diagnostics()[0].error
+        diagnostic = plugin_diagnostic(host, "test-service")
+        assert diagnostic.state is PluginState.FAILED
+        assert "worker boom" in diagnostic.error
     finally:
         stop_host(host)
 
@@ -319,7 +358,7 @@ def test_incompatible_service_plugin_is_not_started(tmp_path):
     try:
         host.start().result(timeout=5)
         module = load_plugin_module(plugin_path)
-        diagnostic = host.plugin_diagnostics()[0]
+        diagnostic = plugin_diagnostic(host, "test-service")
 
         assert module.CREATE_COUNT == 1
         assert module.START_COUNT == 0

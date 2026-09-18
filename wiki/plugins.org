@@ -19,6 +19,12 @@ These are part of the core package, use the same lifecycle manager, and may set
 are started. Third-party service plugins remain enabled by default unless their
 configuration explicitly sets =enabled = false=.
 
+A disabled service remains visible in the canonical plugin projection as
+=state=installed= with =enabled=false=. Zara does not call its =tools()= or
+=start()= methods, so visibility does not grant capability or execution
+authority. This distinction is the basis for native plugin catalog UIs: an
+installed plugin can be shown and configured without pretending it is running.
+
 * Legacy tool plugins
 
 Existing tool-only modules remain supported. They export one of:
@@ -183,15 +189,22 @@ enabled = true
 
 Zara does not interpret or expose a plugin's private settings in diagnostics,
 except that the service manager consumes the generic =enabled= boolean before a
-service is started.
+service is started. Native settings UIs must use the separate canonical
+revisioned plugin-settings contract rather than dumping this private mapping.
 
 * Failures, diagnostics, and shutdown
 
 =RuntimeHost.plugin_diagnostics()= returns bounded =PluginDiagnostic= records
-with only =name=, =version=, =plugin_type=, =state=, and sanitized =error=.
+with =name=, =version=, =plugin_type=, =state=, sanitized =error=, =enabled=,
+bounded plugin =description=, and currently registered capability/tool names.
+The diagnostic never includes the plugin's private configuration. Capability
+names are discovery/status metadata only; callers must not treat their presence
+as permission to execute a tool.
+
 Lifecycle states distinguish =installed=, =loaded=, =running=, =stopped=,
-=failed=, and =incompatible=. Tool-only plugins report =loaded= because they do
-not have a service lifecycle.
+=failed=, and =incompatible=. Disabled services remain =installed= and are not
+started. Tool-only plugins report =loaded= because they do not have a service
+lifecycle.
 
 An incompatible API version is not started. Import, factory, tool, startup,
 managed-worker, and shutdown failures are isolated to that plugin and emit a
