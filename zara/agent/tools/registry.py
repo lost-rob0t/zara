@@ -5,6 +5,7 @@ Uses LangChain tools directly. The old custom registry is deprecated.
 """
 
 import logging
+from collections.abc import Mapping
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
 
 from langchain_core.tools import BaseTool as LangChainTool
@@ -104,10 +105,26 @@ class ToolRegistry:
         return list(self._tools.values())
 
     def requires_approval(self, name: str) -> bool:
-        return (
+        if (
             name in self._configured_approval_required
             or name in self._registered_approval_required
-        )
+        ):
+            return True
+        tool = self._tools.get(name)
+        return tool is not None and _tool_requires_approval(tool)
+
+    def invoke_composed_tool(self, name: str, request: Mapping[str, Any]) -> Any:
+        """Invoke one registry-owned tool without bypassing approval policy."""
+        if not isinstance(request, Mapping):
+            raise TypeError("composed tool request must be a mapping")
+        tool = self.get_tool(name)
+        if tool is None:
+            raise LookupError("tool is unavailable")
+        if self.requires_approval(name):
+            raise PermissionError(
+                "tool requires canonical interactive approval and cannot be invoked directly"
+            )
+        return tool.invoke(dict(request))
 
     async def prepare_async(self) -> None:
         if self.config is None:
