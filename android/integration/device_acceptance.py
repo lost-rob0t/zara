@@ -333,7 +333,7 @@ def exercise_three_menu_ui(device: Device) -> None:
         device.assert_accessible_targets((tab,))
         if tab == "Remote APIs":
             device.await_label("OpenRouter")
-            device.await_contains("Remote profile")
+            device.await_contains("Remote API profile")
         time.sleep(0.4)
         device.capture(f"settings-{tab.lower().replace(' ', '-')}")
 
