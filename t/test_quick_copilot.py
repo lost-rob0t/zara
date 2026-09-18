@@ -18,7 +18,7 @@ from zara.desktop.conversation import (
     MessageRole,
     MessageStatus,
 )
-from zara.desktop.state import DesktopRuntimeState
+from zara.desktop.state import DesktopRuntimeState, DesktopStatus
 from zara.desktop.windows import QuickCopilotWindow
 from zara.desktop.windows.quick import recover_quick_geometry
 from zara.runtime import events
