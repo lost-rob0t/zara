@@ -307,7 +307,20 @@ class Device:
         time.sleep(0.5)
         self.adb("shell", "am", "kill", "ai.zara.app")
         time.sleep(0.8)
-        self.adb("shell", "am", "start", "-W", "-n", "ai.zara.app/.MainActivity")
+        self.adb(
+            "shell",
+            "am",
+            "start",
+            "-W",
+            "-a",
+            "android.intent.action.MAIN",
+            "-c",
+            "android.intent.category.LAUNCHER",
+            "-f",
+            "0x10200000",
+            "-n",
+            "ai.zara.app/.MainActivity",
+        )
         time.sleep(0.8)
 
     def set_display_profile(
