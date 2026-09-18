@@ -453,13 +453,46 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         )
         when (runtimeMode) {
             RuntimeMode.Local -> return submitLocalText(text)
-            RuntimeMode.Remote -> if (!remoteConnected) {
-                return CompletableFuture.failedFuture(
-                    IllegalStateException("Remote mode requires an authenticated Zara server"),
-                )
+            RuntimeMode.Remote -> {
+                if (!remoteConnected) {
+                    return CompletableFuture.failedFuture(
+                        IllegalStateException("Remote mode requires an authenticated Zara server"),
+                    )
+                }
+                return submitRemoteText(text)
             }
-            RuntimeMode.Auto -> if (!remoteConnected) return submitLocalText(text)
+            RuntimeMode.Auto -> return submitAutoLocalFirst(text, remoteConnected)
         }
+    }
+
+    private fun submitAutoLocalFirst(
+        text: String,
+        remoteConnected: Boolean,
+    ): CompletableFuture<TextTurnResult> {
+        val query = text.trim()
+        val explicitSymbolic =
+            query.startsWith("?-") || query.startsWith("/prolog ") || query.startsWith("/expert ")
+        val local = submitLocalText(text)
+        if (explicitSymbolic || !remoteConnected) return local
+
+        return local.handle { result, error -> result to error }.thenCompose { (result, error) ->
+            if (error == null && result?.success == true) {
+                CompletableFuture.completedFuture(result)
+            } else {
+                diagnostics.record(
+                    "auto.remote_fallback",
+                    mapOf(
+                        "local_success" to (result?.success == true),
+                        "local_error" to (error != null),
+                    ),
+                    error,
+                )
+                submitRemoteText(text)
+            }
+        }
+    }
+
+    private fun submitRemoteText(text: String): CompletableFuture<TextTurnResult> {
         val future = controller.submitText(text)
         future.thenAccept { result ->
             val profile = state().configuredProfile ?: return@thenAccept
