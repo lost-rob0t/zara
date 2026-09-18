@@ -91,6 +91,27 @@ def test_sidecar_discovery_uses_canonical_runtime_descriptor() -> None:
     assert timeout == 0.1
 
 
+def test_agentprolog_profile_is_the_only_optional_profile_advertised() -> None:
+    runtime = discovery.runtime_descriptor_from_wire(
+        descriptor(profiles=["agentprolog"])
+    )
+
+    assert runtime.profiles == ("agentprolog",)
+
+
+@pytest.mark.parametrize(
+    "profiles",
+    (
+        ["admin"],
+        ["agentprolog\x00"],
+        ["agentprolog", "other"],
+    ),
+)
+def test_unknown_or_control_runtime_profile_fails_closed(profiles) -> None:
+    with pytest.raises(discovery.RuntimeDiscoveryError):
+        discovery.runtime_descriptor_from_wire(descriptor(profiles=profiles))
+
+
 def test_incompatible_runtime_protocol_is_observed_but_not_selectable() -> None:
     opener = FakeOpener(
         {"runtimes": [descriptor(protocol="ZARA-RUNTIME/99")]}
