@@ -72,7 +72,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun OrgWorkbench() {
     val context = LocalContext.current
-    var treeUri by remember { mutableStateOf(OrgTreePermission.remembered(context)) }
+    var homeRevision by rememberSaveable { mutableStateOf(0) }
+    val homeSelection = remember(homeRevision) { OrgHome.selection(context) }
     var files by remember { mutableStateOf(emptyList<OrgFileRef>()) }
     var tasks by remember { mutableStateOf(emptyList<OrgTask>()) }
     var selected by remember { mutableStateOf<OrgFileRef?>(null) }
@@ -82,8 +83,8 @@ private fun OrgWorkbench() {
     var status by remember { mutableStateOf("") }
     var captureOpen by remember { mutableStateOf(false) }
 
-    val repository = remember(treeUri) {
-        treeUri?.let { uri -> runCatching { OrgTreeRepository(context, uri) }.getOrNull() }
+    val repository: OrgRepository? = remember(homeRevision) {
+        runCatching { OrgHome.open(context) }.getOrNull()
     }
 
     fun refresh() {
@@ -112,10 +113,10 @@ private fun OrgWorkbench() {
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
-            runCatching { OrgTreePermission.remember(context, uri) }
+            runCatching { OrgHome.useCustomSaf(context, uri) }
                 .onSuccess {
-                    treeUri = uri
-                    status = "Org workspace connected"
+                    homeRevision += 1
+                    status = "Custom Org home connected"
                 }
                 .onFailure { status = it.message ?: "Unable to retain workspace permission" }
         }
@@ -136,7 +137,14 @@ private fun OrgWorkbench() {
                 Text("Zara Org", style = MaterialTheme.typography.titleLarge)
                 Text(status.ifBlank { DoomOrgProfile.orgRoot }, style = MaterialTheme.typography.labelSmall)
             }
-            TextButton(onClick = { picker.launch(treeUri) }) { Text(if (treeUri == null) "Open Org tree" else "Change tree") }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = {
+                    OrgHome.useShared(context)
+                    homeRevision += 1
+                    status = "Using shared Org home"
+                }) { Text("Shared home") }
+                TextButton(onClick = { picker.launch(homeSelection.customTreeUri) }) { Text("Custom dir") }
+            }
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -154,9 +162,20 @@ private fun OrgWorkbench() {
 
         if (repository == null) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Pick your Org root. The app uses Android's document-tree permission and keeps the .org files as the source of truth.")
-                Button(onClick = { picker.launch(null) }) { Text("Choose ~/Documents/Notes/org") }
-                Text("Agenda, TODO edits, captures, and Python/Prolog tangles all write back to that tree.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (homeSelection.mode == OrgHomeMode.SHARED) {
+                    Text("Shared Org home is the default. Install/open Org Sync to provide it, or choose a custom directory for this app.")
+                    Button(onClick = { picker.launch(null) }) { Text("Choose custom Org directory") }
+                } else {
+                    Text("The custom Org directory is unavailable. Re-grant it or return to the shared Org home.")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { picker.launch(homeSelection.customTreeUri) }) { Text("Re-grant directory") }
+                        TextButton(onClick = {
+                            OrgHome.useShared(context)
+                            homeRevision += 1
+                        }) { Text("Use shared home") }
+                    }
+                }
+                Text("Org files remain canonical; no private note/task database is created.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
             when (tab) {
