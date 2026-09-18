@@ -320,6 +320,7 @@ def exercise_three_menu_ui(device: Device) -> None:
     open_menu(device, "Settings")
     for tab in (
         "Runtime",
+        "Remote APIs",
         "Connection",
         "Permissions",
         "Appearance",
