@@ -2,11 +2,14 @@ package ai.zara.app
 
 import ai.zara.app.projects.ProjectContextStore
 import ai.zara.app.ui.RenderedTextTurn
+import ai.zara.app.ui.AssistantRuntimePreferenceStore
 import ai.zara.app.ui.LocalEmbeddingPreferenceStore
 import ai.zara.app.ui.RuntimeModePreferenceStore
 import ai.zara.app.ui.ThemePreferenceStore
 import ai.zara.app.ui.UiOperationFailure
 import ai.zara.app.ui.ZaraApp
+import ai.zara.app.runtime.AssistantRuntimeDescriptor
+import ai.zara.app.runtime.EMBEDDED_LOCAL_RUNTIME_ID
 import ai.zara.app.update.Changelog
 import ai.zara.app.update.ChangelogSeenStore
 import ai.zara.app.voice.ManualVoiceState
@@ -66,11 +69,55 @@ class MainActivity : ComponentActivity() {
         var selectedTheme by mutableStateOf(themePreferenceStore.load())
         val runtimeModeStore = RuntimeModePreferenceStore(File(filesDir, "runtime-mode.bin"))
         var runtimeMode by mutableStateOf(runtimeModeStore.load())
+        val assistantRuntimeStore =
+            AssistantRuntimePreferenceStore(File(filesDir, "assistant-runtime.bin"))
+        val desiredAssistantRuntimeId = assistantRuntimeStore.load()
+        var installedAssistantRuntimes by mutableStateOf<List<AssistantRuntimeDescriptor>>(
+            appSession.installedAssistantRuntimes(),
+        )
+        var selectedAssistantRuntimeId by mutableStateOf(appSession.selectedAssistantRuntimeId())
         val embeddingPreferenceStore = LocalEmbeddingPreferenceStore(File(filesDir, "local-embedding.bin"))
         var localEmbedding by mutableStateOf(embeddingPreferenceStore.load())
         val projectStore = ProjectContextStore(File(filesDir, "projects.bin"))
         var projectState by mutableStateOf(projectStore.state())
         appSession.setRuntimeMode(runtimeMode)
+
+        fun applyAssistantRuntimeDiscovery(
+            runtimes: List<AssistantRuntimeDescriptor>,
+            restorePersistedSelection: Boolean,
+        ) {
+            installedAssistantRuntimes = runtimes
+            val preferred = if (restorePersistedSelection) {
+                desiredAssistantRuntimeId
+            } else {
+                selectedAssistantRuntimeId
+            }
+            val target = preferred.takeIf { candidate ->
+                runtimes.any { it.id == candidate && it.selectable }
+            } ?: EMBEDDED_LOCAL_RUNTIME_ID
+            appSession.selectAssistantRuntime(target)
+            selectedAssistantRuntimeId = appSession.selectedAssistantRuntimeId()
+        }
+
+        fun refreshAssistantRuntimes(restorePersistedSelection: Boolean = false) {
+            appSession.discoverAssistantRuntimes().whenComplete { runtimes, error ->
+                runOnUiThread {
+                    if (error != null) {
+                        operationError = UiOperationFailure.summarize(error)
+                        installedAssistantRuntimes = appSession.installedAssistantRuntimes()
+                        selectedAssistantRuntimeId = appSession.selectedAssistantRuntimeId()
+                    } else if (runtimes != null) {
+                        try {
+                            applyAssistantRuntimeDiscovery(runtimes, restorePersistedSelection)
+                        } catch (selectionError: Exception) {
+                            operationError = UiOperationFailure.summarize(selectionError)
+                        }
+                    }
+                }
+            }
+        }
+
+        refreshAssistantRuntimes(restorePersistedSelection = true)
 
         val microphonePermission = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
@@ -144,6 +191,8 @@ class MainActivity : ComponentActivity() {
                 changelogText = currentChangelog,
                 showChangelog = showCurrentChangelog,
                 runtimeMode = runtimeMode,
+                installedAssistantRuntimes = installedAssistantRuntimes,
+                selectedAssistantRuntimeId = selectedAssistantRuntimeId,
                 localEmbedding = localEmbedding,
                 projectState = projectState,
                 onSelectTheme = { theme ->
@@ -154,6 +203,20 @@ class MainActivity : ComponentActivity() {
                     runtimeMode = mode
                     runtimeModeStore.save(mode)
                     appSession.setRuntimeMode(mode)
+                },
+                onSelectAssistantRuntime = { runtimeId ->
+                    operationError = null
+                    try {
+                        appSession.selectAssistantRuntime(runtimeId)
+                        selectedAssistantRuntimeId = appSession.selectedAssistantRuntimeId()
+                        assistantRuntimeStore.save(selectedAssistantRuntimeId)
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onRefreshAssistantRuntimes = {
+                    operationError = null
+                    refreshAssistantRuntimes()
                 },
                 onSetLocalEmbeddingEnabled = { enabled ->
                     localEmbedding = localEmbedding.copy(enabled = enabled)
