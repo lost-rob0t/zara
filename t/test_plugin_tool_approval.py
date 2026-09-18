@@ -132,7 +132,8 @@ async def test_service_plugin_declares_canonical_approval_and_unloads_atomically
 
     assert registry.get_tool("plugin_mutate") is not None
     assert registry.requires_approval("plugin_mutate") is True
-    assert manager.diagnostics()[0].state is PluginState.RUNNING
+    diagnostic = next(item for item in manager.diagnostics() if item.name == "approval-test")
+    assert diagnostic.state is PluginState.RUNNING
 
     await manager.stop()
 
@@ -148,7 +149,7 @@ async def test_service_plugin_malformed_approval_marker_fails_startup_closed(tmp
 
     await manager.start()
 
-    diagnostic = manager.diagnostics()[0]
+    diagnostic = next(item for item in manager.diagnostics() if item.name == "approval-test")
     assert diagnostic.state is PluginState.FAILED
     assert "must be true or false" in diagnostic.error
     assert registry.get_tool("plugin_mutate") is None
