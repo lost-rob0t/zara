@@ -176,3 +176,12 @@ def test_release_ready_only_after_exact_target_promotion(tmp_path):
         )
     )
     assert load_version_context(promoted).release_ready is True
+
+
+def test_android_gradle_plugins_precede_version_declarations():
+    for relative in (
+        "android/app/build.gradle.kts",
+        "android/wear-app/build.gradle.kts",
+    ):
+        gradle = (ROOT / relative).read_text()
+        assert gradle.index("plugins {") < gradle.index("fun loadZaraVersionProperties")
