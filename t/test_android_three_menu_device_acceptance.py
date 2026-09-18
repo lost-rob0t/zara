@@ -30,6 +30,8 @@ def test_acceptance_captures_each_settings_tab_and_two_theme_states():
     ):
         assert f'"{tab}"' in text
     assert 'device.capture(f"settings-{tab.lower().replace(\' \\', \'-\')}")' in text
+    assert '"Remote APIs"' in text
+    assert 'device.await_label("OpenRouter")' in text
     assert '"theme-outrun"' in text
     assert '"theme-light"' in text
 
