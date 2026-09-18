@@ -189,6 +189,26 @@ class Device:
         time.sleep(0.2)
         return True
 
+    def dismiss_release_notes(self) -> bool:
+        # A fresh install legitimately opens the versioned changelog before Chat.
+        # Dismiss only Zara's exact release-notes dialog so acceptance still fails
+        # on crashes, permission dialogs, or unrelated overlays.
+        if self.find_contains("What's new in Zara ") is None:
+            return False
+        continue_button = self.find("Continue")
+        if continue_button is None:
+            raise AssertionError("Zara release notes did not expose Continue")
+        left, top, right, bottom = self.bounds(continue_button)
+        self.adb(
+            "shell",
+            "input",
+            "tap",
+            str((left + right) // 2),
+            str((top + bottom) // 2),
+        )
+        time.sleep(0.2)
+        return True
+
     def await_label(self, label: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -256,6 +276,7 @@ class Device:
             "-n",
             component,
         )
+        self.dismiss_release_notes()
         self.await_label(label)
 
     def assert_launcher_task_isolation(self) -> None:
