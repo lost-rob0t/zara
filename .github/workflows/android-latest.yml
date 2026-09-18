@@ -68,6 +68,14 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
 
+      - name: Download exact-SHA Org Timer APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: zara-org-timer-debug-${{ github.event.workflow_run.head_sha }}
+          path: dist/org-timer
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
       - name: Download exact-SHA Wear APK artifact
         uses: actions/download-artifact@v4
         with:
@@ -89,12 +97,14 @@ jobs:
           org_todo_apk="$(find dist/org-todo -type f -name 'org-todo-debug.apk' -print -quit)"
           org_sync_apk="$(find dist/org-sync -type f -name 'org-sync-debug.apk' -print -quit)"
           org_reminder_apk="$(find dist/org-reminder -type f -name 'org-reminder-debug.apk' -print -quit)"
+          org_timer_apk="$(find dist/org-timer -type f -name 'org-timer-debug.apk' -print -quit)"
           wear_apk="$(find dist/wear -type f -name 'wear-app-debug.apk' -print -quit)"
           test -n "$phone_apk"
           test -n "$org_apk"
           test -n "$org_todo_apk"
           test -n "$org_sync_apk"
           test -n "$org_reminder_apk"
+          test -n "$org_timer_apk"
           test -n "$wear_apk"
 
           cp "$phone_apk" dist/latest/zara-latest.apk
@@ -102,12 +112,14 @@ jobs:
           cp "$org_todo_apk" dist/latest/zara-org-todo-latest.apk
           cp "$org_sync_apk" dist/latest/zara-org-sync-latest.apk
           cp "$org_reminder_apk" dist/latest/zara-org-reminder-latest.apk
+          cp "$org_timer_apk" dist/latest/zara-org-timer-latest.apk
           cp "$wear_apk" dist/latest/zara-wear-latest.apk
           sha256sum dist/latest/zara-latest.apk > dist/latest/zara-latest.apk.sha256
           sha256sum dist/latest/zara-org-latest.apk > dist/latest/zara-org-latest.apk.sha256
           sha256sum dist/latest/zara-org-todo-latest.apk > dist/latest/zara-org-todo-latest.apk.sha256
           sha256sum dist/latest/zara-org-sync-latest.apk > dist/latest/zara-org-sync-latest.apk.sha256
           sha256sum dist/latest/zara-org-reminder-latest.apk > dist/latest/zara-org-reminder-latest.apk.sha256
+          sha256sum dist/latest/zara-org-timer-latest.apk > dist/latest/zara-org-timer-latest.apk.sha256
           sha256sum dist/latest/zara-wear-latest.apk > dist/latest/zara-wear-latest.apk.sha256
 
           phone_sha="$(sha256sum dist/latest/zara-latest.apk | awk '{print $1}')"
@@ -115,6 +127,7 @@ jobs:
           org_todo_sha="$(sha256sum dist/latest/zara-org-todo-latest.apk | awk '{print $1}')"
           org_sync_sha="$(sha256sum dist/latest/zara-org-sync-latest.apk | awk '{print $1}')"
           org_reminder_sha="$(sha256sum dist/latest/zara-org-reminder-latest.apk | awk '{print $1}')"
+          org_timer_sha="$(sha256sum dist/latest/zara-org-timer-latest.apk | awk '{print $1}')"
           wear_sha="$(sha256sum dist/latest/zara-wear-latest.apk | awk '{print $1}')"
           {
             echo "schema=1"
@@ -131,6 +144,8 @@ jobs:
             echo "org_sync_sha256=${org_sync_sha}"
             echo "org_reminder_apk=zara-org-reminder-latest.apk"
             echo "org_reminder_sha256=${org_reminder_sha}"
+            echo "org_timer_apk=zara-org-timer-latest.apk"
+            echo "org_timer_sha256=${org_timer_sha}"
             echo "wear_apk=zara-wear-latest.apk"
             echo "wear_sha256=${wear_sha}"
           } > dist/latest/zara-latest.manifest.txt
@@ -146,7 +161,7 @@ jobs:
           git tag -f android-latest "$SOURCE_SHA"
           git push --force origin refs/tags/android-latest
 
-          notes="Rolling convenience build from the latest fully green master commit. Includes Zara phone, Zara Org, Org Todo, Org Sync, Org Reminder, and Zara Wear APKs. This channel is intentionally mutable; use zara-latest.manifest.txt for the exact source SHA and checksums. Immutable SemVer releases remain under v* tags."
+          notes="Rolling convenience build from the latest fully green master commit. Includes Zara phone, Zara Org, Org Todo, Org Sync, Org Reminder, Org Timer, and Zara Wear APKs. This channel is intentionally mutable; use zara-latest.manifest.txt for the exact source SHA and checksums. Immutable SemVer releases remain under v* tags."
 
           if gh release view android-latest >/dev/null 2>&1; then
             gh release upload android-latest dist/latest/* --clobber
