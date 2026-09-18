@@ -74,6 +74,7 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
             raise ValueError("principal_id must be non-empty")
         self._principal_id = normalized_principal
         self._descriptor = None
+        self._generation = 0
         self._publisher = None
         self._registered_tools: dict[str, object] = {}
 
@@ -106,6 +107,7 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
                 "Prolog-RLM runtime protocol is incompatible",
                 kind="incompatible_protocol",
             )
+        self._generation += 1
         self._descriptor = descriptor
 
     async def submit_turn(
@@ -121,6 +123,7 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
     ) -> RuntimeTurnResult:
         del latency_trace
         descriptor = self._require_started()
+        runtime_generation = self._generation
         if context_ids and not descriptor.supports_context_handles:
             raise UnsupportedRuntimeCommand(
                 "selected Prolog-RLM runtime does not support Zara context handles"
@@ -157,6 +160,8 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
                 "Prolog-RLM runtime transport failed",
                 kind="transport_error",
             ) from None
+        if runtime_generation != self._generation or self._descriptor is not descriptor:
+            raise PrologRlmRuntimeError("Prolog-RLM runtime generation changed")
         return _turn_result_from_reply(reply, request_id=request["request_id"])
 
     async def cancel_turn(self, turn_id: str) -> None:
@@ -214,6 +219,7 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
         )
 
     async def stop(self) -> None:
+        self._generation += 1
         self._descriptor = None
         self._registered_tools.clear()
 
