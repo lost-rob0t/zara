@@ -224,6 +224,13 @@ async function dispatch(action, args) {
       });
     }
 
+    case "page.elements": {
+      const tab = await resolveTab(args);
+      return await sendPageCommand(tab, "elements", {
+        max_items: args.max_items,
+      });
+    }
+
     case "page.extract": {
       const tab = await resolveTab(args);
       return await sendPageCommand(tab, "extract", {
