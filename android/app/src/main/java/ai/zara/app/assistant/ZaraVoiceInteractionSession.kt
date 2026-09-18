@@ -26,7 +26,12 @@ class ZaraVoiceInteractionSession(
         (context.applicationContext as ZaraApplication).appSession
     private val lifecycleFence = application.assistantLifecycleFence
     private val invocationGate = AssistantInvocationGate()
-    private val localVoice = LocalAssistantVoiceController(context, appSession, ::updateStatus)
+    private val localVoice = LocalAssistantVoiceController(
+        context,
+        appSession,
+        lifecycleFence,
+        ::updateStatus,
+    )
     private val lifecycleInvalidationRegistration = lifecycleFence.onInvalidate {
         context.mainExecutor.execute(::cancelLocalCaptureForLifecycleInvalidation)
     }
