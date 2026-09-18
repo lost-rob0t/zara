@@ -491,10 +491,11 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.await_label("Runtime mode Local; selected")
     device.capture("runtime-mode-local")
 
-    # The user's routing choice is durable, not a one-composition toggle.
+    # The user's routing choice is durable, not a one-composition toggle. Process death also
+    # restores the saved Settings surface, so inspect the persisted Local choice in place rather
+    # than forcing an unrelated Chat reset before verifying the runtime preference.
     device.recreate()
-    device.await_label("Chat")
-    open_menu(device, "Settings")
+    device.await_label("Settings")
     device.tap_tab("Runtime")
     device.reveal_contains("Runtime mode Local; selected")
     device.capture("runtime-mode-local-recreated")
