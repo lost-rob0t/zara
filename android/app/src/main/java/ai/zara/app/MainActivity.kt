@@ -376,6 +376,12 @@ class MainActivity : ComponentActivity() {
                 onSaveRemoteApi = { config, apiKey ->
                     operationError = null
                     try {
+                        val previous = cloudModel.state().config
+                        val credentialScopeChanged =
+                            previous.provider != config.provider || previous.endpoint != config.endpoint
+                        if (credentialScopeChanged) {
+                            cloudModel.clearApiKey()
+                        }
                         var next = cloudModel.configure(config)
                         if (apiKey.isNotBlank()) {
                             next = cloudModel.setApiKey(apiKey)
