@@ -4,7 +4,9 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
-- Keep this section for work that is merged but not yet assigned to a release.
+### Fixed
+
+- Plugin capability compositions now re-check a tool's live approval policy immediately before invocation, preventing approval-policy changes after registration from bypassing approval.
 
 ## 0.2.2-alpha
 

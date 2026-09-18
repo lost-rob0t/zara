@@ -259,6 +259,108 @@ def test_android_acceptance_dismisses_only_pixel_launcher_anr(
     assert adb_calls == []
 
 
+def test_android_acceptance_dismisses_release_notes_before_surface_assertion(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    release_notes = module.ET.fromstring(
+        '<node text="What\'s new in Zara 0.2.2-alpha" bounds="[10,10][500,90]" />'
+    )
+    continue_button = module.ET.fromstring(
+        '<node text="Continue" bounds="[500,1500][700,1600]" />'
+    )
+    adb_calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(
+        device,
+        "find_contains",
+        lambda fragment: release_notes if fragment == "What's new in Zara " else None,
+    )
+    monkeypatch.setattr(
+        device,
+        "find",
+        lambda label: continue_button if label == "Continue" else None,
+    )
+    monkeypatch.setattr(
+        device,
+        "adb",
+        lambda *arguments, **kwargs: adb_calls.append(arguments) or "",
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    assert device.dismiss_release_notes() is True
+    assert adb_calls == [("shell", "input", "tap", "600", "1550")]
+
+    monkeypatch.setattr(device, "find_contains", lambda _fragment: None)
+    adb_calls.clear()
+    assert device.dismiss_release_notes() is False
+    assert adb_calls == []
+
+
+def test_android_acceptance_launch_surface_clears_release_notes_before_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    events: list[str] = []
+
+    monkeypatch.setattr(device, "adb", lambda *args, **kwargs: events.append("launch") or "")
+    monkeypatch.setattr(
+        device,
+        "dismiss_release_notes",
+        lambda: events.append("dismiss-release-notes") or True,
+    )
+    monkeypatch.setattr(
+        device,
+        "await_label",
+        lambda label: events.append(f"await:{label}"),
+    )
+
+    device.launch_surface("ai.zara.app/.MainActivity", "Chat")
+
+    assert events == ["launch", "dismiss-release-notes", "await:Chat"]
+
+
+def test_android_acceptance_recreate_relaunches_saved_launcher_task(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    adb_calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(
+        device,
+        "adb",
+        lambda *arguments, **kwargs: adb_calls.append(arguments) or "",
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    device.recreate()
+
+    assert adb_calls == [
+        ("shell", "input", "keyevent", "3"),
+        ("shell", "am", "kill", "ai.zara.app"),
+        (
+            "shell",
+            "am",
+            "start",
+            "-W",
+            "-a",
+            "android.intent.action.MAIN",
+            "-c",
+            "android.intent.category.LAUNCHER",
+            "-f",
+            "0x10200000",
+            "-n",
+            "ai.zara.app/.MainActivity",
+        ),
+    ]
+
+
 def test_android_acceptance_rejects_claimed_sha_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_device_acceptance_module()
     actual_source_sha = "a" * 40

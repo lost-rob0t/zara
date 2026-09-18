@@ -92,7 +92,12 @@ private class FixtureJeroMqDealer(
     init {
         socket.setLinger(0)
         socket.setHandshakeIvl(2_000)
-        check(socket.setImmediate(false))
+        // Fail closed unless the CURVE connection is actually attached, and
+        // keep the fixture alive under the same bounded heartbeat contract as
+        // the stock ROUTER instead of silently queueing onto a dead route.
+        check(socket.setImmediate(true))
+        check(socket.setHeartbeatIvl(100))
+        check(socket.setHeartbeatTimeout(500))
         check(socket.setSendTimeOut(2_000))
         check(socket.setCurveServerKey(JeroMqCurveKeyCodec.decode(serverPublic)))
         check(socket.setCurvePublicKey(JeroMqCurveKeyCodec.decode(clientPublic)))
