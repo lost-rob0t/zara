@@ -8,24 +8,19 @@ KOTLIN = MAIN / "java/ai/zara/app"
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 
 
-def test_plugin_route_is_nested_in_settings():
+def test_plugin_route_is_canonical_settings_plugins():
     source = (KOTLIN / "ui/ZaraApp.kt").read_text()
-    assert "AppSurface.Plugins, AppSurface.Settings -> SettingsSurface(" in source
+    navigation = (KOTLIN / "ui/AppNavigation.kt").read_text()
+    assert 'Plugins(AppMenu.Settings, "Plugins")' in navigation
+    assert "AppSurface.Plugins -> PluginInstallSurface(padding)" in source
     assert "AppSurface.Plugins -> GatedSurface" not in source
-    assert "initialTab = initialSettingsTab(selected)" in source
-    assert "drawerSurfaces().forEach" in source
-    assert source.count("selected = displaySurface(selected)") == 2
 
 
-def test_plugin_tab_does_not_render_general_settings_below_it():
-    source = (KOTLIN / "ui/ZaraApp.kt").read_text()
-    settings = source.split("private fun SettingsSurface(", 1)[1]
-    assert "var selectedTab by rememberSaveable" in settings
-    assert "SettingsTabBar(selectedTab)" in settings
-    plugin = settings.index("PluginInstallSettings()")
-    early_return = settings.index("return@ScreenBody", plugin)
-    general = settings.index('SectionCard("LOCAL ZARA SERVER")')
-    assert plugin < early_return < general
+def test_plugin_surface_does_not_create_a_second_settings_tab_system():
+    surface = (KOTLIN / "ui/PluginInstallSettings.kt").read_text()
+    assert "internal fun PluginInstallSurface(padding: PaddingValues)" in surface
+    assert "SettingsTabBar" not in surface
+    assert "enum class SettingsTab" not in surface
 
 
 def test_install_callback_is_private_and_in_the_ui_process():
