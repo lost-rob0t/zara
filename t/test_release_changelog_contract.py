@@ -97,6 +97,9 @@ def test_versioned_release_uses_canonical_notes_and_exact_green_source() -> None
     assert "Wait for exact-source CI" in workflow
     assert 'conclusion != "success"' in workflow
     assert "versioned-release-${{ needs.validate-version-context.outputs.tag }}" in workflow
+    assert "sync existing release page from tagged changelog" in workflow
+    assert 'git show "${TAG}:CHANGELOG.md"' in workflow
+    assert 'gh release edit "$TAG" --notes-file "$notes"' in workflow
     assert "Verify published release bytes, metadata, signer, and notes" in workflow
     assert 'gh release download "$TAG"' in workflow
     assert 'cmp "$APK" "$published_apk"' in workflow
