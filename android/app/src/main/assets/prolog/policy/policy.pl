@@ -16,8 +16,23 @@ option(max_findings, 8).
 option(disabled_categories, [style]).
 
 setting(Key, Value) :- findall(V, option(Key,V), Values), last(Values,Value).
-rule(I,C,P,M,A,S) :- user_rule(I,C,P,M,A,S).
-rule(I,C,P,M,A,S) :- default_rule(I,C,P,M,A,S), \+ user_rule(I,_,_,_,_,_).
+
+% Build a deterministic rule set before validation. Trealla and SWI differ around
+% negation over a dynamic multifile predicate inside a generator; explicit filtering
+% keeps user rules authoritative without relying on that runtime-specific behavior.
+collect_rules(Rules) :-
+    findall(r(I,C,P,M,A,S), user_rule(I,C,P,M,A,S), UserRules),
+    findall(I, member(r(I,_,_,_,_,_),UserRules), UserIds),
+    findall(r(I,C,P,M,A,S), default_rule(I,C,P,M,A,S), DefaultRules),
+    filter_defaults(DefaultRules, UserIds, KeptDefaults),
+    append(UserRules, KeptDefaults, Rules).
+filter_defaults([],_,[]).
+filter_defaults([r(I,C,P,M,A,S)|Rules],UserIds,Filtered) :-
+    (memberchk(I,UserIds) ->
+        filter_defaults(Rules,UserIds,Filtered)
+    ; Filtered=[r(I,C,P,M,A,S)|Rest],
+      filter_defaults(Rules,UserIds,Rest)
+    ).
 
 advise_codes(Codes, Result) :-
     call_with_time_limit(1, once(advise_codes_bounded(Codes, Result))).
@@ -32,7 +47,7 @@ advise_terms(Codes, Context, Rows) :-
 
 advise_terms_bounded(Codes, Context, Rows) :-
     checked_codes(Codes,32768), ground(Context), is_list(Context),
-    findall(r(I,C,P,M,A,S),rule(I,C,P,M,A,S),Rules),
+    collect_rules(Rules),
     length(Rules,Count), Count =< 512, valid_rules(Rules),
     findall(I,member(r(I,_,_,_,_,_),Rules),Ids), sort(Ids,Unique), length(Unique,Count),
     setting(mode,Mode), memberchk(Mode,[off,advice]),
