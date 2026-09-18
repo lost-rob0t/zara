@@ -6,6 +6,7 @@
 ]).
 
 :- use_module('../shared/modules/intent_frames', []).
+:- use_module('../shared/modules/android_tools', []).
 
 semantic_contract_version('ZARA-SEMANTIC/1').
 
