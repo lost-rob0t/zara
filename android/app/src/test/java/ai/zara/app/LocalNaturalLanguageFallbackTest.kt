@@ -16,10 +16,14 @@ class LocalNaturalLanguageFallbackTest {
     @Test
     fun autoRuntimeIsLocalFirstBeforeRemoteFallback() {
         val source = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
-        val submit = source.substringAfter("fun submitText(text: String)")
+        val submit = source.substringAfter("fun submitText(")
             .substringBefore("private fun submitLocalText")
 
-        assertTrue(submit.contains("RuntimeMode.Auto -> return submitAutoLocalFirst(text, remoteConnected)"))
+        assertTrue(submit.contains("RuntimeMode.Local -> return submitLocalText(text, localConversationId)"))
+        assertTrue(submit.contains("RuntimeMode.Auto -> return submitAutoLocalFirst("))
+        assertTrue(submit.contains("remoteConnected = remoteConnected"))
+        assertTrue(submit.contains("localConversationId = localConversationId"))
+        assertTrue(submit.contains("remoteConversationId = remoteConversationId"))
         assertFalse(submit.contains("RuntimeMode.Auto -> if (!remoteConnected) return submitLocalText(text)"))
     }
 
