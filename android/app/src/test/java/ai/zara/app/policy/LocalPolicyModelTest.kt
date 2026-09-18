@@ -47,6 +47,26 @@ class LocalPolicyModelTest {
         check(cancelled.cancel(true) && pending.isCancelled)
     }
 
+    @Test fun cancellationDuringInspectionCancelsPolicyWorkAndSkipsRevision() {
+        var generationCalls = 0
+        val inspection = CompletableFuture<PolicyAdvice>()
+        val result = LocalPolicyModel(
+            generate = {
+                generationCalls++
+                CompletableFuture.completedFuture(generated("original"))
+            },
+            inspect = { text ->
+                check(text == "original")
+                inspection
+            },
+        ).answer("question")
+
+        check(generationCalls == 1)
+        check(result.cancel(true))
+        check(inspection.isCancelled)
+        check(generationCalls == 1) { "Cancelled inspection must not start a revision generation" }
+    }
+
     @Test fun cancellationDuringRevisionCancelsLocalGenerationAndSkipsRecheck() {
         var calls = 0
         var inspections = 0
