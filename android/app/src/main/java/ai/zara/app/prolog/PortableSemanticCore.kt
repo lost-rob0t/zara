@@ -8,12 +8,15 @@ object PortableSemanticCore {
     val resolverDependencies: List<String> = listOf(
         "prolog/shared/modules/intent_frames.pl",
         "prolog/shared/modules/normalizer.pl",
-        "prolog/shared/modules/android_tools.pl",
         "prolog/shared/kb/intents.pl"
+    )
+
+    val androidToolDependencies: List<String> = listOf(
+        "prolog/shared/modules/android_tools.pl"
     )
 
     val resources: List<String> = listOf(
         coreAssetPath,
         fixtureAssetPath
-    ) + resolverDependencies
+    ) + resolverDependencies + androidToolDependencies
 }
