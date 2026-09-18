@@ -13,6 +13,30 @@ import time
 import xml.etree.ElementTree as ET
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SOURCE_SHA_RE = re.compile(r"[0-9a-f]{40}")
+
+
+def verified_source_sha(claimed_source_sha: str | None) -> str:
+    actual_source_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=REPO_ROOT,
+        text=True,
+    ).strip()
+    if not SOURCE_SHA_RE.fullmatch(actual_source_sha):
+        raise RuntimeError(f"Repository HEAD is not an immutable source SHA: {actual_source_sha!r}")
+    if claimed_source_sha is None:
+        return actual_source_sha
+    if not SOURCE_SHA_RE.fullmatch(claimed_source_sha):
+        raise ValueError(f"Claimed source SHA is invalid: {claimed_source_sha!r}")
+    if claimed_source_sha != actual_source_sha:
+        raise RuntimeError(
+            "Claimed source SHA does not match the checked-out repository: "
+            f"claimed={claimed_source_sha} actual={actual_source_sha}"
+        )
+    return actual_source_sha
+
+
 class Device:
     def __init__(self, serial: str, output: Path) -> None:
         self.serial = serial
@@ -370,15 +394,15 @@ def main() -> None:
     parser.add_argument(
         "--output", type=Path, default=Path("android/app/build/reports/device")
     )
+    parser.add_argument("--source-sha")
     args = parser.parse_args()
     if not args.serial:
         parser.error("Select a test emulator explicitly with --serial or ANDROID_SERIAL")
+    source_sha = verified_source_sha(args.source_sha)
     args.output.mkdir(parents=True, exist_ok=True)
     device = Device(args.serial, args.output)
     result = {
-        "source_sha": subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True
-        ).strip(),
+        "source_sha": source_sha,
         "serial": args.serial,
         "passed": False,
         "screenshots": device.screenshots,

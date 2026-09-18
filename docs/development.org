@@ -37,6 +37,10 @@ nix develop -c bash scripts/test-all.sh
 
 This is the normal top-level regression command. Focused tests are useful while iterating, but a feature slice should not be called green solely because one local test passed when the repository gate exists.
 
+Behavior-changing work also follows a doubled-depth contract: prove the behavior at two distinct layers before relying on the repository-wide gate. Prefer a focused unit/contract layer and an integration, E2E, persistence, emulator, or system layer. Re-running the same assertion does not count as a second layer. Cover meaningful negative, boundary, restart, permission/offline, race/timeout, migration, security, and recovery paths for the changed behavior.
+
+CI adds independent full-Python adversarial passes with different hash seeds and asyncio debug enabled. These runs supplement rather than replace focused RED/GREEN evidence and the normal full gate.
+
 * Running Zara
 
 Run the long-lived service:
@@ -71,7 +75,7 @@ nix develop .#android -c bash scripts/test-android.sh
 
 The Android project lives under =android/= and uses the pinned Gradle/AGP/JDK toolchain documented in [[file:../wiki/android.org][wiki/android.org]].
 
-The gate covers the repository's Android unit/build checks and APK secret-marker inspection. The debug APK is produced under the standard Gradle debug output path.
+The gate covers the repository's Android unit/build checks and APK secret-marker inspection. CI additionally boots the exact candidate APK in an emulator, exercises native surfaces, and captures screenshot evidence.
 
 When working on Android:
 
@@ -99,16 +103,20 @@ New UI work should follow =DESIGN.md= for the semantic theme/component system an
 
 * Visual CI
 
-The current design direction requires deterministic screenshot-producing UI tests/artifacts for important desktop states. Widget/unit tests prove behavior, not whether the rendered interface has giant gaps, clipped controls, broken hierarchy, or theme regressions.
+Every Zara pull request must retain deterministic screenshot evidence from both the desktop app and Android app at the exact reviewed head SHA. This applies to non-UI work too: canonical smoke states exist to expose incidental startup, navigation, theme, layout, and integration regressions.
 
-When adding visual fixtures:
+Desktop CI renders the deterministic Copilot fixture matrix. Android CI boots the candidate APK and runs =android/integration/device_acceptance.py=. The resulting manifests and PNGs are uploaded separately, then =scripts/validate-ui-evidence.py= verifies that both surfaces contain valid evidence for the same source SHA. Do not use a synthetic pull-request merge SHA as the source identity.
+
+When adding or reviewing visual fixtures:
 
 - use deterministic conversation/runtime fixtures;
 - disable or control animation/timing sources;
 - use stable artifact names;
 - capture compact and expanded states where relevant;
 - include error, streaming, tool, and settings states when they are part of the changed surface;
-- upload artifacts even when the test run fails where CI supports =if: always()= behavior.
+- include Android states touched by the change in addition to the canonical smoke matrix;
+- upload artifacts even when the test run fails where CI supports =if: always()= behavior;
+- inspect screenshots; widget/unit success alone is not visual acceptance.
 
 * Runtime/server work
 
@@ -171,7 +179,8 @@ A reviewer should be able to answer from the diff and docs:
 - what owns the new state?
 - how is cancellation/shutdown handled?
 - what is the failure mode?
-- what tests prove it?
+- what tests prove it at two distinct layers?
+- where are the desktop and Android screenshot artifacts for this exact SHA?
 - what remains explicitly incomplete?
 
 * Related docs
