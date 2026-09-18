@@ -18,28 +18,28 @@ data class OrgFileRef(
 class OrgTreeRepository(
     private val context: Context,
     private val treeUri: Uri,
-) {
+) : OrgRepository {
     private val resolver: ContentResolver = context.contentResolver
     private val root: DocumentFile = requireNotNull(DocumentFile.fromTreeUri(context, treeUri)) {
         "Unable to open Org tree"
     }
 
-    fun listOrgFiles(): List<OrgFileRef> {
+    override fun listOrgFiles(): List<OrgFileRef> {
         val result = mutableListOf<OrgFileRef>()
         walk(root, "", result)
         return result.sortedBy { it.relativePath.lowercase() }
     }
 
-    fun read(file: OrgFileRef): String =
+    override fun read(file: OrgFileRef): String =
         resolver.openInputStream(file.uri)?.bufferedReader()?.use { it.readText() }
             ?: error("Unable to read ${file.relativePath}")
 
-    fun write(file: OrgFileRef, text: String) {
+    override fun write(file: OrgFileRef, text: String) {
         resolver.openOutputStream(file.uri, "wt")?.bufferedWriter()?.use { it.write(text) }
             ?: error("Unable to write ${file.relativePath}")
     }
 
-    fun appendAgendaCapture(text: String, relativePath: String = "agenda/inbox.org"): OrgFileRef {
+    override fun appendAgendaCapture(text: String, relativePath: String = "agenda/inbox.org"): OrgFileRef {
         val target = ensureFile(relativePath, "text/org")
         resolver.openOutputStream(target.uri, "wa")?.bufferedWriter()?.use { writer ->
             if (target.length() > 0) writer.append('\n')
@@ -48,11 +48,11 @@ class OrgTreeRepository(
         return OrgFileRef(target.name ?: relativePath.substringAfterLast('/'), relativePath, target.uri)
     }
 
-    fun allTasks(): List<OrgTask> = listOrgFiles().flatMap { file ->
+    override fun allTasks(): List<OrgTask> = listOrgFiles().flatMap { file ->
         OrgParser.parse(read(file), file.relativePath).tasks
     }
 
-    fun cycleTodo(task: OrgTask): OrgTask {
+    override fun cycleTodo(task: OrgTask): OrgTask {
         val file = listOrgFiles().firstOrNull { it.relativePath == task.path }
             ?: error("Missing task file ${task.path}")
         val lines = read(file).lines().toMutableList()
@@ -75,7 +75,7 @@ class OrgTreeRepository(
         return task.copy(state = next)
     }
 
-    fun tangle(file: OrgFileRef): List<OrgFileRef> {
+    override fun tangle(file: OrgFileRef): List<OrgFileRef> {
         val result = OrgTangler.tangle(read(file), file.relativePath)
         return result.outputs.map { output ->
             val target = ensureFile(output.path, mimeType(output.language))
