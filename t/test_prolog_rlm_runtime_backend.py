@@ -55,7 +55,9 @@ class FakeClient:
 
     def generate(self, request):
         self.generated.append(request)
-        return self.reply
+        reply = dict(self.reply)
+        reply.setdefault("request_id", request["request_id"])
+        return reply
 
     def cancel(self, request_id):
         self.cancelled.append(request_id)
@@ -164,6 +166,28 @@ def test_runtime_death_is_typed_and_redacts_sidecar_details() -> None:
     assert raised.value.kind == "transport_error"
     assert str(raised.value) == "transport_error: Prolog-RLM runtime transport failed"
     assert "secret-runtime-token" not in str(raised.value)
+
+
+def test_stale_response_request_id_is_rejected() -> None:
+    client = FakeClient(
+        reply={
+            "protocol": "ZARA-RUNTIME/1",
+            "runtime_id": "prolog-rlm",
+            "request_id": "stale-turn",
+            "status": "completed",
+            "text": "stale text",
+        }
+    )
+    backend = PrologRlmRuntimeBackend(client=client)
+
+    async def scenario():
+        await backend.start()
+        await backend.submit_turn("question", turn_id="current-turn")
+
+    with pytest.raises(PrologRlmRuntimeError, match="request identity changed") as raised:
+        run(scenario())
+
+    assert raised.value.kind == "runtime_error"
 
 
 def test_host_tools_remain_host_owned_until_capability_is_advertised() -> None:
