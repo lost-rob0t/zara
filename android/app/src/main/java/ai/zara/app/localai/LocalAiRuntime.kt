@@ -37,7 +37,7 @@ class LocalAiRuntime(
         check(current.phase != LocalAiPhase.GENERATING) { "Local model is generating" }
         if (current.model == spec && current.phase == LocalAiPhase.READY) return@submit current
         unloadBackend()
-        update(current.copy(phase = LocalAiPhase.LOADING, model = spec, failure = null))
+        update(current.copy(phase = LocalAiPhase.LOADING, model = null, failure = null))
         try {
             backend.load(spec)
             LocalAiState(
@@ -50,7 +50,6 @@ class LocalAiRuntime(
             LocalAiState(
                 phase = LocalAiPhase.FAILED,
                 generation = current.generation,
-                model = spec,
                 failure = boundedMessage(error),
             ).also(::update)
             throw error
