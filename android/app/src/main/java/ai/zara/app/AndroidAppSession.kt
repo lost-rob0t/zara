@@ -241,9 +241,15 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     fun exportDiagnostics(): String {
         val server = localServer.state()
         val aiFuture = localAi.state()
-        val aiState = runCatching {
-            if (aiFuture.isDone) aiFuture.getNow(null) else null
-        }.getOrNull()
+        val aiState = if (
+            aiFuture.isDone &&
+            !aiFuture.isCompletedExceptionally &&
+            !aiFuture.isCancelled
+        ) {
+            runCatching { aiFuture.get() }.getOrNull()
+        } else {
+            null
+        }
         diagnostics.record(
             "diagnostics.export",
             mapOf(
