@@ -13,6 +13,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import java.util.Locale
+import java.util.concurrent.CompletableFuture
 
 internal class LocalAssistantVoiceController(
     context: Context,
@@ -26,6 +27,7 @@ internal class LocalAssistantVoiceController(
     private var listening = false
     private var closed = false
     private val speaker = OfflineSpeaker(appContext)
+    private val pendingTurn = PendingLocalTurn()
 
     @SuppressLint("NewApi")
     fun start(permissionGranted: Boolean) {
@@ -43,6 +45,7 @@ internal class LocalAssistantVoiceController(
 
         speaker.stop()
         cancelRecognizer(invalidate = true)
+        pendingTurn.cancel()
         val token = generation
         val lifecycleToken = lifecycleFence.beginStart()
         val next = SpeechRecognizer.createOnDeviceSpeechRecognizer(appContext)
@@ -73,6 +76,7 @@ internal class LocalAssistantVoiceController(
     fun cancel(notify: Boolean = true) {
         if (closed) return
         cancelRecognizer(invalidate = true)
+        pendingTurn.cancel()
         speaker.stop()
         if (notify) statusObserver("Voice cancelled")
     }
@@ -81,6 +85,7 @@ internal class LocalAssistantVoiceController(
         if (closed) return
         closed = true
         cancelRecognizer(invalidate = true)
+        pendingTurn.cancel()
         speaker.close()
     }
 
@@ -123,8 +128,11 @@ internal class LocalAssistantVoiceController(
                 return
             }
             statusObserver("Thinking locally…")
-            appSession.submitLocalText(transcript).whenComplete { result, error ->
+            val turn = appSession.submitLocalText(transcript)
+            pendingTurn.track(turn)
+            turn.whenComplete { result, error ->
                 appContext.mainExecutor.execute {
+                    pendingTurn.clear(turn)
                     if (!isCurrent(token, lifecycleToken)) return@execute
                     if (error != null) {
                         statusObserver("Local assistant failed: ${UiOperationFailure.summarize(error)}")
@@ -165,6 +173,35 @@ internal class LocalAssistantVoiceController(
     private fun destroyRecognizer() {
         runCatching { recognizer?.destroy() }
         recognizer = null
+    }
+}
+
+internal class PendingLocalTurn {
+    private val lock = Any()
+    private var active: CompletableFuture<*>? = null
+
+    fun track(next: CompletableFuture<*>) {
+        val previous = synchronized(lock) {
+            val old = active
+            active = next
+            old
+        }
+        if (previous !== next) previous?.cancel(true)
+    }
+
+    fun clear(completed: CompletableFuture<*>) {
+        synchronized(lock) {
+            if (active === completed) active = null
+        }
+    }
+
+    fun cancel() {
+        val pending = synchronized(lock) {
+            val current = active
+            active = null
+            current
+        }
+        pending?.cancel(true)
     }
 }
 
