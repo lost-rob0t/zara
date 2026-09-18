@@ -206,7 +206,7 @@ class QuickCopilotWindow(QWidget):
         empty_layout.setSpacing(6)
         empty_title = QLabel("What can I help with?")
         empty_title.setObjectName("zaraEmptyStateTitle")
-        empty_detail = QLabel("Start a conversation or choose one from your history.")
+        empty_detail = QLabel("Type a message or use the mic in the composer.")
         empty_detail.setObjectName("zaraEmptyStateDetail")
         empty_detail.setWordWrap(True)
         empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -221,7 +221,7 @@ class QuickCopilotWindow(QWidget):
         self.message_scroll.setWidget(self.message_container)
 
         self.composer = QuickComposer()
-        self.composer.setPlaceholderText("Ask Zara…")
+        self.composer.setPlaceholderText("Message Zara")
         self.composer.setMinimumHeight(32)
         self.composer.setMaximumHeight(80)
         self.setFocusProxy(self.composer)
