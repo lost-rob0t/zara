@@ -101,10 +101,38 @@ class Device:
         path.write_bytes(data)
         self.screenshots.append({"state": name, "file": path.name, "sha256": hashlib.sha256(data).hexdigest()})
 
+    def launch_surface(self, component: str, label: str) -> None:
+        self.adb(
+            "shell",
+            "am",
+            "start",
+            "-W",
+            "-a",
+            "android.intent.action.MAIN",
+            "-c",
+            "android.intent.category.LAUNCHER",
+            "-f",
+            "0x10200000",
+            "-n",
+            component,
+        )
+        self.await_label(label)
+
+    def assert_launcher_task_isolation(self) -> None:
+        sequence = (
+            ("ai.zara.app/.automation.AutomationActivity", "Prolog Automation", "launcher-automation"),
+            ("ai.zara.app/.watch.WatchSetupActivity", "ZARA WATCH SETUP", "launcher-watch-setup"),
+            ("ai.zara.app/.automation.AutomationActivity", "Prolog Automation", None),
+            ("ai.zara.app/.MainActivity", "Chat", "launcher-main-return"),
+        )
+        for component, label, screenshot in sequence:
+            self.launch_surface(component, label)
+            if screenshot is not None:
+                self.capture(screenshot)
+
     def start(self) -> None:
         self.adb("shell", "am", "force-stop", "ai.zara.app")
-        self.adb("shell", "am", "start", "-W", "-n", "ai.zara.app/.MainActivity")
-        self.await_label("Chat")
+        self.launch_surface("ai.zara.app/.MainActivity", "Chat")
 
 
 def main() -> None:
@@ -128,6 +156,7 @@ def main() -> None:
             "font_scale": device.adb("shell", "settings", "get", "system", "font_scale").strip(),
         }
         device.start()
+        device.assert_launcher_task_isolation()
         device.capture("empty-shell")
         device.tap("☰")
         device.await_label("Logic")
