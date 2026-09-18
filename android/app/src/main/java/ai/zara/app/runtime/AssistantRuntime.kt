@@ -315,6 +315,7 @@ class AssistantRuntimeRegistry(
     },
 ) : AutoCloseable {
     private val stateLock = Any()
+    private val activePrologRequests = mutableSetOf<String>()
     private var generation: Long = 0L
 
     @Volatile
@@ -373,35 +374,49 @@ class AssistantRuntimeRegistry(
             check(discovered.any { it.id == PROLOG_RLM_RUNTIME_ID && it.selectable }) {
                 "Prolog-RLM is no longer an available installed runtime"
             }
+            check(activePrologRequests.add(requestId)) {
+                "Prolog-RLM request id is already active"
+            }
             generation
         }
         return CompletableFuture.supplyAsync(
             {
-                val turn = prologRlm.generate(text, requestId, conversationId, inlineContext)
-                synchronized(stateLock) {
-                    if (
-                        generation != requestGeneration ||
-                        selectedId != PROLOG_RLM_RUNTIME_ID ||
-                        discovered.none { it.id == PROLOG_RLM_RUNTIME_ID && it.selectable }
-                    ) {
-                        throw AssistantRuntimeException(
-                            "Stale Prolog-RLM runtime generation cannot publish a result",
-                        )
+                try {
+                    val turn = prologRlm.generate(text, requestId, conversationId, inlineContext)
+                    synchronized(stateLock) {
+                        if (
+                            generation != requestGeneration ||
+                            selectedId != PROLOG_RLM_RUNTIME_ID ||
+                            discovered.none { it.id == PROLOG_RLM_RUNTIME_ID && it.selectable }
+                        ) {
+                            throw AssistantRuntimeException(
+                                "Stale Prolog-RLM runtime generation cannot publish a result",
+                            )
+                        }
+                    }
+                    turn
+                } finally {
+                    synchronized(stateLock) {
+                        activePrologRequests.remove(requestId)
                     }
                 }
-                turn
             },
             executor,
         )
     }
 
-    fun cancel(requestId: String): CompletableFuture<Unit> =
-        CompletableFuture.supplyAsync(
+    fun cancel(requestId: String): CompletableFuture<Unit> {
+        val active = synchronized(stateLock) {
+            requestId in activePrologRequests
+        }
+        if (!active) return CompletableFuture.completedFuture(Unit)
+        return CompletableFuture.supplyAsync(
             {
                 prologRlm.cancel(requestId)
             },
             controlExecutor,
         )
+    }
 
     override fun close() {
         synchronized(stateLock) {
