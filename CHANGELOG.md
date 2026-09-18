@@ -14,6 +14,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Android Prolog-RLM turns keep cancellation responsive while generation is running, discard stale replies after runtime switches, and fall back to the embedded runtime after rediscovery detects a dead sidecar.
 - Desktop Prolog-RLM turns now discard late completions after cancellation as well as replies from an older runtime generation after the runtime is stopped or restarted, preventing stale output from publishing into the active turn.
 - Prolog-RLM runtime transport failures now surface as bounded typed Zara runtime errors without exposing raw sidecar or provider error details.
+- Desktop Prolog-RLM turns now forward bounded host-owned context handles when the discovered runtime advertises support, so Prolog-RLM receives the intended Zara context without a second Python inference path.
 
 ## 0.2.2-alpha
 
