@@ -1,0 +1,23 @@
+#+title: RAGE #867 — Dedicated Zara Voice Wear app
+#+startup: overview
+
+* Current strict-local slice
+:PROPERTIES:
+:ISSUE:    #867
+:BRANCH:   rage/867-wear-voice
+:END:
+
+** Goal
+Keep Zara Voice as a separate instant-launch Wear OS APK while preserving one shared runtime authority. The focused Voice APK owns only its microphone permission and UI edge; it must not invent account/server/cloud fallback, copy phone session code, or claim listening before a real capture owns the microphone.
+
+** Current decisions
+1. Separate application id: =ai.zara.wear.voice=.
+2. Canonical launch action: =ai.zara.action.WEAR_VOICE=.
+3. Require =RECORD_AUDIO= and watch hardware; do not request =INTERNET= in this focused strict-local shell.
+4. Reuse exact shared Zara semantic tokens from =:shared-ui=.
+5. Do not copy =AndroidAppSession=, enrollment/auth, ZARA/1 transport, PCM capture/playback, or phone voice/session authority into the focused APK.
+6. Package versionName/versionCode come from root =version.properties= so Wear Voice cannot drift from the canonical Zara build.
+7. The Android/Wear gate inspects the merged APK with pinned =aapt2= and fails if =android.permission.INTERNET= reappears.
+
+** Acceptance status
+This slice proves package/runtime boundaries only. It does not claim a completed voice round trip. Full-local acceptance remains owned by #622/#905: no account/server/cloud fallback, real local symbolic/runtime behavior, persistence, cancellation/stale fencing, truthful provider state, and exact-head non-mock evidence.

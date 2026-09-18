@@ -5,6 +5,6 @@ consumed by headless, desktop, pet, and future remote surfaces. It must not
 import Qt or any other concrete UI implementation.
 """
 
-from . import bridge, events
+from . import bridge, events, registry
 
-__all__ = ["bridge", "events"]
+__all__ = ["bridge", "events", "registry"]
