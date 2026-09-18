@@ -271,6 +271,7 @@ fun ZaraApp(
                                             AppSurface.Chat -> ChatSurface(
                                                 state = runtimeState,
                                                 localServerState = localServerState,
+                                                localAiState = localAiState,
                                                 runtimeMode = runtimeMode,
                                                 project = projectState.selectedProject,
                                                 lastTurn = lastTurn,
