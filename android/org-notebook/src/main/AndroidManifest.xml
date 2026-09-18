@@ -4,6 +4,7 @@
     <uses-permission android:name="ai.zara.permission.EXECUTE_NOTEBOOK" />
 
     <queries>
+        <provider android:authorities="ai.zara.org.sync.home" />
         <package android:name="ai.zara.app" />
     </queries>
 
