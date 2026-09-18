@@ -9,8 +9,8 @@ object AppNavigationContract {
         check(routesFor(AppMenu.Chat) == listOf(AppRoute.Chat, AppRoute.Voice))
         check(routesFor(AppMenu.Workspace) == listOf(AppRoute.Logic, AppRoute.Projects, AppRoute.Scheduled))
         check(routesFor(AppMenu.Settings) == listOf(
-            AppRoute.Runtime, AppRoute.Connection, AppRoute.Permissions, AppRoute.Appearance,
-            AppRoute.Plugins, AppRoute.Updates, AppRoute.Diagnostics, AppRoute.About,
+            AppRoute.Runtime, AppRoute.RemoteApis, AppRoute.Connection, AppRoute.Permissions,
+            AppRoute.Appearance, AppRoute.Plugins, AppRoute.Updates, AppRoute.Diagnostics, AppRoute.About,
         ))
         check(AppMenu.entries.flatMap(::routesFor).toSet() == AppRoute.entries.toSet())
         check(AppMenu.entries.flatMap(::routesFor).size == AppRoute.entries.size)
@@ -108,6 +108,6 @@ object AppNavigationContract {
         backReturnsThroughMenuRootThenChat()
         railBreakpointUsesAvailableWindowWidth()
         savedKeysAreStableNames()
-        println("PASS: 10 navigation contracts; 169 route transitions and 144 saved-state combinations")
+        println("PASS: 10 navigation contracts with Remote APIs route")
     }
 }
