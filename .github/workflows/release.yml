@@ -73,9 +73,10 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ steps.release.outputs.version }}
+          NOTES: ${{ runner.temp }}/canonical-release-notes.md
         run: |
           set -euo pipefail
-          python scripts/release-changelog.py --version "$VERSION"
+          python scripts/release-changelog.py --version "$VERSION" --output "$NOTES"
 
   sync-existing-release-notes:
     name: sync existing release page from tagged changelog
