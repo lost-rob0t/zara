@@ -17,6 +17,9 @@ class UpdateManagerContractTest {
         assertTrue(source.contains("fun select("))
         assertTrue(source.contains("choices ="))
         assertTrue(source.contains("Master (fastest green)"))
+        assertTrue(source.contains("MasterUpdateManifest.parse"))
+        assertTrue(source.contains("verifyMasterApk"))
+        assertTrue(source.contains("currentVersionCode"))
     }
 
     @Test
