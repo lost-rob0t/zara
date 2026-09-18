@@ -35,20 +35,30 @@ def parse_changelog(markdown: str) -> dict[str, str]:
 def _normalize_notes(lines: list[str]) -> str:
     rendered: list[str] = []
     blank = False
+    previous_was_heading = False
     for raw in lines:
         line = raw.strip()
         if not line:
             blank = bool(rendered)
             continue
-        if blank and rendered and rendered[-1] != "":
+
+        is_heading = line.startswith("### ")
+        if (
+            blank
+            and rendered
+            and rendered[-1] != ""
+            and (is_heading or not previous_was_heading)
+        ):
             rendered.append("")
         blank = False
-        if line.startswith("### "):
+
+        if is_heading:
             rendered.append(line[4:].strip())
         elif line.startswith("- "):
             rendered.append("• " + line[2:].strip())
         else:
             rendered.append(line)
+        previous_was_heading = is_heading
     return "\n".join(rendered).strip()
 
 
