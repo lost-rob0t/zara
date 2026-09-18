@@ -13,6 +13,7 @@ class PortableSemanticAssetsTest {
         PortableSemanticCore.fixtureAssetPath -> Path.of("src", "main", "assets", resource)
         "prolog/shared/modules/intent_frames.pl" -> Path.of("..", "..", "modules", "intent_frames.pl")
         "prolog/shared/modules/normalizer.pl" -> Path.of("..", "..", "modules", "normalizer.pl")
+        "prolog/shared/modules/android_tools.pl" -> Path.of("..", "..", "modules", "android_tools.pl")
         "prolog/shared/kb/intents.pl" -> Path.of("..", "..", "kb", "intents.pl")
         else -> throw AssertionError("unmapped portable semantic resource: $resource")
     }
@@ -31,6 +32,7 @@ class PortableSemanticAssetsTest {
         assertTrue(build.contains("GeneratePortableSemanticAssets"))
         assertTrue(build.contains("modules/intent_frames.pl"))
         assertTrue(build.contains("modules/normalizer.pl"))
+        assertTrue(build.contains("modules/android_tools.pl"))
         assertTrue(build.contains("kb/intents.pl"))
         assertTrue(build.contains("addGeneratedSourceDirectory"))
     }
