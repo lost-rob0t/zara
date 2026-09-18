@@ -93,6 +93,22 @@ class NativeLoopTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(state["messages"]), 1)
         self.assertEqual(result["tool_results"], [])
 
+    async def test_engine_unavailable_never_falls_back_to_model(self):
+        from langchain_core.messages import HumanMessage
+        class ForbiddenModel:
+            def __getattr__(self, name):
+                raise AssertionError("strict local mode must not fall back to a model")
+        state = {"user_input":"member(X,[a]).", "messages":[HumanMessage(content="member(X,[a]).")], "turn_id":"t2"}
+        result = await mode.run_prolog_conversation_loop(
+            ForbiddenModel(),
+            SimpleNamespace(prolog_engine=None),
+            state,
+            principal_id="local",
+        )
+        self.assertEqual(result["prolog"], {"status": "error", "error": "engine_unavailable"})
+        self.assertIn("canonical Prolog engine", result["response"])
+        self.assertEqual(result["tool_results"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
