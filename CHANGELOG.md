@@ -24,6 +24,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Android Assistant qualification and lifecycle handling were replayed onto the current runtime/navigation foundation.
 - Android emulator release evidence is more deterministic through explicit host-runtime and SDK provisioning checks.
 - Release-note sections render consistently on Desktop and Android without extra blank lines between a subsection heading and its first item.
+- Immutable alpha publication now keys off canonical version readiness plus actual GitHub release absence instead of push-event changed-file metadata, so protected-branch promotion merges cannot silently skip APK publication.
 
 ### Changed
 
