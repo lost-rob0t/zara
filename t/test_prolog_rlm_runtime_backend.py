@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -75,6 +76,26 @@ class RuntimeDeathClient(FakeClient):
         raise RuntimeDiscoveryError(
             "provider payload Authorization: Bearer secret-runtime-token"
         )
+
+
+class BlockingClient(FakeClient):
+    def __init__(self):
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def generate(self, request):
+        self.generated.append(request)
+        self.started.set()
+        if not self.release.wait(timeout=2.0):
+            raise RuntimeError("test did not release blocked generation")
+        return {
+            "protocol": "ZARA-RUNTIME/1",
+            "runtime_id": "prolog-rlm",
+            "request_id": request["request_id"],
+            "status": "completed",
+            "text": "stale completion",
+        }
 
 
 def run(coro):
@@ -188,6 +209,28 @@ def test_stale_response_request_id_is_rejected() -> None:
         run(scenario())
 
     assert raised.value.kind == "runtime_error"
+
+
+def test_stale_runtime_generation_cannot_publish_after_restart() -> None:
+    client = BlockingClient()
+    backend = PrologRlmRuntimeBackend(client=client)
+
+    async def scenario():
+        await backend.start()
+        turn = asyncio.create_task(
+            backend.submit_turn("question", turn_id="turn-before-restart")
+        )
+        assert await asyncio.to_thread(client.started.wait, 1.0)
+
+        await backend.stop()
+        await backend.start()
+        client.release.set()
+
+        with pytest.raises(PrologRlmRuntimeError, match="runtime generation changed") as raised:
+            await turn
+        assert raised.value.kind == "runtime_error"
+
+    run(scenario())
 
 
 def test_host_tools_remain_host_owned_until_capability_is_advertised() -> None:
