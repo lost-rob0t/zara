@@ -69,10 +69,7 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
                 kwargs["endpoint"] = endpoint
             client = PrologRlmSidecarClient(**kwargs)
         self._client = client
-        normalized_principal = str(principal_id).strip()
-        if not normalized_principal:
-            raise ValueError("principal_id must be non-empty")
-        self._principal_id = normalized_principal
+        self._principal_id = _bounded_id(str(principal_id), "principal_id")
         self._descriptor = None
         self._generation = 0
         self._publisher = None
