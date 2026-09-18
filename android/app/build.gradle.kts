@@ -1,4 +1,5 @@
 import groovy.json.JsonSlurper
+import java.util.Properties
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
@@ -15,6 +16,32 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+fun loadZaraVersionProperties(projectRoot: java.io.File): Properties {
+    val versionFile = projectRoot.resolve("../version.properties")
+    require(versionFile.isFile) {
+        "Canonical Zara version context is missing: " + versionFile.absolutePath
+    }
+    return Properties().apply {
+        versionFile.inputStream().use { load(it) }
+    }
+}
+
+val zaraVersionProperties = loadZaraVersionProperties(rootProject.projectDir)
+val zaraVersionName = requireNotNull(zaraVersionProperties.getProperty("zara.version")) {
+    "version.properties is missing zara.version"
+}
+val zaraAndroidVersionCode =
+    zaraVersionProperties.getProperty("android.versionCode")?.toIntOrNull()
+        ?: error("version.properties android.versionCode must be an integer")
+require(zaraVersionName.matches(Regex(
+    """^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$"""
+))) {
+    "version.properties zara.version must be SemVer"
+}
+require(zaraAndroidVersionCode in 1..2100000000) {
+    "version.properties android.versionCode is outside Android's valid range"
+}
+
 abstract class GeneratePortableSemanticAssets : DefaultTask() {
     @get:InputFiles
     @get:PathSensitive(PathSensitivity.RELATIVE)
@@ -29,6 +56,7 @@ abstract class GeneratePortableSemanticAssets : DefaultTask() {
         val intentFrames = checkNotNull(sources["intent_frames.pl"]) { "intent_frames.pl input is required" }
         val normalizer = checkNotNull(sources["normalizer.pl"]) { "normalizer.pl input is required" }
         val intents = checkNotNull(sources["intents.pl"]) { "intents.pl input is required" }
+        val changelog = checkNotNull(sources["CHANGELOG.md"]) { "CHANGELOG.md input is required" }
         val output = outputDirectory.get().asFile
         output.deleteRecursively()
         project.copy {
@@ -42,6 +70,7 @@ abstract class GeneratePortableSemanticAssets : DefaultTask() {
             from(intents) {
                 into("prolog/shared/kb")
             }
+            from(changelog)
         }
     }
 }
@@ -110,8 +139,8 @@ android {
         applicationId = "ai.zara.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.1.2-alpha"
+        versionCode = zaraAndroidVersionCode
+        versionName = zaraVersionName
         buildConfigField("String", "SOURCE_SHA", "\"$sourceSha\"")
         buildConfigField("boolean", "HAS_SAMSUNG_HEALTH_SDK", hasSamsungHealthSdk.toString())
 
@@ -177,7 +206,8 @@ androidComponents {
             sourceFiles.from(
                 layout.projectDirectory.file("../../modules/intent_frames.pl"),
                 layout.projectDirectory.file("../../modules/normalizer.pl"),
-                layout.projectDirectory.file("../../kb/intents.pl")
+                layout.projectDirectory.file("../../kb/intents.pl"),
+                layout.projectDirectory.file("../../CHANGELOG.md")
             )
             outputDirectory.convention(
                 layout.buildDirectory.dir("generated/portableSemanticAssets/${variant.name}")
