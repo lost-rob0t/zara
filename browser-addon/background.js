@@ -184,17 +184,13 @@ async function sendPageCommand(tab, action, args) {
   try {
     const result = await ext.tabs.sendMessage(tab.id, { source: "zara", action, args });
     return unwrapPageResult(result);
-  } catch (firstError) {
-    try {
-      await ext.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ["content.js"],
-      });
-      const result = await ext.tabs.sendMessage(tab.id, { source: "zara", action, args });
-      return unwrapPageResult(result);
-    } catch {
-      throw firstError;
-    }
+  } catch (_firstError) {
+    await ext.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["content.js"],
+    });
+    const result = await ext.tabs.sendMessage(tab.id, { source: "zara", action, args });
+    return unwrapPageResult(result);
   }
 }
 
