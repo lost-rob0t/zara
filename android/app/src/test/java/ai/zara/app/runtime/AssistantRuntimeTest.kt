@@ -2,7 +2,11 @@ package ai.zara.app.runtime
 
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -35,13 +39,7 @@ class AssistantRuntimeTest {
                 "/zara-runtime/v1/generate" -> {
                     assertEquals("POST", method)
                     requestBody = body
-                    JsonObject().apply {
-                        addProperty("protocol", ZARA_RUNTIME_PROTOCOL)
-                        addProperty("runtime_id", PROLOG_RLM_RUNTIME_ID)
-                        addProperty("request_id", "turn-1")
-                        addProperty("status", "completed")
-                        addProperty("text", "from Prolog")
-                    }
+                    completedPayload("turn-1")
                 }
                 else -> error("unexpected path $path")
             }
@@ -95,6 +93,126 @@ class AssistantRuntimeTest {
         }
     }
 
+    @Test
+    fun cancellationIsNotSerializedBehindBlockedGeneration() {
+        val generateEntered = CountDownLatch(1)
+        val releaseGenerate = CountDownLatch(1)
+        val cancelObserved = CountDownLatch(1)
+        val client = PrologRlmSidecarClient(requestOverride = { _, path, _, _ ->
+            when (path) {
+                "/zara-runtime/v1/discover" -> discoveryPayload()
+                "/zara-runtime/v1/generate" -> {
+                    generateEntered.countDown()
+                    assertTrue(releaseGenerate.await(2, TimeUnit.SECONDS))
+                    completedPayload("turn-cancel")
+                }
+                "/zara-runtime/v1/cancel" -> {
+                    cancelObserved.countDown()
+                    cancelPayload()
+                }
+                else -> error("unexpected path $path")
+            }
+        })
+
+        AssistantRuntimeRegistry(prologRlm = client).use { registry ->
+            registry.discover().get(2, TimeUnit.SECONDS)
+            registry.select(PROLOG_RLM_RUNTIME_ID)
+            val generation = registry.generatePrologRlm(
+                text = "long turn",
+                requestId = "turn-cancel",
+                conversationId = "conversation-1",
+            )
+
+            assertTrue(generateEntered.await(1, TimeUnit.SECONDS))
+            registry.cancel("turn-cancel").get(1, TimeUnit.SECONDS)
+            assertTrue(cancelObserved.await(1, TimeUnit.SECONDS))
+
+            releaseGenerate.countDown()
+            assertEquals("from Prolog", generation.get(2, TimeUnit.SECONDS).text)
+        }
+    }
+
+    @Test
+    fun selectionChangeFencesBlockedGenerationResult() {
+        val generateEntered = CountDownLatch(1)
+        val releaseGenerate = CountDownLatch(1)
+        val client = PrologRlmSidecarClient(requestOverride = { _, path, _, _ ->
+            when (path) {
+                "/zara-runtime/v1/discover" -> discoveryPayload()
+                "/zara-runtime/v1/generate" -> {
+                    generateEntered.countDown()
+                    assertTrue(releaseGenerate.await(2, TimeUnit.SECONDS))
+                    completedPayload("turn-stale")
+                }
+                else -> error("unexpected path $path")
+            }
+        })
+
+        AssistantRuntimeRegistry(prologRlm = client).use { registry ->
+            registry.discover().get(2, TimeUnit.SECONDS)
+            registry.select(PROLOG_RLM_RUNTIME_ID)
+            val generation = registry.generatePrologRlm(
+                text = "stale turn",
+                requestId = "turn-stale",
+                conversationId = "conversation-1",
+            )
+
+            assertTrue(generateEntered.await(1, TimeUnit.SECONDS))
+            registry.select(EMBEDDED_LOCAL_RUNTIME_ID)
+            releaseGenerate.countDown()
+
+            val failure = try {
+                generation.get(2, TimeUnit.SECONDS)
+                null
+            } catch (error: ExecutionException) {
+                error.cause
+            }
+            assertTrue(failure is AssistantRuntimeException)
+            assertTrue(failure?.message?.contains("Stale Prolog-RLM runtime generation") == true)
+        }
+    }
+
+    @Test
+    fun rediscoveryAfterRuntimeDeathFallsBackToEmbedded() {
+        val available = AtomicBoolean(true)
+        val client = PrologRlmSidecarClient(requestOverride = { _, path, _, _ ->
+            if (path != "/zara-runtime/v1/discover") error(path)
+            if (!available.get()) throw AssistantRuntimeException("sidecar died")
+            discoveryPayload()
+        })
+
+        AssistantRuntimeRegistry(prologRlm = client).use { registry ->
+            registry.discover().get(2, TimeUnit.SECONDS)
+            registry.select(PROLOG_RLM_RUNTIME_ID)
+            available.set(false)
+
+            val runtimes = registry.discover().get(2, TimeUnit.SECONDS)
+
+            assertEquals(listOf(EMBEDDED_LOCAL_RUNTIME_ID), runtimes.map { it.id })
+            assertEquals(EMBEDDED_LOCAL_RUNTIME_ID, registry.selectedRuntimeId())
+        }
+    }
+
+    @Test
+    fun cancellationWithoutActivePrologTurnDoesNotProbeSidecar() {
+        val cancelCalls = AtomicInteger(0)
+        val client = PrologRlmSidecarClient(requestOverride = { _, path, _, _ ->
+            when (path) {
+                "/zara-runtime/v1/discover" -> discoveryPayload()
+                "/zara-runtime/v1/cancel" -> {
+                    cancelCalls.incrementAndGet()
+                    cancelPayload()
+                }
+                else -> error("unexpected path $path")
+            }
+        })
+
+        AssistantRuntimeRegistry(prologRlm = client).use { registry ->
+            registry.cancel("not-active").get(1, TimeUnit.SECONDS)
+            assertEquals(0, cancelCalls.get())
+        }
+    }
+
     private fun discoveryPayload(): JsonObject = JsonObject().apply {
         add(
             "runtimes",
@@ -123,5 +241,19 @@ class AssistantRuntimeTest {
                 )
             },
         )
+    }
+
+    private fun completedPayload(requestId: String): JsonObject = JsonObject().apply {
+        addProperty("protocol", ZARA_RUNTIME_PROTOCOL)
+        addProperty("runtime_id", PROLOG_RLM_RUNTIME_ID)
+        addProperty("request_id", requestId)
+        addProperty("status", "completed")
+        addProperty("text", "from Prolog")
+    }
+
+    private fun cancelPayload(): JsonObject = JsonObject().apply {
+        addProperty("protocol", ZARA_RUNTIME_PROTOCOL)
+        addProperty("runtime_id", PROLOG_RLM_RUNTIME_ID)
+        addProperty("status", "cancel_requested")
     }
 }
