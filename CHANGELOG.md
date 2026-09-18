@@ -4,6 +4,10 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+### Added
+
+- Zara's first-class native Prolog backend can handle symbolic requests without initializing an LLM or embedding client, and model-backed flows can apply bounded Prolog output-policy advice before returning text.
+
 ### Fixed
 
 - Wear Voice no longer requests direct Internet access; the focused watch voice shell stays network-free and leaves runtime transport to the shared Wear/phone authority path.
