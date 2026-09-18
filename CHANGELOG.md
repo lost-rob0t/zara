@@ -4,7 +4,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
-- Keep this section for work that is merged but not yet assigned to a release.
+- Android and Desktop now use one chat-first assistant surface: voice is started and stopped from a microphone control inside the message composer instead of a separate Chat/Voice page split.
+- Android hides redundant single-route Chat tabs and uses a compact conversation-first empty state with the composer kept visually primary.
 
 ## 0.2.2-alpha
 
