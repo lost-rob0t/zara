@@ -53,6 +53,7 @@ abstract class GeneratePortableSemanticAssets : DefaultTask() {
         val sources = sourceFiles.files.associateBy { it.name }
         val intentFrames = checkNotNull(sources["intent_frames.pl"]) { "intent_frames.pl input is required" }
         val normalizer = checkNotNull(sources["normalizer.pl"]) { "normalizer.pl input is required" }
+        val androidTools = checkNotNull(sources["android_tools.pl"]) { "android_tools.pl input is required" }
         val intents = checkNotNull(sources["intents.pl"]) { "intents.pl input is required" }
         val changelog = checkNotNull(sources["CHANGELOG.md"]) { "CHANGELOG.md input is required" }
         val output = outputDirectory.get().asFile
@@ -63,6 +64,9 @@ abstract class GeneratePortableSemanticAssets : DefaultTask() {
                 into("prolog/shared/modules")
             }
             from(normalizer) {
+                into("prolog/shared/modules")
+            }
+            from(androidTools) {
                 into("prolog/shared/modules")
             }
             from(intents) {
@@ -182,6 +186,7 @@ androidComponents {
             sourceFiles.from(
                 layout.projectDirectory.file("../../modules/intent_frames.pl"),
                 layout.projectDirectory.file("../../modules/normalizer.pl"),
+                layout.projectDirectory.file("../../modules/android_tools.pl"),
                 layout.projectDirectory.file("../../kb/intents.pl"),
                 layout.projectDirectory.file("../../CHANGELOG.md")
             )
