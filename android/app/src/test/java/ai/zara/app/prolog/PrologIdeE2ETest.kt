@@ -66,6 +66,7 @@ class PrologIdeE2ETest {
     fun composeStudioWiresCursorCompletionBuildersNavigationCancelAndIndependentMiniBoxes() {
         val studio = File("src/main/java/ai/zara/app/ui/PrologStudioSurface.kt").readText()
         val builder = File("src/main/java/ai/zara/app/ui/PrologStructuredBuilderPane.kt").readText()
+        val explorer = File("src/main/java/ai/zara/app/ui/PrologGraphExplorer.kt").readText()
 
         assertTrue(studio.contains("TextFieldValue(draft, TextRange(draft.length))"))
         assertTrue(studio.contains("PrologCompletionEngine.complete(editorValue.text, cursor, completionDocuments)"))
@@ -76,8 +77,14 @@ class PrologIdeE2ETest {
         assertTrue(studio.contains("PrologStructuredBuilderPane("))
         assertTrue(studio.contains("PrologAuthorityPolicy.validate(analyzed)"))
         assertTrue(studio.contains("moveCursorToLine(diagnostic.line)"))
-        assertTrue(studio.contains("GraphPane(workspaceDocuments)"))
-        assertTrue(studio.contains("onNavigate(clause.source, clause.line)"))
+        assertTrue(studio.contains("StudioPane.Graph, StudioPane.Files -> PrologGraphExplorer("))
+        assertTrue(studio.contains("documents = workspaceDocuments"))
+        assertTrue(studio.contains("requestedLine = line"))
+        assertTrue(studio.contains("target == document.source || draft == sources.firstOrNull { it.name == selectedName }?.text.orEmpty()"))
+        assertTrue(explorer.contains("PrologSourceDialog("))
+        assertTrue(explorer.contains("onNavigate(viewed.source, viewedLine)"))
+        assertTrue(explorer.contains("clipboard.setText(AnnotatedString(document.text))"))
+        assertTrue(explorer.contains("items(current.nodes, key = { it.id })"))
         assertTrue(studio.contains("LocalZaraServer.CANCEL_QUERY_COMMAND"))
         assertTrue(studio.contains("var queryPending by rememberSaveable"))
         assertTrue(studio.contains("SecondaryAction(\"Cancel query\""))
@@ -89,5 +96,25 @@ class PrologIdeE2ETest {
         assertTrue(builder.contains("PrologFormBuilder.fact"))
         assertTrue(builder.contains("PrologFormBuilder.rule"))
         assertTrue(builder.contains("Append, validate & reload"))
+    }
+
+    @Test
+    fun graphIndexesAnalyzerDocumentsAcrossFilesAndRetainsSourceText() {
+        val sources = listOf(
+            PrologSource("facts.pl", "% evidence\nevidence(alice).\nevidence(bob).\n"),
+            PrologSource("rules.pl", "review(X) :- evidence(X).\n"),
+            PrologSource("empty.pl", "% no clauses yet\n"),
+        )
+        val documents = sources.map { PrologSourceAnalyzer.analyze(it.name, it.text) }
+        val graph = PrologGraphExplorerModel.build(documents)
+        val evidence = graph.nodes.single { it.label == "evidence/1" }
+        assertEquals(ExplorerNodeKind.FACT, evidence.kind)
+        assertEquals(listOf(2, 3), evidence.locations.map { it.line })
+        assertEquals(listOf("facts.pl", "facts.pl"), evidence.locations.map { it.source })
+        assertEquals(listOf(ExplorerEdge("predicate:review/1", "predicate:evidence/1", "references")), graph.edges)
+        assertEquals(sources.map { it.text }, documents.map { it.text })
+        val clauses = PrologGraphExplorerModel.build(documents, includeClauses = true)
+        assertEquals(2, clauses.nodes.count { it.kind == ExplorerNodeKind.FACT_CLAUSE })
+        assertEquals(1, clauses.nodes.count { it.kind == ExplorerNodeKind.RULE_CLAUSE })
     }
 }

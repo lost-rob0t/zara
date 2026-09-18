@@ -1,0 +1,93 @@
+#+TITLE: Android Logic graph and Prolog file viewer
+
+* Open the explorer
+
+Open Logic, then Graph. The Logic tabs wrap at narrow widths instead of leaving
+Graph or Files clipped offscreen. Files is also a direct entry to the same
+explorer's file browser.
+
+Predicates shows the workspace dependency overview. Clauses expands each
+predicate into its individual facts and rules and also shows directives. Files
+lists every source supplied by the current workspace, including empty files and
+files whose syntax the static analyzer cannot understand.
+
+The default scope is All files. Select a filename to scope originating clauses;
+referenced predicates can still resolve to definitions in other workspace files.
+Show all clears the file scope, search, and neighborhood focus. Nothing is
+silently discarded after fourteen predicates. The node count reports the visible
+and indexed totals. Very large graphs start at overview scale: zoom in for text
+or use the complete, scrollable node index below the canvas.
+
+* Read the relationships
+
+Nodes carry predicate indicators or clause text, semantic kind, and provenance.
+Facts use rounded cards, rules use squared cards, and unresolved references have
+a dashed outline. Kind labels accompany theme-token colors so color is not the
+only distinction. Mixed predicates retain both their fact and rule definitions.
+
+Solid arrows point from a predicate or rule clause toward a static reference.
+Dashed arrows mean a predicate defines a clause. Self-loop arrows preserve
+recursive references. Tap a node to inspect every definition, incoming and
+outgoing relationship, and the complete clause text. Relationship entries
+navigate to their other endpoint. Focus neighbors shows immediate context;
+Show all returns to the full scope. Search includes predicate/clause text, kind,
+and source name and retains immediate neighbors of matches.
+
+Pinch or use the zoom controls to change scale, drag to pan, use Fit all to see
+the complete layout, and use 100% to return to a readable scale. Every node is
+also a labeled, clickable entry outside the canvas for accessibility.
+
+* View Prolog source
+
+Tap a definition in the inspector, or a file in Files. The full-screen read-only
+viewer displays the actual document text with syntax highlighting and line
+numbers. Definition navigation scrolls to and highlights the source line.
+Wrapped lines keep their original source line number. Copy source copies the
+full text, not the shortened graph label or an excerpt.
+
+Open in IDE hands the viewed document and source anchor back to the existing
+editor. Browsing another file never modifies the current editor draft. Switching
+the editor to another file is disabled while the current draft is unsaved; save
+that draft first. Opening its own source preserves the draft.
+
+The source pane explicitly distinguishes an unsaved draft from saved workspace
+source. A saved source revision is not proof that the runtime loaded that exact
+revision. No runtime load status is invented from a matching filename. This
+viewer does not execute a directive, consult a file, run a goal, or change the
+existing serialized Trealla runtime or query authority policy.
+
+* Static analysis boundary
+
+This is a source map, not a proof tree, execution trace, or exhaustive Prolog
+semantic analysis. The existing lightweight analyzer can identify nested data
+functors as references and may miss meta-calls, custom operators, or other
+unsupported syntax. Therefore edges are deliberately named references, not
+proven calls. A reference without a workspace definition may be a built-in,
+external predicate, or data term; it is not labeled a runtime error.
+
+All means all indexed nodes and all supplied workspace files, not an implicit
+filesystem crawl or remote/plugin runtime snapshot. Use Files to inspect the
+original source even when static graph extraction is incomplete.
+
+* Verification and review
+
+PrologGraphExplorerTest covers 101-node completeness, multi-file/multi-clause
+provenance, unresolved definitions, semantic kinds, directives, scoped cross-file
+references, same-line clauses, search/focus, recursion, stable non-overlapping
+layout/hit testing, Unicode/CRLF line offsets, and empty/deleted scopes.
+PrologIdeE2ETest retains existing editor contracts, checks the viewer wiring,
+and exercises the real source analyzer with a multi-file graph fixture.
+
+The local focused run exercised twelve pure Kotlin model contracts after an
+initial missing-implementation RED result. It used the same DTO declarations
+copied from PrologStudio.kt and an annotation-free runner because the local
+container had kotlinc but no Nix, Android SDK, or JUnit runtime. This is not
+an Android build or a substitute for the repository test gate.
+
+Before visual completion or merge, require exact-candidate CI through the
+existing Android/Wear gate and the full repository tests. Device/emulator
+screenshots remain required for Light and Outrun, narrow/large-font layouts,
+empty sources, the all-files graph, a 101-node overview, recursive relationships,
+a multi-file definition inspector, and a scrolled source viewer. Review pinch,
+pan, TalkBack index navigation, source selection/copy, rotation, and dirty-buffer
+handoff. No screenshot or device pass is asserted by this implementation note.
