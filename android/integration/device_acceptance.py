@@ -320,6 +320,7 @@ def exercise_three_menu_ui(device: Device) -> None:
     open_menu(device, "Settings")
     for tab in (
         "Runtime",
+        "Remote APIs",
         "Connection",
         "Permissions",
         "Appearance",
@@ -330,8 +331,11 @@ def exercise_three_menu_ui(device: Device) -> None:
     ):
         device.tap_tab(tab)
         device.assert_accessible_targets((tab,))
+        if tab == "Remote APIs":
+            device.await_label("OpenRouter")
+            device.await_contains("Remote profile")
         time.sleep(0.4)
-        device.capture(f"settings-{tab.lower()}")
+        device.capture(f"settings-{tab.lower().replace(' ', '-')}")
 
     device.tap_tab("Appearance")
     device.tap("Outrun")

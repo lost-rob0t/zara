@@ -8,7 +8,7 @@ Issue [[https://github.com/lost-rob0t/zara/issues/934][#934]] reorganizes the ex
 |-----------+------|
 | Chat | Chat, Voice |
 | Workspace | Logic, Projects, Scheduled |
-| Settings | Runtime, Connection, Permissions, Appearance, Plugins, Updates, Diagnostics, About |
+| Settings | Runtime, Remote APIs, Connection, Permissions, Appearance, Plugins, Updates, Diagnostics, About |
 
 On a compact window, open the menu button at the upper left. The drawer has exactly three primary entries; conversation-history placeholders and local/remote status remain below them. At an available window width of at least 600dp, the same three entries appear in a persistent left rail. The menu button still opens the history drawer. There is no bottom navigation bar competing with the composer.
 
@@ -17,6 +17,8 @@ Tabs scroll horizontally. Selecting a menu restores that menu's last tab. Logic 
 * Settings organization
 
 Runtime contains the existing local-server status, Auto/Local/Remote routing selection, and on-device embedding toggle. It does not change provider or model selection implicitly.
+
+Remote APIs owns OpenRouter, generic OpenAI-compatible, StarIntel, StatIntel, and Z.AI Coding Plan provider configuration. API keys are Android-Keystore wrapped and provider/endpoint changes fence any previously stored credential.
 
 Connection contains client identity creation, public-key enrollment guidance, trusted-server pinning/replacement, endpoint entry, and Connect in one place. Previously these controls were split between Settings and Remote. Existing trust validation, connection lifecycle gates, and explicit user actions are unchanged.
 
