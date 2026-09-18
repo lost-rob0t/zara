@@ -54,6 +54,8 @@ class PrologRlmSidecarClient(
     private val endpoint: String = "http://127.0.0.1:18765",
     private val discoveryTimeoutMs: Int = 350,
     private val requestTimeoutMs: Int = 30_000,
+    private val requestOverride:
+        ((method: String, path: String, body: JsonObject?, timeoutMs: Int) -> JsonObject)? = null,
 ) {
     init {
         require(endpoint == "http://127.0.0.1:18765") {
@@ -227,6 +229,16 @@ class PrologRlmSidecarClient(
     }
 
     private fun request(
+        method: String,
+        path: String,
+        body: JsonObject?,
+        timeoutMs: Int,
+    ): JsonObject {
+        requestOverride?.let { return it(method, path, body, timeoutMs) }
+        return requestHttp(method, path, body, timeoutMs)
+    }
+
+    private fun requestHttp(
         method: String,
         path: String,
         body: JsonObject?,
