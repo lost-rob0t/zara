@@ -185,3 +185,15 @@ def test_android_gradle_plugins_precede_version_declarations():
     ):
         gradle = (ROOT / relative).read_text()
         assert gradle.index("plugins {") < gradle.index("fun loadZaraVersionProperties")
+
+
+def test_gradle_semver_pattern_accepts_canonical_version():
+    canonical = _properties()["zara.version"]
+    for relative in (
+        "android/app/build.gradle.kts",
+        "android/wear-app/build.gradle.kts",
+    ):
+        gradle = (ROOT / relative).read_text()
+        match = re.search(r'Regex\(\s*"""([^"]+)"""', gradle)
+        assert match is not None
+        assert re.fullmatch(match.group(1), canonical)
