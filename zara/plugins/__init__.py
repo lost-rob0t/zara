@@ -7,6 +7,7 @@ from .api import (
     PluginRuntime,
     RuntimeStatus,
     ServicePlugin,
+    StartupUnavailable,
 )
 from .manager import PluginDiagnostic, PluginManager, PluginState
 
@@ -20,4 +21,5 @@ __all__ = [
     "PluginState",
     "RuntimeStatus",
     "ServicePlugin",
+    "StartupUnavailable",
 ]
