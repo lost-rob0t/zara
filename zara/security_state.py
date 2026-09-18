@@ -10,6 +10,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterable, Iterator
+from urllib.parse import urlparse
 
 import zmq
 
@@ -30,12 +31,27 @@ _MAX_STATE_BYTES = 1024 * 1024
 _MAX_CLIENTS = 256
 _SERVER_FILE = "server-curve.json"
 _CLIENTS_FILE = "clients.json"
+_REMOTE_LISTENER_FILE = "remote-listener.json"
 _CONTROL_SOCKET_FILE = "security-admin.sock"
 _STATE_LOCK_FILE = ".state.lock"
 
 
 class SecurityStateError(RuntimeError):
     pass
+
+
+def normalize_remote_endpoint(value: str) -> str:
+    endpoint = str(value).strip()
+    parsed = urlparse(endpoint)
+    if parsed.scheme != "tcp" or not parsed.hostname or parsed.port is None:
+        raise SecurityStateError("remote listener endpoint must be tcp://HOST:PORT")
+    if parsed.username is not None or parsed.password is not None:
+        raise SecurityStateError("remote listener endpoint must not contain user information")
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise SecurityStateError("remote listener endpoint must be a bare tcp://HOST:PORT origin")
+    if not 1 <= parsed.port <= 65535:
+        raise SecurityStateError("remote listener port is invalid")
+    return endpoint.rstrip("/")
 
 
 class PersistentSecurityState:
@@ -59,6 +75,10 @@ class PersistentSecurityState:
     @property
     def _clients_path(self) -> Path:
         return self._directory / _CLIENTS_FILE
+
+    @property
+    def _remote_listener_path(self) -> Path:
+        return self._directory / _REMOTE_LISTENER_FILE
 
     @property
     def _state_lock_path(self) -> Path:
@@ -113,6 +133,27 @@ class PersistentSecurityState:
         if isinstance(public_key, bytes):
             return public_key.decode("ascii")
         return public_key
+
+    def load_remote_endpoint(self) -> str | None:
+        if not self._remote_listener_path.exists():
+            return None
+        payload = self._read_private_json(self._remote_listener_path)
+        if set(payload) != {"version", "endpoint"} or payload.get("version") != _STATE_VERSION:
+            raise SecurityStateError("remote listener state has invalid fields or version")
+        endpoint = payload.get("endpoint")
+        if not isinstance(endpoint, str):
+            raise SecurityStateError("remote listener endpoint is invalid")
+        return normalize_remote_endpoint(endpoint)
+
+    def save_remote_endpoint(self, endpoint: str) -> str:
+        normalized = normalize_remote_endpoint(endpoint)
+        self._prepare_directory()
+        with self._state_transaction():
+            self._write_private_json(
+                self._remote_listener_path,
+                {"version": _STATE_VERSION, "endpoint": normalized},
+            )
+        return normalized
 
     def load_registry(self) -> SecurityRegistry:
         return self._registry_from_records(self._load_client_records())
@@ -425,4 +466,4 @@ class PersistentSecurityState:
         )
 
 
-__all__ = ["PersistentSecurityState", "SecurityStateError"]
+__all__ = ["PersistentSecurityState", "SecurityStateError", "normalize_remote_endpoint"]

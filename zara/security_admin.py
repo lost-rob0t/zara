@@ -10,7 +10,7 @@ import stat
 import struct
 import threading
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from zara.json_limits import require_bounded_json_nesting
 from zara.principals import PrincipalContext
@@ -123,6 +123,8 @@ class SecurityAdminServer:
         state: PersistentSecurityState,
         *,
         capabilities: Iterable[Capability],
+        ensure_remote_listener: Callable[[str | None], object] | None = None,
+        remote_listener_status: Callable[[], object] | None = None,
     ) -> None:
         if not isinstance(state, PersistentSecurityState):
             raise TypeError("state must be PersistentSecurityState")
@@ -133,6 +135,8 @@ class SecurityAdminServer:
             normalized.add(capability)
         self._state = state
         self._capabilities = frozenset(normalized)
+        self._ensure_remote_listener = ensure_remote_listener
+        self._remote_listener_status = remote_listener_status
         self._registry: SecurityRegistry | None = None
         self._registry_lock = threading.RLock()
         self._listener: socket.socket | None = None
@@ -305,6 +309,21 @@ class SecurityAdminServer:
                 raise SecurityAdminError("security list request has invalid fields")
             self._live_registry()
             return list(self._state.list_clients())
+        if action == "remote_listener.status":
+            if set(request) != {"version", "action"}:
+                raise SecurityAdminError("remote listener status request has invalid fields")
+            if self._remote_listener_status is None:
+                raise SecurityAdminError("remote listener control is unavailable")
+            return self._remote_listener_status()
+        if action == "remote_listener.ensure":
+            if set(request) != {"version", "action", "endpoint"}:
+                raise SecurityAdminError("remote listener ensure request has invalid fields")
+            endpoint = request.get("endpoint")
+            if endpoint is not None and not isinstance(endpoint, str):
+                raise SecurityAdminError("remote listener endpoint is invalid")
+            if self._ensure_remote_listener is None:
+                raise SecurityAdminError("remote listener control is unavailable")
+            return self._ensure_remote_listener(endpoint)
         raise SecurityAdminError("unknown security admin action")
 
 

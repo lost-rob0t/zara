@@ -35,6 +35,8 @@ default_zmq_endpoint = _core.default_zmq_endpoint
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_REMOTE_ENDPOINT = "tcp://0.0.0.0:7731"
+
 _SAFE_REMOTE_CAPABILITIES = frozenset(
     {
         "session.basic",
@@ -114,6 +116,7 @@ class ZaraServer(_core.ZaraServer):
         self._remote_gateway = None
         self._security_registry = None
         self._security_admin = None
+        self._remote_lock = threading.RLock()
         if secure_tcp:
             self._endpoint_override = endpoint
 
@@ -151,34 +154,101 @@ class ZaraServer(_core.ZaraServer):
             voice_ingress=voice_ingress,
         )
 
-    def _build_secure_gateway(self, endpoint: str, *, supervisor, voice_ingress):
+    def _ensure_security_admin(self) -> None:
+        if self._security_state is None:
+            return
+        if self._security_admin is not None:
+            return
         from zara.security import Capability
         from zara.security_admin import SecurityAdminServer
-        from zara.security_gateway import SecureZaraZmqGateway
 
+        self._security_state.initialize()
+        registry = self._security_state.load_registry()
         admin = SecurityAdminServer(
             self._security_state,
             capabilities={Capability(value) for value in _SAFE_REMOTE_CAPABILITIES},
+            ensure_remote_listener=self.ensure_remote_listener,
+            remote_listener_status=self.remote_listener_status,
         )
+        admin.bind_registry(registry)
         admin.start()
-        try:
-            registry = self._security_state.load_registry()
-            admin.bind_registry(registry)
-            gateway = SecureZaraZmqGateway(
-                endpoint,
-                supervisor=supervisor,
-                security_registry=registry,
-                curve_server=self._security_state.load_server_config(),
-                context=None,
-                config=self._gateway_transport_config,
-                voice_ingress=voice_ingress,
-            )
-        except BaseException:
-            admin.close(timeout=self._shutdown_timeout)
-            raise
         self._security_registry = registry
         self._security_admin = admin
-        return gateway
+
+    def _build_secure_gateway(self, endpoint: str, *, supervisor, voice_ingress):
+        from zara.security_gateway import SecureZaraZmqGateway
+
+        if self._security_state is None:
+            raise ServerError("secure TCP listener has no security state")
+        self._ensure_security_admin()
+        registry = self._security_registry
+        if registry is None:
+            raise ServerError("secure TCP listener has no live security registry")
+        return SecureZaraZmqGateway(
+            endpoint,
+            supervisor=supervisor,
+            security_registry=registry,
+            curve_server=self._security_state.load_server_config(),
+            context=None,
+            config=self._gateway_transport_config,
+            voice_ingress=voice_ingress,
+        )
+
+    def remote_listener_status(self) -> dict[str, object]:
+        if self._security_state is None:
+            raise ServerError("remote listener control has no security state")
+        if self._secure_tcp:
+            endpoint = self._endpoint_override
+            active = self.state in {ServerState.READY, ServerState.DEGRADED}
+        else:
+            endpoint = self._remote_endpoint
+            active = bool(self._remote_gateway is not None and self._remote_gateway.is_alive)
+        return {
+            "active": active,
+            "endpoint": endpoint,
+            "server_public_key": self._security_state.server_public_key(),
+        }
+
+    def ensure_remote_listener(self, endpoint: str | None = None) -> dict[str, object]:
+        if self._security_state is None:
+            raise ServerError("remote listener control has no security state")
+        if self.state not in {ServerState.READY, ServerState.DEGRADED}:
+            raise ServerStateError("server is not ready for remote listener changes")
+        from zara.security import validate_listener_security
+        from zara.security_state import normalize_remote_endpoint
+
+        with self._remote_lock:
+            if self._secure_tcp:
+                existing = normalize_remote_endpoint(str(self._endpoint_override))
+                if endpoint is not None and normalize_remote_endpoint(endpoint) != existing:
+                    raise ServerError("server already owns a different secure TCP listener")
+                return self.remote_listener_status()
+
+            if self._remote_gateway is not None and self._remote_gateway.is_alive:
+                existing = normalize_remote_endpoint(str(self._remote_endpoint))
+                if endpoint is not None and normalize_remote_endpoint(endpoint) != existing:
+                    raise ServerError("server already owns a different remote listener")
+                return self.remote_listener_status()
+
+            candidate = endpoint or self._remote_endpoint or self._security_state.load_remote_endpoint()
+            if candidate is None:
+                candidate = DEFAULT_REMOTE_ENDPOINT
+            candidate = normalize_remote_endpoint(candidate)
+            validate_listener_security(candidate, curve_enabled=True, zap_enabled=True)
+            gateway = self._build_secure_gateway(
+                candidate,
+                supervisor=self._supervisor,
+                voice_ingress=self._voice_ingress,
+            )
+            try:
+                gateway.start().result(timeout=self._shutdown_timeout)
+            except BaseException:
+                gateway.close(timeout=self._shutdown_timeout)
+                raise
+            self._remote_gateway = gateway
+            self._remote_endpoint = candidate
+            self._security_state.save_remote_endpoint(candidate)
+            return self.remote_listener_status()
 
     def _close_security_admin(self) -> bool:
         admin = self._security_admin
@@ -195,14 +265,11 @@ class ZaraServer(_core.ZaraServer):
     def start(self) -> ServerState:
         try:
             state = super().start()
+            self._ensure_security_admin()
+            if not self._secure_tcp and self._remote_endpoint is None and self._security_state is not None:
+                self._remote_endpoint = self._security_state.load_remote_endpoint()
             if self._remote_endpoint is not None and self._remote_gateway is None:
-                gateway = self._build_secure_gateway(
-                    self._remote_endpoint,
-                    supervisor=self._supervisor,
-                    voice_ingress=self._voice_ingress,
-                )
-                self._remote_gateway = gateway
-                gateway.start().result(timeout=self._shutdown_timeout)
+                self.ensure_remote_listener(self._remote_endpoint)
             return state
         except BaseException:
             if self._remote_endpoint is not None and self.state in {

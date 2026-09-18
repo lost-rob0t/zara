@@ -14,6 +14,7 @@ from zara.principals import PrincipalContext
 from zara.protocol import ProtocolMessage, decode_message, encode_message
 from zara.runtime import bridge
 from zara.security import Capability, KeyNotActive
+from zara.security_admin import SecurityAdminClient
 from zara.security_state import PersistentSecurityState
 from zara.security_transport import CurveClientConfig, configure_curve_client_socket
 from zara.server import ServerLease, ServerState, ZaraServer, default_zmq_endpoint
@@ -440,3 +441,96 @@ def test_production_zara_server_secure_tcp_accepts_only_enrolled_curve_client(
     enrolled.close(0)
     unknown.close(0)
     assert server.stop() is True
+
+
+
+def test_local_daemon_can_enable_and_restore_secure_remote_listener_without_restart(
+    tmp_path: Path,
+    zmq_context: zmq.Context,
+):
+    state = PersistentSecurityState(tmp_path / "security")
+    runtime_dir = tmp_path / "runtime"
+
+    probe = zmq_context.socket(zmq.ROUTER)
+    port = probe.bind_to_random_port("tcp://127.0.0.1")
+    probe.close(0)
+    endpoint = f"tcp://127.0.0.1:{port}"
+
+    config = TransportConfig(
+        sndhwm=8,
+        rcvhwm=8,
+        heartbeat_interval_ms=100,
+        heartbeat_timeout_ms=500,
+        linger_ms=0,
+        request_timeout=1.0,
+        poll_interval_ms=5,
+    )
+    server = ZaraServer(
+        supervisor=FakeSupervisor(),
+        runtime_dir=runtime_dir,
+        security_state=state,
+        gateway_transport_config=config,
+        shutdown_timeout=1.0,
+    )
+    assert server.start() is ServerState.READY
+    admin = SecurityAdminClient(state.control_socket_path)
+
+    initial = admin.request("remote_listener.status")
+    assert initial["active"] is False
+    assert initial["endpoint"] is None
+
+    ensured = admin.request("remote_listener.ensure", endpoint=endpoint)
+    assert ensured["active"] is True
+    assert ensured["endpoint"] == endpoint
+    assert ensured["server_public_key"] == state.server_public_key()
+    assert state.load_remote_endpoint() == endpoint
+
+    client_public, client_secret = zmq.curve_keypair()
+    admin.request(
+        "enroll",
+        public_key=client_public.decode("ascii"),
+        device_id="android-live-pair",
+    )
+
+    remote = zmq_context.socket(zmq.DEALER)
+    apply_socket_options(remote, config, router=False)
+    configure_curve_client_socket(
+        remote,
+        CurveClientConfig(
+            public_key=client_public,
+            secret_key=client_secret,
+            server_public_key=state.load_server_config().public_key,
+        ),
+    )
+    remote.connect(endpoint)
+    remote.send_multipart(
+        encode_message(
+            ProtocolMessage(
+                type="hello",
+                id="dynamic-remote-hello",
+                timestamp_ns=time.time_ns(),
+                payload_count=0,
+                body={"versions": [1]},
+            )
+        )
+    )
+    response = receive(remote)
+    assert response.type == "hello.ok"
+    remote.close(0)
+    assert server.stop() is True
+
+    restarted = ZaraServer(
+        supervisor=FakeSupervisor(),
+        runtime_dir=runtime_dir,
+        security_state=state,
+        gateway_transport_config=config,
+        shutdown_timeout=1.0,
+    )
+    assert restarted.start() is ServerState.READY
+    try:
+        restored = SecurityAdminClient(state.control_socket_path).request("remote_listener.status")
+        assert restored["active"] is True
+        assert restored["endpoint"] == endpoint
+        assert restored["server_public_key"] == ensured["server_public_key"]
+    finally:
+        assert restarted.stop() is True
