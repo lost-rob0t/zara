@@ -8,12 +8,7 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -24,46 +19,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-
-internal enum class SettingsTab(val label: String) { General("General"), Plugins("Plugins") }
-
-@Composable
-internal fun SettingsTabLayout(
-    padding: PaddingValues,
-    pluginUi: PluginInstallUi,
-    initiallyPlugins: Boolean = false,
-    generalContent: @Composable () -> Unit,
-) {
-    var selected by rememberSaveable(initiallyPlugins) {
-        mutableStateOf(if (initiallyPlugins) SettingsTab.Plugins else SettingsTab.General)
-    }
-    val tokens = LocalZaraTokens.current
-    Column(Modifier.fillMaxSize().padding(padding)) {
-        TabRow(
-            selectedTabIndex = selected.ordinal,
-            containerColor = tokens.background,
-            contentColor = tokens.secondary,
-            divider = {},
-        ) {
-            SettingsTab.entries.forEach { tab ->
-                Tab(
-                    selected = selected == tab,
-                    onClick = { selected = tab },
-                    text = { Text(tab.label) },
-                    modifier = Modifier.testTag("settings_tab_${tab.name.lowercase()}"),
-                )
-            }
-        }
-        if (selected == SettingsTab.Plugins) {
-            PluginSettingsSurface(pluginUi)
-        } else {
-            generalContent()
-        }
-    }
-}
 
 internal data class PluginInstallUi(
     val candidate: StagedPluginApk?,
@@ -206,8 +163,8 @@ internal fun rememberPluginInstallUi(): PluginInstallUi {
 }
 
 @Composable
-private fun PluginSettingsSurface(state: PluginInstallUi) {
-    ScreenBody(PaddingValues()) {
+internal fun PluginSettingsSurface(state: PluginInstallUi, padding: PaddingValues) {
+    ScreenBody(padding) {
         ScreenTitle("Plugins", "Install Android plugin APKs")
         SectionCard("INSTALL") {
             MutedNotice("Choose a standalone APK from a plugin publisher you trust. Desktop Python/Nix plugins and ZIP bundles cannot be installed here.")
