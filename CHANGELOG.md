@@ -4,8 +4,15 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+### Changed
+
+- Every pull request merged into `master` must now update the canonical changelog, so humans can follow both user-facing and internal changes as they land.
+- Every `master` push now starts a fresh signed rolling Android/Wear build without waiting for unrelated repository CI jobs.
+- Versioned releases now require canonical changelog notes, wait for exact-source CI, install and exercise the exact release APK on an emulator before publication, publish those notes on the GitHub release page, and verify the downloaded APK/checksum/manifest/signer against the gated build.
+
 ### Fixed
 
+- Android screenshot acceptance now recognizes and dismisses only Zara's own first-launch changelog dialog before exercising the normal navigation surface.
 - Plugin capability compositions now re-check a tool's live approval policy immediately before invocation, preventing approval-policy changes after registration from bypassing approval.
 
 ## 0.2.2-alpha
@@ -27,7 +34,6 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Android emulator release evidence is more deterministic through explicit host-runtime and SDK provisioning checks.
 - Release-note sections render consistently on Desktop and Android without extra blank lines between a subsection heading and its first item.
 - Immutable alpha publication now keys off canonical version readiness plus actual GitHub release absence instead of push-event changed-file metadata, so protected-branch promotion merges cannot silently skip APK publication.
-- The mutable `android-latest` channel now starts a fresh signed Android/Wear build on every `master` push instead of waiting for the entire repository CI workflow, preserving an exact-SHA APK payload for each successful master build and rolling the direct-download release forward promptly.
 
 ### Changed
 
