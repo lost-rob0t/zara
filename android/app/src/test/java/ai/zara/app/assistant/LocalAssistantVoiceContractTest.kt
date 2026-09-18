@@ -105,6 +105,21 @@ class LocalAssistantVoiceContractTest {
     }
 
     @Test
+    fun `released local completion is fenced immediately by lifecycle generation`() {
+        val controller = File(
+            "src/main/java/ai/zara/app/assistant/LocalAssistantVoiceController.kt"
+        ).readText()
+        val session = File(
+            "src/main/java/ai/zara/app/assistant/ZaraVoiceInteractionSession.kt"
+        ).readText()
+
+        assertTrue(controller.contains("private val lifecycleFence: AssistantLifecycleFence"))
+        assertTrue(controller.contains("val lifecycleToken = lifecycleFence.beginStart()"))
+        assertTrue(controller.contains("lifecycleFence.isCurrent(lifecycleToken)"))
+        assertTrue(session.contains("LocalAssistantVoiceController(context, appSession, lifecycleFence"))
+    }
+
+    @Test
     fun `assistant shutdown fences released local transcription and model completion`() {
         val source = File(
             "src/main/java/ai/zara/app/assistant/ZaraVoiceInteractionSession.kt"
