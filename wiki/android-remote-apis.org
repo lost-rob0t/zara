@@ -1,0 +1,72 @@
+#+title: Zara Android Remote APIs
+
+* Surface
+
+Android exposes remote model provider configuration at:
+
+=Settings → Remote APIs=
+
+This is a first-class tab in the canonical three-menu shell. It is not hidden
+behind Diagnostics, raw Prolog, or a separate launcher activity.
+
+Supported presets:
+
+- OpenRouter
+- generic OpenAI-compatible HTTPS endpoint
+- StarIntel (=https://llm.starintel.actor/v1=)
+- StatIntel (=https://llm.statintel.actor/v1=)
+- Z.AI Coding Plan (=https://api.z.ai/api/coding/paas/v4=)
+
+The menu owns provider enablement, endpoint, model, application identity, API-key
+presence, and bounded provider-specific policy projection.
+
+* Secret boundary
+
+API keys never belong in Prolog source or the ordinary provider properties file.
+
+The Android control plane stores the selected provider configuration separately
+from credentials. Credentials are wrapped by =AndroidKeystoreCredentialCipher=
+and written only as sealed app-private bytes.
+
+Changing either provider identity or endpoint invalidates the existing stored
+credential before the new profile is accepted. Supplying a new key in the same
+save replaces it after the new profile is validated.
+
+* Endpoint rules
+
+All remote model endpoints must use HTTPS, must contain a host, and must not
+contain credentials, query strings, or fragments.
+
+OpenRouter is restricted to its reviewed official API bases. The default
+OpenRouter provider policy permits only explicit =fp16=, =bf16=, and =fp8=
+quantizations; =unknown= is rejected. Data collection defaults to =deny=.
+
+Z.AI Coding Plan is marked coding-only and cannot be promoted to an ordinary
+general-assistant provider by configuration.
+
+Generic OpenAI-compatible mode accepts a validated HTTPS API base and appends
+=/chat/completions= at execution time.
+
+* Authority
+
+Opening the Remote APIs tab has no network side effect. Saving a profile writes
+validated local configuration and optionally a Keystore-wrapped credential.
+
+The remote model coordinator owns HTTPS execution mechanics and cancellation.
+Android symbolic/device authority remains separate. A model response never
+grants Android action authority by itself.
+
+Local runtime mode remains network-free.
+
+* Tests
+
+The Android gate covers:
+
+- Settings route inventory includes =Remote APIs=;
+- the native surface exposes all required presets;
+- API-key bytes are absent from provider configuration;
+- Android Keystore wrapping is used;
+- switching provider or endpoint fences the old credential;
+- OpenRouter quantization/data-policy validation;
+- Z.AI coding-only isolation;
+- HTTPS endpoint validation and response bounds.
