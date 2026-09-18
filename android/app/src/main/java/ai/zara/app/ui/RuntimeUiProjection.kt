@@ -1,5 +1,7 @@
 package ai.zara.app.ui
 
+import ai.zara.app.localai.LocalAiPhase
+import ai.zara.app.localai.LocalAiState
 import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.LocalServerPhase
 import ai.zara.app.runtime.LocalServerState
@@ -50,6 +52,25 @@ internal fun runtimeUiProjection(
         chatReady = ready,
         remoteInformational = mode == RuntimeMode.Local,
     )
+}
+
+internal fun runtimeStatusLabel(
+    projection: RuntimeUiProjection,
+    mode: RuntimeMode,
+    localState: LocalServerState,
+    localAiState: LocalAiState?,
+): String {
+    val activeLocalModel = localAiState
+        ?.takeIf { it.phase == LocalAiPhase.READY || it.phase == LocalAiPhase.GENERATING }
+        ?.model
+
+    return when {
+        projection.backendLabel == "remote" -> "Online · Remote"
+        projection.backendLabel == "local" || projection.backendLabel == "local fallback" ->
+            activeLocalModel?.let { "Offline · Local model ${it.id}" } ?: "Offline · Symbolic"
+        mode == RuntimeMode.Local && localState.phase == LocalServerPhase.STARTING -> "Connecting…"
+        else -> "Degraded"
+    }
 }
 
 internal fun activeRuntimeBackendLabel(
