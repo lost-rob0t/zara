@@ -22,6 +22,7 @@ from zara.desktop.conversation import ConversationService, ConversationUpdate
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.state import DesktopStatus, INITIAL_STATUS
 from zara.desktop.theme import refresh_dynamic_style
+from zara.runtime import events
 from zara.runtime.commands import CancelTurn, StartVoice, StopVoice, SubmitTurn
 
 _DEFAULT_SIZE = QSize(680, 460)
@@ -338,8 +339,16 @@ class QuickCopilotWindow(QWidget):
         self.status_frame.setToolTip(status.detail or "Zara is ready.")
         refresh_dynamic_style(self.status_lamp)
         refresh_dynamic_style(self.runtime_status_label)
+        self._sync_controls()
 
     def sync_from_shared_state(self, _event: object = None) -> None:
+        if isinstance(_event, events.VoiceStateChanged):
+            if _event.state == "listening":
+                self._voice_active = True
+            elif _event.state in {"idle", "error"}:
+                self._voice_active = False
+                self._voice_request_id = None
+                self._voice_target_active = None
         state = self.conversations.get_state(self.current_conversation_id)
         visible = self._project_messages(state)
         visible_ids = tuple(message.id for message in visible)
