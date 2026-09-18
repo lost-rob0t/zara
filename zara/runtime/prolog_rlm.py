@@ -157,7 +157,7 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
                 "Prolog-RLM runtime transport failed",
                 kind="transport_error",
             ) from None
-        return _turn_result_from_reply(reply)
+        return _turn_result_from_reply(reply, request_id=request["request_id"])
 
     async def cancel_turn(self, turn_id: str) -> None:
         self._require_started()
@@ -259,7 +259,11 @@ def _message_role(message) -> str | None:
     return mapping.get(str(role).lower()) if role is not None else None
 
 
-def _turn_result_from_reply(reply: Mapping[str, Any]) -> RuntimeTurnResult:
+def _turn_result_from_reply(
+    reply: Mapping[str, Any],
+    *,
+    request_id: str,
+) -> RuntimeTurnResult:
     if not isinstance(reply, Mapping):
         raise PrologRlmRuntimeError("Prolog-RLM returned an invalid response")
     if reply.get("protocol") != ZARA_RUNTIME_PROTOCOL:
@@ -269,6 +273,8 @@ def _turn_result_from_reply(reply: Mapping[str, Any]) -> RuntimeTurnResult:
         )
     if reply.get("runtime_id") != PROLOG_RLM_RUNTIME_ID:
         raise PrologRlmRuntimeError("Prolog-RLM response runtime identity changed")
+    if reply.get("request_id") != request_id:
+        raise PrologRlmRuntimeError("Prolog-RLM response request identity changed")
     status = reply.get("status")
     if status == "completed":
         text = reply.get("text", "")
