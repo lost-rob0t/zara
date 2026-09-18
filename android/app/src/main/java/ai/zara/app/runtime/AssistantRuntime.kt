@@ -8,8 +8,13 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicReference
 
 const val ZARA_RUNTIME_PROTOCOL: String = "ZARA-RUNTIME/1"
 const val EMBEDDED_LOCAL_RUNTIME_ID: String = "embedded-local"
@@ -234,8 +239,31 @@ class PrologRlmSidecarClient(
         body: JsonObject?,
         timeoutMs: Int,
     ): JsonObject {
-        requestOverride?.let { return it(method, path, body, timeoutMs) }
-        return requestHttp(method, path, body, timeoutMs)
+        val connectionRef = AtomicReference<HttpURLConnection?>(null)
+        val task = FutureTask<JsonObject> {
+            requestOverride?.invoke(method, path, body, timeoutMs)
+                ?: requestHttp(method, path, body, timeoutMs, connectionRef)
+        }
+        Thread(task, "zara-prolog-rlm-transport").apply { isDaemon = true }.start()
+        return try {
+            task.get(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+        } catch (_: TimeoutException) {
+            connectionRef.getAndSet(null)?.disconnect()
+            task.cancel(true)
+            throw AssistantRuntimeException("Prolog-RLM sidecar request exceeded total deadline")
+        } catch (_: InterruptedException) {
+            connectionRef.getAndSet(null)?.disconnect()
+            task.cancel(true)
+            Thread.currentThread().interrupt()
+            throw AssistantRuntimeException("Prolog-RLM sidecar request was interrupted")
+        } catch (error: ExecutionException) {
+            when (val cause = error.cause) {
+                is AssistantRuntimeException -> throw cause
+                is RuntimeException -> throw cause
+                is Error -> throw cause
+                else -> throw AssistantRuntimeException("Prolog-RLM sidecar transport failed")
+            }
+        }
     }
 
     private fun requestHttp(
@@ -243,13 +271,15 @@ class PrologRlmSidecarClient(
         path: String,
         body: JsonObject?,
         timeoutMs: Int,
+        connectionRef: AtomicReference<HttpURLConnection?>,
     ): JsonObject {
         val connection = URL("$endpoint$path").openConnection() as HttpURLConnection
+        connectionRef.set(connection)
         try {
             connection.requestMethod = method
             connection.instanceFollowRedirects = false
             connection.useCaches = false
-            connection.connectTimeout = timeoutMs
+            connection.connectTimeout = minOf(timeoutMs, MAX_CONNECT_TIMEOUT_MS)
             connection.readTimeout = timeoutMs
             connection.setRequestProperty("Accept", "application/json")
             if (body != null) {
@@ -259,7 +289,10 @@ class PrologRlmSidecarClient(
                 }
                 connection.doOutput = true
                 connection.setRequestProperty("Content-Type", "application/json")
+                connection.connect()
                 connection.outputStream.use { output -> output.write(encoded) }
+            } else {
+                connection.connect()
             }
             val status = connection.responseCode
             if (status !in 200..299) {
@@ -276,6 +309,7 @@ class PrologRlmSidecarClient(
             }
             return parsed.asJsonObject
         } finally {
+            connectionRef.compareAndSet(connection, null)
             connection.disconnect()
         }
     }
@@ -302,6 +336,7 @@ class PrologRlmSidecarClient(
         const val MAX_RESPONSE_BYTES = 512 * 1024
         const val MAX_TEXT_CHARS = 131_072
         const val MAX_CONTEXT_CHARS = 262_144
+        const val MAX_CONNECT_TIMEOUT_MS = 2_000
     }
 }
 
@@ -392,6 +427,23 @@ class AssistantRuntimeRegistry(
         return CompletableFuture.supplyAsync(
             {
                 try {
+                    synchronized(stateLock) {
+                        if (requestId in cancelledPrologRequests) {
+                            throw AssistantRuntimeException(
+                                "Cancelled Prolog-RLM request cannot start generation",
+                            )
+                        }
+                        if (
+                            closed ||
+                            generation != requestGeneration ||
+                            selectedId != PROLOG_RLM_RUNTIME_ID ||
+                            discovered.none { it.id == PROLOG_RLM_RUNTIME_ID && it.selectable }
+                        ) {
+                            throw AssistantRuntimeException(
+                                "Stale Prolog-RLM runtime generation cannot start generation",
+                            )
+                        }
+                    }
                     val turn = prologRlm.generate(text, requestId, conversationId, inlineContext)
                     synchronized(stateLock) {
                         if (requestId in cancelledPrologRequests) {
