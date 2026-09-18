@@ -89,7 +89,7 @@ Java_ai_zara_app_prolog_JniTreallaNativeApi_evaluate(
     char *results[ZARA_MAX_SEMANTIC_RESULTS] = {0};
     size_t count = 0;
     bool query_active = false;
-    bool ok = false;
+    bool result_ok = true;
 
     pthread_mutex_lock(&g_runtime_lock);
     if (g_runtime == NULL) {
@@ -100,10 +100,10 @@ Java_ai_zara_app_prolog_JniTreallaNativeApi_evaluate(
     }
 
     pl_sub_query *query = NULL;
-    ok = pl_query(g_runtime, query_source, &query, 0);
+    bool query_error = pl_query(g_runtime, query_source, &query, 0);
     query_active = query != NULL;
 
-    if (!ok || get_error(g_runtime)) {
+    if (query_error || get_error(g_runtime)) {
         if (query_active)
             pl_done(query);
         pthread_mutex_unlock(&g_runtime_lock);
@@ -130,7 +130,7 @@ Java_ai_zara_app_prolog_JniTreallaNativeApi_evaluate(
             if (!capture_result(query, results, &count)) {
                 pl_done(query);
                 query_active = false;
-                ok = false;
+                result_ok = false;
                 break;
             }
         }
@@ -142,11 +142,11 @@ Java_ai_zara_app_prolog_JniTreallaNativeApi_evaluate(
     if (query_active)
         pl_done(query);
 
-    bool query_error = get_error(g_runtime);
+    bool runtime_error = get_error(g_runtime);
     pthread_mutex_unlock(&g_runtime_lock);
     (*env)->ReleaseStringUTFChars(env, query_text, query_source);
 
-    if (!ok || query_error) {
+    if (!result_ok || runtime_error) {
         for (size_t i = 0; i < count; i++)
             pl_free(results[i]);
         throw_state(env, "Trealla semantic result extraction failed");
