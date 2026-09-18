@@ -17,6 +17,7 @@ import java.util.Locale
 internal class LocalAssistantVoiceController(
     context: Context,
     private val appSession: AndroidAppSession,
+    private val lifecycleFence: AssistantLifecycleFence,
     private val statusObserver: (String) -> Unit,
 ) : AutoCloseable {
     private val appContext = context.applicationContext
@@ -43,10 +44,11 @@ internal class LocalAssistantVoiceController(
         speaker.stop()
         cancelRecognizer(invalidate = true)
         val token = generation
+        val lifecycleToken = lifecycleFence.beginStart()
         val next = SpeechRecognizer.createOnDeviceSpeechRecognizer(appContext)
         recognizer = next
         listening = true
-        next.setRecognitionListener(listener(token))
+        next.setRecognitionListener(listener(token, lifecycleToken))
         next.startListening(
             Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(
@@ -82,9 +84,12 @@ internal class LocalAssistantVoiceController(
         speaker.close()
     }
 
-    private fun listener(token: Long) = object : RecognitionListener {
+    private fun listener(
+        token: Long,
+        lifecycleToken: Long,
+    ) = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
-            if (isCurrent(token)) statusObserver("Listening locally…")
+            if (isCurrent(token, lifecycleToken)) statusObserver("Listening locally…")
         }
 
         override fun onBeginningOfSpeech() = Unit
@@ -94,18 +99,18 @@ internal class LocalAssistantVoiceController(
         override fun onBufferReceived(buffer: ByteArray?) = Unit
 
         override fun onEndOfSpeech() {
-            if (isCurrent(token)) statusObserver("Transcribing locally…")
+            if (isCurrent(token, lifecycleToken)) statusObserver("Transcribing locally…")
         }
 
         override fun onError(error: Int) {
-            if (!isCurrent(token)) return
+            if (!isCurrent(token, lifecycleToken)) return
             listening = false
             destroyRecognizer()
             statusObserver("Local voice unavailable: ${speechErrorLabel(error)}")
         }
 
         override fun onResults(results: Bundle?) {
-            if (!isCurrent(token)) return
+            if (!isCurrent(token, lifecycleToken)) return
             val transcript = results
                 ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 ?.firstOrNull()
@@ -120,7 +125,7 @@ internal class LocalAssistantVoiceController(
             statusObserver("Thinking locally…")
             appSession.submitLocalText(transcript).whenComplete { result, error ->
                 appContext.mainExecutor.execute {
-                    if (!isCurrent(token)) return@execute
+                    if (!isCurrent(token, lifecycleToken)) return@execute
                     if (error != null) {
                         statusObserver("Local assistant failed: ${UiOperationFailure.summarize(error)}")
                     } else if (result != null) {
@@ -132,7 +137,7 @@ internal class LocalAssistantVoiceController(
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
-            if (!isCurrent(token)) return
+            if (!isCurrent(token, lifecycleToken)) return
             val partial = partialResults
                 ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 ?.firstOrNull()
@@ -144,7 +149,11 @@ internal class LocalAssistantVoiceController(
         override fun onEvent(eventType: Int, params: Bundle?) = Unit
     }
 
-    private fun isCurrent(token: Long): Boolean = !closed && token == generation
+    private fun isCurrent(
+        token: Long,
+        lifecycleToken: Long,
+    ): Boolean =
+        !closed && token == generation && lifecycleFence.isCurrent(lifecycleToken)
 
     private fun cancelRecognizer(invalidate: Boolean) {
         if (invalidate) generation += 1
