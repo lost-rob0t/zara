@@ -5,6 +5,7 @@ import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 
 enum class DeviceCapability(val wireId: String) {
+    AppSearch("app_search"),
     OpenApp("open_app"),
     OpenUri("open_uri");
 
