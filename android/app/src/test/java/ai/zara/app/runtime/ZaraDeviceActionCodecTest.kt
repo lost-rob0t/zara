@@ -31,6 +31,42 @@ class ZaraDeviceActionCodecTest {
     }
 
     @Test
+    fun `decodes strict app_search action request`() {
+        val message = ZaraDeviceActionCodec.decodeServerMessage(
+            frames(
+                """{"body":{"action_id":"action-search","args":{"app":"youtube","query":"psytrance"},"capability":"app_search","deadline_ns":999999999999999999,"idempotency":"at_most_once"},"id":"request-search","payload_count":0,"session_id":"session-1","timestamp_ns":4,"type":"device.action.request"}"""
+            )
+        )
+
+        assertEquals(
+            DeviceServerMessage.Request(
+                id = "request-search",
+                sessionId = "session-1",
+                traceId = null,
+                actionId = "action-search",
+                capability = DeviceCapability.AppSearch,
+                arguments = DeviceActionArguments.AppSearch("youtube", "psytrance"),
+                deadlineNs = 999999999999999999,
+                idempotency = DeviceActionIdempotency.AtMostOnce,
+            ),
+            message,
+        )
+    }
+
+    @Test
+    fun `app_search schema is closed and bounded`() {
+        listOf(
+            """{"body":{"action_id":"a","args":{"app":"youtube","query":"ok","shell":"id"},"capability":"app_search","deadline_ns":9,"idempotency":"at_most_once"},"id":"r","payload_count":0,"session_id":"s","timestamp_ns":1,"type":"device.action.request"}""",
+            """{"body":{"action_id":"a","args":{"app":"youtube","query":""},"capability":"app_search","deadline_ns":9,"idempotency":"at_most_once"},"id":"r","payload_count":0,"session_id":"s","timestamp_ns":1,"type":"device.action.request"}""",
+            """{"body":{"action_id":"a","args":{"app":"youtube","query":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},"capability":"app_search","deadline_ns":9,"idempotency":"at_most_once"},"id":"r","payload_count":0,"session_id":"s","timestamp_ns":1,"type":"device.action.request"}""",
+        ).forEach { envelope ->
+            assertThrows(ZaraWireException::class.java) {
+                ZaraDeviceActionCodec.decodeServerMessage(frames(envelope))
+            }
+        }
+    }
+
+    @Test
     fun `decodes strict action cancel`() {
         val message = ZaraDeviceActionCodec.decodeServerMessage(
             frames(
