@@ -103,3 +103,72 @@ def test_generic_llm_env_key_overrides_provider_config(monkeypatch, tmp_path):
     )
     config = ZaraConfig(str(config_path))
     assert config.get_llm_config()["openrouter_api_key"] == "env-key"
+
+
+def test_mutation_evidence_excludes_heldout_prompts(monkeypatch, tmp_path):
+    cases = [
+        bench.BenchmarkCase("train-one", "TRAIN_SECRET", split="train"),
+        bench.BenchmarkCase("heldout-one", "HELDOUT_SECRET", split="heldout"),
+    ]
+    resource = tmp_path / "prompt.txt"
+    resource.write_text("base prompt", encoding="utf-8")
+    seen = {}
+
+    def fake_rollouts(cases, **kwargs):
+        prompt = kwargs["system_prompt"]
+        if "candidate prompt" in prompt:
+            train_score, heldout_score = 1.0, 1.0
+        else:
+            train_score, heldout_score = 0.0, 0.5
+        return [
+            {
+                "case_id": "train-one",
+                "split": "train",
+                "prompt": "TRAIN_SECRET",
+                "success": train_score == 1.0,
+                "score": train_score,
+                "latency_ms": 1.0,
+                "text": "train response",
+                "error_type": "",
+                "attempts": 1,
+                "policy_failure": False,
+            },
+            {
+                "case_id": "heldout-one",
+                "split": "heldout",
+                "prompt": "HELDOUT_SECRET",
+                "success": heldout_score == 1.0,
+                "score": heldout_score,
+                "latency_ms": 1.0,
+                "text": "heldout response",
+                "error_type": "",
+                "attempts": 1,
+                "policy_failure": False,
+            },
+        ]
+
+    async def fake_mutation(**kwargs):
+        seen["failures"] = kwargs["failures"]
+        return "candidate prompt"
+
+    monkeypatch.setattr(bench, "run_rollouts", fake_rollouts)
+    monkeypatch.setattr(bench, "propose_mutation", fake_mutation)
+
+    lineage = bench.evolve(
+        cases=cases,
+        resource_path=resource,
+        resource_kind="prompt",
+        generations=1,
+        provider="openrouter",
+        model=bench.DEFAULT_GLM_MODEL,
+        endpoint="https://example.test/v1/chat/completions",
+        api_key="test-key",
+        workers=10,
+        timeout=1.0,
+        output_dir=tmp_path / "out",
+    )
+
+    assert [row["prompt"] for row in seen["failures"]] == ["TRAIN_SECRET"]
+    assert all(row["prompt"] != "HELDOUT_SECRET" for row in seen["failures"])
+    assert lineage[-1].accepted is True
+    assert lineage[-1].parent_id == "gen-000"
