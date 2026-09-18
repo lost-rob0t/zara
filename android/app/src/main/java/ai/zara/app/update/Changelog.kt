@@ -27,19 +27,30 @@ object Changelog {
     private fun normalize(lines: List<String>): String {
         val rendered = mutableListOf<String>()
         var blank = false
+        var previousWasHeading = false
         for (raw in lines) {
             val line = raw.trim()
             if (line.isEmpty()) {
                 blank = rendered.isNotEmpty()
                 continue
             }
-            if (blank && rendered.lastOrNull() != "") rendered += ""
+
+            val isHeading = line.startsWith("### ")
+            if (
+                blank &&
+                rendered.lastOrNull() != "" &&
+                (isHeading || !previousWasHeading)
+            ) {
+                rendered += ""
+            }
             blank = false
+
             rendered += when {
-                line.startsWith("### ") -> line.removePrefix("### ").trim()
+                isHeading -> line.removePrefix("### ").trim()
                 line.startsWith("- ") -> "• " + line.removePrefix("- ").trim()
                 else -> line
             }
+            previousWasHeading = isHeading
         }
         return rendered.joinToString("\n").trim()
     }
