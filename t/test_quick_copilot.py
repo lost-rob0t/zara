@@ -22,7 +22,14 @@ from zara.desktop.state import DesktopRuntimeState, DesktopStatus
 from zara.desktop.windows import QuickCopilotWindow
 from zara.desktop.windows.quick import recover_quick_geometry
 from zara.runtime import events
-from zara.runtime.commands import CancelTurn, CommandReceipt, RestartRuntime, StartVoice, StopVoice, SubmitTurn
+from zara.runtime.commands import (
+    CancelTurn,
+    CommandReceipt,
+    RestartRuntime,
+    StartVoice,
+    StopVoice,
+    SubmitTurn,
+)
 
 
 def app() -> QApplication:
