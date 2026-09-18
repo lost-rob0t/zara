@@ -1,6 +1,7 @@
 package ai.zara.org.core
 
 import java.time.LocalDate
+import java.time.LocalTime
 
 /** Native Org semantics derived from nsaspy's Doom config. Org text stays canonical. */
 object DoomOrgProfile {
@@ -51,7 +52,9 @@ data class OrgTask(
     val priority: Char? = null,
     val tags: Set<String> = emptySet(),
     val scheduled: LocalDate? = null,
+    val scheduledTime: LocalTime? = null,
     val deadline: LocalDate? = null,
+    val deadlineTime: LocalTime? = null,
     val effort: String? = null,
     val category: String? = null,
 )
@@ -123,7 +126,9 @@ object OrgParser {
     private val priority = Regex("^\\[#([A-Z])](?:\\s+|$)")
     private val tags = Regex("\\s+:([A-Za-z0-9_@#%:.-]+):\\s*$")
     private val property = Regex("^:([^:]+):\\s*(.*)$")
-    private val timestamp = Regex("(?:<|\\[)([0-9]{4}-[0-9]{2}-[0-9]{2})")
+    private val timestamp = Regex(
+        "(?:<|\\[)([0-9]{4}-[0-9]{2}-[0-9]{2})(?:\\s+[A-Za-z]{3})?(?:\\s+([0-9]{2}:[0-9]{2}))?",
+    )
     private val sourceBegin = Regex("(?i)^#\\+begin_src\\s+(\\S+)(.*)$")
     private val sourceEnd = Regex("(?i)^#\\+end_src\\s*$")
     private val titleLine = Regex("(?i)^#\\+title:\\s*(.*)$")
@@ -177,15 +182,23 @@ object OrgParser {
                     }
 
                     var scheduled: LocalDate? = null
+                    var scheduledTime: LocalTime? = null
                     var deadline: LocalDate? = null
+                    var deadlineTime: LocalTime? = null
                     var effort: String? = null
                     var category: String? = null
                     var scan = index + 1
                     while (scan < lines.size && heading.matchEntire(lines[scan]) == null) {
                         val bodyLine = lines[scan].trim()
                         when {
-                            bodyLine.startsWith("SCHEDULED:", ignoreCase = true) -> scheduled = parseDate(bodyLine)
-                            bodyLine.startsWith("DEADLINE:", ignoreCase = true) -> deadline = parseDate(bodyLine)
+                            bodyLine.startsWith("SCHEDULED:", ignoreCase = true) -> {
+                                scheduled = parseDate(bodyLine)
+                                scheduledTime = parseTime(bodyLine)
+                            }
+                            bodyLine.startsWith("DEADLINE:", ignoreCase = true) -> {
+                                deadline = parseDate(bodyLine)
+                                deadlineTime = parseTime(bodyLine)
+                            }
                             bodyLine.startsWith(":Effort:", ignoreCase = true) -> effort = property.matchEntire(bodyLine)?.groupValues?.get(2)?.trim()
                             bodyLine.startsWith(":CATEGORY:", ignoreCase = true) -> category = property.matchEntire(bodyLine)?.groupValues?.get(2)?.trim()
                         }
@@ -200,7 +213,9 @@ object OrgParser {
                         priority = taskPriority,
                         tags = taskTags,
                         scheduled = scheduled,
+                        scheduledTime = scheduledTime,
                         deadline = deadline,
+                        deadlineTime = deadlineTime,
                         effort = effort,
                         category = category,
                     )
@@ -221,9 +236,15 @@ object OrgParser {
         return result
     }
 
-    private fun parseDate(line: String): LocalDate? = timestamp.find(line)?.groupValues?.get(1)?.let {
-        runCatching { LocalDate.parse(it) }.getOrNull()
-    }
+    private fun parseDate(line: String): LocalDate? =
+        timestamp.find(line)?.groupValues?.getOrNull(1)?.let {
+            runCatching { LocalDate.parse(it) }.getOrNull()
+        }
+
+    private fun parseTime(line: String): LocalTime? =
+        timestamp.find(line)?.groupValues?.getOrNull(2)?.takeIf { it.isNotBlank() }?.let {
+            runCatching { LocalTime.parse(it) }.getOrNull()
+        }
 }
 
 data class TangleOutput(val path: String, val language: String, val content: String)
