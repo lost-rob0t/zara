@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_SHA_RE = re.compile(r"[0-9a-f]{40}")
+UI_DUMP_PATH = "/data/local/tmp/zara-acceptance.xml"
 
 
 def verified_source_sha(claimed_source_sha: str | None) -> str:
@@ -55,9 +56,10 @@ class Device:
         )
 
     def nodes(self):
-        self.adb("shell", "uiautomator", "dump", "/sdcard/zara-acceptance.xml")
+        self.adb("shell", "rm", "-f", UI_DUMP_PATH)
+        self.adb("shell", "uiautomator", "dump", UI_DUMP_PATH)
         return ET.fromstring(
-            self.adb("shell", "cat", "/sdcard/zara-acceptance.xml")
+            self.adb("shell", "cat", UI_DUMP_PATH)
         ).iter("node")
 
     def find(self, label: str):
