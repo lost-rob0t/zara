@@ -21,7 +21,9 @@ class ProjectsWiringContractTest {
         assertTrue(app.contains("conversation?.projectId?.let(projectState::project)"))
         assertTrue(app.contains("project?.let { ProjectBreadcrumb(it) }"))
         assertTrue(app.contains("onSendText(message, conversation, project)"))
-        assertTrue(projects.contains("\"Chat / ${'
+        assertTrue(projects.contains("Chat / "))
+        assertTrue(projects.contains("project.name"))
+    }
 
     @Test fun `projects surface renders host operation failures`() {
         val source = File("src/main/java/ai/zara/app/ui/ProjectsSurface.kt").readText()
@@ -49,46 +51,6 @@ class ProjectsWiringContractTest {
         assertTrue(source.contains("projectStore.select(projectId)"))
         assertTrue(source.contains("conversationStore.moveToProject("))
         assertTrue(source.contains("remoteConversationId"))
-    }
-
-    @Test fun `project model exposes no filesystem source authority`() {
-        val source = File("src/main/java/ai/zara/app/projects/ProjectContextStore.kt").readText()
-        val model = source.substringAfter("data class ProjectContext(")
-            .substringBefore("data class ProjectContextState(")
-
-        assertTrue(model.contains("sourceScope: ProjectSourceScope = ProjectSourceScope.AppPrivate"))
-        assertFalse(model.contains("path:"))
-        assertFalse(model.contains("uri:"))
-        assertFalse(model.contains("directory:"))
-    }
-}
-}{project.name}\""))
-    }
-
-    @Test fun `projects surface renders host operation failures`() {
-        val source = File("src/main/java/ai/zara/app/ui/ProjectsSurface.kt").readText()
-
-        assertTrue(source.contains("operationError: String?"))
-        assertTrue(source.contains("operationError?.takeIf"))
-        assertTrue(source.contains("ErrorBanner"))
-    }
-
-    @Test fun `host isolates last turn projection by selected project`() {
-        val source = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
-
-        assertTrue(source.contains("projectTurns by mutableStateOf<Map<String, RenderedTextTurn>>"))
-        assertTrue(source.contains("projectState.selectedProjectId?.let { projectTurns[it] }"))
-        assertTrue(source.contains("projectTurns = projectTurns + (project.id to rendered)"))
-    }
-
-    @Test fun `host persists project selection and binds only remote conversation identities`() {
-        val source = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
-
-        assertTrue(source.contains("ProjectContextStore(File(filesDir, \"projects.bin\"))"))
-        assertTrue(source.contains("projectStore.select(created.id)"))
-        assertTrue(source.contains("projectStore.select(projectId)"))
-        assertTrue(source.contains("takeUnless { it.startsWith(\"local-project:\") }"))
-        assertTrue(source.contains("projectStore.bindConversation("))
     }
 
     @Test fun `project model exposes no filesystem source authority`() {
