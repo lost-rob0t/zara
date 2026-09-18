@@ -317,6 +317,18 @@ def exercise_three_menu_ui(device: Device) -> None:
         time.sleep(0.4)
         device.capture(f"workspace-{tab.lower()}")
 
+    # Seed one real project so the Chat + menu can exercise the requested
+    # add-current-chat-to-project flow instead of only proving an empty menu.
+    device.tap_tab("Projects")
+    device.tap("Project name")
+    device.type_text("EvidenceProject")
+    device.press_back()
+    device.tap("Create project")
+    device.await_label("EvidenceProject")
+    device.capture("workspace-project-active")
+    device.tap("Use chat without project")
+    device.await_contains("No project is active")
+
     open_menu(device, "Settings")
     for tab in (
         "Runtime",
@@ -343,6 +355,33 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.tap("Outrun")
 
     open_menu(device, "Chat")
+    device.await_label("Open Projects")
+    device.await_label("Add context or project")
+    device.assert_accessible_targets(("Open Projects", "Add context or project"))
+    device.capture("chat-projects-first-class")
+
+    device.tap("Add context or project")
+    for action in ("Upload files", "Add text context", "Add chat to project", "Open Projects"):
+        device.await_label(action)
+    device.capture("chat-plus-menu")
+    device.tap("Add text context")
+    device.await_label("Paste notes, facts, or reference text…")
+    device.tap("Paste notes, facts, or reference text…")
+    device.type_text("context_evidence_1045")
+    device.press_back()
+    device.tap("Add")
+    device.await_label("Text context")
+    device.capture("chat-context-chip")
+
+    device.tap("Add context or project")
+    device.tap("Add chat to project")
+    device.await_label("EvidenceProject")
+    device.capture("chat-project-picker")
+    device.tap("EvidenceProject")
+    device.await_contains("Chat / EvidenceProject")
+    device.await_label("Text context")
+    device.capture("chat-added-to-project")
+
     device.set_display_profile(
         "wide-navigation-rail", target_width_dp=700, font_scale=1.0
     )

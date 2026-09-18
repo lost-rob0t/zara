@@ -12,6 +12,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 - Android now uses a simplified three-menu application shell with tabbed Settings and adaptive navigation.
 - Android Projects provide persistent project contexts and project-scoped chat conversations.
+- Android Chat now exposes Projects directly and adds a ChatGPT-style + menu for explicit text/file context plus adding the current chat to a project.
 - Release CI now requires exact-source Android and Desktop screenshot evidence plus deeper adversarial regression gates.
 - Zara's strict version context separates the currently built version from the active release target and validates immutable release provenance.
 

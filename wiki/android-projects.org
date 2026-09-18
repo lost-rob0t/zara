@@ -32,7 +32,11 @@ Project chat and ordinary chat are separate scopes.
 The initial model exposes only =ProjectSourceScope.AppPrivate=.
 There is deliberately no path, URI, directory, recursive-crawl flag, or ambient filesystem permission in =ProjectContext=.
 
-A string that looks like a path is still only a project name. Future source attachment must be explicit and separately permissioned; selecting a project must never imply access to nearby files.
+A string that looks like a path is still only a project name. Source attachment is explicit and separately permissioned; selecting a project never implies access to nearby files.
+
+The Chat composer now owns a bounded explicit-context layer. Its =+= menu may import user-selected UTF-8 text/code/data files through Android SAF or add pasted text. Zara snapshots that content into app-private storage for the current ordinary-chat or project scope; it does not retain a broad filesystem grant, crawl a directory, or read sibling files. Binary/PDF/image extraction is deliberately rejected until a typed extractor owns those formats.
+
+Explicit context remains visible as removable chips before a turn is sent. The current Android slice materializes those bounded snapshots into the submitted turn with clear attachment boundaries and an untrusted-reference warning. It does not claim that the canonical #51 =context_ids=/ContextManager pipeline is complete.
 
 * Persistence and degradation
 
@@ -50,6 +54,15 @@ Limits are intentionally small:
 Malformed, unsupported, oversized, or inconsistent metadata enters an explicit degraded state. Zara does not invent replacement projects or silently overwrite the damaged file; project mutations remain blocked so recovery remains possible.
 
 * UI
+
+Projects are first-class from both the main Chat surface and =Workspace -> Projects=.
+
+The main Chat surface provides:
+
+- an always-visible =Projects= shortcut,
+- the active-project indicator and =Chat / <project>= breadcrumb,
+- a ChatGPT-style =+= menu for file context, pasted context, =Add chat to project=, and =Open Projects=,
+- removable explicit-context chips.
 
 =Workspace -> Projects= provides:
 
@@ -74,7 +87,11 @@ Focused tests cover:
 - explicit scoped controller routing,
 - project -> ordinary-chat contamination regression,
 - Projects route/UI/host wiring contracts,
-- absence of filesystem authority in the project model.
+- absence of filesystem authority in the project model,
+- bounded context-store persistence/degradation,
+- explicit context materialization with prompt-injection labeling,
+- main Chat Projects shortcut and =+= menu wiring,
+- add-current-chat-to-project conversation/context handoff.
 
 Real Android screenshot evidence remains a merge gate for the Projects list, selected-project details, active project breadcrumb, and degraded/empty presentation.
 

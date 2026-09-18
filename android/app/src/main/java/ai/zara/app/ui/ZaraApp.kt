@@ -1,6 +1,7 @@
 package ai.zara.app.ui
 
 import ai.zara.app.BuildConfig
+import ai.zara.app.context.ChatContextAttachment
 import ai.zara.app.projects.ProjectContext
 import ai.zara.app.projects.ProjectContextState
 import ai.zara.app.runtime.AssistantRole
@@ -152,6 +153,7 @@ fun ZaraApp(
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
     projectState: ProjectContextState,
+    contextAttachments: List<ChatContextAttachment>,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
@@ -162,6 +164,10 @@ fun ZaraApp(
     onSendText: (String, ProjectContext?) -> Unit,
     onCreateProject: (String) -> Unit,
     onSelectProject: (String?) -> Unit,
+    onPickContextFiles: () -> Unit,
+    onAddTextContext: (String) -> Unit,
+    onRemoveContextAttachment: (String) -> Unit,
+    onAddChatToProject: (String) -> Unit,
     onRequestMicrophonePermission: () -> Unit,
     onRequestAssistantRole: () -> Unit,
     onStartVoice: () -> Unit,
@@ -268,6 +274,15 @@ fun ZaraApp(
                                                 operationError = operationError,
                                                 operationBusy = operationBusy,
                                                 onSendText = onSendText,
+                                                projects = projectState.projects,
+                                                contextAttachments = contextAttachments,
+                                                onPickContextFiles = onPickContextFiles,
+                                                onAddTextContext = onAddTextContext,
+                                                onRemoveContextAttachment = onRemoveContextAttachment,
+                                                onAddChatToProject = onAddChatToProject,
+                                                onOpenProjects = {
+                                                    navigation = navigation.selectRoute(AppRoute.Projects)
+                                                },
                                                 padding = padding,
                                             )
                                             AppSurface.Logic -> PrologStudioSurface(
@@ -544,6 +559,13 @@ private fun ChatSurface(
     operationError: String?,
     operationBusy: Boolean,
     onSendText: (String, ProjectContext?) -> Unit,
+    projects: List<ProjectContext>,
+    contextAttachments: List<ChatContextAttachment>,
+    onPickContextFiles: () -> Unit,
+    onAddTextContext: (String) -> Unit,
+    onRemoveContextAttachment: (String) -> Unit,
+    onAddChatToProject: (String) -> Unit,
+    onOpenProjects: () -> Unit,
     padding: PaddingValues,
 ) {
     var input by rememberSaveable { mutableStateOf("") }
@@ -559,6 +581,10 @@ private fun ChatSurface(
             .padding(padding)
             .padding(horizontal = 16.dp),
     ) {
+        ProjectsMainShortcut(
+            activeProject = project,
+            onOpenProjects = onOpenProjects,
+        )
         project?.let { ProjectBreadcrumb(it) }
         Column(
             modifier = Modifier
@@ -607,11 +633,26 @@ private fun ChatSurface(
             operationError?.let { ErrorBanner(it) }
         }
 
+        ChatContextStrip(
+            attachments = contextAttachments,
+            enabled = !operationBusy,
+            onRemove = onRemoveContextAttachment,
+        )
         CompactComposer(
             value = input,
             onValueChange = { input = it },
             ready = ready,
             operationBusy = operationBusy,
+            leadingIcon = {
+                ChatPlusButton(
+                    projects = projects,
+                    enabled = !operationBusy,
+                    onPickFiles = onPickContextFiles,
+                    onAddTextContext = onAddTextContext,
+                    onAddChatToProject = onAddChatToProject,
+                    onOpenProjects = onOpenProjects,
+                )
+            },
             onSend = {
                 val message = input.trim()
                 if (message.isNotEmpty()) {
@@ -642,6 +683,7 @@ private fun CompactComposer(
     onValueChange: (String) -> Unit,
     ready: Boolean,
     operationBusy: Boolean,
+    leadingIcon: (@Composable () -> Unit)? = null,
     onSend: () -> Unit,
 ) {
     val tokens = LocalZaraTokens.current
@@ -657,6 +699,7 @@ private fun CompactComposer(
                 color = tokens.textMuted,
             )
         },
+        leadingIcon = leadingIcon,
         trailingIcon = {
             TextButton(
                 onClick = onSend,
