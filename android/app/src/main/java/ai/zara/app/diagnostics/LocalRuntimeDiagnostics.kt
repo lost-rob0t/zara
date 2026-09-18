@@ -47,6 +47,7 @@ class LocalRuntimeDiagnostics(
     @Synchronized
     fun export(header: Map<String, Any?>): String {
         val body = runCatching { if (file.isFile) file.readText() else "" }.getOrDefault("")
+        val boundedBody = body.takeLast(MAX_EXPORT_CHARS)
         return buildString {
             append("ZARA-LOCAL-DIAGNOSTICS/1\n")
             header.toSortedMap().forEach { (key, value) ->
@@ -59,10 +60,10 @@ class LocalRuntimeDiagnostics(
             if (body.isBlank()) {
                 append("(no recorded events)\n")
             } else {
-                append(body.takeLast(MAX_EXPORT_CHARS))
+                append(boundedBody)
                 if (!endsWith("\n")) append('\n')
             }
-        }.takeLast(MAX_EXPORT_CHARS + 8_192)
+        }
     }
 
     @Synchronized
