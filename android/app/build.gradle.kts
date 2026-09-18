@@ -32,7 +32,7 @@ val zaraAndroidVersionCode =
     zaraVersionProperties.getProperty("android.versionCode")?.toIntOrNull()
         ?: error("version.properties android.versionCode must be an integer")
 require(zaraVersionName.matches(Regex(
-    """^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"""
+    """^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$"""
 ))) {
     "version.properties zara.version must be SemVer"
 }
