@@ -45,7 +45,7 @@ Do not merge unless the PR is mergeable and the exact candidate SHA is green. Op
 
 ## 3. Publish immutable versions and rolling latest
 
-After the integrated candidate is approved on `master`, resolve the strict version context again and require `release_ready=true`. The canonical `CHANGELOG.md` must contain one non-empty `## <version>` section. Each version maps one-to-one to `v<version>` and one GitHub release. Never move, overwrite, or reuse a version tag/release; refuse tag/version mismatches.
+After the integrated candidate is approved on `master`, resolve the strict version context again and require `release_ready=true`. The canonical `CHANGELOG.md` must contain one non-empty `## <version>` section. Each version maps one-to-one to `v<version>` and one GitHub release. Never move or overwrite a release tag. Never reuse a version tag/release; refuse tag/version mismatches.
 
 Before publication, versioned release CI waits for the exact source SHA's full CI to pass, including Android UI acceptance. It then installs and exercises the exact signed release APK it just built on an emulator before any GitHub release is created. The trusted tag or `master` release workflow must then produce:
 
