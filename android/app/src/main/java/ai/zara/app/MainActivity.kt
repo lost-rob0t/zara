@@ -328,6 +328,14 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 },
+                onSelectUpdate = { selectionId ->
+                    operationError = null
+                    updateManager.select(selectionId).whenComplete { _, error ->
+                        runOnUiThread {
+                            operationError = error?.let(UiOperationFailure::summarize)
+                        }
+                    }
+                },
                 onDownloadUpdate = {
                     operationError = null
                     updateManager.download().whenComplete { _, error ->
