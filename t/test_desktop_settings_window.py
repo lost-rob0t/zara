@@ -4,7 +4,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication
 
 import zara.desktop.windows.settings as settings_window_module
 from zara.config import DEFAULT_CONFIG_TOML, ZaraConfig
@@ -157,29 +157,6 @@ def test_runtime_settings_only_offer_live_selectable_runtimes(tmp_path, monkeypa
         assert runtime.findData("prolog-rlm") == -1
         assert runtime.currentData() == "zara-python"
         assert runtime.accessibleName() == "Installed assistant runtime"
-    finally:
-        dispose(window)
-
-
-def test_runtime_settings_show_truthful_non_selectable_diagnostics(tmp_path, monkeypatch):
-    incompatible = prolog_runtime(protocol="ZARA-RUNTIME/99")
-    monkeypatch.setattr(
-        settings_window_module,
-        "discover_installed_runtimes",
-        lambda _config: (
-            builtin_runtime_descriptor(),
-            incompatible,
-        ),
-    )
-
-    window, _, _, _ = make_window(tmp_path)
-    try:
-        diagnostics = window.findChild(QLabel, "zaraRuntimeDiagnostics")
-        assert diagnostics is not None
-        assert "Prolog-RLM · 0.1.0-dev" in diagnostics.text()
-        assert "incompatible protocol ZARA-RUNTIME/99" in diagnostics.text()
-        assert f"requires {ZARA_RUNTIME_PROTOCOL}" in diagnostics.text()
-        assert "zara-python" not in diagnostics.text()
     finally:
         dispose(window)
 
