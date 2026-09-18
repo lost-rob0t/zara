@@ -1,5 +1,10 @@
 import java.util.Properties
 
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
+}
+
 fun loadZaraVersionProperties(projectRoot: java.io.File): Properties {
     val versionFile = projectRoot.resolve("../version.properties")
     require(versionFile.isFile) {
@@ -24,11 +29,6 @@ require(zaraVersionName.matches(Regex(
 }
 require(zaraAndroidVersionCode in 1..2100000000) {
     "version.properties android.versionCode is outside Android's valid range"
-}
-
-plugins {
-    alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.compose)
 }
 
 val debugSigningKeystore = providers.environmentVariable("ZARA_ANDROID_DEBUG_KEYSTORE").orNull
