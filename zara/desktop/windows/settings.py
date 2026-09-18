@@ -54,6 +54,7 @@ from zara.desktop.prolog_studio import (
     PrologStudioError,
 )
 from zara.desktop.theme import THEME_REGISTRY
+from zara.runtime.discovery import discover_installed_runtimes
 
 
 _CATEGORIES = (
@@ -453,10 +454,34 @@ class SettingsWindow(QWidget):
         return page
 
     def _assistant_page(self) -> QWidget:
-        page, form = self._page("Assistant", "Provider, model, conversation depth, and agent behavior.")
-        self._combo_setting(form, "llm.provider", "Provider", [("Ollama", "ollama"), ("OpenAI", "openai"), ("Anthropic", "anthropic"), ("OpenRouter", "openrouter")], "ollama")
-        self._line_setting(form, "llm.model", "Model")
-        self._line_setting(form, "llm.endpoint", "Endpoint")
+        page, form = self._page(
+            "Assistant",
+            "Choose an installed assistant runtime. Provider settings below belong to Zara's built-in Python runtime.",
+        )
+        runtimes = discover_installed_runtimes(self.config)
+        runtime_choices = [
+            (
+                f"{descriptor.display_name}  ·  {descriptor.runtime_version}",
+                descriptor.id,
+            )
+            for descriptor in runtimes
+            if descriptor.selectable
+        ]
+        runtime = self._combo_setting(
+            form,
+            "runtime.backend",
+            "Runtime",
+            runtime_choices,
+            "zara-python",
+        )
+        runtime.setAccessibleName("Installed assistant runtime")
+        runtime.setToolTip(
+            "Only runtimes discovered as installed and compatible are selectable. "
+            "Prolog-RLM remains optional."
+        )
+        self._combo_setting(form, "llm.provider", "Python provider", [("Ollama", "ollama"), ("OpenAI", "openai"), ("Anthropic", "anthropic"), ("OpenRouter", "openrouter")], "ollama")
+        self._line_setting(form, "llm.model", "Python model")
+        self._line_setting(form, "llm.endpoint", "Python endpoint")
         self._spin_setting(form, "llm.history_limit", "History messages", 20, 1, 500)
         self._spin_setting(form, "agent.max_steps", "Maximum tool steps", 10, 1, 100)
         prompt = QPlainTextEdit(str(self._value("agent.system_prompt", "")))
