@@ -13,6 +13,17 @@ cd "$repo_root/android"
 bash "$repo_root/scripts/test-pair-android-qr.sh"
 bash "$repo_root/scripts/test-android-semantic-parity.sh"
 
+# One Android Org semantics implementation only. Focused apps may consume it,
+# but must not fork the parser/task model under their own source trees.
+duplicate_org_semantics="$(
+  grep -R -n -E '^[[:space:]]*(object[[:space:]]+OrgParser|data[[:space:]]+class[[:space:]]+OrgTask)'     "$repo_root/android"     --include='*.kt'     --exclude-dir=build     | grep -v '/org-core/' || true
+)"
+if [[ -n "$duplicate_org_semantics" ]]; then
+  echo "duplicate Android Org parser/task semantics found outside :org-core" >&2
+  printf '%s\n' "$duplicate_org_semantics" >&2
+  exit 1
+fi
+
 export ZARA_TREALLA_LIBRARY_ROOT="$PWD/app/build/trealla"
 bash ./build-trealla.sh
 
@@ -34,14 +45,9 @@ cleanup_interop() {
 }
 trap cleanup_interop EXIT
 
-nix develop "$repo_root" -c env \
-  PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}" \
-  python3 "$repo_root/android/integration/stock_zara_server_fixture.py" \
-  --fixture-file "$interop_fixture" <&9 >"$interop_log" 2>&1 &
+nix develop "$repo_root" -c env   PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}"   python3 "$repo_root/android/integration/stock_zara_server_fixture.py"   --fixture-file "$interop_fixture" <&9 >"$interop_log" 2>&1 &
 interop_pid=$!
 
-# The nested root Nix shell may be cold on Actions. This bound is only for
-# environment/process readiness; protocol correctness remains event-driven.
 for _ in $(seq 1 1200); do
   if [[ -f "$interop_fixture" ]] && grep -qx 'READY' "$interop_log"; then
     break
@@ -61,15 +67,7 @@ fi
 chmod 600 "$interop_fixture"
 export ZARA_STOCK_FIXTURE="$interop_fixture"
 
-if ! gradle --no-daemon \
-  :app:testDebugUnitTest \
-  :shared-ui:testDebugUnitTest \
-  :org-core:testDebugUnitTest \
-  :org-app:testDebugUnitTest \
-  :wear-app:testDebugUnitTest \
-  :app:assembleDebug \
-  :org-app:assembleDebug \
-  :wear-app:assembleDebug; then
+if ! gradle --no-daemon   :app:testDebugUnitTest   :shared-ui:testDebugUnitTest   :org-core:testDebugUnitTest   :org-storage:testDebugUnitTest   :org-app:testDebugUnitTest   :org-todo:testDebugUnitTest   :wear-app:testDebugUnitTest   :app:assembleDebug   :org-app:assembleDebug   :org-todo:assembleDebug   :wear-app:assembleDebug; then
   cat "$interop_log" >&2
   echo "stock ZaraServer Android/Wear/Org interop gate failed" >&2
   exit 1
@@ -82,16 +80,18 @@ unset ZARA_STOCK_FIXTURE
 
 phone_apk="app/build/outputs/apk/debug/app-debug.apk"
 org_apk="org-app/build/outputs/apk/debug/org-app-debug.apk"
+org_todo_apk="org-todo/build/outputs/apk/debug/org-todo-debug.apk"
 wear_apk="wear-app/build/outputs/apk/debug/wear-app-debug.apk"
 test -f "$phone_apk"
 test -f "$org_apk"
+test -f "$org_todo_apk"
 test -f "$wear_apk"
 
-for apk in "$phone_apk" "$org_apk" "$wear_apk"; do
+for apk in "$phone_apk" "$org_apk" "$org_todo_apk" "$wear_apk"; do
   if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET"; then
     echo "APK secret-marker inspection FAILED: private/secret material found in $apk" >&2
     exit 1
   fi
 done
 
-echo "android/wear/org gate ok: $phone_apk $org_apk $wear_apk"
+echo "android/wear/org gate ok: $phone_apk $org_apk $org_todo_apk $wear_apk"
