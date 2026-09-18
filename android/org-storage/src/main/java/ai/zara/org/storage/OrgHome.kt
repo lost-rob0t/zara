@@ -13,6 +13,7 @@ interface OrgRepository {
     fun listOrgFiles(): List<OrgFileRef>
     fun read(file: OrgFileRef): String
     fun write(file: OrgFileRef, text: String)
+    fun writeRelative(relativePath: String, text: String): OrgFileRef
     fun appendAgendaCapture(text: String, relativePath: String = "agenda/inbox.org"): OrgFileRef
     fun allTasks(): List<OrgTask>
     fun cycleTodo(task: OrgTask): OrgTask
@@ -141,6 +142,15 @@ class SharedOrgRepository(
 
     override fun write(file: OrgFileRef, text: String) {
         writeText(file.relativePath, text)
+    }
+
+    override fun writeRelative(relativePath: String, text: String): OrgFileRef {
+        writeText(relativePath, text)
+        return OrgFileRef(
+            name = relativePath.substringAfterLast('/'),
+            relativePath = relativePath,
+            uri = SharedOrgHomeContract.fileUri(relativePath),
+        )
     }
 
     override fun appendAgendaCapture(text: String, relativePath: String): OrgFileRef {
