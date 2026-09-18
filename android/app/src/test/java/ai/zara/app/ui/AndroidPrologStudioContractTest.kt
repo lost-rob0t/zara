@@ -13,11 +13,12 @@ class AndroidPrologStudioContractTest {
 
         assertTrue(shell.contains("AppSurface.Logic -> PrologStudioSurface("))
         assertFalse(shell.contains("Logic(\"Logic\", \"#652\")"))
-        listOf("IDE", "Expert", "Graph", "Learn").forEach { label ->
+        listOf("IDE", "Expert", "Graph", "Files", "Learn").forEach { label ->
             assertTrue("missing studio pane $label", studio.contains("\"$label\""))
         }
         assertTrue(studio.contains("PrologVisualTransformation"))
-        assertTrue(studio.contains("LogicGraphCanvas"))
+        assertTrue(studio.contains("StudioPane.Graph, StudioPane.Files -> PrologGraphExplorer("))
+        assertFalse(studio.contains("LogicGraphCanvas"))
         assertTrue(studio.contains("PrologTutorialCatalog.steps"))
     }
 
