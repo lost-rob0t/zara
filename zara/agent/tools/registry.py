@@ -105,10 +105,13 @@ class ToolRegistry:
         return list(self._tools.values())
 
     def requires_approval(self, name: str) -> bool:
-        return (
+        if (
             name in self._configured_approval_required
             or name in self._registered_approval_required
-        )
+        ):
+            return True
+        tool = self._tools.get(name)
+        return tool is not None and _tool_requires_approval(tool)
 
     def invoke_composed_tool(self, name: str, request: Mapping[str, Any]) -> Any:
         """Invoke one registry-owned tool without bypassing approval policy."""
