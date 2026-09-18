@@ -887,9 +887,11 @@ private fun SettingsSurface(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             StatusDot(
-                                when {
-                                    selectedRuntime -> tokens.success
-                                    runtime.selectable -> tokens.borderActive
+                                when (runtime.health) {
+                                    "ready" -> tokens.success
+                                    "starting", "busy", "degraded" -> tokens.warning
+                                    "failed" -> tokens.error
+                                    "stopped" -> tokens.textMuted
                                     else -> tokens.warning
                                 }
                             )
@@ -905,6 +907,14 @@ private fun SettingsSurface(
                                         append(runtime.runtimeVersion)
                                         append(" · ")
                                         append(runtime.health)
+                                        append(" · ")
+                                        append(runtime.locality)
+                                        if (runtime.supportsStreaming) {
+                                            append(" · streaming")
+                                        }
+                                        if (runtime.supportsCancel) {
+                                            append(" · cancel")
+                                        }
                                         if (runtime.profiles.isNotEmpty()) {
                                             append(" · ")
                                             append(runtime.profiles.joinToString(", "))
