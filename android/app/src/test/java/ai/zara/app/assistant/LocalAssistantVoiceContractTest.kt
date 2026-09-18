@@ -107,6 +107,19 @@ class LocalAssistantVoiceContractTest {
     }
 
     @Test
+    fun `local callback checks pending turn authority before publishing`() {
+        val source = File(
+            "src/main/java/ai/zara/app/assistant/LocalAssistantVoiceController.kt"
+        ).readText()
+        val callback = source
+            .substringAfter("turn.whenComplete { result, error ->")
+            .substringBefore("override fun onPartialResults")
+
+        assertTrue(callback.contains("if (!pendingTurn.isCurrent(turn)) return@execute"))
+        assertTrue(callback.contains("pendingTurn.clear(turn)"))
+    }
+
+    @Test
     fun `assistant lifecycle invalidation notifies registered local cancellation listener`() {
         val fence = AssistantLifecycleFence()
         var invalidations = 0
