@@ -917,7 +917,7 @@ private fun SettingsSurface(
                     ) {
                         StatusDot(if (remoteEnabled) tokens.success else tokens.border)
                         Text(
-                            if (remoteEnabled) "Remote API fallback enabled" else "Remote API fallback disabled",
+                            if (remoteEnabled) "Remote API profile enabled" else "Remote API profile disabled",
                             modifier = Modifier.padding(start = 10.dp),
                             color = tokens.text,
                         )
@@ -1070,7 +1070,7 @@ private fun SettingsSurface(
                     }
                     remoteApiState.message?.let { MutedNotice(it) }
                     MutedNotice(
-                        "Remote API keys are wrapped by Android Keystore and are never written to Prolog/config metadata."
+                        "Remote API keys are wrapped by Android Keystore and are never written to Prolog/config metadata. Local mode remains network-free."
                     )
                 }
             }
