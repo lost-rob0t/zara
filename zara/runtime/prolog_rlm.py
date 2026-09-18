@@ -14,9 +14,31 @@ from .discovery import (
     RuntimeDiscoveryError,
 )
 
+_RUNTIME_ERROR_KINDS = {
+    "unavailable",
+    "incompatible_protocol",
+    "invalid_request",
+    "unauthorized",
+    "capability_denied",
+    "provider_error",
+    "model_error",
+    "context_error",
+    "tool_error",
+    "budget_exceeded",
+    "timeout",
+    "cancelled",
+    "transport_error",
+    "runtime_error",
+}
+
 
 class PrologRlmRuntimeError(RuntimeError):
-    """A Prolog-RLM runtime request failed through the machine adapter."""
+    """A typed, safe Prolog-RLM failure crossing the Zara runtime boundary."""
+
+    def __init__(self, message: str, *, kind: str = "runtime_error") -> None:
+        normalized_kind = kind if kind in _RUNTIME_ERROR_KINDS else "runtime_error"
+        self.kind = normalized_kind
+        super().__init__(f"{normalized_kind}: {message}")
 
 
 class PrologRlmRuntimeBackend(RuntimeBackend):
@@ -63,15 +85,27 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
         self._publisher = publisher
 
     async def start(self) -> None:
-        descriptors = await asyncio.to_thread(self._client.discover)
+        try:
+            descriptors = await asyncio.to_thread(self._client.discover)
+        except RuntimeDiscoveryError:
+            raise PrologRlmRuntimeError(
+                "Prolog-RLM runtime discovery failed",
+                kind="unavailable",
+            ) from None
         descriptor = next(
             (item for item in descriptors if item.id == PROLOG_RLM_RUNTIME_ID),
             None,
         )
         if descriptor is None or not descriptor.selectable:
-            raise PrologRlmRuntimeError("Prolog-RLM is not an available installed runtime")
+            raise PrologRlmRuntimeError(
+                "Prolog-RLM is not an available installed runtime",
+                kind="unavailable",
+            )
         if descriptor.protocol != ZARA_RUNTIME_PROTOCOL:
-            raise PrologRlmRuntimeError("Prolog-RLM runtime protocol is incompatible")
+            raise PrologRlmRuntimeError(
+                "Prolog-RLM runtime protocol is incompatible",
+                kind="incompatible_protocol",
+            )
         self._descriptor = descriptor
 
     async def submit_turn(
@@ -116,12 +150,27 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
                 "system context",
             )
 
-        reply = await asyncio.to_thread(self._client.generate, request)
+        try:
+            reply = await asyncio.to_thread(self._client.generate, request)
+        except RuntimeDiscoveryError:
+            raise PrologRlmRuntimeError(
+                "Prolog-RLM runtime transport failed",
+                kind="transport_error",
+            ) from None
         return _turn_result_from_reply(reply)
 
     async def cancel_turn(self, turn_id: str) -> None:
         self._require_started()
-        await asyncio.to_thread(self._client.cancel, _bounded_id(turn_id, "turn_id"))
+        try:
+            await asyncio.to_thread(
+                self._client.cancel,
+                _bounded_id(turn_id, "turn_id"),
+            )
+        except RuntimeDiscoveryError:
+            raise PrologRlmRuntimeError(
+                "Prolog-RLM cancellation transport failed",
+                kind="transport_error",
+            ) from None
 
     def register_tools(self, tools) -> None:
         """Retain host-owned plugin registrations without granting them to RLM.
@@ -214,7 +263,10 @@ def _turn_result_from_reply(reply: Mapping[str, Any]) -> RuntimeTurnResult:
     if not isinstance(reply, Mapping):
         raise PrologRlmRuntimeError("Prolog-RLM returned an invalid response")
     if reply.get("protocol") != ZARA_RUNTIME_PROTOCOL:
-        raise PrologRlmRuntimeError("Prolog-RLM returned an incompatible response")
+        raise PrologRlmRuntimeError(
+            "Prolog-RLM returned an incompatible response",
+            kind="incompatible_protocol",
+        )
     if reply.get("runtime_id") != PROLOG_RLM_RUNTIME_ID:
         raise PrologRlmRuntimeError("Prolog-RLM response runtime identity changed")
     status = reply.get("status")
@@ -230,14 +282,12 @@ def _turn_result_from_reply(reply: Mapping[str, Any]) -> RuntimeTurnResult:
 
     error = reply.get("error")
     kind = error.get("kind") if isinstance(error, Mapping) else "runtime_error"
-    message = error.get("message") if isinstance(error, Mapping) else None
-    if not isinstance(kind, str) or not kind:
+    if not isinstance(kind, str) or kind not in _RUNTIME_ERROR_KINDS:
         kind = "runtime_error"
-    if not isinstance(message, str) or not message:
-        message = "Prolog-RLM runtime request failed"
-    if len(message) > 512:
-        message = message[:512]
-    raise PrologRlmRuntimeError(f"{kind}: {message}")
+    raise PrologRlmRuntimeError(
+        "Prolog-RLM runtime request failed",
+        kind=kind,
+    )
 
 
 def _bounded_text(value: str, maximum: int, field: str) -> str:
