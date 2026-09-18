@@ -75,15 +75,33 @@ def test_history_rename_and_message_search_are_durable(tmp_path):
     assert [record.id for record in body_matches] == [second.id]
 
 
-def test_conversation_migration_coexists_with_later_registration_of_v1(tmp_path):
+def test_conversation_schema_does_not_consume_shared_migration_versions(tmp_path):
     db = DatabaseManager(tmp_path / "ordering.db")
     store = ConversationStore(db)
     store.create_conversation("Desktop first")
 
     db.register_migration(1, ["CREATE TABLE IF NOT EXISTS late_v1 (id INTEGER PRIMARY KEY)"])
+    db.register_migration(2, ["CREATE TABLE IF NOT EXISTS late_v2 (id INTEGER PRIMARY KEY)"])
+
     assert db.fetch_one("SELECT name FROM sqlite_master WHERE name = 'late_v1'") is not None
+    assert db.fetch_one("SELECT name FROM sqlite_master WHERE name = 'late_v2'") is not None
     versions = {row["version"] for row in db.fetch_all("SELECT version FROM schema_migrations")}
     assert versions == {1, 2}
+    assert store.list_conversations()[0].title == "Desktop first"
+
+
+def test_conversation_schema_survives_preexisting_v2_migration(tmp_path):
+    db = DatabaseManager(tmp_path / "preexisting-v2.db")
+    db.register_migration(2, ["CREATE TABLE IF NOT EXISTS subsystem_v2 (id INTEGER PRIMARY KEY)"])
+    db.connect()
+
+    store = ConversationStore(db)
+    conversation = store.create_conversation("Portable despite v2")
+
+    assert store.get_conversation(conversation.id) is not None
+    assert db.fetch_one("SELECT name FROM sqlite_master WHERE name = 'subsystem_v2'") is not None
+    versions = {row["version"] for row in db.fetch_all("SELECT version FROM schema_migrations")}
+    assert versions == {2}
 
 
 def test_reload_marks_incomplete_turns_interrupted_instead_of_restoring_phantom_activity(tmp_path):
