@@ -5,6 +5,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -58,6 +59,33 @@ class LocalAiRuntimeTest {
         assertEquals(LocalAiPhase.READY, runtime.state().phase)
         assertEquals(LocalAiPhase.STOPPED, runtime.unload().get(2, TimeUnit.SECONDS).phase)
         assertTrue(backend.unloaded)
+        runtime.close()
+    }
+
+    @Test
+    fun failedLoadDoesNotAdvertiseAttemptedModelAsActive() {
+        val backend = object : LocalLlmBackend {
+            override fun load(spec: LocalModelSpec) {
+                throw IllegalStateException("fixture load failure")
+            }
+
+            override fun generate(
+                request: LocalGenerationRequest,
+                listener: LocalGenerationListener,
+            ): LocalGenerationSession = error("generation must not start after failed load")
+
+            override fun unload() = Unit
+            override fun close() = Unit
+        }
+        val runtime = LocalAiRuntime(backend)
+
+        assertThrows(Exception::class.java) {
+            runtime.load(modelSpec()).get(2, TimeUnit.SECONDS)
+        }
+
+        assertEquals(LocalAiPhase.FAILED, runtime.state().phase)
+        assertNull(runtime.state().model)
+        assertEquals("fixture load failure", runtime.state().failure)
         runtime.close()
     }
 
