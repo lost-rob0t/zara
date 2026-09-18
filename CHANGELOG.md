@@ -4,11 +4,16 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+### Added
+
 - Assistant runtimes are backend-neutral: Desktop and Android discover installed runtimes, expose Prolog-RLM as an optional runtime when present, and keep model/provider reasoning inside Prolog-RLM when selected.
+
+### Fixed
+
+- Plugin capability compositions now re-check a tool's live approval policy immediately before invocation, preventing approval-policy changes after registration from bypassing approval.
 - Android Prolog-RLM turns keep cancellation responsive while generation is running, discard stale replies after runtime switches, and fall back to the embedded runtime after rediscovery detects a dead sidecar.
-- Desktop Prolog-RLM turns now discard replies from an older runtime generation after the runtime is stopped or restarted, preventing stale output from publishing into the new selection.
+- Desktop Prolog-RLM turns now discard late completions after cancellation as well as replies from an older runtime generation after the runtime is stopped or restarted, preventing stale output from publishing into the active turn.
 - Prolog-RLM runtime transport failures now surface as bounded typed Zara runtime errors without exposing raw sidecar or provider error details.
-- Keep this section for work that is merged but not yet assigned to a release.
 
 ## 0.2.2-alpha
 
@@ -29,6 +34,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Android emulator release evidence is more deterministic through explicit host-runtime and SDK provisioning checks.
 - Release-note sections render consistently on Desktop and Android without extra blank lines between a subsection heading and its first item.
 - Immutable alpha publication now keys off canonical version readiness plus actual GitHub release absence instead of push-event changed-file metadata, so protected-branch promotion merges cannot silently skip APK publication.
+- The mutable `android-latest` channel now starts a fresh signed Android/Wear build on every `master` push instead of waiting for the entire repository CI workflow, preserving an exact-SHA APK payload for each successful master build and rolling the direct-download release forward promptly.
 
 ### Changed
 
