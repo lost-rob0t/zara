@@ -248,6 +248,14 @@ jobs:
           path: android/org-reminder/build/outputs/apk/debug/org-reminder-debug.apk
           if-no-files-found: warn
 
+      - name: Upload Org Timer debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zara-org-timer-debug-${{ github.event.pull_request.head.sha || github.sha }}
+          path: android/org-timer/build/outputs/apk/debug/org-timer-debug.apk
+          if-no-files-found: warn
+
       - name: Upload Wear debug APK
         if: always()
         uses: actions/upload-artifact@v4
