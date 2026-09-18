@@ -144,13 +144,18 @@ class LocalZaraServer(
     private fun <T> submit(block: () -> T): CompletableFuture<T> {
         if (closed) return CompletableFuture.failedFuture(IllegalStateException("Local Zara server is closed"))
         val future = CompletableFuture<T>()
-        actor.execute {
+        val task = actor.submit {
+            if (future.isCancelled) return@submit
             try {
                 future.complete(block())
             } catch (error: Throwable) {
                 future.completeExceptionally(error)
             }
         }
+        future.whenComplete { _, _ ->
+            if (future.isCancelled) task.cancel(false)
+        }
+        if (future.isCancelled) task.cancel(false)
         return future
     }
 
