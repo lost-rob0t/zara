@@ -88,3 +88,8 @@ def test_acceptance_captures_truthful_local_model_state():
     text = source()
     assert 'device.reveal("LOCAL MODEL")' in text
     assert 'device.capture("runtime-local-model-state")' in text
+
+def test_acceptance_proves_symbolic_local_chat_state():
+    text = source()
+    assert 'device.await_label("Offline · Symbolic")' in text
+    assert 'device.capture("local-chat-symbolic")' in text

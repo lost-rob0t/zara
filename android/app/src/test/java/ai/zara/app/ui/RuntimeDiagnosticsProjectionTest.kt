@@ -182,4 +182,19 @@ class RuntimeDiagnosticsProjectionTest {
         assertTrue(activity.contains("onRefreshLocalAiState = ::refreshLocalAiState"))
     }
 
+    @Test
+    fun `chat status distinguishes symbolic local model remote and degraded states`() {
+        val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val chat = source.substringAfter("private fun ChatSurface(")
+            .substringBefore("private fun CompactComposer(")
+
+        assertTrue(chat.contains("Offline · Symbolic"))
+        assertTrue(chat.contains("Offline · Local model"))
+        assertTrue(chat.contains("Online · Remote"))
+        assertTrue(chat.contains("Connecting…"))
+        assertTrue(chat.contains("Degraded"))
+        assertTrue(chat.contains("localAiState?.model"))
+        assertTrue(chat.contains("Runtime status $runtimeStatus"))
+    }
+
 }

@@ -498,6 +498,8 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.tap("Outrun")
 
     open_menu(device, "Chat")
+    device.await_label("Offline · Symbolic")
+    device.capture("local-chat-symbolic")
     device.set_display_profile(
         "wide-navigation-rail", target_width_dp=700, font_scale=1.0
     )

@@ -556,6 +556,7 @@ private fun DrawerHistoryRow(title: String, detail: String) {
 private fun ChatSurface(
     state: RuntimeState,
     localServerState: LocalServerState,
+    localAiState: LocalAiState?,
     runtimeMode: RuntimeMode,
     project: ProjectContext?,
     lastTurn: RenderedTextTurn?,
@@ -568,6 +569,14 @@ private fun ChatSurface(
     val projection = runtimeUiProjection(runtimeMode, localServerState, state)
     val ready = projection.chatReady
     val backend = projection.backendLabel
+    val runtimeStatus = when {
+        backend == "remote" -> "Online · Remote"
+        backend == "local" || backend == "local fallback" ->
+            localAiState?.model?.let { "Offline · Local model ${it.id}" } ?: "Offline · Symbolic"
+        runtimeMode == RuntimeMode.Local && localServerState.phase == LocalServerPhase.STARTING ->
+            "Connecting…"
+        else -> "Degraded"
+    }
     val tokens = LocalZaraTokens.current
 
     Column(
@@ -650,12 +659,9 @@ private fun ChatSurface(
             },
         )
         Text(
-            when (backend) {
-                "remote" -> "REMOTE  •  AUTHENTICATED  •  SYMBOLIC"
-                "local", "local fallback" -> "LOCAL  •  SYMBOLIC  •  PRIVATE"
-                else -> "RUNTIME UNAVAILABLE"
-            },
-            modifier = Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 10.dp),
+            runtimeStatus,
+            modifier = Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 10.dp)
+                .semantics { contentDescription = "Runtime status $runtimeStatus" },
             color = tokens.textMuted,
             textAlign = TextAlign.Center,
             fontFamily = FontFamily.Monospace,

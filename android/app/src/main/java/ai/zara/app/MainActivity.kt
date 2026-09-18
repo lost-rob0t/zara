@@ -218,6 +218,7 @@ class MainActivity : ComponentActivity() {
                         future.whenComplete { result, error ->
                             runOnUiThread {
                                 operationBusy = false
+                                refreshLocalAiState()
                                 if (error != null) {
                                     operationError = UiOperationFailure.summarize(error)
                                 } else if (result != null) {
