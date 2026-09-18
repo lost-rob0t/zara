@@ -9,3 +9,7 @@ pytest -q "$repo_root/t/test_latency_metrics.py"
 python "$repo_root/scripts/benchmark-voice.py" \
   --jsonl "$artifact_dir/voice-latency.jsonl" \
   --report "$artifact_dir/voice-latency-report.json"
+python "$repo_root/scripts/benchmark-zmq-e2e.py" \
+  --iterations 300 \
+  --gate \
+  --output "$artifact_dir/zmq-e2e-report.json"

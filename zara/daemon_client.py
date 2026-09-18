@@ -95,16 +95,20 @@ def create_daemon_client(
     if "curve_client" in kwargs:
         raise TypeError("curve_client is owned by Zara daemon client configuration")
 
-    # Resolve the concrete transport at call time. Besides keeping this module
-    # focused on policy, this preserves Zara's long-standing transport injection
-    # seam used by tests and embedders.
-    from zara.zmq_transport import ZmqZaraClient
+    # Resolve the concrete transport at call time. Production uses the hardened
+    # client, while an explicit replacement of the canonical transport keeps the
+    # long-standing injection seam used by tests and embedders.
+    from zara import zmq_hardening, zmq_transport
+
+    client_type = zmq_transport.ZmqZaraClient
+    if client_type is zmq_hardening.ZmqZaraClient:
+        client_type = zmq_hardening.HardenedZmqZaraClient
 
     curve_client = curve_client_config(config)
     if curve_client is not None:
         kwargs["curve_client"] = curve_client
 
-    return ZmqZaraClient(
+    return client_type(
         resolve_daemon_endpoint(config, explicit=endpoint),
         **kwargs,
     )
