@@ -1,55 +1,35 @@
 """Backend-neutral runtime discovery for Zara.
 
 Runtime discovery is observation only. It does not grant tool, filesystem,
-provider, principal, or plugin authority.
+provider, principal, or plugin authority. Descriptor semantics come from the
+canonical :mod:`zara.runtime.registry` contract rather than a parallel type.
 """
 
 from __future__ import annotations
 
 import json
-import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
 from typing import Any, Mapping
 
-ZARA_RUNTIME_PROTOCOL = "ZARA-RUNTIME/1"
+from .registry import (
+    ControlOwner,
+    RuntimeDescriptor,
+    RuntimeHealth,
+    RuntimeLocality,
+    RuntimeTransport,
+    ZARA_RUNTIME_PROTOCOL,
+)
+
 BUILTIN_RUNTIME_ID = "zara-python"
 PROLOG_RLM_RUNTIME_ID = "prolog-rlm"
 DEFAULT_PROLOG_RLM_ENDPOINT = "http://127.0.0.1:18765"
 _MAX_DISCOVERY_BYTES = 64 * 1024
-_RUNTIME_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 
 class RuntimeDiscoveryError(RuntimeError):
     """A runtime could not be safely discovered."""
-
-
-@dataclass(frozen=True)
-class RuntimeDescriptor:
-    id: str
-    display_name: str
-    protocol: str
-    runtime_version: str
-    implementation_version: str
-    installed: bool
-    available: bool
-    health: str
-    locality: str
-    transport: str
-    capabilities: tuple[str, ...]
-    profiles: tuple[str, ...]
-    provider_control: str
-    model_control: str
-    supports_streaming: bool
-    supports_cancel: bool
-    supports_context_handles: bool
-    supports_host_tools: bool
-
-    @property
-    def selectable(self) -> bool:
-        return self.installed and self.available and self.health in {"ready", "busy"}
 
 
 def builtin_runtime_descriptor() -> RuntimeDescriptor:
@@ -63,17 +43,18 @@ def builtin_runtime_descriptor() -> RuntimeDescriptor:
         implementation_version="builtin",
         installed=True,
         available=True,
-        health="ready",
-        locality="embedded",
-        transport="in_process",
+        health=RuntimeHealth.READY,
+        locality=RuntimeLocality.EMBEDDED,
+        transport=RuntimeTransport.IN_PROCESS,
         capabilities=("chat", "streaming", "host_tools", "context"),
         profiles=(),
-        provider_control="zara",
-        model_control="zara",
+        provider_control=ControlOwner.ZARA,
+        model_control=ControlOwner.ZARA,
         supports_streaming=True,
         supports_cancel=True,
         supports_context_handles=True,
         supports_host_tools=True,
+        provenance="zara:builtin",
     )
 
 
@@ -103,52 +84,62 @@ def normalize_loopback_endpoint(value: str) -> str:
 
 
 def runtime_descriptor_from_wire(value: Mapping[str, Any]) -> RuntimeDescriptor:
-    """Validate the bounded ZARA-RUNTIME/1 descriptor projection."""
+    """Validate and project one bounded ZARA-RUNTIME descriptor observation.
+
+    Unsupported protocol majors remain observable so Settings can explain why an
+    installed runtime cannot be selected. Selection itself stays fail-closed in
+    the canonical registry.
+    """
 
     if not isinstance(value, Mapping):
         raise RuntimeDiscoveryError("runtime descriptor must be an object")
-    runtime_id = _bounded_string(value, "id", 64)
-    if _RUNTIME_ID_RE.fullmatch(runtime_id) is None:
-        raise RuntimeDiscoveryError("runtime id is invalid")
-    protocol = _bounded_string(value, "protocol", 32)
-    if protocol != ZARA_RUNTIME_PROTOCOL:
-        raise RuntimeDiscoveryError("runtime protocol is incompatible")
 
-    capabilities = _bounded_string_list(value.get("capabilities", ()), "capabilities", 64)
-    profiles = _bounded_string_list(value.get("profiles", ()), "profiles", 16)
-
-    return RuntimeDescriptor(
-        id=runtime_id,
-        display_name=_bounded_string(value, "display_name", 96),
-        protocol=protocol,
-        runtime_version=_bounded_string(value, "runtime_version", 64),
-        implementation_version=_bounded_string(value, "implementation_version", 64),
-        installed=_strict_bool(value, "installed"),
-        available=_strict_bool(value, "available"),
-        health=_bounded_choice(
-            value,
-            "health",
-            {"starting", "ready", "busy", "degraded", "failed", "stopped"},
-        ),
-        locality=_bounded_choice(
-            value,
-            "locality",
-            {"embedded", "local_process", "local_sidecar", "remote"},
-        ),
-        transport=_bounded_choice(
-            value,
-            "transport",
-            {"in_process", "stdio", "loopback_http", "binder", "zara_remote"},
-        ),
-        capabilities=capabilities,
-        profiles=profiles,
-        provider_control=_bounded_choice(value, "provider_control", {"runtime", "zara", "mixed"}),
-        model_control=_bounded_choice(value, "model_control", {"runtime", "zara", "mixed"}),
-        supports_streaming=_strict_bool(value, "supports_streaming"),
-        supports_cancel=_strict_bool(value, "supports_cancel"),
-        supports_context_handles=_strict_bool(value, "supports_context_handles"),
-        supports_host_tools=_strict_bool(value, "supports_host_tools"),
-    )
+    try:
+        return RuntimeDescriptor(
+            id=_bounded_string(value, "id", 64),
+            display_name=_bounded_string(value, "display_name", 128),
+            protocol=_bounded_string(value, "protocol", 32),
+            runtime_version=_bounded_string(value, "runtime_version", 64),
+            implementation_version=_bounded_string(value, "implementation_version", 64),
+            installed=_strict_bool(value, "installed"),
+            available=_strict_bool(value, "available"),
+            health=RuntimeHealth(
+                _bounded_choice(
+                    value,
+                    "health",
+                    {"starting", "ready", "busy", "degraded", "failed", "stopped"},
+                )
+            ),
+            locality=RuntimeLocality(
+                _bounded_choice(
+                    value,
+                    "locality",
+                    {"embedded", "local_process", "local_sidecar", "remote"},
+                )
+            ),
+            transport=RuntimeTransport(
+                _bounded_choice(
+                    value,
+                    "transport",
+                    {"in_process", "stdio", "loopback_http", "binder", "zara_remote"},
+                )
+            ),
+            capabilities=_bounded_string_list(value.get("capabilities", ()), "capabilities", 64),
+            profiles=_bounded_string_list(value.get("profiles", ()), "profiles", 32),
+            provider_control=ControlOwner(
+                _bounded_choice(value, "provider_control", {"runtime", "zara", "mixed"})
+            ),
+            model_control=ControlOwner(
+                _bounded_choice(value, "model_control", {"runtime", "zara", "mixed"})
+            ),
+            supports_streaming=_strict_bool(value, "supports_streaming"),
+            supports_cancel=_strict_bool(value, "supports_cancel"),
+            supports_context_handles=_strict_bool(value, "supports_context_handles"),
+            supports_host_tools=_strict_bool(value, "supports_host_tools"),
+            provenance=_optional_bounded_string(value, "provenance", 512),
+        )
+    except (TypeError, ValueError) as error:
+        raise RuntimeDiscoveryError("runtime descriptor is invalid") from error
 
 
 class PrologRlmSidecarClient:
@@ -224,10 +215,12 @@ class PrologRlmSidecarClient:
 
 
 def discover_installed_runtimes(config=None) -> tuple[RuntimeDescriptor, ...]:
-    """Return only currently selectable installed runtimes.
+    """Return current installed runtime observations for Desktop Settings.
 
-    The built-in runtime is always present. Optional runtimes are added only
-    after a compatible live discovery response.
+    Zara's built-in runtime is always present. Prolog-RLM is added only after an
+    explicit loopback sidecar answers discovery. An installed but incompatible or
+    unhealthy sidecar remains observable for diagnostics, while the canonical
+    descriptor keeps it non-selectable.
     """
 
     runtimes = [builtin_runtime_descriptor()]
@@ -244,7 +237,7 @@ def discover_installed_runtimes(config=None) -> tuple[RuntimeDescriptor, ...]:
         return tuple(runtimes)
 
     for descriptor in discovered:
-        if descriptor.id == PROLOG_RLM_RUNTIME_ID and descriptor.selectable:
+        if descriptor.id == PROLOG_RLM_RUNTIME_ID and descriptor.installed:
             runtimes.append(descriptor)
     return tuple(runtimes)
 
@@ -254,6 +247,13 @@ def _bounded_string(value: Mapping[str, Any], key: str, maximum: int) -> str:
     if not isinstance(item, str) or not item or len(item) > maximum or any(
         ord(char) < 0x20 for char in item
     ):
+        raise RuntimeDiscoveryError(f"runtime descriptor field {key} is invalid")
+    return item
+
+
+def _optional_bounded_string(value: Mapping[str, Any], key: str, maximum: int) -> str:
+    item = value.get(key, "")
+    if not isinstance(item, str) or len(item) > maximum or any(ord(char) < 0x20 for char in item):
         raise RuntimeDiscoveryError(f"runtime descriptor field {key} is invalid")
     return item
 
