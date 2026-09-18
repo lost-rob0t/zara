@@ -39,7 +39,11 @@ A Prolog-RLM issue must not become a blocker for Zara UI/product progress unless
 
 ## Screenshot gate
 
-Every visual child issue under #648 must generate deterministic screenshot evidence. At minimum include the states required by `android/DESIGN.md` that the issue touches.
+Every Zara change must retain deterministic screenshot evidence from **both Android and desktop** at the exact reviewed source SHA. This is a repo-wide regression gate, not a visual-issue-only requirement. Non-UI changes still capture canonical smoke states so incidental layout, startup, theme, navigation, or integration regressions remain visible.
+
+Android CI must boot the candidate APK, exercise real native surfaces, emit a manifest plus PNGs, and pass the dual-surface evidence validator together with the desktop fixture manifest. A synthetic pull-request merge SHA must never be substituted for the reviewed head SHA.
+
+For visual Android work, include every state required by `android/DESIGN.md` that the issue touches in addition to the canonical smoke matrix.
 
 Review screenshots for:
 
@@ -54,6 +58,12 @@ Review screenshots for:
 - local/offline versus remote status clarity.
 
 Do not claim visual completion from Compose tests alone.
+
+## Doubled test-depth gate
+
+Behavior-changing Android work must be tested through at least two distinct layers before the repository-wide gates run. Prefer a focused unit/contract test plus an integration, emulator, E2E, persistence, or system-level test. Re-running the same assertion does not count as a second layer.
+
+Add negative and recovery coverage wherever the changed behavior has meaningful failure modes, including permission denial, offline/unavailable services, malformed Prolog effects, restart/persistence boundaries, races/timeouts, lifecycle transitions, migration/compatibility, and shared desktop/Android parity. The normal Android/Wear gate, the booted-emulator screenshot acceptance pass, the cross-platform evidence validator, and the independent deep-regression matrix all need to be green for the exact candidate head.
 
 ## Implementation order
 
