@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_SHA_RE = re.compile(r"[0-9a-f]{40}")
+UI_DUMP_PATH = "/data/local/tmp/zara-acceptance.xml"
 
 
 def verified_source_sha(claimed_source_sha: str | None) -> str:
@@ -55,10 +56,20 @@ class Device:
         )
 
     def nodes(self):
-        self.adb("shell", "uiautomator", "dump", "/sdcard/zara-acceptance.xml")
-        return ET.fromstring(
-            self.adb("shell", "cat", "/sdcard/zara-acceptance.xml")
-        ).iter("node")
+        # UIAutomator occasionally reports a successful dump on hosted API-35
+        # emulators without creating the requested file on emulated /sdcard. Keep
+        # the hierarchy in shell-owned local storage, clear stale output first,
+        # and fail with the dump diagnostic if a fresh hierarchy was not created.
+        self.adb("shell", "rm", "-f", UI_DUMP_PATH)
+        dump_output = self.adb("shell", "uiautomator", "dump", UI_DUMP_PATH)
+        try:
+            hierarchy = self.adb("shell", "cat", UI_DUMP_PATH)
+        except subprocess.CalledProcessError as error:
+            diagnostic = dump_output.strip() or "no uiautomator diagnostic"
+            raise AssertionError(
+                f"UIAutomator did not create {UI_DUMP_PATH}: {diagnostic}"
+            ) from error
+        return ET.fromstring(hierarchy).iter("node")
 
     def find(self, label: str):
         return next(
