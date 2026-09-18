@@ -59,8 +59,10 @@ object AppNavigationWiringContract {
         check(runtime.contains("onSetLocalEmbeddingEnabled")) { "Runtime lost embedding controls" }
         check(!runtime.contains("IDENTITY")) { "Runtime leaked connection identity controls" }
 
-        check(remoteApis.contains("REMOTE APIS")) { "Remote APIs card missing" }
+        check(remoteApis.contains("REMOTE API STATUS")) { "Remote APIs status card missing" }
         check(remoteApis.contains("OpenRouter")) { "OpenRouter preset missing" }
+        check(remoteApis.contains("RemoteProviderCard(")) { "Modern provider cards missing" }
+        check(remoteApis.contains("Switch(")) { "Remote API enable switch missing" }
         check(remoteApis.contains("Generic OpenAI-compatible")) { "Generic OpenAI-compatible preset missing" }
         check(remoteApis.contains("Z.AI Coding Plan")) { "Z.AI preset missing" }
         check(remoteApis.contains("Android Keystore")) { "Remote API secret boundary is not visible" }
