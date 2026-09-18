@@ -53,6 +53,17 @@ def _manifest_plugin_identity(path: Path) -> str:
     return identity
 
 
+def _read_manifest_text(path: Path) -> str:
+    with path.open("rb") as stream:
+        payload = stream.read(MAX_UI_MANIFEST_BYTES + 1)
+    if len(payload) > MAX_UI_MANIFEST_BYTES:
+        raise ValueError(f"UI manifest is too large: {path}")
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError(f"UI manifest must be valid UTF-8: {path}") from error
+
+
 class UiManifestLoader:
     """Project declarative plugin UI manifests without importing plugin code."""
 
@@ -98,9 +109,7 @@ class UiManifestLoader:
 
     @staticmethod
     def _read(path: Path) -> tuple[str, tuple[UiContribution, ...]]:
-        if path.stat().st_size > MAX_UI_MANIFEST_BYTES:
-            raise ValueError(f"UI manifest is too large: {path}")
-        document = json.loads(path.read_text(encoding="utf-8"))
+        document = json.loads(_read_manifest_text(path))
         if not isinstance(document, dict):
             raise ValueError("UI manifest root must be an object")
         if document.get("api_version") != UI_MANIFEST_API_VERSION:
