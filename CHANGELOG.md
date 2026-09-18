@@ -6,6 +6,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Wear Voice no longer requests direct Internet access; the focused watch voice shell stays network-free and leaves runtime transport to the shared Wear/phone authority path.
+- Wear Voice now uses Zara's canonical version name and Android versionCode instead of shipping stale module-local package metadata.
 - Android strict Local Assistant capture uses Android's on-device speech recognizer and non-network TTS voices without requiring remote enrollment or a remote session.
 - Ending or cancelling a local Assistant session fences stale recognition, local-model, and speech output so old work cannot publish afterward.
 - Cancelling, hiding, restarting, or closing strict Local Assistant voice now actively cancels its pending local turn future instead of only ignoring a late completion.
