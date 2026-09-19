@@ -223,6 +223,9 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun setRuntimeMode(mode: RuntimeMode) {
         val previous = runtimeMode
+        if (mode == RuntimeMode.Local && previous != RuntimeMode.Local) {
+            controller.suspendRemoteForLocalMode()
+        }
         runtimeMode = mode
         diagnostics.record(
             "runtime_mode.changed",
