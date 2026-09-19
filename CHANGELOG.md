@@ -10,7 +10,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
-- Desktop Prolog-RLM discovery now requires a literal loopback address (`127.0.0.1` or `::1`) instead of trusting the `localhost` hostname, keeping context and turn traffic on an explicit local transport boundary.
+- Android Runtime settings now project `embedded-local` health and model version from the canonical local-AI lifecycle instead of showing a synthetic `builtin / ready` row; unknown local-model state fails closed as unavailable rather than inventing readiness.
+- Desktop Prolog-RLM discovery and runtime configuration now require a literal loopback address (`127.0.0.1` or `::1`) instead of trusting the `localhost` hostname, keeping context and turn traffic on an explicit local transport boundary.
 - Wear Voice no longer requests direct Internet access; the focused watch voice shell stays network-free and leaves runtime transport to the shared Wear/phone authority path.
 - Wear Voice now uses Zara's canonical version name and Android versionCode instead of shipping stale module-local package metadata.
 - Plugin capability compositions now re-check a tool's live approval policy immediately before invocation, preventing approval-policy changes after registration from bypassing approval.
