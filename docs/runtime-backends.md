@@ -184,9 +184,11 @@ discovery_timeout = 0.35
 request_timeout = 30.0
 ```
 
-The endpoint is restricted to explicit loopback HTTP. Opening Assistant
-settings performs bounded discovery and adds Prolog-RLM to the Runtime menu
-only when it returns a compatible live descriptor.
+The endpoint is restricted to literal loopback HTTP addresses: `127.0.0.1` or
+`::1`. Hostnames such as `localhost` are not accepted at the runtime transport
+boundary. Opening Assistant settings performs bounded discovery and adds
+Prolog-RLM to the Runtime menu only when it returns a compatible live
+descriptor.
 
 ## Android
 
