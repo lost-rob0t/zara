@@ -92,7 +92,9 @@ object OrgWorkspaceProjector {
         val effectiveClock = clock ?: Clock.system(dailySpec.zoneId)
         val today = LocalDate.now(effectiveClock)
         val dailies = orderedDocuments.mapNotNull { (path, source) ->
-            dailySpec.logicalDate(path)?.let { date -> OrgDailyEntry(date, path, source) }
+            dailySpec.logicalDate(path)
+                ?.takeIf { date -> !date.isAfter(today) }
+                ?.let { date -> OrgDailyEntry(date, path, source) }
         }.sortedWith(compareByDescending<OrgDailyEntry> { it.date }.thenBy { it.path })
 
         return OrgWorkspaceProjection(
