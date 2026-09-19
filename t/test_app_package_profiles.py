@@ -75,6 +75,26 @@ def test_direct_constructor_cannot_bypass_profile_validation():
         )
 
 
+def test_profile_package_count_bound_fails_closed():
+    packages = [f"pkg_{index}" for index in range(257)]
+
+    with pytest.raises(PackageProfileError, match="too many enabled packages"):
+        AppPackageProfile.from_mapping(
+            {
+                "schema": PACKAGE_PROFILE_SCHEMA,
+                "app_id": "org_editor",
+                "enabled_packages": packages,
+                "pins": {},
+            }
+        )
+
+    with pytest.raises(PackageProfileError, match="too many enabled packages"):
+        AppPackageProfile(
+            app_id="org_editor",
+            enabled_packages=tuple(packages),
+        )
+
+
 def test_activation_reuses_app_registry_and_never_creates_global_package_state():
     editor_profile = AppPackageProfile.from_mapping(
         {
