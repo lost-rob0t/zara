@@ -80,7 +80,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            set -euo pipefail
+            set -eu
             serial="emulator-5554"
             adb -s "$serial" wait-for-device
             test "$(adb -s "$serial" get-state)" = "device"
