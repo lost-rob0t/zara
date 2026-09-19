@@ -211,19 +211,26 @@ class Device:
 
     def dismiss_release_notes(self, timeout: float = 2.0) -> bool:
         # A fresh install legitimately opens the versioned changelog before Chat.
-        # Dismiss only Zara's exact release-notes dialog so acceptance still fails
-        # on crashes, permission dialogs, or unrelated overlays. Compose/UIAutomator
-        # may wrap the version onto another semantic line, so retain the historical
-        # versioned-prefix probe and fall back to the stable Zara title prefix.
+        # Prefer Zara's exact release-notes title. Hosted Compose can occasionally
+        # render that title visually while exposing only the action semantic to
+        # UIAutomator; in that fallback, require Continue to be owned by Zara so we
+        # never dismiss a system permission/crash dialog by accident.
         release_notes = self.find_contains("What's new in Zara ")
         if release_notes is None:
             release_notes = self.find_contains("What's new in Zara")
+        continue_button = None
         if release_notes is None:
-            return False
+            candidate = self.find("Continue")
+            if candidate is None or candidate.get("package") != "ai.zara.app":
+                return False
+            continue_button = candidate
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            continue_button = self.find("Continue")
+            if continue_button is None:
+                continue_button = self.find("Continue")
             if continue_button is not None:
+                if release_notes is None and continue_button.get("package") != "ai.zara.app":
+                    return False
                 left, top, right, bottom = self.bounds(continue_button)
                 self.adb(
                     "shell",
@@ -235,6 +242,7 @@ class Device:
                 time.sleep(0.2)
                 return True
             if self.dismiss_pixel_launcher_anr():
+                continue_button = None
                 continue
             time.sleep(0.1)
         raise AssertionError("Zara release notes did not expose Continue")
