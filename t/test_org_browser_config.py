@@ -118,8 +118,10 @@ def test_native_process_reads_owner_local_prolog_snapshot_before_python(tmp_path
                     "default_project": "snapshot-project",
                 },
                 "roots": ["~/snapshot-roam"],
+                "roots_override": True,
                 "heading_scales": [{"level": 1, "scale": 1.9}],
                 "help_sources": ["wiki/org-workspace.org"],
+                "help_sources_override": True,
             }
         )
     )
