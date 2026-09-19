@@ -71,3 +71,13 @@ def test_org_emulator_runner_script_is_posix_sh_compatible():
     )[1].split("- name: Validate exact-head Org evidence", 1)[0]
     assert "set -eu\n" in emulator_block
     assert "set -euo pipefail" not in emulator_block
+
+
+def test_org_emulator_runner_waits_for_boot_and_writable_external_storage():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    emulator_block = text.split(
+        "uses: reactivecircus/android-emulator-runner@v2", 1
+    )[1].split("- name: Validate exact-head Org evidence", 1)[0]
+    assert "getprop sys.boot_completed" in emulator_block
+    assert "test -d /sdcard/Documents" in emulator_block
+    assert "/sdcard/Documents/.zara-org-storage-ready" in emulator_block
