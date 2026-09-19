@@ -1,12 +1,12 @@
 # Zara Store
 
-`ai.zara.store` is Zara's first-party Android app and plugin store. It consumes standard F-Droid repositories and adds a narrow Zara metadata layer for source provenance, plugin protocol compatibility, capabilities, and runtime readiness.
+`ai.zara.store` is Zara's first-party Android app and plugin store. It consumes standard F-Droid repositories and adds a narrow Zara metadata layer for source provenance, plugin protocol compatibility, and declared capabilities.
 
 Tracked by #1015 under the Android app-suite epic #1000.
 
 ## Foundation slice
 
-This initial module deliberately implements the trust/state contract before APK installation authority:
+This initial module deliberately implements artifact/catalog state before APK installation authority:
 
 - pins the reusable Apache-2.0 F-Droid `download`, `index`, and `database` libraries at `0.2.0`;
 - accepts ordinary F-Droid package identities without Zara metadata;
@@ -14,11 +14,11 @@ This initial module deliberately implements the trust/state contract before APK 
 - embeds the exact Zara source commit in `BuildConfig.SOURCE_SHA`;
 - decodes standard F-Droid V2 indexes through F-Droid's own `IndexParser` behind a Zara-owned seam;
 - keeps index decoding explicitly separate from signature/hash verification and repository trust;
-- separates `downloaded`, `verified`, and observed `installed` state;
-- separates Android-plugin `enabled`, `trusted`, `permissionReady`, and `runtimeReady` state;
+- owns only `discovered`, `downloaded`, `verified`, and observed `installed` artifact state;
+- does **not** own plugin `enabled`, `trusted`, permission, capability, health, or runtime-readiness state; those are projections from Zara's canonical plugin host/registry;
 - only requests network access. This slice does **not** request `REQUEST_INSTALL_PACKAGES` and cannot install APKs yet.
 
-The next installer slice must use Android's supported PackageInstaller flow, require the appropriate per-source user authorization on stock Android, and confirm package/version/signer through PackageManager before reporting `installed`.
+The next installer slice must use Android's supported PackageInstaller flow, require the appropriate per-source user authorization on stock Android, and confirm package/version/signer through PackageManager before reporting `installed`. Installation must remain separate from canonical plugin enablement, trust, permission, capability, health, and runtime readiness.
 
 ## Repository model
 
@@ -36,7 +36,7 @@ Zara-specific semantics are a companion catalog bound to the same exact package 
 /zara/source-manifest.json
 ```
 
-The companion catalog can add Zara semantics. It cannot convert a different or unverified APK into a trusted Zara package.
+The companion catalog can add Zara package metadata. It cannot convert a different or unverified APK into a trusted Zara package, and it is not a second live plugin registry.
 
 ## F-Droid upstream boundary
 
@@ -60,7 +60,7 @@ Zara Store is an ordinary app. Repository browsing and verification need no elev
 
 ### Future Zara ROM
 
-The same store UI, catalog, package identities, and plugin trust model remain. Only the installer backend changes to a separately reviewed system component. The UI process should not become a broad privileged app.
+The same store UI, catalog, package identities, and canonical plugin-host trust model remain. Only the installer backend changes to a separately reviewed system component. The UI process should not become a broad privileged app.
 
 ## Build
 
