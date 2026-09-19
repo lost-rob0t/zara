@@ -225,6 +225,22 @@ class RuntimeRegistryV1Test {
         }
     }
 
+    @Test
+    fun boundedTextCountsUnicodeScalarsLikeSharedSchema() {
+        val descriptor = loadFixtureDescriptors().first { it.id == "zara-python" }
+        val scalar = "\uD83E\uDD16"
+        val exactLimit = scalar.repeat(64)
+        val overLimit = scalar.repeat(65)
+
+        assertEquals(64, exactLimit.codePointCount(0, exactLimit.length))
+        assertEquals(exactLimit, descriptor.copy(runtimeVersion = exactLimit).runtimeVersion)
+
+        val error = expectFailure<IllegalArgumentException> {
+            descriptor.copy(runtimeVersion = overLimit)
+        }
+        assertTrue(error.message.orEmpty().contains("runtimeVersion exceeds 64 characters"))
+    }
+
     private fun loadFixtureDescriptors(): List<RuntimeDescriptor> {
         val records = sharedFixtureFile().readLines(Charsets.UTF_8).filter { it.isNotBlank() }
         val header = records.first().split('\t')
