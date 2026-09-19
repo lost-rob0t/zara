@@ -3,9 +3,9 @@ package ai.zara.org.core
 import java.time.LocalDate
 import java.time.LocalTime
 
-/** Native Org semantics derived from nsaspy's Doom config. Org text stays canonical. */
+/** Native Org semantics derived from Doom-style Org conventions. Org text stays canonical. */
 object DoomOrgProfile {
-    const val orgRoot = "~/Documents/Notes/org"
+    const val orgRoot = "Configured Org workspace"
     const val agendaDirectory = "agenda"
     const val ideasFile = "ideas.org"
 
