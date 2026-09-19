@@ -17,7 +17,7 @@ class LocalNaturalLanguageFallbackTest {
     fun autoRuntimeIsLocalFirstBeforeRemoteFallback() {
         val source = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
         val submit = source.substringAfter("fun submitText(")
-            .substringBefore("private fun submitLocalText")
+            .substringBefore("internal fun submitLocalText")
 
         assertTrue(submit.contains("RuntimeMode.Local -> return submitLocalText(text, localConversationId)"))
         assertTrue(submit.contains("RuntimeMode.Auto -> return submitAutoLocalFirst("))
@@ -25,6 +25,25 @@ class LocalNaturalLanguageFallbackTest {
         assertTrue(submit.contains("localConversationId = localConversationId"))
         assertTrue(submit.contains("remoteConversationId = remoteConversationId"))
         assertFalse(submit.contains("RuntimeMode.Auto -> if (!remoteConnected) return submitLocalText(text)"))
+    }
+
+    @Test
+    fun slashExpertCommandsStayOnExplicitLocalSymbolicRoute() {
+        val source = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
+        val auto = source.substringAfter("private fun submitAutoLocalFirst(")
+            .substringBefore("private fun submitRemoteText(")
+        val local = source.substringAfter("internal fun submitLocalText(")
+            .substringBefore("private fun generateLocalModelTurn(")
+
+        assertTrue(
+            "slash commands must never fall through Auto to a remote/model turn",
+            auto.contains("query.startsWith(\"/\")"),
+        )
+        assertTrue(
+            "slash commands must be parsed by the bounded local command router",
+            local.contains("query.startsWith(\"/\")") &&
+                local.contains("LocalPrologCommand.parse(query, catalog)"),
+        )
     }
 
     @Test

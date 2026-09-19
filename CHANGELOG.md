@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
+- Android private-workspace experts can now be invoked directly as bounded local slash commands such as `/triage alice`, while `/expert` and `/prolog` remain supported.
 - Added an authenticated browser bridge and packaged Chromium/Firefox extension for reading pages and performing approval-gated browser actions from Zara.
 - Portable Zara package profiles can now enable and pin packages independently per app while reusing the same package ABI and each app's existing symbol registry.
 - Service plugins can register owner-scoped programmable symbols with deterministic override precedence, introspection, and automatic restoration of previous definitions when a plugin unloads.

@@ -162,17 +162,31 @@ object LocalNaturalLanguageExpertRouter {
 data class LocalPrologCommand(val query: String) {
     companion object {
         private val expertCommand = Regex("^/expert\\s+([a-z][A-Za-z0-9_]*)\\s+([a-z][A-Za-z0-9_]*)$")
+        private val directExpertCommand = Regex("^/([a-z][A-Za-z0-9_]*)\\s+([a-z][A-Za-z0-9_]*)$")
 
         fun parse(text: String, catalog: PrologWorkspaceCatalog): LocalPrologCommand {
             val trimmed = text.trim()
             if (trimmed.startsWith("/prolog ")) {
                 return LocalPrologCommand(PrologQueryPolicy.requireSafe(trimmed.removePrefix("/prolog ")))
             }
-            val match = expertCommand.matchEntire(trimmed)
-                ?: throw IllegalArgumentException("Use /expert PREDICATE ENTITY")
-            val predicate = PredicateRef(match.groupValues[1], 2)
-            require(catalog.experts.any { it == predicate }) { "Expert entry is not declared in the private workspace" }
-            return LocalPrologCommand("${predicate.name}(${match.groupValues[2]}, Result)")
+
+            expertCommand.matchEntire(trimmed)?.let { match ->
+                val predicate = PredicateRef(match.groupValues[1], 2)
+                require(catalog.experts.any { it == predicate }) {
+                    "Expert entry is not declared in the private workspace"
+                }
+                return LocalPrologCommand("${predicate.name}(${match.groupValues[2]}, Result)")
+            }
+
+            val direct = directExpertCommand.matchEntire(trimmed)
+                ?: throw IllegalArgumentException("Unknown local slash command")
+            val commandName = direct.groupValues[1]
+            val predicate = listOf(
+                PredicateRef(commandName, 2),
+                PredicateRef("${commandName}_explain", 2),
+            ).firstOrNull { candidate -> catalog.experts.any { it == candidate } }
+                ?: throw IllegalArgumentException("Unknown expert command: /$commandName")
+            return LocalPrologCommand("${predicate.name}(${direct.groupValues[2]}, Result)")
         }
     }
 }

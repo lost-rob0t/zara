@@ -485,7 +485,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     ): CompletableFuture<TextTurnResult> {
         val query = text.trim()
         val explicitSymbolic =
-            query.startsWith("?-") || query.startsWith("/prolog ") || query.startsWith("/expert ")
+            query.startsWith("?-") || query.startsWith("/")
         val local = submitLocalText(text, localConversationId)
         if (explicitSymbolic || !remoteConnected) return local
 
@@ -561,14 +561,14 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         val query = text.trim()
         val catalog = PrologWorkspaceCatalog.from(prologWorkspace.listSources())
         val explicitSymbolic =
-            query.startsWith("?-") || query.startsWith("/prolog ") || query.startsWith("/expert ")
+            query.startsWith("?-") || query.startsWith("/")
         val route: String
         val future = when {
             query.startsWith("?-") -> {
                 route = "explicit_query"
                 localServer.query(query)
             }
-            query.startsWith("/prolog ") || query.startsWith("/expert ") -> {
+            query.startsWith("/") -> {
                 route = "explicit_command"
                 val command = try {
                     LocalPrologCommand.parse(query, catalog)
