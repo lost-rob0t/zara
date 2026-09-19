@@ -36,7 +36,7 @@ def normalize_pairing_code(raw: str) -> str:
 
     letters: list[str] = []
     for character in raw:
-        if character == "-" or character in " \t\r\n":
+        if character == "-" or character.isspace():
             continue
         if "a" <= character <= "z":
             letters.append(character.upper())
