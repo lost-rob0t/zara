@@ -27,6 +27,7 @@ FIXTURE_TREE_URI = (
     "content://com.android.externalstorage.documents/tree/"
     "primary%3ADocuments%2FZaraOrgAcceptance"
 )
+PICKER_UI_DUMP_ATTEMPTS = 3
 
 
 def _push_text(device: Device, remote_path: str, text: str) -> None:
@@ -155,6 +156,26 @@ def seed_picker_and_daily_configuration(device: Device) -> None:
         device.adb("shell", "rm", "-f", remote_stage)
 
 
+def _picker_nodes(device: Device):
+    """Read DocumentsUI semantics through a tiny, fail-closed transition budget."""
+
+    last_error: AssertionError | None = None
+    for attempt in range(PICKER_UI_DUMP_ATTEMPTS):
+        try:
+            return tuple(device.nodes())
+        except AssertionError as error:
+            if "UIAutomator did not create" not in str(error):
+                raise
+            last_error = error
+            if attempt + 1 < PICKER_UI_DUMP_ATTEMPTS:
+                time.sleep(0.2)
+    assert last_error is not None
+    raise AssertionError(
+        "DocumentsUI hierarchy remained unavailable after "
+        f"{PICKER_UI_DUMP_ATTEMPTS} bounded attempts: {last_error}"
+    ) from last_error
+
+
 def _find_picker_contains(device: Device, fragment: str):
     """Find OS-owned DocumentsUI text without assuming presentation casing."""
 
@@ -162,7 +183,7 @@ def _find_picker_contains(device: Device, fragment: str):
     return next(
         (
             node
-            for node in device.nodes()
+            for node in _picker_nodes(device)
             if any(
                 needle in (node.get(attribute) or "").casefold()
                 for attribute in ("text", "content-desc")
