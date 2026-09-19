@@ -8,7 +8,7 @@ capabilities, approve tools, persist events, or own retry policy.
 The reducer is intentionally strict: event identity must match the correlated
 :class:`AutomationRunPlan`, sequence numbers are contiguous, retry backoff is
 explicit, and exactly one terminal event is permitted.  Runtime/provider payloads
-never cross this boundary; terminal data is represented only by bounded opaque
+never cross this boundary; terminal data is represented only by bounded host-owned
 references and typed error identifiers.
 """
 
@@ -26,6 +26,7 @@ _MAX_ATTEMPT = 64
 _MAX_REF_LENGTH = 256
 _MAX_ERROR_KIND_LENGTH = 96
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/@-]*$")
+_RESULT_REF_RE = re.compile(r"^result:[A-Za-z0-9][A-Za-z0-9_.:/@-]*$")
 _ALLOWED_KINDS = frozenset(
     {
         "accepted",
@@ -36,7 +37,6 @@ _ALLOWED_KINDS = frozenset(
         "failed",
     }
 )
-_TERMINAL_KINDS = frozenset({"completed", "cancelled", "failed"})
 
 
 class AutomationReceiptError(ValueError):
@@ -47,8 +47,9 @@ class AutomationReceiptError(ValueError):
 class AutomationRunEvent:
     """One inert event emitted by the canonical automation execution owner.
 
-    ``result_ref`` is an opaque bounded reference, never a raw provider/tool
-    result. ``error_kind`` is a typed identifier, never a stack trace/message.
+    ``result_ref`` is a host-owned bounded reference in the ``result:``
+    namespace, never a raw provider/tool result. ``error_kind`` is a typed
+    identifier, never a stack trace/message.
     """
 
     sequence: int
@@ -168,6 +169,7 @@ def reduce_automation_run(
             _validate_terminal_attempt(event, attempts)
             if not event.result_ref:
                 raise AutomationReceiptError("completed event requires a bounded result reference")
+            _bounded_result_ref(event.result_ref)
             if event.error_kind:
                 raise AutomationReceiptError("completed event cannot carry an error kind")
             if event.retry_at_unix_ms is not None:
@@ -273,6 +275,12 @@ def _validate_terminal_attempt(event: AutomationRunEvent, attempts: int) -> None
 def _require_empty_payload(event: AutomationRunEvent, kind: str) -> None:
     if event.retry_at_unix_ms is not None or event.result_ref or event.error_kind:
         raise AutomationReceiptError(f"{kind} event carries an unexpected payload")
+
+
+def _bounded_result_ref(value: str) -> str:
+    if len(value) > _MAX_REF_LENGTH or not _RESULT_REF_RE.fullmatch(value):
+        raise AutomationReceiptError("result_ref must be a bounded host-owned result: reference")
+    return value
 
 
 def _bounded_token(value: object, name: str, limit: int) -> str:
