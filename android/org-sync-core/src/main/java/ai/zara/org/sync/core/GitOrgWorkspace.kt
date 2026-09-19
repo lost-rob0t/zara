@@ -219,9 +219,7 @@ class GitOrgWorkspace(
         fun validateRemote(remote: String) {
             require(remote.isNotBlank()) { "Git remote is required" }
             val uri = URIish(remote)
-            if (uri.scheme == "http" || uri.scheme == "https") {
-                require(uri.pass == null) { "Do not embed Git passwords or tokens in the remote URL" }
-            }
+            require(uri.pass == null) { "Do not embed Git passwords or tokens in the remote URL" }
         }
     }
 }
