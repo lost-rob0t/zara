@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
+- Desktop Org now has separately launchable `zara-org` / `zara-org-editor` and `zara-org-todo` native surfaces. Both consume the configured Org roots and the existing shared Org parser/index/rendering contracts; no operator-specific path or private task database is introduced.
 - Org Sync can now make a configured Git workspace the same shared Org home consumed by first-party Org apps, persist that typed workspace selection, switch to a user-selected SAF tree through the system picker, and cancel in-flight clone/sync work without accepting stale completion updates.
 - Org Sync now accepts a validated logical shared-workspace root instead of hard-coding one app-private checkout, while custom external Org trees remain user-selected SAF roots; Git sync operations gain generation/cancellation fencing and preserve base/local/remote revision evidence when conflicts occur.
 - Optional service plugins can now report a canonical "started but unavailable" state when required configuration or credentials are missing; unavailable plugins expose only a bounded reason code in diagnostics, keep no registered tools or capabilities, and no longer fail startup.
