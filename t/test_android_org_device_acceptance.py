@@ -45,12 +45,13 @@ def test_org_acceptance_daily_layout_is_acceptance_configuration_not_a_product_d
 
 def test_org_acceptance_fixture_uploads_do_not_use_nested_adb_shell_quoting():
     text = ACCEPTANCE.read_text(encoding="utf-8")
+    compact = " ".join(text.split())
     # adb shell reparses command arguments. Passing a multi-word script as the
     # argument to remote `sh -c` loses the intended command boundary on hosted
     # emulators, so fixture writes must use adb push + direct argv operations.
-    assert '"sh",\n        "-c",' not in text
+    assert '"sh", "-c",' not in compact
     assert '"push",' in text
-    assert '"run-as",\n        PACKAGE,\n        "cp",' in text
+    assert '"run-as", PACKAGE, "cp",' in compact
 
 
 def test_org_evidence_validator_requires_exact_sha_pass_and_all_text_twins():
@@ -119,5 +120,9 @@ def test_org_evidence_upload_retains_preflight_diagnostics_even_if_device_captur
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "Prepare exact-head evidence directory" in text
     assert "preflight.json" in text
-    assert '"source_sha":"$SOURCE_SHA"' in text
+    assert (
+        'printf \'{"source_sha":"%s","phase":"device-preflight"}\\n\' '
+        '"$SOURCE_SHA" > "$evidence_dir/preflight.json"'
+        in text
+    )
     assert "if-no-files-found: error" in text
