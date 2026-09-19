@@ -19,6 +19,7 @@ class Runtime:
 
 def project_root(tmp_path: Path) -> Path:
     root = tmp_path / "social"
+    (root / "video_studio" / "src").mkdir(parents=True)
     project = root / "youtube" / "video-source" / "developer-makes-skynet"
     project.mkdir(parents=True)
     (project / "video.json").write_text(
