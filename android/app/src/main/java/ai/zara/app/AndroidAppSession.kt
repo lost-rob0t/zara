@@ -554,7 +554,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         }
     }
 
-    private fun submitLocalText(
+    internal fun submitLocalText(
         text: String,
         conversationId: String = "local-device",
     ): CompletableFuture<TextTurnResult> {

@@ -34,18 +34,20 @@ class NativeTreallaSourceContractTest {
     }
 
     @Test
-    fun plQueryReturnValueIsTreatedAsAnErrorSignal() {
+    fun plQueryFalseReturnIsTreatedAsApiError() {
         val source = projectFile("app/src/main/cpp/zara_trealla_jni.c")
         val text = source.readText()
 
         assertTrue(
-            "Trealla pl_query return value is an error signal and must fail only when true",
-            text.contains("bool query_error = pl_query(") &&
-                text.contains("if (query_error || get_error(g_runtime))")
+            "Pinned Trealla pl_query returns !error, so false must be the API error case",
+            text.contains("bool query_ok = pl_query(") &&
+                text.contains("bool runtime_error = get_error(g_runtime)") &&
+                text.contains("if (!query_ok || runtime_error)")
         )
         assertFalse(
-            "Trealla pl_query must not be treated as a success boolean",
-            text.contains("ok = pl_query(") || text.contains("if (!ok || get_error(g_runtime))")
+            "Trealla pl_query success must never be named or treated as an error signal",
+            text.contains("bool query_error = pl_query(") ||
+                text.contains("if (query_ok || runtime_error)")
         )
     }
 

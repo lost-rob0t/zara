@@ -16,6 +16,8 @@ import xml.etree.ElementTree as ET
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_SHA_RE = re.compile(r"[0-9a-f]{40}")
 UI_DUMP_PATH = "/data/local/tmp/zara-acceptance.xml"
+UI_DUMP_ATTEMPTS = 3
+UI_DUMP_RETRY_DELAY_SECONDS = 0.2
 
 
 def verified_source_sha(claimed_source_sha: str | None) -> str:
@@ -56,20 +58,27 @@ class Device:
         )
 
     def nodes(self):
-        # UIAutomator occasionally reports a successful dump on hosted API-35
-        # emulators without creating the requested file on emulated /sdcard. Keep
-        # the hierarchy in shell-owned local storage, clear stale output first,
-        # and fail with the dump diagnostic if a fresh hierarchy was not created.
-        self.adb("shell", "rm", "-f", UI_DUMP_PATH)
-        dump_output = self.adb("shell", "uiautomator", "dump", UI_DUMP_PATH)
-        try:
-            hierarchy = self.adb("shell", "cat", UI_DUMP_PATH)
-        except subprocess.CalledProcessError as error:
-            diagnostic = dump_output.strip() or "no uiautomator diagnostic"
-            raise AssertionError(
-                f"UIAutomator did not create {UI_DUMP_PATH}: {diagnostic}"
-            ) from error
-        return ET.fromstring(hierarchy).iter("node")
+        # Hosted API-35 emulators can occasionally report a successful dump before
+        # the hierarchy file becomes available. Retry only that exact missing-file
+        # condition; command failures and malformed XML still fail immediately.
+        last_error: subprocess.CalledProcessError | None = None
+        diagnostic = "no uiautomator diagnostic"
+        for attempt in range(1, UI_DUMP_ATTEMPTS + 1):
+            self.adb("shell", "rm", "-f", UI_DUMP_PATH)
+            dump_output = self.adb("shell", "uiautomator", "dump", UI_DUMP_PATH)
+            try:
+                hierarchy = self.adb("shell", "cat", UI_DUMP_PATH)
+            except subprocess.CalledProcessError as error:
+                last_error = error
+                diagnostic = dump_output.strip() or "no uiautomator diagnostic"
+                if attempt < UI_DUMP_ATTEMPTS:
+                    time.sleep(UI_DUMP_RETRY_DELAY_SECONDS)
+                    continue
+                break
+            return ET.fromstring(hierarchy).iter("node")
+        raise AssertionError(
+            f"UIAutomator did not create {UI_DUMP_PATH}: {diagnostic}"
+        ) from last_error
 
     def find(self, label: str):
         return next(
@@ -200,34 +209,42 @@ class Device:
         time.sleep(0.2)
         return True
 
-    def dismiss_release_notes(self) -> bool:
+    def dismiss_release_notes(self, timeout: float = 2.0) -> bool:
         # A fresh install legitimately opens the versioned changelog before Chat.
         # Dismiss only Zara's exact release-notes dialog so acceptance still fails
-        # on crashes, permission dialogs, or unrelated overlays.
-        if self.find_contains("What's new in Zara ") is None:
+        # on crashes, permission dialogs, or unrelated overlays. Compose/UIAutomator
+        # may wrap the version onto another semantic line, so retain the historical
+        # versioned-prefix probe and fall back to the stable Zara title prefix.
+        release_notes = self.find_contains("What's new in Zara ")
+        if release_notes is None:
+            release_notes = self.find_contains("What's new in Zara")
+        if release_notes is None:
             return False
-        continue_button = self.find("Continue")
-        if continue_button is None:
-            raise AssertionError("Zara release notes did not expose Continue")
-        left, top, right, bottom = self.bounds(continue_button)
-        self.adb(
-            "shell",
-            "input",
-            "tap",
-            str((left + right) // 2),
-            str((top + bottom) // 2),
-        )
-        time.sleep(0.2)
-        return True
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            continue_button = self.find("Continue")
+            if continue_button is not None:
+                left, top, right, bottom = self.bounds(continue_button)
+                self.adb(
+                    "shell",
+                    "input",
+                    "tap",
+                    str((left + right) // 2),
+                    str((top + bottom) // 2),
+                )
+                time.sleep(0.2)
+                return True
+            time.sleep(0.1)
+        raise AssertionError("Zara release notes did not expose Continue")
 
     def await_label(self, label: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.find(label) is not None:
                 return
-            if self.dismiss_release_notes():
-                continue
             if self.dismiss_pixel_launcher_anr():
+                continue
+            if self.dismiss_release_notes():
                 continue
             time.sleep(0.2)
         raise AssertionError(f"Screen did not show {label}")
@@ -289,6 +306,7 @@ class Device:
             "-n",
             component,
         )
+        self.dismiss_pixel_launcher_anr()
         self.dismiss_release_notes()
         self.await_label(label)
 

@@ -289,6 +289,7 @@
                   cp -r $src/kb $out/share/zarathushtra/
                   cp -r $src/modules $out/share/zarathushtra/
                   cp -r $src/assets $out/share/zarathushtra/
+                  cp -r $src/browser-addon $out/share/zarathushtra/
                 '' else ""}
 
                 # Create wrapper with correct Python interpreter and environment
@@ -355,6 +356,7 @@
               cp -r $src/scripts $out/share/zarathushtra/
               cp -r $src/zara $out/share/zarathushtra/
               cp -r $src/assets $out/share/zarathushtra/
+              cp -r $src/browser-addon $out/share/zarathushtra/
 
               # zara-console (Python wrapper)
               makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara-console \
@@ -427,6 +429,29 @@
                 chmod -R u+w $out-src
                 cd $out-src
                 ${pythonLibs}/bin/python -m compileall -q zara scripts
+                touch $out
+              '';
+
+            # Formally prove the hard AGENTIC-15 fleet invariants and their
+            # negative fixtures. This is intentionally part of nix flake check so
+            # the existing required CI path cannot skip the proof.
+            agentic-verify = pkgs.runCommand "zara-check-agentic-verify"
+              {
+                nativeBuildInputs = [ pkgs.swi-prolog ];
+                src = ./.;
+              }
+              ''
+                cd $src
+                export HOME=$(mktemp -d)
+                export XDG_CONFIG_HOME=$HOME/.config
+                swipl -q \
+                  -s verification/agentic_fleet_verify.pl \
+                  -g "(agentic_fleet_verify:verify -> halt(0); halt(1))" \
+                  -t "halt(1)"
+                swipl -q \
+                  -s t/agentic_fleet_verify.pl \
+                  -g "(run_tests -> halt(0); halt(1))" \
+                  -t "halt(1)"
                 touch $out
               '';
 

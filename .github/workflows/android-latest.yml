@@ -61,6 +61,17 @@ jobs:
       - name: Build and test phone + Wear APKs
         run: nix develop ./android -c bash scripts/test-android.sh
 
+      - name: Verify update-compatible APK signing certificates
+        shell: bash
+        run: |
+          set -euo pipefail
+          phone_apk="android/app/build/outputs/apk/debug/app-debug.apk"
+          code_editor_apk="android/code-editor/build/outputs/apk/debug/code-editor-debug.apk"
+          wear_apk="android/wear-app/build/outputs/apk/debug/wear-app-debug.apk"
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$phone_apk"
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$code_editor_apk"
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$wear_apk"
+
       - name: Prepare exact-master rolling payload
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -70,17 +81,22 @@ jobs:
         run: |
           set -euo pipefail
           phone_apk="android/app/build/outputs/apk/debug/app-debug.apk"
+          code_editor_apk="android/code-editor/build/outputs/apk/debug/code-editor-debug.apk"
           wear_apk="android/wear-app/build/outputs/apk/debug/wear-app-debug.apk"
           test -f "$phone_apk"
+          test -f "$code_editor_apk"
           test -f "$wear_apk"
 
           mkdir -p dist/latest
           cp "$phone_apk" dist/latest/zara-latest.apk
+          cp "$code_editor_apk" dist/latest/zara-code-editor-latest.apk
           cp "$wear_apk" dist/latest/zara-wear-latest.apk
           sha256sum dist/latest/zara-latest.apk > dist/latest/zara-latest.apk.sha256
+          sha256sum dist/latest/zara-code-editor-latest.apk > dist/latest/zara-code-editor-latest.apk.sha256
           sha256sum dist/latest/zara-wear-latest.apk > dist/latest/zara-wear-latest.apk.sha256
 
           phone_sha="$(sha256sum dist/latest/zara-latest.apk | awk '{print $1}')"
+          code_editor_sha="$(sha256sum dist/latest/zara-code-editor-latest.apk | awk '{print $1}')"
           wear_sha="$(sha256sum dist/latest/zara-wear-latest.apk | awk '{print $1}')"
           {
             echo "schema=1"
@@ -91,6 +107,8 @@ jobs:
             echo "version_code=${VERSION_CODE}"
             echo "phone_apk=zara-latest.apk"
             echo "phone_sha256=${phone_sha}"
+            echo "code_editor_apk=zara-code-editor-latest.apk"
+            echo "code_editor_sha256=${code_editor_sha}"
             echo "wear_apk=zara-wear-latest.apk"
             echo "wear_sha256=${wear_sha}"
           } > dist/latest/zara-latest.manifest.txt
@@ -136,8 +154,10 @@ jobs:
           grep -qx "mutable=true" dist/latest/zara-latest.manifest.txt
           grep -qx "source_sha=${SOURCE_SHA}" dist/latest/zara-latest.manifest.txt
           phone_sha="$(sed -n 's/^phone_sha256=//p' dist/latest/zara-latest.manifest.txt)"
+          code_editor_sha="$(sed -n 's/^code_editor_sha256=//p' dist/latest/zara-latest.manifest.txt)"
           wear_sha="$(sed -n 's/^wear_sha256=//p' dist/latest/zara-latest.manifest.txt)"
           test "$(sha256sum dist/latest/zara-latest.apk | awk '{print $1}')" = "$phone_sha"
+          test "$(sha256sum dist/latest/zara-code-editor-latest.apk | awk '{print $1}')" = "$code_editor_sha"
           test "$(sha256sum dist/latest/zara-wear-latest.apk | awk '{print $1}')" = "$wear_sha"
 
       - name: Publish rolling android-latest release
@@ -169,7 +189,7 @@ jobs:
           git tag -f android-latest "$SOURCE_SHA"
           git push --force origin refs/tags/android-latest
 
-          notes="Rolling convenience build from master commit ${SOURCE_SHA}. Every master push starts a fresh signed Android/Wear build; this mutable channel advances after that exact build passes its Android/Wear gate. Use zara-latest.manifest.txt for the exact source SHA and checksums. Immutable SemVer releases remain under v* tags."
+          notes="Rolling convenience build from master commit ${SOURCE_SHA}. Every master push starts a fresh signed Android/Code Editor/Wear build; this mutable channel advances after that exact build passes its Android/Wear/Code gate. Use zara-latest.manifest.txt for the exact source SHA and checksums. Immutable SemVer releases remain under v* tags."
 
           if gh release view android-latest >/dev/null 2>&1; then
             gh release upload android-latest dist/latest/* --clobber
