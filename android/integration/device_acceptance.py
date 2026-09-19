@@ -212,25 +212,25 @@ class Device:
     def dismiss_release_notes(self, timeout: float = 2.0) -> bool:
         # A fresh install legitimately opens the versioned changelog before Chat.
         # Prefer Zara's exact release-notes title. Hosted Compose can occasionally
-        # render that title visually while exposing only the action semantic to
-        # UIAutomator; in that fallback, require Continue to be owned by Zara so we
-        # never dismiss a system permission/crash dialog by accident.
+        # render that title visually while UIAutomator exposes only the action and
+        # changelog-section semantics. Accept that exact fallback pair; unrelated
+        # Continue buttons still do not satisfy the release-notes contract.
         release_notes = self.find_contains("What's new in Zara ")
         if release_notes is None:
             release_notes = self.find_contains("What's new in Zara")
         continue_button = None
         if release_notes is None:
-            candidate = self.find("Continue")
-            if candidate is None or candidate.get("package") != "ai.zara.app":
+            continue_button = self.find("Continue")
+            changelog_marker = self.find("Added")
+            if changelog_marker is None:
+                changelog_marker = self.find("Fixed")
+            if continue_button is None or changelog_marker is None:
                 return False
-            continue_button = candidate
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if continue_button is None:
                 continue_button = self.find("Continue")
             if continue_button is not None:
-                if release_notes is None and continue_button.get("package") != "ai.zara.app":
-                    return False
                 left, top, right, bottom = self.bounds(continue_button)
                 self.adb(
                     "shell",
