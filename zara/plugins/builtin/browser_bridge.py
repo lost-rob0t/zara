@@ -312,7 +312,7 @@ class BrowserBridgePlugin(ServicePlugin):
 
     async def _browser_socket(self, request: web.Request) -> web.StreamResponse:
         origin = request.headers.get("Origin", "")
-        if origin and not (
+        if not (
             origin.startswith("chrome-extension://")
             or origin.startswith("moz-extension://")
         ):
@@ -455,12 +455,11 @@ class BrowserBridgePlugin(ServicePlugin):
 
     @staticmethod
     def _require_safe_bind(host: str, configuration: dict[str, Any]) -> None:
-        if host in {"127.0.0.1", "::1", "localhost"}:
+        if host in {"127.0.0.1", "::1"}:
             return
-        if configuration.get("allow_remote") is not True:
-            raise RuntimeError(
-                "non-loopback browser bridge binding requires allow_remote=true"
-            )
+        raise RuntimeError(
+            "browser bridge cleartext transport requires a literal loopback host"
+        )
 
     @staticmethod
     def _bounded_port(value: Any) -> int:
