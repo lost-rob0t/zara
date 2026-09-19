@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_SHA_RE = re.compile(r"[0-9a-f]{40}")
+UI_DUMP_PATH = "/data/local/tmp/zara-acceptance.xml"
 
 
 def verified_source_sha(claimed_source_sha: str | None) -> str:
@@ -55,10 +56,20 @@ class Device:
         )
 
     def nodes(self):
-        self.adb("shell", "uiautomator", "dump", "/sdcard/zara-acceptance.xml")
-        return ET.fromstring(
-            self.adb("shell", "cat", "/sdcard/zara-acceptance.xml")
-        ).iter("node")
+        # UIAutomator occasionally reports a successful dump on hosted API-35
+        # emulators without creating the requested file on emulated /sdcard. Keep
+        # the hierarchy in shell-owned local storage, clear stale output first,
+        # and fail with the dump diagnostic if a fresh hierarchy was not created.
+        self.adb("shell", "rm", "-f", UI_DUMP_PATH)
+        dump_output = self.adb("shell", "uiautomator", "dump", UI_DUMP_PATH)
+        try:
+            hierarchy = self.adb("shell", "cat", UI_DUMP_PATH)
+        except subprocess.CalledProcessError as error:
+            diagnostic = dump_output.strip() or "no uiautomator diagnostic"
+            raise AssertionError(
+                f"UIAutomator did not create {UI_DUMP_PATH}: {diagnostic}"
+            ) from error
+        return ET.fromstring(hierarchy).iter("node")
 
     def find(self, label: str):
         return next(
@@ -189,11 +200,33 @@ class Device:
         time.sleep(0.2)
         return True
 
+    def dismiss_release_notes(self) -> bool:
+        # A fresh install legitimately opens the versioned changelog before Chat.
+        # Dismiss only Zara's exact release-notes dialog so acceptance still fails
+        # on crashes, permission dialogs, or unrelated overlays.
+        if self.find_contains("What's new in Zara ") is None:
+            return False
+        continue_button = self.find("Continue")
+        if continue_button is None:
+            raise AssertionError("Zara release notes did not expose Continue")
+        left, top, right, bottom = self.bounds(continue_button)
+        self.adb(
+            "shell",
+            "input",
+            "tap",
+            str((left + right) // 2),
+            str((top + bottom) // 2),
+        )
+        time.sleep(0.2)
+        return True
+
     def await_label(self, label: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.find(label) is not None:
                 return
+            if self.dismiss_release_notes():
+                continue
             if self.dismiss_pixel_launcher_anr():
                 continue
             time.sleep(0.2)
@@ -256,6 +289,7 @@ class Device:
             "-n",
             component,
         )
+        self.dismiss_release_notes()
         self.await_label(label)
 
     def assert_launcher_task_isolation(self) -> None:
@@ -286,7 +320,20 @@ class Device:
         time.sleep(0.5)
         self.adb("shell", "am", "kill", "ai.zara.app")
         time.sleep(0.8)
-        self.adb("shell", "am", "start", "-W", "-n", "ai.zara.app/.MainActivity")
+        self.adb(
+            "shell",
+            "am",
+            "start",
+            "-W",
+            "-a",
+            "android.intent.action.MAIN",
+            "-c",
+            "android.intent.category.LAUNCHER",
+            "-f",
+            "0x10200000",
+            "-n",
+            "ai.zara.app/.MainActivity",
+        )
         time.sleep(0.8)
 
     def set_display_profile(
