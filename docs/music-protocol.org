@@ -1,0 +1,297 @@
+#+title: Zara Music Wire Protocol
+#+property: header-args :comments no
+
+* Purpose
+
+Zara Music reuses =ZARA/1= for authenticated control and event traffic. It does
+*not* turn ZARA/1 into an audio transport. Navidrome/OpenSubsonic HTTP remains
+the media plane for audio, artwork, downloads, and range requests.
+
+The control plane is deliberately bounded for libraries that can contain
+millions of files:
+
+- clients submit selectors rather than path lists;
+- results are snapshot-pinned and cursor-paged;
+- page size is capped at 500 items;
+- long operations are durable jobs with progress sequence numbers;
+- filesystem mutations are always =plan -> apply=;
+- =expected_generation= fences stale plans;
+- idempotency keys make retries explicit;
+- Android and desktop consume the same message contract.
+
+The human-readable Org document is canonical for the generated Prolog facts and
+machine schema below. Run:
+
+#+begin_src sh
+python scripts/tangle-music-protocol.py
+python scripts/tangle-music-protocol.py --check
+#+end_src
+
+Only the two explicit targets in this document are accepted by the tangler.
+
+* Control versus media plane
+
+#+begin_example
+Android / desktop / Zara plugin
+              |
+        ZARA/1 + CURVE
+              |
+       Zara Music service
+        /            \
+   Prolog policy     durable jobs
+        |                 |
+   explanations      filesystem workers
+              \
+         Navidrome plugin
+              |
+      Navidrome/OpenSubsonic
+              |
+        HTTP media stream
+#+end_example
+
+A client never receives authority merely because it knows a path, job id,
+snapshot id, or plan id. Principal identity comes from the existing ZARA/1
+authenticated session.
+
+* Query contract
+
+=music.library.query= carries:
+
+- =library_id=
+- =selector=
+- =page_size= in =1..500=
+- optional opaque =cursor=
+
+A selector can pin =snapshot_id=, contain one bounded =where= tree, and contain
+up to four sort keys. The predicate tree has a maximum depth of 8 and maximum
+64 clauses. The wire representation is JSON data, never executable Prolog
+source. The server translates the validated AST into its internal Prolog/query
+representation.
+
+=music.library.page= returns a stable =snapshot_id= and numeric =generation=.
+A later page uses the opaque cursor. The server may expire a cursor; it must
+never reinterpret a cursor against a different snapshot.
+
+* Job contract
+
+=music.job.submit= supports these operations:
+
+| Operation | Meaning | Mutates media filesystem directly? |
+|-----------+---------+------------------------------------|
+| scan | inventory/change discovery | no |
+| hash | content hashing | no |
+| fingerprint | acoustic fingerprint generation | no |
+| metadata | metadata/knowledge candidate acquisition | no |
+| dedupe | duplicate candidate analysis | no |
+| tag | proposed tag edits | only after plan/apply |
+| move | proposed path moves | only after plan/apply |
+| quarantine | proposed recoverable quarantine | only after plan/apply |
+
+=tag=, =move=, and =quarantine= may only be submitted with =mode= set to
+=plan=. A successful planner emits =music.plan.ready=. Applying that plan
+requires =music.plan.apply= with the exact expected library generation.
+Generation mismatch fails closed instead of applying stale path decisions.
+
+Jobs are resumable server objects. Progress events carry monotonically
+increasing =seq=/=last_seq= values so reconnecting clients can obtain current
+status without replaying an unbounded event history.
+
+* Failure and safety invariants
+
+- No music-domain message accepts binary payload frames.
+- No music-domain command accepts conversation/turn/audio-stream correlation.
+- The selector AST is finite and allowlisted.
+- Error codes and public error strings are bounded and sanitized.
+- LLM output never bypasses plan/apply, generation fences, or Prolog policy.
+- Destructive file deletion is not a protocol primitive. Quarantine/undo is
+  implemented by the server-side filesystem engine.
+- Paths are result data, not capabilities.
+- OpenSubsonic credentials/media URLs do not become Prolog facts or ZARA logs.
+
+* Generated portable Prolog facts
+
+#+begin_src prolog :tangle kb/music_protocol.pl
+% GENERATED FROM docs/music-protocol.org. DO NOT EDIT.
+% Portable facts only: SWI-Prolog and the Android Trealla subset can consult
+% the same vocabulary without Python implementation details.
+
+music_wire_version(1).
+music_page_limit(500).
+music_selector_depth_limit(8).
+music_selector_clause_limit(64).
+
+music_client_message_type('music.library.query').
+music_client_message_type('music.job.submit').
+music_client_message_type('music.job.status').
+music_client_message_type('music.job.cancel').
+music_client_message_type('music.plan.apply').
+
+music_server_message_type('music.library.page').
+music_server_message_type('music.job.accepted').
+music_server_message_type('music.job.status.ok').
+music_server_message_type('music.job.cancel.accepted').
+music_server_message_type('music.job.progress').
+music_server_message_type('music.job.completed').
+music_server_message_type('music.job.failed').
+music_server_message_type('music.plan.ready').
+music_server_message_type('music.plan.apply.accepted').
+
+music_job_operation(scan, execute).
+music_job_operation(hash, execute).
+music_job_operation(fingerprint, execute).
+music_job_operation(metadata, execute).
+music_job_operation(dedupe, execute).
+music_job_operation(tag, plan).
+music_job_operation(move, plan).
+music_job_operation(quarantine, plan).
+
+music_selector_field(id).
+music_selector_field(path).
+music_selector_field(artist).
+music_selector_field(album).
+music_selector_field(title).
+music_selector_field(genre).
+music_selector_field(year).
+music_selector_field(format).
+music_selector_field(size).
+music_selector_field(modified_ns).
+music_selector_field(duration_ms).
+music_selector_field(recording_id).
+music_selector_field(duplicate_class).
+music_selector_field(metadata_state).
+
+music_selector_operator(eq).
+music_selector_operator(ne).
+music_selector_operator(lt).
+music_selector_operator(lte).
+music_selector_operator(gt).
+music_selector_operator(gte).
+music_selector_operator(contains).
+music_selector_operator(prefix).
+music_selector_operator(in).
+#+end_src
+
+* Generated machine schema
+
+This schema is a compact machine-readable registry for client generators and
+conformance tests. Message-specific closed-body validation remains normative in
+=zara/music_protocol.py=.
+
+#+begin_src json :tangle schemas/zara-music-v1.json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zara.local/schema/music-v1.json",
+  "title": "Zara Music ZARA/1 domain contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "media_plane",
+    "page_limit",
+    "selector_depth_limit",
+    "selector_clause_limit",
+    "client_message_types",
+    "server_message_types",
+    "job_operations",
+    "mutation_operations",
+    "selector_fields",
+    "selector_operators"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "media_plane": {
+      "const": "opensubsonic-http"
+    },
+    "page_limit": {
+      "const": 500
+    },
+    "selector_depth_limit": {
+      "const": 8
+    },
+    "selector_clause_limit": {
+      "const": 64
+    },
+    "client_message_types": {
+      "const": [
+        "music.library.query",
+        "music.job.submit",
+        "music.job.status",
+        "music.job.cancel",
+        "music.plan.apply"
+      ]
+    },
+    "server_message_types": {
+      "const": [
+        "music.library.page",
+        "music.job.accepted",
+        "music.job.status.ok",
+        "music.job.cancel.accepted",
+        "music.job.progress",
+        "music.job.completed",
+        "music.job.failed",
+        "music.plan.ready",
+        "music.plan.apply.accepted"
+      ]
+    },
+    "job_operations": {
+      "const": [
+        "scan",
+        "hash",
+        "fingerprint",
+        "metadata",
+        "dedupe",
+        "tag",
+        "move",
+        "quarantine"
+      ]
+    },
+    "mutation_operations": {
+      "const": [
+        "tag",
+        "move",
+        "quarantine"
+      ]
+    },
+    "selector_fields": {
+      "const": [
+        "id",
+        "path",
+        "artist",
+        "album",
+        "title",
+        "genre",
+        "year",
+        "format",
+        "size",
+        "modified_ns",
+        "duration_ms",
+        "recording_id",
+        "duplicate_class",
+        "metadata_state"
+      ]
+    },
+    "selector_operators": {
+      "const": [
+        "eq",
+        "ne",
+        "lt",
+        "lte",
+        "gt",
+        "gte",
+        "contains",
+        "prefix",
+        "in"
+      ]
+    }
+  }
+}
+#+end_src
+
+* Next slices
+
+The filesystem engine, semantic music ontology, metadata/dedupe worker,
+Android player, desktop player, and Zara plugin are separate implementation
+slices under the Zara Music epic. This protocol intentionally freezes their
+shared authority boundary first.
