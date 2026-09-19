@@ -89,11 +89,12 @@ jobs:
           disable-animations: true
           script: |
             set -eu
-            # android-emulator-runner executes each script line as a separate POSIX `sh -c` after its own boot-complete wait. Keep every line stateless.
+            # android-emulator-runner executes each script line as a separate POSIX `sh -c` after its own boot-complete wait. Keep every line stateless and avoid nested guest-shell quoting.
             adb -s emulator-5554 wait-for-device
             test "$(adb -s emulator-5554 get-state)" = "device"
             adb -s emulator-5554 shell mkdir -p /sdcard/Documents
-            adb -s emulator-5554 shell sh -c 'touch /sdcard/Documents/.zara-org-storage-ready && rm -f /sdcard/Documents/.zara-org-storage-ready'
+            adb -s emulator-5554 shell touch /sdcard/Documents/.zara-org-storage-ready
+            adb -s emulator-5554 shell rm -f /sdcard/Documents/.zara-org-storage-ready
             adb -s emulator-5554 install -r android/org-app/build/outputs/apk/debug/org-app-debug.apk
             python android/integration/org_device_acceptance.py --serial emulator-5554 --source-sha "$SOURCE_SHA" --output android/org-app/build/reports/device
 
