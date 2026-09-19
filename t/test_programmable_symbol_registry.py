@@ -271,3 +271,23 @@ def test_separate_application_registries_do_not_share_package_state():
     with pytest.raises(SymbolLookupError):
         editor.resolve("org:daily/open")
     assert todo.get("org:daily/open") == "todo-daily"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    (
+        {"symbol": "org:\x00daily/open", "kind": "command", "owner": "plugin:daily"},
+        {"symbol": "org:dáilies/open", "kind": "command", "owner": "plugin:daily"},
+        {"symbol": "org:daily/open", "kind": "com\x00mand", "owner": "plugin:daily"},
+        {"symbol": "org:daily/open", "kind": "cømmand", "owner": "plugin:daily"},
+        {"symbol": "org:daily/open", "kind": "command", "owner": "plugin:bad owner"},
+        {"symbol": "org:daily/open", "kind": "command", "owner": "plugin:bäd"},
+    ),
+)
+def test_registry_rejects_nonportable_namespace_identifiers_before_mutation(kwargs):
+    registry = ProgrammableSymbolRegistry()
+
+    with pytest.raises(SymbolRegistrationError, match="portable"):
+        registry.register(**kwargs, value="bad")
+
+    assert registry.symbols() == ()
