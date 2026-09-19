@@ -16,11 +16,35 @@ class LocalNaturalLanguageFallbackTest {
     @Test
     fun autoRuntimeIsLocalFirstBeforeRemoteFallback() {
         val source = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
-        val submit = source.substringAfter("fun submitText(text: String)")
+        val submit = source.substringAfter("fun submitText(")
             .substringBefore("private fun submitLocalText")
 
-        assertTrue(submit.contains("RuntimeMode.Auto -> return submitAutoLocalFirst(text, remoteConnected)"))
+        assertTrue(submit.contains("RuntimeMode.Local -> return submitLocalText(text, localConversationId)"))
+        assertTrue(submit.contains("RuntimeMode.Auto -> return submitAutoLocalFirst("))
+        assertTrue(submit.contains("remoteConnected = remoteConnected"))
+        assertTrue(submit.contains("localConversationId = localConversationId"))
+        assertTrue(submit.contains("remoteConversationId = remoteConversationId"))
         assertFalse(submit.contains("RuntimeMode.Auto -> if (!remoteConnected) return submitLocalText(text)"))
+    }
+
+    @Test
+    fun strictLocalModeSuspendsRemoteBeforePublishingLocalMode() {
+        val source = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
+        val setter = source.substringAfter("fun setRuntimeMode(mode: RuntimeMode) {")
+            .substringBefore("fun localServerState()")
+
+        val suspendIndex = setter.indexOf("controller.suspendRemoteForLocalMode()")
+        val publishIndex = setter.indexOf("runtimeMode = mode")
+
+        assertTrue("entering strict Local must suspend remote transport", suspendIndex >= 0)
+        assertTrue(
+            "remote transport must be fenced before Local becomes the published routing mode",
+            publishIndex >= 0 && suspendIndex < publishIndex,
+        )
+        assertTrue(
+            "re-selecting Local must not churn the remote generation",
+            setter.contains("mode == RuntimeMode.Local && previous != RuntimeMode.Local"),
+        )
     }
 
     @Test
