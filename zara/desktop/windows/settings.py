@@ -55,6 +55,7 @@ from zara.desktop.prolog_studio import (
 )
 from zara.desktop.theme import THEME_REGISTRY
 from zara.runtime.discovery import discover_installed_runtimes
+from zara.runtime.registry import RuntimeDescriptor, RuntimeHealth, ZARA_RUNTIME_PROTOCOL
 
 
 _CATEGORIES = (
@@ -80,6 +81,39 @@ _FACT_LABELS = {
     "todo_context_mode": "TODO context mode",
     "verb_intent": "Intent mapping",
 }
+
+
+def _runtime_diagnostic_reason(descriptor: RuntimeDescriptor) -> str:
+    if not descriptor.protocol_compatible:
+        return f"incompatible protocol {descriptor.protocol}; requires {ZARA_RUNTIME_PROTOCOL}"
+    if not descriptor.installed:
+        return "runtime is not installed"
+    if not descriptor.available:
+        return "runtime reports unavailable"
+    if descriptor.health in {RuntimeHealth.FAILED, RuntimeHealth.STOPPED}:
+        return f"runtime health is {descriptor.health.value}"
+    return ""
+
+
+def _runtime_status_text(descriptor: RuntimeDescriptor, *, selected: bool) -> str:
+    capabilities = ", ".join(descriptor.capabilities) or "none"
+    profiles = ", ".join(descriptor.profiles) or "none"
+    selectability = "selectable" if descriptor.selectable else "not selectable"
+    selection = "selected" if selected and descriptor.selectable else "not selected"
+    if selected and not descriptor.selectable:
+        selection = "configured but unavailable"
+    lines = [
+        (
+            f"{descriptor.display_name} · {descriptor.runtime_version} · "
+            f"{descriptor.health.value} · {descriptor.locality.value} · "
+            f"{selectability} · {selection}"
+        ),
+        f"Capabilities: {capabilities} · Profiles: {profiles}",
+    ]
+    reason = _runtime_diagnostic_reason(descriptor)
+    if reason:
+        lines.append(f"Diagnostic: {reason}")
+    return "\n".join(lines)
 
 
 class ThemePreviewButton(QPushButton):
@@ -273,6 +307,7 @@ class SettingsWindow(QWidget):
         self._allow_close = False
         self.setting_widgets: dict[str, QWidget] = {}
         self.theme_buttons: list[ThemePreviewButton] = []
+        self.runtime_status_labels: list[QLabel] = []
 
         self.category_list = QListWidget()
         self.category_list.setObjectName("zaraSettingsCategories")
@@ -459,6 +494,7 @@ class SettingsWindow(QWidget):
             "Choose an installed assistant runtime. Provider settings below belong to Zara's built-in Python runtime.",
         )
         runtimes = discover_installed_runtimes(self.config)
+        configured_runtime_id = str(self._value("runtime.backend", "zara-python"))
         runtime_choices = [
             (
                 f"{descriptor.display_name}  ·  {descriptor.runtime_version}",
@@ -479,6 +515,18 @@ class SettingsWindow(QWidget):
             "Only runtimes discovered as installed and compatible are selectable. "
             "Prolog-RLM remains optional."
         )
+        for descriptor in runtimes:
+            status = QLabel(
+                _runtime_status_text(
+                    descriptor,
+                    selected=descriptor.id == configured_runtime_id,
+                )
+            )
+            status.setObjectName("zaraRuntimeStatus")
+            status.setAccessibleName(f"Runtime status for {descriptor.display_name}")
+            status.setWordWrap(True)
+            form.addRow("Runtime status", status)
+            self.runtime_status_labels.append(status)
         self._combo_setting(form, "llm.provider", "Python provider", [("Ollama", "ollama"), ("OpenAI", "openai"), ("Anthropic", "anthropic"), ("OpenRouter", "openrouter")], "ollama")
         self._line_setting(form, "llm.model", "Python model")
         self._line_setting(form, "llm.endpoint", "Python endpoint")
