@@ -69,6 +69,7 @@ class StockZaraServerInteropTest {
                 "client_secret",
                 "acceptance_host",
                 "acceptance_port",
+                "security_admin_path",
             ),
             values.keys,
         )
