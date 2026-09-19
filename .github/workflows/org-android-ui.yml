@@ -7,6 +7,7 @@ on:
       - "android/org-core/**"
       - "android/org-storage/**"
       - "android/integration/org_device_acceptance.py"
+      - "android/integration/org_device_acceptance_runner.py"
       - "scripts/validate-org-ui-evidence.py"
       - ".github/workflows/org-android-ui.yml"
       - "version.properties"
@@ -94,7 +95,7 @@ jobs:
             test "$(adb -s emulator-5554 get-state)" = "device"
             # Do not probe scoped external storage with raw shell writes here. The acceptance harness owns fixture setup and validates the real SAF grant/read/write path.
             adb -s emulator-5554 install -r android/org-app/build/outputs/apk/debug/org-app-debug.apk
-            python android/integration/org_device_acceptance.py --serial emulator-5554 --source-sha "$SOURCE_SHA" --output android/org-app/build/reports/device
+            python android/integration/org_device_acceptance_runner.py --serial emulator-5554 --source-sha "$SOURCE_SHA" --output android/org-app/build/reports/device
 
       - name: Validate exact-head Org evidence
         if: success()
