@@ -18,6 +18,19 @@ class GitOrgWorkspaceTest {
     }
 
     @Test
+    fun cancelledLeaseNeverTouchesRepository() {
+        val root = Files.createTempDirectory("zara-org-sync-cancel").toFile()
+        val fence = SyncGenerationFence()
+        val lease = fence.begin()
+        assertTrue(fence.cancel(lease))
+
+        val result = GitOrgWorkspace(root).sync(lease)
+
+        assertTrue(result is GitSyncResult.Cancelled)
+        assertFalse(root.resolve(".git").exists())
+    }
+
+    @Test
     fun httpsRemoteRejectsEmbeddedPassword() {
         val rejected = runCatching {
             GitOrgWorkspace.validateRemote("https://user:secret@example.invalid/org.git")
