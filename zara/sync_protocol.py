@@ -64,6 +64,21 @@ def _counter(value: int, *, field: str) -> int:
 class VersionVector:
     entries: tuple[tuple[str, int], ...]
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.entries, tuple):
+            raise SyncProtocolError("version vector entries must be a tuple")
+        if len(self.entries) > MAX_VECTOR_ENTRIES:
+            raise SyncProtocolError("version vector has too many entries")
+        previous: str | None = None
+        for entry in self.entries:
+            if not isinstance(entry, tuple) or len(entry) != 2:
+                raise SyncProtocolError("version vector entry is malformed")
+            node_id = _bounded_identifier(entry[0], field="node_id")
+            _counter(entry[1], field="version counter")
+            if previous is not None and node_id <= previous:
+                raise SyncProtocolError("version vector entries must be unique and sorted")
+            previous = node_id
+
     @classmethod
     def from_mapping(cls, values: Mapping[str, int]) -> "VersionVector":
         if not isinstance(values, Mapping):
@@ -173,6 +188,8 @@ class ObjectRevision:
             raise SyncProtocolError("tombstone must be boolean")
         if not isinstance(self.encrypted, bool):
             raise SyncProtocolError("encrypted must be boolean")
+        if not isinstance(self.blocks, tuple):
+            raise SyncProtocolError("blocks must be a tuple")
         content_size = _counter(self.content_size, field="content size")
         if self.tombstone:
             if content_size != 0 or self.content_sha256 is not None or self.blocks:
