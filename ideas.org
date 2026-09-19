@@ -13,3 +13,24 @@
 # - Why deferred: <one sentence>
 # - Next proof: <smallest thing that would justify promotion>
 # - Promoted issue: <repo#issue | none>
+
+** IDEA Android MCP tool console
+- Captured: 2026-09-19 00:18 America/New_York
+- Source: chat request; lost-rob0t/zara#1183
+- Why deferred: Promoted immediately into the Android developer-workspace implementation map.
+- Next proof: Render real MCP server/tool descriptors and complete one correlated tool invocation in Android.
+- Promoted issue: lost-rob0t/zara#1184
+
+** IDEA Zara Termux Linux Runtime Bridge APK
+- Captured: 2026-09-19 00:18 America/New_York
+- Source: chat request; lost-rob0t/zara#1183
+- Why deferred: Promoted immediately; implementation is split between the bridge APK and worker bootstrap/runtime registration.
+- Next proof: Start a Zara worker inside Termux through the supported integration contract and register it as a local authenticated host.
+- Promoted issue: lost-rob0t/zara#1185, lost-rob0t/zara#1186
+
+** IDEA Zara Android coding workspace backed by local and remote worker stacks
+- Captured: 2026-09-19 00:18 America/New_York
+- Source: chat request; lost-rob0t/zara#1183
+- Why deferred: Promoted immediately into protocol, UI and E2E slices.
+- Next proof: Open one durable coding session, edit a file, run a test, inspect Git diff and reattach after activity recreation.
+- Promoted issue: lost-rob0t/zara#1187, lost-rob0t/zara#1188, lost-rob0t/zara#1189
