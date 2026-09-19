@@ -27,7 +27,7 @@ internal fun runtimeUiProjection(
     val localReady = localState.phase == LocalServerPhase.READY
     val remoteReady = state.enrollment == EnrollmentReadiness.Ready &&
         state.server is ServerConnection.Connected &&
-        state.sessionId != null
+        state.sessionId?.isNotBlank() == true
 
     val backend = when (mode) {
         RuntimeMode.Local -> if (localReady) "local" else "local (${localState.phase.name.lowercase()})"
