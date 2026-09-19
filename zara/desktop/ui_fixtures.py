@@ -18,13 +18,18 @@ from PySide6.QtWidgets import QApplication
 
 from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationService, ConversationStore
+from zara.desktop.org_app import OrgDesktopSurface, OrgDesktopWindow, OrgTodoWidget
+from zara.desktop.org_widgets import OrgWorkspaceWidget
 from zara.desktop.theme import apply_desktop_theme
 from zara.desktop.windows import CopilotPresentation, CopilotWindow
+from zara.org_browser import OrgBrowserConfig, OrgBrowserHookRegistry, OrgBrowserRuntime
+from zara.org_roam import OrgRoamIndex, parse_org_text
 from zara.runtime import events
 
 _COMPACT_SIZE = (680, 460)
 _EXPANDED_SIZE = (960, 680)
 _MINIMUM_SIZE = (480, 320)
+_ORG_SIZE = (1180, 760)
 _THEME = "signal-cabin"
 
 _FIXTURES: tuple[tuple[str, str], ...] = (
@@ -42,6 +47,26 @@ _FIXTURES: tuple[tuple[str, str], ...] = (
     ("history", "copilot-history.png"),
     ("smallest-supported", "copilot-smallest-supported.png"),
 )
+
+_ORG_FIXTURE = """#+title: Org Desktop
+* TODO Review desktop parity :org:desktop:
+:PROPERTIES:
+:ID: fixture-task
+:END:
+Editor and Todo read this same ordinary Org document.
+
+* NEXT Reconcile shared sync :org:sync:
+:PROPERTIES:
+:ID: fixture-sync
+:END:
+Sync remains owned by the shared workspace contract.
+
+* Notes
+:PROPERTIES:
+:ID: fixture-notes
+:END:
+Untouched Org text stays canonical and editable by Emacs.
+"""
 
 
 class _FixtureBridge:
@@ -231,11 +256,53 @@ def _render_one(
         settings.sync()
 
 
+def _render_org_surface(
+    output_dir: Path,
+    surface: OrgDesktopSurface,
+    filename: str,
+    *,
+    source_commit: str,
+) -> dict[str, object]:
+    app = _application()
+    document = parse_org_text(_ORG_FIXTURE, path="/fixture/org/parity.org")
+    index = OrgRoamIndex.from_documents((document,))
+    runtime = OrgBrowserRuntime(OrgBrowserConfig(), OrgBrowserHookRegistry())
+    window = OrgDesktopWindow(surface, org_index=index, org_runtime=runtime)
+    window.resize(*_ORG_SIZE)
+
+    try:
+        content = window.centralWidget()
+        if isinstance(content, OrgWorkspaceWidget):
+            content.select_node("fixture-task")
+        elif isinstance(content, OrgTodoWidget):
+            content.select_node("fixture-task")
+        window.show()
+        app.processEvents()
+        pixmap = window.grab()
+        if pixmap.isNull():
+            raise RuntimeError(f"failed to render Org fixture: {surface.value}")
+        target = output_dir / filename
+        if not pixmap.save(str(target), "PNG"):
+            raise RuntimeError(f"failed to save Org fixture: {target}")
+        return {
+            "state": f"org-{surface.value}",
+            "path": filename,
+            "width": pixmap.width(),
+            "height": pixmap.height(),
+            "theme": _THEME,
+            "source_commit": source_commit,
+        }
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def render_copilot_fixtures(output_dir: Path | str, *, source_commit: str) -> dict[str, object]:
-    """Render the closed #324 fixture matrix without touching user state or I/O.
+    """Render required Desktop evidence without touching user state or I/O.
 
     ``source_commit`` is evidence supplied by the caller; rendering does not invoke
-    Git, the daemon, providers, microphones, or the network.
+    Git, the daemon, providers, microphones, the network, or configured Org roots.
     """
     target = Path(output_dir)
     target.mkdir(parents=True, exist_ok=True)
@@ -261,6 +328,22 @@ def render_copilot_fixtures(output_dir: Path | str, *, source_commit: str) -> di
                 )
                 for state, filename in _FIXTURES
             ]
+            fixtures.extend(
+                (
+                    _render_org_surface(
+                        target,
+                        OrgDesktopSurface.EDITOR,
+                        "org-editor.png",
+                        source_commit=source_commit,
+                    ),
+                    _render_org_surface(
+                        target,
+                        OrgDesktopSurface.TODO,
+                        "org-todo.png",
+                        source_commit=source_commit,
+                    ),
+                )
+            )
     finally:
         app.setStyle(previous_style_name)
         app.setPalette(previous_palette)
