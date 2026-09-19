@@ -1,9 +1,7 @@
 package ai.zara.store.catalog
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ZaraCatalogContractTest {
@@ -80,7 +78,7 @@ class ZaraCatalogContractTest {
     }
 
     @Test
-    fun installedPluginIsNotAutomaticallyEnabledTrustedOrReady() {
+    fun installedPluginDoesNotCreateParallelRuntimeAuthorityState() {
         val state = StorePackageState()
             .markDownloaded()
             .markVerified()
@@ -96,18 +94,15 @@ class ZaraCatalogContractTest {
             kind = ZaraPackageKind.ANDROID_PLUGIN,
         ) as InstallObservationResult.Accepted
 
-        assertTrue(accepted.state.installed)
-        assertFalse(accepted.state.plugin!!.enabled)
-        assertFalse(accepted.state.plugin.trusted)
-        assertFalse(accepted.state.plugin.permissionReady)
-        assertFalse(accepted.state.plugin.runtimeReady)
-    }
-
-    @Test
-    fun runtimeReadyCannotSkipPluginAuthorityStates() {
-        assertThrows(IllegalArgumentException::class.java) {
-            PluginRuntimeState(runtimeReady = true)
-        }
+        assertEquals(
+            StorePackageState(
+                discovered = true,
+                downloaded = true,
+                verified = true,
+                installed = true,
+            ),
+            accepted.state,
+        )
     }
 
     private fun pluginMetadata() = ZaraCatalogMetadata(
