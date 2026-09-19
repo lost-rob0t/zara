@@ -17,7 +17,7 @@ _SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _TOKEN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 _MAX_ERROR_CHARS = 1000
 _DEFAULT_COMMAND_TIMEOUT = 1800.0
-_DEFAULT_RECORD_STOP_TIMEOUT = 8.0
+_DEFAULT_RECORD_STOP_TIMEOUT = 2.0
 
 
 class VideoStudioPlugin(ServicePlugin):
@@ -136,9 +136,9 @@ class VideoStudioPlugin(ServicePlugin):
                 _DEFAULT_RECORD_STOP_TIMEOUT,
             )
         )
-        if not 0.5 <= stop_timeout <= 60.0:
+        if not 0.5 <= stop_timeout <= 3.0:
             raise ValueError(
-                "video-studio record_stop_timeout_seconds must be between 0.5 and 60"
+                "video-studio record_stop_timeout_seconds must be between 0.5 and 3"
             )
 
         self._configuration = configuration
@@ -339,7 +339,7 @@ class VideoStudioPlugin(ServicePlugin):
         except ProcessLookupError:
             return
         try:
-            process.wait(timeout=2.0)
+            process.wait(timeout=1.0)
             return
         except subprocess.TimeoutExpired:
             pass
