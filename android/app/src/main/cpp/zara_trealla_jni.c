@@ -25,19 +25,19 @@ static void throw_query_state(
     bool query_ok,
     bool runtime_error,
     bool status,
-    bool query_active,
+    bool query_handle,
     size_t query_length)
 {
     char detail[320];
     snprintf(
         detail,
         sizeof(detail),
-        "%s [pl_query_ok=%s runtime_error=%s status=%s query_active=%s query_length=%zu]",
+        "%s [pl_query_ok=%s runtime_error=%s status=%s query_handle=%s query_length=%zu]",
         message,
         query_ok ? "true" : "false",
         runtime_error ? "true" : "false",
         status ? "true" : "false",
-        query_active ? "true" : "false",
+        query_handle ? "true" : "false",
         query_length);
     throw_state(env, detail);
 }
@@ -132,8 +132,11 @@ Java_ai_zara_app_prolog_JniTreallaNativeApi_evaluate(
     bool status = get_status(g_runtime);
 
     if (!query_ok || runtime_error) {
-        if (query_active)
+        bool query_handle = query_active;
+        if (query_active) {
             pl_done(query);
+            query_active = false;
+        }
         pthread_mutex_unlock(&g_runtime_lock);
         (*env)->ReleaseStringUTFChars(env, query_text, query_source);
         throw_query_state(
@@ -142,7 +145,7 @@ Java_ai_zara_app_prolog_JniTreallaNativeApi_evaluate(
             query_ok,
             runtime_error,
             status,
-            query_active,
+            query_handle,
             query_length);
         return NULL;
     }
@@ -163,17 +166,21 @@ Java_ai_zara_app_prolog_JniTreallaNativeApi_evaluate(
 
     if (status) {
         if (!capture_result(query, results, &count)) {
-            if (query_active)
+            bool result_error = get_error(g_runtime);
+            bool query_handle = query_active;
+            if (query_active) {
                 pl_done(query);
+                query_active = false;
+            }
             pthread_mutex_unlock(&g_runtime_lock);
             (*env)->ReleaseStringUTFChars(env, query_text, query_source);
             throw_query_state(
                 env,
                 "Trealla semantic query must bind Result",
                 query_ok,
-                get_error(g_runtime),
+                result_error,
                 status,
-                query_active,
+                query_handle,
                 query_length);
             return NULL;
         }
@@ -195,8 +202,10 @@ Java_ai_zara_app_prolog_JniTreallaNativeApi_evaluate(
         query_active = false;
     }
 
-    if (query_active)
+    if (query_active) {
         pl_done(query);
+        query_active = false;
+    }
 
     runtime_error = get_error(g_runtime);
     pthread_mutex_unlock(&g_runtime_lock);
