@@ -41,6 +41,7 @@ class RuntimeDiagnosticsProjectionTest {
         val localStarting = localReady.copy(phase = LocalServerPhase.STARTING)
         val remote = RuntimeState.initial().copy(
             enrollment = EnrollmentReadiness.Ready,
+            generation = 7,
             server = ServerConnection.Connected(7),
             sessionId = "remote-session",
         )
@@ -57,6 +58,22 @@ class RuntimeDiagnosticsProjectionTest {
         val remote = RuntimeState.initial().copy(
             enrollment = EnrollmentReadiness.Ready,
             server = ServerConnection.Disconnected,
+        )
+
+        val projection = runtimeUiProjection(RuntimeMode.Auto, localReady, remote)
+
+        assertEquals("local fallback", projection.backendLabel)
+        assertTrue(projection.chatReady)
+        assertFalse(projection.remoteInformational)
+    }
+
+    @Test
+    fun `auto mode falls back locally when connected remote generation is stale`() {
+        val remote = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Ready,
+            generation = 12,
+            server = ServerConnection.Connected(11),
+            sessionId = "session-11",
         )
 
         val projection = runtimeUiProjection(RuntimeMode.Auto, localReady, remote)
@@ -99,8 +116,24 @@ class RuntimeDiagnosticsProjectionTest {
     fun `connected socket without authenticated session is not projected ready`() {
         val remote = RuntimeState.initial().copy(
             enrollment = EnrollmentReadiness.Ready,
+            generation = 9,
             server = ServerConnection.Connected(9),
             sessionId = null,
+        )
+
+        val projection = runtimeUiProjection(RuntimeMode.Remote, localReady, remote)
+
+        assertEquals("remote (not ready)", projection.backendLabel)
+        assertFalse(projection.chatReady)
+    }
+
+    @Test
+    fun `connected authenticated session without enrollment readiness is not projected ready`() {
+        val remote = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.AwaitingServerPin,
+            generation = 9,
+            server = ServerConnection.Connected(9),
+            sessionId = "session-9",
         )
 
         val projection = runtimeUiProjection(RuntimeMode.Remote, localReady, remote)
@@ -113,6 +146,7 @@ class RuntimeDiagnosticsProjectionTest {
     fun `blank authenticated session id is not projected ready`() {
         val remote = RuntimeState.initial().copy(
             enrollment = EnrollmentReadiness.Ready,
+            generation = 10,
             server = ServerConnection.Connected(10),
             sessionId = "   ",
         )
@@ -165,9 +199,10 @@ class RuntimeDiagnosticsProjectionTest {
     }
 
     @Test
-    fun `strict local mode ignores an authenticated remote session`() {
+    fun `strict local mode ignores a genuinely authenticated current remote session`() {
         val remote = RuntimeState.initial().copy(
             enrollment = EnrollmentReadiness.Ready,
+            generation = 42,
             server = ServerConnection.Connected(42),
             sessionId = "remote-session",
         )
