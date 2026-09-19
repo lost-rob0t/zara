@@ -38,7 +38,7 @@ def test_picker_exact_action_ignores_permission_prompt_body(monkeypatch, tmp_pat
     )
     monkeypatch.setattr(module, "_picker_nodes", lambda _device: tuple(hierarchy.iter("node")))
 
-    node = module._find_picker_exact(device, "Allow")
+    node = module._find_picker_action(device, "Allow")
 
     assert node is not None
     assert node.get("text") == "ALLOW"
