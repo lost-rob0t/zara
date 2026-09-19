@@ -202,3 +202,37 @@ def test_profile_rejects_unknown_schema_and_ambient_fields():
                 "global_registry": True,
             }
         )
+
+
+def test_package_versions_reject_path_shaped_and_nonportable_tokens_before_mutation():
+    with pytest.raises(PackageProfileError, match="package pin version"):
+        AppPackageProfile.from_mapping(
+            {
+                "schema": PACKAGE_PROFILE_SCHEMA,
+                "app_id": "org_editor",
+                "enabled_packages": ["logseq_daily"],
+                "pins": {"logseq_daily": "../1.4.2"},
+            }
+        )
+
+    profile = AppPackageProfile.from_mapping(
+        {
+            "schema": PACKAGE_PROFILE_SCHEMA,
+            "app_id": "org_editor",
+            "enabled_packages": ["logseq_daily"],
+            "pins": {},
+        }
+    )
+    registry = ProgrammableSymbolRegistry()
+    specs = (SymbolSpec("org:daily/open", "command", "editor-daily"),)
+
+    for invalid_version in ("1.4.2/escape", "1.4.2\\escape", "1.4.2-β"):
+        with pytest.raises(PackageProfileError, match="package pin version"):
+            activate_profile_package(
+                registry,
+                profile,
+                "logseq_daily",
+                specs,
+                package_version=invalid_version,
+            )
+        assert registry.symbols() == ()
