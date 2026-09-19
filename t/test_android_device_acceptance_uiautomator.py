@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import subprocess
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -148,3 +149,59 @@ def test_await_label_dismisses_release_notes_that_appear_after_launch(
     device.await_label("Chat", timeout=0.1)
 
     assert state["dismissals"] == 1
+
+
+def test_dismiss_release_notes_uses_zara_owned_continue_when_title_semantics_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    continue_button = ET.fromstring(
+        '<node text="Continue" package="ai.zara.app" bounds="[10,20][30,40]" />'
+    )
+    calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(device, "find_contains", lambda _fragment: None)
+    monkeypatch.setattr(
+        device,
+        "find",
+        lambda label: continue_button if label == "Continue" else None,
+    )
+    monkeypatch.setattr(
+        device,
+        "adb",
+        lambda *arguments, **_kwargs: calls.append(arguments) or "",
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    assert device.dismiss_release_notes()
+    assert calls == [("shell", "input", "tap", "20", "30")]
+
+
+def test_dismiss_release_notes_does_not_tap_foreign_continue_without_title(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    continue_button = ET.fromstring(
+        '<node text="Continue" package="com.android.permissioncontroller" '
+        'bounds="[10,20][30,40]" />'
+    )
+    calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(device, "find_contains", lambda _fragment: None)
+    monkeypatch.setattr(
+        device,
+        "find",
+        lambda label: continue_button if label == "Continue" else None,
+    )
+    monkeypatch.setattr(
+        device,
+        "adb",
+        lambda *arguments, **_kwargs: calls.append(arguments) or "",
+    )
+
+    assert not device.dismiss_release_notes()
+    assert calls == []
