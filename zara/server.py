@@ -57,13 +57,21 @@ def default_security_state_directory() -> Path:
     """Return Zara's persistent owner-private daemon security-state directory."""
     explicit = os.environ.get("ZARA_SECURITY_DIR", "").strip()
     if explicit:
-        return Path(explicit).expanduser()
+        path = Path(explicit).expanduser()
+        if not path.is_absolute():
+            raise ValueError("ZARA_SECURITY_DIR must be an absolute path")
+        return path
     xdg_state = os.environ.get("XDG_STATE_HOME", "").strip()
     if xdg_state and Path(xdg_state).is_absolute():
         root = Path(xdg_state)
     else:
         root = Path.home() / ".local" / "state"
     return root / "zarathushtra" / "security"
+
+
+def default_control_socket_path(runtime_dir: Path | str | None = None) -> Path:
+    """Return the owner-local live daemon control socket without acquiring its lease."""
+    return ServerLease(runtime_dir)._runtime_dir() / "zara-control.sock"
 
 
 def _split_tcp_endpoint(endpoint: str) -> tuple[str, int]:
@@ -109,7 +117,7 @@ def _advertised_remote_endpoint(endpoint: str) -> str:
     if host in _WILDCARD_REMOTE_HOSTS:
         configured = os.environ.get("ZARA_ADVERTISE_HOST", "").strip()
         if configured:
-            if any(character.isspace() for character in configured):
+            if len(configured) > 255 or any(character.isspace() for character in configured):
                 raise ServerError("ZARA_ADVERTISE_HOST is invalid")
             host = configured.removeprefix("[").removesuffix("]")
         else:
@@ -179,6 +187,7 @@ class ZaraServer(_core.ZaraServer):
         self._security_registry = None
         self._security_admin = None
         self._security_admin_lock = threading.RLock()
+        self._security_admin_closing = False
         if secure_tcp:
             self._endpoint_override = endpoint
 
@@ -216,49 +225,65 @@ class ZaraServer(_core.ZaraServer):
             voice_ingress=voice_ingress,
         )
 
-    def _ensure_security_state(self):
+    def _security_state_object(self):
         state = self._security_state
         if state is None:
             from zara.security_state import PersistentSecurityState
 
             state = PersistentSecurityState(default_security_state_directory())
             self._security_state = state
-        state.initialize()
         return state
+
+    def _control_socket_path(self) -> Path:
+        lease_path = self._lease.path
+        if lease_path is not None:
+            return Path(lease_path).parent / "zara-control.sock"
+        return default_control_socket_path(self._runtime_dir_override)
 
     def _ensure_security_admin(self):
         with self._security_admin_lock:
+            if self._security_admin_closing:
+                raise ServerStateError("zara-server owner control is shutting down")
             if self._security_admin is not None:
-                return self._security_registry
+                return self._security_admin
 
             from zara.security import Capability
             from zara.security_admin import SecurityAdminServer
 
-            state = self._ensure_security_state()
-            registry = state.load_registry()
+            state = self._security_state_object()
             admin = SecurityAdminServer(
                 state,
                 capabilities={Capability(value) for value in _SAFE_REMOTE_CAPABILITIES},
+                control_socket_path=self._control_socket_path(),
                 ensure_remote_listener=self.ensure_remote_listener,
                 remote_listener_status=self.remote_listener_status,
             )
-            admin.bind_registry(registry)
-            self._security_registry = registry
             self._security_admin = admin
             try:
                 admin.start()
             except BaseException:
                 self._security_admin = None
-                self._security_registry = None
                 raise
+            return admin
+
+    def _ensure_security_registry(self):
+        with self._security_admin_lock:
+            if self._security_registry is not None:
+                return self._security_registry
+            admin = self._ensure_security_admin()
+            state = self._security_state_object()
+            state.initialize()
+            registry = state.load_registry()
+            admin.bind_registry(registry)
+            self._security_registry = registry
             return registry
 
     def _build_secure_gateway(self, endpoint: str, *, supervisor, voice_ingress):
         from zara.security_gateway import SecureZaraZmqGateway
 
-        registry = self._ensure_security_admin()
+        registry = self._ensure_security_registry()
         state = self._security_state
-        if state is None or registry is None:
+        if state is None:
             raise ServerError("secure listener authority is unavailable")
         return SecureZaraZmqGateway(
             endpoint,
@@ -272,6 +297,7 @@ class ZaraServer(_core.ZaraServer):
 
     def _close_security_admin(self) -> bool:
         with self._security_admin_lock:
+            self._security_admin_closing = True
             admin = self._security_admin
             self._security_admin = None
             self._security_registry = None
@@ -286,7 +312,9 @@ class ZaraServer(_core.ZaraServer):
 
     def _remote_metadata_locked(self, *, active: bool) -> dict[str, object]:
         state = self._security_state
-        public_key = None if state is None else state.server_public_key()
+        public_key = None
+        if active and state is not None and self._security_registry is not None:
+            public_key = state.server_public_key()
         endpoint = self._remote_advertised_endpoint if active else None
         return {
             "active": active,
@@ -321,6 +349,7 @@ class ZaraServer(_core.ZaraServer):
                 raise ServerStateError("zara-server is not ready for remote listener activation")
             self._ensure_security_admin()
             if self._secure_tcp:
+                self._ensure_security_registry()
                 if self._remote_advertised_endpoint is None:
                     self._remote_advertised_endpoint = _advertised_remote_endpoint(
                         str(self._endpoint_override)
@@ -344,6 +373,8 @@ class ZaraServer(_core.ZaraServer):
             return self._remote_metadata_locked(active=active)
 
     def start(self) -> ServerState:
+        with self._security_admin_lock:
+            self._security_admin_closing = False
         try:
             state = super().start()
             self._ensure_security_admin()
@@ -445,12 +476,15 @@ def _security_state(args):
     return PersistentSecurityState(args.security_dir)
 
 
-def _live_security_admin(state):
-    if not os.path.lexists(state.control_socket_path):
-        return None
+def _live_security_admin(state, *, runtime_dir: Path | str | None = None):
     from zara.security_admin import SecurityAdminClient
 
-    return SecurityAdminClient(state.control_socket_path)
+    runtime_path = default_control_socket_path(runtime_dir)
+    if os.path.lexists(runtime_path):
+        return SecurityAdminClient(runtime_path)
+    if os.path.lexists(state.control_socket_path):
+        return SecurityAdminClient(state.control_socket_path)
+    return None
 
 
 def _require_daemon_offline(args) -> None:
@@ -495,7 +529,7 @@ def _run_security_management(args) -> Optional[int]:
     if args.security_enroll_key is not None:
         if not args.security_device_id:
             raise ValueError("--security-enroll-key requires --security-device-id")
-        admin = _live_security_admin(state)
+        admin = _live_security_admin(state, runtime_dir=args.runtime_dir)
         if admin is not None:
             result = admin.request(
                 "enroll",
@@ -528,7 +562,7 @@ def _run_security_management(args) -> Optional[int]:
         )
         return 0
     if args.security_revoke_device is not None:
-        admin = _live_security_admin(state)
+        admin = _live_security_admin(state, runtime_dir=args.runtime_dir)
         if admin is not None:
             result = admin.request("revoke", device_id=args.security_revoke_device)
             print(json.dumps(result, sort_keys=True))
@@ -538,7 +572,7 @@ def _run_security_management(args) -> Optional[int]:
         print(json.dumps({"device_id": args.security_revoke_device, "active": False}, sort_keys=True))
         return 0
     if args.security_list_clients:
-        admin = _live_security_admin(state)
+        admin = _live_security_admin(state, runtime_dir=args.runtime_dir)
         if admin is not None:
             clients = admin.request("list")
         else:
@@ -621,6 +655,7 @@ __all__ = [
     "ServerState",
     "ServerStateError",
     "ZaraServer",
+    "default_control_socket_path",
     "default_security_state_directory",
     "default_zmq_endpoint",
     "main",
