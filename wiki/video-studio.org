@@ -1,0 +1,102 @@
+#+title: Zara video studio
+
+* Purpose
+
+The =video-studio= first-party service plugin lets Zara drive the deterministic
+media tools in =starintel-social-presence= without moving video logic into Zara.
+
+The plugin is disabled by default. It accepts only checked-in video project
+slugs and resolves them to:
+
+#+begin_example
+<social_root>/youtube/video-source/<slug>/video.json
+#+end_example
+
+It never accepts an arbitrary project path or shell command from the model.
+
+* Configuration
+
+#+begin_src toml
+[plugins.video-studio]
+enabled = true
+social_root = "/home/user/Documents/Projects/starintel-social-presence"
+use_nix = true
+command_timeout_seconds = 1800
+record_stop_timeout_seconds = 2
+#+end_src
+
+With =use_nix = true=, each command runs through the social-presence flake so
+=ffmpeg=, =wf-recorder=, Python, and the checked-in video studio are resolved by
+that repository.
+
+For a direct local Python environment, set =use_nix = false=. Zara prepends
+=<social_root>/video_studio/src= to =PYTHONPATH= for the subprocess.
+
+An optional provider-neutral AI-video adapter may be passed through private
+plugin configuration:
+
+#+begin_src toml
+ai_video_command_json = "[\"python3\",\"/private/path/generate-video.py\"]"
+#+end_src
+
+Provider credentials do not belong in tool arguments or tracked video
+manifests. The generator command receives the social-presence shot request on
+stdin and uses its own private environment for credentials.
+
+* Tools
+
+| Tool | Effect | Approval |
+|-
+| =video_plan= | print the deterministic production plan | no plugin-required approval |
+| =video_record_start= | start one Wayland recording process group | required |
+| =video_record_stop= | stop the active recording process group | required |
+| =video_record_status= | report recording state | no plugin-required approval |
+| =video_render= | render one or all FFmpeg variants | required |
+| =video_generate= | generate one or all configured synthetic shots | required |
+| =video_package= | write the local YouTube/ads publish package | required |
+
+Plugin-required approval is additive to the operator's normal
+=[tool_approval].required_tools= policy.
+
+* Recording lifecycle
+
+Only one recording may be active in a Zara runtime.
+
+=video_record_start= launches the social-presence CLI in a new Unix process
+group. This is deliberate: the CLI may contain =nix=, Python, and
+=wf-recorder= processes. =video_record_stop= signals the whole group with
+=SIGINT= so the recorder can finish its media file cleanly. It escalates through
+=SIGTERM= and =SIGKILL= only if the group does not stop within the bounded
+shutdown window.
+
+Plugin shutdown and runtime restart use the same cleanup path, so a Zara restart
+does not intentionally leave a recorder behind.
+
+* Example
+
+The first checked-in project is intended to be:
+
+#+begin_example
+developer-makes-skynet
+#+end_example
+
+A typical Zara-driven session is:
+
+1. =video_plan("developer-makes-skynet")=
+2. approve =video_record_start=
+3. run the real Quasar / Skynet demo
+4. approve =video_record_stop=
+5. approve =video_render=
+6. optionally approve =video_generate=
+7. approve =video_package=
+
+The final package prepares local video assets and metadata. Uploading to
+YouTube, creating a Google Ads campaign, or spending money remains a separate
+explicitly authorized action.
+
+* ARG boundary
+
+ARG clues are owned by the social-presence =video.json= manifest, not Zara.
+That manifest requires =arg.fictional = true=. Zara treats ARG data as media
+production metadata; it does not invent real-world incidents, impersonate
+authorities, or turn fiction into a product claim.
