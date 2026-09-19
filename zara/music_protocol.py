@@ -374,6 +374,8 @@ def validate_music_message(message: Any) -> None:
         _bool("complete", body["complete"])
         if body["complete"] and body["next_cursor"] is not None:
             raise MusicProtocolError("complete music page cannot carry next_cursor")
+        if not body["complete"] and body["next_cursor"] is None:
+            raise MusicProtocolError("incomplete music page requires next_cursor")
         return
 
     if message.type == "music.job.submit":
