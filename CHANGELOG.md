@@ -4,6 +4,10 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+### Added
+
+- Android Runtime settings can configure the local LLM API policy from the app-private Prolog `config.pl`, including loopback port, background-host policy, and maximum output tokens, while keeping API secrets out of Prolog.
+
 ### Fixed
 
 - Android no longer advertises a local model as active while it is still loading or after loading fails; strict-local status stays on the symbolic runtime until a model is actually ready.
