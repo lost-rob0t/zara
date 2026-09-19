@@ -147,7 +147,7 @@ Ship it.
         self.assertEqual("completed", client.issue["state_reason"])
 
     def test_existing_manual_body_is_preserved(self):
-        existing = marker("task-1") + "\\n\\nManual issue details."
+        existing = marker("task-1") + "\n\nManual issue details."
         merged = merge_managed_body(existing, task(), "ideas.org")
         self.assertIn("Manual issue details.", merged)
         self.assertIn(MANAGED_START, merged)
