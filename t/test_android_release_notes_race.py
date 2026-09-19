@@ -124,3 +124,30 @@ def test_launch_surface_dismisses_launcher_anr_before_release_notes(
     device.launch_surface("ai.zara.app/.MainActivity", "Chat")
 
     assert events == ["anr", "release-notes", "await:Chat"]
+
+
+def test_dismiss_release_notes_accepts_wrapped_title_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    title = module.ET.fromstring(
+        '<node text="What\'s new in Zara&#10;0.2.2-alpha" bounds="[0,0][200,80]" />'
+    )
+    continue_button = module.ET.fromstring(
+        '<node text="Continue" bounds="[10,20][110,80]" />'
+    )
+    taps: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(device, "nodes", lambda: iter((title, continue_button)))
+
+    def adb(*args: str, **_kwargs):
+        taps.append(args)
+        return ""
+
+    monkeypatch.setattr(device, "adb", adb)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    assert device.dismiss_release_notes() is True
+    assert taps == [("shell", "input", "tap", "60", "50")]
