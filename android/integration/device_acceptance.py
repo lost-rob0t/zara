@@ -225,6 +225,8 @@ class Device:
         while time.monotonic() < deadline:
             if self.find(label) is not None:
                 return
+            if self.dismiss_release_notes():
+                continue
             if self.dismiss_pixel_launcher_anr():
                 continue
             time.sleep(0.2)
