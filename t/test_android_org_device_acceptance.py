@@ -100,20 +100,19 @@ def test_org_emulator_runner_script_is_posix_sh_compatible_and_line_independent(
     assert "attempt=" not in emulator_block
 
 
-def test_org_emulator_runner_creates_fixture_parent_then_write_probes_without_nested_shell_quoting():
+def test_org_emulator_runner_does_not_probe_scoped_storage_with_raw_shell_writes():
     text = WORKFLOW.read_text(encoding="utf-8")
     emulator_block = text.split(
         "uses: reactivecircus/android-emulator-runner@v2", 1
     )[1].split("- name: Validate exact-head Org evidence", 1)[0]
-    # The action itself waits until the emulator reports boot complete before
-    # executing script lines. Keep host/action and guest-shell quoting flat:
-    # nested `adb shell sh -c '...'` is reparsed by two shells and broke touch.
+    # API-35 scoped external storage can reject raw shell writes to Documents.
+    # The evidence gate must exercise the real acceptance/SAF path rather than
+    # fail early on an unrelated shell-writability probe.
     assert "adb -s emulator-5554 wait-for-device" in emulator_block
-    assert "adb -s emulator-5554 shell mkdir -p /sdcard/Documents" in emulator_block
-    assert "adb -s emulator-5554 shell touch /sdcard/Documents/.zara-org-storage-ready" in emulator_block
-    assert "adb -s emulator-5554 shell rm -f /sdcard/Documents/.zara-org-storage-ready" in emulator_block
+    assert "adb -s emulator-5554 shell touch /sdcard/Documents/.zara-org-storage-ready" not in emulator_block
+    assert "adb -s emulator-5554 shell rm -f /sdcard/Documents/.zara-org-storage-ready" not in emulator_block
     assert "adb -s emulator-5554 shell sh -c" not in emulator_block
-    assert "test -d /sdcard/Documents" not in emulator_block
+    assert "python android/integration/org_device_acceptance.py" in emulator_block
 
 
 def test_org_evidence_upload_retains_preflight_diagnostics_even_if_device_capture_fails():
