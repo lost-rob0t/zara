@@ -3,7 +3,11 @@ package ai.zara.org.app
 import ai.zara.org.core.AgendaGroup
 import ai.zara.org.core.DoomAgenda
 import ai.zara.org.core.DoomOrgProfile
+import ai.zara.org.core.OrgRoamGraph
+import ai.zara.org.core.OrgRoamNode
 import ai.zara.org.core.OrgTask
+import ai.zara.org.core.OrgWorkspaceProjection
+import ai.zara.org.core.OrgWorkspaceProjector
 import ai.zara.ui.org.OrgTextRenderer
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -18,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -42,7 +47,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 
-private enum class WorkbenchTab { AGENDA, FILES, EDITOR }
+private enum class WorkbenchTab { AGENDA, TODO, ROAM, FILES, EDITOR }
 
 private val OutrunScheme: ColorScheme = darkColorScheme(
     primary = Color(0xFFFF4FD8),
@@ -75,7 +80,9 @@ private fun OrgWorkbench() {
     var homeRevision by rememberSaveable { mutableStateOf(0) }
     val homeSelection = remember(homeRevision) { OrgHome.selection(context) }
     var files by remember { mutableStateOf(emptyList<OrgFileRef>()) }
-    var tasks by remember { mutableStateOf(emptyList<OrgTask>()) }
+    var projection by remember {
+        mutableStateOf(OrgWorkspaceProjector.project(emptyMap()))
+    }
     var selected by remember { mutableStateOf<OrgFileRef?>(null) }
     var editor by rememberSaveable { mutableStateOf("") }
     var tab by rememberSaveable { mutableStateOf(WorkbenchTab.AGENDA) }
@@ -90,9 +97,18 @@ private fun OrgWorkbench() {
     fun refresh() {
         val repo = repository ?: return
         runCatching {
-            files = repo.listOrgFiles()
-            tasks = repo.allTasks()
-            status = "${files.size} Org files · ${tasks.size} tasks"
+            val refreshedFiles = repo.listOrgFiles()
+            val documents = refreshedFiles.associate { file ->
+                file.relativePath to repo.read(file)
+            }
+            val refreshedProjection = OrgWorkspaceProjector.project(documents)
+            files = refreshedFiles
+            projection = refreshedProjection
+            status = buildString {
+                append(refreshedFiles.size).append(" Org files")
+                append(" · ").append(refreshedProjection.tasks.size).append(" tasks")
+                append(" · ").append(refreshedProjection.roam.nodes.size).append(" roam nodes")
+            }
         }.onFailure { status = it.message ?: "Refresh failed" }
     }
 
@@ -107,8 +123,17 @@ private fun OrgWorkbench() {
         }.onFailure { status = it.message ?: "Open failed" }
     }
 
+    fun openPath(relativePath: String) {
+        files.firstOrNull { it.relativePath == relativePath }?.let(::open)
+    }
+
     LaunchedEffect(repository) {
-        refresh()
+        if (repository == null) {
+            files = emptyList()
+            projection = OrgWorkspaceProjector.project(emptyMap())
+        } else {
+            refresh()
+        }
     }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -135,7 +160,15 @@ private fun OrgWorkbench() {
         ) {
             Column {
                 Text("Zara Org", style = MaterialTheme.typography.titleLarge)
-                Text(status.ifBlank { DoomOrgProfile.orgRoot }, style = MaterialTheme.typography.labelSmall)
+                Text(
+                    status.ifBlank {
+                        when (homeSelection.mode) {
+                            OrgHomeMode.SHARED -> "Shared Org home"
+                            OrgHomeMode.CUSTOM_SAF -> "Custom Org directory"
+                        }
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 TextButton(onClick = {
@@ -152,18 +185,22 @@ private fun OrgWorkbench() {
                 TextButton(onClick = { tab = destination }) {
                     Text(
                         destination.name.lowercase().replaceFirstChar(Char::uppercaseChar),
-                        color = if (tab == destination) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (tab == destination) {
+                            MaterialTheme.colorScheme.secondary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     )
                 }
             }
-            TextButton(onClick = { refresh() }) { Text("Refresh") }
+            TextButton(onClick = { refresh() }, enabled = repository != null) { Text("Refresh") }
             TextButton(onClick = { captureOpen = true }, enabled = repository != null) { Text("Capture") }
         }
 
         if (repository == null) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (homeSelection.mode == OrgHomeMode.SHARED) {
-                    Text("Shared Org home is the default. Install/open Org Sync to provide it, or choose a custom directory for this app.")
+                    Text("Shared Org home is unavailable. Install/open Org Sync to provide it, or choose a custom directory for this app.")
                     Button(onClick = { picker.launch(null) }) { Text("Choose custom Org directory") }
                 } else {
                     Text("The custom Org directory is unavailable. Re-grant it or return to the shared Org home.")
@@ -175,19 +212,38 @@ private fun OrgWorkbench() {
                         }) { Text("Use shared home") }
                     }
                 }
-                Text("Org files remain canonical; no private note/task database is created.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "Org files remain canonical; Todo and Roam are rebuildable projections over the same corpus.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         } else {
             when (tab) {
                 WorkbenchTab.AGENDA -> AgendaView(
-                    tasks = tasks,
+                    tasks = projection.tasks,
                     onCycle = { task ->
                         runCatching { repository.cycleTodo(task) }
                             .onSuccess { refresh() }
                             .onFailure { status = it.message ?: "TODO update failed" }
                     },
-                    onOpen = { task -> files.firstOrNull { it.relativePath == task.path }?.let(::open) },
+                    onOpen = { task -> openPath(task.path) },
                 )
+
+                WorkbenchTab.TODO -> TodoView(
+                    tasks = projection.openTasks,
+                    onCycle = { task ->
+                        runCatching { repository.cycleTodo(task) }
+                            .onSuccess { refresh() }
+                            .onFailure { status = it.message ?: "TODO update failed" }
+                    },
+                    onOpen = { task -> openPath(task.path) },
+                )
+
+                WorkbenchTab.ROAM -> RoamView(
+                    graph = projection.roam,
+                    onOpen = { node -> openPath(node.path) },
+                )
+
                 WorkbenchTab.FILES -> FileView(files = files, onOpen = ::open)
                 WorkbenchTab.EDITOR -> EditorView(
                     file = selected,
@@ -199,16 +255,23 @@ private fun OrgWorkbench() {
                         val file = selected
                         if (file != null) {
                             runCatching { repository.write(file, editor) }
-                                .onSuccess { status = "Saved ${file.relativePath}"; refresh() }
+                                .onSuccess {
+                                    status = "Saved ${file.relativePath}"
+                                    refresh()
+                                }
                                 .onFailure { status = it.message ?: "Save failed" }
                         }
                     },
                     onTangle = {
                         val file = selected
                         if (file != null) {
-                            runCatching { repository.write(file, editor); repository.tangle(file) }
-                                .onSuccess { outputs -> status = "Tangled ${outputs.joinToString { it.relativePath }}"; refresh() }
-                                .onFailure { status = it.message ?: "Tangle failed" }
+                            runCatching {
+                                repository.write(file, editor)
+                                repository.tangle(file)
+                            }.onSuccess { outputs ->
+                                status = "Tangled ${outputs.joinToString { it.relativePath }}"
+                                refresh()
+                            }.onFailure { status = it.message ?: "Tangle failed" }
                         }
                     },
                 )
@@ -246,32 +309,205 @@ private fun AgendaView(
             val rows = grouped[group].orEmpty()
             if (rows.isNotEmpty()) {
                 item(group) {
-                    Text(group.label, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.secondary)
+                    Text(
+                        group.label,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
                 }
                 items(rows, key = { "${it.path}:${it.line}" }) { task ->
-                    Row(
+                    TaskRow(task = task, onCycle = { onCycle(task) }, onOpen = { onOpen(task) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodoView(
+    tasks: List<OrgTask>,
+    onCycle: (OrgTask) -> Unit,
+    onOpen: (OrgTask) -> Unit,
+) {
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        item("todo-summary") {
+            Text(
+                "${tasks.size} open tasks · same canonical Org corpus",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+        items(tasks, key = { "todo:${it.path}:${it.line}" }) { task ->
+            TaskRow(task = task, onCycle = { onCycle(task) }, onOpen = { onOpen(task) })
+        }
+    }
+}
+
+@Composable
+private fun TaskRow(
+    task: OrgTask,
+    onCycle: () -> Unit,
+    onOpen: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .clickable(onClick = onOpen)
+            .padding(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        TextButton(onClick = onCycle) { Text(task.state) }
+        Column {
+            Text(task.title)
+            Text(
+                buildString {
+                    append(task.path).append(':').append(task.line)
+                    task.scheduled?.let { append(" · S ").append(it) }
+                    task.deadline?.let { append(" · D ").append(it) }
+                    task.effort?.let { append(" · ").append(it) }
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RoamView(
+    graph: OrgRoamGraph,
+    onOpen: (OrgRoamNode) -> Unit,
+) {
+    var query by rememberSaveable { mutableStateOf("") }
+    var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
+    val visible = remember(graph, query) { graph.search(query) }
+    val selected = selectedId?.let(graph.nodes::get)
+
+    LaunchedEffect(graph) {
+        if (selectedId !in graph.nodes) selectedId = null
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.weight(1f),
+                label = { Text("Search nodes, aliases, tags, IDs") },
+                singleLine = true,
+            )
+            Text(
+                "${graph.nodes.size} nodes",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.padding(top = 18.dp),
+            )
+        }
+
+        if (graph.duplicateIds.isNotEmpty()) {
+            Text(
+                "Duplicate IDs excluded: ${graph.duplicateIds.sorted().joinToString()}",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+
+        if (selected != null) {
+            RoamNodeDetail(
+                node = selected,
+                graph = graph,
+                onClose = { selectedId = null },
+                onSelect = { selectedId = it },
+                onOpen = { onOpen(selected) },
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(visible, key = { it.id }) { node ->
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(MaterialTheme.colorScheme.surface)
-                            .clickable { onOpen(task) }
-                            .padding(8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            .clickable { selectedId = node.id }
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        TextButton(onClick = { onCycle(task) }) { Text(task.state) }
-                        Column {
-                            Text(task.title)
-                            Text(
-                                buildString {
-                                    append(task.path).append(':').append(task.line)
-                                    task.scheduled?.let { append(" · S ").append(it) }
-                                    task.deadline?.let { append(" · D ").append(it) }
-                                    task.effort?.let { append(" · ").append(it) }
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                        Text(node.title)
+                        Text(
+                            buildString {
+                                append(node.path).append(':').append(node.line)
+                                if (node.aliases.isNotEmpty()) {
+                                    append(" · aliases: ").append(node.aliases.joinToString())
+                                }
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                        )
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoamNodeDetail(
+    node: OrgRoamNode,
+    graph: OrgRoamGraph,
+    onClose: () -> Unit,
+    onSelect: (String) -> Unit,
+    onOpen: () -> Unit,
+) {
+    val backlinks = remember(graph, node.id) { graph.backlinks(node.id) }
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(node.title, style = MaterialTheme.typography.titleLarge)
+                Text(node.id, style = MaterialTheme.typography.labelSmall)
+                Text("${node.path}:${node.line}", style = MaterialTheme.typography.labelSmall)
+            }
+            TextButton(onClick = onOpen) { Text("Open") }
+            TextButton(onClick = onClose) { Text("Back") }
+        }
+
+        Text("Outlinks", style = MaterialTheme.typography.titleMedium)
+        if (node.links.isEmpty()) {
+            Text("No id: outlinks")
+        } else {
+            node.links.forEach { link ->
+                TextButton(
+                    onClick = { if (link.targetId in graph.nodes) onSelect(link.targetId) },
+                    enabled = link.targetId in graph.nodes,
+                ) {
+                    Text(link.label ?: link.targetId)
+                }
+            }
+        }
+
+        Text("Backlinks", style = MaterialTheme.typography.titleMedium)
+        if (backlinks.isEmpty()) {
+            Text("No backlinks")
+        } else {
+            backlinks.forEach { link ->
+                TextButton(
+                    onClick = { if (link.sourceId in graph.nodes) onSelect(link.sourceId) },
+                ) {
+                    Text(graph.nodes[link.sourceId]?.title ?: link.sourceId)
                 }
             }
         }
@@ -305,7 +541,7 @@ private fun EditorView(
     onTangle: () -> Unit,
 ) {
     if (file == null) {
-        Text("Open an Org file from Files or Agenda.")
+        Text("Open an Org file from Files, Agenda, Todo, or Roam.")
         return
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
