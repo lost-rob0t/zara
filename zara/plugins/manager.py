@@ -21,7 +21,14 @@ from zara.agent.tool_cancellation import (
 from zara.runtime import events
 from zara.runtime.turn_context import TurnCapabilityLease, current_turn_capability_lease
 
-from .api import CapabilityHandle, PLUGIN_API_VERSION, PluginMetadata, PluginRuntime, RuntimeStatus
+from .api import (
+    CapabilityHandle,
+    PLUGIN_API_VERSION,
+    PluginMetadata,
+    PluginRuntime,
+    RuntimeStatus,
+    StartupUnavailable,
+)
 from .loader import iter_plugin_files, load_plugin_module
 
 logger = logging.getLogger(__name__)
@@ -33,6 +40,7 @@ class PluginState(str, enum.Enum):
     INSTALLED = "installed"
     LOADED = "loaded"
     RUNNING = "running"
+    UNAVAILABLE = "unavailable"
     STOPPED = "stopped"
     FAILED = "failed"
     INCOMPATIBLE = "incompatible"
@@ -456,9 +464,27 @@ class PluginManager:
             if not callable(start_method):
                 raise TypeError("service plugin must define start(runtime)")
             record.start_called = True
-            await self._call_lifecycle(start_method, runtime)
+            start_result = await self._call_lifecycle(start_method, runtime)
         except Exception as error:
             self._mark_failed(record, f"startup failed: {error}")
+            await self._stop_record(record, preserve_failure=True)
+            return
+
+        if isinstance(start_result, StartupUnavailable):
+            with self._lock:
+                already_failed = record.state is PluginState.FAILED
+            if not already_failed:
+                self._mark_unavailable(record, start_result.reason)
+            self._remove_tools(record)
+            if record.runtime is not None:
+                record.runtime._shutdown()
+            return
+
+        if start_result is not None:
+            self._mark_failed(
+                record,
+                "startup failed: start() must return None or StartupUnavailable",
+            )
             await self._stop_record(record, preserve_failure=True)
             return
 
@@ -514,8 +540,10 @@ class PluginManager:
 
         with self._lock:
             if not preserve_failure and record.state is not PluginState.FAILED:
+                was_unavailable = record.state is PluginState.UNAVAILABLE
                 record.state = PluginState.STOPPED
-                record.error = ""
+                if not was_unavailable:
+                    record.error = ""
             elif preserve_failure and previous_failure and not record.error:
                 record.error = previous_failure
 
@@ -540,8 +568,8 @@ class PluginManager:
             operation = asyncio.to_thread(method, *args)
         return await asyncio.wait_for(operation, timeout=self._lifecycle_timeout)
 
-    async def _call_lifecycle(self, method, *args) -> None:
-        await self._call_plugin(method, *args)
+    async def _call_lifecycle(self, method, *args):
+        return await self._call_plugin(method, *args)
 
     def _remove_tools(self, record: _PluginRecord) -> None:
         if not record.tool_names:
@@ -555,6 +583,12 @@ class PluginManager:
 
     def _runtime_failed(self, record: _PluginRecord, message: str) -> None:
         self._mark_failed(record, f"runtime failed: {message}")
+
+    def _mark_unavailable(self, record: _PluginRecord, reason: str) -> None:
+        with self._lock:
+            record.state = PluginState.UNAVAILABLE
+            record.error = reason
+        logger.info("Plugin %s is unavailable: %s", record.metadata.name, reason)
 
     def _mark_failed(self, record: _PluginRecord, message: str) -> None:
         bounded = _bounded_error(message)
