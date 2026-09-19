@@ -33,6 +33,14 @@ class RuntimeDiscoveryError(RuntimeError):
     """A runtime could not be safely discovered."""
 
 
+class _RejectRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Keep runtime traffic on the explicitly configured loopback authority."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        del req, fp, code, msg, headers, newurl
+        raise RuntimeDiscoveryError("runtime sidecar redirects are forbidden")
+
+
 def builtin_runtime_descriptor() -> RuntimeDescriptor:
     """Describe Zara's built-in Python runtime without probing providers."""
 
@@ -162,7 +170,10 @@ class PrologRlmSidecarClient:
             raise ValueError("runtime timeout must be positive")
         self.endpoint = normalize_loopback_endpoint(endpoint)
         self.timeout = float(timeout)
-        self._opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        self._opener = opener or urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            _RejectRedirectHandler(),
+        )
 
     def discover(self) -> tuple[RuntimeDescriptor, ...]:
         payload = self._request_json("GET", "/zara-runtime/v1/discover")
