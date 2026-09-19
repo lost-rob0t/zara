@@ -12,9 +12,14 @@ data class OrgTimerTemplate(
 }
 
 object OrgTimers {
-    fun fromTasks(tasks: Iterable<OrgTask>): List<OrgTimerTemplate> =
-        tasks.asSequence()
-            .filter { task -> task.state !in DoomOrgProfile.doneStates }
+    /**
+     * Derive timers only from canonical open tasks.
+     *
+     * The projection resolves each file's own `#+TODO` / `#+SEQ_TODO` workflow,
+     * so timer eligibility never falls back to DoomOrgProfile done-state guesses.
+     */
+    fun fromProjection(projection: OrgWorkspaceProjection): List<OrgTimerTemplate> =
+        projection.openTasks.asSequence()
             .filter { task -> "timer" in task.tags }
             .mapNotNull { task ->
                 val duration = task.effort?.let(::parseEffort) ?: return@mapNotNull null
