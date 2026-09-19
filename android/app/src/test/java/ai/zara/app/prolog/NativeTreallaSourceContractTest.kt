@@ -34,6 +34,22 @@ class NativeTreallaSourceContractTest {
     }
 
     @Test
+    fun plQueryReturnValueIsTreatedAsAnErrorSignal() {
+        val source = projectFile("app/src/main/cpp/zara_trealla_jni.c")
+        val text = source.readText()
+
+        assertTrue(
+            "Trealla pl_query return value is an error signal and must fail only when true",
+            text.contains("bool query_error = pl_query(") &&
+                text.contains("if (query_error || get_error(g_runtime))")
+        )
+        assertFalse(
+            "Trealla pl_query must not be treated as a success boolean",
+            text.contains("ok = pl_query(") || text.contains("if (!ok || get_error(g_runtime))")
+        )
+    }
+
+    @Test
     fun cmakeRequiresAnExplicitPinnedTreallaSourceTree() {
         val cmake = projectFile("app/src/main/cpp/CMakeLists.txt")
         assertTrue("native Trealla CMake contract is required", cmake.isFile)
