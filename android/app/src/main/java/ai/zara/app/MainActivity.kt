@@ -9,7 +9,6 @@ import ai.zara.app.ui.ThemePreferenceStore
 import ai.zara.app.ui.UiOperationFailure
 import ai.zara.app.ui.ZaraApp
 import ai.zara.app.runtime.AssistantRuntimeDescriptor
-import ai.zara.app.runtime.EMBEDDED_LOCAL_RUNTIME_ID
 import ai.zara.app.update.Changelog
 import ai.zara.app.update.ChangelogSeenStore
 import ai.zara.app.voice.ManualVoiceState
@@ -94,7 +93,12 @@ class MainActivity : ComponentActivity() {
             }
             val target = preferred.takeIf { candidate ->
                 runtimes.any { it.id == candidate && it.selectable }
-            } ?: EMBEDDED_LOCAL_RUNTIME_ID
+            } ?: runtimes.firstOrNull { it.selectable }?.id
+            if (target == null) {
+                selectedAssistantRuntimeId = ""
+                operationError = "No discovered assistant runtime is currently selectable"
+                return
+            }
             appSession.selectAssistantRuntime(target)
             selectedAssistantRuntimeId = appSession.selectedAssistantRuntimeId()
         }
