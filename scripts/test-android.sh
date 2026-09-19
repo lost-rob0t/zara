@@ -95,6 +95,9 @@ test -f "$code_apk"
 test -f "$wear_apk"
 test -f "$voice_apk"
 
+bash "$repo_root/scripts/check-android-apk-installable.sh" "$phone_apk" "ai.zara.app"
+bash "$repo_root/scripts/check-android-apk-installable.sh" "$code_apk" "ai.zara.code.editor"
+
 for apk in "$phone_apk" "$code_apk" "$wear_apk" "$voice_apk"; do
   if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET"; then
     echo "APK secret-marker inspection FAILED: private/secret material found in $apk" >&2
