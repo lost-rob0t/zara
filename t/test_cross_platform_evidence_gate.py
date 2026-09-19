@@ -42,6 +42,30 @@ def _write_desktop_evidence(root: Path, source_sha: str) -> Path:
     }
     manifest_path = evidence / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    org_fixtures = []
+    for mode, filename in (
+        ("editor", "org-editor.png"),
+        ("todo", "org-todo.png"),
+        ("sync", "org-sync.png"),
+        ("notebook", "org-notebook.png"),
+    ):
+        org_payload = _png_bytes(f"org-{mode}")
+        (evidence / filename).write_bytes(org_payload)
+        org_fixtures.append(
+            {
+                "mode": mode,
+                "path": filename,
+                "source_commit": source_sha,
+                "width": 840,
+                "height": 620,
+                "sha256": hashlib.sha256(org_payload).hexdigest(),
+            }
+        )
+    (evidence / "org-manifest.json").write_text(
+        json.dumps({"schema": 1, "fixtures": org_fixtures}),
+        encoding="utf-8",
+    )
     return manifest_path
 
 

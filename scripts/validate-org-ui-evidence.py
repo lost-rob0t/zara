@@ -17,6 +17,10 @@ REQUIRED_STATES = {
     "org-daily-today",
     "org-daily-previous",
 }
+EXPECTED_FILES = {
+    "screenshot": {state: f"{state}.png" for state in REQUIRED_STATES},
+    "text": {state: f"{state}.txt" for state in REQUIRED_STATES},
+}
 
 
 class EvidenceError(RuntimeError):
@@ -76,6 +80,16 @@ def validate(source_sha: str, manifest_path: Path) -> None:
             digest = entry.get("sha256")
             if not isinstance(filename, str) or not filename:
                 raise EvidenceError(f"{kind} {state} is missing file")
+            expected_filename = EXPECTED_FILES[kind][state]
+            if Path(filename).name != filename:
+                raise EvidenceError(
+                    f"{kind} {state} must use a safe basename, got {filename!r}"
+                )
+            if filename != expected_filename:
+                raise EvidenceError(
+                    f"{kind} {state} filename mismatch: expected {expected_filename!r}, "
+                    f"got {filename!r}"
+                )
             path = root / filename
             if not path.is_file():
                 raise EvidenceError(f"{kind} {state} file is missing: {filename}")

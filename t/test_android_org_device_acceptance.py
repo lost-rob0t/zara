@@ -8,7 +8,7 @@ WORKFLOW = Path(".github/workflows/org-android-ui.yml")
 
 def test_org_acceptance_uses_real_saf_ordinary_org_corpus_not_product_store():
     text = ACCEPTANCE.read_text(encoding="utf-8")
-    assert 'corpus_authority": "ordinary Org files through persisted Android SAF"' in text
+    assert 'corpus_authority\": \"ordinary Org files through persisted Android SAF\"' in text
     assert 'ActivityResultContracts.OpenDocumentTree' not in text
     assert 'device.tap("Choose Org directory")' in text
     assert '"Use this folder"' in text
@@ -43,6 +43,17 @@ def test_org_acceptance_daily_layout_is_acceptance_configuration_not_a_product_d
     assert "fixture path exists only inside the disposable emulator" in text
 
 
+def test_org_acceptance_fixture_uploads_do_not_use_nested_adb_shell_quoting():
+    text = ACCEPTANCE.read_text(encoding="utf-8")
+    compact = " ".join(text.split())
+    # adb shell reparses command arguments. Passing a multi-word script as the
+    # argument to remote `sh -c` loses the intended command boundary on hosted
+    # emulators, so fixture writes must use adb push + direct argv operations.
+    assert '"sh", "-c",' not in compact
+    assert '"push",' in text
+    assert '"run-as", PACKAGE, "cp",' in compact
+
+
 def test_org_evidence_validator_requires_exact_sha_pass_and_all_text_twins():
     text = VALIDATOR.read_text(encoding="utf-8")
     assert 'manifest.get("source_sha") != source_sha' in text
@@ -51,6 +62,16 @@ def test_org_evidence_validator_requires_exact_sha_pass_and_all_text_twins():
     assert 'manifest.get("corpus_authority")' in text
     assert 'manifest.get("fixture_root_is_test_only") is not True' in text
     assert '"text_evidence"' in text
+
+
+def test_org_evidence_validator_pins_safe_state_filenames():
+    text = VALIDATOR.read_text(encoding="utf-8")
+    # Artifact manifests are data, not authority. A passing exact-head manifest
+    # must not redirect validation to a sibling/parent file or alias one state's
+    # evidence as another state's file.
+    assert "EXPECTED_FILES" in text
+    assert "Path(filename).name != filename" in text
+    assert "filename != expected_filename" in text
 
 
 def test_org_evidence_workflow_checks_out_and_names_artifact_by_exact_pr_head():
@@ -64,20 +85,44 @@ def test_org_evidence_workflow_checks_out_and_names_artifact_by_exact_pr_head():
     assert "org-android-ui-evidence-${{ github.event.pull_request.head.sha }}" in text
 
 
-def test_org_emulator_runner_script_is_posix_sh_compatible():
+def test_org_emulator_runner_script_is_posix_sh_compatible_and_line_independent():
     text = WORKFLOW.read_text(encoding="utf-8")
     emulator_block = text.split(
         "uses: reactivecircus/android-emulator-runner@v2", 1
     )[1].split("- name: Validate exact-head Org evidence", 1)[0]
     assert "set -eu\n" in emulator_block
     assert "set -euo pipefail" not in emulator_block
+    # android-emulator-runner invokes each script line as a separate `sh -c`;
+    # shell control structures split across lines can never be valid here.
+    assert "while [" not in emulator_block
+    assert "done\n" not in emulator_block
+    assert "ready=" not in emulator_block
+    assert "attempt=" not in emulator_block
 
 
-def test_org_emulator_runner_waits_for_boot_and_writable_external_storage():
+def test_org_emulator_runner_creates_fixture_parent_then_write_probes_without_nested_shell_quoting():
     text = WORKFLOW.read_text(encoding="utf-8")
     emulator_block = text.split(
         "uses: reactivecircus/android-emulator-runner@v2", 1
     )[1].split("- name: Validate exact-head Org evidence", 1)[0]
-    assert "getprop sys.boot_completed" in emulator_block
-    assert "test -d /sdcard/Documents" in emulator_block
-    assert "/sdcard/Documents/.zara-org-storage-ready" in emulator_block
+    # The action itself waits until the emulator reports boot complete before
+    # executing script lines. Keep host/action and guest-shell quoting flat:
+    # nested `adb shell sh -c '...'` is reparsed by two shells and broke touch.
+    assert "adb -s emulator-5554 wait-for-device" in emulator_block
+    assert "adb -s emulator-5554 shell mkdir -p /sdcard/Documents" in emulator_block
+    assert "adb -s emulator-5554 shell touch /sdcard/Documents/.zara-org-storage-ready" in emulator_block
+    assert "adb -s emulator-5554 shell rm -f /sdcard/Documents/.zara-org-storage-ready" in emulator_block
+    assert "adb -s emulator-5554 shell sh -c" not in emulator_block
+    assert "test -d /sdcard/Documents" not in emulator_block
+
+
+def test_org_evidence_upload_retains_preflight_diagnostics_even_if_device_capture_fails():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "Prepare exact-head evidence directory" in text
+    assert "preflight.json" in text
+    assert (
+        'printf \'{"source_sha":"%s","phase":"device-preflight"}\\n\' '
+        '"$SOURCE_SHA" > "$evidence_dir/preflight.json"'
+        in text
+    )
+    assert "if-no-files-found: error" in text

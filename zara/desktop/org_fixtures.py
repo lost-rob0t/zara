@@ -11,6 +11,7 @@ from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication
 
 from zara.desktop.org_app import OrgLaunchMode, build_org_window
+from zara.desktop.org_evidence import validate_org_evidence
 from zara.desktop.theme import apply_desktop_theme
 
 _THEME = "signal-cabin"
@@ -91,7 +92,7 @@ def _render_one(
 
 
 def render_org_fixtures(output_dir: Path | str, *, source_commit: str) -> dict[str, object]:
-    """Render Editor/Todo/Sync/Notebook from the real Desktop Org constructor."""
+    """Render and integrity-check the exact-head Desktop Org evidence set."""
 
     target = Path(output_dir)
     target.mkdir(parents=True, exist_ok=True)
@@ -134,6 +135,7 @@ def render_org_fixtures(output_dir: Path | str, *, source_commit: str) -> dict[s
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    validate_org_evidence(target, expected_source_commit=source_commit)
     return manifest
 
 

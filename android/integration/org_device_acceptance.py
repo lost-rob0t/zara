@@ -8,13 +8,13 @@ OpenDocumentTree flow and then consumes that persisted SAF grant.
 from __future__ import annotations
 
 import argparse
-import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import tempfile
 import time
 
 from device_acceptance import Device, verified_source_sha
@@ -29,8 +29,20 @@ FIXTURE_TREE_URI = (
 )
 
 
-def _shell_b64(text: str) -> str:
-    return base64.b64encode(text.encode("utf-8")).decode("ascii")
+def _push_text(device: Device, remote_path: str, text: str) -> None:
+    """Upload exact fixture bytes without relying on nested remote-shell quoting."""
+
+    local_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", newline="", delete=False
+        ) as handle:
+            handle.write(text)
+            local_path = Path(handle.name)
+        device.adb("push", str(local_path), remote_path)
+    finally:
+        if local_path is not None:
+            local_path.unlink(missing_ok=True)
 
 
 def _write_external_text(device: Device, relative_path: str, text: str) -> None:
@@ -38,13 +50,8 @@ def _write_external_text(device: Device, relative_path: str, text: str) -> None:
         raise AssertionError(f"unsafe acceptance path: {relative_path!r}")
     absolute = f"/sdcard/{FIXTURE_RELATIVE_ROOT}/{relative_path}"
     parent = absolute.rsplit("/", 1)[0]
-    encoded = _shell_b64(text)
-    device.adb(
-        "shell",
-        "sh",
-        "-c",
-        f"mkdir -p {parent} && printf %s {encoded} | base64 -d > {absolute}",
-    )
+    device.adb("shell", "mkdir", "-p", parent)
+    _push_text(device, absolute, text)
 
 
 def prepare_canonical_saf_fixture(device: Device) -> tuple[str, str]:
@@ -131,18 +138,21 @@ def seed_picker_and_daily_configuration(device: Device) -> None:
             "",
         )
     )
-    encoded = _shell_b64(xml)
-    device.adb(
-        "shell",
-        "run-as",
-        PACKAGE,
-        "sh",
-        "-c",
-        (
-            "mkdir -p shared_prefs && "
-            f"printf %s {encoded} | base64 -d > shared_prefs/zara-org-home.xml"
-        ),
-    )
+    remote_stage = "/data/local/tmp/zara-org-home.xml"
+    _push_text(device, remote_stage, xml)
+    try:
+        device.adb("shell", "chmod", "0644", remote_stage)
+        device.adb("shell", "run-as", PACKAGE, "mkdir", "-p", "shared_prefs")
+        device.adb(
+            "shell",
+            "run-as",
+            PACKAGE,
+            "cp",
+            remote_stage,
+            "shared_prefs/zara-org-home.xml",
+        )
+    finally:
+        device.adb("shell", "rm", "-f", remote_stage)
 
 
 def _tap_contains(device: Device, fragment: str) -> None:

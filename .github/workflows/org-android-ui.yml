@@ -56,6 +56,14 @@ jobs:
           '
           test -f android/org-app/build/outputs/apk/debug/org-app-debug.apk
 
+      - name: Prepare exact-head evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="android/org-app/build/reports/device"
+          mkdir -p "$evidence_dir"
+          printf '{"source_sha":"%s","phase":"device-preflight"}\n' "$SOURCE_SHA" > "$evidence_dir/preflight.json"
+
       - name: Enable KVM access
         shell: bash
         run: |
@@ -81,10 +89,12 @@ jobs:
           disable-animations: true
           script: |
             set -eu
-            # android-emulator-runner executes script lines independently; keep all stateful readiness logic on one physical line.
+            # android-emulator-runner executes each script line as a separate POSIX `sh -c` after its own boot-complete wait. Keep every line stateless and avoid nested guest-shell quoting.
             adb -s emulator-5554 wait-for-device
             test "$(adb -s emulator-5554 get-state)" = "device"
-            bash -euo pipefail -c 'attempt=0; while [ "$attempt" -lt 60 ]; do boot="$(adb -s emulator-5554 shell getprop sys.boot_completed | tr -d "\r")"; if [ "$boot" = "1" ] && adb -s emulator-5554 shell test -d /sdcard/Documents && adb -s emulator-5554 shell sh -c "touch /sdcard/Documents/.zara-org-storage-ready && rm -f /sdcard/Documents/.zara-org-storage-ready"; then exit 0; fi; attempt=$((attempt + 1)); sleep 1; done; echo "Android booted without writable external Documents storage" >&2; adb -s emulator-5554 shell getprop sys.boot_completed >&2 || true; adb -s emulator-5554 shell ls -ld /sdcard /sdcard/Documents >&2 || true; exit 1'
+            adb -s emulator-5554 shell mkdir -p /sdcard/Documents
+            adb -s emulator-5554 shell touch /sdcard/Documents/.zara-org-storage-ready
+            adb -s emulator-5554 shell rm -f /sdcard/Documents/.zara-org-storage-ready
             adb -s emulator-5554 install -r android/org-app/build/outputs/apk/debug/org-app-debug.apk
             python android/integration/org_device_acceptance.py --serial emulator-5554 --source-sha "$SOURCE_SHA" --output android/org-app/build/reports/device
 
