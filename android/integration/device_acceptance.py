@@ -232,6 +232,8 @@ class Device:
                 )
                 time.sleep(0.2)
                 return True
+            if self.dismiss_pixel_launcher_anr():
+                continue
             time.sleep(0.1)
         raise AssertionError("Zara release notes did not expose Continue")
 
