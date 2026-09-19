@@ -1,6 +1,7 @@
 package ai.zara.app.assistant
 
 import ai.zara.app.runtime.AssistantRole
+import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.LocalServerPhase
 import ai.zara.app.runtime.LocalServerState
 import ai.zara.app.runtime.RuntimeMode
@@ -23,7 +24,8 @@ internal fun planAssistantCapture(
     }
 
     val localReady = localState.phase == LocalServerPhase.READY
-    val remoteReady = runtimeState.server is ServerConnection.Connected &&
+    val remoteReady = runtimeState.enrollment == EnrollmentReadiness.Ready &&
+        runtimeState.server is ServerConnection.Connected &&
         runtimeState.sessionId != null
 
     return when (mode) {
