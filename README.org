@@ -137,6 +137,13 @@ Long-running plugins receive a restricted runtime facade for configuration, even
 
 The companion [[https://github.com/lost-rob0t/zara-plugins][zara-plugins]] repository is the home for installable Zara plugin work. Core lifecycle/API documentation lives in [[file:wiki/plugins.org][wiki/plugins.org]]. MCP integration is documented in [[file:wiki/mcp.org][wiki/mcp.org]].
 
+*** Emacs
+
+The repository ships a thin native Emacs client in =emacs/zara.el=.  It keeps
+Zara's normal client/runtime boundary intact, provides a native chat buffer,
+and can register a confirmation-gated =ZaraAsk= gptel tool.  See
+[[file:wiki/emacs.org][wiki/emacs.org]].
+
 *** Zarathushtra desktop pets
 
 The optional Pet subsystem reacts to provider-neutral Zara runtime events such as listening, thinking, tool activity, success, and errors.
@@ -260,6 +267,7 @@ See [[file:docs/development.org][docs/development.org]].
 | [[file:wiki/plugins.org][wiki/plugins.org]] | Plugin API and lifecycle. |
 | [[file:wiki/install.org][wiki/install.org]] | Installation details. |
 | [[file:wiki/customization.org][wiki/customization.org]] | Configuration and customization. |
+| [[file:wiki/emacs.org][wiki/emacs.org]] | Native Emacs chat client and gptel delegation boundary. |
 
 ** Status language used in this repository
 
