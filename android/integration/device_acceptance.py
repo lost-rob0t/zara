@@ -206,7 +206,10 @@ class Device:
         # on crashes, permission dialogs, or unrelated overlays. Compose may publish
         # the dialog title before the confirm-button semantics reach UIAutomator, so
         # give that exact button a short bounded window instead of requiring both
-        # nodes to appear in the same hierarchy snapshot.
+        # nodes to appear in the same hierarchy snapshot. Clear the known hosted
+        # Pixel Launcher ANR first so it cannot hide Zara's Continue semantics.
+        if self.dismiss_pixel_launcher_anr():
+            return False
         if self.find_contains("What's new in Zara ") is None:
             return False
         deadline = time.monotonic() + timeout
