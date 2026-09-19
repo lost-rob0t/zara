@@ -12,6 +12,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
+from zara.music_protocol import (
+    MUSIC_CLIENT_MESSAGE_TYPES,
+    MUSIC_SERVER_MESSAGE_TYPES,
+    MusicProtocolError,
+    validate_music_message,
+)
+
 
 PROTOCOL_MARKER = b"ZARA/1"
 AUDIO_INPUT_CONTENT_TYPE = "audio/pcm;codec=pcm_s16le"
@@ -38,6 +45,7 @@ CLIENT_MESSAGE_TYPES = frozenset(
         "device.action.result",
         "device.action.error",
     }
+    | MUSIC_CLIENT_MESSAGE_TYPES
 )
 
 SERVER_MESSAGE_TYPES = frozenset(
@@ -81,6 +89,7 @@ SERVER_MESSAGE_TYPES = frozenset(
         "runtime.stopped",
         "protocol.error",
     }
+    | MUSIC_SERVER_MESSAGE_TYPES
 )
 
 RESERVED_MESSAGE_TYPES = frozenset(
@@ -769,6 +778,10 @@ def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> Pr
     _validate_visible_stt_envelope(message)
     _validate_tool_envelope(message)
     _validate_device_envelope(message)
+    try:
+        validate_music_message(message)
+    except MusicProtocolError as error:
+        raise ProtocolValidationError(str(error)) from error
     return message
 
 
@@ -898,6 +911,8 @@ __all__ = [
     "CLIENT_MESSAGE_TYPES",
     "DecodedMessage",
     "KNOWN_MESSAGE_TYPES",
+    "MUSIC_CLIENT_MESSAGE_TYPES",
+    "MUSIC_SERVER_MESSAGE_TYPES",
     "PROTOCOL_MARKER",
     "ProtocolLimits",
     "ProtocolMessage",
