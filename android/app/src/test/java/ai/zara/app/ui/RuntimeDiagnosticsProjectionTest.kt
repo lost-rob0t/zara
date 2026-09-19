@@ -123,6 +123,21 @@ class RuntimeDiagnosticsProjectionTest {
     }
 
     @Test
+    fun `stale connected generation is not projected ready`() {
+        val remote = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Ready,
+            generation = 11,
+            server = ServerConnection.Connected(10),
+            sessionId = "session-10",
+        )
+
+        val projection = runtimeUiProjection(RuntimeMode.Remote, localReady, remote)
+
+        assertEquals("remote (not ready)", projection.backendLabel)
+        assertFalse(projection.chatReady)
+    }
+
+    @Test
     fun `chat consumes canonical runtime projection instead of reconstructing readiness`() {
         val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
         val chat = source.substringAfter("private fun ChatSurface(")
@@ -210,5 +225,4 @@ class RuntimeDiagnosticsProjectionTest {
         assertTrue(chat.contains("localAiState?.model"))
         assertTrue(chat.contains("Runtime status \$runtimeStatus"))
     }
-
 }
