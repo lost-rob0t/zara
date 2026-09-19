@@ -7,12 +7,14 @@ import pytest
 from zara.org_automation import (
     AutomationDependency,
     AutomationInspection,
-    AutomationPlanError,
     AutomationSymbol,
     OrgAutomationHeading,
     compile_automation,
-    fence_automation_generation,
     inspect_automation,
+)
+from zara.org_automation_run import (
+    AutomationPlanError,
+    fence_automation_generation,
     plan_automation_run,
 )
 
@@ -188,10 +190,10 @@ def test_plan_rejects_stale_or_forged_dependency_projection() -> None:
         dependencies=(
             AutomationDependency(
                 role="WHEN",
-                symbol="org.file.saved",
+                symbol="org.todo.changed",
                 kind="event",
                 owner="org-core",
-                capabilities=("android.superuser",),
+                capabilities=(),
             ),
         )
         + inspection.dependencies[1:],
