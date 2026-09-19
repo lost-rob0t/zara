@@ -68,6 +68,33 @@ class AssistantCapturePlanTest {
     }
 
     @Test
+    fun `remote capture requires enrollment even when transport and session look connected`() {
+        val state = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Unenrolled,
+            assistantRole = AssistantRole.Held,
+            server = ServerConnection.Connected(7),
+            sessionId = "session-7",
+        )
+
+        assertEquals(
+            AssistantCapturePlan.Reject("Remote Zara session is not ready"),
+            planAssistantCapture(
+                mode = RuntimeMode.Remote,
+                localState = readyLocalState(),
+                runtimeState = state,
+            ),
+        )
+        assertEquals(
+            AssistantCapturePlan.Local,
+            planAssistantCapture(
+                mode = RuntimeMode.Auto,
+                localState = readyLocalState(),
+                runtimeState = state,
+            ),
+        )
+    }
+
+    @Test
     fun `remote mode rejects capture without authenticated remote session`() {
         val state = RuntimeState.initial().copy(
             enrollment = EnrollmentReadiness.Unenrolled,
