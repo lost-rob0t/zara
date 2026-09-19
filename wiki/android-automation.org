@@ -149,12 +149,26 @@ org=path/to/config.org
 directory=path/to/prolog
 #+end_example
 
+For an ordinary dotfiles repository, the manifest may omit =org= and
+=directory=.  When both are absent Zara looks only in the manifest-gated
+canonical Android projection:
+
+#+begin_example
+.config/zarathushtra/android/*.pl
+#+end_example
+
+The desktop sibling =.config/zarathushtra/config.pl= is deliberately not
+imported by this convention, so desktop process mappings never become Android
+execution authority.
+
 The importer:
 
 - accepts HTTPS without embedded credentials;
 - bounds refs, source count and bytes;
 - rejects symlink and canonical-path escape;
-- imports only top-level =.pl= sources from a declared directory;
+- imports only top-level =.pl= sources from a declared directory, or from the
+  canonical =.config/zarathushtra/android= dotfiles directory when the manifest
+  declares no source path;
 - tangles only explicit Org =prolog= blocks with =:tangle basename.pl=;
 - rejects arbitrary initialization, process, file, meta-call and dynamic-db
   predicates at the Git-template boundary;

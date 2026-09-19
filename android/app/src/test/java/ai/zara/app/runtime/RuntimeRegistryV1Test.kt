@@ -65,6 +65,24 @@ class RuntimeRegistryV1Test {
     }
 
     @Test
+    fun identicalDiscoveryRefreshIsGenerationNoopAndPreservesBinding() {
+        val registry = RuntimeRegistry()
+        val fixture = loadFixtureDescriptors()
+        registry.refresh(fixture)
+        registry.select("zara-python")
+        val binding = registry.bindInvocation(
+            contextRef = "ctx:turn-1",
+            capabilityRefs = listOf("cap:tool-42"),
+        )
+        val before = registry.snapshot()
+
+        val after = registry.refresh(fixture.reversed())
+
+        assertEquals(before, after)
+        assertTrue(registry.acceptsBinding(binding, contextRef = "ctx:turn-1"))
+    }
+
+    @Test
     fun refreshInvalidatesSelectionGenerationWhenRuntimeDisappears() {
         val registry = RuntimeRegistry()
         val fixture = loadFixtureDescriptors()
@@ -121,7 +139,14 @@ class RuntimeRegistryV1Test {
         assertTrue(registry.acceptsBinding(binding, contextRef = "ctx:turn-1"))
         assertFalse(registry.acceptsBinding(binding, contextRef = "ctx:turn-2"))
 
-        registry.refresh(fixture)
+        val changed = fixture.map { descriptor ->
+            if (descriptor.id == "zara-python") {
+                descriptor.copy(health = RuntimeHealth.DEGRADED)
+            } else {
+                descriptor
+            }
+        }
+        registry.refresh(changed)
 
         assertFalse(registry.acceptsBinding(binding, contextRef = "ctx:turn-1"))
     }
@@ -198,6 +223,22 @@ class RuntimeRegistryV1Test {
             }
             assertTrue(error.message.orEmpty().contains("provenance"))
         }
+    }
+
+    @Test
+    fun boundedTextCountsUnicodeScalarsLikeSharedSchema() {
+        val descriptor = loadFixtureDescriptors().first { it.id == "zara-python" }
+        val scalar = "\uD83E\uDD16"
+        val exactLimit = scalar.repeat(64)
+        val overLimit = scalar.repeat(65)
+
+        assertEquals(64, exactLimit.codePointCount(0, exactLimit.length))
+        assertEquals(exactLimit, descriptor.copy(runtimeVersion = exactLimit).runtimeVersion)
+
+        val error = expectFailure<IllegalArgumentException> {
+            descriptor.copy(runtimeVersion = overLimit)
+        }
+        assertTrue(error.message.orEmpty().contains("runtimeVersion exceeds 64 characters"))
     }
 
     private fun loadFixtureDescriptors(): List<RuntimeDescriptor> {
