@@ -68,6 +68,48 @@ class AssistantCapturePlanTest {
     }
 
     @Test
+    fun `remote mode rejects capture without authenticated remote session`() {
+        val state = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Unenrolled,
+            assistantRole = AssistantRole.Held,
+            server = ServerConnection.Disconnected,
+            sessionId = null,
+        )
+
+        assertEquals(
+            AssistantCapturePlan.Reject("Remote Zara session is not ready"),
+            planAssistantCapture(
+                mode = RuntimeMode.Remote,
+                localState = readyLocalState(),
+                runtimeState = state,
+            ),
+        )
+    }
+
+    @Test
+    fun `auto mode rejects capture when neither backend is ready`() {
+        val state = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Unenrolled,
+            assistantRole = AssistantRole.Held,
+            server = ServerConnection.Disconnected,
+            sessionId = null,
+        )
+
+        assertEquals(
+            AssistantCapturePlan.Reject("No Zara runtime is ready"),
+            planAssistantCapture(
+                mode = RuntimeMode.Auto,
+                localState = LocalServerState(
+                    phase = LocalServerPhase.STARTING,
+                    generation = 0,
+                    loadedSources = emptyList(),
+                ),
+                runtimeState = state,
+            ),
+        )
+    }
+
+    @Test
     fun `strict local mode fails honestly when embedded runtime is not ready`() {
         val state = RuntimeState.initial().copy(assistantRole = AssistantRole.Held)
 
