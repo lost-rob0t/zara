@@ -67,7 +67,7 @@ fi
 chmod 600 "$interop_fixture"
 export ZARA_STOCK_FIXTURE="$interop_fixture"
 
-if ! gradle --no-daemon   :app:testDebugUnitTest   :shared-ui:testDebugUnitTest   :org-core:testDebugUnitTest   :org-storage:testDebugUnitTest   :org-app:testDebugUnitTest   :org-todo:testDebugUnitTest   :org-reminder:testDebugUnitTest   :org-timer:testDebugUnitTest   :org-sync-core:testDebugUnitTest   :wear-app:testDebugUnitTest   :app:assembleDebug   :org-app:assembleDebug   :org-todo:assembleDebug   :org-reminder:assembleDebug   :org-timer:assembleDebug   :org-sync:assembleDebug   :wear-app:assembleDebug; then
+if ! gradle --no-daemon   :app:testDebugUnitTest   :shared-ui:testDebugUnitTest   :org-core:testDebugUnitTest   :org-storage:testDebugUnitTest   :org-app:testDebugUnitTest   :org-todo:testDebugUnitTest   :org-roam:testDebugUnitTest   :org-reminder:testDebugUnitTest   :org-timer:testDebugUnitTest   :org-sync-core:testDebugUnitTest   :wear-app:testDebugUnitTest   :app:assembleDebug   :org-app:assembleDebug   :org-todo:assembleDebug   :org-roam:assembleDebug   :org-reminder:assembleDebug   :org-timer:assembleDebug   :org-sync:assembleDebug   :wear-app:assembleDebug; then
   cat "$interop_log" >&2
   echo "stock ZaraServer Android/Wear/Org interop gate failed" >&2
   exit 1
@@ -81,6 +81,7 @@ unset ZARA_STOCK_FIXTURE
 phone_apk="app/build/outputs/apk/debug/app-debug.apk"
 org_apk="org-app/build/outputs/apk/debug/org-app-debug.apk"
 org_todo_apk="org-todo/build/outputs/apk/debug/org-todo-debug.apk"
+org_roam_apk="org-roam/build/outputs/apk/debug/org-roam-debug.apk"
 org_reminder_apk="org-reminder/build/outputs/apk/debug/org-reminder-debug.apk"
 org_timer_apk="org-timer/build/outputs/apk/debug/org-timer-debug.apk"
 org_sync_apk="org-sync/build/outputs/apk/debug/org-sync-debug.apk"
@@ -88,16 +89,50 @@ wear_apk="wear-app/build/outputs/apk/debug/wear-app-debug.apk"
 test -f "$phone_apk"
 test -f "$org_apk"
 test -f "$org_todo_apk"
+test -f "$org_roam_apk"
 test -f "$org_reminder_apk"
 test -f "$org_timer_apk"
 test -f "$org_sync_apk"
 test -f "$wear_apk"
 
-for apk in "$phone_apk" "$org_apk" "$org_todo_apk" "$org_reminder_apk" "$org_timer_apk" "$org_sync_apk" "$wear_apk"; do
+apksigner_bin="$(command -v apksigner || true)"
+if [[ -z "$apksigner_bin" ]]; then
+  apksigner_bin="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -perm -u+x -print 2>/dev/null | sort -V | tail -n 1)"
+fi
+if [[ -z "$apksigner_bin" || ! -x "$apksigner_bin" ]]; then
+  echo "Android package signer verifier is unavailable" >&2
+  exit 1
+fi
+
+org_signing_fingerprint() {
+  local apk="$1"
+  local fingerprint
+  fingerprint="$(
+    "$apksigner_bin" verify --print-certs "$apk" \
+      | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ { print $2; exit }' \
+      | tr '[:upper:]' '[:lower:]'
+  )"
+  if [[ -z "$fingerprint" ]]; then
+    echo "Unable to read APK signing certificate: $apk" >&2
+    return 1
+  fi
+  printf '%s' "$fingerprint"
+}
+
+host_signer="$(org_signing_fingerprint "$phone_apk")"
+for apk in "$org_apk" "$org_todo_apk" "$org_roam_apk" "$org_reminder_apk" "$org_timer_apk" "$org_sync_apk"; do
+  apk_signer="$(org_signing_fingerprint "$apk")"
+  if [[ "$apk_signer" != "$host_signer" ]]; then
+    echo "Org APK signer mismatch: $apk is not signed by the Zara host signer" >&2
+    exit 1
+  fi
+done
+
+for apk in "$phone_apk" "$org_apk" "$org_todo_apk" "$org_roam_apk" "$org_reminder_apk" "$org_timer_apk" "$org_sync_apk" "$wear_apk"; do
   if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET"; then
     echo "APK secret-marker inspection FAILED: private/secret material found in $apk" >&2
     exit 1
   fi
 done
 
-echo "android/wear/org gate ok: $phone_apk $org_apk $org_todo_apk $org_reminder_apk $org_timer_apk $org_sync_apk $wear_apk"
+echo "android/wear/org gate ok: $phone_apk $org_apk $org_todo_apk $org_roam_apk $org_reminder_apk $org_timer_apk $org_sync_apk $wear_apk"
