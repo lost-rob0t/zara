@@ -77,6 +77,17 @@ def _socket_info(path: Path):
     return info
 
 
+def _prepare_control_directory(path: Path) -> None:
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = os.lstat(path)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise SecurityAdminError("security admin directory is not a directory")
+    if info.st_uid != os.getuid():
+        raise SecurityAdminError("security admin directory is not owner-owned")
+    if stat.S_IMODE(info.st_mode) != 0o700:
+        os.chmod(path, 0o700)
+
+
 def _open_socket_address(path: Path) -> tuple[int | None, str]:
     """Return a bind/connect address without moving the socket out of its directory."""
     direct = os.fspath(path)
@@ -167,6 +178,7 @@ class SecurityAdminServer:
         state: PersistentSecurityState,
         *,
         capabilities: Iterable[Capability],
+        control_socket_path: Path | str | None = None,
         ensure_remote_listener: Callable[[], object] | None = None,
         remote_listener_status: Callable[[], object] | None = None,
     ) -> None:
@@ -181,7 +193,14 @@ class SecurityAdminServer:
             raise TypeError("ensure_remote_listener must be callable")
         if remote_listener_status is not None and not callable(remote_listener_status):
             raise TypeError("remote_listener_status must be callable")
+        if control_socket_path is None:
+            normalized_control_path = None
+        else:
+            normalized_control_path = Path(control_socket_path).expanduser()
+            if not normalized_control_path.is_absolute():
+                raise ValueError("security admin control socket path must be absolute")
         self._state = state
+        self._control_socket_path = normalized_control_path
         self._capabilities = frozenset(normalized)
         self._ensure_remote_listener = ensure_remote_listener
         self._remote_listener_status = remote_listener_status
@@ -193,7 +212,7 @@ class SecurityAdminServer:
 
     @property
     def path(self) -> Path:
-        return self._state.control_socket_path
+        return self._control_socket_path or self._state.control_socket_path
 
     def bind_registry(self, registry: SecurityRegistry) -> None:
         if not isinstance(registry, SecurityRegistry):
@@ -208,8 +227,8 @@ class SecurityAdminServer:
             return
         if getattr(socket, "SO_PEERCRED", None) is None:
             raise SecurityAdminError("owner peer credential checks are unavailable")
-        self._state.prepare_directory()
         path = self.path
+        _prepare_control_directory(path.parent)
         info = _socket_info(path)
         if info is not None:
             probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
