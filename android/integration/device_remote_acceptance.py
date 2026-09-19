@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 import time
 
 from device_acceptance import Device, open_menu
@@ -28,6 +29,8 @@ def read_fixture(path: Path) -> dict[str, str]:
         "endpoint",
         "server_public",
         "security_admin_path",
+        "acceptance_host",
+        "acceptance_port",
     }
     missing = required - values.keys()
     if missing:
@@ -70,6 +73,14 @@ def type_printable_ascii(device: Device, value: str) -> None:
     command = f'input text "$(printf %s \'{encoded}\' | base64 -d)"'
     device.adb("shell", "sh", "-c", command)
     time.sleep(0.5)
+
+
+def signal_turn_acceptance(fixture: dict[str, str]) -> None:
+    port = int(fixture["acceptance_port"])
+    if port not in range(1, 65536):
+        raise AssertionError("Stock Zara acceptance port is invalid")
+    with socket.create_connection((fixture["acceptance_host"], port), timeout=5.0) as barrier:
+        barrier.sendall(b"A")
 
 
 def enroll_live_server(fixture: dict[str, str], public_key: str) -> None:
@@ -142,6 +153,7 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.type_text("device_remote_ping")
     device.press_back()
     device.tap("↑")
+    signal_turn_acceptance(fixture)
     device.await_contains("stock server response", timeout=20.0)
     device.await_contains("REMOTE", timeout=5.0)
     device.capture("remote-text-turn")
