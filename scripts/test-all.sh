@@ -13,6 +13,7 @@
 #   4. Runtime tool-approval security gate
 #   4b. S1-mini transcript normalizer gate
 #   5. Full pytest suite (with JUnit XML output)
+#   5b. Native Emacs client ERT
 #   6. Config/process/file-tool security scripts
 #   7. Deterministic latency budgets
 #   8. Packaging/Nix checks
@@ -172,6 +173,16 @@ phase_pytest() {
 }
 
 run_phase "Pytest suite" phase_pytest
+
+# --- Phase 5b: Native Emacs client ---------------------------------------
+phase_emacs_client() {
+  emacs -Q --batch \
+    -L "$repo_root/emacs" \
+    -l "$repo_root/emacs/zara-test.el" \
+    -f ert-run-tests-batch-and-exit
+}
+
+run_phase "Native Emacs client ERT" phase_emacs_client
 
 # --- Phase 6: Config/process/file-tool security scripts -------------------
 phase_security_scripts() {
