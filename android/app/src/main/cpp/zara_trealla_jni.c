@@ -100,10 +100,10 @@ Java_ai_zara_app_prolog_JniTreallaNativeApi_evaluate(
     }
 
     pl_sub_query *query = NULL;
-    bool query_error = pl_query(g_runtime, query_source, &query, 0);
+    bool query_ok = pl_query(g_runtime, query_source, &query, 0);
     query_active = query != NULL;
 
-    if (query_error || get_error(g_runtime)) {
+    if (!query_ok || get_error(g_runtime)) {
         if (query_active)
             pl_done(query);
         pthread_mutex_unlock(&g_runtime_lock);
