@@ -2,6 +2,7 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
 
 #include "trealla.h"
 
@@ -15,6 +16,72 @@ static void throw_state(JNIEnv *env, const char *message)
     jclass cls = (*env)->FindClass(env, "java/lang/IllegalStateException");
     if (cls != NULL)
         (*env)->ThrowNew(env, cls, message);
+}
+
+static void append_detail_text(
+    char *buffer,
+    size_t capacity,
+    size_t *length,
+    const char *text)
+{
+    if (capacity == 0 || text == NULL || *length >= capacity)
+        return;
+
+    while (*text != '\0' && *length + 1 < capacity) {
+        buffer[*length] = *text;
+        (*length)++;
+        text++;
+    }
+    buffer[*length] = '\0';
+}
+
+static void append_detail_size(
+    char *buffer,
+    size_t capacity,
+    size_t *length,
+    size_t value)
+{
+    if (capacity == 0 || *length >= capacity)
+        return;
+
+    char digits[sizeof(size_t) * 3];
+    size_t digit_count = 0;
+    do {
+        digits[digit_count++] = (char)('0' + (value % 10));
+        value /= 10;
+    } while (value != 0 && digit_count < sizeof(digits));
+
+    while (digit_count > 0 && *length + 1 < capacity) {
+        buffer[*length] = digits[--digit_count];
+        (*length)++;
+    }
+    buffer[*length] = '\0';
+}
+
+static void throw_query_state(
+    JNIEnv *env,
+    const char *message,
+    bool query_ok,
+    bool runtime_error,
+    bool status,
+    bool query_handle,
+    size_t query_length)
+{
+    char detail[320] = {0};
+    size_t detail_length = 0;
+    append_detail_text(detail, sizeof(detail), &detail_length, message);
+    append_detail_text(detail, sizeof(detail), &detail_length, " [pl_query_ok=");
+    append_detail_text(detail, sizeof(detail), &detail_length, query_ok ? "true" : "false");
+    append_detail_text(detail, sizeof(detail), &detail_length, " runtime_error=");
+    append_detail_text(detail, sizeof(detail), &detail_length, runtime_error ? "true" : "false");
+    append_detail_text(detail, sizeof(detail), &detail_length, " status=");
+    append_detail_text(detail, sizeof(detail), &detail_length, status ? "true" : "false");
+    append_detail_text(detail, sizeof(detail), &detail_length, " query_handle=");
+    append_detail_text(detail, sizeof(detail), &detail_length, query_handle ? "true" : "false");
+    append_detail_text(detail, sizeof(detail), &detail_length, " query_length=");
+    append_detail_size(detail, sizeof(detail), &detail_length, query_length);
+    append_detail_text(detail, sizeof(detail), &detail_length, "]");
+    throw_state(env, detail);
 }
 
 static bool capture_result(pl_sub_query *query, char **results, size_t *count)
@@ -86,6 +153,7 @@ Java_ai_zara_app_prolog_JniTreallaNativeApi_evaluate(
     if (query_source == NULL)
         return NULL;
 
+    const size_t query_length = strlen(query_source);
     char *results[ZARA_MAX_SEMANTIC_RESULTS] = {0};
     size_t count = 0;
     bool query_active = false;
@@ -100,25 +168,62 @@ Java_ai_zara_app_prolog_JniTreallaNativeApi_evaluate(
     }
 
     pl_sub_query *query = NULL;
-    bool query_error = pl_query(g_runtime, query_source, &query, 0);
+    bool query_ok = pl_query(g_runtime, query_source, &query, 0);
     query_active = query != NULL;
+    bool runtime_error = get_error(g_runtime);
+    bool status = get_status(g_runtime);
 
-    if (query_error || get_error(g_runtime)) {
-        if (query_active)
+    if (!query_ok || runtime_error) {
+        bool query_handle = query_active;
+        if (query_active) {
             pl_done(query);
+            query_active = false;
+        }
         pthread_mutex_unlock(&g_runtime_lock);
         (*env)->ReleaseStringUTFChars(env, query_text, query_source);
-        throw_state(env, "Trealla native query failed");
+        throw_query_state(
+            env,
+            "Trealla native query failed",
+            query_ok,
+            runtime_error,
+            status,
+            query_handle,
+            query_length);
         return NULL;
     }
 
-    if (get_status(g_runtime)) {
+    if (status && !query_active) {
+        pthread_mutex_unlock(&g_runtime_lock);
+        (*env)->ReleaseStringUTFChars(env, query_text, query_source);
+        throw_query_state(
+            env,
+            "Trealla native query succeeded without an active query handle",
+            query_ok,
+            runtime_error,
+            status,
+            query_active,
+            query_length);
+        return NULL;
+    }
+
+    if (status) {
         if (!capture_result(query, results, &count)) {
-            if (query_active)
+            bool result_error = get_error(g_runtime);
+            bool query_handle = query_active;
+            if (query_active) {
                 pl_done(query);
+                query_active = false;
+            }
             pthread_mutex_unlock(&g_runtime_lock);
             (*env)->ReleaseStringUTFChars(env, query_text, query_source);
-            throw_state(env, "Trealla semantic query must bind Result");
+            throw_query_state(
+                env,
+                "Trealla semantic query must bind Result",
+                query_ok,
+                result_error,
+                status,
+                query_handle,
+                query_length);
             return NULL;
         }
 
@@ -139,17 +244,26 @@ Java_ai_zara_app_prolog_JniTreallaNativeApi_evaluate(
         query_active = false;
     }
 
-    if (query_active)
+    if (query_active) {
         pl_done(query);
+        query_active = false;
+    }
 
-    bool runtime_error = get_error(g_runtime);
+    runtime_error = get_error(g_runtime);
     pthread_mutex_unlock(&g_runtime_lock);
     (*env)->ReleaseStringUTFChars(env, query_text, query_source);
 
     if (!result_ok || runtime_error) {
         for (size_t i = 0; i < count; i++)
             pl_free(results[i]);
-        throw_state(env, "Trealla semantic result extraction failed");
+        throw_query_state(
+            env,
+            "Trealla semantic result extraction failed",
+            query_ok,
+            runtime_error,
+            status,
+            query_active,
+            query_length);
         return NULL;
     }
 
