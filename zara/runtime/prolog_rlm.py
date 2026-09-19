@@ -13,6 +13,7 @@ from .discovery import (
     PrologRlmSidecarClient,
     RuntimeDiscoveryError,
 )
+from .registry import ControlOwner
 
 _RUNTIME_ERROR_KINDS = {
     "unavailable",
@@ -104,6 +105,14 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
             raise PrologRlmRuntimeError(
                 "Prolog-RLM runtime protocol is incompatible",
                 kind="incompatible_protocol",
+            )
+        if (
+            descriptor.provider_control is not ControlOwner.RUNTIME
+            or descriptor.model_control is not ControlOwner.RUNTIME
+        ):
+            raise PrologRlmRuntimeError(
+                "Prolog-RLM must own provider and model control",
+                kind="capability_denied",
             )
         if not descriptor.selectable:
             raise PrologRlmRuntimeError(
