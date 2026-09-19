@@ -17,12 +17,14 @@ def test_notebook_persists_result_before_advancing_in_memory_revision() -> None:
     block = _applied_result_block()
 
     write = block.find("write(file, applied.source)")
+    on_success = block.find(".onSuccess")
     source_advance = block.find("source = applied.source")
     revision_advance = block.find("sourceRevision = applied.nextRevision")
 
     assert write >= 0, "successful notebook results must persist to canonical Org storage"
+    assert on_success >= 0, "in-memory state may advance only from the successful persistence path"
     assert source_advance >= 0 and revision_advance >= 0, "successful results must advance UI state"
-    assert write < source_advance < revision_advance, (
+    assert write < on_success < source_advance < revision_advance, (
         "canonical Org write must succeed before Notebook advances in-memory source/revision"
     )
 
@@ -32,4 +34,6 @@ def test_notebook_result_write_failure_has_an_explicit_failure_path() -> None:
 
     assert "runCatching" in block, "canonical result persistence must catch repository/SAF write failures"
     assert ".onFailure" in block, "failed canonical result writes must surface a failure path"
+    assert "Result persistence unavailable" in block, "missing storage authority must fail closed"
+    assert "Result save failed" in block, "repository write failure must not report a saved result"
     assert "Result saved" in block, "successful result persistence should retain explicit success status"
