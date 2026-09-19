@@ -7,7 +7,7 @@ Issue [[https://github.com/lost-rob0t/zara/issues/934][#934]] reorganizes the ex
 | Left menu | Tabs |
 |-----------+------|
 | Chat | Chat, Voice |
-| Workspace | Logic, Projects, Scheduled |
+| Workspace | Logic, Map, Projects, Scheduled |
 | Settings | Runtime, Connection, Permissions, Appearance, Plugins, Updates, Diagnostics, About |
 
 On a compact window, open the menu button at the upper left. The drawer has exactly three primary entries; conversation-history placeholders and local/remote status remain below them. At an available window width of at least 600dp, the same three entries appear in a persistent left rail. The menu button still opens the history drawer. There is no bottom navigation bar competing with the composer.
@@ -34,7 +34,7 @@ Back closes an open drawer before changing routes. Otherwise it returns from a s
 
 * Feature truth
 
-At the implementation base =e8e8382ddea3a48b1b67de9146e5e8ae6d17645f=, Projects, Scheduled, and Plugins are explicitly gated by #653, #654, and #655. Their tabs remain available to explain that state; this change does not add their backends. Pinned/recent history remains its existing unavailable placeholder state. Other workers can wire these surfaces through the existing callbacks/contracts without adding primary-menu entries.
+Map is a real StarIntel renderer surface backed by the build-time =ZARA_STARINTEL_MAP_URL= endpoint; it is not a new data authority. At the implementation base =e8e8382ddea3a48b1b67de9146e5e8ae6d17645f=, Projects, Scheduled, and Plugins are explicitly gated by #653, #654, and #655. Their tabs remain available to explain that state; this change does not add their backends. Pinned/recent history remains its existing unavailable placeholder state. Other workers can wire these surfaces through the existing callbacks/contracts without adding primary-menu entries.
 
 * Verification and release gate
 
