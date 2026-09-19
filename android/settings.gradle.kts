@@ -1,6 +1,12 @@
 pluginManagement {
     repositories {
-        google()
+        google {
+            content {
+                includeGroupByRegex("com\\.android.*")
+                includeGroupByRegex("com\\.google.*")
+                includeGroupByRegex("androidx.*")
+            }
+        }
         mavenCentral()
         gradlePluginPortal()
     }
@@ -11,17 +17,19 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://jitpack.io") }
     }
 }
 
 rootProject.name = "zara-android"
-include(":wear-voice")
 include(":app")
 include(":shared-ui")
 include(":editor-core")
 include(":code-editor")
 include(":org-core")
 include(":org-storage")
-include(":org-app")
 include(":org-sync-core")
+include(":org-app")
+include(":wear-app")
+include(":wear-voice")
 include(":org-notebook")
