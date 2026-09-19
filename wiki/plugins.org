@@ -143,7 +143,8 @@ managed-worker scheduler or compose existing core services when the feature is
 part of Zara itself, but it must still route agent work through =RuntimeHost=,
 use the shared event stream, remain restart-safe, and avoid a second
 =AgentManager= or microphone capture loop. =agent-mode= is the initial example;
-see =wiki/agent-mode.org=.
+see =wiki/agent-mode.org=. The =video-studio= plugin uses the same boundary to
+drive the external StarIntel media pipeline; see =wiki/video-studio.org=.
 
 * Events and threading
 
