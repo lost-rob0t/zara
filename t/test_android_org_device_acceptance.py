@@ -17,6 +17,16 @@ def test_org_acceptance_uses_real_saf_ordinary_org_corpus_not_product_store():
     assert "SQLite" not in text
 
 
+def test_org_acceptance_navigates_picker_when_root_selection_is_disabled():
+    text = ACCEPTANCE.read_text(encoding="utf-8")
+    # Hosted API-35 may ignore EXTRA_INITIAL_URI and open the picker at storage
+    # root, where Android explicitly disables "Use this folder". Evidence must
+    # navigate the disposable acceptance fixture rather than tap a disabled root.
+    assert 'device.find_contains("Can’t use this folder") is not None' in text
+    assert '_tap_contains(device, "Documents")' in text
+    assert '_tap_contains(device, "ZaraOrgAcceptance")' in text
+
+
 def test_org_acceptance_captures_todo_roam_and_scrolled_separate_dailies_with_text_twins():
     text = ACCEPTANCE.read_text(encoding="utf-8")
     for state in (
