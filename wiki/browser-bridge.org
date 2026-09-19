@@ -1,0 +1,75 @@
+#+title: Zara browser bridge
+
+* Architecture
+
+The browser integration has three explicit layers:
+
+#+begin_example
+Prolog-RLM browser predicates/tools
+        |
+        | authenticated HTTP RPC
+        v
+Zara browser-bridge plugin
+        |
+        | authenticated WebSocket RPC
+        v
+Zara Browser Bridge WebExtension
+        |
+        v
+real browser tabs + DOM
+#+end_example
+
+No layer receives callable code from the model.  The action vocabulary is
+closed at both the Prolog and Zara boundaries.
+
+* Prolog-RLM tools
+
+The =browser= tool category contains:
+
+| Tool | Effect |
+|------+---------------|
+| browser_tabs | read |
+| browser_read | read |
+| browser_elements | read |
+| browser_extract | read |
+| browser_screenshot | read |
+| browser_open | network_write |
+| browser_navigate | network_write |
+| browser_click | network_write |
+| browser_type | network_write |
+| browser_submit | network_write |
+
+Loading the category grants no capability and changes no authority.
+
+* Vision loop
+
+=browser_screenshot= returns =data_url= with MIME type =image/png=.  Prolog-RLM
+already accepts image URLs/data URLs as multimodal content, so an agent may
+perform:
+
+#+begin_example
+browser_screenshot -> image_url(DataURL, high) -> multimodal model
+#+end_example
+
+This keeps browser capture separate from model selection.
+
+* Image generation
+
+Prolog-RLM image output is a separate model operation.  Configure:
+
+#+begin_example
+PROLOG_RLM_IMAGE_ENDPOINT
+PROLOG_RLM_IMAGE_MODEL
+PROLOG_RLM_IMAGE_API_KEY
+#+end_example
+
+The endpoint is OpenAI-compatible and is not defaulted to a remote vendor.
+=image_generate= is a =network_write= tool because it may spend provider
+credits or create provider-side artifacts.
+
+* Browser posting
+
+Posting is composed from ordinary browser primitives rather than a site-specific
+backdoor.  For a form-based site, the runtime reads the page, types into
+selected fields, and submits the selected form/control.  Mutation stays subject
+to Zara approval and Prolog-RLM authority.
