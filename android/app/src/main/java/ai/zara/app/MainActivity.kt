@@ -2,6 +2,7 @@ package ai.zara.app
 
 import ai.zara.app.projects.ProjectContextStore
 import ai.zara.app.localai.LocalAiState
+import ai.zara.app.localai.LocalLlmConfiguration
 import ai.zara.app.ui.RenderedTextTurn
 import ai.zara.app.ui.LocalEmbeddingPreferenceStore
 import ai.zara.app.ui.RuntimeModePreferenceStore
@@ -39,6 +40,7 @@ class MainActivity : ComponentActivity() {
     private var operationError by mutableStateOf<String?>(null)
     private var voiceState by mutableStateOf<ManualVoiceState>(ManualVoiceState.Idle)
     private var localAiState by mutableStateOf<LocalAiState?>(null)
+    private var localLlmConfiguration by mutableStateOf(LocalLlmConfiguration())
     private var localAiRefreshGeneration = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,6 +54,7 @@ class MainActivity : ComponentActivity() {
         )
         microphonePermissionGranted = hasMicrophonePermission()
         voiceState = appSession.voiceState()
+        refreshLocalLlmConfiguration()
 
         var runtimeState by mutableStateOf(appSession.state())
         var enrollmentPublicKey by mutableStateOf(appSession.enrollmentPublicKeyZ85())
@@ -141,6 +144,7 @@ class MainActivity : ComponentActivity() {
                 selectedTheme = selectedTheme,
                 localServerState = localServerState,
                 localAiState = localAiState,
+                localLlmConfiguration = localLlmConfiguration,
                 prologSources = prologSources,
                 prologQueryResult = prologQueryResult,
                 updateState = updateState,
@@ -161,6 +165,20 @@ class MainActivity : ComponentActivity() {
                     refreshLocalAiState()
                 },
                 onRefreshLocalAiState = ::refreshLocalAiState,
+                onSaveLocalLlmConfiguration = { configuration ->
+                    operationError = null
+                    operationBusy = true
+                    appSession.saveLocalLlmConfiguration(configuration).whenComplete { saved, error ->
+                        runOnUiThread {
+                            operationBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            if (saved != null) {
+                                localLlmConfiguration = saved
+                                prologSources = appSession.prologSources()
+                            }
+                        }
+                    }
+                },
                 onSetLocalEmbeddingEnabled = { enabled ->
                     localEmbedding = localEmbedding.copy(enabled = enabled)
                     embeddingPreferenceStore.save(localEmbedding)
@@ -427,6 +445,7 @@ class MainActivity : ComponentActivity() {
         if (!::appSession.isInitialized) return
         appSession.assessAssistantRole()
         refreshLocalAiState()
+        refreshLocalLlmConfiguration()
         reconcileMicrophonePermission(hasMicrophonePermission())
     }
 
@@ -451,6 +470,15 @@ class MainActivity : ComponentActivity() {
             (application as ZaraApplication).updateManager.setObserver(null)
         }
         super.onDestroy()
+    }
+
+    private fun refreshLocalLlmConfiguration() {
+        if (!::appSession.isInitialized) return
+        try {
+            localLlmConfiguration = appSession.localLlmConfiguration()
+        } catch (error: Exception) {
+            operationError = UiOperationFailure.summarize(error)
+        }
     }
 
     private fun refreshLocalAiState() {
