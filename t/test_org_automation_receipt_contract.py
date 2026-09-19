@@ -242,3 +242,20 @@ def test_completed_and_failed_payload_shapes_are_closed() -> None:
     assert failed.status == "failed"
     assert failed.error_kind == "runtime_error"
     assert failed.result_ref == ""
+
+
+def test_completed_result_must_be_a_host_owned_reference_not_secret_shaped_text() -> None:
+    with pytest.raises(AutomationReceiptError, match="result_ref"):
+        reduce_automation_run(
+            run_plan(),
+            (
+                event(0, "accepted"),
+                event(1, "started", attempt=1),
+                event(
+                    2,
+                    "completed",
+                    attempt=1,
+                    result_ref="sk-live-provider-secret",
+                ),
+            ),
+        )
