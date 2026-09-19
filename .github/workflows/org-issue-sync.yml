@@ -1,0 +1,66 @@
+name: Org Issue Sync
+
+on:
+  pull_request:
+    paths:
+      - ideas.org
+      - scripts/org_issue_sync.py
+      - t/test_org_issue_sync.py
+      - .github/workflows/org-issue-sync.yml
+  push:
+    branches:
+      - master
+    paths:
+      - ideas.org
+      - scripts/org_issue_sync.py
+      - t/test_org_issue_sync.py
+      - .github/workflows/org-issue-sync.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: org-issue-sync-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Test Org issue synchronizer
+        run: python -m unittest discover -s t -p 'test_org_issue_sync.py' -v
+
+      - name: Validate Org RAGE metadata
+        run: python scripts/org_issue_sync.py --file ideas.org --repo "$GITHUB_REPOSITORY" --check
+
+  sync:
+    needs: validate
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Sync promoted Org TODOs to GitHub Issues
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/org_issue_sync.py --file ideas.org --repo "$GITHUB_REPOSITORY" --sync

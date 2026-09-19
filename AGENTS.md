@@ -193,6 +193,51 @@ Do not game coverage. Never weaken assertions, add meaningless execution-only te
 ## Cursor / Copilot Rules
 - No `.cursor/rules/`, `.cursorrules`, or `.github/copilot-instructions.md` found.
 
+## Org Idea / RAGE Issue Intake
+
+`ideas.org` is Zara's canonical human-editable idea intake. GitHub Issues remain the authoritative executable RAGE queue after an idea is promoted.
+
+### State semantics
+
+- Capture every new implementation/product idea as an `IDEA` TODO state in `ideas.org`; do not encode IDEA as an Org tag.
+- `IDEA` is intentionally non-executable and never creates a GitHub issue.
+- Promote executable work to `TODO`, `NEXT`, or `DOING` and set `:ISSUE_SYNC: auto`.
+- `:ID:` is the immutable cross-system identity. Do not use the mutable heading/title as identity.
+- `DONE` closes an existing managed issue as completed.
+- `CANCELLED` closes an existing managed issue as not planned.
+- Use `SCHEDULED` for queue/time placement and `DEADLINE` only for an actual final cutoff.
+
+### Initial RAGE slice metadata
+
+Any issue-managed entry with `:RAGE_SLICE: initial` is an executable slice definition and must contain all of:
+
+- `RAGE_PARENT`
+- `RAGE_PRIORITY`
+- `RAGE_SCOPE`
+- `RAGE_NON_GOALS`
+- `RAGE_INVARIANTS`
+- `RAGE_DEPENDS`
+- `RAGE_BRANCH`
+- `RAGE_RESEARCH`
+- `RAGE_ACCEPTANCE`
+- `RAGE_TDD`
+- `RAGE_ARTIFACTS`
+- `RAGE_GATE`
+
+Keep each property concrete enough that a worker can start research/TDD without inventing scope. Detailed prose may live under the Org heading, but the required properties are the machine-checkable minimum.
+
+### Issue synchronization
+
+- `scripts/org_issue_sync.py` validates the queue and owns Org↔GitHub synchronization.
+- `.github/workflows/org-issue-sync.yml` runs tests/validation on pull requests and performs issue writes only on `master` pushes or explicit workflow dispatch.
+- Managed issues contain `<!-- zara-org-id: <ID> -->`; this marker, not title matching, provides idempotency.
+- If an issue already exists, record `:ISSUE_NUMBER:` and ensure the issue contains the matching marker before enabling sync.
+- The synchronizer updates only its managed block and preserves manual issue detail outside that block.
+- Never make pull-request validation create issues. Promotion becomes externally effective only after the source Org change lands.
+- Duplicate IDs, incomplete initial-slice metadata, or an `:ISSUE_NUMBER:` pointing at an issue with a different marker are hard failures.
+
+This intake layer does not replace the RAGE issue-consumer rules below. Once promoted, workers consume the GitHub issue queue and record normal append-only `rage/` evidence.
+
 ## RAGE Work Protocol
 
 When the user requests RAGE, use the repository's GitHub Issues as the work queue. Do not manufacture an implementation target from prose when an issue or epic already defines the work.

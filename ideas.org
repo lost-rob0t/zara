@@ -1,15 +1,119 @@
 #+title: Zara Ideas
 #+startup: overview
+#+TODO: IDEA TODO NEXT DOING | DONE CANCELLED
 
 * Idea Inbox
 
 # IDEA is an Org TODO state in the operator's Doom/Org workflow.
-# Capture format:
+# Capture uncommitted thoughts as:
 # ** IDEA <short title>
 # Do NOT add :IDEA: as a tag.
-# SCHEDULED/DEADLINE are intentionally omitted unless the idea is promoted into active work.
-# - Captured: YYYY-MM-DD HH:MM America/New_York
-# - Source: <issue/PR/chat reference when available>
-# - Why deferred: <one sentence>
-# - Next proof: <smallest thing that would justify promotion>
-# - Promoted issue: <repo#issue | none>
+#
+# Promotion contract:
+# - IDEA never creates a GitHub issue.
+# - Promote to TODO/NEXT/DOING and set :ISSUE_SYNC: auto to manage an issue.
+# - :ID: is immutable issue identity; titles may change.
+# - DONE closes the managed issue as completed; CANCELLED closes it as not planned.
+# - SCHEDULED places work in time; DEADLINE is only the real final cutoff.
+#
+# Initial RAGE slices are executable specifications, not labels. A synced entry with
+# :RAGE_SLICE: initial must define every required property below:
+# RAGE_PARENT, RAGE_PRIORITY, RAGE_SCOPE, RAGE_NON_GOALS, RAGE_INVARIANTS,
+# RAGE_DEPENDS, RAGE_BRANCH, RAGE_RESEARCH, RAGE_ACCEPTANCE, RAGE_TDD,
+# RAGE_ARTIFACTS, RAGE_GATE.
+#
+# CI validates this file on pull requests and syncs managed TODOs after merge to
+# master. GitHub issues carry a hidden zara-org-id marker so sync is idempotent.
+
+** TODO Polyglot tool ABI + full Git/Tea plugins + Prolog↔Python generated tool shapes
+:PROPERTIES:
+:ID: zara-idea-polyglot-tool-runtime
+:ISSUE_SYNC: auto
+:ISSUE_REPO: lost-rob0t/zara
+:ISSUE_NUMBER: 1199
+:ISSUE_TITLE: [RAGE][P1][Tooling] Polyglot tool ABI + full Git/Tea plugins + Prolog↔Python generated tool shapes
+:RAGE_SLICE: initial
+:RAGE_PARENT: #1192
+:RAGE_PRIORITY: P1
+:RAGE_SCOPE: Freeze one canonical Zara tool descriptor; generate Python/LangChain tools from Prolog declarations; expose typed Python callables to Prolog; implement managed Prolog-to-Python execution; start Git with typed status/log/diff.
+:RAGE_NON_GOALS: No ambient eval; no duplicate Python-only registry; no Android-only schema; no language-specific agent fork; no bypass of capability/approval authority.
+:RAGE_INVARIANTS: Prolog owns declarative schema/policy; installation never grants authority; child budgets only narrow parent envelopes; cancellation and stale generations cannot publish accepted results; side effects remain typed and auditable.
+:RAGE_DEPENDS: #986,#1046
+:RAGE_BRANCH: rage/1199-polyglot-tool-abi
+:RAGE_RESEARCH: Audit #986 command registry and #1046 runtime ABI; inspect existing LangChain tools, PrologEngine boundary, Git helpers, Tea/Forgejo usage, Nix language runtimes, and cancellation/budget/event contracts.
+:RAGE_ACCEPTANCE: Deterministic generated Python schema; Python-to-Prolog typed round trip; managed Python invocation from Prolog; cancellation fencing; typed Git status/log/diff; shared conformance fixture; documented Common Lisp/Nim/JS/TS/Elisp package extension.
+:RAGE_TDD: RED invalid/mismatched schema and cancellation cases first; RED Python↔Prolog round trip; RED Git fixture outputs; implement minimum bridge and read-only Git slice; then refactor under green tests.
+:RAGE_ARTIFACTS: Canonical descriptor/schema; Prolog declarations; Python adapter/generator; conformance fixtures; Git package; architecture/wiki docs; append-only RAGE log.
+:RAGE_GATE: Focused bridge/tool tests; Prolog load; scripts/test-all.sh; nix flake check; nix build; exact-head GitHub Actions.
+:END:
+- Captured: 2026-09-19 00:25 America/New_York
+- Source: operator request; GitHub #1199
+- Promoted issue: lost-rob0t/zara#1199
+
+*** Definition
+The full program extends the same ABI into mutating Git operations, Tea/Forgejo/Gitea operations, and Babel-style language packages for Prolog, Python, Common Lisp, shell, Nim, JavaScript, TypeScript, and Emacs Lisp.
+
+*** Initial slice boundary
+Only freeze/prove the descriptor and bidirectional Prolog/Python bridge plus read-only Git status/log/diff. Later side-effecting Git, Tea, and additional runtime packages become explicit child slices.
+
+** TODO Desktop Work mode + local host/container/VM execution + persistent Zara Linux environment
+:PROPERTIES:
+:ID: zara-idea-work-mode-desktop-runtime
+:ISSUE_SYNC: auto
+:ISSUE_REPO: lost-rob0t/zara
+:ISSUE_NUMBER: 1200
+:ISSUE_TITLE: [RAGE][P1][Work Mode] Desktop local coding workspace + host/container/VM execution + persistent Zara Linux environment
+:RAGE_SLICE: initial
+:RAGE_PARENT: #1192
+:RAGE_PRIORITY: P1
+:RAGE_SCOPE: Freeze WorkSession and ExecutionEnvironment contracts; implement real desktop-host execution and one persistent isolated container backend; surface execution location, session lifecycle, files/terminal/Git/tests/events, budgets, and cancellation in Work mode.
+:RAGE_NON_GOALS: No second scheduler or approval engine; no direct model-owned Docker socket; no chat-history fake persistence; no duplicate Termux stack; no backend-specific task semantics.
+:RAGE_INVARIANTS: Durable generation-fenced WorkSession identity; canonical capability/approval boundaries; reconnect never replays completed effects; execution locality is always visible; strict-local means no hidden cloud fallback.
+:RAGE_DEPENDS: #1188,#1046
+:RAGE_BRANCH: rage/1200-work-mode-runtime
+:RAGE_RESEARCH: Audit #1192, #1188, #1183/#1185/#1186/#1187, #1046, RuntimeHost/task/event boundaries, current desktop project/chat UX, container/VM support, Nix packaging, and persistent workspace requirements.
+:RAGE_ACCEPTANCE: Durable project session; real host command; same task in persistent isolated container; process restart reattach without replay; cancellation fences late output; edit/test/Git diff events; package persistence; truthful unavailable state; strict-local proof; #1188-compatible fixture.
+:RAGE_TDD: RED session lifecycle/replay/cancel tests first; RED host adapter; RED persistent container restart; implement minimum contract/backends; add UI only against real session state; expand failure/resource paths.
+:RAGE_ARTIFACTS: WorkSession schema; ExecutionEnvironment interface; host adapter; container adapter; persistent Zara Linux profile design; desktop Work surface; fixtures/tests; RAGE log.
+:RAGE_GATE: Focused Work-mode tests; scripts/test-all.sh; nix flake check; nix build; exact-source desktop UI evidence; exact-head GitHub Actions.
+:END:
+- Captured: 2026-09-19 00:25 America/New_York
+- Source: operator request; GitHub #1200
+- Promoted issue: lost-rob0t/zara#1200
+
+*** Release baseline
+Desktop and phone converge on modern assistant chat/project semantics while remaining local-first. Android/Termux implementation continues under #1183 and its children; this entry owns the missing desktop Work-mode execution slice.
+
+*** Environment direction
+Support explicitly authorized host workspaces, persistent Zara containers, a reproducible Zara Linux environment with persistent Nix plus an apt-compatible lane, common VM adapters, and #1188 remote workers through one WorkSession contract.
+
+** TODO Secure P2P worker mesh + horizontal fan-out + four-worker Proxmox deployment
+:PROPERTIES:
+:ID: zara-idea-worker-mesh-proxmox
+:ISSUE_SYNC: auto
+:ISSUE_REPO: lost-rob0t/zara
+:ISSUE_NUMBER: 1201
+:ISSUE_TITLE: [RAGE][P1][Workers] Secure P2P Zara worker mesh + horizontal fan-out + Proxmox 4-worker deployment profile
+:RAGE_SLICE: initial
+:RAGE_PARENT: #1192
+:RAGE_PRIORITY: P1
+:RAGE_SCOPE: Implement trusted worker descriptors, pairing, heartbeat, generation/lease fencing, capability/resource advertisement, and deterministic two-worker placement; add a declarative Proxmox profile that launches four shared Zara workers.
+:RAGE_NON_GOALS: No unauthenticated LAN authority; no fake duplicate work for parallelism; no worker-specific agent fork; no Proxmox-only scheduling semantics; no budget/capability bypass.
+:RAGE_INVARIANTS: Network reachability grants no capability; one job has one accepted terminal result; stale generations cannot commit; concurrent workers cannot oversubscribe budgets; placement/result provenance is replayable; disconnected workers degrade truthfully.
+:RAGE_DEPENDS: #1188,#1200
+:RAGE_BRANCH: rage/1201-worker-mesh-proxmox
+:RAGE_RESEARCH: Audit #1188 ZMQ/LISA host/session protocol, #1200 WorkSession contract, RuntimeHost/task scheduler/budget primitives, current Proxmox/Nix deployment patterns, CURVE/auth identity, worker lifecycle, and failure/retry semantics.
+:RAGE_ACCEPTANCE: Pair/reject spoofed worker; heartbeat degradation; stale-generation rejection; two-worker fan-out; max-parallel/budget enforcement; exact-job cancellation; retry-safe failover without duplicate accepted side effect; drain; four reproducible Proxmox workers; scale count beyond four; Work mode shows real execution worker.
+:RAGE_TDD: RED identity/spoof and generation tests; RED placement/budget race tests; RED cancellation/failover matrix; implement minimum two-worker fabric; then prove declarative four-worker Proxmox deployment.
+:RAGE_ARTIFACTS: Host descriptor; trust/pairing state; scheduler placement policy; multi-worker fixtures; Proxmox Nix profile/module; deployment docs; fault matrix; RAGE log.
+:RAGE_GATE: Deterministic multi-worker integration/fault tests; scripts/test-all.sh; nix flake check; nix build; Proxmox profile evaluation; exact-head GitHub Actions.
+:END:
+- Captured: 2026-09-19 00:25 America/New_York
+- Source: operator request; GitHub #1201
+- Promoted issue: lost-rob0t/zara#1201
+
+*** Target topology
+The personal deployment target is one desktop Zara/control host plus four shared Proxmox worker instances. Four is a deployment profile, not a protocol limit.
+
+*** Scheduling direction
+Work mode may fan independent/subagent jobs across eligible workers under explicit max parallelism, hierarchical reserve/commit/refund budgets, affinity, cancellation, idempotency, retry-safety, and stale-generation fencing.
