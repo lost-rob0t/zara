@@ -57,6 +57,33 @@ class OrgWorkspaceProjectionTest {
     }
 
     @Test
+    fun multipleFileLocalTodoSequencesRemainCanonical() {
+        val source = """
+            #+TODO: TODO(t) | DONE(d)
+            #+TODO: REPORT(r) BUG(b) KNOWNCAUSE(k) | FIXED(f)
+            #+TODO: | CANCELED(c)
+            * TODO General task
+            * BUG Reproduce issue
+            * FIXED Resolved issue
+            * CANCELED Dropped work
+        """.trimIndent()
+
+        val document = OrgParser.parse(source, "mixed.org")
+        val workflow = OrgParser.todoWorkflow(source)
+        val projection = OrgWorkspaceProjector.project(mapOf("mixed.org" to source))
+
+        assertEquals(listOf("TODO", "BUG", "FIXED", "CANCELED"), document.tasks.map { it.state })
+        assertEquals(
+            listOf("TODO", "DONE", "REPORT", "BUG", "KNOWNCAUSE", "FIXED", "CANCELED"),
+            workflow.states,
+        )
+        assertEquals(setOf("DONE", "FIXED", "CANCELED"), workflow.doneStates)
+        assertEquals(listOf("General task", "Reproduce issue"), projection.openTasks.map { it.title })
+        assertEquals("FIXED", OrgParser.nextTodoState(source, "KNOWNCAUSE"))
+        assertEquals("REPORT", OrgParser.nextTodoState(source, "FIXED"))
+    }
+
+    @Test
     fun dailyProjectionUsesExplicitArbitraryWorkspaceTemplate() {
         val spec = OrgDailySpec(
             relativePathTemplate = "knowledge/journal/{date}.org",
