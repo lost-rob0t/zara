@@ -32,11 +32,15 @@ internal fun planAssistantCapture(
         } else {
             AssistantCapturePlan.Reject("Local Zara server is not ready")
         }
-        RuntimeMode.Remote -> AssistantCapturePlan.Remote
+        RuntimeMode.Remote -> if (remoteReady) {
+            AssistantCapturePlan.Remote
+        } else {
+            AssistantCapturePlan.Reject("Remote Zara session is not ready")
+        }
         RuntimeMode.Auto -> when {
             remoteReady -> AssistantCapturePlan.Remote
             localReady -> AssistantCapturePlan.Local
-            else -> AssistantCapturePlan.Remote
+            else -> AssistantCapturePlan.Reject("No Zara runtime is ready")
         }
     }
 }
