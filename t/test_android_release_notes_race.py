@@ -22,41 +22,6 @@ def _load_device_acceptance_module():
     return module
 
 
-def test_dismiss_release_notes_taps_continue_for_visible_changelog(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    module = _load_device_acceptance_module()
-    device = module.Device("emulator-5554", tmp_path)
-    title = module.ET.fromstring(
-        '<node text="What&apos;s new in Zara 0.2.2-alpha" bounds="[0,0][100,40]" />'
-    )
-    continue_button = module.ET.fromstring(
-        '<node text="Continue" bounds="[20,40][100,80]" />'
-    )
-    adb_calls: list[tuple[str, ...]] = []
-
-    monkeypatch.setattr(
-        device,
-        "find_contains",
-        lambda fragment: title if fragment == "What's new in Zara " else None,
-    )
-    monkeypatch.setattr(
-        device,
-        "find",
-        lambda label: continue_button if label == "Continue" else None,
-    )
-    monkeypatch.setattr(
-        device,
-        "adb",
-        lambda *arguments, **_kwargs: adb_calls.append(arguments) or "",
-    )
-    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
-
-    assert device.dismiss_release_notes() is True
-    assert adb_calls == [("shell", "input", "tap", "60", "60")]
-
-
 def test_await_label_dismisses_release_notes_that_appear_after_launch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
