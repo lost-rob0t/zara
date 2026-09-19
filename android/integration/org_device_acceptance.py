@@ -193,15 +193,49 @@ def _find_picker_contains(device: Device, fragment: str):
     )
 
 
-def _await_picker_contains(
-    device: Device, fragment: str, timeout: float = 20.0
+def _find_picker_action(device: Device, action: str):
+    """Find an OS-owned picker action exactly, ignoring presentation casing only."""
+
+    needle = action.strip().casefold()
+    return next(
+        (
+            node
+            for node in _picker_nodes(device)
+            if any(
+                (node.get(attribute) or "").strip().casefold() == needle
+                for attribute in ("text", "content-desc")
+            )
+        ),
+        None,
+    )
+
+
+def _await_picker_action(
+    device: Device, action: str, timeout: float = 20.0
 ) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if _find_picker_contains(device, fragment) is not None:
+        if _find_picker_action(device, action) is not None:
             return
         time.sleep(0.2)
-    raise AssertionError(f"System picker did not retain text containing {fragment}")
+    raise AssertionError(f"System picker did not retain action {action}")
+
+
+def _tap_picker_action(device: Device, action: str) -> None:
+    node = _find_picker_action(device, action)
+    if node is None:
+        raise AssertionError(f"System picker action is not reachable: {action}")
+    left, top, right, bottom = device.bounds(node)
+    if right <= left or bottom <= top:
+        raise AssertionError(f"System picker action has empty bounds: {action}")
+    device.adb(
+        "shell",
+        "input",
+        "tap",
+        str((left + right) // 2),
+        str((top + bottom) // 2),
+    )
+    time.sleep(0.4)
 
 
 def _tap_contains(device: Device, fragment: str) -> None:
@@ -230,7 +264,7 @@ def _navigate_picker_to_fixture_if_needed(device: Device) -> None:
     _tap_contains(device, "Documents")
     device.await_contains("ZaraOrgAcceptance")
     _tap_contains(device, "ZaraOrgAcceptance")
-    _await_picker_contains(device, "Use this folder")
+    _await_picker_action(device, "Use this folder")
     if device.find_contains("Can’t use this folder") is not None:
         raise AssertionError("SAF picker did not enter the acceptance fixture directory")
 
@@ -266,11 +300,11 @@ def connect_fixture_through_saf(device: Device) -> None:
     device.launch_surface(COMPONENT, "Org")
     device.await_contains("Shared Org workspace is unavailable")
     device.tap("Choose Org directory")
-    _await_picker_contains(device, "Use this folder")
+    _await_picker_action(device, "Use this folder")
     _navigate_picker_to_fixture_if_needed(device)
-    _tap_contains(device, "Use this folder")
-    _await_picker_contains(device, "Allow")
-    _tap_contains(device, "Allow")
+    _tap_picker_action(device, "Use this folder")
+    _await_picker_action(device, "Allow")
+    _tap_picker_action(device, "Allow")
     device.await_contains("Acceptance task", timeout=20.0)
 
 
