@@ -42,3 +42,34 @@ def test_picker_exact_action_ignores_permission_prompt_body(monkeypatch, tmp_pat
 
     assert node is not None
     assert node.get("text") == "ALLOW"
+
+
+def test_app_control_tap_recovers_from_late_pixel_launcher_anr(monkeypatch, tmp_path) -> None:
+    module = _load_org_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    control = ET.fromstring(
+        '<node text="Choose Org directory" bounds="[20,40][220,140]" />'
+    )
+    dismissals = iter((True, False))
+    adb_calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(device, "dismiss_pixel_launcher_anr", lambda: next(dismissals))
+    monkeypatch.setattr(
+        device,
+        "find",
+        lambda label: control if label == "Choose Org directory" else None,
+    )
+    monkeypatch.setattr(
+        device,
+        "adb",
+        lambda *arguments, **kwargs: adb_calls.append(arguments) or "",
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    module._tap_app_control_through_launcher_anr(
+        device,
+        "Choose Org directory",
+        timeout=1.0,
+    )
+
+    assert adb_calls == [("shell", "input", "tap", "120", "90")]
