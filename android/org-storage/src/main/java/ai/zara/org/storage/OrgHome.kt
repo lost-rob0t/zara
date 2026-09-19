@@ -1,5 +1,6 @@
 package ai.zara.org.storage
 
+import ai.zara.org.core.OrgDailySpec
 import ai.zara.org.core.OrgParser
 import ai.zara.org.core.OrgTask
 import ai.zara.org.core.OrgTangler
@@ -7,6 +8,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import android.util.Base64
+import java.time.ZoneId
 
 interface OrgRepository {
     fun listOrgFiles(): List<OrgFileRef>
@@ -28,6 +30,18 @@ data class OrgHomeSelection(
     val mode: OrgHomeMode,
     val customTreeUri: Uri? = null,
 )
+
+data class OrgDailyConfiguration(
+    val relativePathTemplate: String,
+    val datePattern: String,
+    val zoneId: String,
+) {
+    fun toSpec(): OrgDailySpec = OrgDailySpec(
+        relativePathTemplate = relativePathTemplate,
+        datePattern = datePattern,
+        zoneId = ZoneId.of(zoneId),
+    )
+}
 
 object SharedOrgHomeContract {
     const val AUTHORITY = "ai.zara.org.sync.home"
@@ -63,6 +77,9 @@ object OrgHome {
     private const val PREFS = "zara-org-home"
     private const val KEY_MODE = "mode"
     private const val KEY_CUSTOM_URI = "custom-tree-uri"
+    private const val KEY_DAILY_PATH_TEMPLATE = "daily-path-template"
+    private const val KEY_DAILY_DATE_PATTERN = "daily-date-pattern"
+    private const val KEY_DAILY_ZONE_ID = "daily-zone-id"
 
     fun selection(context: Context): OrgHomeSelection {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -71,6 +88,54 @@ object OrgHome {
         }.getOrDefault(OrgHomeMode.SHARED)
         val uri = prefs.getString(KEY_CUSTOM_URI, null)?.let(Uri::parse)
         return OrgHomeSelection(mode, uri)
+    }
+
+    fun dailySpec(context: Context): OrgDailySpec? {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val pathTemplate = prefs.getString(KEY_DAILY_PATH_TEMPLATE, null)
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?: return null
+        val datePattern = prefs.getString(KEY_DAILY_DATE_PATTERN, null)
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?: return null
+        val zoneId = prefs.getString(KEY_DAILY_ZONE_ID, null)
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?: return null
+        return runCatching {
+            OrgDailyConfiguration(pathTemplate, datePattern, zoneId).toSpec()
+        }.getOrNull()
+    }
+
+    fun configureDaily(
+        context: Context,
+        relativePathTemplate: String,
+        datePattern: String,
+        zoneId: String,
+    ) {
+        val configuration = OrgDailyConfiguration(
+            relativePathTemplate = relativePathTemplate.trim(),
+            datePattern = datePattern.trim(),
+            zoneId = zoneId.trim(),
+        )
+        configuration.toSpec()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_DAILY_PATH_TEMPLATE, configuration.relativePathTemplate)
+            .putString(KEY_DAILY_DATE_PATTERN, configuration.datePattern)
+            .putString(KEY_DAILY_ZONE_ID, configuration.zoneId)
+            .apply()
+    }
+
+    fun clearDaily(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .remove(KEY_DAILY_PATH_TEMPLATE)
+            .remove(KEY_DAILY_DATE_PATTERN)
+            .remove(KEY_DAILY_ZONE_ID)
+            .apply()
     }
 
     fun useShared(context: Context) {
