@@ -337,7 +337,7 @@ def resolve_org_todo_root(
     todo_config: Mapping[str, Any],
     home: Optional[Path] = None,
 ) -> Path:
-    """Resolve the canonical Org source, preferring an existing gpt-todos checkout."""
+    """Resolve the configured canonical Org source without guessing user layout."""
 
     home_path = (home or Path.home()).expanduser()
     configured_root = str(todo_config.get("org_root", "")).strip()
@@ -346,11 +346,10 @@ def resolve_org_todo_root(
     configured_repo = str(todo_config.get("gpt_todos_repo", "")).strip()
     if configured_repo:
         return _expand_home(configured_repo, home_path) / "agenda"
-    discovered = home_path / "Documents" / "gpt-todos" / "agenda"
-    if discovered.is_dir():
-        return discovered
-    fallback = str(todo_config.get("org_path", "~/todo.org")).strip() or "~/todo.org"
-    return _expand_home(fallback, home_path)
+    configured_path = str(todo_config.get("org_path", "")).strip()
+    if configured_path:
+        return _expand_home(configured_path, home_path)
+    return home_path / ".local" / "share" / "zarathushtra" / "todos.org"
 
 
 def _parse_file(path: Path) -> list[_OrgTask]:
