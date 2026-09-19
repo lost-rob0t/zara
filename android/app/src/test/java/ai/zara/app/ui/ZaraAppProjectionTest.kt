@@ -106,7 +106,7 @@ class ZaraAppProjectionTest {
     fun frozenDrawerRouteInventoryReplacesBottomNavigation() {
         val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
         val expected = listOf(
-            "Chat", "Logic", "Voice", "Projects", "Remote", "Scheduled",
+            "Chat", "Logic", "Map", "Voice", "Projects", "Remote", "Scheduled",
             "Plugins", "Themes", "Diagnostics", "Settings", "About",
         )
         var cursor = -1
@@ -117,6 +117,22 @@ class ZaraAppProjectionTest {
         }
         assertTrue(source.contains("ModalNavigationDrawer"))
         assertFalse(source.contains("NavigationBarItem"))
+    }
+
+    @Test
+    fun starIntelMapIsARealWorkspaceSurface() {
+        val app = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val map = File("src/main/java/ai/zara/app/ui/StarIntelMapSurface.kt").readText()
+        val gradle = File("build.gradle.kts").readText()
+
+        assertTrue(app.contains("AppRoute.Map -> AppSurface.Map"))
+        assertTrue(app.contains("AppSurface.Map -> StarIntelMapSurface("))
+        assertTrue(app.contains("BuildConfig.STARINTEL_MAP_URL"))
+        assertTrue(map.contains("mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW"))
+        assertTrue(map.contains("setGeolocationEnabled(false)"))
+        assertTrue(map.contains("allowFileAccess = false"))
+        assertTrue(gradle.contains("ZARA_STARINTEL_MAP_URL"))
+        assertTrue(gradle.contains("https://maps.starintel.actor/"))
     }
 
     @Test
