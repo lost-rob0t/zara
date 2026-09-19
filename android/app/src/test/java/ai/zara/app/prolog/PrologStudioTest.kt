@@ -243,6 +243,10 @@ class PrologStudioTest {
         )
         assertEquals(
             "triage_explain(alice, Result)",
+            LocalPrologCommand.parse("/triage_explain alice", catalog).query,
+        )
+        assertEquals(
+            "triage_explain(alice, Result)",
             LocalPrologCommand.parse("/prolog triage_explain(alice, Result)", catalog).query,
         )
         listOf(
