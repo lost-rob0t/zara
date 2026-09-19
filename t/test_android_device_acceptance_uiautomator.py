@@ -75,3 +75,39 @@ def test_nodes_reports_successful_dump_that_created_no_hierarchy(
         match=r"UIAutomator did not create /data/local/tmp/zara-acceptance\.xml: UI hierarchy dump reported success",
     ):
         list(device.nodes())
+
+
+def test_await_label_dismisses_release_notes_that_appear_after_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    state = {"release_notes": True, "dismissals": 0}
+    clock = {"value": 0.0}
+
+    def fake_monotonic() -> float:
+        clock["value"] += 0.01
+        return clock["value"]
+
+    def fake_find(label: str):
+        if label == "Chat" and not state["release_notes"]:
+            return object()
+        return None
+
+    def fake_dismiss_release_notes() -> bool:
+        if not state["release_notes"]:
+            return False
+        state["release_notes"] = False
+        state["dismissals"] += 1
+        return True
+
+    monkeypatch.setattr(module.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(device, "find", fake_find)
+    monkeypatch.setattr(device, "dismiss_release_notes", fake_dismiss_release_notes)
+    monkeypatch.setattr(device, "dismiss_pixel_launcher_anr", lambda: False)
+
+    device.await_label("Chat", timeout=0.1)
+
+    assert state["dismissals"] == 1
