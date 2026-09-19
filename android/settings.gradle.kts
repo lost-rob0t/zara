@@ -24,6 +24,8 @@ dependencyResolutionManagement {
 rootProject.name = "zara-android"
 include(":app")
 include(":shared-ui")
+include(":editor-core")
+include(":code-editor")
 include(":org-core")
 include(":org-storage")
 include(":org-sync-core")

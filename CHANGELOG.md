@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
+- Android now includes a code editor for user-selected workspace roots with revision-fenced voice edits, so late speech results cannot overwrite newer editor changes.
 - Android Org Daily now consumes an explicitly configured workspace-relative daily path template, date pattern, and timezone through the shared Org-home authority; arbitrary user roots stay intact, invalid or missing Daily configuration fails closed, and simply viewing Daily still does not invent or create a file.
 - Desktop Org now has named native Qt launch surfaces for the flagship workbench plus focused Editor, Todo, Sync, and Notebook modes. The shared shell opens only an explicitly selected Org root, recursively discovers ordinary `.org` files without inventing a default layout, and uses revision-fenced source saves so edits made concurrently by Emacs, Git, or another Zara process fail stale instead of being overwritten.
 - Android's flagship Org shell now exposes Todo, Org-roam, and Daily surfaces over the shared canonical Org repository/projection stack; it supports the shared workspace or an arbitrary SAF-selected directory, keeps ordinary Org files authoritative, and refuses to guess a Daily path, filename pattern, or timezone when canonical Daily configuration is unavailable.
@@ -18,6 +19,9 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android code-editor voice operations now fence cursor and selection changes as editor revisions, so a late transcript cannot apply to a different selection than the one active when listening started.
+- Android code-editor voice dictation now preserves spoken indentation, removes speech-only spacing around quoted text and Prolog commas, normalizes grouping punctuation without regex crashes, and builds against the current Compose layout API.
+- Android code-editor voice actions now handle backward text selections correctly, so replace, wrap, and explain operations use the selected range instead of rejecting or reversing it.
 - Android Org TODO state changes now preserve the source file's existing line endings and terminal-newline shape instead of rewriting unrelated formatting in canonical Org files.
 - Android release-evidence automation now tolerates the short Compose/UIAutomator semantics race where the release-notes title appears before its Continue button, while still failing if the button never becomes available.
 - Android voice transcripts no longer accept late updates after a final transcript, preventing stale stream events from overwriting a completed transcript.
