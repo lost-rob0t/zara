@@ -149,7 +149,9 @@ private fun CodeEditorWorkbench() {
         when (target) {
             is NavigationTarget.Line -> {
                 val offset = lineStartOffset(value.text, target.line)
-                editorValue = value.copy(selection = TextRange(offset))
+                val next = value.copy(selection = TextRange(offset))
+                editorValue = next
+                syncEditorStateToBuffer(buffer, next)
                 status = "Line ${target.line}"
             }
             is NavigationTarget.Search -> {
@@ -157,7 +159,9 @@ private fun CodeEditorWorkbench() {
                 val forward = value.text.indexOf(target.query, from, ignoreCase = true)
                 val index = if (forward >= 0) forward else value.text.indexOf(target.query, ignoreCase = true)
                 if (index >= 0) {
-                    editorValue = value.copy(selection = TextRange(index, index + target.query.length))
+                    val next = value.copy(selection = TextRange(index, index + target.query.length))
+                    editorValue = next
+                    syncEditorStateToBuffer(buffer, next)
                     status = "Found ${target.query}"
                 } else status = "Not found: ${target.query}"
             }
