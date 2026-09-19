@@ -108,6 +108,24 @@ The agent-facing tools are built by =build_task_tools= in
 through =backend.register_tools=. They are absent entirely when
 =[tasks].enabled= is false.
 
+* Recurring schedules
+
+The additive scheduled-task layer is owned by the same =RuntimeHost= and Tasks
+authority. A firing never creates a second agent loop: Prolog may handle a
+short deterministic goal directly, otherwise the scheduler delegates one
+bounded task through the existing =TaskRunner=.
+
+Supported recurrence syntax:
+
+- five-field cron, including aliases such as =@hourly= and =@daily=;
+- fixed elapsed intervals such as =@every 90m=, =@every 6h= and =@every 2d=.
+
+Fixed intervals stay anchored to their scheduled phase. If Zara is offline for
+multiple slots, restart executes at most the one due firing and advances to the
+next future slot instead of replaying an unbounded catch-up storm. Schedule
+identity, run claims and next-run state are persisted and principal-scoped.
+
+
 * Explicit non-goals (phase 1)
 
 No second agent loop or LangGraph fork, no subagent swarms, no distributed
