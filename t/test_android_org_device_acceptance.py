@@ -10,7 +10,7 @@ def test_org_acceptance_uses_real_saf_ordinary_org_corpus_not_product_store():
     text = ACCEPTANCE.read_text(encoding="utf-8")
     assert 'corpus_authority\": \"ordinary Org files through persisted Android SAF\"' in text
     assert 'ActivityResultContracts.OpenDocumentTree' not in text
-    assert 'device.tap("Choose Org directory")' in text
+    assert '_tap_app_control_through_launcher_anr(device, "Choose Org directory")' in text
     assert '"Use this folder"' in text
     assert '"fixture_root_is_test_only": True' in text
     assert "Room" not in text
