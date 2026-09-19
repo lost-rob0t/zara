@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zara.local/schema/music-v1.json",
+  "title": "Zara Music ZARA/1 domain contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "media_plane",
+    "page_limit",
+    "selector_depth_limit",
+    "selector_clause_limit",
+    "client_message_types",
+    "server_message_types",
+    "job_operations",
+    "mutation_operations",
+    "selector_fields",
+    "selector_operators"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "media_plane": {
+      "const": "opensubsonic-http"
+    },
+    "page_limit": {
+      "const": 500
+    },
+    "selector_depth_limit": {
+      "const": 8
+    },
+    "selector_clause_limit": {
+      "const": 64
+    },
+    "client_message_types": {
+      "const": [
+        "music.library.query",
+        "music.job.submit",
+        "music.job.status",
+        "music.job.cancel",
+        "music.plan.apply"
+      ]
+    },
+    "server_message_types": {
+      "const": [
+        "music.library.page",
+        "music.job.accepted",
+        "music.job.status.ok",
+        "music.job.cancel.accepted",
+        "music.job.progress",
+        "music.job.completed",
+        "music.job.failed",
+        "music.plan.ready",
+        "music.plan.apply.accepted"
+      ]
+    },
+    "job_operations": {
+      "const": [
+        "scan",
+        "hash",
+        "fingerprint",
+        "metadata",
+        "dedupe",
+        "tag",
+        "move",
+        "quarantine"
+      ]
+    },
+    "mutation_operations": {
+      "const": [
+        "tag",
+        "move",
+        "quarantine"
+      ]
+    },
+    "selector_fields": {
+      "const": [
+        "id",
+        "path",
+        "artist",
+        "album",
+        "title",
+        "genre",
+        "year",
+        "format",
+        "size",
+        "modified_ns",
+        "duration_ms",
+        "recording_id",
+        "duplicate_class",
+        "metadata_state"
+      ]
+    },
+    "selector_operators": {
+      "const": [
+        "eq",
+        "ne",
+        "lt",
+        "lte",
+        "gt",
+        "gte",
+        "contains",
+        "prefix",
+        "in"
+      ]
+    }
+  }
+}
