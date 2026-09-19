@@ -79,16 +79,19 @@ def test_org_emulator_runner_script_is_posix_sh_compatible_and_line_independent(
     assert "attempt=" not in emulator_block
 
 
-def test_org_emulator_runner_creates_fixture_parent_then_write_probes_without_loop_state():
+def test_org_emulator_runner_creates_fixture_parent_then_write_probes_without_nested_shell_quoting():
     text = WORKFLOW.read_text(encoding="utf-8")
     emulator_block = text.split(
         "uses: reactivecircus/android-emulator-runner@v2", 1
     )[1].split("- name: Validate exact-head Org evidence", 1)[0]
     # The action itself waits until the emulator reports boot complete before
-    # executing script lines. The custom script only needs stateless commands.
+    # executing script lines. Keep host/action and guest-shell quoting flat:
+    # nested `adb shell sh -c '...'` is reparsed by two shells and broke touch.
     assert "adb -s emulator-5554 wait-for-device" in emulator_block
-    assert "mkdir -p /sdcard/Documents" in emulator_block
-    assert "/sdcard/Documents/.zara-org-storage-ready" in emulator_block
+    assert "adb -s emulator-5554 shell mkdir -p /sdcard/Documents" in emulator_block
+    assert "adb -s emulator-5554 shell touch /sdcard/Documents/.zara-org-storage-ready" in emulator_block
+    assert "adb -s emulator-5554 shell rm -f /sdcard/Documents/.zara-org-storage-ready" in emulator_block
+    assert "adb -s emulator-5554 shell sh -c" not in emulator_block
     assert "test -d /sdcard/Documents" not in emulator_block
 
 
