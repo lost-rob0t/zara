@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Zara Android/Wear gate: semantic parity + JVM tests + stock secure-server interop + pinned native build + phone/Wear debug APKs + secret inspection.
+# Zara Android/Wear gate: semantic parity + JVM tests + stock secure-server interop + pinned native build + phone/Wear/Org debug APKs + secret inspection.
 # Run via: nix develop .#android -c bash scripts/test-android.sh
 set -euo pipefail
 
@@ -63,9 +63,14 @@ gradle_log="$(mktemp)"
 if ! gradle --no-daemon \
   :app:testDebugUnitTest \
   :shared-ui:testDebugUnitTest \
+  :org-core:testDebugUnitTest \
+  :org-storage:testDebugUnitTest \
+  :org-sync-core:testDebugUnitTest \
+  :org-app:testDebugUnitTest \
   :wear-app:testDebugUnitTest \
   :wear-voice:testDebugUnitTest \
   :app:assembleDebug \
+  :org-app:assembleDebug \
   :wear-app:assembleDebug \
   :wear-voice:assembleDebug 2>&1 | tee "$gradle_log"; then
   diagnostics_dir="app/build/reports/semantic-parity"
@@ -73,7 +78,7 @@ if ! gradle --no-daemon \
   tail -n 240 "$gradle_log" > "$diagnostics_dir/gradle-failure-tail.log"
   cp "$interop_log" "$diagnostics_dir/stock-zara-server.log"
   cat "$interop_log" >&2
-  echo "stock ZaraServer Android/Wear interop gate failed" >&2
+  echo "stock ZaraServer Android/Wear/Org interop gate failed" >&2
   exit 1
 fi
 rm -f "$gradle_log"
@@ -84,13 +89,15 @@ interop_pid=""
 unset ZARA_STOCK_FIXTURE
 
 phone_apk="app/build/outputs/apk/debug/app-debug.apk"
+org_apk="org-app/build/outputs/apk/debug/org-app-debug.apk"
 wear_apk="wear-app/build/outputs/apk/debug/wear-app-debug.apk"
 voice_apk="wear-voice/build/outputs/apk/debug/wear-voice-debug.apk"
 test -f "$phone_apk"
+test -f "$org_apk"
 test -f "$wear_apk"
 test -f "$voice_apk"
 
-for apk in "$phone_apk" "$wear_apk" "$voice_apk"; do
+for apk in "$phone_apk" "$org_apk" "$wear_apk" "$voice_apk"; do
   if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET"; then
     echo "APK secret-marker inspection FAILED: private/secret material found in $apk" >&2
     exit 1
@@ -108,4 +115,4 @@ if grep -Fq "android.permission.INTERNET" <<<"$voice_permissions"; then
   exit 1
 fi
 
-echo "android/wear gate ok: $phone_apk $wear_apk $voice_apk"
+echo "android/wear/org gate ok: $phone_apk $org_apk $wear_apk $voice_apk"
