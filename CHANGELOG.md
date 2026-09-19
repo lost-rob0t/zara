@@ -4,6 +4,10 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+### Added
+
+- Android chat now keeps durable multi-conversation history with New chat, pin/unpin, rename, move-to-project actions, full turn restoration, and per-chat lifecycle status indicators.
+
 ### Fixed
 
 - Android's embedded Trealla bridge now treats `pl_query`'s return value as an error signal, so valid local Prolog queries are no longer rejected as native query failures.
