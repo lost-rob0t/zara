@@ -1,8 +1,8 @@
 """Native Qt launch surfaces for Zara Org desktop products.
 
-Ordinary Org files remain canonical.  This module deliberately does not parse
+Ordinary Org files remain canonical. This module deliberately does not parse
 Org or maintain a shadow task/index database: the first desktop slice is a
-source-preserving workbench over an explicit user workspace.  Structured Todo,
+source-preserving workbench over an explicit user workspace. Structured Todo,
 Sync and Notebook projections consume the canonical Org services as those
 contracts land; their named launch modes already share this one shell and
 workspace authority instead of growing separate desktop stacks.
@@ -66,7 +66,7 @@ def resolve_org_root(
 class OrgWorkspace:
     """Filesystem adapter for one explicit desktop Org workspace.
 
-    The adapter owns no Org semantics.  It provides stable root-relative logical
+    The adapter owns no Org semantics. It provides stable root-relative logical
     document IDs plus revision-fenced UTF-8 source reads/writes so the Qt shell
     cannot silently overwrite a file modified by Emacs, Git or another Zara
     process.
@@ -161,11 +161,16 @@ def _parser(default_mode: OrgLaunchMode) -> argparse.ArgumentParser:
     return parser
 
 
-def _qt_main(mode: OrgLaunchMode, root: Path | None, document: str | None) -> int:
+def build_org_window(mode: OrgLaunchMode, root: Path | None, document: str | None):
+    """Build the real Desktop Org window without starting the Qt event loop.
+
+    The production launcher and deterministic screenshot harness both use this
+    constructor, so evidence exercises the same surface users launch.
+    """
+
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QAction
     from PySide6.QtWidgets import (
-        QApplication,
         QFileDialog,
         QLabel,
         QListWidget,
@@ -175,7 +180,6 @@ def _qt_main(mode: OrgLaunchMode, root: Path | None, document: str | None) -> in
         QSplitter,
         QStatusBar,
         QToolBar,
-        QWidget,
     )
 
     class OrgDesktopWindow(QMainWindow):
@@ -285,8 +289,14 @@ def _qt_main(mode: OrgLaunchMode, root: Path | None, document: str | None) -> in
                 f"{saved.document_id} · saved rev {saved.revision[:12]}"
             )
 
+    return OrgDesktopWindow()
+
+
+def _qt_main(mode: OrgLaunchMode, root: Path | None, document: str | None) -> int:
+    from PySide6.QtWidgets import QApplication
+
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    window = OrgDesktopWindow()
+    window = build_org_window(mode, root, document)
     window.show()
     return app.exec()
 
@@ -326,6 +336,7 @@ __all__ = [
     "OrgLaunchMode",
     "OrgWorkspace",
     "RevisionConflict",
+    "build_org_window",
     "main",
     "main_editor",
     "main_notebook",
