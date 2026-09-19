@@ -164,8 +164,8 @@ def reduce_automation_run(
             status = "retry_wait"
 
         elif event.kind == "completed":
-            if status not in {"planned", "accepted", "running"}:
-                raise AutomationReceiptError(f"completed event is invalid from state {status}")
+            if status != "running" or attempts == 0:
+                raise AutomationReceiptError("completed event requires a started active attempt")
             _validate_terminal_attempt(event, attempts)
             if not event.result_ref:
                 raise AutomationReceiptError("completed event requires a bounded result reference")
