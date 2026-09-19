@@ -8,6 +8,12 @@ import org.junit.Test
 
 class OrgCoreTest {
     @Test
+    fun profileDoesNotEmbedOperatorSpecificOrgRoot() {
+        assertFalse(DoomOrgProfile.orgRoot.startsWith("~"))
+        assertFalse(DoomOrgProfile.orgRoot.contains("Documents/Notes/org"))
+    }
+
+    @Test
     fun parsesDoomTodoMetadataAndAgendaGroup() {
         val source = """
             * TODO [#A] Ship parser :StarIntel:org_parser:
