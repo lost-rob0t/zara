@@ -21,6 +21,7 @@ _MAX_ENDPOINT_BYTES = 512
 _MAX_ENDPOINTS = 32
 _MAX_PROTOCOL_VERSIONS = 16
 _MAX_COUNTER = (1 << 63) - 1
+_HOST_RE = re.compile(r"[A-Za-z0-9.:-]+\Z")
 _PROTOCOL_VERSION_RE = re.compile(r"ZARA/[1-9][0-9]*\Z")
 _WIRE_FIELDS = frozenset(
     {
@@ -78,7 +79,7 @@ def _endpoint(value: object) -> str:
     if (
         parsed.scheme.lower() != "tcp"
         or not host
-        or any(character.isspace() or character.iscontrol() for character in host)
+        or _HOST_RE.fullmatch(host) is None
         or port is None
         or port not in range(1, 65536)
         or parsed.username is not None
