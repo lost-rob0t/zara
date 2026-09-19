@@ -26,28 +26,22 @@ class OrgReminderTest {
     }
 
     @Test
-    fun remindersUseExplicitTimeOrSharedDefault() {
-        val tasks = listOf(
-            OrgTask(
-                path = "agenda/a.org",
-                line = 1,
-                level = 1,
-                state = "TODO",
-                title = "Explicit",
-                scheduled = LocalDate.of(2026, 9, 19),
-                scheduledTime = LocalTime.of(7, 45),
-            ),
-            OrgTask(
-                path = "agenda/b.org",
-                line = 2,
-                level = 1,
-                state = "TODO",
-                title = "All day",
-                deadline = LocalDate.of(2026, 9, 20),
-            ),
+    fun remindersUseExplicitTimeOrSharedDefaultFromCanonicalProjection() {
+        val source = """
+            #+TODO: NEXT | SHIPPED
+            * NEXT Explicit
+            SCHEDULED: <2026-09-19 Sat 07:45>
+            * NEXT All day
+            DEADLINE: <2026-09-20 Sun>
+        """.trimIndent()
+        val projection = OrgWorkspaceProjector.project(
+            mapOf("agenda/custom-workflow.org" to source),
         )
 
-        val reminders = OrgReminders.fromTasks(tasks, defaultTime = LocalTime.of(9, 0))
+        val reminders = OrgReminders.fromProjection(
+            projection,
+            defaultTime = LocalTime.of(9, 0),
+        )
 
         assertEquals(LocalDateTime.of(2026, 9, 19, 7, 45), reminders[0].whenLocal)
         assertTrue(reminders[0].explicitTime)
@@ -56,16 +50,16 @@ class OrgReminderTest {
     }
 
     @Test
-    fun completedTasksDoNotScheduleReminders() {
-        val task = OrgTask(
-            path = "agenda/done.org",
-            line = 1,
-            level = 1,
-            state = "DONE",
-            title = "Done",
-            scheduled = LocalDate.of(2026, 9, 19),
+    fun fileLocalDoneStateDoesNotScheduleReminders() {
+        val source = """
+            #+TODO: NEXT | SHIPPED
+            * SHIPPED Already delivered
+            SCHEDULED: <2026-09-19 Sat 09:00>
+        """.trimIndent()
+        val projection = OrgWorkspaceProjector.project(
+            mapOf("agenda/custom-workflow.org" to source),
         )
 
-        assertTrue(OrgReminders.fromTasks(listOf(task)).isEmpty())
+        assertTrue(OrgReminders.fromProjection(projection).isEmpty())
     }
 }
