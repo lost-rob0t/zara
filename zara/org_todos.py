@@ -307,7 +307,7 @@ class OrgTodoStore:
             return [self.root] if self.root.exists() else []
         if not self.root.exists():
             return []
-        return sorted(path for path in self.root.glob("*.org") if path.is_file())
+        return sorted(path for path in self.root.rglob("*.org") if path.is_file())
 
     def _all_tasks(self) -> list[_OrgTask]:
         tasks: list[_OrgTask] = []
