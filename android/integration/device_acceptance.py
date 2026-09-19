@@ -16,6 +16,8 @@ import xml.etree.ElementTree as ET
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_SHA_RE = re.compile(r"[0-9a-f]{40}")
 UI_DUMP_PATH = "/data/local/tmp/zara-acceptance.xml"
+UI_DUMP_ATTEMPTS = 3
+UI_DUMP_RETRY_DELAY_SECONDS = 0.2
 
 
 def verified_source_sha(claimed_source_sha: str | None) -> str:
@@ -56,20 +58,27 @@ class Device:
         )
 
     def nodes(self):
-        # UIAutomator occasionally reports a successful dump on hosted API-35
-        # emulators without creating the requested file on emulated /sdcard. Keep
-        # the hierarchy in shell-owned local storage, clear stale output first,
-        # and fail with the dump diagnostic if a fresh hierarchy was not created.
-        self.adb("shell", "rm", "-f", UI_DUMP_PATH)
-        dump_output = self.adb("shell", "uiautomator", "dump", UI_DUMP_PATH)
-        try:
-            hierarchy = self.adb("shell", "cat", UI_DUMP_PATH)
-        except subprocess.CalledProcessError as error:
-            diagnostic = dump_output.strip() or "no uiautomator diagnostic"
-            raise AssertionError(
-                f"UIAutomator did not create {UI_DUMP_PATH}: {diagnostic}"
-            ) from error
-        return ET.fromstring(hierarchy).iter("node")
+        # Hosted API-35 emulators can occasionally report a successful dump before
+        # the hierarchy file becomes available. Retry only that exact missing-file
+        # condition; command failures and malformed XML still fail immediately.
+        last_error: subprocess.CalledProcessError | None = None
+        diagnostic = "no uiautomator diagnostic"
+        for attempt in range(1, UI_DUMP_ATTEMPTS + 1):
+            self.adb("shell", "rm", "-f", UI_DUMP_PATH)
+            dump_output = self.adb("shell", "uiautomator", "dump", UI_DUMP_PATH)
+            try:
+                hierarchy = self.adb("shell", "cat", UI_DUMP_PATH)
+            except subprocess.CalledProcessError as error:
+                last_error = error
+                diagnostic = dump_output.strip() or "no uiautomator diagnostic"
+                if attempt < UI_DUMP_ATTEMPTS:
+                    time.sleep(UI_DUMP_RETRY_DELAY_SECONDS)
+                    continue
+                break
+            return ET.fromstring(hierarchy).iter("node")
+        raise AssertionError(
+            f"UIAutomator did not create {UI_DUMP_PATH}: {diagnostic}"
+        ) from last_error
 
     def find(self, label: str):
         return next(
