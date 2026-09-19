@@ -1,6 +1,5 @@
 package ai.zara.org.storage
 
-import ai.zara.org.core.DoomOrgProfile
 import ai.zara.org.core.OrgParser
 import ai.zara.org.core.OrgTask
 import ai.zara.org.core.OrgTangler
@@ -92,11 +91,20 @@ object OrgHome {
             .apply()
     }
 
-    fun open(context: Context): OrgRepository? {
+    fun open(
+        context: Context,
+        fallbackTodoStates: List<String> = OrgParser.defaultTodoStates,
+    ): OrgRepository? {
         val home = selection(context)
         return when (home.mode) {
-            OrgHomeMode.SHARED -> if (sharedAvailable(context)) SharedOrgRepository(context) else null
-            OrgHomeMode.CUSTOM_SAF -> home.customTreeUri?.let { OrgTreeRepository(context, it) }
+            OrgHomeMode.SHARED -> if (sharedAvailable(context)) {
+                SharedOrgRepository(context, fallbackTodoStates)
+            } else {
+                null
+            }
+            OrgHomeMode.CUSTOM_SAF -> home.customTreeUri?.let {
+                OrgTreeRepository(context, it, fallbackTodoStates)
+            }
         }
     }
 
@@ -106,6 +114,7 @@ object OrgHome {
 
 class SharedOrgRepository(
     private val context: Context,
+    private val fallbackTodoStates: List<String> = OrgParser.defaultTodoStates,
 ) : OrgRepository {
     private val resolver = context.contentResolver
 
@@ -166,17 +175,18 @@ class SharedOrgRepository(
     }
 
     override fun allTasks(): List<OrgTask> = listOrgFiles().flatMap { file ->
-        OrgParser.parse(read(file), file.relativePath).tasks
+        OrgParser.parse(read(file), file.relativePath, fallbackTodoStates).tasks
     }
 
     override fun cycleTodo(task: OrgTask): OrgTask {
         val file = listOrgFiles().firstOrNull { it.relativePath == task.path }
             ?: error("Missing task file ${task.path}")
-        val lines = read(file).lines().toMutableList()
+        val source = read(file)
+        val lines = source.lines().toMutableList()
         val index = task.line - 1
         require(index in lines.indices) { "Task line is out of range" }
         val old = task.state
-        val next = DoomOrgProfile.nextTodoState(old)
+        val next = OrgParser.nextTodoState(source, old, fallbackTodoStates)
         val prefix = "*".repeat(task.level) + " "
         val line = lines[index]
         require(line.startsWith(prefix)) { "Task heading changed; refresh agenda" }
