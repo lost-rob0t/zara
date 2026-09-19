@@ -1,0 +1,29 @@
+#+title: RAGE #388 r18 — registered-tool cancellation wrapper
+
+* Iteration 18
+:PROPERTIES:
+:ISSUE: 388
+:START_SHA: 207e3b689399464de413d3faba7c2ed763168ca3
+:END:
+
+** Prior evidence
+- r17/#619 is retired: asyncio task-local cancellation cannot satisfy synchronous service tools.
+- Earlier ContextVar-through-ToolNode and InjectedState designs were falsified and remain retired.
+- Canonical r16/#569 proved the usable boundary: compiled =ToolNode= calls the exact registered =BaseTool.ainvoke= with the whole typed ToolCall and reaches the original tool body.
+
+** Design
+- Opt-in remains metadata =zara_supports_cancellation=true=; malformed markers fail closed.
+- Registry wraps only opted-in =BaseTool= instances. Approval policy is computed from the original tool before wrapping.
+- The wrapper preserves name/model schema and forwards the exact ToolCall through the same canonical ToolNode path.
+- Each public =ainvoke= creates one private =threading.Event= signal. The plugin gets only a read-only =ToolCancellation= view through invocation-local context created inside the already-proven wrapper boundary; there is no model argument, process id, reusable token, external cancel endpoint, or second executor authority.
+- Sync bodies run through =asyncio.to_thread= and inherit the invocation-local view; async bodies run in a child task. Parent cancellation sets the private signal before cancelling child execution.
+- Registry unload returns the original tool, preserving plugin lifecycle identity.
+- =create_tools_node= remains the sole approval/current-binding/event boundary and sole publisher of terminal =ToolCancelled=.
+
+** Acceptance
+- real sync service-tool body observes signal before owned work continues;
+- real async body sees signal before =CancelledError= cleanup;
+- concurrent invocations have distinct signals and cancelling one does not mark another;
+- cancellation state is absent outside invocation and absent from model schema;
+- existing full repository, Android compatibility, mic, flake/package gates remain mandatory;
+- zero =android/**= changes.

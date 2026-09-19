@@ -1,9 +1,7 @@
 package ai.zara.app
 
+import ai.zara.app.conversations.ConversationStore
 import ai.zara.app.projects.ProjectContextStore
-import ai.zara.app.localai.LocalAiState
-import ai.zara.app.localai.LocalLlmConfiguration
-import ai.zara.app.ui.RenderedTextTurn
 import ai.zara.app.ui.LocalEmbeddingPreferenceStore
 import ai.zara.app.ui.RuntimeModePreferenceStore
 import ai.zara.app.ui.ThemePreferenceStore
@@ -39,9 +37,6 @@ class MainActivity : ComponentActivity() {
     private var microphonePermissionGranted by mutableStateOf(false)
     private var operationError by mutableStateOf<String?>(null)
     private var voiceState by mutableStateOf<ManualVoiceState>(ManualVoiceState.Idle)
-    private var localAiState by mutableStateOf<LocalAiState?>(null)
-    private var localLlmConfiguration by mutableStateOf(LocalLlmConfiguration())
-    private var localAiRefreshGeneration = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,13 +49,10 @@ class MainActivity : ComponentActivity() {
         )
         microphonePermissionGranted = hasMicrophonePermission()
         voiceState = appSession.voiceState()
-        refreshLocalLlmConfiguration()
 
         var runtimeState by mutableStateOf(appSession.state())
         var enrollmentPublicKey by mutableStateOf(appSession.enrollmentPublicKeyZ85())
         var pinnedServerPublicKey by mutableStateOf(appSession.pinnedServerPublicKeyZ85())
-        var unscopedLastTurn by mutableStateOf<RenderedTextTurn?>(null)
-        var projectTurns by mutableStateOf<Map<String, RenderedTextTurn>>(emptyMap())
         var operationBusy by mutableStateOf(false)
         var voiceStreamState by mutableStateOf(appSession.voiceStreamState())
         var voiceStreamFailure by mutableStateOf(appSession.voiceStreamFailure())
@@ -76,6 +68,16 @@ class MainActivity : ComponentActivity() {
         var localEmbedding by mutableStateOf(embeddingPreferenceStore.load())
         val projectStore = ProjectContextStore(File(filesDir, "projects.bin"))
         var projectState by mutableStateOf(projectStore.state())
+        val conversationStore = ConversationStore(File(filesDir, "conversations.bin"))
+        var conversationState by mutableStateOf(conversationStore.state())
+        if (conversationState.loadFailure == null && conversationState.selectedConversation == null) {
+            try {
+                conversationStore.create(projectState.selectedProjectId)
+                conversationState = conversationStore.state()
+            } catch (error: Exception) {
+                operationError = UiOperationFailure.summarize(error)
+            }
+        }
         appSession.setRuntimeMode(runtimeMode)
 
         val microphonePermission = registerForActivityResult(
@@ -119,8 +121,6 @@ class MainActivity : ComponentActivity() {
                 ZaraTheme.Light -> false
                 else -> true
             }
-            val visibleLastTurn = projectState.selectedProjectId?.let { projectTurns[it] }
-                ?: if (projectState.selectedProjectId == null) unscopedLastTurn else null
             SideEffect {
                 val style = if (resolvedSystemBarDark) {
                     SystemBarStyle.dark(Color.TRANSPARENT)
@@ -134,7 +134,7 @@ class MainActivity : ComponentActivity() {
                 sourceSha = BuildConfig.SOURCE_SHA,
                 enrollmentPublicKey = enrollmentPublicKey,
                 pinnedServerPublicKey = pinnedServerPublicKey,
-                lastTurn = visibleLastTurn,
+                conversationState = conversationState,
                 operationError = operationError,
                 operationBusy = operationBusy,
                 microphonePermissionGranted = microphonePermissionGranted,
@@ -143,8 +143,6 @@ class MainActivity : ComponentActivity() {
                 voiceStreamFailure = voiceStreamFailure,
                 selectedTheme = selectedTheme,
                 localServerState = localServerState,
-                localAiState = localAiState,
-                localLlmConfiguration = localLlmConfiguration,
                 prologSources = prologSources,
                 prologQueryResult = prologQueryResult,
                 updateState = updateState,
@@ -162,22 +160,6 @@ class MainActivity : ComponentActivity() {
                     runtimeMode = mode
                     runtimeModeStore.save(mode)
                     appSession.setRuntimeMode(mode)
-                    refreshLocalAiState()
-                },
-                onRefreshLocalAiState = ::refreshLocalAiState,
-                onSaveLocalLlmConfiguration = { configuration ->
-                    operationError = null
-                    operationBusy = true
-                    appSession.saveLocalLlmConfiguration(configuration).whenComplete { saved, error ->
-                        runOnUiThread {
-                            operationBusy = false
-                            operationError = error?.let(UiOperationFailure::summarize)
-                            if (saved != null) {
-                                localLlmConfiguration = saved
-                                prologSources = appSession.prologSources()
-                            }
-                        }
-                    }
                 },
                 onSetLocalEmbeddingEnabled = { enabled ->
                     localEmbedding = localEmbedding.copy(enabled = enabled)
@@ -225,50 +207,129 @@ class MainActivity : ComponentActivity() {
                         operationError = UiOperationFailure.summarize(error)
                     }
                 },
-                onSendText = { text, project ->
+                onNewConversation = {
+                    operationError = null
+                    try {
+                        conversationStore.create()
+                        conversationState = conversationStore.state()
+                        if (projectState.loadFailure == null) {
+                            projectState = projectStore.select(null)
+                        }
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onSelectConversation = { conversationId ->
+                    operationError = null
+                    try {
+                        conversationState = conversationStore.select(conversationId)
+                        if (projectState.loadFailure == null) {
+                            projectState = projectStore.select(
+                                conversationState.selectedConversation?.projectId,
+                            )
+                        }
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onToggleConversationPinned = { conversationId, pinned ->
+                    operationError = null
+                    try {
+                        conversationState = conversationStore.setPinned(conversationId, pinned)
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onRenameConversation = { conversationId, title ->
+                    operationError = null
+                    try {
+                        conversationState = conversationStore.rename(conversationId, title)
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onMoveConversationToProject = { conversationId, projectId ->
+                    operationError = null
+                    try {
+                        if (projectId != null) {
+                            require(projectState.project(projectId) != null) { "Unknown project: $projectId" }
+                        }
+                        conversationState = conversationStore.moveToProject(conversationId, projectId)
+                        if (conversationState.selectedConversationId == conversationId &&
+                            projectState.loadFailure == null
+                        ) {
+                            projectState = projectStore.select(projectId)
+                        }
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onSendText = { text, conversation, project ->
                     operationError = null
                     operationBusy = true
+                    val conversationId = conversation.id
                     try {
+                        conversationState = conversationStore.beginTurn(conversationId, text)
                         val future = if (project == null) {
-                            appSession.submitText(text)
+                            appSession.submitText(
+                                text = text,
+                                localConversationId = conversation.localConversationId,
+                                remoteConversationId = conversation.remoteConversationId,
+                            )
                         } else {
-                            appSession.submitProjectText(text, project.id, project.conversationId)
+                            appSession.submitProjectText(
+                                text = text,
+                                projectId = project.id,
+                                conversationId = conversation.remoteConversationId,
+                                localConversationId = conversation.localConversationId,
+                            )
                         }
                         future.whenComplete { result, error ->
                             runOnUiThread {
                                 operationBusy = false
-                                refreshLocalAiState()
                                 if (error != null) {
-                                    operationError = UiOperationFailure.summarize(error)
+                                    val failure = UiOperationFailure.summarize(error)
+                                    operationError = failure
+                                    try {
+                                        conversationState = conversationStore.failTurn(conversationId, failure)
+                                    } catch (storeError: Exception) {
+                                        operationError = UiOperationFailure.summarize(storeError)
+                                    }
                                 } else if (result != null) {
-                                    val rendered = RenderedTextTurn(
-                                        userText = text,
-                                        assistantText = result.text,
-                                        success = result.success,
-                                    )
-                                    if (project == null) {
-                                        unscopedLastTurn = rendered
-                                    } else {
-                                        projectTurns = projectTurns + (project.id to rendered)
-                                        val remoteConversationId = result.conversationId
-                                            ?.takeUnless { it.startsWith("local-project:") }
-                                        if (remoteConversationId != null) {
-                                            try {
-                                                projectState = projectStore.bindConversation(
-                                                    project.id,
-                                                    remoteConversationId,
-                                                )
-                                            } catch (bindError: Exception) {
-                                                operationError = UiOperationFailure.summarize(bindError)
-                                            }
+                                    val remoteConversationId = result.conversationId
+                                        ?.takeUnless { it.startsWith("local-") }
+                                    try {
+                                        conversationState = conversationStore.completeTurn(
+                                            conversationId = conversationId,
+                                            assistantText = result.text,
+                                            success = result.success,
+                                            remoteConversationId = remoteConversationId,
+                                        )
+                                        if (project != null && remoteConversationId != null &&
+                                            projectState.loadFailure == null
+                                        ) {
+                                            projectState = projectStore.bindConversation(
+                                                project.id,
+                                                remoteConversationId,
+                                            )
                                         }
+                                    } catch (storeError: Exception) {
+                                        operationError = UiOperationFailure.summarize(storeError)
                                     }
                                 }
                             }
                         }
                     } catch (error: Exception) {
                         operationBusy = false
-                        operationError = UiOperationFailure.summarize(error)
+                        val failure = UiOperationFailure.summarize(error)
+                        operationError = failure
+                        try {
+                            val selected = conversationStore.state().conversation(conversationId)
+                            if (selected?.status == ai.zara.app.conversations.ConversationStatus.Running) {
+                                conversationState = conversationStore.failTurn(conversationId, failure)
+                            }
+                        } catch (_: Exception) {
+                        }
                     }
                 },
                 onCreateProject = { name ->
@@ -276,6 +337,12 @@ class MainActivity : ComponentActivity() {
                     try {
                         val created = projectStore.create(name)
                         projectState = projectStore.select(created.id)
+                        conversationState.selectedConversation?.let { conversation ->
+                            conversationState = conversationStore.moveToProject(
+                                conversation.id,
+                                created.id,
+                            )
+                        }
                     } catch (error: Exception) {
                         operationError = UiOperationFailure.summarize(error)
                     }
@@ -284,6 +351,12 @@ class MainActivity : ComponentActivity() {
                     operationError = null
                     try {
                         projectState = projectStore.select(projectId)
+                        conversationState.selectedConversation?.let { conversation ->
+                            conversationState = conversationStore.moveToProject(
+                                conversation.id,
+                                projectId,
+                            )
+                        }
                     } catch (error: Exception) {
                         operationError = UiOperationFailure.summarize(error)
                     }
@@ -444,8 +517,6 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         if (!::appSession.isInitialized) return
         appSession.assessAssistantRole()
-        refreshLocalAiState()
-        refreshLocalLlmConfiguration()
         reconcileMicrophonePermission(hasMicrophonePermission())
     }
 
@@ -462,7 +533,6 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        localAiRefreshGeneration += 1
         if (::appSession.isInitialized) {
             appSession.setStateObserver(null)
             appSession.setVoiceStreamObserver(null)
@@ -470,26 +540,6 @@ class MainActivity : ComponentActivity() {
             (application as ZaraApplication).updateManager.setObserver(null)
         }
         super.onDestroy()
-    }
-
-    private fun refreshLocalLlmConfiguration() {
-        if (!::appSession.isInitialized) return
-        try {
-            localLlmConfiguration = appSession.localLlmConfiguration()
-        } catch (error: Exception) {
-            operationError = UiOperationFailure.summarize(error)
-        }
-    }
-
-    private fun refreshLocalAiState() {
-        if (!::appSession.isInitialized) return
-        val generation = ++localAiRefreshGeneration
-        appSession.localAiState().whenComplete { state, error ->
-            runOnUiThread {
-                if (generation != localAiRefreshGeneration || isDestroyed) return@runOnUiThread
-                localAiState = if (error == null) state else null
-            }
-        }
     }
 
     private fun reconcileMicrophonePermission(granted: Boolean) {

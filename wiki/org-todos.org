@@ -1,0 +1,79 @@
+#+title: Zara Org Todos
+
+* Canonical model
+Zara uses Org-mode as the default durable store for human todos. The old SQLite =TodoStore= remains available as an explicit legacy backend, but Org is the default mutation/read path.
+
+Machine-executed long-horizon =AgentTask= state remains separate under =zara/tasks/=. Human todos must not be promoted into machine task lifecycle state implicitly.
+
+* Workspace selection
+Zara does not guess an operator-specific notes checkout or require a particular Git/workspace layout. Ordinary Org files remain canonical wherever the user keeps them.
+
+Configure an existing agenda directory or Org file with =[todo].org_root=. Existing gpt-todos users may instead set =[todo].gpt_todos_repo= explicitly, in which case Zara uses that checkout's =agenda= directory. =[todo].org_path= remains an explicit single-file option.
+
+When none of those locations is configured, Zara uses its own neutral app-data Org file at =~/.local/share/zarathushtra/todos.org=. This fallback is an ordinary Org file and can be opened or moved into another Emacs/Doom/org-roam workflow later; Zara does not silently scan a user's Documents tree.
+
+* Configuration
+The runtime accepts these optional =[todo]= keys:
+
+#+begin_src toml
+[todo]
+backend = "org"                 # default; set "sqlite" for legacy storage
+org_root = ""                   # explicit agenda directory or .org file
+gpt_todos_repo = ""             # explicit checkout root; Zara uses <root>/agenda
+org_path = ""                   # explicit single-file Org source
+default_file = "inbox.org"      # capture target when org_root is a directory
+default_status = "TODO"
+default_duration_minutes = 30
+#+end_src
+
+Resolution precedence is =org_root=, then explicit =gpt_todos_repo/agenda=, then explicit =org_path=, then Zara's neutral app-data Org file. No user's Documents/Notes or gpt-todos path is a production default.
+
+* Org schema
+Zara preserves the native gpt-todos shape:
+
+#+begin_src org
+** STRT [#A] Build Org schedule watch face :wearos:todo:
+:PROPERTIES:
+:ID:       5021ae0b-6b2f-4dc2-92c9-cc79b8ed1ed6
+:OWNER:    user
+:REPO:     lost-rob0t/zara
+:EFFORT:   1:30
+:END:
+SCHEDULED: <2026-09-17 Thu 18:00 +1w>
+DEADLINE: <2026-10-01 Thu 23:59>
+#+end_src
+
+- =ID= is stable task identity. Zara generates a UUID for newly captured work and accepts a unique ID prefix in tools/voice flows.
+- =EFFORT= is allocated duration in normal Org =H:MM= form. The watch schedule projection uses =SCHEDULED + EFFORT= as a time interval.
+- =SCHEDULED= is queue/timeline placement.
+- =DEADLINE= is the hard final cutoff only. Scheduling a task never silently changes its deadline.
+- Org repeaters such as =+1w=, =++1w= and =.+1w= are parsed as recurrence metadata on =SCHEDULED=.
+- Unknown properties such as =OWNER=, =REPO=, =ISSUE= and =SOURCE= are preserved during edits.
+
+The parser recognizes Zara/gpt-todos states including =TODO=, =STRT=, =WAIT=, =HOLD=, =IDEA=, =LOOP=, =DONE= and =KILL=, plus legacy Zara states.
+
+* Expert system
+=modules/todo_expert.pl= provides deterministic reasoning over normalized todo state. It currently exposes:
+
+- =route_task/2,3= — project/cadence routing compatible with gpt-todos;
+- =todo_state/6= — =active=, =upcoming=, =overdue=, =waiting=, =actionable= or =done=;
+- =todo_score/7= — deterministic state/priority/deadline score.
+
+The =todo_brief= tool/intent projects Org todos through these rules. Prolog remains the reasoning layer; Org remains durable state.
+
+* Intents and agent tools
+Examples:
+
+#+begin_example
+org editor
+agenda 5
+prioritize todos
+schedule <id-prefix> 2026-09-17 18:00
+#+end_example
+
+=org editor= resolves to the canonical Org editor target. The Android editor surface can use the returned path/task ID as its navigation target rather than inventing another task record.
+
+* Wear schedule projection
+The Wear watch face consumes a bounded snapshot derived from the same canonical Org records. Each projected allocation includes stable ID, title/status, =SCHEDULED= start, =EFFORT= duration, priority/tags and source identity.
+
+The watch is a projection, not a scheduler. Editing/rescheduling returns through Zara's canonical Org boundary.

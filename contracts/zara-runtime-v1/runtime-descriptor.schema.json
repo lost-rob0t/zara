@@ -27,10 +27,29 @@
   ],
   "properties": {
     "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
-    "display_name": {"type": "string", "minLength": 1, "maxLength": 128},
-    "protocol": {"type": "string", "pattern": "^ZARA-RUNTIME/[1-9][0-9]*$"},
-    "runtime_version": {"type": "string", "minLength": 1, "maxLength": 64},
-    "implementation_version": {"type": "string", "minLength": 1, "maxLength": 64},
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^(?!\\s)(?!.*\\s$)[^\\u0000-\\u001F\\u007F]+$"
+    },
+    "protocol": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^ZARA-RUNTIME/[1-9][0-9]*$"
+    },
+    "runtime_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^(?!\\s)(?!.*\\s$)[^\\u0000-\\u001F\\u007F]+$"
+    },
+    "implementation_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^(?!\\s)(?!.*\\s$)[^\\u0000-\\u001F\\u007F]+$"
+    },
     "installed": {"type": "boolean"},
     "available": {"type": "boolean"},
     "health": {"enum": ["starting", "ready", "busy", "degraded", "failed", "stopped"]},

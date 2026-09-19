@@ -266,7 +266,7 @@ def test_android_acceptance_dismisses_release_notes_before_surface_assertion(
     module = _load_device_acceptance_module()
     device = module.Device("emulator-5554", tmp_path)
     release_notes = module.ET.fromstring(
-        '<node text="What\'s new in Zara&#10;0.2.2-alpha" bounds="[10,10][500,90]" />'
+        '<node text="What\'s new in Zara 0.2.2-alpha" bounds="[10,10][500,90]" />'
     )
     continue_button = module.ET.fromstring(
         '<node text="Continue" bounds="[500,1500][700,1600]" />'
@@ -276,7 +276,7 @@ def test_android_acceptance_dismisses_release_notes_before_surface_assertion(
     monkeypatch.setattr(
         device,
         "find_contains",
-        lambda fragment: release_notes if fragment == "What's new in Zara" else None,
+        lambda fragment: release_notes if fragment == "What's new in Zara " else None,
     )
     monkeypatch.setattr(
         device,
@@ -299,26 +299,68 @@ def test_android_acceptance_dismisses_release_notes_before_surface_assertion(
     assert adb_calls == []
 
 
-def test_android_acceptance_await_label_dismisses_late_release_notes(
+def test_android_acceptance_waits_for_delayed_release_notes_button_semantics(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     module = _load_device_acceptance_module()
     device = module.Device("emulator-5554", tmp_path)
-    labels = iter((None, object()))
-    dismissals: list[str] = []
+    release_notes = module.ET.fromstring(
+        '<node text="What\'s new in Zara 0.2.2-alpha" bounds="[10,10][500,90]" />'
+    )
+    continue_button = module.ET.fromstring(
+        '<node text="Continue" bounds="[500,1500][700,1600]" />'
+    )
+    attempts = {"continue": 0}
+    adb_calls: list[tuple[str, ...]] = []
 
-    monkeypatch.setattr(device, "find", lambda _label: next(labels))
     monkeypatch.setattr(
         device,
-        "dismiss_release_notes",
-        lambda: dismissals.append("release-notes") or True,
+        "find_contains",
+        lambda fragment: release_notes if fragment == "What's new in Zara " else None,
     )
-    monkeypatch.setattr(device, "dismiss_unrelated_system_dialogs", lambda: False)
 
-    device.await_label("Chat", timeout=1.0)
+    def delayed_find(label: str):
+        if label != "Continue":
+            return None
+        attempts["continue"] += 1
+        return continue_button if attempts["continue"] >= 3 else None
 
-    assert dismissals == ["release-notes"]
+    monkeypatch.setattr(device, "find", delayed_find)
+    monkeypatch.setattr(
+        device,
+        "adb",
+        lambda *arguments, **kwargs: adb_calls.append(arguments) or "",
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    assert device.dismiss_release_notes(timeout=1.0) is True
+    assert attempts["continue"] == 3
+    assert adb_calls == [("shell", "input", "tap", "600", "1550")]
+
+
+def test_android_acceptance_release_notes_button_timeout_still_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    release_notes = module.ET.fromstring(
+        '<node text="What\'s new in Zara 0.2.2-alpha" bounds="[10,10][500,90]" />'
+    )
+    monotonic_values = iter((0.0, 0.0, 0.5, 1.1))
+
+    monkeypatch.setattr(
+        device,
+        "find_contains",
+        lambda fragment: release_notes if fragment == "What's new in Zara " else None,
+    )
+    monkeypatch.setattr(device, "find", lambda _label: None)
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(AssertionError, match="did not expose Continue"):
+        device.dismiss_release_notes(timeout=1.0)
 
 
 def test_android_acceptance_launch_surface_clears_release_notes_before_waiting(

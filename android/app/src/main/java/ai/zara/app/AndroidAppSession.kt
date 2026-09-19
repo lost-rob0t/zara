@@ -18,8 +18,6 @@ import ai.zara.app.diagnostics.LocalRuntimeDiagnostics
 import ai.zara.app.localai.LocalAiServiceClient
 import ai.zara.app.localai.LocalAiState
 import ai.zara.app.localai.LocalGenerationRequest
-import ai.zara.app.localai.LocalLlmConfiguration
-import ai.zara.app.localai.LocalLlmPrologConfigStore
 import ai.zara.app.localai.LocalTtsState
 import ai.zara.app.runtime.AndroidTextSessionController
 import ai.zara.app.runtime.AssistantRole
@@ -93,7 +91,6 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     )
     private val localServer: LocalZaraServer
     private val localAi = LocalAiServiceClient(context)
-    private val localLlmConfig = LocalLlmPrologConfigStore(prologWorkspace)
     @Volatile private var latestVoiceStreamState: VoiceStreamState? = null
     @Volatile private var latestVoiceStreamFailure: String? = null
     @Volatile private var latestAudioRoute: AudioRouteSnapshot? = null
@@ -119,21 +116,6 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             "prolog_workspace.seeded",
             mapOf("sources" to prologWorkspace.listSources().joinToString(",") { it.name }),
         )
-        runCatching { localLlmConfig.ensureDefaults() }
-            .onSuccess { configuration ->
-                diagnostics.record(
-                    "local_llm.config.ready",
-                    mapOf(
-                        "api_enabled" to configuration.apiEnabled,
-                        "background" to configuration.background,
-                        "api_port" to configuration.apiPort,
-                        "max_output_tokens" to configuration.maxOutputTokens,
-                    ),
-                )
-            }
-            .onFailure { error ->
-                diagnostics.record("local_llm.config.failed", emptyMap(), error)
-            }
         val stagedSemanticAssets = PortableSemanticAssetStager(
             File(context.noBackupFilesDir, "zara/prolog-runtime"),
         ).stageAll(AndroidPortableSemanticAssetSource(context.assets))
@@ -241,6 +223,9 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun setRuntimeMode(mode: RuntimeMode) {
         val previous = runtimeMode
+        if (mode == RuntimeMode.Local && previous != RuntimeMode.Local) {
+            controller.suspendRemoteForLocalMode()
+        }
         runtimeMode = mode
         diagnostics.record(
             "runtime_mode.changed",
@@ -255,15 +240,6 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     }
 
     fun localAiState(): CompletableFuture<LocalAiState> = localAi.state()
-
-    fun localLlmConfiguration(): LocalLlmConfiguration =
-        localLlmConfig.readManaged()
-
-    fun saveLocalLlmConfiguration(
-        configuration: LocalLlmConfiguration,
-    ): CompletableFuture<LocalLlmConfiguration> =
-        mutatePrologWorkspace { localLlmConfig.save(configuration) }
-            .thenApply { localLlmConfig.readManaged() }
 
     fun exportDiagnostics(): String {
         val server = localServer.state()
@@ -467,7 +443,11 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         return controller.connect(profile)
     }
 
-    fun submitText(text: String): CompletableFuture<TextTurnResult> {
+    fun submitText(
+        text: String,
+        localConversationId: String = "local-device",
+        remoteConversationId: String? = null,
+    ): CompletableFuture<TextTurnResult> {
         val remoteConnected = state().server is ServerConnection.Connected
         diagnostics.record(
             "text.submit",
@@ -479,16 +459,21 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             ),
         )
         when (runtimeMode) {
-            RuntimeMode.Local -> return submitLocalText(text)
+            RuntimeMode.Local -> return submitLocalText(text, localConversationId)
             RuntimeMode.Remote -> {
                 if (!remoteConnected) {
                     return CompletableFuture.failedFuture(
                         IllegalStateException("Remote mode requires an authenticated Zara server"),
                     )
                 }
-                return submitRemoteText(text)
+                return submitRemoteText(text, remoteConversationId)
             }
-            RuntimeMode.Auto -> return submitAutoLocalFirst(text, remoteConnected)
+            RuntimeMode.Auto -> return submitAutoLocalFirst(
+                text = text,
+                remoteConnected = remoteConnected,
+                localConversationId = localConversationId,
+                remoteConversationId = remoteConversationId,
+            )
         }
     }
 
@@ -542,12 +527,12 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         text: String,
         projectId: String,
         conversationId: String?,
+        localConversationId: String = "local-project:$projectId",
     ): CompletableFuture<TextTurnResult> {
         val normalizedProjectId = projectId.trim()
         require(normalizedProjectId.isNotEmpty()) { "Project id is required" }
         require(normalizedProjectId.length <= 128) { "Project id is too long" }
         require(normalizedProjectId.none(Char::isISOControl)) { "Project id contains control characters" }
-        val localConversationId = "local-project:$normalizedProjectId"
         val remoteConnected = state().server is ServerConnection.Connected
         return when (runtimeMode) {
             RuntimeMode.Local -> submitLocalText(text, localConversationId)
@@ -569,7 +554,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         }
     }
 
-    private fun submitLocalText(
+    internal fun submitLocalText(
         text: String,
         conversationId: String = "local-device",
     ): CompletableFuture<TextTurnResult> {

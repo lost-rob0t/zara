@@ -16,14 +16,13 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Optional service plugins can now report a canonical "started but unavailable" state when required configuration or credentials are missing; unavailable plugins expose only a bounded reason code in diagnostics, keep no registered tools or capabilities, and no longer fail startup.
 - Android chat now keeps durable multi-conversation history with New chat, pin/unpin, rename, move-to-project actions, full turn restoration, and per-chat lifecycle status indicators.
 - Human todos can now use ordinary Org files as canonical storage, with configurable roots or gpt-todos checkouts, stable Org IDs, schedule/deadline/repeater metadata, and round-trip preservation of unrelated Org properties and prose.
-- Android Runtime settings can configure the local LLM API policy from the app-private Prolog `config.pl`, including loopback port, background-host policy, and maximum output tokens, while keeping API secrets out of Prolog.
 
 ### Fixed
 
-- Android remote runtime projection now rejects stale connected generations, so an old authenticated socket/session cannot be shown as ready after the canonical runtime generation advances.
-- Android runtime projection now treats blank remote session IDs as unauthenticated, so Remote and Auto cannot advertise a connected backend from an empty session.
-- Android no longer advertises a local model as active while it is still loading or after loading fails; strict-local status stays on the symbolic runtime until a model is actually ready.
+- Runtime descriptor protocol text is now bounded consistently by the shared schema and host validators, preventing incompatible overlong protocol identifiers from passing wire validation.
 - Android Local AI now rejects new model work as soon as its runtime begins shutting down and drops stale backend callbacks after close, preventing shutdown races from hanging requests or reviving stopped local state.
+- Android strict Local Assistant voice now uses only the on-device recognizer and non-network TTS, and cancels and fences stale local recognition, model, and speech work when the Assistant session is hidden, cancelled, restarted, or shut down.
+- Android Assistant voice now refuses Remote capture unless enrollment is ready, the connected transport belongs to the current runtime generation, and the authenticated session ID is nonblank; Auto falls back to Local when that remote authority is stale or incomplete.
 - Programmable package symbol, kind, and owner identifiers now reject control characters, whitespace, and non-ASCII tokens before registry mutation, keeping the portable namespace deterministic across Python, Prolog, and native app adapters.
 - Portable package-profile versions now reject path-shaped, control-character, and non-ASCII tokens before any registry mutation, keeping package pins deterministic across host platforms.
 - Org todo discovery now recursively scans configured directory roots, so nested ordinary `.org` files remain visible and editable without flattening a user's workspace or Git layout.
@@ -51,11 +50,6 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 ### Fixed
 
 - Android Local chat now falls back to the verified on-device model when symbolic/Prolog resolution fails, while explicit Prolog commands still report their own failures.
-- Android Runtime settings now makes Auto, Local, and Remote explicit user-selectable modes; the choice persists on-device, Local never falls back to a server, and Remote fails closed when unavailable.
-- Android Runtime settings and Diagnostics now show the canonical local-model phase, model/version, format, quantization, and accelerator instead of inferring local AI readiness.
-- Android local-model status refreshes now ignore stale asynchronous completions, so older provider/model state cannot overwrite newer on-device runtime truth after mode changes or Activity teardown.
-- Android Chat now reports the active runtime honestly as Online Remote, Offline Symbolic, Offline Local model, Connecting, or Degraded instead of hard-coding symbolic status.
-- Android Local mode keeps chat usable when the local runtime is ready without requiring a server account/session, and Diagnostics separates Local state from informational Remote state.
 - Android launcher entries use distinct task identities so opening Automation or Watch Setup cannot reuse another Zara launcher surface's task state.
 - Android audio-focus release failures keep the focus lease retryable instead of silently losing ownership.
 - Android Assistant qualification and lifecycle handling were replayed onto the current runtime/navigation foundation.

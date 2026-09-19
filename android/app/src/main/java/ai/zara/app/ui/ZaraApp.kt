@@ -1,10 +1,11 @@
 package ai.zara.app.ui
 
 import ai.zara.app.BuildConfig
+import ai.zara.app.conversations.ConversationRecord
+import ai.zara.app.conversations.ConversationState
+import ai.zara.app.conversations.ConversationStatus
 import ai.zara.app.projects.ProjectContext
 import ai.zara.app.projects.ProjectContextState
-import ai.zara.app.localai.LocalAiState
-import ai.zara.app.localai.LocalLlmConfiguration
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.RuntimeState
@@ -26,6 +27,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -54,6 +56,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -69,7 +73,6 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -125,19 +128,13 @@ private fun tokensColorScheme(tokens: ZaraSemanticTokens) = darkColorScheme(
     error = tokens.error,
 )
 
-data class RenderedTextTurn(
-    val userText: String,
-    val assistantText: String,
-    val success: Boolean,
-)
-
 @Composable
 fun ZaraApp(
     runtimeState: RuntimeState,
     sourceSha: String,
     enrollmentPublicKey: String?,
     pinnedServerPublicKey: String?,
-    lastTurn: RenderedTextTurn?,
+    conversationState: ConversationState,
     operationError: String?,
     operationBusy: Boolean,
     microphonePermissionGranted: Boolean,
@@ -146,8 +143,6 @@ fun ZaraApp(
     voiceStreamFailure: String?,
     selectedTheme: ZaraTheme,
     localServerState: LocalServerState,
-    localAiState: LocalAiState?,
-    localLlmConfiguration: LocalLlmConfiguration,
     prologSources: List<PrologSource>,
     prologQueryResult: LocalQueryResult?,
     updateState: UpdateState,
@@ -159,14 +154,17 @@ fun ZaraApp(
     projectState: ProjectContextState,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
-    onRefreshLocalAiState: () -> Unit,
-    onSaveLocalLlmConfiguration: (LocalLlmConfiguration) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
     onReplaceServerPin: (String) -> Unit,
     onConnect: (String) -> Unit,
-    onSendText: (String, ProjectContext?) -> Unit,
+    onNewConversation: () -> Unit,
+    onSelectConversation: (String) -> Unit,
+    onToggleConversationPinned: (String, Boolean) -> Unit,
+    onRenameConversation: (String, String) -> Unit,
+    onMoveConversationToProject: (String, String?) -> Unit,
+    onSendText: (String, ConversationRecord, ProjectContext?) -> Unit,
     onCreateProject: (String) -> Unit,
     onSelectProject: (String?) -> Unit,
     onRequestMicrophonePermission: () -> Unit,
@@ -231,10 +229,25 @@ fun ZaraApp(
                             selected = navigation.menu,
                             state = runtimeState,
                             localState = localServerState,
+                            conversationState = conversationState,
+                            projects = projectState.projects,
                             onSelect = { destination ->
                                 navigation = navigation.selectMenu(destination)
                                 scope.launch { drawerState.close() }
                             },
+                            onNewConversation = {
+                                onNewConversation()
+                                navigation = navigation.selectMenu(AppMenu.Chat)
+                                scope.launch { drawerState.close() }
+                            },
+                            onSelectConversation = { conversationId ->
+                                onSelectConversation(conversationId)
+                                navigation = navigation.selectMenu(AppMenu.Chat)
+                                scope.launch { drawerState.close() }
+                            },
+                            onTogglePinned = onToggleConversationPinned,
+                            onRenameConversation = onRenameConversation,
+                            onMoveConversationToProject = onMoveConversationToProject,
                         )
                     },
                 ) {
@@ -271,18 +284,20 @@ fun ZaraApp(
                                     savedContent.SaveableStateProvider(navigation.route.name) {
                                         val padding = PaddingValues(0.dp)
                                         when (selected) {
-                                            AppSurface.Chat -> ChatSurface(
-                                                state = runtimeState,
-                                                localServerState = localServerState,
-                                                localAiState = localAiState,
-                                                runtimeMode = runtimeMode,
-                                                project = projectState.selectedProject,
-                                                lastTurn = lastTurn,
-                                                operationError = operationError,
-                                                operationBusy = operationBusy,
-                                                onSendText = onSendText,
-                                                padding = padding,
-                                            )
+                                            AppSurface.Chat -> {
+                                                val conversation = conversationState.selectedConversation
+                                                val project = conversation?.projectId?.let(projectState::project)
+                                                ChatSurface(
+                                                    state = runtimeState,
+                                                    localServerState = localServerState,
+                                                    conversation = conversation,
+                                                    project = project,
+                                                    operationError = operationError,
+                                                    operationBusy = operationBusy,
+                                                    onSendText = onSendText,
+                                                    padding = padding,
+                                                )
+                                            }
                                             AppSurface.Logic -> PrologStudioSurface(
                                                 localState = localServerState,
                                                 sources = prologSources,
@@ -331,8 +346,6 @@ fun ZaraApp(
                                                 state = runtimeState,
                                                 sourceSha = sourceSha,
                                                 localServerState = localServerState,
-                                                localAiState = localAiState,
-                                                runtimeMode = runtimeMode,
                                                 voiceStreamState = voiceStreamState,
                                                 voiceStreamFailure = voiceStreamFailure,
                                                 operationError = operationError,
@@ -348,8 +361,6 @@ fun ZaraApp(
                                                 onConnect = onConnect,
                                                 state = runtimeState,
                                                 localServerState = localServerState,
-                                                localAiState = localAiState,
-                                                localLlmConfiguration = localLlmConfiguration,
                                                 updateState = updateState,
                                                 runtimeMode = runtimeMode,
                                                 localEmbedding = localEmbedding,
@@ -366,8 +377,6 @@ fun ZaraApp(
                                                 onDownloadUpdate = onDownloadUpdate,
                                                 onInstallUpdate = onInstallUpdate,
                                                 onSelectRuntimeMode = onSelectRuntimeMode,
-                                                onRefreshLocalAiState = onRefreshLocalAiState,
-                                                onSaveLocalLlmConfiguration = onSaveLocalLlmConfiguration,
                                                 onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
                                                 padding = padding,
                                             )
@@ -444,9 +453,18 @@ private fun ZaraDrawer(
     selected: AppMenu,
     state: RuntimeState,
     localState: LocalServerState,
+    conversationState: ConversationState,
+    projects: List<ProjectContext>,
     onSelect: (AppMenu) -> Unit,
+    onNewConversation: () -> Unit,
+    onSelectConversation: (String) -> Unit,
+    onTogglePinned: (String, Boolean) -> Unit,
+    onRenameConversation: (String, String) -> Unit,
+    onMoveConversationToProject: (String, String?) -> Unit,
 ) {
     val tokens = LocalZaraTokens.current
+    var showAllPinned by rememberSaveable { mutableStateOf(false) }
+    var showAllRecents by rememberSaveable { mutableStateOf(false) }
     ModalDrawerSheet(
         modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 360.dp),
         drawerContainerColor = tokens.surfaceElevated,
@@ -494,14 +512,80 @@ private fun ZaraDrawer(
                 )
             }
 
-            Spacer(Modifier.size(12.dp))
+            TextButton(
+                onClick = onNewConversation,
+                enabled = conversationState.loadFailure == null,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+            ) {
+                Text(
+                    "＋  New chat",
+                    modifier = Modifier.fillMaxWidth(),
+                    color = tokens.accentCyan,
+                    textAlign = TextAlign.Start,
+                )
+            }
+
+            conversationState.loadFailure?.let { failure ->
+                DrawerHistoryEmpty("History unavailable", failure)
+            }
+
+            Spacer(Modifier.size(6.dp))
             DrawerDividerLabel("PINNED")
-            DrawerHistoryRow("No pinned conversations", "nothing is synced implicitly")
+            if (conversationState.pinnedConversations.isEmpty()) {
+                DrawerHistoryEmpty("No pinned conversations", "Pin a chat from its ⋮ menu")
+            } else {
+                val pinned = if (showAllPinned) {
+                    conversationState.pinnedConversations
+                } else {
+                    conversationState.pinnedConversations.take(6)
+                }
+                pinned.forEach { conversation ->
+                    key(conversation.id) {
+                        ConversationDrawerRow(
+                            conversation = conversation,
+                            selected = conversation.id == conversationState.selectedConversationId,
+                            projects = projects,
+                            onSelect = onSelectConversation,
+                            onTogglePinned = onTogglePinned,
+                            onRenameConversation = onRenameConversation,
+                            onMoveConversationToProject = onMoveConversationToProject,
+                        )
+                    }
+                }
+                if (conversationState.pinnedConversations.size > 6) {
+                    HistoryExpansionAction(showAllPinned) { showAllPinned = !showAllPinned }
+                }
+            }
+
             Spacer(Modifier.size(10.dp))
             DrawerDividerLabel("RECENTS")
-            DrawerHistoryRow("No saved conversations", "local history is not enabled yet")
-            Spacer(Modifier.weight(1f))
+            if (conversationState.recentConversations.isEmpty()) {
+                DrawerHistoryEmpty("No recent conversations", "Start a new chat")
+            } else {
+                val recents = if (showAllRecents) {
+                    conversationState.recentConversations
+                } else {
+                    conversationState.recentConversations.take(10)
+                }
+                recents.forEach { conversation ->
+                    key(conversation.id) {
+                        ConversationDrawerRow(
+                            conversation = conversation,
+                            selected = conversation.id == conversationState.selectedConversationId,
+                            projects = projects,
+                            onSelect = onSelectConversation,
+                            onTogglePinned = onTogglePinned,
+                            onRenameConversation = onRenameConversation,
+                            onMoveConversationToProject = onMoveConversationToProject,
+                        )
+                    }
+                }
+                if (conversationState.recentConversations.size > 10) {
+                    HistoryExpansionAction(showAllRecents) { showAllRecents = !showAllRecents }
+                }
+            }
 
+            Spacer(Modifier.weight(1f))
             Surface(
                 color = tokens.surface,
                 border = BorderStroke(1.dp, tokens.border),
@@ -550,7 +634,7 @@ private fun DrawerDividerLabel(label: String) {
 }
 
 @Composable
-private fun DrawerHistoryRow(title: String, detail: String) {
+private fun DrawerHistoryEmpty(title: String, detail: String) {
     val tokens = LocalZaraTokens.current
     Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp)) {
         Text(title, color = tokens.textMuted, style = MaterialTheme.typography.bodySmall)
@@ -559,30 +643,207 @@ private fun DrawerHistoryRow(title: String, detail: String) {
 }
 
 @Composable
+private fun HistoryExpansionAction(
+    expanded: Boolean,
+    onClick: () -> Unit,
+) {
+    val tokens = LocalZaraTokens.current
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+    ) {
+        Text(
+            if (expanded) "Show less" else "See all…",
+            modifier = Modifier.fillMaxWidth(),
+            color = tokens.textMuted,
+            textAlign = TextAlign.Start,
+        )
+    }
+}
+
+@Composable
+private fun ConversationDrawerRow(
+    conversation: ConversationRecord,
+    selected: Boolean,
+    projects: List<ProjectContext>,
+    onSelect: (String) -> Unit,
+    onTogglePinned: (String, Boolean) -> Unit,
+    onRenameConversation: (String, String) -> Unit,
+    onMoveConversationToProject: (String, String?) -> Unit,
+) {
+    val tokens = LocalZaraTokens.current
+    var menuExpanded by rememberSaveable(conversation.id) { mutableStateOf(false) }
+    var renameOpen by rememberSaveable(conversation.id) { mutableStateOf(false) }
+    var renameDraft by rememberSaveable(conversation.id) { mutableStateOf(conversation.title) }
+    var moveOpen by rememberSaveable(conversation.id) { mutableStateOf(false) }
+    val projectName = conversation.projectId?.let { projectId ->
+        projects.firstOrNull { it.id == projectId }?.name ?: "project"
+    }
+    val statusLabel = conversation.status.name.lowercase()
+    val detail = listOfNotNull(projectName, statusLabel).joinToString(" · ")
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .clickable { onSelect(conversation.id) },
+        color = if (selected) tokens.surface else Color.Transparent,
+        border = if (selected) BorderStroke(1.dp, tokens.borderActive) else null,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 10.dp, top = 5.dp, bottom = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatusDot(conversationStatusColor(tokens, conversation.status))
+            Column(Modifier.padding(start = 9.dp).weight(1f)) {
+                Text(conversation.title, color = tokens.text, style = MaterialTheme.typography.bodySmall)
+                Text(detail, color = tokens.textMuted, style = MaterialTheme.typography.labelSmall)
+            }
+            Box {
+                TextButton(
+                    onClick = { menuExpanded = true },
+                    modifier = Modifier.semantics {
+                        contentDescription = "Actions for ${conversation.title}"
+                    },
+                ) {
+                    Text("⋮", color = tokens.textMuted)
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(if (conversation.pinned) "Unpin" else "Pin") },
+                        onClick = {
+                            menuExpanded = false
+                            onTogglePinned(conversation.id, !conversation.pinned)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Rename") },
+                        onClick = {
+                            menuExpanded = false
+                            renameDraft = conversation.title
+                            renameOpen = true
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Move to project") },
+                        onClick = {
+                            menuExpanded = false
+                            moveOpen = true
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    if (renameOpen) {
+        AlertDialog(
+            onDismissRequest = { renameOpen = false },
+            title = { Text("Rename chat") },
+            text = {
+                OutlinedTextField(
+                    value = renameDraft,
+                    onValueChange = { renameDraft = it.take(120) },
+                    singleLine = true,
+                    label = { Text("Chat name") },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = renameDraft.isNotBlank(),
+                    onClick = {
+                        onRenameConversation(conversation.id, renameDraft.trim())
+                        renameOpen = false
+                    },
+                ) {
+                    Text("Rename")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameOpen = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (moveOpen) {
+        AlertDialog(
+            onDismissRequest = { moveOpen = false },
+            title = { Text("Move chat to project") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    TextButton(
+                        onClick = {
+                            onMoveConversationToProject(conversation.id, null)
+                            moveOpen = false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            "No project",
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Start,
+                        )
+                    }
+                    projects.forEach { project ->
+                        TextButton(
+                            onClick = {
+                                onMoveConversationToProject(conversation.id, project.id)
+                                moveOpen = false
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                project.name,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Start,
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { moveOpen = false }) { Text("Cancel") }
+            },
+        )
+    }
+}
+
+private fun conversationStatusColor(
+    tokens: ZaraSemanticTokens,
+    status: ConversationStatus,
+): Color = when (status) {
+    ConversationStatus.Empty -> tokens.border
+    ConversationStatus.Running -> tokens.accentCyan
+    ConversationStatus.Success -> tokens.success
+    ConversationStatus.Failed -> tokens.error
+    ConversationStatus.Interrupted -> tokens.warning
+}
+
+@Composable
 private fun ChatSurface(
     state: RuntimeState,
     localServerState: LocalServerState,
-    localAiState: LocalAiState?,
-    runtimeMode: RuntimeMode,
+    conversation: ConversationRecord?,
     project: ProjectContext?,
-    lastTurn: RenderedTextTurn?,
     operationError: String?,
     operationBusy: Boolean,
-    onSendText: (String, ProjectContext?) -> Unit,
+    onSendText: (String, ConversationRecord, ProjectContext?) -> Unit,
     padding: PaddingValues,
 ) {
     var input by rememberSaveable { mutableStateOf("") }
-    val projection = runtimeUiProjection(runtimeMode, localServerState, state)
-    val ready = projection.chatReady
-    val backend = projection.backendLabel
-    val runtimeStatus = when {
-        backend == "remote" -> "Online · Remote"
-        backend == "local" || backend == "local fallback" ->
-            localAiState?.model?.let { "Offline · Local model ${it.id}" } ?: "Offline · Symbolic"
-        runtimeMode == RuntimeMode.Local && localServerState.phase == LocalServerPhase.STARTING ->
-            "Connecting…"
-        else -> "Degraded"
-    }
+    val remoteReady = state.server is ServerConnection.Connected &&
+        state.enrollment == EnrollmentReadiness.Ready
+    val localReady = localServerState.phase == LocalServerPhase.READY
+    val ready = conversation != null && (remoteReady || localReady)
     val tokens = LocalZaraTokens.current
 
     Column(
@@ -598,7 +859,7 @@ private fun ChatSurface(
                 .weight(1f)
                 .verticalScroll(rememberScrollState()),
         ) {
-            if (lastTurn == null) {
+            if (conversation == null || conversation.turns.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 360.dp),
                     contentAlignment = Alignment.Center,
@@ -625,28 +886,27 @@ private fun ChatSurface(
                             modifier = Modifier.padding(top = 18.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            when (runtimeMode) {
-                                RuntimeMode.Local -> {
-                                    StatusPill("local ${localServerState.phase.name.lowercase()}")
-                                    StatusPill("private")
-                                }
-                                RuntimeMode.Remote -> {
-                                    StatusPill(enrollmentLabel(state.enrollment))
-                                    StatusPill(connectionLabel(state.server))
-                                }
-                                RuntimeMode.Auto -> {
-                                    StatusPill(backend)
-                                    StatusPill(if (backend == "remote") "authenticated" else "private")
-                                }
-                            }
+                            StatusPill(enrollmentLabel(state.enrollment))
+                            StatusPill(connectionLabel(state.server))
                         }
                     }
                 }
             } else {
                 Spacer(Modifier.size(18.dp))
-                UserMessage(lastTurn.userText)
-                Spacer(Modifier.size(12.dp))
-                AssistantMessage(lastTurn.assistantText, lastTurn.success)
+                conversation.turns.forEachIndexed { index, turn ->
+                    UserMessage(turn.userText)
+                    Spacer(Modifier.size(12.dp))
+                    when {
+                        turn.assistantText != null ->
+                            AssistantMessage(turn.assistantText, turn.success == true)
+                        conversation.status == ConversationStatus.Running &&
+                            index == conversation.turns.lastIndex ->
+                            AssistantPendingMessage()
+                    }
+                    if (index != conversation.turns.lastIndex) {
+                        Spacer(Modifier.size(18.dp))
+                    }
+                }
             }
             operationError?.let { ErrorBanner(it) }
         }
@@ -658,22 +918,50 @@ private fun ChatSurface(
             operationBusy = operationBusy,
             onSend = {
                 val message = input.trim()
-                if (message.isNotEmpty()) {
+                if (message.isNotEmpty() && conversation != null) {
                     input = ""
-                    onSendText(message, project)
+                    onSendText(message, conversation, project)
                 }
             },
         )
         Text(
-            runtimeStatus,
-            modifier = Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 10.dp)
-                .semantics { contentDescription = "Runtime status $runtimeStatus" },
+            when {
+                remoteReady -> "REMOTE  •  AUTHENTICATED  •  SYMBOLIC"
+                localReady -> "LOCAL  •  SYMBOLIC  •  PRIVATE"
+                else -> "LOCAL RUNTIME STARTING"
+            },
+            modifier = Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 10.dp),
             color = tokens.textMuted,
             textAlign = TextAlign.Center,
             fontFamily = FontFamily.Monospace,
             fontSize = 9.sp,
             letterSpacing = 1.6.sp,
         )
+    }
+}
+
+@Composable
+private fun AssistantPendingMessage() {
+    val tokens = LocalZaraTokens.current
+    Surface(
+        color = tokens.surface,
+        border = BorderStroke(1.dp, tokens.accentCyan),
+        shape = MaterialTheme.shapes.large,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatusDot(tokens.accentCyan)
+            Text(
+                "Working…",
+                modifier = Modifier.padding(start = 10.dp),
+                color = tokens.textMuted,
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
     }
 }
 
@@ -694,7 +982,7 @@ private fun CompactComposer(
         singleLine = true,
         placeholder = {
             Text(
-                if (ready) "Ask anything…" else "Runtime unavailable",
+                if (ready) "Ask anything…" else "Open Settings → Connection",
                 color = tokens.textMuted,
             )
         },
@@ -796,7 +1084,7 @@ private fun VoiceSurface(
                 onRequestMicrophonePermission,
             )
             !canStartManualVoice(state, microphonePermissionGranted) && !capturing ->
-                MutedNotice("In-app Voice currently uses the authenticated Remote stream. Local system-assistant voice works through the Android Assistant surface.")
+                MutedNotice("Voice becomes available after an authenticated session connects in Settings → Connection.")
             capturing -> {
                 PrimaryAction("Stop & send", !operationBusy, onStopVoice)
                 SecondaryAction("Cancel", !operationBusy, onCancelVoice)
@@ -853,8 +1141,6 @@ private fun SettingsSurface(
     onConnect: (String) -> Unit,
     state: RuntimeState,
     localServerState: LocalServerState,
-    localAiState: LocalAiState?,
-    localLlmConfiguration: LocalLlmConfiguration,
     updateState: UpdateState,
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
@@ -871,8 +1157,6 @@ private fun SettingsSurface(
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
-    onRefreshLocalAiState: () -> Unit,
-    onSaveLocalLlmConfiguration: (LocalLlmConfiguration) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     padding: PaddingValues,
 ) {
@@ -880,17 +1164,7 @@ private fun SettingsSurface(
     var replacementServerPin by rememberSaveable { mutableStateOf("") }
     var showServerPinReplacement by rememberSaveable { mutableStateOf(false) }
     var showAssistantHelp by rememberSaveable { mutableStateOf(false) }
-    var localApiPort by rememberSaveable(localLlmConfiguration.apiPort) {
-        mutableStateOf(localLlmConfiguration.apiPort.toString())
-    }
-    var localMaxOutputTokens by rememberSaveable(localLlmConfiguration.maxOutputTokens) {
-        mutableStateOf(localLlmConfiguration.maxOutputTokens.toString())
-    }
     val tokens = LocalZaraTokens.current
-
-    LaunchedEffect(section) {
-        if (section == AppRoute.Runtime) onRefreshLocalAiState()
-    }
 
     ScreenBody(padding) {
         ScreenTitle(section.label, "Settings")
@@ -902,14 +1176,8 @@ private fun SettingsSurface(
                     KeyValueRow("knowledge sources", localServerState.loadedSources.size.toString())
                     MutedNotice("Runs inside Zara with no account or network. The Logic workspace is app-private and never syncs to a remote server implicitly.")
                     localServerState.failure?.let { ErrorBanner(it) }
-                    Text("RUNTIME MODE", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
-                    KeyValueRow("selected", runtimeMode.name)
+                    Text("CHAT BACKEND", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
                     RuntimeMode.entries.forEach { mode ->
-                        val description = when (mode) {
-                            RuntimeMode.Auto -> "Use authenticated Remote when available; otherwise use Local."
-                            RuntimeMode.Local -> "Stay on-device. No account, server, or cloud fallback."
-                            RuntimeMode.Remote -> "Use only an authenticated Zara server; fail closed when unavailable."
-                        }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -917,132 +1185,18 @@ private fun SettingsSurface(
                                     selected = mode == runtimeMode,
                                     onClick = { onSelectRuntimeMode(mode) },
                                 )
-                                .semantics {
-                                    contentDescription = "Runtime mode ${mode.name}; ${if (mode == runtimeMode) "selected" else "not selected"}"
-                                }
-                                .padding(vertical = 10.dp),
+                                .padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             StatusDot(if (mode == runtimeMode) tokens.success else tokens.border)
-                            Column(
-                                modifier = Modifier.padding(start = 10.dp).weight(1f),
-                            ) {
-                                Text(
-                                    mode.name,
-                                    color = if (mode == runtimeMode) tokens.text else tokens.textMuted,
-                                    fontWeight = if (mode == runtimeMode) FontWeight.SemiBold else FontWeight.Normal,
-                                )
-                                Text(
-                                    description,
-                                    color = tokens.textMuted,
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                            }
+                            Text(
+                                mode.name,
+                                modifier = Modifier.padding(start = 10.dp),
+                                color = if (mode == runtimeMode) tokens.text else tokens.textMuted,
+                            )
                         }
                     }
-                    MutedNotice("Mode selection is saved on this device and applies to new turns immediately. Auto, Local, and Remote are routing choices; they do not change which concrete optional runtime is installed.")
-                    val localModel = localAiState?.model
-                    Text("LOCAL MODEL", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
-                    KeyValueRow("phase", localAiState?.phase?.name?.lowercase() ?: "unavailable")
-                    KeyValueRow("model", localModel?.let { "${it.id}@${it.version}" } ?: "none")
-                    KeyValueRow("format", localModel?.format?.wireName ?: "none")
-                    KeyValueRow("quantization", localModel?.quantization?.wireName ?: "none")
-                    KeyValueRow("accelerator", localModel?.backend?.name?.lowercase() ?: "none")
-                    localAiState?.failure?.let { ErrorBanner(it) }
-                    MutedNotice("Read directly from the local AI service. 'none' means no local model is loaded; Zara never invents local-model readiness.")
-
-                    Text("LOCAL LLM API", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
-                    KeyValueRow("configuration", "config.pl")
-                    KeyValueRow("endpoint", "http://127.0.0.1:${localLlmConfiguration.apiPort}/v1")
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .selectable(
-                                selected = localLlmConfiguration.apiEnabled,
-                                enabled = !operationBusy,
-                                onClick = {
-                                    onSaveLocalLlmConfiguration(
-                                        localLlmConfiguration.copy(
-                                            apiEnabled = !localLlmConfiguration.apiEnabled,
-                                        ),
-                                    )
-                                },
-                            )
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        StatusDot(if (localLlmConfiguration.apiEnabled) tokens.success else tokens.border)
-                        Text(
-                            if (localLlmConfiguration.apiEnabled) "API enabled" else "API disabled",
-                            modifier = Modifier.padding(start = 10.dp),
-                            color = tokens.text,
-                        )
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .selectable(
-                                selected = localLlmConfiguration.background,
-                                enabled = !operationBusy,
-                                onClick = {
-                                    onSaveLocalLlmConfiguration(
-                                        localLlmConfiguration.copy(
-                                            background = !localLlmConfiguration.background,
-                                        ),
-                                    )
-                                },
-                            )
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        StatusDot(if (localLlmConfiguration.background) tokens.success else tokens.border)
-                        Text(
-                            if (localLlmConfiguration.background) "Background host requested" else "Foreground/session only",
-                            modifier = Modifier.padding(start = 10.dp),
-                            color = tokens.text,
-                        )
-                    }
-                    OutlinedTextField(
-                        value = localApiPort,
-                        onValueChange = { localApiPort = it.filter(Char::isDigit).take(5) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Loopback API port") },
-                        enabled = !operationBusy,
-                        singleLine = true,
-                        colors = fieldColors(),
-                    )
-                    OutlinedTextField(
-                        value = localMaxOutputTokens,
-                        onValueChange = { localMaxOutputTokens = it.filter(Char::isDigit).take(4) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Maximum output tokens") },
-                        enabled = !operationBusy,
-                        singleLine = true,
-                        colors = fieldColors(),
-                    )
-                    val parsedLocalApiPort = localApiPort.toIntOrNull()
-                    val parsedLocalMaxOutputTokens = localMaxOutputTokens.toIntOrNull()
-                    PrimaryAction(
-                        "Save local LLM config",
-                        !operationBusy &&
-                            parsedLocalApiPort != null &&
-                            parsedLocalApiPort in 1_024..65_535 &&
-                            parsedLocalMaxOutputTokens != null &&
-                            parsedLocalMaxOutputTokens in 1..4_096,
-                    ) {
-                        onSaveLocalLlmConfiguration(
-                            localLlmConfiguration.copy(
-                                apiPort = requireNotNull(parsedLocalApiPort),
-                                maxOutputTokens = requireNotNull(parsedLocalMaxOutputTokens),
-                            ),
-                        )
-                    }
-                    MutedNotice(
-                        "Non-secret Local LLM policy is stored as executable Prolog facts in the app-private config.pl. " +
-                            "The API bind address is fixed to loopback; API secrets are never written into Prolog. " +
-                            "Service readiness still comes from the local AI runtime, not from this toggle."
-                    )
-
+                    MutedNotice("Auto prefers an authenticated remote session and falls back to local. Local never sends the turn to the network. Remote fails closed when disconnected.")
                     Text("LOCAL EMBEDDINGS", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
                     Row(
                         modifier = Modifier
@@ -1242,8 +1396,6 @@ private fun DiagnosticsSurface(
     state: RuntimeState,
     sourceSha: String,
     localServerState: LocalServerState,
-    localAiState: LocalAiState?,
-    runtimeMode: RuntimeMode,
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
     operationError: String?,
@@ -1252,42 +1404,22 @@ private fun DiagnosticsSurface(
     onClearDiagnostics: () -> Unit,
     padding: PaddingValues,
 ) {
-    val projection = runtimeUiProjection(runtimeMode, localServerState, state)
     ScreenBody(padding) {
         ScreenTitle("Diagnostics", "Bounded runtime state")
         SectionCard("BUILD") {
             KeyValueRow("source", sourceSha.take(12))
         }
         SectionCard("RUNTIME") {
-            KeyValueRow("mode", runtimeMode.name.lowercase())
-            KeyValueRow("active backend", projection.backendLabel)
-            KeyValueRow("chat ready", projection.chatReady.toString())
-            KeyValueRow("assistant role", assistantRoleLabel(state.assistantRole))
-        }
-        SectionCard("LOCAL") {
-            KeyValueRow("server", localServerState.phase.name.lowercase())
-            KeyValueRow("generation", localServerState.generation.toString())
-            KeyValueRow("sources", localServerState.loadedSources.size.toString())
-            KeyValueRow("failure", localServerState.failure ?: "none")
-        }
-        SectionCard("LOCAL MODEL") {
-            val localModel = localAiState?.model
-            KeyValueRow("phase", localAiState?.phase?.name?.lowercase() ?: "unavailable")
-            KeyValueRow("model", localModel?.let { "${it.id}@${it.version}" } ?: "none")
-            KeyValueRow("format", localModel?.format?.wireName ?: "none")
-            KeyValueRow("quantization", localModel?.quantization?.wireName ?: "none")
-            KeyValueRow("accelerator", localModel?.backend?.name?.lowercase() ?: "none")
-            localAiState?.failure?.let { ErrorBanner(it) }
-        }
-        SectionCard("REMOTE") {
+            KeyValueRow("local server", localServerState.phase.name.lowercase())
+            KeyValueRow("local generation", localServerState.generation.toString())
+            KeyValueRow("local sources", localServerState.loadedSources.size.toString())
+            KeyValueRow("local failure", localServerState.failure ?: "none")
             KeyValueRow("connection", connectionLabel(state.server))
             KeyValueRow("generation", state.generation.toString())
             KeyValueRow("session", state.sessionId ?: "none")
             KeyValueRow("conversation", state.selectedConversationId ?: "none")
             KeyValueRow("enrollment", enrollmentLabel(state.enrollment))
-            if (projection.remoteInformational) {
-                MutedNotice("Remote state is informational in Local mode and is not required for local chat or Android Assistant voice.")
-            }
+            KeyValueRow("assistant role", assistantRoleLabel(state.assistantRole))
         }
         SectionCard("LOCAL LOG") {
             MutedNotice(
