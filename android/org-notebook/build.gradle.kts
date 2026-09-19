@@ -13,8 +13,8 @@ android {
         applicationId = "ai.zara.org.notebook"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-alpha"
+        versionCode = 4
+        versionName = "0.2.2-alpha"
     }
 
     buildFeatures {
@@ -25,7 +25,7 @@ android {
         getByName("debug") {
             if (debugSigningKeystore != null) {
                 val keyFile = file(debugSigningKeystore)
-                require(keyFile.isFile) { "Zara Android debug signing keystore is missing" }
+                require(keyFile.isFile) { "ZARA Android debug signing keystore is missing" }
                 storeFile = keyFile
                 storePassword = "android"
                 keyAlias = "androiddebugkey"
