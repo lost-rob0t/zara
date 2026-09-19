@@ -49,7 +49,7 @@ _STEP_KINDS = {
     "THEN": frozenset({"action", "command"}),
 }
 
-# Synced recipe data is declarative.  These keys are not parameter names: they
+# Synced recipe data is declarative. These keys are not parameter names: they
 # are ambient execution mechanisms that must stay behind typed host adapters.
 _FORBIDDEN_ARGUMENT_KEYS = frozenset(
     {
@@ -80,7 +80,7 @@ class AutomationCompileError(ValueError):
 class OrgAutomationHeading:
     """Minimal projection supplied by Zara's canonical Org parser.
 
-    ``source`` is provenance only.  It can name any configured file/workspace;
+    ``source`` is provenance only. It can name any configured file/workspace;
     this layer has no default Org root and never opens the path.
     """
 
@@ -115,8 +115,9 @@ class AutomationRecipe:
 class AutomationSymbol:
     """Read-only projection from the canonical programmable registry.
 
-    ``safe_for_automation`` is metadata, not an authority grant.  Actual calls
-    must still pass the runtime's principal/capability/approval checks.
+    Required capabilities are descriptive here. They are not acquired or
+    granted by inspection; invocation must still pass the runtime's canonical
+    principal/capability/permission/approval checks.
     """
 
     symbol: str
@@ -125,7 +126,6 @@ class AutomationSymbol:
     capabilities: tuple[str, ...] = ()
     platforms: tuple[str, ...] = ()
     available: bool = True
-    safe_for_automation: bool = False
 
 
 @dataclass(frozen=True)
@@ -147,8 +147,8 @@ class AutomationInspection:
 def compile_automation(root: OrgAutomationHeading) -> AutomationRecipe:
     """Compile a canonical-parser heading projection into an inert recipe.
 
-    The source text is never rewritten.  Unknown root properties remain inert
-    metadata, while WHEN/IF/THEN parameters remain inert strings.  Only the
+    The source text is never rewritten. Unknown root properties remain inert
+    metadata, while WHEN/IF/THEN parameters remain inert strings. Only the
     selector fields (EVENT/PREDICATE/COMMAND) become symbol references.
     """
 
@@ -233,8 +233,8 @@ def inspect_automation(
 ) -> AutomationInspection:
     """Resolve recipe dependencies without invoking them.
 
-    This is discovery only.  Capability requirements are surfaced for callers;
-    they are not satisfied or granted here.  A registry unload or platform
+    This is discovery only. Capability requirements are surfaced for callers;
+    they are not satisfied or granted here. A registry unload or platform
     mismatch therefore changes inspection state without mutating canonical Org.
     """
 
@@ -304,12 +304,6 @@ def inspect_automation(
                 status="unsupported",
                 dependencies=tuple(dependencies),
                 reason=f"unsupported_platform:{step.symbol}:{platform}",
-            )
-        if not descriptor.safe_for_automation:
-            return AutomationInspection(
-                status="blocked",
-                dependencies=tuple(dependencies),
-                reason=f"automation_unsafe:{step.symbol}",
             )
 
     return AutomationInspection(status="ready", dependencies=tuple(dependencies))
@@ -420,8 +414,6 @@ def _validate_descriptor(descriptor: AutomationSymbol) -> AutomationSymbol:
     owner = _bounded_text(descriptor.owner, "owner", _MAX_ID_LENGTH, allow_empty=True)
     if not isinstance(descriptor.available, bool):
         raise AutomationCompileError("symbol availability must be boolean")
-    if not isinstance(descriptor.safe_for_automation, bool):
-        raise AutomationCompileError("safe_for_automation must be boolean")
 
     capabilities = _bounded_string_tuple(
         descriptor.capabilities,
@@ -444,7 +436,6 @@ def _validate_descriptor(descriptor: AutomationSymbol) -> AutomationSymbol:
         capabilities=capabilities,
         platforms=platforms,
         available=descriptor.available,
-        safe_for_automation=descriptor.safe_for_automation,
     )
 
 
