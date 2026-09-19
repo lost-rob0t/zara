@@ -14,6 +14,7 @@ import ai.zara.app.device.DeviceCapabilityRegistry
 import ai.zara.app.device.OpenAppAdapter
 import ai.zara.app.device.OpenUriAdapter
 import ai.zara.app.device.RegistryDeviceActionHandler
+import ai.zara.app.diagnostics.LocalRuntimeDiagnostics
 import ai.zara.app.localai.LocalAiServiceClient
 import ai.zara.app.localai.LocalAiState
 import ai.zara.app.localai.LocalTtsState
@@ -87,6 +88,9 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     private val voiceStreamSink: VoiceStreamSinkActor
     private val audioRouteController: AudioRouteController
     private val prologWorkspace = PrologWorkspace(File(context.filesDir, "prolog-workspace"))
+    private val diagnostics = LocalRuntimeDiagnostics(
+        File(context.noBackupFilesDir, "zara/diagnostics/local-runtime.log"),
+    )
     private val localServer: LocalZaraServer
     private val localAi = LocalAiServiceClient(context)
     @Volatile private var latestPolicyOutcome: PolicyOutcome? = null
@@ -208,6 +212,49 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     }
 
     fun localAiState(): CompletableFuture<LocalAiState> = localAi.state()
+
+    fun exportDiagnostics(): String {
+        val server = localServer.state()
+        val aiFuture = localAi.state()
+        val aiState = if (
+            aiFuture.isDone &&
+            !aiFuture.isCompletedExceptionally &&
+            !aiFuture.isCancelled
+        ) {
+            runCatching { aiFuture.get() }.getOrNull()
+        } else {
+            null
+        }
+        diagnostics.record(
+            "diagnostics.export",
+            mapOf(
+                "local_server_phase" to server.phase.name.lowercase(),
+                "local_ai_phase" to (aiState?.phase?.name?.lowercase() ?: "unknown"),
+            ),
+        )
+        return diagnostics.export(
+            mapOf(
+                "version" to BuildConfig.VERSION_NAME,
+                "version_code" to BuildConfig.VERSION_CODE,
+                "source_sha" to BuildConfig.SOURCE_SHA,
+                "runtime_mode" to runtimeMode.name.lowercase(),
+                "local_server_phase" to server.phase.name.lowercase(),
+                "local_server_generation" to server.generation,
+                "local_server_sources" to server.loadedSources.joinToString(","),
+                "local_server_failure" to (server.failure ?: "none"),
+                "local_ai_phase" to (aiState?.phase?.name?.lowercase() ?: "unknown"),
+                "local_ai_generation" to (aiState?.generation ?: -1),
+                "local_ai_model" to (aiState?.model?.let { "${it.id}@${it.version}" } ?: "none"),
+                "local_ai_quantization" to (aiState?.model?.quantization?.wireName ?: "none"),
+                "enrollment" to state().enrollment.toString(),
+                "connection" to state().server::class.java.simpleName,
+            )
+        )
+    }
+
+    fun clearDiagnostics() {
+        diagnostics.clear()
+    }
 
     fun localTtsState(): CompletableFuture<LocalTtsState> = localAi.ttsState()
 
@@ -392,7 +439,33 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         return future
     }
 
-    private fun submitLocalText(text: String): CompletableFuture<TextTurnResult> {
+    fun submitProjectText(
+        text: String,
+        projectId: String,
+        conversationId: String?,
+    ): CompletableFuture<TextTurnResult> {
+        val normalizedProjectId = projectId.trim()
+        require(normalizedProjectId.isNotEmpty()) { "Project id is required" }
+        require(normalizedProjectId.length <= 128) { "Project id is too long" }
+        require(normalizedProjectId.none(Char::isISOControl)) { "Project id contains control characters" }
+        val localConversationId = "local-project:$normalizedProjectId"
+        val remoteConnected = state().server is ServerConnection.Connected
+        when (runtimeMode) {
+            RuntimeMode.Local -> return submitLocalText(text, localConversationId)
+            RuntimeMode.Remote -> if (!remoteConnected) {
+                return CompletableFuture.failedFuture(
+                    IllegalStateException("Remote mode requires an authenticated Zara server"),
+                )
+            }
+            RuntimeMode.Auto -> if (!remoteConnected) return submitLocalText(text, localConversationId)
+        }
+        return controller.submitText(text, conversationId)
+    }
+
+    private fun submitLocalText(
+        text: String,
+        conversationId: String = "local-device",
+    ): CompletableFuture<TextTurnResult> {
         val query = text.trim()
         val catalog = PrologWorkspaceCatalog.from(prologWorkspace.listSources())
         val explicitSymbolic = query.startsWith("?-") || query.startsWith("/prolog ") || query.startsWith("/expert ")
@@ -411,7 +484,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         }
         return future.thenCompose { result ->
             if (result.terms.isNotEmpty() || explicitSymbolic) {
-                CompletableFuture.completedFuture(localPrologTurn(result))
+                CompletableFuture.completedFuture(localPrologTurn(result, conversationId))
             } else {
                 LocalPolicyModel(
                     generate = { request -> localAi.generate(request) },
@@ -420,7 +493,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 ).answer(query).handle { generated, error ->
                     if (error != null) {
                         TextTurnResult(
-                            conversationId = "local-device",
+                            conversationId = conversationId,
                             turnId = UUID.randomUUID().toString(),
                             text = "No deterministic local rule matched and no verified local model is ready. Local Prolog is still ready.",
                             success = false,
@@ -428,7 +501,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                     } else {
                         val answer = generated.trim()
                         TextTurnResult(
-                            conversationId = "local-device",
+                            conversationId = conversationId,
                             turnId = UUID.randomUUID().toString(),
                             text = answer.ifEmpty { "The local model returned no text." },
                             success = answer.isNotEmpty(),
@@ -439,17 +512,19 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         }
     }
 
-    private fun localPrologTurn(result: LocalQueryResult): TextTurnResult =
-        TextTurnResult(
-            conversationId = "local-device",
-            turnId = UUID.randomUUID().toString(),
-            text = if (result.terms.isEmpty()) {
-                "No deterministic local rule matched."
-            } else {
-                result.terms.joinToString("\n")
-            },
-            success = result.terms.isNotEmpty(),
-        )
+    private fun localPrologTurn(
+        result: LocalQueryResult,
+        conversationId: String,
+    ): TextTurnResult = TextTurnResult(
+        conversationId = conversationId,
+        turnId = UUID.randomUUID().toString(),
+        text = if (result.terms.isEmpty()) {
+            "No deterministic local rule matched."
+        } else {
+            result.terms.joinToString("\n")
+        },
+        success = result.terms.isNotEmpty(),
+    )
 
     fun pressToTalk(permissionGranted: Boolean): CompletableFuture<Unit> =
         pressVoice(AssistantVoiceOwnership.Manual, permissionGranted)
