@@ -4,6 +4,10 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+### Added
+
+- Added a bounded Zara Music control-domain contract over ZARA/1 for huge-library queries, resumable jobs, and generation-fenced plan/apply mutations; audio/media streaming remains on OpenSubsonic/HTTP.
+
 ### Fixed
 
 - Android's embedded Trealla bridge now treats `pl_query`'s return value as an error signal, so valid local Prolog queries are no longer rejected as native query failures.
