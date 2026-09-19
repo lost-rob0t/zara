@@ -1,5 +1,7 @@
 """Public contracts for user-installed Zara plugins."""
 
+from zara.agent.tool_cancellation import ToolCancellation, current_tool_cancellation
+
 from .api import (
     PLUGIN_API_VERSION,
     ManagedWorker,
@@ -22,4 +24,6 @@ __all__ = [
     "RuntimeStatus",
     "ServicePlugin",
     "StartupUnavailable",
+    "ToolCancellation",
+    "current_tool_cancellation",
 ]
