@@ -109,6 +109,20 @@ class RuntimeDiagnosticsProjectionTest {
     }
 
     @Test
+    fun `blank authenticated session id is not projected ready`() {
+        val remote = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Ready,
+            server = ServerConnection.Connected(10),
+            sessionId = "   ",
+        )
+
+        val projection = runtimeUiProjection(RuntimeMode.Remote, localReady, remote)
+
+        assertEquals("remote (not ready)", projection.backendLabel)
+        assertFalse(projection.chatReady)
+    }
+
+    @Test
     fun `chat consumes canonical runtime projection instead of reconstructing readiness`() {
         val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
         val chat = source.substringAfter("private fun ChatSurface(")
