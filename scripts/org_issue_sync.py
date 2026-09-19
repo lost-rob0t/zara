@@ -13,8 +13,8 @@ import urllib.request
 from pathlib import Path
 from typing import Iterable
 
-TASK_RE = re.compile(r"^(\\*{2})\\s+(IDEA|TODO|NEXT|DOING|DONE|CANCELLED)\\s+(.+?)\\s*$")
-PROPERTY_RE = re.compile(r"^:([A-Za-z0-9_@#%+-]+):\\s*(.*?)\\s*$")
+TASK_RE = re.compile(r"^(\*{2})\s+(IDEA|TODO|NEXT|DOING|DONE|CANCELLED)\s+(.+?)\s*$")
+PROPERTY_RE = re.compile(r"^:([A-Za-z0-9_@#%+-]+):\s*(.*?)\s*$")
 
 OPEN_STATES = {"TODO", "NEXT", "DOING"}
 CLOSED_STATES = {"DONE", "CANCELLED"}
@@ -113,7 +113,7 @@ def parse_org_text(text: str) -> list[OrgTask]:
                 state=state,
                 title=title,
                 properties=properties,
-                body="\\n".join(body_lines).strip(),
+                body="\n".join(body_lines).strip(),
                 line=start_line,
             )
         )
@@ -166,7 +166,7 @@ def validate_tasks(tasks: Iterable[OrgTask]) -> None:
                 )
 
     if errors:
-        raise ValidationError("\\n".join(errors))
+        raise ValidationError("\n".join(errors))
 
 
 def marker(task_id: str) -> str:
@@ -186,7 +186,7 @@ def render_managed_block(task: OrgTask, source: str) -> str:
 
     lines = [
         MANAGED_START,
-        f"Managed from \`{source}\` entry \`{task.task_id}\`. Edit the Org entry for managed fields.",
+        f"Managed from {source} entry {task.task_id}. Edit the Org entry for managed fields.",
         "",
         "## Org/RAGE metadata",
         "",
@@ -213,7 +213,7 @@ def render_managed_block(task: OrgTask, source: str) -> str:
         lines.extend(["", "## Org specification", "", task.body])
 
     lines.append(MANAGED_END)
-    return "\\n".join(lines)
+    return "\n".join(lines)
 
 
 def merge_managed_body(existing_body: str, task: OrgTask, source: str) -> str:
@@ -230,14 +230,14 @@ def merge_managed_body(existing_body: str, task: OrgTask, source: str) -> str:
         marker_pos = body.find(identity)
         if marker_pos >= 0:
             insert_at = marker_pos + len(identity)
-            body = body[:insert_at] + "\\n\\n" + managed + body[insert_at:]
+            body = body[:insert_at] + "\n\n" + managed + body[insert_at:]
         else:
-            body = identity + "\\n\\n" + managed + ("\\n\\n" + body if body.strip() else "")
+            body = identity + "\n\n" + managed + ("\n\n" + body if body.strip() else "")
 
     if identity not in body:
-        body = identity + "\\n\\n" + body
+        body = identity + "\n\n" + body
 
-    return body.strip() + "\\n"
+    return body.strip() + "\n"
 
 
 class GitHubClient:
