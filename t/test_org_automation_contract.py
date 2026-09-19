@@ -52,20 +52,17 @@ def symbol_catalog() -> dict[str, AutomationSymbol]:
             symbol="org.file.saved",
             kind="event",
             owner="org-core",
-            safe_for_automation=True,
         ),
         "zara:condition/workspace-clean": AutomationSymbol(
             symbol="zara:condition/workspace-clean",
             kind="condition",
             owner="org-runtime",
-            safe_for_automation=True,
         ),
         "org.sync.push": AutomationSymbol(
             symbol="org.sync.push",
             kind="command",
             owner="org-sync",
             capabilities=("org.sync.write",),
-            safe_for_automation=True,
         ),
     }
 
@@ -247,14 +244,29 @@ def test_missing_or_unloaded_symbol_degrades_without_corrupting_recipe() -> None
     assert recipe.actions[0].symbol == "org.sync.push"
 
 
-def test_recipe_reference_does_not_grant_symbol_authority() -> None:
+def test_recipe_reference_only_surfaces_authority_requirements() -> None:
+    inspection = inspect_automation(
+        compile_automation(recipe_heading()),
+        symbol_catalog().get,
+        platform="android",
+    )
+
+    assert inspection.status == "ready"
+    action = inspection.dependencies[-1]
+    assert action.symbol == "org.sync.push"
+    assert action.capabilities == ("org.sync.write",)
+    assert not hasattr(inspection, "granted_capabilities")
+    assert not hasattr(inspection, "execute")
+
+
+def test_unavailable_symbol_reports_degraded() -> None:
     catalog = symbol_catalog()
     catalog["org.sync.push"] = AutomationSymbol(
         symbol="org.sync.push",
         kind="command",
         owner="org-sync",
         capabilities=("org.sync.write",),
-        safe_for_automation=False,
+        available=False,
     )
 
     inspection = inspect_automation(
@@ -263,8 +275,8 @@ def test_recipe_reference_does_not_grant_symbol_authority() -> None:
         platform="android",
     )
 
-    assert inspection.status == "blocked"
-    assert inspection.reason == "automation_unsafe:org.sync.push"
+    assert inspection.status == "degraded"
+    assert inspection.reason == "unavailable_symbol:org.sync.push"
 
 
 def test_platform_specific_symbol_reports_unsupported() -> None:
@@ -274,7 +286,6 @@ def test_platform_specific_symbol_reports_unsupported() -> None:
         kind="command",
         owner="org-sync",
         platforms=("android",),
-        safe_for_automation=True,
     )
 
     inspection = inspect_automation(
