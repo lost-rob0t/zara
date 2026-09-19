@@ -537,7 +537,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                     submitRemoteText(text, conversationId)
                 }
             }
-            RuntimeMode.Auto -> submitAutoLocalFirst(
+            RuntimeMode.Auto -> submitAutoRemoteFirst(
                 text = text,
                 remoteConnected = remoteConnected,
                 localConversationId = localConversationId,
