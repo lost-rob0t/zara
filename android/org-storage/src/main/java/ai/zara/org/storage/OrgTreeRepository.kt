@@ -1,6 +1,5 @@
 package ai.zara.org.storage
 
-import ai.zara.org.core.DoomOrgProfile
 import ai.zara.org.core.OrgParser
 import ai.zara.org.core.OrgTask
 import ai.zara.org.core.OrgTangler
@@ -18,6 +17,7 @@ data class OrgFileRef(
 class OrgTreeRepository(
     private val context: Context,
     private val treeUri: Uri,
+    private val fallbackTodoStates: List<String> = OrgParser.defaultTodoStates,
 ) : OrgRepository {
     private val resolver: ContentResolver = context.contentResolver
     private val root: DocumentFile = requireNotNull(DocumentFile.fromTreeUri(context, treeUri)) {
@@ -60,18 +60,19 @@ class OrgTreeRepository(
     }
 
     override fun allTasks(): List<OrgTask> = listOrgFiles().flatMap { file ->
-        OrgParser.parse(read(file), file.relativePath).tasks
+        OrgParser.parse(read(file), file.relativePath, fallbackTodoStates).tasks
     }
 
     override fun cycleTodo(task: OrgTask): OrgTask {
         val file = listOrgFiles().firstOrNull { it.relativePath == task.path }
             ?: error("Missing task file ${task.path}")
-        val lines = read(file).lines().toMutableList()
+        val source = read(file)
+        val lines = source.lines().toMutableList()
         val index = task.line - 1
         require(index in lines.indices) { "Task line is out of range" }
 
         val old = task.state
-        val next = DoomOrgProfile.nextTodoState(old)
+        val next = OrgParser.nextTodoState(source, old, fallbackTodoStates)
         val line = lines[index]
         val prefix = "*".repeat(task.level) + " "
         require(line.startsWith(prefix)) { "Task heading changed; refresh agenda" }
