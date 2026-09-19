@@ -25,8 +25,9 @@ internal fun runtimeUiProjection(
     state: RuntimeState,
 ): RuntimeUiProjection {
     val localReady = localState.phase == LocalServerPhase.READY
+    val connectedGeneration = (state.server as? ServerConnection.Connected)?.generation
     val remoteReady = state.enrollment == EnrollmentReadiness.Ready &&
-        state.server is ServerConnection.Connected &&
+        connectedGeneration == state.generation &&
         state.sessionId?.isNotBlank() == true
 
     val backend = when (mode) {
