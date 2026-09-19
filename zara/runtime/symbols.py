@@ -37,6 +37,16 @@ _LAYER_ORDER = {
 }
 
 
+def _is_portable_identifier(value: object, *, max_length: int) -> bool:
+    """Return whether ``value`` is stable across Python/Prolog/native adapters."""
+
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= max_length
+        and all(0x21 <= ord(character) <= 0x7E for character in value)
+    )
+
+
 @dataclass(frozen=True)
 class SymbolSpec:
     symbol: str
@@ -359,39 +369,24 @@ class ProgrammableSymbolRegistry:
 
     @staticmethod
     def _validate_symbol(symbol: str) -> None:
-        if (
-            not isinstance(symbol, str)
-            or not symbol
-            or len(symbol) > _MAX_SYMBOL_LENGTH
-            or symbol != symbol.strip()
-            or any(character.isspace() for character in symbol)
-        ):
+        if not _is_portable_identifier(symbol, max_length=_MAX_SYMBOL_LENGTH):
             raise SymbolRegistrationError(
-                "symbol must be a non-empty bounded string without whitespace"
+                "symbol must be a non-empty bounded portable ASCII token"
             )
 
     @staticmethod
     def _validate_kind(kind: str) -> None:
-        if (
-            not isinstance(kind, str)
-            or not kind
-            or len(kind) > _MAX_KIND_LENGTH
-            or kind != kind.strip()
-            or any(character.isspace() for character in kind)
-        ):
+        if not _is_portable_identifier(kind, max_length=_MAX_KIND_LENGTH):
             raise SymbolRegistrationError(
-                "kind must be a non-empty bounded string without whitespace"
+                "kind must be a non-empty bounded portable ASCII token"
             )
 
     @staticmethod
     def _validate_owner(owner: str) -> None:
-        if (
-            not isinstance(owner, str)
-            or not owner
-            or len(owner) > _MAX_OWNER_LENGTH
-            or owner != owner.strip()
-        ):
-            raise SymbolRegistrationError("owner must be a non-empty bounded string")
+        if not _is_portable_identifier(owner, max_length=_MAX_OWNER_LENGTH):
+            raise SymbolRegistrationError(
+                "owner must be a non-empty bounded portable ASCII token"
+            )
 
 
 __all__ = [
