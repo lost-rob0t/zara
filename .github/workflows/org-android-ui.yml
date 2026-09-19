@@ -81,28 +81,10 @@ jobs:
           disable-animations: true
           script: |
             set -eu
-            # android-emulator-runner executes script lines independently; keep the target serial explicit.
+            # android-emulator-runner executes script lines independently; keep all stateful readiness logic on one physical line.
             adb -s emulator-5554 wait-for-device
             test "$(adb -s emulator-5554 get-state)" = "device"
-            ready=0
-            attempt=0
-            while [ "$attempt" -lt 60 ]; do
-              boot="$(adb -s emulator-5554 shell getprop sys.boot_completed | tr -d '\r')"
-              if [ "$boot" = "1" ] && adb -s emulator-5554 shell test -d /sdcard/Documents; then
-                if adb -s emulator-5554 shell sh -c 'touch /sdcard/Documents/.zara-org-storage-ready && rm -f /sdcard/Documents/.zara-org-storage-ready'; then
-                  ready=1
-                  break
-                fi
-              fi
-              attempt=$((attempt + 1))
-              sleep 1
-            done
-            test "$ready" = "1" || {
-              echo "Android booted without writable external Documents storage" >&2
-              adb -s emulator-5554 shell getprop sys.boot_completed >&2 || true
-              adb -s emulator-5554 shell ls -ld /sdcard /sdcard/Documents >&2 || true
-              exit 1
-            }
+            bash -euo pipefail -c 'attempt=0; while [ "$attempt" -lt 60 ]; do boot="$(adb -s emulator-5554 shell getprop sys.boot_completed | tr -d "\r")"; if [ "$boot" = "1" ] && adb -s emulator-5554 shell test -d /sdcard/Documents && adb -s emulator-5554 shell sh -c "touch /sdcard/Documents/.zara-org-storage-ready && rm -f /sdcard/Documents/.zara-org-storage-ready"; then exit 0; fi; attempt=$((attempt + 1)); sleep 1; done; echo "Android booted without writable external Documents storage" >&2; adb -s emulator-5554 shell getprop sys.boot_completed >&2 || true; adb -s emulator-5554 shell ls -ld /sdcard /sdcard/Documents >&2 || true; exit 1'
             adb -s emulator-5554 install -r android/org-app/build/outputs/apk/debug/org-app-debug.apk
             python android/integration/org_device_acceptance.py --serial emulator-5554 --source-sha "$SOURCE_SHA" --output android/org-app/build/reports/device
 
