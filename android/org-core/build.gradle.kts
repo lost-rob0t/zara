@@ -17,5 +17,6 @@ android {
 }
 
 dependencies {
+    implementation(project(":editor-core"))
     testImplementation(libs.junit)
 }

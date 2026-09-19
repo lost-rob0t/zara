@@ -27,6 +27,27 @@ FIXTURE_TREE_URI = (
     "content://com.android.externalstorage.documents/tree/"
     "primary%3ADocuments%2FZaraOrgAcceptance"
 )
+UIAUTOMATOR_RETRY_ATTEMPTS = 3
+UIAUTOMATOR_RETRY_DELAY_SECONDS = 0.25
+UIAUTOMATOR_MISSING_HIERARCHY_PREFIX = "UIAutomator did not create "
+
+
+class OrgEvidenceDevice(Device):
+    """Bound the known API-35 UIAutomator null-root transition without hiding failures."""
+
+    def nodes(self):
+        last_error: AssertionError | None = None
+        for attempt in range(UIAUTOMATOR_RETRY_ATTEMPTS):
+            try:
+                return super().nodes()
+            except AssertionError as error:
+                if not str(error).startswith(UIAUTOMATOR_MISSING_HIERARCHY_PREFIX):
+                    raise
+                last_error = error
+                if attempt + 1 < UIAUTOMATOR_RETRY_ATTEMPTS:
+                    time.sleep(UIAUTOMATOR_RETRY_DELAY_SECONDS)
+        assert last_error is not None
+        raise last_error
 
 
 def _push_text(device: Device, remote_path: str, text: str) -> None:
@@ -294,7 +315,7 @@ def main() -> None:
 
     source_sha = verified_source_sha(args.source_sha)
     args.output.mkdir(parents=True, exist_ok=True)
-    device = Device(args.serial, args.output)
+    device = OrgEvidenceDevice(args.serial, args.output)
     text_evidence: list[dict] = []
     result = {
         "source_sha": source_sha,

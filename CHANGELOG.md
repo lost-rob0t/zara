@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
+- Android now includes a separate Zara Org Notebook APK for explicit Prolog source-block execution against the shared canonical Org corpus, with signature-scoped runtime IPC and stale-result fencing.
 - Android now includes a code editor for user-selected workspace roots with revision-fenced voice edits, so late speech results cannot overwrite newer editor changes.
 - Android Org Daily now consumes an explicitly configured workspace-relative daily path template, date pattern, and timezone through the shared Org-home authority; arbitrary user roots stay intact, invalid or missing Daily configuration fails closed, and simply viewing Daily still does not invent or create a file.
 - Desktop Org now has named native Qt launch surfaces for the flagship workbench plus focused Editor, Todo, Sync, and Notebook modes. The shared shell opens only an explicitly selected Org root, recursively discovers ordinary `.org` files without inventing a default layout, and uses revision-fenced source saves so edits made concurrently by Emacs, Git, or another Zara process fail stale instead of being overwritten.
@@ -24,6 +25,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Android Org Git sync now treats its configured branch as authoritative and fails closed instead of pulling or pushing a different checked-out branch; incomplete JGit push statuses are no longer reported as successful syncs.
 - Android Org Daily now anchors its default continuous stream at the configured logical today, so pre-existing future daily files do not appear ahead of today's real file when scrolling backward through canonical dailies.
 - Desktop Org source saves now preserve each existing file's permission mode across atomic replacement, so editing from Zara does not silently turn a shared Emacs/Git Org file into a `0600` temp-file mode.
+- Org Notebook execution now reuses the canonical editor operation fence for document revisions and cancellation, preventing late notebook replies from bypassing the same stale-edit protection used by voice/model editor work.
+- Zara Org Notebook now uses the canonical `0.2.2-alpha` Android package version and versionCode 4 instead of stale module-local `0.1.0-alpha` metadata.
 - Org todo discovery now recursively scans configured directory roots, so nested ordinary `.org` files remain visible and editable without flattening a user's workspace or Git layout.
 - Android code-editor voice operations now fence cursor and selection changes as editor revisions, so a late transcript cannot apply to a different selection than the one active when listening started.
 - Android code-editor voice dictation now preserves spoken indentation, removes speech-only spacing around quoted text and Prolog commas, normalizes grouping punctuation without regex crashes, and builds against the current Compose layout API.
