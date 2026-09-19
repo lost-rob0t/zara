@@ -28,37 +28,39 @@ def _load_org_acceptance_module():
         sys.path.pop(0)
 
 
-def test_org_saf_control_tap_recovers_only_from_pixel_launcher_anr(
+def test_org_saf_control_tap_clears_pixel_launcher_anr_then_taps_control(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     module = _load_org_acceptance_module()
     device = module.Device("emulator-5554", tmp_path)
-    tap_attempts = 0
-    dismiss_attempts = 0
+    dismiss_results = iter((True, False))
+    adb_calls: list[tuple[str, ...]] = []
+    monotonic_values = iter((0.0, 0.0, 0.1))
+    control = object()
 
-    def tap(label: str) -> None:
-        nonlocal tap_attempts
-        tap_attempts += 1
-        assert label == "Choose Org directory"
-        if tap_attempts == 1:
-            raise AssertionError(
-                "Control is not reachable after scrolling: Choose Org directory"
-            )
-
-    def dismiss_launcher_anr() -> bool:
-        nonlocal dismiss_attempts
-        dismiss_attempts += 1
-        return True
-
-    monkeypatch.setattr(device, "tap", tap)
-    monkeypatch.setattr(device, "dismiss_pixel_launcher_anr", dismiss_launcher_anr)
+    monkeypatch.setattr(
+        device,
+        "dismiss_pixel_launcher_anr",
+        lambda: next(dismiss_results),
+    )
+    monkeypatch.setattr(device, "find", lambda label: control if label == "Choose Org directory" else None)
+    monkeypatch.setattr(device, "bounds", lambda _node: (10, 20, 90, 100))
+    monkeypatch.setattr(
+        device,
+        "adb",
+        lambda *arguments, **kwargs: adb_calls.append(arguments) or "",
+    )
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(monotonic_values))
     monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
 
-    module._tap_app_control(device, "Choose Org directory")
+    module._tap_app_control_through_launcher_anr(
+        device,
+        "Choose Org directory",
+        timeout=1.0,
+    )
 
-    assert tap_attempts == 2
-    assert dismiss_attempts == 1
+    assert adb_calls == [("shell", "input", "tap", "50", "60")]
 
 
 def test_org_saf_control_tap_does_not_mask_real_missing_control(
@@ -67,15 +69,19 @@ def test_org_saf_control_tap_does_not_mask_real_missing_control(
 ) -> None:
     module = _load_org_acceptance_module()
     device = module.Device("emulator-5554", tmp_path)
+    monotonic_values = iter((0.0, 0.0, 2.0))
 
-    monkeypatch.setattr(
-        device,
-        "tap",
-        lambda _label: (_ for _ in ()).throw(
-            AssertionError("Control is not reachable after scrolling: Choose Org directory")
-        ),
-    )
     monkeypatch.setattr(device, "dismiss_pixel_launcher_anr", lambda: False)
+    monkeypatch.setattr(device, "find", lambda _label: None)
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
 
-    with pytest.raises(AssertionError, match="Choose Org directory"):
-        module._tap_app_control(device, "Choose Org directory")
+    with pytest.raises(
+        AssertionError,
+        match="Control is not reachable after launcher ANR recovery: Choose Org directory",
+    ):
+        module._tap_app_control_through_launcher_anr(
+            device,
+            "Choose Org directory",
+            timeout=1.0,
+        )
