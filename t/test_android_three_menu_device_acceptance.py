@@ -67,6 +67,8 @@ def test_visual_acceptance_stays_non_mutating_but_dedicated_remote_gate_connects
 
     remote = REMOTE_ACCEPTANCE.read_text(encoding="utf-8")
     gate = EMULATOR_GATE.read_text(encoding="utf-8")
+    assert 'type_printable_ascii(device, "?- Result = zara_ready.")' in remote
+    assert '"local_turn_completed": True' in remote
     assert 'device.tap("Create client identity")' in remote
     assert 'SecurityAdminClient' in remote
     assert 'device.tap("Pin server key")' in remote
