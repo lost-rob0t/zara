@@ -132,6 +132,10 @@ class RuntimeRegistry {
             }
         }
         return synchronized(lock) {
+            if (replacement == descriptors) {
+                return@synchronized snapshotLocked()
+            }
+
             val nextGeneration = generation + 1
             val currentId = selection?.runtimeId
             val current = currentId?.let(replacement::get)
