@@ -32,6 +32,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -97,12 +98,13 @@ private fun OrgSyncApp() {
         )
         OrgWorkspaceMapper.appPrivateRoot(context.filesDir, descriptor)
     }
-    val workspace = remember(root) { GitOrgWorkspace(root) }
+    val displayedWorkspace = remember(root) { GitOrgWorkspace(root) }
     val syncFence = remember { SyncGenerationFence() }
     val worker = remember { Executors.newSingleThreadExecutor() }
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
     var activeLease by remember { mutableStateOf<SyncLease?>(null) }
-    var status by remember { mutableStateOf(describe(workspace)) }
+    val currentLease by rememberUpdatedState(activeLease)
+    var status by remember { mutableStateOf(describe(displayedWorkspace)) }
 
     fun cancelActive(message: String = "Sync cancelled") {
         val lease = activeLease ?: return
@@ -111,24 +113,35 @@ private fun OrgSyncApp() {
         status = message
     }
 
-    fun selectGitWorkspace() {
-        SharedWorkspaceStore.useGit(
-            context = context,
+    fun selectGitWorkspace(): GitOrgWorkspace {
+        val descriptor = OrgWorkspaceDescriptor.Git(
+            id = WorkspaceId("shared"),
+            displayName = "Shared Org",
             localRootId = rootIdInput,
             remote = remote.trim(),
             branch = branch.trim(),
         )
-        activeRootId = rootIdInput
+        SharedWorkspaceStore.useGit(
+            context = context,
+            localRootId = descriptor.localRootId,
+            remote = descriptor.remote,
+            branch = descriptor.branch,
+        )
+        activeRootId = descriptor.localRootId
+        return GitOrgWorkspace(OrgWorkspaceMapper.gitRoot(context.filesDir, descriptor))
     }
 
-    fun launchGitOperation(label: String, action: (SyncLease) -> String) {
+    fun launchGitOperation(
+        label: String,
+        target: GitOrgWorkspace,
+        action: (GitOrgWorkspace, SyncLease) -> String,
+    ) {
         cancelActive("Previous sync cancelled")
         val lease = syncFence.begin()
         activeLease = lease
         status = label
-        val selectedWorkspace = workspace
         worker.execute {
-            val result = runCatching { action(lease) }
+            val result = runCatching { action(target, lease) }
             mainHandler.post {
                 if (activeLease?.generation != lease.generation) return@post
                 activeLease = null
@@ -151,7 +164,7 @@ private fun OrgSyncApp() {
 
     DisposableEffect(Unit) {
         onDispose {
-            activeLease?.let(syncFence::cancel)
+            currentLease?.let(syncFence::cancel)
             worker.shutdownNow()
         }
     }
@@ -217,15 +230,18 @@ private fun OrgSyncApp() {
             Button(
                 enabled = activeLease == null && remote.isNotBlank() && branch.isNotBlank(),
                 onClick = {
-                    runCatching {
-                        selectGitWorkspace()
-                        workspace.initialize()
-                        workspace.configureRemote(remote.trim(), branch.trim())
-                    }.onSuccess {
-                        status = describe(workspace)
-                    }.onFailure {
-                        status = it.message ?: "Git init failed"
-                    }
+                    runCatching { selectGitWorkspace() }
+                        .onSuccess { target ->
+                            runCatching {
+                                target.initialize()
+                                target.configureRemote(remote.trim(), branch.trim())
+                            }.onSuccess {
+                                status = describe(target)
+                            }.onFailure {
+                                status = it.message ?: "Git init failed"
+                            }
+                        }
+                        .onFailure { status = it.message ?: "Invalid Git workspace" }
                 },
             ) {
                 Text("Initialize")
@@ -235,10 +251,10 @@ private fun OrgSyncApp() {
                 enabled = activeLease == null && remote.isNotBlank() && branch.isNotBlank(),
                 onClick = {
                     runCatching { selectGitWorkspace() }
-                        .onSuccess {
-                            launchGitOperation("Cloning Git workspace…") { lease ->
-                                workspace.clone(remote.trim(), branch.trim(), lease)
-                                describe(workspace)
+                        .onSuccess { target ->
+                            launchGitOperation("Cloning Git workspace…", target) { selected, lease ->
+                                selected.clone(remote.trim(), branch.trim(), lease)
+                                describe(selected)
                             }
                         }
                         .onFailure { status = it.message ?: "Invalid Git workspace" }
@@ -251,9 +267,9 @@ private fun OrgSyncApp() {
                 enabled = activeLease == null && remote.isNotBlank() && branch.isNotBlank(),
                 onClick = {
                     runCatching { selectGitWorkspace() }
-                        .onSuccess {
-                            launchGitOperation("Syncing Git workspace…") { lease ->
-                                when (val result = workspace.sync(lease)) {
+                        .onSuccess { target ->
+                            launchGitOperation("Syncing Git workspace…", target) { selected, lease ->
+                                when (val result = selected.sync(lease)) {
                                     is GitSyncResult.Synced -> result.message
                                     is GitSyncResult.Conflict -> {
                                         val files = result.files.take(5).joinToString()
@@ -277,7 +293,7 @@ private fun OrgSyncApp() {
             }
         }
 
-        TextButton(onClick = { status = describe(workspace) }) {
+        TextButton(onClick = { status = describe(displayedWorkspace) }) {
             Text("Refresh status")
         }
 
