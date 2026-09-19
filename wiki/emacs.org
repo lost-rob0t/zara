@@ -1,0 +1,58 @@
+#+title: Emacs client
+#+startup: overview
+
+* Overview
+
+Zara ships a native Emacs client in =emacs/zara.el=.  It is deliberately a
+thin client: it calls the canonical =zara= CLI, which owns daemon endpoint
+resolution, ZARA/1 transport, authentication, runtime policy, tool approvals,
+memory, Prolog, plugins, and remote execution.  Emacs does not create a second
+assistant runtime.
+
+* Commands
+
+- =M-x zara-chat= opens the native =*Zara*= chat surface.
+- =s= or =RET= sends a request from that surface.
+- =M-x zara-status= shows executable and endpoint resolution.
+- =zara-ask= is the synchronous Lisp API for bounded tool delegation.
+- =M-x zara-gptel-register-tool= registers =ZaraAsk= when gptel is installed.
+
+By default the client runs =zara PROMPT= and lets Zara resolve its configured
+or private local daemon endpoint.  Set =zara-connect-endpoint= only when Emacs
+must select an explicit endpoint.
+
+#+begin_src emacs-lisp
+(require 'zara)
+
+(setq zara-connect-endpoint nil)
+
+(zara-gptel-register-tool)
+(global-set-key (kbd "C-c z") #'zara-chat)
+#+end_src
+
+* gptel boundary
+
+=ZaraAsk= delegates one self-contained prompt to Zara.  It does not expose
+arbitrary shell or Elisp evaluation.  Delegation is confirmation-gated by
+default through =zara-gptel-confirm-delegation=.  Once delegated, Zara's own
+approval and capability policy remains authoritative for Zara tools.
+
+This makes gptel and Zara complementary:
+
+- gptel can keep an Emacs-native coding/tool conversation;
+- gptel may ask Zara for work that belongs to Zara's runtime, memory, Prolog,
+  plugins, or remote-mode fabric;
+- Zara may independently use the =zara-emacs= service plugin to perform bounded
+  editor operations through =emacsclient=.
+
+* Verification
+
+#+begin_src sh
+nix develop -c emacs -Q --batch \
+  -L emacs \
+  -l emacs/zara-test.el \
+  -f ert-run-tests-batch-and-exit
+
+nix develop -c bash scripts/test-all.sh
+nix flake check
+#+end_src
