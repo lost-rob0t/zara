@@ -21,6 +21,12 @@ adb -s "$serial" shell pidof ai.zara.code.editor >/dev/null
 adb -s "$serial" shell am force-stop ai.zara.code.editor
 
 adb -s "$serial" install -r "$phone_apk"
+# GitHub's hosted Pixel image can leave its launcher process in an ANR dialog over
+# an otherwise healthy Zara activity. Quiesce only that OS-owned package before
+# acceptance instead of hiding global error dialogs or masking Zara failures.
+if adb -s "$serial" shell pm path com.google.android.apps.nexuslauncher >/dev/null 2>&1; then
+  adb -s "$serial" shell am force-stop com.google.android.apps.nexuslauncher
+fi
 python android/integration/device_acceptance.py \
   --serial "$serial" \
   --source-sha "$source_sha" \
