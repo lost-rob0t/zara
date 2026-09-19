@@ -33,7 +33,11 @@
       "maxLength": 128,
       "pattern": "^(?!\\s)(?!.*\\s$)[^\\u0000-\\u001F\\u007F]+$"
     },
-    "protocol": {"type": "string", "pattern": "^ZARA-RUNTIME/[1-9][0-9]*$"},
+    "protocol": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^ZARA-RUNTIME/[1-9][0-9]*$"
+    },
     "runtime_version": {
       "type": "string",
       "minLength": 1,
