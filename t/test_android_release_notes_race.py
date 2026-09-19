@@ -50,3 +50,45 @@ def test_await_label_dismisses_release_notes_that_appear_after_launch(
     device.await_label("Chat", timeout=1.0)
 
     assert state["dismissed"] is True
+
+
+def test_release_notes_clear_pixel_launcher_anr_before_retrying_continue(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    release_notes = module.ET.fromstring(
+        '<node text="What\'s new in Zara 0.2.2-alpha" bounds="[0,0][100,100]" />'
+    )
+    calls = {"launcher_anr": 0}
+
+    monkeypatch.setattr(device, "find_contains", lambda _fragment: release_notes)
+    monkeypatch.setattr(device, "find", lambda _label: None)
+
+    def dismiss_pixel_launcher_anr() -> bool:
+        calls["launcher_anr"] += 1
+        return True
+
+    monkeypatch.setattr(device, "dismiss_pixel_launcher_anr", dismiss_pixel_launcher_anr)
+
+    assert device.dismiss_release_notes() is True
+    assert calls["launcher_anr"] == 1
+
+
+def test_release_notes_still_fail_when_continue_is_missing_without_launcher_anr(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    release_notes = module.ET.fromstring(
+        '<node text="What\'s new in Zara 0.2.2-alpha" bounds="[0,0][100,100]" />'
+    )
+
+    monkeypatch.setattr(device, "find_contains", lambda _fragment: release_notes)
+    monkeypatch.setattr(device, "find", lambda _label: None)
+    monkeypatch.setattr(device, "dismiss_pixel_launcher_anr", lambda: False)
+
+    with pytest.raises(AssertionError, match="release notes did not expose Continue"):
+        device.dismiss_release_notes()
