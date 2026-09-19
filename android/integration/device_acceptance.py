@@ -200,25 +200,31 @@ class Device:
         time.sleep(0.2)
         return True
 
-    def dismiss_release_notes(self) -> bool:
+    def dismiss_release_notes(self, timeout: float = 2.0) -> bool:
         # A fresh install legitimately opens the versioned changelog before Chat.
         # Dismiss only Zara's exact release-notes dialog so acceptance still fails
-        # on crashes, permission dialogs, or unrelated overlays.
+        # on crashes, permission dialogs, or unrelated overlays. Compose may publish
+        # the dialog title before the confirm-button semantics reach UIAutomator, so
+        # give that exact button a short bounded window instead of requiring both
+        # nodes to appear in the same hierarchy snapshot.
         if self.find_contains("What's new in Zara ") is None:
             return False
-        continue_button = self.find("Continue")
-        if continue_button is None:
-            raise AssertionError("Zara release notes did not expose Continue")
-        left, top, right, bottom = self.bounds(continue_button)
-        self.adb(
-            "shell",
-            "input",
-            "tap",
-            str((left + right) // 2),
-            str((top + bottom) // 2),
-        )
-        time.sleep(0.2)
-        return True
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            continue_button = self.find("Continue")
+            if continue_button is not None:
+                left, top, right, bottom = self.bounds(continue_button)
+                self.adb(
+                    "shell",
+                    "input",
+                    "tap",
+                    str((left + right) // 2),
+                    str((top + bottom) // 2),
+                )
+                time.sleep(0.2)
+                return True
+            time.sleep(0.1)
+        raise AssertionError("Zara release notes did not expose Continue")
 
     def await_label(self, label: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
