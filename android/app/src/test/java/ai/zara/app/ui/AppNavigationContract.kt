@@ -108,6 +108,6 @@ object AppNavigationContract {
         backReturnsThroughMenuRootThenChat()
         railBreakpointUsesAvailableWindowWidth()
         savedKeysAreStableNames()
-        println("PASS: 10 navigation contracts; 169 route transitions and 144 saved-state combinations")
+        println("PASS: 10 navigation contracts; 196 route transitions and 192 saved-state combinations")
     }
 }
