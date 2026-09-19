@@ -22,6 +22,7 @@ class OrgWorkspaceProjectionTest {
             """.trimIndent(),
             "journal/2026_09_18.org" to """
                 #+title: Daily
+                #+TODO: TODO STRT | DONE
                 * STRT Review projection
                 :PROPERTIES:
                 :ID: daily-node
