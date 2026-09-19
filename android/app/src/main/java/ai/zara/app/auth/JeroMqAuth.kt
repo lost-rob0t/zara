@@ -57,7 +57,11 @@ class JeroMqCurveDealerFactory(
         val socket = context.createSocket(SocketType.DEALER)
         try {
             socket.setLinger(0)
-            check(socket.setImmediate(true)) { "failed to require a live Zara route" }
+            // TCP/CURVE establishment is asynchronous. Allow the first ZARA/1
+            // hello to queue while that bounded handshake completes; IMMEDIATE
+            // drops/blocks that first frame on higher-latency adb-reverse paths
+            // before an eligible peer exists. Handshake, send and request
+            // timeouts still bound a dead route and reconnect remains fail-closed.
             check(socket.setHandshakeIvl(5_000)) { "failed to bound the CURVE handshake" }
             check(socket.setHeartbeatIvl(1_000)) { "failed to configure Zara heartbeat interval" }
             check(socket.setHeartbeatTimeout(5_000)) { "failed to configure Zara heartbeat timeout" }
