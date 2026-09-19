@@ -8,10 +8,17 @@ import java.util.concurrent.Executors
 class LocalAiRuntime(
     private val backend: LocalLlmBackend,
 ) : AutoCloseable {
+    @Volatile
+    private var actorThread: Thread? = null
+
     private val actor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "zara-local-ai").apply { isDaemon = true }
+        Thread(runnable, "zara-local-ai").apply {
+            isDaemon = true
+            actorThread = this
+        }
     }
     private val lifecycleLock = Any()
+    private val closeDone = CompletableFuture<Unit>()
 
     @Volatile
     private var current = LocalAiState()
@@ -199,11 +206,8 @@ class LocalAiRuntime(
     }
 
     override fun close() {
-        val done = CompletableFuture<Unit>()
-        val started = synchronized(lifecycleLock) {
-            if (closed) {
-                false
-            } else {
+        synchronized(lifecycleLock) {
+            if (!closed) {
                 closed = true
                 actor.execute {
                     try {
@@ -212,17 +216,17 @@ class LocalAiRuntime(
                         runCatching { backend.close() }
                         update(LocalAiState(LocalAiPhase.STOPPED, current.generation + 1))
                         stateObserver = null
-                        done.complete(Unit)
+                        actor.shutdown()
+                        closeDone.complete(Unit)
                     } catch (error: Throwable) {
-                        done.completeExceptionally(error)
+                        actor.shutdown()
+                        closeDone.completeExceptionally(error)
                     }
                 }
-                true
             }
         }
-        if (!started) return
-        runCatching { done.get() }
-        actor.shutdownNow()
+        if (Thread.currentThread() === actorThread) return
+        runCatching { closeDone.get() }
     }
 
     private fun enqueueIfOpen(block: () -> Unit): Boolean = synchronized(lifecycleLock) {
