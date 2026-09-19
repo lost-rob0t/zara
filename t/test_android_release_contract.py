@@ -18,6 +18,7 @@ def test_android_release_candidate_apk_uploads_require_green_gate():
 
     for upload_name in (
         "Upload exact-SHA phone debug APK",
+        "Upload Code Editor debug APK",
         "Upload Wear debug APK",
     ):
         step = android_job.split(f"      - name: {upload_name}\n", 1)[1].split("\n      - name:", 1)[0]
@@ -40,6 +41,9 @@ def test_each_master_push_builds_and_rolls_direct_latest_apks():
     assert "group: android-latest-publish" in workflow
     assert "cancel-in-progress: false" in workflow
     assert "zara-latest.apk" in workflow
+    assert "zara-code-editor-latest.apk" in workflow
+    assert "code_editor_apk=zara-code-editor-latest.apk" in workflow
+    assert "code_editor_sha256=${code_editor_sha}" in workflow
     assert "zara-wear-latest.apk" in workflow
     assert "android-latest" in workflow
     assert "mutable=true" in workflow
@@ -52,6 +56,8 @@ def test_release_assets_use_semver_name_and_record_provenance():
 
     assert "zara-android-${VERSION}.apk" in workflow
     assert "zara-android-${VERSION}.manifest.txt" in workflow
+    assert "zara-code-editor-${VERSION}.apk" in workflow
+    assert "zara-code-editor-${VERSION}.manifest.txt" in workflow
     assert "source_sha=${GITHUB_SHA}" in workflow
     assert "version_name=${VERSION}" in workflow
     assert "version_code=${VERSION_CODE}" in workflow
@@ -67,3 +73,12 @@ def test_repo_documents_the_semver_release_skill():
     assert "Never move or overwrite a release tag" in skill
     assert "android-latest" in skill
     assert "downloaded GitHub artifact" in skill
+
+
+def test_code_editor_release_uses_update_compatible_signing_key():
+    build = (ROOT / "android/code-editor/build.gradle.kts").read_text()
+
+    assert 'providers.environmentVariable("ZARA_ANDROID_DEBUG_KEYSTORE")' in build
+    assert 'signingConfigs' in build
+    assert 'storePassword = "android"' in build
+    assert 'keyAlias = "androiddebugkey"' in build

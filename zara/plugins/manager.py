@@ -103,6 +103,8 @@ class PluginManager:
         max_workers: int = 8,
         advice_registrar=None,
         advice_unregistrar=None,
+        symbol_registrar=None,
+        symbol_unregistrar=None,
         capability_approval_provider=None,
         capability_invoker=None,
     ) -> None:
@@ -118,6 +120,8 @@ class PluginManager:
         self._tool_unregistrar = tool_unregistrar
         self._advice_registrar = advice_registrar
         self._advice_unregistrar = advice_unregistrar
+        self._symbol_registrar = symbol_registrar
+        self._symbol_unregistrar = symbol_unregistrar
         self._capability_approval_provider = capability_approval_provider
         self._capability_invoker = capability_invoker
         self._publisher = publisher
@@ -440,6 +444,8 @@ class PluginManager:
             worker_join_timeout=self._lifecycle_timeout,
             advice_registrar=self._advice_registrar,
             advice_unregistrar=self._advice_unregistrar,
+            symbol_registrar=self._symbol_registrar,
+            symbol_unregistrar=self._symbol_unregistrar,
             capability_resolver=lambda capability, caller=record.metadata.name: self._resolve_capability(
                 caller, capability
             ),

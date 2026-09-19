@@ -372,6 +372,14 @@ jobs:
           path: artifacts/android-debug/
           if-no-files-found: warn
 
+      - name: Upload Code Editor debug APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zara-code-editor-debug-${{ github.event.pull_request.head.sha || github.sha }}
+          path: android/code-editor/build/outputs/apk/debug/code-editor-debug.apk
+          if-no-files-found: warn
+
       - name: Upload Wear debug APK
         if: success()
         uses: actions/upload-artifact@v4

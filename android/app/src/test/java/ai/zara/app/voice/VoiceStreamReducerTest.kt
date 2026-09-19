@@ -36,6 +36,27 @@ class VoiceStreamReducerTest {
         }
     }
 
+    @Test fun `final transcript is terminal for the same stream`() {
+        var state = VoiceStreamState.connected("session-1")
+        state = reduceVoiceStream(
+            state,
+            VoiceStreamEvent.Transcript("session-1", "conversation-1", "mic-1", 4, "done", true),
+        )
+
+        assertThrows(StaleVoiceStreamException::class.java) {
+            reduceVoiceStream(
+                state,
+                VoiceStreamEvent.Transcript("session-1", "conversation-1", "mic-1", 5, "late partial", false),
+            )
+        }
+        assertThrows(StaleVoiceStreamException::class.java) {
+            reduceVoiceStream(
+                state,
+                VoiceStreamEvent.Transcript("session-1", "conversation-1", "mic-1", 6, "late final", true),
+            )
+        }
+    }
+
     @Test fun `terminal transcript permits a new stream to restart sequence from zero`() {
         var state = VoiceStreamState.connected("session-1")
         state = reduceVoiceStream(
