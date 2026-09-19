@@ -3,6 +3,7 @@ package ai.zara.org.storage
 import ai.zara.org.core.OrgParser
 import ai.zara.org.core.OrgTask
 import ai.zara.org.core.OrgTangler
+import ai.zara.org.core.cycleTodoState
 import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
@@ -67,24 +68,9 @@ class OrgTreeRepository(
         val file = listOrgFiles().firstOrNull { it.relativePath == task.path }
             ?: error("Missing task file ${task.path}")
         val source = read(file)
-        val lines = source.lines().toMutableList()
-        val index = task.line - 1
-        require(index in lines.indices) { "Task line is out of range" }
-
-        val old = task.state
-        val next = OrgParser.nextTodoState(source, old, fallbackTodoStates)
-        val line = lines[index]
-        val prefix = "*".repeat(task.level) + " "
-        require(line.startsWith(prefix)) { "Task heading changed; refresh agenda" }
-
-        val afterStars = line.removePrefix(prefix)
-        require(afterStars == old || afterStars.startsWith("$old ")) {
-            "Task state changed; refresh agenda"
-        }
-
-        lines[index] = prefix + next + afterStars.removePrefix(old)
-        write(file, lines.joinToString("\n"))
-        return task.copy(state = next)
+        val mutation = OrgParser.cycleTodoState(source, task, fallbackTodoStates)
+        write(file, mutation.source)
+        return task.copy(state = mutation.state)
     }
 
     override fun tangle(file: OrgFileRef): List<OrgFileRef> {
