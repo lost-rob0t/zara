@@ -93,6 +93,7 @@ import kotlinx.coroutines.launch
 enum class AppSurface(val label: String, val glyph: String, val gatedIssue: String? = null) {
     Chat("Chat", "⌂"),
     Logic("Logic", "λ"),
+    Map("Map", "⌖"),
     Voice("Voice", "◉"),
     Projects("Projects", "◇", "#653"),
     Remote("Remote", "⇄"),
@@ -274,6 +275,10 @@ fun ZaraApp(
                                                 onSendText = onSendText,
                                                 padding = padding,
                                             )
+                                            AppSurface.Map -> StarIntelMapSurface(
+                                                baseUrl = BuildConfig.STARINTEL_MAP_URL,
+                                                modifier = Modifier.fillMaxSize(),
+                                            )
                                             AppSurface.Logic -> PrologStudioSurface(
                                                 localState = localServerState,
                                                 sources = prologSources,
@@ -373,6 +378,7 @@ internal fun AppRoute.surface(): AppSurface = when (this) {
     AppRoute.Chat -> AppSurface.Chat
     AppRoute.Voice -> AppSurface.Voice
     AppRoute.Logic -> AppSurface.Logic
+    AppRoute.Map -> AppSurface.Map
     AppRoute.Projects -> AppSurface.Projects
     AppRoute.Scheduled -> AppSurface.Scheduled
     AppRoute.Connection -> AppSurface.Remote

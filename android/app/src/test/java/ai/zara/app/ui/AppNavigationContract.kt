@@ -7,7 +7,7 @@ object AppNavigationContract {
 
     fun completeRouteInventory() {
         check(routesFor(AppMenu.Chat) == listOf(AppRoute.Chat, AppRoute.Voice))
-        check(routesFor(AppMenu.Workspace) == listOf(AppRoute.Logic, AppRoute.Projects, AppRoute.Scheduled))
+        check(routesFor(AppMenu.Workspace) == listOf(AppRoute.Logic, AppRoute.Map, AppRoute.Projects, AppRoute.Scheduled))
         check(routesFor(AppMenu.Settings) == listOf(
             AppRoute.Runtime, AppRoute.Connection, AppRoute.Permissions, AppRoute.Appearance,
             AppRoute.Plugins, AppRoute.Updates, AppRoute.Diagnostics, AppRoute.About,
@@ -108,6 +108,6 @@ object AppNavigationContract {
         backReturnsThroughMenuRootThenChat()
         railBreakpointUsesAvailableWindowWidth()
         savedKeysAreStableNames()
-        println("PASS: 10 navigation contracts; 169 route transitions and 144 saved-state combinations")
+        println("PASS: 10 navigation contracts; 196 route transitions and 192 saved-state combinations")
     }
 }
