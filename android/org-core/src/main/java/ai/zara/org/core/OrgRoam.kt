@@ -51,7 +51,7 @@ object OrgRoam {
     private val trailingTags = Regex("\\s+:([A-Za-z0-9_@#%:.-]+):\\s*$")
     private val priority = Regex("^\\[#([A-Z])](?:\\s+|$)")
     private val idLink = Regex("\\[\\[id:([^]\\s]+)](?:\\[([^]]*)])?]")
-    private val aliasToken = Regex("\\"([^\\"]+)\\"|(\\S+)")
+    private val aliasToken = Regex("\"([^\"]+)\"|(\\S+)")
 
     fun build(documents: Map<String, String>): OrgRoamGraph {
         val candidates = mutableListOf<NodeCandidate>()
