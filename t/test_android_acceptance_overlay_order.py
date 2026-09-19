@@ -22,7 +22,7 @@ def _load_device_acceptance_module():
     return module
 
 
-def test_await_label_clears_pixel_launcher_anr_before_release_notes(
+def test_release_notes_clear_pixel_launcher_anr_before_probing_zara_dialog(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -30,11 +30,6 @@ def test_await_label_clears_pixel_launcher_anr_before_release_notes(
     device = module.Device("emulator-5554", tmp_path)
     events: list[str] = []
 
-    monkeypatch.setattr(
-        device,
-        "find",
-        lambda label: object() if label == "Chat" and events == ["pixel"] else None,
-    )
     monkeypatch.setattr(
         device,
         "dismiss_pixel_launcher_anr",
@@ -42,40 +37,53 @@ def test_await_label_clears_pixel_launcher_anr_before_release_notes(
     )
     monkeypatch.setattr(
         device,
-        "dismiss_release_notes",
-        lambda: events.append("release") or False,
+        "find_contains",
+        lambda _fragment: events.append("release-probe") or None,
     )
-    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
 
-    device.await_label("Chat", timeout=1.0)
-
+    assert device.dismiss_release_notes() is False
     assert events == ["pixel"]
 
 
-def test_launch_surface_delegates_overlay_recovery_to_await_label(
+def test_release_notes_probe_zara_dialog_after_system_overlay_is_clear(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     module = _load_device_acceptance_module()
     device = module.Device("emulator-5554", tmp_path)
+    release_notes = module.ET.fromstring(
+        '<node text="What\'s new in Zara 0.2.2-alpha" bounds="[10,10][500,90]" />'
+    )
+    continue_button = module.ET.fromstring(
+        '<node text="Continue" bounds="[500,1500][700,1600]" />'
+    )
     events: list[str] = []
 
     monkeypatch.setattr(
         device,
+        "dismiss_pixel_launcher_anr",
+        lambda: events.append("pixel") or False,
+    )
+    monkeypatch.setattr(
+        device,
+        "find_contains",
+        lambda fragment: (
+            events.append("release-probe") or release_notes
+            if fragment == "What's new in Zara "
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        device,
+        "find",
+        lambda label: continue_button if label == "Continue" else None,
+    )
+    monkeypatch.setattr(
+        device,
         "adb",
-        lambda *arguments, **kwargs: events.append("launch") or "",
+        lambda *arguments, **kwargs: events.append("tap") or "",
     )
-    monkeypatch.setattr(
-        device,
-        "dismiss_release_notes",
-        lambda: events.append("eager-release-notes") or True,
-    )
-    monkeypatch.setattr(
-        device,
-        "await_label",
-        lambda label: events.append(f"await:{label}"),
-    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
 
-    device.launch_surface("ai.zara.app/.MainActivity", "Chat")
-
-    assert events == ["launch", "await:Chat"]
+    assert device.dismiss_release_notes() is True
+    assert events == ["pixel", "release-probe", "tap"]
