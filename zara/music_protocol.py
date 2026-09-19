@@ -451,6 +451,8 @@ def validate_music_message(message: Any) -> None:
         _server_event(message)
         body = _body(message)
         _job_status_body(body)
+        if body["last_seq"] != message.seq:
+            raise MusicProtocolError(f"{message.type} last_seq must match seq")
         expected = "completed" if message.type == "music.job.completed" else {
             "running",
             "planning",
