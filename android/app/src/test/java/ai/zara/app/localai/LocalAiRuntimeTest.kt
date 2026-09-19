@@ -161,6 +161,30 @@ class LocalAiRuntimeTest {
         assertEquals(LocalAiPhase.STOPPED, runtime.state().phase)
     }
 
+    @Test
+    fun closeFromStateObserverDoesNotDeadlockActor() {
+        val backend = FakeLlmBackend()
+        val runtime = LocalAiRuntime(backend)
+        val observerCloseReturned = CountDownLatch(1)
+        runtime.setStateObserver { state ->
+            if (state.phase == LocalAiPhase.READY) {
+                runtime.close()
+                observerCloseReturned.countDown()
+            }
+        }
+
+        val loaded = runtime.load(modelSpec())
+
+        assertTrue(
+            "close invoked from the actor-owned observer must return",
+            observerCloseReturned.await(2, TimeUnit.SECONDS),
+        )
+        assertEquals(LocalAiPhase.READY, loaded.get(2, TimeUnit.SECONDS).phase)
+        runtime.close()
+        assertEquals(LocalAiPhase.STOPPED, runtime.state().phase)
+        assertTrue(backend.awaitCloseStarted())
+    }
+
     private fun modelSpec() = LocalModelSpec(
         id = "fixture",
         version = "1",
