@@ -174,10 +174,21 @@ private fun NotebookWorkbench() {
                 } else {
                     when (val applied = OrgNotebookResults.apply(source, sourceRevision, request, result)) {
                         is OrgResultApplyResult.Applied -> {
-                            source = applied.source
-                            sourceRevision = applied.nextRevision
-                            selected?.let { file -> repository?.write(file, applied.source) }
-                            status = "Result saved · ${result.durationMs} ms · runtime ${result.runtimeGeneration}"
+                            val repo = repository
+                            val file = selected
+                            if (repo == null || file == null) {
+                                status = "Result persistence unavailable"
+                            } else {
+                                runCatching { repo.write(file, applied.source) }
+                                    .onSuccess {
+                                        source = applied.source
+                                        sourceRevision = applied.nextRevision
+                                        status = "Result saved · ${result.durationMs} ms · runtime ${result.runtimeGeneration}"
+                                    }
+                                    .onFailure { error ->
+                                        status = error.message ?: "Result save failed"
+                                    }
+                            }
                         }
                         is OrgResultApplyResult.Stale -> status = "Result is stale: ${applied.reason}"
                         is OrgResultApplyResult.Rejected -> status = applied.reason
