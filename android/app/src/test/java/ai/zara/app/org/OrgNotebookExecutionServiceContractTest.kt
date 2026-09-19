@@ -7,14 +7,14 @@ import org.junit.Test
 
 class OrgNotebookExecutionServiceContractTest {
     @Test
-    fun serviceIsSignatureProtectedAndRunsInExistingVoiceProcess() {
+    fun serviceIsSignatureProtectedAndStaysInCanonicalAppProcess() {
         val manifest = File("src/main/AndroidManifest.xml").readText()
 
         assertTrue(manifest.contains("android:name=\"ai.zara.permission.EXECUTE_NOTEBOOK\""))
         assertTrue(manifest.contains("android:protectionLevel=\"signature\""))
         assertTrue(manifest.contains("android:name=\".org.OrgNotebookExecutionService\""))
         assertTrue(manifest.contains("android:permission=\"ai.zara.permission.EXECUTE_NOTEBOOK\""))
-        assertTrue(manifest.contains("android:process=\":voice\""))
+        assertFalse(manifest.contains("android:process=\":voice\""))
     }
 
     @Test
