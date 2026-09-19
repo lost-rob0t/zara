@@ -68,6 +68,7 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
+    implementation(libs.gson)
 
     // Apache-2.0 F-Droid client foundations. Keep all three on one pinned release.
     implementation(libs.fdroid.download)
