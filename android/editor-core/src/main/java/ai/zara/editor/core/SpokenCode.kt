@@ -94,7 +94,7 @@ object CodeSpeechNormalizer {
 
     private fun cleanupAroundPunctuation(text: String): String = text
         .replace(Regex("[ \\t]+([),;:\\]}.])"), "$1")
-        .replace(Regex("([([{]) +"), "$1")
-        .replace(Regex("([A-Za-z0-9_]) +([([{])"), "$1$2")
+        .replace(Regex("([({\\[]) +"), "$1")
+        .replace(Regex("([A-Za-z0-9_]) +([({\\[])"), "$1$2")
         .replace(Regex("[ \\t]*\\n[ \\t]*"), "\n")
 }
