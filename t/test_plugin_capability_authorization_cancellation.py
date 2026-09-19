@@ -59,6 +59,48 @@ def _write_plugin(path, *, name: str, tool_name: str | None = None):
     )
 
 
+def _write_cancellable_plugin(path, *, name: str, tool_name: str):
+    path.write_text(
+        textwrap.dedent(
+            f"""
+            from langchain_core.tools import StructuredTool
+            from zara.plugins import (
+                PluginMetadata,
+                ServicePlugin,
+                current_tool_cancellation,
+            )
+
+            def read(value: str) -> str:
+                cancellation = current_tool_cancellation()
+                return "cancelled" if cancellation.wait(timeout=0.5) else "missed"
+
+            def _tools():
+                return [StructuredTool.from_function(
+                    read,
+                    name={tool_name!r},
+                    description="cancellable composition authorization test tool",
+                    metadata={{"zara_supports_cancellation": True}},
+                )]
+
+            class Plugin(ServicePlugin):
+                metadata = PluginMetadata(name={name!r}, version="1")
+
+                def tools(self):
+                    return _tools()
+
+                def start(self, runtime):
+                    pass
+
+                def stop(self):
+                    pass
+
+            def create_plugin():
+                return Plugin()
+            """
+        )
+    )
+
+
 def _manager(tmp_path, registry, *, allowed=(), invoker=None, lifecycle_timeout=1.0):
     bus = RuntimeEventBus()
 
@@ -289,3 +331,57 @@ async def test_stop_times_out_blocking_composed_invocation_and_fences_late_resul
     release_invocation.set()
     with pytest.raises(RuntimeError, match="cancelled|stale"):
         await invocation
+
+@pytest.mark.asyncio
+async def test_turn_cancellation_signals_cancellable_composed_tool_before_stale_fence(tmp_path):
+    _write_plugin(tmp_path / "consumer.py", name="consumer")
+    _write_cancellable_plugin(
+        tmp_path / "provider.py",
+        name="provider",
+        tool_name="provider.read",
+    )
+    registry = ToolRegistry()
+    observed_results = []
+
+    def invoke(name, request):
+        result = registry.invoke_composed_tool(name, request)
+        observed_results.append(result)
+        return result
+
+    manager = _manager(
+        tmp_path,
+        registry,
+        allowed=("provider.read",),
+        invoker=invoke,
+    )
+    await manager.start()
+    handle = manager._resolve_capability("consumer", "provider.read")
+    assert handle is not None
+    lease = TurnCapabilityLease("turn-1")
+
+    def invoke_bound():
+        with bind_turn_capability_lease(lease):
+            return manager._invoke_capability(
+                "consumer",
+                handle,
+                {"value": "status"},
+            )
+
+    invocation = asyncio.create_task(asyncio.to_thread(invoke_bound))
+
+    def wait_for_registration():
+        with manager._invocation_condition:
+            return manager._invocation_condition.wait_for(
+                lambda: bool(manager._active_capability_invocations),
+                timeout=1.0,
+            )
+
+    assert await asyncio.to_thread(wait_for_registration)
+    lease.invalidate()
+    manager.cancel_capability_turn("turn-1")
+
+    with pytest.raises(RuntimeError, match="cancelled|stale"):
+        await asyncio.wait_for(invocation, timeout=1.0)
+
+    assert observed_results == ["cancelled"]
+    await manager.stop()
