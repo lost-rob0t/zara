@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QCloseEvent, QPainter, QPaintEvent, QPen
+from PySide6.QtGui import QColor, QCloseEvent, QPainter, QPaintEvent, QPen, QStandardItemModel
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -510,9 +510,26 @@ class SettingsWindow(QWidget):
             runtime_choices,
             "zara-python",
         )
+        configured_descriptor = next(
+            (descriptor for descriptor in runtimes if descriptor.id == configured_runtime_id),
+            None,
+        )
+        if configured_descriptor is not None and not configured_descriptor.selectable:
+            runtime.insertItem(
+                0,
+                f"{configured_descriptor.display_name}  ·  configured, unavailable",
+                configured_descriptor.id,
+            )
+            model = runtime.model()
+            if isinstance(model, QStandardItemModel):
+                item = model.item(0)
+                if item is not None:
+                    item.setEnabled(False)
+            runtime.setCurrentIndex(0)
         runtime.setAccessibleName("Installed assistant runtime")
         runtime.setToolTip(
             "Only runtimes discovered as installed and compatible are selectable. "
+            "A configured runtime that is currently unavailable is preserved until explicit reselection. "
             "Prolog-RLM remains optional."
         )
         for descriptor in runtimes:
