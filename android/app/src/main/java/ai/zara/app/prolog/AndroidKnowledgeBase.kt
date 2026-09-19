@@ -89,8 +89,7 @@ class AndroidKnowledgeBase(
         val storedDetail = when (event.sensitivity) {
             AndroidMemorySensitivity.SECRET -> "redacted:${sha256(event.detail)}"
             AndroidMemorySensitivity.PUBLIC,
-            AndroidMemorySensitivity.PRIVATE,
-            -> event.detail.take(MAX_DETAIL_CHARS)
+            AndroidMemorySensitivity.PRIVATE -> event.detail.take(MAX_DETAIL_CHARS)
         }
         appendRecord(
             "android_event(${q(event.kind)},${q(event.subject)},${q(storedDetail)},${q(event.provenance)},${q(event.sensitivity.name.lowercase())},${clockMillis()})."
@@ -102,7 +101,10 @@ class AndroidKnowledgeBase(
         require(limit >= 0) { "Android memory context limit must be non-negative" }
         if (limit == 0) return ""
         val records = sources().flatMap { source ->
-            source.text.lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
+            source.text.lineSequence()
+                .map { line -> line.trim() }
+                .filter { line -> line.isNotEmpty() }
+                .toList()
         }
         return records.takeLast(limit).asReversed().joinToString("\n")
     }
