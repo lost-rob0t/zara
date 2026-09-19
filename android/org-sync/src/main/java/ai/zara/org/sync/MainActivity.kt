@@ -2,6 +2,9 @@ package ai.zara.org.sync
 
 import ai.zara.org.sync.core.GitOrgWorkspace
 import ai.zara.org.sync.core.GitSyncResult
+import ai.zara.org.sync.core.OrgWorkspaceDescriptor
+import ai.zara.org.sync.core.OrgWorkspaceMapper
+import ai.zara.org.sync.core.WorkspaceId
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -54,15 +57,34 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun OrgSyncApp() {
     val context = LocalContext.current
-    val root = remember { context.filesDir.resolve("org-workspaces/main") }
-    val workspace = remember { GitOrgWorkspace(root) }
     val prefs = remember { context.getSharedPreferences("org-sync", MODE_PRIVATE) }
+    var activeRootId by rememberSaveable {
+        mutableStateOf(prefs.getString("workspace-root-id", "main") ?: "main")
+    }
+    var rootIdInput by rememberSaveable { mutableStateOf(activeRootId) }
+    val root = remember(activeRootId) {
+        val descriptor = runCatching {
+            OrgWorkspaceDescriptor.AppPrivate(
+                id = WorkspaceId("shared"),
+                displayName = "Shared Org",
+                rootId = activeRootId,
+            )
+        }.getOrElse {
+            OrgWorkspaceDescriptor.AppPrivate(
+                id = WorkspaceId("shared"),
+                displayName = "Shared Org",
+                rootId = "main",
+            )
+        }
+        OrgWorkspaceMapper.appPrivateRoot(context.filesDir, descriptor)
+    }
+    val workspace = remember(root) { GitOrgWorkspace(root) }
 
     var remote by rememberSaveable { mutableStateOf(prefs.getString("remote", "") ?: "") }
     var branch by rememberSaveable { mutableStateOf(prefs.getString("branch", "main") ?: "main") }
     var status by remember { mutableStateOf(describe(workspace)) }
 
-    fun persist() {
+    fun persistGit() {
         prefs.edit().putString("remote", remote.trim()).putString("branch", branch.trim()).apply()
     }
 
@@ -82,7 +104,38 @@ private fun OrgSyncApp() {
             "Owns the default shared Org home used by Org, Todo, Notebook and other first-party Org APKs.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Text(root.absolutePath, style = MaterialTheme.typography.labelSmall)
+
+        OutlinedTextField(
+            value = rootIdInput,
+            onValueChange = { rootIdInput = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Shared workspace root") },
+            supportingText = {
+                Text("Logical Zara-owned root. External/custom document trees use persisted SAF selection.")
+            },
+            singleLine = true,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                runCatching {
+                    val descriptor = OrgWorkspaceDescriptor.AppPrivate(
+                        id = WorkspaceId("shared"),
+                        displayName = "Shared Org",
+                        rootId = rootIdInput,
+                    )
+                    OrgWorkspaceMapper.appPrivateRoot(context.filesDir, descriptor)
+                    prefs.edit().putString("workspace-root-id", rootIdInput).apply()
+                    activeRootId = rootIdInput
+                }.onSuccess {
+                    status = "Shared workspace selected · ${rootIdInput}"
+                }.onFailure {
+                    status = it.message ?: "Invalid workspace root"
+                }
+            }) {
+                Text("Use workspace")
+            }
+            Text(root.absolutePath, style = MaterialTheme.typography.labelSmall)
+        }
 
         OutlinedTextField(
             value = remote,
@@ -103,7 +156,7 @@ private fun OrgSyncApp() {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 runCatching {
-                    persist()
+                    persistGit()
                     workspace.initialize()
                     if (remote.isNotBlank()) workspace.configureRemote(remote.trim(), branch.trim())
                 }.onSuccess { refresh() }
@@ -116,7 +169,7 @@ private fun OrgSyncApp() {
                 enabled = remote.isNotBlank() && branch.isNotBlank(),
                 onClick = {
                     runCatching {
-                        persist()
+                        persistGit()
                         workspace.clone(remote.trim(), branch.trim())
                     }.onSuccess { refresh() }
                         .onFailure { status = it.message ?: "Clone failed" }
@@ -126,13 +179,14 @@ private fun OrgSyncApp() {
             }
 
             Button(onClick = {
-                persist()
+                persistGit()
                 status = when (val result = workspace.sync()) {
                     is GitSyncResult.Synced -> result.message
                     is GitSyncResult.Conflict -> {
                         val files = result.files.take(5).joinToString()
                         if (files.isBlank()) result.message else "${result.message}: $files"
                     }
+                    is GitSyncResult.Cancelled -> result.message
                     is GitSyncResult.Failed -> result.message
                 }
             }) {
@@ -147,7 +201,7 @@ private fun OrgSyncApp() {
         Text(status, color = MaterialTheme.colorScheme.secondary)
         Text(
             "Shared home is exposed only to apps signed with the same Zara signing certificate. " +
-                "Individual Org apps can switch to their own custom SAF directory.",
+                "Individual Org apps can switch independently to a persisted custom SAF directory.",
             style = MaterialTheme.typography.bodySmall,
         )
     }
