@@ -171,7 +171,28 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             if match is None:
                 return None
             route, _state = match
-            return self._route_nodes.get(route)
+            node = self._route_nodes.get(route)
+            user_id = self._route_user_ids.get(route)
+        if node is None or user_id is None:
+            return None
+
+        try:
+            enrolled = self._security_registry.resolve_user_id(user_id)
+            verify_authenticated_node(node, enrolled)
+        except (KeyNotActive, NodeAuthorityError, TypeError, ValueError):
+            return None
+
+        # Do not hold the gateway lock while resolving the registry: inbound
+        # authentication takes the registry lock before touching route state.
+        # Re-check the route after resolution so a concurrent reconnect cannot
+        # make a formerly valid node record authoritative for a new session.
+        with self._lock:
+            current = self._route_for_session_locked(principal_id, session_id)
+            if current is None or current[0] != route:
+                return None
+            if self._route_nodes.get(route) != node:
+                return None
+        return node
 
     def _audit(
         self,
