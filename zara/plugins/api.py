@@ -21,6 +21,8 @@ PLUGIN_API_VERSION = "1"
 DEFAULT_EVENT_QUEUE_SIZE = 256
 MAX_EVENT_QUEUE_SIZE = 4096
 MAX_SUBSCRIPTIONS_PER_PLUGIN = 16
+MAX_UNAVAILABLE_REASON_LENGTH = 64
+UNAVAILABLE_REASON_ALLOWED = set("abcdefghijklmnopqrstuvwxyz0123456789._-")
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,34 @@ class RuntimeStatus:
 
 
 @dataclass(frozen=True)
+class StartupUnavailable:
+    """Canonical ``start()`` result reporting the plugin started but is unusable.
+
+    The plugin did not fail and must not be reported as running. ``reason``
+    is a bounded, non-secret diagnostic code (lowercase letters, digits,
+    ``.``, ``_`` and ``-`` only) so that raw exception or credential text can
+    never leak through diagnostics.
+    """
+
+    reason: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.reason, str):
+            raise ValueError("unavailable reason must be a string")
+        if not self.reason or len(self.reason) > MAX_UNAVAILABLE_REASON_LENGTH:
+            raise ValueError(
+                "unavailable reason must contain 1 to "
+                f"{MAX_UNAVAILABLE_REASON_LENGTH} characters"
+            )
+        if self.reason[0] not in set("abcdefghijklmnopqrstuvwxyz0123456789"):
+            raise ValueError("unavailable reason must start with a lowercase letter or digit")
+        if any(character not in UNAVAILABLE_REASON_ALLOWED for character in self.reason):
+            raise ValueError(
+                "unavailable reason may contain lowercase letters, digits, '.', '_' and '-'"
+            )
+
+
+@dataclass(frozen=True)
 class CapabilityHandle:
     """Opaque Core-owned reference to one loaded plugin capability generation."""
 
@@ -74,7 +104,7 @@ class ServicePlugin(ABC):
     metadata: PluginMetadata
 
     @abstractmethod
-    def start(self, runtime: "PluginRuntime") -> None:
+    def start(self, runtime: "PluginRuntime") -> StartupUnavailable | None:
         pass
 
     @abstractmethod
@@ -357,4 +387,5 @@ __all__ = [
     "PluginRuntime",
     "RuntimeStatus",
     "ServicePlugin",
+    "StartupUnavailable",
 ]
