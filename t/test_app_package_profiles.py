@@ -1,0 +1,147 @@
+from __future__ import annotations
+
+import pytest
+
+from zara.runtime.package_profiles import (
+    PACKAGE_PROFILE_SCHEMA,
+    AppPackageProfile,
+    PackageProfileError,
+    activate_profile_package,
+)
+from zara.runtime.symbols import ProgrammableSymbolRegistry, SymbolLookupError, SymbolSpec
+
+
+def test_profile_round_trip_is_portable_and_deterministic():
+    profile = AppPackageProfile.from_mapping(
+        {
+            "schema": PACKAGE_PROFILE_SCHEMA,
+            "app_id": "org_editor",
+            "enabled_packages": ["org_roam", "logseq_daily"],
+            "pins": {"logseq_daily": "1.4.2"},
+        }
+    )
+
+    assert profile.app_id == "org_editor"
+    assert profile.enabled_packages == ("logseq_daily", "org_roam")
+    assert profile.pins == (("logseq_daily", "1.4.2"),)
+    assert profile.to_mapping() == {
+        "schema": PACKAGE_PROFILE_SCHEMA,
+        "app_id": "org_editor",
+        "enabled_packages": ["logseq_daily", "org_roam"],
+        "pins": {"logseq_daily": "1.4.2"},
+    }
+
+
+def test_profile_rejects_duplicate_enablement_and_pin_for_disabled_package():
+    with pytest.raises(PackageProfileError, match="duplicate enabled package"):
+        AppPackageProfile.from_mapping(
+            {
+                "schema": PACKAGE_PROFILE_SCHEMA,
+                "app_id": "org_editor",
+                "enabled_packages": ["org_roam", "org_roam"],
+                "pins": {},
+            }
+        )
+
+    with pytest.raises(PackageProfileError, match="pin requires package to be enabled"):
+        AppPackageProfile.from_mapping(
+            {
+                "schema": PACKAGE_PROFILE_SCHEMA,
+                "app_id": "org_todo",
+                "enabled_packages": ["gtd"],
+                "pins": {"logseq_daily": "1.4.2"},
+            }
+        )
+
+
+def test_activation_reuses_app_registry_and_never_creates_global_package_state():
+    editor_profile = AppPackageProfile.from_mapping(
+        {
+            "schema": PACKAGE_PROFILE_SCHEMA,
+            "app_id": "org_editor",
+            "enabled_packages": ["logseq_daily"],
+            "pins": {},
+        }
+    )
+    todo_profile = AppPackageProfile.from_mapping(
+        {
+            "schema": PACKAGE_PROFILE_SCHEMA,
+            "app_id": "org_todo",
+            "enabled_packages": ["logseq_daily"],
+            "pins": {},
+        }
+    )
+    editor_registry = ProgrammableSymbolRegistry()
+    todo_registry = ProgrammableSymbolRegistry()
+
+    activate_profile_package(
+        editor_registry,
+        editor_profile,
+        "logseq_daily",
+        (SymbolSpec("org:daily/open", "command", "editor-daily"),),
+    )
+    activate_profile_package(
+        todo_registry,
+        todo_profile,
+        "logseq_daily",
+        (SymbolSpec("org:daily/open", "command", "todo-daily"),),
+    )
+
+    assert editor_registry.get("org:daily/open") == "editor-daily"
+    assert todo_registry.get("org:daily/open") == "todo-daily"
+    assert editor_registry.describe("org:daily/open")[0].owner == (
+        "app:org_editor:package:logseq_daily"
+    )
+    assert todo_registry.describe("org:daily/open")[0].owner == (
+        "app:org_todo:package:logseq_daily"
+    )
+
+    editor_registry.clear_owner("app:org_editor:package:logseq_daily")
+    with pytest.raises(SymbolLookupError):
+        editor_registry.resolve("org:daily/open")
+    assert todo_registry.get("org:daily/open") == "todo-daily"
+
+
+def test_activation_fails_closed_for_package_not_enabled_in_target_app():
+    profile = AppPackageProfile.from_mapping(
+        {
+            "schema": PACKAGE_PROFILE_SCHEMA,
+            "app_id": "org_todo",
+            "enabled_packages": ["gtd"],
+            "pins": {},
+        }
+    )
+    registry = ProgrammableSymbolRegistry()
+
+    with pytest.raises(PackageProfileError, match="not enabled for app 'org_todo'"):
+        activate_profile_package(
+            registry,
+            profile,
+            "logseq_daily",
+            (SymbolSpec("org:daily/open", "command", "wrong-target"),),
+        )
+
+    assert registry.symbols() == ()
+
+
+def test_profile_rejects_unknown_schema_and_ambient_fields():
+    with pytest.raises(PackageProfileError, match="unsupported package profile schema"):
+        AppPackageProfile.from_mapping(
+            {
+                "schema": 99,
+                "app_id": "org_editor",
+                "enabled_packages": [],
+                "pins": {},
+            }
+        )
+
+    with pytest.raises(PackageProfileError, match="unknown package profile fields"):
+        AppPackageProfile.from_mapping(
+            {
+                "schema": PACKAGE_PROFILE_SCHEMA,
+                "app_id": "org_editor",
+                "enabled_packages": [],
+                "pins": {},
+                "global_registry": True,
+            }
+        )
