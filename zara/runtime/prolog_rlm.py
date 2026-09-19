@@ -344,8 +344,12 @@ def _bounded_text(value: str, maximum: int, field: str) -> str:
 
 
 def _bounded_id(value: str, field: str) -> str:
-    text = _bounded_text(value, 128, field).strip()
-    if not text or any(ord(char) < 0x20 for char in text):
+    text = _bounded_text(value, 128, field)
+    if (
+        not text
+        or text != text.strip()
+        or any(ord(char) < 0x20 or ord(char) == 0x7F for char in text)
+    ):
         raise ValueError(f"{field} is invalid")
     return text
 
