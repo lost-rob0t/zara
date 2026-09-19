@@ -143,6 +143,24 @@ class LocalAiRuntimeTest {
         }
     }
 
+    @Test
+    fun backendCallbacksAfterCloseAreDroppedWithoutRevivingRuntimeState() {
+        val backend = FakeLlmBackend()
+        val runtime = LocalAiRuntime(backend)
+        runtime.load(modelSpec()).get(2, TimeUnit.SECONDS)
+        val future = runtime.generate(LocalGenerationRequest("close me", 16))
+        assertTrue(backend.awaitGenerationStarted())
+
+        runtime.close()
+
+        assertTrue(future.isCompletedExceptionally)
+        assertEquals(LocalAiPhase.STOPPED, runtime.state().phase)
+        backend.emit("late")
+        backend.complete()
+        backend.fail(IllegalStateException("late failure"))
+        assertEquals(LocalAiPhase.STOPPED, runtime.state().phase)
+    }
+
     private fun modelSpec() = LocalModelSpec(
         id = "fixture",
         version = "1",
@@ -193,6 +211,10 @@ class LocalAiRuntimeTest {
 
         fun complete() {
             listener?.onDone()
+        }
+
+        fun fail(error: Throwable) {
+            listener?.onError(error)
         }
 
         override fun unload() {
