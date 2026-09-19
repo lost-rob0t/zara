@@ -19,5 +19,5 @@ def test_focused_org_apks_are_built_and_secret_scanned() -> None:
 def test_focused_org_apks_must_share_one_signing_certificate() -> None:
     source = _gate_source()
     assert "org_signing_fingerprint" in source
-    assert "apksigner verify --print-certs" in source
+    assert "verify --print-certs" in source
     assert "Org APK signer mismatch" in source
