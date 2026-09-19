@@ -1,14 +1,16 @@
 package ai.zara.app
 
 import ai.zara.app.projects.ProjectContextStore
-import ai.zara.app.ui.RenderedTextTurn
+import ai.zara.app.runtime.AssistantRuntimeDescriptor
+import ai.zara.app.runtime.failClosedEmbeddedLocalRuntime
+import ai.zara.app.runtime.projectEmbeddedLocalRuntime
 import ai.zara.app.ui.AssistantRuntimePreferenceStore
 import ai.zara.app.ui.LocalEmbeddingPreferenceStore
+import ai.zara.app.ui.RenderedTextTurn
 import ai.zara.app.ui.RuntimeModePreferenceStore
 import ai.zara.app.ui.ThemePreferenceStore
 import ai.zara.app.ui.UiOperationFailure
 import ai.zara.app.ui.ZaraApp
-import ai.zara.app.runtime.AssistantRuntimeDescriptor
 import ai.zara.app.update.Changelog
 import ai.zara.app.update.ChangelogSeenStore
 import ai.zara.app.voice.ManualVoiceState
@@ -72,9 +74,9 @@ class MainActivity : ComponentActivity() {
             AssistantRuntimePreferenceStore(File(filesDir, "assistant-runtime.bin"))
         val desiredAssistantRuntimeId = assistantRuntimeStore.load()
         var installedAssistantRuntimes by mutableStateOf<List<AssistantRuntimeDescriptor>>(
-            appSession.installedAssistantRuntimes(),
+            failClosedEmbeddedLocalRuntime(appSession.installedAssistantRuntimes()),
         )
-        var selectedAssistantRuntimeId by mutableStateOf(appSession.selectedAssistantRuntimeId())
+        var selectedAssistantRuntimeId by mutableStateOf("")
         val embeddingPreferenceStore = LocalEmbeddingPreferenceStore(File(filesDir, "local-embedding.bin"))
         var localEmbedding by mutableStateOf(embeddingPreferenceStore.load())
         val projectStore = ProjectContextStore(File(filesDir, "projects.bin"))
@@ -104,21 +106,32 @@ class MainActivity : ComponentActivity() {
         }
 
         fun refreshAssistantRuntimes(restorePersistedSelection: Boolean = false) {
-            appSession.discoverAssistantRuntimes().whenComplete { runtimes, error ->
-                runOnUiThread {
-                    if (error != null) {
-                        operationError = UiOperationFailure.summarize(error)
-                        installedAssistantRuntimes = appSession.installedAssistantRuntimes()
-                        selectedAssistantRuntimeId = appSession.selectedAssistantRuntimeId()
-                    } else if (runtimes != null) {
-                        try {
-                            applyAssistantRuntimeDiscovery(runtimes, restorePersistedSelection)
-                        } catch (selectionError: Exception) {
-                            operationError = UiOperationFailure.summarize(selectionError)
+            appSession.discoverAssistantRuntimes()
+                .thenCombine(appSession.localAiState()) { runtimes, localAiState ->
+                    projectEmbeddedLocalRuntime(runtimes, localAiState)
+                }
+                .whenComplete { runtimes, error ->
+                    runOnUiThread {
+                        if (error != null) {
+                            operationError = UiOperationFailure.summarize(error)
+                            installedAssistantRuntimes = failClosedEmbeddedLocalRuntime(
+                                appSession.installedAssistantRuntimes(),
+                            )
+                            val observedSelection = appSession.selectedAssistantRuntimeId()
+                            selectedAssistantRuntimeId = observedSelection.takeIf { candidate ->
+                                installedAssistantRuntimes.any {
+                                    it.id == candidate && it.selectable
+                                }
+                            }.orEmpty()
+                        } else if (runtimes != null) {
+                            try {
+                                applyAssistantRuntimeDiscovery(runtimes, restorePersistedSelection)
+                            } catch (selectionError: Exception) {
+                                operationError = UiOperationFailure.summarize(selectionError)
+                            }
                         }
                     }
                 }
-            }
         }
 
         refreshAssistantRuntimes(restorePersistedSelection = true)
