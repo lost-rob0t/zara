@@ -43,6 +43,16 @@ def test_org_acceptance_daily_layout_is_acceptance_configuration_not_a_product_d
     assert "fixture path exists only inside the disposable emulator" in text
 
 
+def test_org_acceptance_fixture_uploads_do_not_use_nested_adb_shell_quoting():
+    text = ACCEPTANCE.read_text(encoding="utf-8")
+    # adb shell reparses command arguments. Passing a multi-word script as the
+    # argument to remote `sh -c` loses the intended command boundary on hosted
+    # emulators, so fixture writes must use adb push + direct argv operations.
+    assert '"sh",\n        "-c",' not in text
+    assert '"push",' in text
+    assert '"run-as",\n        PACKAGE,\n        "cp",' in text
+
+
 def test_org_evidence_validator_requires_exact_sha_pass_and_all_text_twins():
     text = VALIDATOR.read_text(encoding="utf-8")
     assert 'manifest.get("source_sha") != source_sha' in text
