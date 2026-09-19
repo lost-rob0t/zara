@@ -4,6 +4,7 @@ import ai.zara.app.BuildConfig
 import ai.zara.app.projects.ProjectContext
 import ai.zara.app.projects.ProjectContextState
 import ai.zara.app.localai.LocalAiState
+import ai.zara.app.localai.LocalLlmConfiguration
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.RuntimeState
@@ -146,6 +147,7 @@ fun ZaraApp(
     selectedTheme: ZaraTheme,
     localServerState: LocalServerState,
     localAiState: LocalAiState?,
+    localLlmConfiguration: LocalLlmConfiguration,
     prologSources: List<PrologSource>,
     prologQueryResult: LocalQueryResult?,
     updateState: UpdateState,
@@ -158,6 +160,7 @@ fun ZaraApp(
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onRefreshLocalAiState: () -> Unit,
+    onSaveLocalLlmConfiguration: (LocalLlmConfiguration) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
@@ -346,6 +349,7 @@ fun ZaraApp(
                                                 state = runtimeState,
                                                 localServerState = localServerState,
                                                 localAiState = localAiState,
+                                                localLlmConfiguration = localLlmConfiguration,
                                                 updateState = updateState,
                                                 runtimeMode = runtimeMode,
                                                 localEmbedding = localEmbedding,
@@ -363,6 +367,7 @@ fun ZaraApp(
                                                 onInstallUpdate = onInstallUpdate,
                                                 onSelectRuntimeMode = onSelectRuntimeMode,
                                                 onRefreshLocalAiState = onRefreshLocalAiState,
+                                                onSaveLocalLlmConfiguration = onSaveLocalLlmConfiguration,
                                                 onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
                                                 padding = padding,
                                             )
@@ -849,6 +854,7 @@ private fun SettingsSurface(
     state: RuntimeState,
     localServerState: LocalServerState,
     localAiState: LocalAiState?,
+    localLlmConfiguration: LocalLlmConfiguration,
     updateState: UpdateState,
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
@@ -866,6 +872,7 @@ private fun SettingsSurface(
     onInstallUpdate: () -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onRefreshLocalAiState: () -> Unit,
+    onSaveLocalLlmConfiguration: (LocalLlmConfiguration) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     padding: PaddingValues,
 ) {
@@ -873,6 +880,12 @@ private fun SettingsSurface(
     var replacementServerPin by rememberSaveable { mutableStateOf("") }
     var showServerPinReplacement by rememberSaveable { mutableStateOf(false) }
     var showAssistantHelp by rememberSaveable { mutableStateOf(false) }
+    var localApiPort by rememberSaveable(localLlmConfiguration.apiPort) {
+        mutableStateOf(localLlmConfiguration.apiPort.toString())
+    }
+    var localMaxOutputTokens by rememberSaveable(localLlmConfiguration.maxOutputTokens) {
+        mutableStateOf(localLlmConfiguration.maxOutputTokens.toString())
+    }
     val tokens = LocalZaraTokens.current
 
     LaunchedEffect(section) {
@@ -937,6 +950,99 @@ private fun SettingsSurface(
                     KeyValueRow("accelerator", localModel?.backend?.name?.lowercase() ?: "none")
                     localAiState?.failure?.let { ErrorBanner(it) }
                     MutedNotice("Read directly from the local AI service. 'none' means no local model is loaded; Zara never invents local-model readiness.")
+
+                    Text("LOCAL LLM API", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+                    KeyValueRow("configuration", "config.pl")
+                    KeyValueRow("endpoint", "http://127.0.0.1:${localLlmConfiguration.apiPort}/v1")
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = localLlmConfiguration.apiEnabled,
+                                enabled = !operationBusy,
+                                onClick = {
+                                    onSaveLocalLlmConfiguration(
+                                        localLlmConfiguration.copy(
+                                            apiEnabled = !localLlmConfiguration.apiEnabled,
+                                        ),
+                                    )
+                                },
+                            )
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        StatusDot(if (localLlmConfiguration.apiEnabled) tokens.success else tokens.border)
+                        Text(
+                            if (localLlmConfiguration.apiEnabled) "API enabled" else "API disabled",
+                            modifier = Modifier.padding(start = 10.dp),
+                            color = tokens.text,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = localLlmConfiguration.background,
+                                enabled = !operationBusy,
+                                onClick = {
+                                    onSaveLocalLlmConfiguration(
+                                        localLlmConfiguration.copy(
+                                            background = !localLlmConfiguration.background,
+                                        ),
+                                    )
+                                },
+                            )
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        StatusDot(if (localLlmConfiguration.background) tokens.success else tokens.border)
+                        Text(
+                            if (localLlmConfiguration.background) "Background host requested" else "Foreground/session only",
+                            modifier = Modifier.padding(start = 10.dp),
+                            color = tokens.text,
+                        )
+                    }
+                    OutlinedTextField(
+                        value = localApiPort,
+                        onValueChange = { localApiPort = it.filter(Char::isDigit).take(5) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Loopback API port") },
+                        enabled = !operationBusy,
+                        singleLine = true,
+                        colors = fieldColors(),
+                    )
+                    OutlinedTextField(
+                        value = localMaxOutputTokens,
+                        onValueChange = { localMaxOutputTokens = it.filter(Char::isDigit).take(4) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Maximum output tokens") },
+                        enabled = !operationBusy,
+                        singleLine = true,
+                        colors = fieldColors(),
+                    )
+                    val parsedLocalApiPort = localApiPort.toIntOrNull()
+                    val parsedLocalMaxOutputTokens = localMaxOutputTokens.toIntOrNull()
+                    PrimaryAction(
+                        "Save local LLM config",
+                        !operationBusy &&
+                            parsedLocalApiPort != null &&
+                            parsedLocalApiPort in 1_024..65_535 &&
+                            parsedLocalMaxOutputTokens != null &&
+                            parsedLocalMaxOutputTokens in 1..4_096,
+                    ) {
+                        onSaveLocalLlmConfiguration(
+                            localLlmConfiguration.copy(
+                                apiPort = requireNotNull(parsedLocalApiPort),
+                                maxOutputTokens = requireNotNull(parsedLocalMaxOutputTokens),
+                            ),
+                        )
+                    }
+                    MutedNotice(
+                        "Non-secret Local LLM policy is stored as executable Prolog facts in the app-private config.pl. " +
+                            "The API bind address is fixed to loopback; API secrets are never written into Prolog. " +
+                            "Service readiness still comes from the local AI runtime, not from this toggle."
+                    )
+
                     Text("LOCAL EMBEDDINGS", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
                     Row(
                         modifier = Modifier
