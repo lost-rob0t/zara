@@ -61,7 +61,10 @@ class NativeTreallaBridge(
         return try {
             nativeApi.evaluate(query).toList()
         } catch (error: Throwable) {
-            throw IllegalStateException("Trealla native evaluation failed", error)
+            throw IllegalStateException(
+                "Trealla native evaluation failed (query_length=${query.length})",
+                error,
+            )
         }
     }
 
