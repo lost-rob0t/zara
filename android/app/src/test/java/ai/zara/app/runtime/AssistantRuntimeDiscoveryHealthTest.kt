@@ -1,5 +1,10 @@
 package ai.zara.app.runtime
 
+import ai.zara.app.localai.LocalAiPhase
+import ai.zara.app.localai.LocalAiState
+import ai.zara.app.localai.LocalModelBackend
+import ai.zara.app.localai.LocalModelQuantization
+import ai.zara.app.localai.LocalModelSpec
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import java.util.concurrent.TimeUnit
@@ -9,6 +14,38 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AssistantRuntimeDiscoveryHealthTest {
+    @Test
+    fun embeddedLocalDescriptorTracksCanonicalLocalAiLifecycle() {
+        val model = localModelSpec()
+        val cases = listOf(
+            LocalAiState(phase = LocalAiPhase.STOPPED) to "stopped",
+            LocalAiState(phase = LocalAiPhase.LOADING, model = model) to "starting",
+            LocalAiState(phase = LocalAiPhase.READY, model = model) to "ready",
+            LocalAiState(phase = LocalAiPhase.GENERATING, model = model) to "busy",
+            LocalAiState(phase = LocalAiPhase.FAILED, model = model, failure = "backend died") to "failed",
+        )
+
+        cases.forEach { (state, expectedHealth) ->
+            val descriptor = embeddedLocalRuntimeDescriptor(state)
+
+            assertEquals(EMBEDDED_LOCAL_RUNTIME_ID, descriptor.id)
+            assertEquals(expectedHealth, descriptor.health)
+            assertEquals(state.model?.version ?: "unloaded", descriptor.runtimeVersion)
+            assertEquals(expectedHealth in setOf("ready", "busy"), descriptor.selectable)
+        }
+    }
+
+    @Test
+    fun impossibleReadyWithoutModelFailsClosedAsDegraded() {
+        val descriptor = embeddedLocalRuntimeDescriptor(
+            LocalAiState(phase = LocalAiPhase.READY, model = null),
+        )
+
+        assertEquals("degraded", descriptor.health)
+        assertEquals("unloaded", descriptor.runtimeVersion)
+        assertFalse(descriptor.selectable)
+    }
+
     @Test
     fun degradedPrologRuntimeRemainsDiscoveredButCannotBeSelected() {
         val client = PrologRlmSidecarClient(requestOverride = { _, path, _, _ ->
@@ -28,6 +65,16 @@ class AssistantRuntimeDiscoveryHealthTest {
             assertTrue(rejected)
         }
     }
+
+    private fun localModelSpec(): LocalModelSpec = LocalModelSpec(
+        id = "fixture-model",
+        version = "1.2.3",
+        quantization = LocalModelQuantization.INT4,
+        sha256 = "0".repeat(64),
+        path = "/models/fixture-model.litertlm",
+        maxContextTokens = 4_096,
+        backend = LocalModelBackend.CPU,
+    )
 
     private fun discoveryPayload(health: String): JsonObject = JsonObject().apply {
         add(
