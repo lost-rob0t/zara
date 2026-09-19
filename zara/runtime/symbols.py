@@ -161,7 +161,7 @@ class ProgrammableSymbolRegistry:
 
             self._validate_kind_compatibility(
                 normalized,
-                excluding_owner=owner,
+                excluding_owner=None,
             )
 
             old_ids = [
