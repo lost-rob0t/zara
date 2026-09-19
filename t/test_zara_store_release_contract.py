@@ -49,3 +49,44 @@ def test_android_release_evidence_includes_store_apk_hash():
 
     assert "apps/zara-store/build/outputs/apk/debug/zara-store-debug.apk" in gate
     assert "store_apk_sha256=" in gate
+
+
+def test_store_cannot_define_parallel_plugin_runtime_authority():
+    source_root = ROOT / "android/apps/zara-store/src/main/java"
+    forbidden_types = {
+        "CapabilityRegistry",
+        "PermissionRegistry",
+        "PluginHealthRegistry",
+        "PluginManager",
+        "PluginRegistry",
+        "PluginRuntimeState",
+    }
+    declaration = re.compile(
+        r"\b(?:data\s+class|sealed\s+class|class|interface|object|enum\s+class)\s+"
+        r"(" + "|".join(sorted(forbidden_types)) + r")\b"
+    )
+    offenders = []
+
+    for path in sorted(source_root.rglob("*.kt")):
+        for match in declaration.finditer(path.read_text()):
+            offenders.append(f"{path.relative_to(ROOT)}:{match.group(1)}")
+
+    assert not offenders, (
+        "Zara Store owns package artifact lifecycle only; plugin runtime/trust/permission "
+        "authority must remain in the canonical plugin host/registry: " + ", ".join(offenders)
+    )
+
+
+def test_store_package_state_contains_artifact_lifecycle_only():
+    contract = (
+        ROOT
+        / "android/apps/zara-store/src/main/java/ai/zara/store/catalog/ZaraCatalogContract.kt"
+    ).read_text()
+    state = re.search(r"data class StorePackageState\((.*?)\)\s*\{", contract, re.DOTALL)
+
+    assert state is not None
+    fields = state.group(1).lower()
+    for forbidden in ("enabled", "trusted", "permission", "capability", "health", "ready", "runtime"):
+        assert forbidden not in fields, (
+            f"StorePackageState must not persist canonical plugin host field {forbidden!r}"
+        )
