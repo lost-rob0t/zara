@@ -10,14 +10,15 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
-- Desktop Runtime settings now preserve a discovered-but-currently-unavailable configured runtime as a disabled current choice, so saving an unrelated setting cannot silently switch the runtime backend; changing runtimes remains an explicit selection of a discovered selectable runtime.
 - Android Runtime settings now project `embedded-local` health and model version from the canonical local-AI lifecycle instead of showing a synthetic `builtin / ready` row; unknown local-model state fails closed as unavailable rather than inventing readiness.
 - Desktop Prolog-RLM discovery and runtime configuration now require a literal loopback address (`127.0.0.1` or `::1`) instead of trusting the `localhost` hostname, keeping context and turn traffic on an explicit local transport boundary.
 - Wear Voice no longer requests direct Internet access; the focused watch voice shell stays network-free and leaves runtime transport to the shared Wear/phone authority path.
 - Wear Voice now uses Zara's canonical version name and Android versionCode instead of shipping stale module-local package metadata.
 - Plugin capability compositions now re-check a tool's live approval policy immediately before invocation, preventing approval-policy changes after registration from bypassing approval.
 - Android Prolog-RLM turns keep cancellation responsive while generation is running, discard stale replies after runtime switches, and fall back to the embedded runtime after rediscovery detects a dead sidecar.
+- Android Prolog-RLM chat now distinguishes user cancellation, stale-runtime fencing, ordinary turn failure, and actual sidecar unavailability; only runtime unavailability triggers sidecar rediscovery, and chat/diagnostics do not echo raw runtime error detail.
 - Desktop Runtime settings now render discovery-driven health, locality, capabilities, profiles, selection state, and a bounded diagnostic reason for installed-but-unselectable runtimes without adding them to the selectable runtime list.
+- Runtime settings now ignore saved provider/model selections that become incompatible or unavailable, and clear dependent stale picks instead of silently keeping invalid choices.
 - Desktop Prolog-RLM turns now preserve a runtime-returned cancellation as a typed cancelled result and discard late completions after local cancellation as well as replies from an older runtime generation after the runtime is stopped or restarted, preventing stale output from publishing into the active turn.
 - Prolog-RLM runtime transport failures now surface as bounded typed Zara runtime errors without exposing raw sidecar or provider error details.
 - Desktop Prolog-RLM startup now reports an incompatible discovered `ZARA-RUNTIME` protocol as a typed protocol error instead of collapsing it into a generic unavailable-runtime failure.

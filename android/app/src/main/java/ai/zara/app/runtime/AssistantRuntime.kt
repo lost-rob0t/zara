@@ -40,7 +40,15 @@ data class AssistantRuntimeTurn(
     val text: String,
 )
 
-class AssistantRuntimeException(message: String) : IllegalStateException(message)
+open class AssistantRuntimeException(message: String) : IllegalStateException(message)
+
+class AssistantRuntimeCancelledException(message: String) : AssistantRuntimeException(message)
+
+class AssistantRuntimeStaleGenerationException(message: String) : AssistantRuntimeException(message)
+
+class AssistantRuntimeTurnFailedException(message: String) : AssistantRuntimeException(message)
+
+class AssistantRuntimeUnavailableException(message: String) : AssistantRuntimeException(message)
 
 fun embeddedLocalRuntimeDescriptor(): AssistantRuntimeDescriptor =
     AssistantRuntimeDescriptor(
@@ -143,15 +151,19 @@ class PrologRlmSidecarClient(
                 val responseText = requiredString(reply, "text", MAX_TEXT_CHARS)
                 return AssistantRuntimeTurn(requestId = requestId, text = responseText)
             }
-            "cancelled" -> throw AssistantRuntimeException("Prolog-RLM request was cancelled")
+            "cancelled" -> throw AssistantRuntimeCancelledException(
+                "Prolog-RLM request was cancelled",
+            )
             "failed" -> {
                 val error = reply.getAsJsonObject("error")
                 val kind = error?.let { optionalString(it, "kind", 64) } ?: "runtime_error"
                 val message = error?.let { optionalString(it, "message", 512) }
                     ?: "Prolog-RLM runtime request failed"
-                throw AssistantRuntimeException("$kind: $message")
+                throw AssistantRuntimeTurnFailedException("$kind: $message")
             }
-            else -> throw AssistantRuntimeException("Unsupported Prolog-RLM terminal status: $status")
+            else -> throw AssistantRuntimeUnavailableException(
+                "Unsupported Prolog-RLM terminal status: $status",
+            )
         }
     }
 
@@ -222,10 +234,10 @@ class PrologRlmSidecarClient(
 
     private fun requireWireIdentity(value: JsonObject) {
         if (requiredString(value, "protocol", 32) != ZARA_RUNTIME_PROTOCOL) {
-            throw AssistantRuntimeException("Prolog-RLM response protocol changed")
+            throw AssistantRuntimeUnavailableException("Prolog-RLM response protocol changed")
         }
         if (requiredRuntimeId(value, "runtime_id") != PROLOG_RLM_RUNTIME_ID) {
-            throw AssistantRuntimeException("Prolog-RLM response identity changed")
+            throw AssistantRuntimeUnavailableException("Prolog-RLM response identity changed")
         }
     }
 
@@ -246,18 +258,21 @@ class PrologRlmSidecarClient(
         } catch (_: TimeoutException) {
             connectionRef.getAndSet(null)?.disconnect()
             task.cancel(true)
-            throw AssistantRuntimeException("Prolog-RLM sidecar request exceeded total deadline")
+            throw AssistantRuntimeUnavailableException(
+                "Prolog-RLM sidecar request exceeded total deadline",
+            )
         } catch (_: InterruptedException) {
             connectionRef.getAndSet(null)?.disconnect()
             task.cancel(true)
             Thread.currentThread().interrupt()
-            throw AssistantRuntimeException("Prolog-RLM sidecar request was interrupted")
+            throw AssistantRuntimeUnavailableException("Prolog-RLM sidecar request was interrupted")
         } catch (error: ExecutionException) {
             when (val cause = error.cause) {
                 is AssistantRuntimeException -> throw cause
-                is RuntimeException -> throw cause
                 is Error -> throw cause
-                else -> throw AssistantRuntimeException("Prolog-RLM sidecar transport failed")
+                else -> throw AssistantRuntimeUnavailableException(
+                    "Prolog-RLM sidecar transport failed",
+                )
             }
         }
     }
@@ -292,16 +307,20 @@ class PrologRlmSidecarClient(
             }
             val status = connection.responseCode
             if (status !in 200..299) {
-                throw AssistantRuntimeException("Prolog-RLM sidecar returned HTTP $status")
+                throw AssistantRuntimeUnavailableException(
+                    "Prolog-RLM sidecar returned HTTP $status",
+                )
             }
             val bytes = connection.inputStream.use(::readBounded)
             val parsed = runCatching {
                 JsonParser.parseString(String(bytes, StandardCharsets.UTF_8))
             }.getOrElse {
-                throw AssistantRuntimeException("Prolog-RLM returned invalid JSON")
+                throw AssistantRuntimeUnavailableException("Prolog-RLM returned invalid JSON")
             }
             if (!parsed.isJsonObject) {
-                throw AssistantRuntimeException("Prolog-RLM response must be a JSON object")
+                throw AssistantRuntimeUnavailableException(
+                    "Prolog-RLM response must be a JSON object",
+                )
             }
             return parsed.asJsonObject
         } finally {
@@ -425,7 +444,7 @@ class AssistantRuntimeRegistry(
                 try {
                     synchronized(stateLock) {
                         if (requestId in cancelledPrologRequests) {
-                            throw AssistantRuntimeException(
+                            throw AssistantRuntimeCancelledException(
                                 "Cancelled Prolog-RLM request cannot start generation",
                             )
                         }
@@ -435,7 +454,7 @@ class AssistantRuntimeRegistry(
                             selectedId != PROLOG_RLM_RUNTIME_ID ||
                             discovered.none { it.id == PROLOG_RLM_RUNTIME_ID && it.selectable }
                         ) {
-                            throw AssistantRuntimeException(
+                            throw AssistantRuntimeStaleGenerationException(
                                 "Stale Prolog-RLM runtime generation cannot start generation",
                             )
                         }
@@ -443,7 +462,7 @@ class AssistantRuntimeRegistry(
                     val turn = prologRlm.generate(text, requestId, conversationId, inlineContext)
                     synchronized(stateLock) {
                         if (requestId in cancelledPrologRequests) {
-                            throw AssistantRuntimeException(
+                            throw AssistantRuntimeCancelledException(
                                 "Cancelled Prolog-RLM request cannot publish a result",
                             )
                         }
@@ -453,12 +472,21 @@ class AssistantRuntimeRegistry(
                             selectedId != PROLOG_RLM_RUNTIME_ID ||
                             discovered.none { it.id == PROLOG_RLM_RUNTIME_ID && it.selectable }
                         ) {
-                            throw AssistantRuntimeException(
+                            throw AssistantRuntimeStaleGenerationException(
                                 "Stale Prolog-RLM runtime generation cannot publish a result",
                             )
                         }
                     }
                     turn
+                } catch (error: AssistantRuntimeCancelledException) {
+                    throw error
+                } catch (error: AssistantRuntimeTurnFailedException) {
+                    throw error
+                } catch (error: AssistantRuntimeStaleGenerationException) {
+                    throw error
+                } catch (error: AssistantRuntimeException) {
+                    fenceUnavailablePrologRlm(requestGeneration)
+                    throw error
                 } finally {
                     synchronized(stateLock) {
                         activePrologRequests.remove(requestId)
@@ -468,6 +496,21 @@ class AssistantRuntimeRegistry(
             },
             executor,
         )
+    }
+
+    private fun fenceUnavailablePrologRlm(requestGeneration: Long) {
+        synchronized(stateLock) {
+            if (
+                closed ||
+                generation != requestGeneration ||
+                selectedId != PROLOG_RLM_RUNTIME_ID
+            ) {
+                return
+            }
+            discovered = discovered.filterNot { it.id == PROLOG_RLM_RUNTIME_ID }
+            selectedId = EMBEDDED_LOCAL_RUNTIME_ID
+            generation += 1L
+        }
     }
 
     fun cancel(requestId: String): CompletableFuture<Unit> {

@@ -41,7 +41,7 @@ def test_surface_wait_dismisses_only_zara_release_notes(monkeypatch, tmp_path: P
         return None
 
     def find_contains(fragment: str):
-        if fragment == "What's new in Zara" and not state["dismissed"]:
+        if fragment == "What's new in Zara " and not state["dismissed"]:
             return release_notes
         return None
 
@@ -64,5 +64,5 @@ def test_surface_wait_dismisses_only_zara_release_notes(monkeypatch, tmp_path: P
     state["dismissed"] = False
     monkeypatch.setattr(device, "find_contains", lambda _fragment: None)
     adb_calls.clear()
-    assert device.dismiss_zara_release_notes() is False
+    assert device.dismiss_release_notes() is False
     assert adb_calls == []
