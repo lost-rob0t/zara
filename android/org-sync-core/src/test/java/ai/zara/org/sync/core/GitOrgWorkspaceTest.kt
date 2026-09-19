@@ -40,6 +40,15 @@ class GitOrgWorkspaceTest {
     }
 
     @Test
+    fun sshRemoteRejectsEmbeddedPassword() {
+        val rejected = runCatching {
+            GitOrgWorkspace.validateRemote("ssh://git:secret@example.invalid/org.git")
+        }.isFailure
+
+        assertTrue(rejected)
+    }
+
+    @Test
     fun sshRemoteMayCarryUsernameButNotSecretInDescriptor() {
         val accepted = runCatching {
             GitOrgWorkspace.validateRemote("ssh://git@example.invalid/org.git")
