@@ -6,6 +6,12 @@ import Qt or any other concrete UI implementation.
 """
 
 from . import bridge, events
+from .package_profiles import (
+    PACKAGE_PROFILE_SCHEMA,
+    AppPackageProfile,
+    PackageProfileError,
+    activate_profile_package,
+)
 from .symbols import (
     ProgrammableSymbolRegistry,
     SymbolDiagnostic,
@@ -16,12 +22,16 @@ from .symbols import (
 )
 
 __all__ = [
+    "PACKAGE_PROFILE_SCHEMA",
+    "AppPackageProfile",
+    "PackageProfileError",
     "ProgrammableSymbolRegistry",
     "SymbolDiagnostic",
     "SymbolLookupError",
     "SymbolRegistration",
     "SymbolRegistrationError",
     "SymbolSpec",
+    "activate_profile_package",
     "bridge",
     "events",
 ]
