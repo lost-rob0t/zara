@@ -67,7 +67,7 @@ fi
 chmod 600 "$interop_fixture"
 export ZARA_STOCK_FIXTURE="$interop_fixture"
 
-if ! gradle --no-daemon   :app:testDebugUnitTest   :shared-ui:testDebugUnitTest   :org-core:testDebugUnitTest   :org-storage:testDebugUnitTest   :org-app:testDebugUnitTest   :org-todo:testDebugUnitTest   :org-notebook:testDebugUnitTest   :org-sync-core:testDebugUnitTest   :wear-app:testDebugUnitTest   :app:assembleDebug   :org-app:assembleDebug   :org-todo:assembleDebug   :org-notebook:assembleDebug   :org-sync:assembleDebug   :wear-app:assembleDebug; then
+if ! gradle --no-daemon   :app:testDebugUnitTest   :shared-ui:testDebugUnitTest   :org-core:testDebugUnitTest   :org-storage:testDebugUnitTest   :org-app:testDebugUnitTest   :org-todo:testDebugUnitTest   :org-sync:testDebugUnitTest   :org-notebook:testDebugUnitTest   :org-sync-core:testDebugUnitTest   :wear-app:testDebugUnitTest   :app:assembleDebug   :org-app:assembleDebug   :org-todo:assembleDebug   :org-notebook:assembleDebug   :org-sync:assembleDebug   :wear-app:assembleDebug; then
   cat "$interop_log" >&2
   echo "stock ZaraServer Android/Wear/Org interop gate failed" >&2
   exit 1
