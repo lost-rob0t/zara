@@ -157,6 +157,19 @@ def test_runtime_settings_only_offer_live_selectable_runtimes(tmp_path, monkeypa
         assert runtime.findData("prolog-rlm") == -1
         assert runtime.currentData() == "zara-python"
         assert runtime.accessibleName() == "Installed assistant runtime"
+
+        statuses = [label.text() for label in window.runtime_status_labels]
+        assert any(
+            "Prolog-RLM · 0.1.0-dev · ready · local_sidecar · not selectable" in text
+            and "Diagnostic: incompatible protocol ZARA-RUNTIME/99; requires ZARA-RUNTIME/1" in text
+            for text in statuses
+        )
+        assert any(
+            "Prolog-RLM · 0.1.0-dev · ready · local_sidecar · not selectable" in text
+            and "Diagnostic: runtime reports unavailable" in text
+            for text in statuses
+        )
+        assert all("Capabilities:" in text and "Profiles:" in text for text in statuses)
     finally:
         dispose(window)
 
