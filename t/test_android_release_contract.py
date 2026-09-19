@@ -87,14 +87,14 @@ def test_code_editor_release_uses_update_compatible_signing_key():
 def test_android_gate_validates_code_editor_apk_structure_and_signature():
     gate = (ROOT / "scripts/test-android.sh").read_text()
 
-    assert 'check-android-apk-installable.sh "$code_apk" "ai.zara.code.editor"' in gate
+    assert 'check-android-apk-installable.sh" "$code_apk" "ai.zara.code.editor"' in gate
 
 
 def test_ci_installs_and_launches_code_editor_on_emulator():
     workflow = (ROOT / ".github/workflows/ci.yml").read_text()
     smoke = (ROOT / "scripts/test-android-emulator-install.sh").read_text()
 
-    assert 'scripts/test-android-emulator-install.sh emulator-5554 "$SOURCE_SHA"' in workflow
+    assert 'bash scripts/test-android-emulator-install.sh "$serial" "$SOURCE_SHA"' in workflow
     assert 'adb -s "$serial" install -r "$code_apk"' in smoke
     assert 'cmd package path ai.zara.code.editor' in smoke
     assert 'am start -W -n ai.zara.code.editor/.MainActivity' in smoke
