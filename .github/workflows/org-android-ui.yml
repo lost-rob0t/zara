@@ -1,0 +1,115 @@
+name: Org Android UI evidence
+
+on:
+  pull_request:
+    paths:
+      - "android/org-app/**"
+      - "android/org-core/**"
+      - "android/org-storage/**"
+      - "android/integration/org_device_acceptance.py"
+      - "android/integration/org_device_acceptance_runner.py"
+      - "scripts/validate-org-ui-evidence.py"
+      - ".github/workflows/org-android-ui.yml"
+      - "version.properties"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: org-android-ui-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  org-android-ui:
+    name: exact-head Org Android screenshot + text evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+
+    steps:
+      - name: Check out exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$SOURCE_SHA" || {
+            echo "checkout/source mismatch: expected=$SOURCE_SHA actual=$actual" >&2
+            exit 1
+          }
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Build and unit-test flagship Org APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix develop ./android -c bash -euo pipefail -c '
+            cd android
+            gradle --no-daemon :org-core:testDebugUnitTest :org-storage:testDebugUnitTest :org-app:testDebugUnitTest :org-app:assembleDebug
+          '
+          test -f android/org-app/build/outputs/apk/debug/org-app-debug.apk
+
+      - name: Prepare exact-head evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="android/org-app/build/reports/device"
+          mkdir -p "$evidence_dir"
+          printf '{"source_sha":"%s","phase":"device-preflight"}\n' "$SOURCE_SHA" > "$evidence_dir/preflight.json"
+
+      - name: Enable KVM access
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: Capture real SAF-backed Org surfaces
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            set -eu
+            # android-emulator-runner executes each script line as a separate POSIX `sh -c` after its own boot-complete wait. Keep every line stateless and avoid nested guest-shell quoting.
+            adb -s emulator-5554 wait-for-device
+            test "$(adb -s emulator-5554 get-state)" = "device"
+            # Do not probe scoped external storage with raw shell writes here. The acceptance harness owns fixture setup and validates the real SAF grant/read/write path.
+            adb -s emulator-5554 install -r android/org-app/build/outputs/apk/debug/org-app-debug.apk
+            python android/integration/org_device_acceptance_runner.py --serial emulator-5554 --source-sha "$SOURCE_SHA" --output android/org-app/build/reports/device
+
+      - name: Validate exact-head Org evidence
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate-org-ui-evidence.py \
+            --source-sha "$SOURCE_SHA" \
+            --manifest android/org-app/build/reports/device/manifest.json
+
+      - name: Upload Org Android UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: org-android-ui-evidence-${{ github.event.pull_request.head.sha }}
+          path: android/org-app/build/reports/device/
+          if-no-files-found: error
