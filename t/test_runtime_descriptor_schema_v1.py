@@ -56,6 +56,7 @@ def _valid_descriptor() -> RuntimeDescriptor:
         ("display_name", " Zara Python"),
         ("display_name", "Zara Python "),
         ("display_name", "Zara\nPython"),
+        ("protocol", "ZARA-RUNTIME/" + "9" * 20),
         ("runtime_version", " 1.0"),
         ("runtime_version", "1.0\t"),
         ("implementation_version", " fixture"),
