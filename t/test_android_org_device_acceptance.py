@@ -30,16 +30,30 @@ def test_org_acceptance_navigates_picker_when_root_selection_is_disabled():
 def test_org_acceptance_matches_documentsui_actions_case_insensitively_without_weakening_app_assertions():
     text = ACCEPTANCE.read_text(encoding="utf-8")
     # AOSP DocumentsUI may expose action labels as USE THIS FOLDER / ALLOW while
-    # other images use title case. Scope normalization to OS-owned picker labels;
+    # other images use title case. Scope normalization to OS-owned picker actions;
     # app-owned Org assertions must keep the shared exact/case-sensitive helper.
-    assert "def _find_picker_contains" in text
-    assert "fragment.casefold()" in text
-    assert '(node.get(attribute) or "").casefold()' in text
-    assert "def _await_picker_contains" in text
-    assert '_await_picker_contains(device, "Use this folder")' in text
-    assert '_tap_contains(device, "Use this folder")' in text
-    assert '_await_picker_contains(device, "Allow")' in text
+    assert "def _find_picker_action" in text
+    assert "action.strip().casefold()" in text
+    assert '(node.get(attribute) or "").strip().casefold() == needle' in text
+    assert "def _await_picker_action" in text
+    assert "def _tap_picker_action" in text
+    assert '_await_picker_action(device, "Use this folder")' in text
+    assert '_tap_picker_action(device, "Use this folder")' in text
+    assert '_await_picker_action(device, "Allow")' in text
+    assert '_tap_picker_action(device, "Allow")' in text
     assert 'device.await_contains("Acceptance task", timeout=20.0)' in text
+
+
+def test_org_acceptance_picker_actions_do_not_match_dialog_titles_by_substring():
+    text = ACCEPTANCE.read_text(encoding="utf-8")
+    # The confirmation title itself begins with "Allow ...". A substring matcher
+    # can tap that title instead of the ALLOW button and leave SAF unconfirmed.
+    assert "def _find_picker_action" in text
+    action_block = text.split("def _find_picker_action", 1)[1].split(
+        "def _await_picker_action", 1
+    )[0]
+    assert ".strip().casefold() == needle" in action_block
+    assert "needle in" not in action_block
 
 
 def test_org_acceptance_bounds_documentsui_null_root_recovery():
