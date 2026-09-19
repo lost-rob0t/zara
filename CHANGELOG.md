@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
+- Android private-workspace experts can now be invoked directly as bounded local slash commands such as `/triage alice`, while `/expert` and `/prolog` remain supported.
 - Optional service plugins can now report a canonical "started but unavailable" state when required configuration or credentials are missing; unavailable plugins expose only a bounded reason code in diagnostics, keep no registered tools or capabilities, and no longer fail startup.
 - Android chat now keeps durable multi-conversation history with New chat, pin/unpin, rename, move-to-project actions, full turn restoration, and per-chat lifecycle status indicators.
 
