@@ -61,6 +61,7 @@ class FakeOpener:
 def test_loopback_endpoint_rejects_remote_and_credentials() -> None:
     for endpoint in (
         "http://192.168.1.3:18765",
+        "http://localhost:18765",
         "https://127.0.0.1:18765",
         "http://user:secret@127.0.0.1:18765",
         "http://127.0.0.1:18765?token=secret",
