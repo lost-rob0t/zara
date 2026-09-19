@@ -430,6 +430,20 @@
                 touch $out
               '';
 
+            emacs = pkgs.runCommand "zara-check-emacs"
+              {
+                nativeBuildInputs = [ pkgs.emacs-nox ];
+                src = ./.;
+              }
+              ''
+                cd $src
+                emacs -Q --batch \
+                  -L emacs \
+                  -l emacs/zara-test.el \
+                  -f ert-run-tests-batch-and-exit
+                touch $out
+              '';
+
             # Ensure main.pl and its module graph load cleanly in SWI-Prolog.
             # An isolated HOME prevents the user's local config from masking
             # load failures (or causing spurious ones) during the check.
@@ -559,6 +573,7 @@
               pkgs.mpv  # Alternative for streaming audio playback
               pkgs.portaudio
               pkgs.swi-prolog
+              pkgs.emacs-nox
               pkgs.pulseaudio
             ];
 
