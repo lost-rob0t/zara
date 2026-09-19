@@ -1,8 +1,8 @@
 """Typed Zara peer-node descriptors bound to authenticated registry identity.
 
-Node documents are discovery/session metadata only.  They never select a
-principal, replace CURVE/ZAP authentication, or widen the capabilities granted
-by the durable security registry.
+Node documents are discovery/session metadata only. They never select a
+principal, replace CURVE/ZAP authentication, or turn device feature
+advertisements into security capabilities.
 """
 
 from __future__ import annotations
@@ -13,12 +13,14 @@ from dataclasses import dataclass
 from typing import Mapping
 from urllib.parse import urlsplit
 
-from zara.security import Capability, EnrolledKey, SecurityRegistry
+from zara.protocol import DEVICE_CAPABILITIES
+from zara.security import EnrolledKey, SecurityRegistry
 
 _MAX_DISPLAY_NAME_BYTES = 256
 _MAX_ENDPOINT_BYTES = 512
 _MAX_ENDPOINTS = 32
 _MAX_PROTOCOL_VERSIONS = 16
+_MAX_COUNTER = (1 << 63) - 1
 _PROTOCOL_VERSION_RE = re.compile(r"ZARA/[1-9][0-9]*\Z")
 _WIRE_FIELDS = frozenset(
     {
@@ -72,9 +74,11 @@ def _endpoint(value: object) -> str:
         port = parsed.port
     except ValueError as error:
         raise ValueError("endpoint is invalid") from error
+    host = parsed.hostname
     if (
         parsed.scheme.lower() != "tcp"
-        or not parsed.hostname
+        or not host
+        or any(character.isspace() or character.iscontrol() for character in host)
         or port is None
         or port not in range(1, 65536)
         or parsed.username is not None
@@ -95,6 +99,20 @@ def _sequence(name: str, value: object, *, limit: int) -> list[object]:
     return list(value)
 
 
+def _capability(value: object) -> str:
+    if not isinstance(value, str) or value not in DEVICE_CAPABILITIES:
+        raise ValueError("capability is not a known device capability")
+    return value
+
+
+def _counter(name: str, value: object, *, allow_zero: bool) -> int:
+    minimum = 0 if allow_zero else 1
+    if type(value) is not int or value < minimum or value > _MAX_COUNTER:
+        qualifier = "non-negative" if allow_zero else "positive"
+        raise ValueError(f"{name} must be a bounded {qualifier} integer")
+    return value
+
+
 @dataclass(frozen=True)
 class ZaraNode:
     """Validated ZARA/1 peer descriptor; authentication remains external."""
@@ -104,7 +122,7 @@ class ZaraNode:
     device_class: DeviceClass
     curve_public_key: str
     endpoints: tuple[str, ...]
-    capabilities: frozenset[Capability]
+    capabilities: frozenset[str]
     protocol_versions: frozenset[str]
     last_seen: int
     enrollment_generation: int
@@ -135,8 +153,8 @@ class ZaraNode:
 
         if not isinstance(self.capabilities, frozenset):
             raise TypeError("capabilities must be a frozenset")
-        if not all(isinstance(value, Capability) for value in self.capabilities):
-            raise TypeError("capabilities must contain Capability values")
+        normalized_capabilities = frozenset(_capability(value) for value in self.capabilities)
+        object.__setattr__(self, "capabilities", normalized_capabilities)
 
         if not isinstance(self.protocol_versions, frozenset) or not self.protocol_versions:
             raise ValueError("protocol_versions must be a non-empty frozenset")
@@ -146,10 +164,20 @@ class ZaraNode:
             if not isinstance(version, str) or _PROTOCOL_VERSION_RE.fullmatch(version) is None:
                 raise ValueError("protocol version is invalid")
 
-        if type(self.last_seen) is not int or self.last_seen < 0:
-            raise ValueError("last_seen must be a non-negative integer")
-        if type(self.enrollment_generation) is not int or self.enrollment_generation <= 0:
-            raise ValueError("enrollment_generation must be a positive integer")
+        object.__setattr__(
+            self,
+            "last_seen",
+            _counter("last_seen", self.last_seen, allow_zero=True),
+        )
+        object.__setattr__(
+            self,
+            "enrollment_generation",
+            _counter(
+                "enrollment_generation",
+                self.enrollment_generation,
+                allow_zero=False,
+            ),
+        )
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, object]) -> "ZaraNode":
@@ -169,22 +197,21 @@ class ZaraNode:
         capability_values = _sequence(
             "capabilities",
             value["capabilities"],
-            limit=len(Capability),
+            limit=len(DEVICE_CAPABILITIES),
         )
+        if any(not isinstance(raw, str) for raw in capability_values):
+            raise TypeError("capabilities must contain strings")
         if len(set(capability_values)) != len(capability_values):
             raise ValueError("capabilities contains a duplicate capability")
-        capabilities: set[Capability] = set()
-        for raw in capability_values:
-            try:
-                capabilities.add(Capability(raw))
-            except (TypeError, ValueError) as error:
-                raise ValueError("capability is invalid") from error
+        capabilities = frozenset(_capability(raw) for raw in capability_values)
 
         protocol_values = _sequence(
             "protocol_versions",
             value["protocol_versions"],
             limit=_MAX_PROTOCOL_VERSIONS,
         )
+        if any(not isinstance(raw, str) for raw in protocol_values):
+            raise TypeError("protocol_versions must contain strings")
         if not protocol_values:
             raise ValueError("protocol_versions must not be empty")
         if len(set(protocol_values)) != len(protocol_values):
@@ -196,7 +223,7 @@ class ZaraNode:
             device_class=device_class,
             curve_public_key=value["curve_public_key"],
             endpoints=endpoints,
-            capabilities=frozenset(capabilities),
+            capabilities=capabilities,
             protocol_versions=frozenset(protocol_values),
             last_seen=value["last_seen"],
             enrollment_generation=value["enrollment_generation"],
@@ -209,7 +236,7 @@ class ZaraNode:
             "device_class": self.device_class.value,
             "curve_public_key": self.curve_public_key,
             "endpoints": list(self.endpoints),
-            "capabilities": sorted(capability.value for capability in self.capabilities),
+            "capabilities": sorted(self.capabilities),
             "protocol_versions": sorted(self.protocol_versions),
             "last_seen": self.last_seen,
             "enrollment_generation": self.enrollment_generation,
@@ -231,8 +258,6 @@ def verify_authenticated_node(node: ZaraNode, enrolled: EnrolledKey) -> ZaraNode
         raise NodeAuthorityError("node_id does not match authenticated identity")
     if node.enrollment_generation != enrolled.generation:
         raise NodeAuthorityError("node enrollment generation is stale or untrusted")
-    if not node.capabilities.issubset(enrolled.capabilities):
-        raise NodeAuthorityError("node document cannot widen authenticated capabilities")
     return node
 
 
