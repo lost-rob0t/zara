@@ -96,33 +96,23 @@ object ZaraCatalogOverlay {
     }
 }
 
-data class PluginRuntimeState(
-    val enabled: Boolean = false,
-    val trusted: Boolean = false,
-    val permissionReady: Boolean = false,
-    val runtimeReady: Boolean = false,
-) {
-    init {
-        if (runtimeReady) {
-            require(enabled && trusted && permissionReady) {
-                "A runtime-ready plugin must be enabled, trusted, and permission-ready"
-            }
-        }
-    }
-}
-
+/**
+ * Store-owned artifact lifecycle only.
+ *
+ * Plugin enabled/trusted/permission/runtime readiness is canonical host state and
+ * must be projected from that authority when rendered; Zara Store must not keep
+ * or mutate a parallel plugin registry.
+ */
 data class StorePackageState(
     val discovered: Boolean = true,
     val downloaded: Boolean = false,
     val verified: Boolean = false,
     val installed: Boolean = false,
-    val plugin: PluginRuntimeState? = null,
 ) {
     init {
         if (downloaded) require(discovered) { "Downloaded package must be discovered" }
         if (verified) require(downloaded) { "Verified package must be downloaded" }
         if (installed) require(verified) { "Installed package must come from a verified artifact" }
-        if (plugin != null) require(installed) { "Plugin runtime state requires an observed installation" }
     }
 
     fun markDownloaded(): StorePackageState = copy(downloaded = true)
@@ -130,11 +120,6 @@ data class StorePackageState(
     fun markVerified(): StorePackageState {
         require(downloaded) { "Package must be downloaded before verification" }
         return copy(verified = true)
-    }
-
-    fun updatePlugin(state: PluginRuntimeState): StorePackageState {
-        require(installed) { "Package must be installed before plugin state is projected" }
-        return copy(plugin = state)
     }
 }
 
@@ -170,12 +155,9 @@ object StoreInstallVerifier {
         if (expected.signerSha256 != observed.signerSha256) {
             return InstallObservationResult.Rejected("installed_signer_mismatch")
         }
-        val plugin = if (kind == ZaraPackageKind.ANDROID_PLUGIN) PluginRuntimeState() else null
-        return InstallObservationResult.Accepted(
-            current.copy(
-                installed = true,
-                plugin = plugin,
-            ),
-        )
+
+        // Package kind affects catalog semantics, never Store-owned runtime authority.
+        kind.name
+        return InstallObservationResult.Accepted(current.copy(installed = true))
     }
 }
