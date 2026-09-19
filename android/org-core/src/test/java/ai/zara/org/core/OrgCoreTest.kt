@@ -35,6 +35,28 @@ class OrgCoreTest {
     }
 
     @Test
+    fun todoMutationPreservesCrLfAndTerminalNewline() {
+        val source = "#+TODO: TODO | DONE\r\n* TODO Keep formatting\r\nBody\r\n"
+        val task = OrgParser.parse(source, "nested/work.org").tasks.single()
+
+        val mutation = OrgParser.cycleTodoState(source, task)
+
+        assertEquals("DONE", mutation.state)
+        assertEquals("#+TODO: TODO | DONE\r\n* DONE Keep formatting\r\nBody\r\n", mutation.source)
+    }
+
+    @Test
+    fun todoMutationPreservesMissingTerminalNewline() {
+        val source = "* TODO Keep eof\nBody without newline"
+        val task = OrgParser.parse(source, "work.org").tasks.single()
+
+        val mutation = OrgParser.cycleTodoState(source, task)
+
+        assertEquals("DONE", mutation.state)
+        assertEquals("* DONE Keep eof\nBody without newline", mutation.source)
+    }
+
+    @Test
     fun parsesDoomTodoMetadataAndAgendaGroup() {
         val source = """
             * TODO [#A] Ship parser :StarIntel:org_parser:
