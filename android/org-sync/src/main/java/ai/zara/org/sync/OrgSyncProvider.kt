@@ -1,6 +1,9 @@
 package ai.zara.org.sync
 
 import ai.zara.org.storage.SharedOrgHomeContract
+import ai.zara.org.sync.core.OrgWorkspaceDescriptor
+import ai.zara.org.sync.core.OrgWorkspaceMapper
+import ai.zara.org.sync.core.WorkspaceId
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.database.Cursor
@@ -13,7 +16,25 @@ import java.io.FileNotFoundException
 
 class OrgSyncProvider : ContentProvider() {
     private val root: File
-        get() = requireNotNull(context).filesDir.resolve("org-workspaces/main").also { it.mkdirs() }
+        get() {
+            val appContext = requireNotNull(context)
+            val prefs = appContext.getSharedPreferences("org-sync", android.content.Context.MODE_PRIVATE)
+            val configuredRoot = prefs.getString("workspace-root-id", "main") ?: "main"
+            val descriptor = runCatching {
+                OrgWorkspaceDescriptor.AppPrivate(
+                    id = WorkspaceId("shared"),
+                    displayName = "Shared Org",
+                    rootId = configuredRoot,
+                )
+            }.getOrElse {
+                OrgWorkspaceDescriptor.AppPrivate(
+                    id = WorkspaceId("shared"),
+                    displayName = "Shared Org",
+                    rootId = "main",
+                )
+            }
+            return OrgWorkspaceMapper.appPrivateRoot(appContext.filesDir, descriptor).also { it.mkdirs() }
+        }
 
     override fun onCreate(): Boolean {
         root.mkdirs()
