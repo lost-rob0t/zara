@@ -61,6 +61,62 @@ class AppPackageProfile:
     pins: tuple[tuple[str, str], ...] = ()
     schema: int = PACKAGE_PROFILE_SCHEMA
 
+    def __post_init__(self) -> None:
+        """Enforce the profile ABI even for direct Python construction.
+
+        ``from_mapping`` is the normal wire/config entry point, but callers may
+        instantiate the dataclass directly. Keeping validation here prevents a
+        direct constructor from bypassing app/package namespace or pin rules.
+        """
+
+        if type(self.schema) is not int or self.schema != PACKAGE_PROFILE_SCHEMA:
+            raise PackageProfileError(
+                f"unsupported package profile schema: {self.schema!r}"
+            )
+
+        app_id = _bounded_id(self.app_id, label="app_id")
+
+        if not isinstance(self.enabled_packages, (list, tuple)):
+            raise PackageProfileError("enabled_packages must be a list")
+        if len(self.enabled_packages) > _MAX_PACKAGES:
+            raise PackageProfileError("too many enabled packages")
+
+        enabled: list[str] = []
+        seen: set[str] = set()
+        for raw_package_id in self.enabled_packages:
+            package_id = _bounded_id(raw_package_id, label="package_id")
+            if package_id in seen:
+                raise PackageProfileError(
+                    f"duplicate enabled package: {package_id}"
+                )
+            seen.add(package_id)
+            enabled.append(package_id)
+
+        if not isinstance(self.pins, (list, tuple)):
+            raise PackageProfileError("pins must contain package/version pairs")
+        if len(self.pins) > _MAX_PACKAGES:
+            raise PackageProfileError("too many package pins")
+
+        pins: list[tuple[str, str]] = []
+        pinned: set[str] = set()
+        for raw_pin in self.pins:
+            if not isinstance(raw_pin, (list, tuple)) or len(raw_pin) != 2:
+                raise PackageProfileError("pins must contain package/version pairs")
+            raw_package_id, raw_version = raw_pin
+            package_id = _bounded_id(raw_package_id, label="package_id")
+            if package_id in pinned:
+                raise PackageProfileError(f"duplicate package pin: {package_id}")
+            if package_id not in seen:
+                raise PackageProfileError(
+                    f"pin requires package to be enabled: {package_id}"
+                )
+            pinned.add(package_id)
+            pins.append((package_id, _bounded_version(raw_version)))
+
+        object.__setattr__(self, "app_id", app_id)
+        object.__setattr__(self, "enabled_packages", tuple(sorted(enabled)))
+        object.__setattr__(self, "pins", tuple(sorted(pins)))
+
     @classmethod
     def from_mapping(cls, raw: Mapping[str, object]) -> "AppPackageProfile":
         if not isinstance(raw, Mapping):
