@@ -14,6 +14,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Wear Voice now uses Zara's canonical version name and Android versionCode instead of shipping stale module-local package metadata.
 - Plugin capability compositions now re-check a tool's live approval policy immediately before invocation, preventing approval-policy changes after registration from bypassing approval.
 - Android Prolog-RLM turns keep cancellation responsive while generation is running, discard stale replies after runtime switches, and fall back to the embedded runtime after rediscovery detects a dead sidecar.
+- Desktop Runtime settings now render discovery-driven health, locality, capabilities, profiles, selection state, and a bounded diagnostic reason for installed-but-unselectable runtimes without adding them to the selectable runtime list.
 - Desktop Prolog-RLM turns now preserve a runtime-returned cancellation as a typed cancelled result and discard late completions after local cancellation as well as replies from an older runtime generation after the runtime is stopped or restarted, preventing stale output from publishing into the active turn.
 - Prolog-RLM runtime transport failures now surface as bounded typed Zara runtime errors without exposing raw sidecar or provider error details.
 - Desktop Prolog-RLM startup now reports an incompatible discovered `ZARA-RUNTIME` protocol as a typed protocol error instead of collapsing it into a generic unavailable-runtime failure.
