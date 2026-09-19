@@ -91,6 +91,39 @@ test -f "$notebook_apk"
 test -f "$org_sync_apk"
 test -f "$wear_apk"
 
+apksigner_bin="$(command -v apksigner || true)"
+if [[ -z "$apksigner_bin" ]]; then
+  apksigner_bin="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -perm -u+x -print 2>/dev/null | sort -V | tail -n 1)"
+fi
+if [[ -z "$apksigner_bin" || ! -x "$apksigner_bin" ]]; then
+  echo "Android package signer verifier is unavailable" >&2
+  exit 1
+fi
+
+org_signing_fingerprint() {
+  local apk="$1"
+  local fingerprint
+  fingerprint="$(
+    "$apksigner_bin" verify --print-certs "$apk" \
+      | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ { print $2; exit }' \
+      | tr '[:upper:]' '[:lower:]'
+  )"
+  if [[ -z "$fingerprint" ]]; then
+    echo "Unable to read APK signing certificate: $apk" >&2
+    return 1
+  fi
+  printf '%s' "$fingerprint"
+}
+
+host_signer="$(org_signing_fingerprint "$phone_apk")"
+for apk in "$org_apk" "$org_todo_apk" "$notebook_apk" "$org_sync_apk"; do
+  apk_signer="$(org_signing_fingerprint "$apk")"
+  if [[ "$apk_signer" != "$host_signer" ]]; then
+    echo "Org APK signer mismatch: $apk is not signed by the Zara host signer" >&2
+    exit 1
+  fi
+done
+
 for apk in "$phone_apk" "$org_apk" "$org_todo_apk" "$notebook_apk" "$org_sync_apk" "$wear_apk"; do
   if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET"; then
     echo "APK secret-marker inspection FAILED: private/secret material found in $apk" >&2
