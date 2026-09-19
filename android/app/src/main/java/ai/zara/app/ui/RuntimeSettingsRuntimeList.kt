@@ -1,6 +1,7 @@
 package ai.zara.app.ui
 
 import ai.zara.app.runtime.RuntimeHealth
+import ai.zara.app.runtime.RuntimeRegistrySnapshot
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,6 +40,17 @@ internal fun runtimeSettingsEvidenceText(row: RuntimeSettingsRuntimeRow): String
     append(" · selected ")
     append(row.selected)
 }
+
+@Composable
+internal fun RuntimeSettingsRuntimeList(
+    snapshot: RuntimeRegistrySnapshot,
+    onSelectRuntime: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) = RuntimeSettingsRuntimeList(
+    rows = snapshot.runtimeSettingsRows(),
+    onSelectRuntime = onSelectRuntime,
+    modifier = modifier,
+)
 
 @Composable
 internal fun RuntimeSettingsRuntimeList(
