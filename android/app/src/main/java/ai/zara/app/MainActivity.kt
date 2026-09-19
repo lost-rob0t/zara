@@ -2,6 +2,7 @@ package ai.zara.app
 
 import ai.zara.app.conversations.ConversationStore
 import ai.zara.app.projects.ProjectContextStore
+import ai.zara.app.runtime.AndroidRuntimeRegistryOwner
 import ai.zara.app.ui.LocalEmbeddingPreferenceStore
 import ai.zara.app.ui.RuntimeModePreferenceStore
 import ai.zara.app.ui.ThemePreferenceStore
@@ -80,6 +81,25 @@ class MainActivity : ComponentActivity() {
         }
         appSession.setRuntimeMode(runtimeMode)
 
+        val runtimeRegistryOwner = AndroidRuntimeRegistryOwner(
+            runtimeVersion = BuildConfig.VERSION_NAME,
+            implementationVersion = BuildConfig.SOURCE_SHA,
+        )
+        var runtimeSnapshot by mutableStateOf(runtimeRegistryOwner.snapshot())
+        var runtimeRefreshSequence = 0L
+        fun refreshRuntimeSnapshot() {
+            val sequence = ++runtimeRefreshSequence
+            appSession.localAiState().whenComplete { localAiState, _ ->
+                if (localAiState == null) return@whenComplete
+                runOnUiThread {
+                    if (sequence == runtimeRefreshSequence) {
+                        runtimeSnapshot = runtimeRegistryOwner.refresh(localAiState)
+                    }
+                }
+            }
+        }
+        refreshRuntimeSnapshot()
+
         val microphonePermission = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { granted ->
@@ -99,6 +119,7 @@ class MainActivity : ComponentActivity() {
 
         appSession.setStateObserver { state ->
             runOnUiThread { runtimeState = state }
+            refreshRuntimeSnapshot()
         }
         appSession.setVoiceStreamObserver { streamState, failure ->
             runOnUiThread {
@@ -131,6 +152,7 @@ class MainActivity : ComponentActivity() {
             }
             ZaraApp(
                 runtimeState = runtimeState,
+                runtimeSnapshot = runtimeSnapshot,
                 sourceSha = BuildConfig.SOURCE_SHA,
                 enrollmentPublicKey = enrollmentPublicKey,
                 pinnedServerPublicKey = pinnedServerPublicKey,
@@ -155,6 +177,15 @@ class MainActivity : ComponentActivity() {
                 onSelectTheme = { theme ->
                     selectedTheme = theme
                     themePreferenceStore.save(theme)
+                },
+                onSelectRuntime = { runtimeId ->
+                    operationError = null
+                    try {
+                        runtimeRegistryOwner.select(runtimeId)
+                        runtimeSnapshot = runtimeRegistryOwner.snapshot()
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
                 },
                 onSelectRuntimeMode = { mode ->
                     runtimeMode = mode
@@ -284,7 +315,9 @@ class MainActivity : ComponentActivity() {
                                 localConversationId = conversation.localConversationId,
                             )
                         }
+                        refreshRuntimeSnapshot()
                         future.whenComplete { result, error ->
+                            refreshRuntimeSnapshot()
                             runOnUiThread {
                                 operationBusy = false
                                 if (error != null) {
@@ -320,6 +353,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     } catch (error: Exception) {
+                        refreshRuntimeSnapshot()
                         operationBusy = false
                         val failure = UiOperationFailure.summarize(error)
                         operationError = failure
