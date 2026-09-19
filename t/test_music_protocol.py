@@ -219,6 +219,26 @@ def test_job_progress_is_an_event_with_sequence_not_a_reply():
         )
 
 
+def test_job_progress_and_completion_reject_split_resume_watermarks():
+    body = {
+        "job_id": "job-1",
+        "operation": "fingerprint",
+        "state": "running",
+        "processed": 300,
+        "total": 1000,
+        "errors": 0,
+        "generation": 9,
+        "last_seq": 3,
+    }
+
+    with pytest.raises(ProtocolValidationError, match="last_seq"):
+        encode_message(message("music.job.progress", seq=4, body=body))
+
+    completed = dict(body, state="completed", processed=1000, last_seq=5)
+    with pytest.raises(ProtocolValidationError, match="last_seq"):
+        encode_message(message("music.job.completed", seq=6, body=completed))
+
+
 def test_music_control_messages_never_carry_audio_or_binary_payloads():
     with pytest.raises(ProtocolValidationError, match="payload"):
         encode_message(
