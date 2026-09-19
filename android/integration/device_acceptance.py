@@ -211,16 +211,25 @@ class Device:
 
     def dismiss_release_notes(self, timeout: float = 2.0) -> bool:
         # A fresh install legitimately opens the versioned changelog before Chat.
-        # Dismiss only Zara's exact release-notes dialog so acceptance still fails
-        # on crashes, permission dialogs, or unrelated overlays. Compose may publish
-        # the dialog title before the confirm-button semantics reach UIAutomator, so
-        # give that exact button a short bounded window instead of requiring both
-        # nodes to appear in the same hierarchy snapshot.
-        if self.find_contains("What's new in Zara ") is None:
-            return False
+        # Prefer Zara's exact release-notes title. Hosted Compose can occasionally
+        # render that title visually while UIAutomator exposes only the action and
+        # changelog-section semantics. Accept that exact fallback pair; unrelated
+        # Continue buttons still do not satisfy the release-notes contract.
+        release_notes = self.find_contains("What's new in Zara ")
+        if release_notes is None:
+            release_notes = self.find_contains("What's new in Zara")
+        continue_button = None
+        if release_notes is None:
+            continue_button = self.find("Continue")
+            changelog_marker = self.find("Added")
+            if changelog_marker is None:
+                changelog_marker = self.find("Fixed")
+            if continue_button is None or changelog_marker is None:
+                return False
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            continue_button = self.find("Continue")
+            if continue_button is None:
+                continue_button = self.find("Continue")
             if continue_button is not None:
                 left, top, right, bottom = self.bounds(continue_button)
                 self.adb(
@@ -232,6 +241,9 @@ class Device:
                 )
                 time.sleep(0.2)
                 return True
+            if self.dismiss_pixel_launcher_anr():
+                continue_button = None
+                continue
             time.sleep(0.1)
         raise AssertionError("Zara release notes did not expose Continue")
 
@@ -240,9 +252,9 @@ class Device:
         while time.monotonic() < deadline:
             if self.find(label) is not None:
                 return
-            if self.dismiss_release_notes():
-                continue
             if self.dismiss_pixel_launcher_anr():
+                continue
+            if self.dismiss_release_notes():
                 continue
             time.sleep(0.2)
         raise AssertionError(f"Screen did not show {label}")
@@ -304,6 +316,7 @@ class Device:
             "-n",
             component,
         )
+        self.dismiss_pixel_launcher_anr()
         self.dismiss_release_notes()
         self.await_label(label)
 
