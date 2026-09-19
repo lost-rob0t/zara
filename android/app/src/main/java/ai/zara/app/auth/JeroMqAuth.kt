@@ -57,7 +57,11 @@ class JeroMqCurveDealerFactory(
         val socket = context.createSocket(SocketType.DEALER)
         try {
             socket.setLinger(0)
-            socket.setHandshakeIvl(5_000)
+            check(socket.setImmediate(true)) { "failed to require a live Zara route" }
+            check(socket.setHandshakeIvl(5_000)) { "failed to bound the CURVE handshake" }
+            check(socket.setHeartbeatIvl(1_000)) { "failed to configure Zara heartbeat interval" }
+            check(socket.setHeartbeatTimeout(5_000)) { "failed to configure Zara heartbeat timeout" }
+            check(socket.setSendTimeOut(5_000)) { "failed to bound Zara sends" }
             enrollment.configure(JeroMqCurveSocket(socket))
             return socket
         } catch (error: Exception) {

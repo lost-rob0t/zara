@@ -2,6 +2,8 @@ from pathlib import Path
 
 
 ACCEPTANCE = Path("android/integration/device_acceptance.py")
+REMOTE_ACCEPTANCE = Path("android/integration/device_remote_acceptance.py")
+EMULATOR_GATE = Path("scripts/test-android-emulator-install.sh")
 
 
 def source() -> str:
@@ -55,10 +57,26 @@ def test_acceptance_checks_accessibility_semantics_without_claiming_talkback():
     assert '"talkback_spoken_traversal": False' in text
 
 
-def test_acceptance_manifest_records_profiles_and_never_calls_runtime_actions():
+def test_visual_acceptance_stays_non_mutating_but_dedicated_remote_gate_connects():
     text = source()
     assert '"profiles": device.profiles' in text
     assert '"settings", "put", "system", "font_scale"' in text
     assert '"wm", "size", "reset"' in text
     assert '"keyevent", "4"' in text
     assert 'Connect"' not in text.split("def exercise_three_menu_ui", 1)[-1]
+
+    remote = REMOTE_ACCEPTANCE.read_text(encoding="utf-8")
+    gate = EMULATOR_GATE.read_text(encoding="utf-8")
+    assert 'type_printable_ascii(device, "?- Result = zara_ready.")' in remote
+    assert '"local_turn_completed": True' in remote
+    assert 'device.tap("Create client identity")' in remote
+    assert 'SecurityAdminClient' in remote
+    assert 'device.tap("Pin server key")' in remote
+    assert 'device.tap("Connect")' in remote
+    assert 'device.await_label("connected"' in remote
+    assert 'device.tap("Remote")' in remote
+    assert 'signal_turn_acceptance(fixture)' in remote
+    assert 'device.await_contains("stock server response"' in remote
+    assert '"remote_turn_completed": True' in remote
+    assert 'adb -s "$serial" reverse "tcp:$reverse_port" "tcp:$reverse_port"' in gate
+    assert 'device_remote_acceptance.py' in gate
