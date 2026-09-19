@@ -80,7 +80,7 @@ private fun OrgWorkspace() {
         runCatching {
             val files = repo.listOrgFiles()
             val documents = files.associate { it.relativePath to repo.read(it) }
-            projection = OrgWorkspaceProjector.project(documents)
+            projection = OrgWorkspaceProjector.project(documents, OrgHome.dailySpec(context))
             status = "${files.size} files · ${projection.tasks.size} tasks · ${projection.roam.nodes.size} nodes"
         }.onFailure { status = it.message ?: "Unable to project Org workspace" }
     }
@@ -93,7 +93,7 @@ private fun OrgWorkspace() {
     }
 
     LaunchedEffect(repository) {
-        projection = OrgWorkspaceProjector.project(emptyMap())
+        projection = OrgWorkspaceProjector.project(emptyMap(), OrgHome.dailySpec(context))
         if (repository != null) refresh()
     }
 
