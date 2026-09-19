@@ -2,6 +2,7 @@ from pathlib import Path
 
 
 ACCEPTANCE = Path("android/integration/org_device_acceptance.py")
+RUNNER = Path("android/integration/org_device_acceptance_runner.py")
 VALIDATOR = Path("scripts/validate-org-ui-evidence.py")
 WORKFLOW = Path(".github/workflows/org-android-ui.yml")
 
@@ -69,6 +70,20 @@ def test_org_acceptance_bounds_documentsui_null_root_recovery():
     assert "time.sleep(0.2)" in text
 
 
+def test_org_acceptance_runner_has_one_fail_closed_direct_stream_fallback():
+    text = RUNNER.read_text(encoding="utf-8")
+    # Hosted API-35 can report a successful file-backed UIAutomator dump without
+    # materializing the file. The Org evidence runner gets one direct /dev/tty
+    # stream fallback, and only for that exact failure mode.
+    assert "class OrgEvidenceDevice(Device)" in text
+    assert '"UIAutomator did not create" not in str(error)' in text
+    assert 'self.adb("exec-out", "uiautomator", "dump", "/dev/tty")' in text
+    assert 'hierarchy.find("<?xml")' in text
+    assert 'hierarchy.rfind("</hierarchy>")' in text
+    assert "ET.fromstring" in text
+    assert "org_acceptance.Device = OrgEvidenceDevice" in text
+
+
 def test_org_acceptance_captures_todo_roam_and_scrolled_separate_dailies_with_text_twins():
     text = ACCEPTANCE.read_text(encoding="utf-8")
     for state in (
@@ -132,7 +147,7 @@ def test_org_evidence_workflow_checks_out_and_names_artifact_by_exact_pr_head():
     assert "ref: ${{ github.event.pull_request.head.sha }}" in text
     assert 'test "$actual" = "$SOURCE_SHA"' in text
     assert ":org-app:testDebugUnitTest :org-app:assembleDebug" in text
-    assert "org_device_acceptance.py" in text
+    assert "org_device_acceptance_runner.py" in text
     assert "validate-org-ui-evidence.py" in text
     assert "org-android-ui-evidence-${{ github.event.pull_request.head.sha }}" in text
 
@@ -164,7 +179,7 @@ def test_org_emulator_runner_does_not_probe_scoped_storage_with_raw_shell_writes
     assert "adb -s emulator-5554 shell touch /sdcard/Documents/.zara-org-storage-ready" not in emulator_block
     assert "adb -s emulator-5554 shell rm -f /sdcard/Documents/.zara-org-storage-ready" not in emulator_block
     assert "adb -s emulator-5554 shell sh -c" not in emulator_block
-    assert "python android/integration/org_device_acceptance.py" in emulator_block
+    assert "python android/integration/org_device_acceptance_runner.py" in emulator_block
 
 
 def test_org_evidence_upload_retains_preflight_diagnostics_even_if_device_capture_fails():
