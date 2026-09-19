@@ -140,14 +140,17 @@ def _start_peer(
         ),
     )
     dealer.connect(endpoint)
-    return gateway, dealer, principal, enrolled
+    return gateway, dealer, principal, enrolled, registry
 
 
 def test_secure_hello_binds_node_to_authenticated_principal_and_session(
     zmq_context,
     transport_config,
 ):
-    gateway, dealer, principal, enrolled = _start_peer(zmq_context, transport_config)
+    gateway, dealer, principal, enrolled, _registry = _start_peer(
+        zmq_context,
+        transport_config,
+    )
     node_mapping = _node_mapping(enrolled)
     try:
         hello = _send_hello(
@@ -156,9 +159,10 @@ def test_secure_hello_binds_node_to_authenticated_principal_and_session(
             "peer-hello",
         )
         assert hello.type == "hello.ok"
-        assert gateway.node_for_session(principal.principal_id, hello.session_id) == ZaraNode.from_mapping(
-            node_mapping
-        )
+        assert gateway.node_for_session(
+            principal.principal_id,
+            hello.session_id,
+        ) == ZaraNode.from_mapping(node_mapping)
 
         legacy = _send_hello(dealer, {"versions": [1]}, "legacy-reset")
         assert legacy.type == "hello.ok"
@@ -173,7 +177,10 @@ def test_secure_hello_rejects_node_identity_or_generation_mismatch(
     zmq_context,
     transport_config,
 ):
-    gateway, dealer, _principal, enrolled = _start_peer(zmq_context, transport_config)
+    gateway, dealer, _principal, enrolled, _registry = _start_peer(
+        zmq_context,
+        transport_config,
+    )
     try:
         wrong_node = _node_mapping(enrolled)
         wrong_node["node_id"] = "different-device"
@@ -214,7 +221,10 @@ def test_secure_hello_rejects_authorization_capability_in_node_document(
     zmq_context,
     transport_config,
 ):
-    gateway, dealer, _principal, enrolled = _start_peer(zmq_context, transport_config)
+    gateway, dealer, _principal, enrolled, _registry = _start_peer(
+        zmq_context,
+        transport_config,
+    )
     try:
         denied = _send_hello(
             dealer,
@@ -230,6 +240,30 @@ def test_secure_hello_rejects_authorization_capability_in_node_document(
             "message": "peer node descriptor is invalid",
             "retryable": False,
         }
+    finally:
+        dealer.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_node_lookup_fails_closed_after_registry_revocation(
+    zmq_context,
+    transport_config,
+):
+    gateway, dealer, principal, enrolled, registry = _start_peer(
+        zmq_context,
+        transport_config,
+    )
+    try:
+        hello = _send_hello(
+            dealer,
+            {"versions": [1], "node": _node_mapping(enrolled)},
+            "revocable-node",
+        )
+        assert hello.type == "hello.ok"
+        assert gateway.node_for_session(principal.principal_id, hello.session_id) is not None
+
+        registry.revoke(enrolled.device_id)
+        assert gateway.node_for_session(principal.principal_id, hello.session_id) is None
     finally:
         dealer.close(0)
         gateway.close(timeout=1.0)
