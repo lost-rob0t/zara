@@ -197,6 +197,8 @@ class ObjectRevision:
             return
         if not isinstance(self.content_sha256, str) or _SHA256_RE.fullmatch(self.content_sha256) is None:
             raise SyncProtocolError("content sha256 must be canonical lowercase hex")
+        if content_size > 0 and not self.blocks:
+            raise SyncProtocolError("non-empty content requires blocks")
         expected_offset = 0
         for block in self.blocks:
             if not isinstance(block, BlockRef):
@@ -206,8 +208,6 @@ class ObjectRevision:
             expected_offset += block.size
         if expected_offset != content_size:
             raise SyncProtocolError("block manifest does not cover content size")
-        if content_size > 0 and not self.blocks:
-            raise SyncProtocolError("non-empty content requires blocks")
 
 
 __all__ = [
