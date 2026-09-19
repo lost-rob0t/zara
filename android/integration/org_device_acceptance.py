@@ -155,8 +155,36 @@ def seed_picker_and_daily_configuration(device: Device) -> None:
         device.adb("shell", "rm", "-f", remote_stage)
 
 
+def _find_picker_contains(device: Device, fragment: str):
+    """Find OS-owned DocumentsUI text without assuming presentation casing."""
+
+    needle = fragment.casefold()
+    return next(
+        (
+            node
+            for node in device.nodes()
+            if any(
+                needle in (node.get(attribute) or "").casefold()
+                for attribute in ("text", "content-desc")
+            )
+        ),
+        None,
+    )
+
+
+def _await_picker_contains(
+    device: Device, fragment: str, timeout: float = 20.0
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _find_picker_contains(device, fragment) is not None:
+            return
+        time.sleep(0.2)
+    raise AssertionError(f"System picker did not retain text containing {fragment}")
+
+
 def _tap_contains(device: Device, fragment: str) -> None:
-    node = device.find_contains(fragment)
+    node = _find_picker_contains(device, fragment)
     if node is None:
         raise AssertionError(f"Control is not reachable: {fragment}")
     left, top, right, bottom = device.bounds(node)
@@ -181,7 +209,7 @@ def _navigate_picker_to_fixture_if_needed(device: Device) -> None:
     _tap_contains(device, "Documents")
     device.await_contains("ZaraOrgAcceptance")
     _tap_contains(device, "ZaraOrgAcceptance")
-    device.await_contains("Use this folder")
+    _await_picker_contains(device, "Use this folder")
     if device.find_contains("Can’t use this folder") is not None:
         raise AssertionError("SAF picker did not enter the acceptance fixture directory")
 
@@ -217,10 +245,10 @@ def connect_fixture_through_saf(device: Device) -> None:
     device.launch_surface(COMPONENT, "Org")
     device.await_contains("Shared Org workspace is unavailable")
     device.tap("Choose Org directory")
-    device.await_contains("Use this folder")
+    _await_picker_contains(device, "Use this folder")
     _navigate_picker_to_fixture_if_needed(device)
     _tap_contains(device, "Use this folder")
-    device.await_contains("Allow")
+    _await_picker_contains(device, "Allow")
     _tap_contains(device, "Allow")
     device.await_contains("Acceptance task", timeout=20.0)
 
