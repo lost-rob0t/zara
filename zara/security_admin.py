@@ -196,9 +196,7 @@ class SecurityAdminServer:
         if control_socket_path is None:
             normalized_control_path = None
         else:
-            normalized_control_path = Path(control_socket_path).expanduser()
-            if not normalized_control_path.is_absolute():
-                raise ValueError("security admin control socket path must be absolute")
+            normalized_control_path = Path(control_socket_path).expanduser().absolute()
         self._state = state
         self._control_socket_path = normalized_control_path
         self._capabilities = frozenset(normalized)
@@ -395,7 +393,7 @@ class SecurityAdminClient:
     """Owner-side client for the running daemon's live security authority."""
 
     def __init__(self, path: Path | str) -> None:
-        self._path = Path(path)
+        self._path = Path(path).expanduser().absolute()
 
     def request(self, action: str, **fields: object) -> object:
         info = _socket_info(self._path)
