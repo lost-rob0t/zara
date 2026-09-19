@@ -35,8 +35,7 @@ class OrgSyncProvider : ContentProvider() {
         )
         when (val workspace = SharedWorkspaceStore.load(requireNotNull(context))) {
             is SharedWorkspaceSelection.AppPrivate,
-            is SharedWorkspaceSelection.Git,
-            -> {
+            is SharedWorkspaceSelection.Git -> {
                 val root = localRoot(workspace)
                 root.walkTopDown()
                     .filter { it.isFile && it.extension.equals("org", ignoreCase = true) }
@@ -59,8 +58,7 @@ class OrgSyncProvider : ContentProvider() {
         val relativePath = SharedOrgHomeContract.decodeFileUri(uri)
         return when (val workspace = SharedWorkspaceStore.load(requireNotNull(context))) {
             is SharedWorkspaceSelection.AppPrivate,
-            is SharedWorkspaceSelection.Git,
-            -> openLocalFile(workspace, relativePath, mode)
+            is SharedWorkspaceSelection.Git -> openLocalFile(workspace, relativePath, mode)
 
             is SharedWorkspaceSelection.Saf -> {
                 val file = safRepository(workspace).listOrgFiles()
@@ -80,8 +78,7 @@ class OrgSyncProvider : ContentProvider() {
         }
         when (val workspace = SharedWorkspaceStore.load(requireNotNull(context))) {
             is SharedWorkspaceSelection.AppPrivate,
-            is SharedWorkspaceSelection.Git,
-            -> when (method) {
+            is SharedWorkspaceSelection.Git -> when (method) {
                 SharedOrgHomeContract.METHOD_APPEND_ORG -> {
                     val file = safeLocalFile(workspace, relativePath)
                     file.parentFile?.mkdirs()
