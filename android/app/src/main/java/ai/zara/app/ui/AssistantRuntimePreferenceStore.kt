@@ -1,17 +1,15 @@
 package ai.zara.app.ui
 
-import ai.zara.app.runtime.EMBEDDED_LOCAL_RUNTIME_ID
 import java.io.File
 
 class AssistantRuntimePreferenceStore(private val file: File) {
-    fun load(): String = runCatching {
+    fun load(): String? = runCatching {
         val raw = file.readText().trim()
-        if (raw.startsWith(FORMAT_PREFIX)) {
-            normalize(raw.removePrefix(FORMAT_PREFIX))
-        } else {
-            EMBEDDED_LOCAL_RUNTIME_ID
+        if (!raw.startsWith(FORMAT_PREFIX)) {
+            return@runCatching null
         }
-    }.getOrDefault(EMBEDDED_LOCAL_RUNTIME_ID)
+        normalize(raw.removePrefix(FORMAT_PREFIX))
+    }.getOrNull()
 
     fun save(runtimeId: String) {
         val normalized = normalize(runtimeId)
