@@ -28,6 +28,25 @@ class LocalNaturalLanguageFallbackTest {
     }
 
     @Test
+    fun slashExpertCommandsStayOnExplicitLocalSymbolicRoute() {
+        val source = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
+        val auto = source.substringAfter("private fun submitAutoLocalFirst(")
+            .substringBefore("private fun submitRemoteText(")
+        val local = source.substringAfter("private fun submitLocalText(")
+            .substringBefore("private fun generateLocalModelTurn(")
+
+        assertTrue(
+            "slash commands must never fall through Auto to a remote/model turn",
+            auto.contains("query.startsWith(\"/\")"),
+        )
+        assertTrue(
+            "slash commands must be parsed by the bounded local command router",
+            local.contains("query.startsWith(\"/\")") &&
+                local.contains("LocalPrologCommand.parse(query, catalog)"),
+        )
+    }
+
+    @Test
     fun strictLocalModeSuspendsRemoteBeforePublishingLocalMode() {
         val source = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
         val setter = source.substringAfter("fun setRuntimeMode(mode: RuntimeMode) {")
