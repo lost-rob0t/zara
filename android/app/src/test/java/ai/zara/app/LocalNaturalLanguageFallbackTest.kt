@@ -28,6 +28,26 @@ class LocalNaturalLanguageFallbackTest {
     }
 
     @Test
+    fun strictLocalModeSuspendsRemoteBeforePublishingLocalMode() {
+        val source = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
+        val setter = source.substringAfter("fun setRuntimeMode(mode: RuntimeMode) {")
+            .substringBefore("fun localServerState()")
+
+        val suspendIndex = setter.indexOf("controller.suspendRemoteForLocalMode()")
+        val publishIndex = setter.indexOf("runtimeMode = mode")
+
+        assertTrue("entering strict Local must suspend remote transport", suspendIndex >= 0)
+        assertTrue(
+            "remote transport must be fenced before Local becomes the published routing mode",
+            publishIndex >= 0 && suspendIndex < publishIndex,
+        )
+        assertTrue(
+            "re-selecting Local must not churn the remote generation",
+            setter.contains("mode == RuntimeMode.Local && previous != RuntimeMode.Local"),
+        )
+    }
+
+    @Test
     fun symbolicFailureFallsThroughInsteadOfEscaping() {
         val symbolic = CompletableFuture.failedFuture<LocalQueryResult>(
             IllegalStateException("Trealla native evaluation failed"),
