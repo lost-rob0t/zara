@@ -238,7 +238,9 @@ def render_copilot_fixtures(output_dir: Path | str, *, source_commit: str) -> di
     """Render the closed #324 fixture matrix without touching user state or I/O.
 
     ``source_commit`` is evidence supplied by the caller; rendering does not invoke
-    Git, the daemon, providers, microphones, or the network.
+    Git, the daemon, providers, microphones, or the network. The same artifact
+    directory also receives native Org Editor/Todo/Sync/Notebook screenshots so
+    the existing exact-head Desktop evidence transport covers #1022/#1051.
     """
     target = Path(output_dir)
     target.mkdir(parents=True, exist_ok=True)
@@ -279,6 +281,10 @@ def render_copilot_fixtures(output_dir: Path | str, *, source_commit: str) -> di
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+    from zara.desktop.org_fixtures import render_org_fixtures
+
+    render_org_fixtures(target, source_commit=source_commit)
     return manifest
 
 
