@@ -1,4 +1,5 @@
 import groovy.json.JsonSlurper
+import java.net.URI
 import java.util.Properties
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
@@ -125,7 +126,7 @@ val starIntelMapUrl = providers.environmentVariable("ZARA_STARINTEL_MAP_URL").or
     ?.trim()
     ?.takeIf { it.isNotEmpty() }
     ?: "https://maps.starintel.actor/"
-val starIntelMapUri = runCatching { java.net.URI(starIntelMapUrl) }
+val starIntelMapUri = runCatching { URI(starIntelMapUrl) }
     .getOrElse { error("ZARA_STARINTEL_MAP_URL must be a valid HTTPS URL") }
 require(
     starIntelMapUri.scheme.equals("https", ignoreCase = true) &&
