@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
+- Zara can optionally drive StarIntel video projects through an approval-gated video-studio plugin for screen recording, FFmpeg renders, synthetic-shot generation, and YouTube/ads package preparation.
 - Android chat now keeps durable multi-conversation history with New chat, pin/unpin, rename, move-to-project actions, full turn restoration, and per-chat lifecycle status indicators.
 
 ### Fixed
