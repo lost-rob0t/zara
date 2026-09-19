@@ -212,11 +212,13 @@ class Device:
     def dismiss_release_notes(self, timeout: float = 2.0) -> bool:
         # A fresh install legitimately opens the versioned changelog before Chat.
         # Dismiss only Zara's exact release-notes dialog so acceptance still fails
-        # on crashes, permission dialogs, or unrelated overlays. Compose may publish
-        # the dialog title before the confirm-button semantics reach UIAutomator, so
-        # give that exact button a short bounded window instead of requiring both
-        # nodes to appear in the same hierarchy snapshot.
-        if self.find_contains("What's new in Zara ") is None:
+        # on crashes, permission dialogs, or unrelated overlays. Compose/UIAutomator
+        # may wrap the version onto another semantic line, so retain the historical
+        # versioned-prefix probe and fall back to the stable Zara title prefix.
+        release_notes = self.find_contains("What's new in Zara ")
+        if release_notes is None:
+            release_notes = self.find_contains("What's new in Zara")
+        if release_notes is None:
             return False
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -242,9 +244,9 @@ class Device:
         while time.monotonic() < deadline:
             if self.find(label) is not None:
                 return
-            if self.dismiss_release_notes():
-                continue
             if self.dismiss_pixel_launcher_anr():
+                continue
+            if self.dismiss_release_notes():
                 continue
             time.sleep(0.2)
         raise AssertionError(f"Screen did not show {label}")
@@ -306,6 +308,7 @@ class Device:
             "-n",
             component,
         )
+        self.dismiss_pixel_launcher_anr()
         self.dismiss_release_notes()
         self.await_label(label)
 

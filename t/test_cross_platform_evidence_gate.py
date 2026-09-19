@@ -366,7 +366,7 @@ def test_android_acceptance_release_notes_button_timeout_still_fails_closed(
         device.dismiss_release_notes(timeout=1.0)
 
 
-def test_android_acceptance_launch_surface_clears_release_notes_before_waiting(
+def test_android_acceptance_launch_surface_clears_launcher_anr_and_release_notes_before_waiting(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -375,6 +375,11 @@ def test_android_acceptance_launch_surface_clears_release_notes_before_waiting(
     events: list[str] = []
 
     monkeypatch.setattr(device, "adb", lambda *args, **kwargs: events.append("launch") or "")
+    monkeypatch.setattr(
+        device,
+        "dismiss_pixel_launcher_anr",
+        lambda: events.append("dismiss-launcher-anr") or False,
+    )
     monkeypatch.setattr(
         device,
         "dismiss_release_notes",
@@ -388,7 +393,12 @@ def test_android_acceptance_launch_surface_clears_release_notes_before_waiting(
 
     device.launch_surface("ai.zara.app/.MainActivity", "Chat")
 
-    assert events == ["launch", "dismiss-release-notes", "await:Chat"]
+    assert events == [
+        "launch",
+        "dismiss-launcher-anr",
+        "dismiss-release-notes",
+        "await:Chat",
+    ]
 
 
 def test_android_acceptance_recreate_relaunches_saved_launcher_task(
