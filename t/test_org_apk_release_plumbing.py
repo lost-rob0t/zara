@@ -21,6 +21,13 @@ def test_android_gate_builds_and_verifies_every_dependency_ready_org_apk() -> No
         assert f"{module}/build/outputs/apk/debug/{apk_name}" in ANDROID_GATE
 
 
+def test_android_gate_requires_host_signer_parity_for_org_apks() -> None:
+    assert "apksigner" in ANDROID_GATE
+    assert 'host_signer="$(org_signing_fingerprint "$phone_apk")"' in ANDROID_GATE
+    assert '"$org_roam_apk"' in ANDROID_GATE
+    assert "Org APK signer mismatch" in ANDROID_GATE
+
+
 def test_ci_uploads_exact_head_org_roam_apk() -> None:
     assert "name: zara-org-roam-debug-${{ github.event.pull_request.head.sha || github.sha }}" in CI_WORKFLOW
     assert "android/org-roam/build/outputs/apk/debug/org-roam-debug.apk" in CI_WORKFLOW
