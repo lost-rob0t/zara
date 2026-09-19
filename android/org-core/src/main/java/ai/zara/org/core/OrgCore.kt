@@ -134,29 +134,25 @@ object OrgParser {
     private val sourceBegin = Regex("(?i)^#\\+begin_src\\s+(\\S+)(.*)$")
     private val sourceEnd = Regex("(?i)^#\\+end_src\\s*$")
     private val titleLine = Regex("(?i)^#\\+title:\\s*(.*)$")
-    private val todoDirective = Regex("(?i)^#\\+(?:TODO|SEQ_TODO):\\s*(.*)$")
-    private val todoKeyword = Regex("^([^\\s(|]+)")
 
     fun todoStates(
         source: String,
         fallbackTodoStates: List<String> = defaultTodoStates,
-    ): List<String> {
-        val declared = source.lineSequence()
-            .mapNotNull { line -> todoDirective.matchEntire(line.trim())?.groupValues?.getOrNull(1) }
-            .map(::parseTodoKeywords)
-            .firstOrNull { it.isNotEmpty() }
-        if (declared != null) return declared
-        return fallbackTodoStates.filter { it.isNotBlank() }.distinct().ifEmpty { defaultTodoStates }
-    }
+    ): List<String> =
+        parseOrgTodoSequences(source, fallbackTodoStates)
+            .flatMap { it.states }
+            .distinct()
 
     fun nextTodoState(
         source: String,
         current: String?,
         fallbackTodoStates: List<String> = defaultTodoStates,
     ): String {
-        val states = todoStates(source, fallbackTodoStates)
-        val index = states.indexOf(current)
-        return if (index < 0) states.first() else states[(index + 1) % states.size]
+        val sequences = parseOrgTodoSequences(source, fallbackTodoStates)
+        val active = sequences.firstOrNull { sequence -> current in sequence.states }
+            ?: return sequences.first().states.first()
+        val index = active.states.indexOf(current)
+        return active.states[(index + 1) % active.states.size]
     }
 
     fun parse(
@@ -266,15 +262,6 @@ object OrgParser {
         }
         return result
     }
-
-    private fun parseTodoKeywords(raw: String): List<String> =
-        raw.split(Regex("\\s+"))
-            .asSequence()
-            .filter { it.isNotBlank() && it != "|" }
-            .mapNotNull { token -> todoKeyword.find(token)?.groupValues?.getOrNull(1) }
-            .filter { it.isNotBlank() }
-            .distinct()
-            .toList()
 
     private fun parseDate(line: String): LocalDate? =
         timestamp.find(line)?.groupValues?.getOrNull(1)?.let {
