@@ -314,7 +314,8 @@ private fun AutomationScreen(
         }
         Text(
             "Templates must declare zara-template.properties or .zara/config-template.properties. " +
-                "They may point to a .pl directory or an Org file whose Prolog blocks use :tangle file.pl.",
+                "They may point to a .pl directory or Org file; with no source declaration Zara uses " +
+                ".config/zarathushtra/android as the canonical dotfiles layout.",
             style = MaterialTheme.typography.bodySmall,
         )
     }

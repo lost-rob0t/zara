@@ -18,6 +18,13 @@ test -f "$repo_root/modules/intent_frames.pl"
 test -f "$repo_root/modules/normalizer.pl"
 test -f "$repo_root/kb/intents.pl"
 
+trealla_embed_sample="$ZARA_TREALLA_SOURCE_DIR/samples/embed.c"
+test -f "$trealla_embed_sample"
+if ! grep -Fq 'if (!pl_query(pl, goal, &q, 0))' "$trealla_embed_sample"; then
+  echo "semantic parity FAILED: pinned Trealla pl_query success contract changed" >&2
+  exit 1
+fi
+
 rm -rf "$report_dir"
 mkdir -p "$report_dir"
 
