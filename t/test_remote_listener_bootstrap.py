@@ -76,6 +76,28 @@ def test_default_control_socket_path_reuses_canonical_runtime_directory(tmp_path
     assert default_control_socket_path(runtime_dir) == runtime_dir / "zara-control.sock"
 
 
+def test_security_admin_normalizes_relative_runtime_control_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    monkeypatch.chdir(tmp_path)
+    state = PersistentSecurityState(tmp_path / "security")
+    relative_path = Path("runtime") / "zara-control.sock"
+    metadata = {"active": False, "endpoint": None, "server_public_key": None}
+    admin = SecurityAdminServer(
+        state,
+        capabilities=set(),
+        control_socket_path=relative_path,
+        remote_listener_status=lambda: dict(metadata),
+    )
+    assert admin.path == tmp_path / relative_path
+    admin.start()
+    try:
+        assert SecurityAdminClient(relative_path).request("remote_listener.status") == metadata
+    finally:
+        admin.close(timeout=1.0)
+
+
 def test_owner_local_control_exposes_only_bounded_listener_actions(tmp_path: Path):
     state = PersistentSecurityState(tmp_path / "security")
     state.initialize()
