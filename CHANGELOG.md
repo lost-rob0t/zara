@@ -13,6 +13,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Release plumbing now builds and same-signer-verifies the separate Org Roam APK, preserves it as an exact-head CI artifact, and includes it with checksum/provenance in the rolling Android APK channel.
 - Org workbench no longer embeds an operator-specific filesystem root in its UI fallback; the shared/custom configured Org workspace remains authoritative.
 - Android voice transcripts no longer accept late updates after a final transcript, preventing stale stream events from overwriting a completed transcript.
 - Android's embedded Trealla bridge now treats `pl_query`'s return value as an error signal, so valid local Prolog queries are no longer rejected as native query failures.
