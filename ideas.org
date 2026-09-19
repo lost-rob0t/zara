@@ -13,3 +13,24 @@
 # - Why deferred: <one sentence>
 # - Next proof: <smallest thing that would justify promotion>
 # - Promoted issue: <repo#issue | none>
+
+** IDEA StarIntel Geo as a geographic projection of the full knowledge graph
+- Captured: 2026-09-19 02:16 America/New_York
+- Source: lost-rob0t/star-spec#3
+- Why deferred: Promoted into the StarIntel Geo spec and implementation issue tree.
+- Next proof: Land star-spec#9 and implement the first direct/anchored/derived projection fixture end to end.
+- Promoted issue: lost-rob0t/star-spec#3
+
+** IDEA Gotham-style StarIntel map rendering profile
+- Captured: 2026-09-19 02:16 America/New_York
+- Source: lost-rob0t/star-spec#8
+- Why deferred: Presentation work depends on stable GeoProjection semantics.
+- Next proof: Quasar screenshot fixture showing explicit, inferred, candidate, uncertain, and temporal relations without semantic ambiguity.
+- Promoted issue: lost-rob0t/quasar-ui#179
+
+** IDEA Original Quest StarIntel Geo XR thin client
+- Captured: 2026-09-19 02:16 America/New_York
+- Source: lost-rob0t/zara#1205
+- Why deferred: XR should consume the shared Geo protocol after the server/map contracts exist.
+- Next proof: Sideloadable fixture build that selects a geo anchor and resolves its canonical StarIntel document.
+- Promoted issue: lost-rob0t/zara#1205
