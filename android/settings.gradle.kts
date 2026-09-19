@@ -24,6 +24,7 @@ dependencyResolutionManagement {
 rootProject.name = "zara-android"
 include(":app")
 include(":shared-ui")
-include(":termux-bridge")
+include(":editor-core")
+include(":code-editor")
 include(":wear-app")
 include(":wear-voice")

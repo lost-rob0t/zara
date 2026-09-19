@@ -6,12 +6,33 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
+- Portable Zara package profiles can now enable and pin packages independently per app while reusing the same package ABI and each app's existing symbol registry.
+- Service plugins can register owner-scoped programmable symbols with deterministic override precedence, introspection, and automatic restoration of previous definitions when a plugin unloads.
+- Android now includes a code editor for user-selected workspace roots with revision-fenced voice edits, so late speech results cannot overwrite newer editor changes.
+- Android Git config templates now recognize the canonical dotfiles projection at `.config/zarathushtra/android` when a manifest omits explicit source paths, while keeping the existing manifest, validation, and data-only Prolog security boundary.
+- Android launcher actions now persist launchable apps, typed launch intents, and bounded success/failure observations in Zara's private Prolog workspace; secret memory is fingerprinted instead of copied into model recall.
+- Org automation definitions can now compile from canonical Org heading projections into deterministic, inspectable trigger/condition/action symbol references without granting execution authority or assuming a fixed Org root.
+- Org automation runs now have inert correlated run envelopes with deterministic replay keys and an explicit stale-definition fence, while execution and authorization remain owned by Zara's canonical typed runtime.
+- Org automation run receipts can now be rebuilt deterministically from bounded correlated events with contiguous sequencing, explicit retry backoff, and exactly-one terminal projection semantics without storing raw provider/tool payloads.
 - Optional service plugins can now report a canonical "started but unavailable" state when required configuration or credentials are missing; unavailable plugins expose only a bounded reason code in diagnostics, keep no registered tools or capabilities, and no longer fail startup.
 - Android chat now keeps durable multi-conversation history with New chat, pin/unpin, rename, move-to-project actions, full turn restoration, and per-chat lifecycle status indicators.
-- Android now builds a separate Zara Termux Bridge APK that reports whether Termux is installed and whether the supported Run Command permission is granted without claiming the Linux worker runtime is ready before a real integration probe succeeds.
+- Human todos can now use ordinary Org files as canonical storage, with configurable roots or gpt-todos checkouts, stable Org IDs, schedule/deadline/repeater metadata, and round-trip preservation of unrelated Org properties and prose.
 
 ### Fixed
 
+- Zara Code APKs now pass cryptographic/package validation, CI installs and launches the editor on an Android emulator, and rolling `android-latest` publication rechecks the stable signing certificate before publishing.
+- Python runtime descriptors now reject schema-invalid boolean and enum-shaped scalar values at construction, keeping `ZARA-RUNTIME/1` host state aligned with the shared wire contract before discovery or selection.
+- Runtime descriptor protocol text is now bounded consistently by the shared schema and host validators, preventing incompatible overlong protocol identifiers from passing wire validation.
+- Android Local AI now rejects new model work as soon as its runtime begins shutting down and drops stale backend callbacks after close, preventing shutdown races from hanging requests or reviving stopped local state.
+- Android strict Local Assistant voice now uses only the on-device recognizer and non-network TTS, and cancels and fences stale local recognition, model, and speech work when the Assistant session is hidden, cancelled, restarted, or shut down.
+- Android Assistant voice now refuses Remote capture unless enrollment is ready, the connected transport belongs to the current runtime generation, and the authenticated session ID is nonblank; Auto falls back to Local when that remote authority is stale or incomplete.
+- Programmable package symbol, kind, and owner identifiers now reject control characters, whitespace, and non-ASCII tokens before registry mutation, keeping the portable namespace deterministic across Python, Prolog, and native app adapters.
+- Portable package-profile versions now reject path-shaped, control-character, and non-ASCII tokens before any registry mutation, keeping package pins deterministic across host platforms.
+- Org todo discovery now recursively scans configured directory roots, so nested ordinary `.org` files remain visible and editable without flattening a user's workspace or Git layout.
+- Android code-editor voice operations now fence cursor and selection changes as editor revisions, so a late transcript cannot apply to a different selection than the one active when listening started.
+- Android code-editor voice dictation now preserves spoken indentation, removes speech-only spacing around quoted text and Prolog commas, normalizes grouping punctuation without regex crashes, and builds against the current Compose layout API.
+- Android code-editor voice actions now handle backward text selections correctly, so replace, wrap, and explain operations use the selected range instead of rejecting or reversing it.
+- Android release-evidence automation now tolerates the short Compose/UIAutomator semantics race where the release-notes title appears before its Continue button, while still failing if the button never becomes available.
 - Android voice transcripts no longer accept late updates after a final transcript, preventing stale stream events from overwriting a completed transcript.
 - Android's embedded Trealla bridge now honors the pinned Trealla `pl_query` success contract, restoring local Prolog queries; Local mode also runs a live query readiness probe before reporting READY and emits richer bounded query diagnostics on failure.
 - Wear Voice no longer requests direct Internet access; the focused watch voice shell stays network-free and leaves runtime transport to the shared Wear/phone authority path.

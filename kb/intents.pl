@@ -122,7 +122,8 @@ python_skill_intent(greet, say_hello, rest).
 python_skill_intent(weather, noaa_weather, rest).
 python_skill_intent(forecast, noaa_weather, rest).
 
-% Built-in TODO Python skills are optional as one coherent surface.
+% Built-in human TODO skills are one coherent optional surface. Org is the
+% default canonical backend; SQLite remains available as a legacy backend.
 todo_python_skill_intent(todo, capture_todo, rest).
 todo_python_skill_intent(add, capture_todo, rest).
 todo_python_skill_intent(note, capture_todo, rest).
@@ -141,6 +142,19 @@ todo_python_skill_intent(show, list_todos, rest).
 todo_python_skill_intent(edit, edit_todo, rest).
 todo_python_skill_intent(update, edit_todo, rest).
 todo_python_skill_intent(export, export_todos, rest).
+
+% Org-mode editor/location intents.
+todo_python_skill_intent(org, open_org_todos, rest).
+todo_python_skill_intent(orgmode, open_org_todos, rest).
+todo_python_skill_intent(org_mode, open_org_todos, rest).
+todo_python_skill_intent(orgeditor, open_org_todos, rest).
+todo_python_skill_intent(org_editor, open_org_todos, rest).
+
+% Deterministic expert-system views over canonical human todos.
+todo_python_skill_intent(brief, todo_brief, rest).
+todo_python_skill_intent(prioritize, todo_brief, rest).
+todo_python_skill_intent(priorities, todo_brief, rest).
+todo_python_skill_intent(agenda, todo_brief, rest).
 
 python_skill_intent(Word, Skill, Arity) :-
     todo_intents_enabled,
@@ -173,7 +187,8 @@ verb_intent(who, ask, rest).
 % ----------------------------------------------------------------------
 % TODO / Reminder / Scheduling
 % ----------------------------------------------------------------------
-% Deprecated in Prolog. Routed to Python skills above when enabled.
+% Human todo execution is routed to Python skills above when enabled. The
+% deterministic expert rules live in modules/todo_expert.pl.
 
 % Timers
 verb_intent(timer, timer, rest).

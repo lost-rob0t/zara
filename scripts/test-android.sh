@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Zara Android/Wear gate: semantic parity + JVM tests + stock secure-server interop + pinned native build + phone/Termux bridge/Wear debug APKs + secret inspection.
+# Zara Android/Wear gate: semantic parity + JVM tests + stock secure-server interop + pinned native build + phone/Code/Wear debug APKs + secret inspection.
 # Run via: nix develop .#android -c bash scripts/test-android.sh
 set -euo pipefail
 
@@ -63,11 +63,12 @@ gradle_log="$(mktemp)"
 if ! gradle --no-daemon \
   :app:testDebugUnitTest \
   :shared-ui:testDebugUnitTest \
-  :termux-bridge:testDebugUnitTest \
+  :editor-core:testDebugUnitTest \
+  :code-editor:testDebugUnitTest \
   :wear-app:testDebugUnitTest \
   :wear-voice:testDebugUnitTest \
   :app:assembleDebug \
-  :termux-bridge:assembleDebug \
+  :code-editor:assembleDebug \
   :wear-app:assembleDebug \
   :wear-voice:assembleDebug 2>&1 | tee "$gradle_log"; then
   diagnostics_dir="app/build/reports/semantic-parity"
@@ -75,7 +76,7 @@ if ! gradle --no-daemon \
   tail -n 240 "$gradle_log" > "$diagnostics_dir/gradle-failure-tail.log"
   cp "$interop_log" "$diagnostics_dir/stock-zara-server.log"
   cat "$interop_log" >&2
-  echo "stock ZaraServer Android/Wear interop gate failed" >&2
+  echo "stock ZaraServer Android/Wear/Code interop gate failed" >&2
   exit 1
 fi
 rm -f "$gradle_log"
@@ -86,15 +87,18 @@ interop_pid=""
 unset ZARA_STOCK_FIXTURE
 
 phone_apk="app/build/outputs/apk/debug/app-debug.apk"
-termux_bridge_apk="termux-bridge/build/outputs/apk/debug/termux-bridge-debug.apk"
+code_apk="code-editor/build/outputs/apk/debug/code-editor-debug.apk"
 wear_apk="wear-app/build/outputs/apk/debug/wear-app-debug.apk"
 voice_apk="wear-voice/build/outputs/apk/debug/wear-voice-debug.apk"
 test -f "$phone_apk"
-test -f "$termux_bridge_apk"
+test -f "$code_apk"
 test -f "$wear_apk"
 test -f "$voice_apk"
 
-for apk in "$phone_apk" "$termux_bridge_apk" "$wear_apk" "$voice_apk"; do
+bash "$repo_root/scripts/check-android-apk-installable.sh" "$phone_apk" "ai.zara.app"
+bash "$repo_root/scripts/check-android-apk-installable.sh" "$code_apk" "ai.zara.code.editor"
+
+for apk in "$phone_apk" "$code_apk" "$wear_apk" "$voice_apk"; do
   if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET"; then
     echo "APK secret-marker inspection FAILED: private/secret material found in $apk" >&2
     exit 1
@@ -103,12 +107,7 @@ done
 
 aapt2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
 if [[ ! -x "$aapt2" ]]; then
-  echo "Android permission gate FAILED: pinned aapt2 not found at $aapt2" >&2
-  exit 1
-fi
-termux_bridge_permissions="$($aapt2 dump permissions "$termux_bridge_apk")"
-if ! grep -Fq "com.termux.permission.RUN_COMMAND" <<<"$termux_bridge_permissions"; then
-  echo "Termux bridge permission gate FAILED: RUN_COMMAND permission missing" >&2
+  echo "Wear Voice permission gate FAILED: pinned aapt2 not found at $aapt2" >&2
   exit 1
 fi
 voice_permissions="$($aapt2 dump permissions "$voice_apk")"
@@ -117,4 +116,4 @@ if grep -Fq "android.permission.INTERNET" <<<"$voice_permissions"; then
   exit 1
 fi
 
-echo "android/wear gate ok: $phone_apk $termux_bridge_apk $wear_apk $voice_apk"
+echo "android/wear/code gate ok: $phone_apk $code_apk $wear_apk $voice_apk"
