@@ -58,6 +58,7 @@ object OrgRoam {
 
         documents.toSortedMap().forEach { (path, source) ->
             val lines = source.lines()
+            val todoStates = OrgParser.todoStates(source)
             var index = 0
             while (index < lines.size) {
                 val match = heading.matchEntire(lines[index])
@@ -72,7 +73,7 @@ object OrgRoam {
                 val metadata = headingMetadata(lines, index + 1, next)
                 val canonicalId = metadata.id ?: metadata.customId
                 if (canonicalId != null) {
-                    val titleAndTags = normalizeHeading(rawHeading)
+                    val titleAndTags = normalizeHeading(rawHeading, todoStates)
                     candidates += NodeCandidate(
                         id = canonicalId,
                         customId = metadata.customId,
@@ -154,9 +155,9 @@ object OrgRoam {
         return HeadingMetadata(id, customId, aliases)
     }
 
-    private fun normalizeHeading(raw: String): Pair<String, Set<String>> {
+    private fun normalizeHeading(raw: String, todoStates: List<String>): Pair<String, Set<String>> {
         var text = raw
-        val state = DoomOrgProfile.todoStates.firstOrNull { text == it || text.startsWith("$it ") }
+        val state = todoStates.firstOrNull { text == it || text.startsWith("$it ") }
         if (state != null) text = text.removePrefix(state).trimStart()
         priority.find(text)?.let { text = text.removeRange(it.range).trimStart() }
 
