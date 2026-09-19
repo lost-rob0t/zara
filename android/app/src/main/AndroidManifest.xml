@@ -30,6 +30,9 @@
         <package android:name="com.google.android.youtube" />
         <package android:name="app.revanced.android.youtube" />
         <package android:name="app.rvx.android.youtube" />
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
     </queries>
 
     <application
@@ -50,7 +53,8 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:process=":voice">
+            android:process=":voice"
+            android:taskAffinity="ai.zara.app.task.main">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -61,7 +65,8 @@
             android:name=".automation.AutomationActivity"
             android:exported="true"
             android:label="Zara Automation"
-            android:process=":voice">
+            android:process=":voice"
+            android:taskAffinity="ai.zara.app.task.automation">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -71,7 +76,8 @@
         <activity
             android:name=".watch.WatchSetupActivity"
             android:exported="true"
-            android:label="Zara Watch Setup">
+            android:label="Zara Watch Setup"
+            android:taskAffinity="ai.zara.app.task.watchsetup">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -102,6 +108,21 @@
             android:exported="false"
             android:permission="android.permission.BIND_VOICE_INTERACTION"
             android:process=":voice" />
+
+        <service
+            android:name=".assistant.ZaraRecognitionService"
+            android:exported="true"
+            android:label="Zara speech recognition"
+            android:permission="android.permission.BIND_SPEECH_RECOGNITION_SERVICE"
+            android:process=":voice">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.speech"
+                android:resource="@xml/recognition_service" />
+        </service>
 
         <service
             android:name=".accessibility.ZaraAccessibilityService"

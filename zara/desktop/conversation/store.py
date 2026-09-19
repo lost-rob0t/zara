@@ -1,4 +1,4 @@
-"""SQLite persistence for desktop conversations using Zara's shared database."""
+"""SQLite persistence for conversations using Zara's portable database ABI."""
 
 from __future__ import annotations
 
@@ -6,6 +6,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+from zara.conversation_schema import (
+    LEGACY_LOCAL_PRINCIPAL_ID,
+    PORTABLE_LOCAL_PRINCIPAL_ID,
+    conversation_schema_statements,
+)
 from zara.database import DatabaseManager, get_database
 from zara.server import PrincipalContext
 
@@ -17,9 +22,7 @@ from .models import (
     MessageStatus,
 )
 
-_CONVERSATION_MIGRATION_VERSION = 2
 _INTERRUPTED_ERROR = "Interrupted when Zara stopped."
-_LEGACY_PRINCIPAL_ID = "__zara_legacy_local_owner__"
 
 
 def _now_iso() -> str:
@@ -27,7 +30,13 @@ def _now_iso() -> str:
 
 
 class ConversationStore:
-    """Durable conversation repository bound to exactly one principal."""
+    """Durable conversation repository bound to exactly one principal.
+
+    Local-owner history uses a platform-neutral storage principal so the same
+    SQLite file can move between Linux/macOS/Windows and Android without the
+    host OS UID changing ownership of the rows. Authenticated/non-local
+    principals remain isolated under their real principal IDs.
+    """
 
     def __init__(
         self,
@@ -39,8 +48,12 @@ class ConversationStore:
         self._principal = principal or PrincipalContext.local_owner()
         if not isinstance(self._principal, PrincipalContext):
             raise TypeError("principal must be a PrincipalContext")
+        self._storage_principal_id = (
+            PORTABLE_LOCAL_PRINCIPAL_ID
+            if self._principal.kind == "local-owner"
+            else self._principal.principal_id
+        )
         self._ensure_schema()
-        self._ensure_principal_schema()
         self._claim_legacy_rows_for_local_owner()
 
     @property
@@ -51,90 +64,78 @@ class ConversationStore:
     def principal(self) -> PrincipalContext:
         return self._principal
 
-    def _ensure_schema(self) -> None:
-        statements = [
-            """
-            CREATE TABLE IF NOT EXISTS desktop_conversations (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                provider TEXT NOT NULL DEFAULT '',
-                model TEXT NOT NULL DEFAULT ''
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS desktop_messages (
-                id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL,
-                sequence INTEGER NOT NULL,
-                turn_id TEXT,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                status TEXT NOT NULL,
-                error TEXT NOT NULL DEFAULT '',
-                tool_run_id TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY(conversation_id)
-                    REFERENCES desktop_conversations(id) ON DELETE CASCADE,
-                UNIQUE(conversation_id, sequence)
-            )
-            """,
-            "CREATE INDEX IF NOT EXISTS idx_desktop_conversations_updated ON desktop_conversations(updated_at DESC)",
-            "CREATE INDEX IF NOT EXISTS idx_desktop_messages_conversation ON desktop_messages(conversation_id, sequence)",
-            "CREATE INDEX IF NOT EXISTS idx_desktop_messages_turn ON desktop_messages(conversation_id, turn_id)",
-            "CREATE INDEX IF NOT EXISTS idx_desktop_messages_tool_run ON desktop_messages(conversation_id, tool_run_id)",
-        ]
-        try:
-            self._db.register_migration(_CONVERSATION_MIGRATION_VERSION, statements)
-        except ValueError:
-            # Multiple desktop surfaces may share one DatabaseManager instance.
-            # Registration is process-local; the migration itself is idempotent.
-            pass
-        self._db.connect()
+    @property
+    def storage_principal_id(self) -> str:
+        """Principal key persisted in the portable conversation tables."""
 
-    def _ensure_principal_schema(self) -> None:
-        """Upgrade ownership columns while holding SQLite's write reservation."""
+        return self._storage_principal_id
+
+    def _ensure_schema(self) -> None:
+        """Install the conversation ABI without consuming a global migration slot.
+
+        ``DatabaseManager.schema_migrations`` is shared by unrelated Zara
+        subsystems, several of which historically used the same integer
+        versions. Android also uses SQLite ``user_version`` for its app-local
+        database lifecycle. Conversation history therefore owns an idempotent
+        table/index ABI instead of claiming a process-global migration number.
+        This is what lets a database produced by either platform be opened by
+        the other regardless of which unrelated stores were initialized first.
+        """
+
+        self._db.connect()
         with self._db.transaction(immediate=True) as conn:
-            conversation_columns = {
-                row["name"]
-                for row in conn.execute("PRAGMA table_info(desktop_conversations)")
-            }
-            message_columns = {
-                row["name"] for row in conn.execute("PRAGMA table_info(desktop_messages)")
-            }
-            if "principal_id" not in conversation_columns:
-                conn.execute(
-                    "ALTER TABLE desktop_conversations "
-                    f"ADD COLUMN principal_id TEXT NOT NULL DEFAULT '{_LEGACY_PRINCIPAL_ID}'"
-                )
-            if "principal_id" not in message_columns:
-                conn.execute(
-                    "ALTER TABLE desktop_messages "
-                    f"ADD COLUMN principal_id TEXT NOT NULL DEFAULT '{_LEGACY_PRINCIPAL_ID}'"
-                )
+            self._repair_principal_column(conn, "desktop_conversations")
+            self._repair_principal_column(conn, "desktop_messages")
+            for statement in conversation_schema_statements():
+                conn.execute(statement)
+
+    @staticmethod
+    def _repair_principal_column(conn, table: str) -> None:
+        columns = {
+            row["name"] for row in conn.execute(f"PRAGMA table_info({table})")
+        }
+        if columns and "principal_id" not in columns:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_desktop_conversations_principal_updated "
-                "ON desktop_conversations(principal_id, updated_at DESC)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_desktop_messages_principal_conversation "
-                "ON desktop_messages(principal_id, conversation_id, sequence)"
+                f"ALTER TABLE {table} "
+                f"ADD COLUMN principal_id TEXT NOT NULL DEFAULT '{PORTABLE_LOCAL_PRINCIPAL_ID}'"
             )
 
     def _claim_legacy_rows_for_local_owner(self) -> None:
         if self._principal.kind != "local-owner":
             return
-        owner = self._principal.principal_id
+        # Before the portable local-owner key existed, Desktop persisted the
+        # host's numeric Unix UID (``uid:<digits>``). A database restored under
+        # another local account must keep that local history visible, while
+        # authenticated principals such as ``user:alice`` remain untouched.
+        legacy_local_predicate = """
+            principal_id IN (?, ?)
+            OR (
+                substr(principal_id, 1, 4) = 'uid:'
+                AND length(substr(principal_id, 5)) > 0
+                AND substr(principal_id, 5) NOT GLOB '*[^0-9]*'
+            )
+        """
+        parameters = (
+            PORTABLE_LOCAL_PRINCIPAL_ID,
+            LEGACY_LOCAL_PRINCIPAL_ID,
+            self._principal.principal_id,
+        )
         with self._db.transaction() as conn:
             conn.execute(
-                "UPDATE desktop_conversations SET principal_id = ? WHERE principal_id = ?",
-                (owner, _LEGACY_PRINCIPAL_ID),
+                f"""
+                UPDATE desktop_conversations
+                SET principal_id = ?
+                WHERE {legacy_local_predicate}
+                """,
+                parameters,
             )
             conn.execute(
-                "UPDATE desktop_messages SET principal_id = ? WHERE principal_id = ?",
-                (owner, _LEGACY_PRINCIPAL_ID),
+                f"""
+                UPDATE desktop_messages
+                SET principal_id = ?
+                WHERE {legacy_local_predicate}
+                """,
+                parameters,
             )
 
     def create_conversation(
@@ -164,7 +165,7 @@ class ConversationStore:
                 record.updated_at,
                 record.provider,
                 record.model,
-                self._principal.principal_id,
+                self._storage_principal_id,
             ),
         )
         return record
@@ -183,7 +184,7 @@ class ConversationStore:
                 record.provider,
                 record.model,
                 record.id,
-                self._principal.principal_id,
+                self._storage_principal_id,
             ),
         )
         if cursor.rowcount != 1:
@@ -203,7 +204,7 @@ class ConversationStore:
     def get_conversation(self, conversation_id: str) -> Optional[ConversationRecord]:
         row = self._db.fetch_one(
             "SELECT * FROM desktop_conversations WHERE id = ? AND principal_id = ?",
-            (conversation_id, self._principal.principal_id),
+            (conversation_id, self._storage_principal_id),
         )
         if row is None:
             return None
@@ -220,7 +221,7 @@ class ConversationStore:
         if limit < 1:
             raise ValueError("limit must be >= 1")
         clean_query = query.strip().lower()
-        owner = self._principal.principal_id
+        owner = self._storage_principal_id
         if clean_query:
             pattern = f"%{clean_query}%"
             rows = self._db.fetch_all(
@@ -267,7 +268,7 @@ class ConversationStore:
             FROM desktop_messages
             WHERE conversation_id = ? AND principal_id = ?
             """,
-            (conversation_id, self._principal.principal_id),
+            (conversation_id, self._storage_principal_id),
         )
         return int(row["max_sequence"] if row is not None else 0) + 1
 
@@ -275,7 +276,7 @@ class ConversationStore:
         if self.get_conversation(message.conversation_id) is None:
             raise KeyError(message.conversation_id)
         message.updated_at = _now_iso()
-        owner = self._principal.principal_id
+        owner = self._storage_principal_id
         cursor = self._db.execute(
             """
             INSERT INTO desktop_messages (
@@ -328,7 +329,7 @@ class ConversationStore:
             WHERE conversation_id = ? AND principal_id = ?
             ORDER BY sequence ASC
             """,
-            (conversation_id, self._principal.principal_id),
+            (conversation_id, self._storage_principal_id),
         )
         return [
             MessageRecord(

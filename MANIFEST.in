@@ -1,7 +1,9 @@
 include README.org
+include CHANGELOG.md
 include LICENSE
 include main.pl
 include AGENTS.md
+include version.properties
 include flake.nix
 include flake.lock
 include docker-compose.yml
