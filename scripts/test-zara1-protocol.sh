@@ -17,6 +17,7 @@ timeout 120s python -m pytest \
   -o faulthandler_timeout=15 \
   t/test_protocol.py \
   t/test_protocol_runtime.py \
+  t/test_music_protocol.py \
   t/test_zmq_transport.py \
   t/test_zmq_transport_turn_completed.py \
   t/test_zmq_transport_reconnect_idempotency.py \

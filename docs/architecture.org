@@ -110,6 +110,24 @@ Current design/implementation principles:
 
 See [[file:server.org][server.org]] for operational/security details.
 
+** Zara Music control domain
+
+Zara Music extends the closed =ZARA/1= vocabulary with bounded library-query,
+job, progress, and plan/apply messages. It reuses the existing authenticated
+session/principal boundary; it does not create a music-specific identity or
+transport stack.
+
+The music wire contract deliberately separates planes:
+
+- =ZARA/1= carries control, query, job, progress, explanation and mutation-plan
+  state;
+- Navidrome/OpenSubsonic HTTP carries audio, artwork, downloads and range
+  requests;
+- filesystem mutations remain server-side and generation-fenced.
+
+See [[file:music-protocol.org][music-protocol.org]] for the Org-first domain
+contract and generated portable Prolog/schema artifacts.
+
 * Principal ownership and isolation
 
 Daemon state is scoped by an authenticated principal rather than a process-global "current user" string.

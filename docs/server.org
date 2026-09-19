@@ -123,6 +123,24 @@ The daemon/client path uses bounded concepts including:
 
 One stalled/hostile client must not be allowed to create unbounded memory growth or starve unrelated principals.
 
+* Zara Music domain
+
+The Zara Music protocol is an additive closed domain inside =ZARA/1=. It reuses
+the daemon's existing CURVE/ZAP authentication, session correlation, bounds,
+and principal isolation.
+
+Music clients do not enumerate an unbounded filesystem. They send bounded
+selectors and receive snapshot/cursor pages. Long-running scan/hash/fingerprint/
+metadata/dedupe work is represented as resumable server jobs. File mutations
+use a two-stage =plan -> apply= flow with an expected library generation so a
+stale client cannot apply path decisions against a newer library state.
+
+No Zara Music control message carries binary media payloads. Playback and media
+bytes remain on Navidrome/OpenSubsonic HTTP.
+
+The normative human-readable contract is
+[[file:music-protocol.org][music-protocol.org]].
+
 * Authentication and principal identity
 
 Remote/authenticated Zara uses CURVE/ZAP-style device identity rather than trusting a caller-supplied =user_id= string.
