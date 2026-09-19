@@ -35,7 +35,7 @@ test(remove_and_clear, [setup(setup_projection)]) :-
     org_roam_memory:replace_org_memory("b", "node-b", "p", "B", []),
     org_roam_memory:remove_org_memory("a"),
     \+ org_roam_memory:org_memory("a", _, _, _, _),
-    org_roam_memory:org_memory("b", _, _, _, _, _),
+    org_roam_memory:org_memory("b", _, _, _, _),
     org_roam_memory:clear_org_memory,
     \+ org_roam_memory:org_memory(_, _, _, _, _).
 
