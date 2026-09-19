@@ -204,9 +204,12 @@ class Device:
         # A fresh install legitimately opens the versioned changelog before Chat.
         # Dismiss only Zara's exact release-notes dialog so acceptance still fails
         # on crashes, permission dialogs, or unrelated overlays. Compose/UIAutomator
-        # may wrap the version onto another semantic line, so match the stable Zara
-        # title prefix and then require the exact Continue action below.
-        if self.find_contains("What's new in Zara") is None:
+        # may wrap the version onto another semantic line, so retain the historical
+        # versioned-prefix probe and fall back to the stable Zara title prefix.
+        release_notes = self.find_contains("What's new in Zara ")
+        if release_notes is None:
+            release_notes = self.find_contains("What's new in Zara")
+        if release_notes is None:
             return False
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
