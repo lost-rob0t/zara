@@ -21,6 +21,16 @@ val zaraVersionName = requireNotNull(zaraVersionProperties.getProperty("zara.ver
 val zaraAndroidVersionCode =
     zaraVersionProperties.getProperty("android.versionCode")?.toIntOrNull()
         ?: error("version.properties android.versionCode must be an integer")
+require(zaraVersionName.matches(Regex(
+    """^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$"""
+))) {
+    "version.properties zara.version must be SemVer"
+}
+require(zaraAndroidVersionCode in 1..2100000000) {
+    "version.properties android.versionCode is outside Android's valid range"
+}
+
+val debugSigningKeystore = providers.environmentVariable("ZARA_ANDROID_DEBUG_KEYSTORE").orNull
 
 android {
     namespace = "ai.zara.termux.bridge"
@@ -32,6 +42,19 @@ android {
         targetSdk = 36
         versionCode = zaraAndroidVersionCode
         versionName = zaraVersionName
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            if (debugSigningKeystore != null) {
+                val keyFile = file(debugSigningKeystore)
+                require(keyFile.isFile) { "Zara Android debug signing keystore is missing" }
+                storeFile = keyFile
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
     buildTypes {
