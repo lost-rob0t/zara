@@ -203,11 +203,10 @@ class Device:
     def dismiss_release_notes(self, timeout: float = 2.0) -> bool:
         # A fresh install legitimately opens the versioned changelog before Chat.
         # Dismiss only Zara's exact release-notes dialog so acceptance still fails
-        # on crashes, permission dialogs, or unrelated overlays. Compose may publish
-        # the dialog title before the confirm-button semantics reach UIAutomator, so
-        # give that exact button a short bounded window instead of requiring both
-        # nodes to appear in the same hierarchy snapshot.
-        if self.find_contains("What's new in Zara ") is None:
+        # on crashes, permission dialogs, or unrelated overlays. Compose/UIAutomator
+        # may wrap the version onto another semantic line, so match the stable Zara
+        # title prefix and then require the exact Continue action below.
+        if self.find_contains("What's new in Zara") is None:
             return False
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
