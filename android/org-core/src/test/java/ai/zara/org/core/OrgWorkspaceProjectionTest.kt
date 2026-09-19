@@ -91,6 +91,7 @@ class OrgWorkspaceProjectionTest {
             zoneId = ZoneId.of("America/New_York"),
         )
         val documents = linkedMapOf(
+            "knowledge/journal/2026_09_20.org" to "* Existing future daily",
             "knowledge/journal/2026_09_17.org" to "* Yesterday",
             "elsewhere/2026_09_19.org" to "* Not a configured daily",
             "knowledge/journal/2026_09_18.org" to "* Today",
