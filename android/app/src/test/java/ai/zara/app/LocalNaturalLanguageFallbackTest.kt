@@ -33,6 +33,26 @@ class LocalNaturalLanguageFallbackTest {
     }
 
     @Test
+    fun autoRuntimeKeepsExplicitSymbolicCommandsLocalWhenRemoteIsConnected() {
+        val source = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
+        val auto = source.substringAfter("private fun submitAutoRemoteFirst(")
+            .substringBefore("private fun submitRemoteText")
+
+        val explicitIndex = auto.indexOf("if (explicitSymbolic)")
+        val remoteIndex = auto.indexOf("if (remoteConnected)")
+
+        assertTrue(auto.contains("query.startsWith(\"?-\")"))
+        assertTrue(auto.contains("query.startsWith(\"/prolog \")"))
+        assertTrue(auto.contains("query.startsWith(\"/expert \")"))
+        assertTrue("explicit symbolic routing must be checked", explicitIndex >= 0)
+        assertTrue(
+            "explicit symbolic input must stay local before Auto considers Remote",
+            remoteIndex >= 0 && explicitIndex < remoteIndex,
+        )
+        assertTrue(auto.contains("return submitLocalText(text, localConversationId)"))
+    }
+
+    @Test
     fun strictLocalModeSuspendsRemoteBeforePublishingLocalMode() {
         val source = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
         val setter = source.substringAfter("fun setRuntimeMode(mode: RuntimeMode) {")
