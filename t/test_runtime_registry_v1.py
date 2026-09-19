@@ -114,6 +114,20 @@ def test_duplicate_discovery_fails_atomically() -> None:
     assert registry.snapshot() == original
 
 
+def test_identical_discovery_refresh_is_generation_noop_and_preserves_binding() -> None:
+    registry = RuntimeRegistry()
+    fixture = fixture_descriptors()
+    registry.refresh(fixture)
+    registry.select("zara-python")
+    binding = registry.bind_invocation("ctx:turn-1", capability_refs=("cap:tool-42",))
+    before = registry.snapshot()
+
+    after = registry.refresh(list(reversed(fixture)))
+
+    assert after == before
+    assert registry.accepts_binding(binding, context_ref="ctx:turn-1")
+
+
 def test_refresh_invalidates_selection_generation_when_runtime_disappears() -> None:
     registry = RuntimeRegistry()
     registry.refresh(fixture_descriptors())
@@ -167,7 +181,13 @@ def test_invocation_binding_requires_selected_runtime_and_exact_host_context() -
     assert registry.accepts_binding(binding, context_ref="ctx:turn-1")
     assert registry.accepts_binding(binding, context_ref="ctx:turn-2") is False
 
-    registry.refresh(fixture)
+    changed = [
+        replace(item, health=RuntimeHealth.DEGRADED)
+        if item.id == "zara-python"
+        else item
+        for item in fixture
+    ]
+    registry.refresh(changed)
 
     assert registry.accepts_binding(binding, context_ref="ctx:turn-1") is False
 
