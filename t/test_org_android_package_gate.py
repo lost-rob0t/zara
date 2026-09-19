@@ -9,9 +9,10 @@ def _gate_source() -> str:
     return ANDROID_GATE.read_text(encoding="utf-8")
 
 
-def test_focused_org_apks_are_built_and_secret_scanned() -> None:
+def test_focused_org_apks_are_built_tested_and_secret_scanned() -> None:
     source = _gate_source()
     for module in ("org-app", "org-todo", "org-sync", "org-notebook"):
+        assert f":{module}:testDebugUnitTest" in source
         assert f":{module}:assembleDebug" in source
         assert f'{module}/build/outputs/apk/debug/{module}-debug.apk' in source
 
