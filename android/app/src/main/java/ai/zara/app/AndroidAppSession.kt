@@ -18,6 +18,8 @@ import ai.zara.app.diagnostics.LocalRuntimeDiagnostics
 import ai.zara.app.localai.LocalAiServiceClient
 import ai.zara.app.localai.LocalAiState
 import ai.zara.app.localai.LocalGenerationRequest
+import ai.zara.app.localai.LocalLlmConfiguration
+import ai.zara.app.localai.LocalLlmPrologConfigStore
 import ai.zara.app.localai.LocalTtsState
 import ai.zara.app.runtime.AndroidTextSessionController
 import ai.zara.app.runtime.AssistantRole
@@ -91,6 +93,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     )
     private val localServer: LocalZaraServer
     private val localAi = LocalAiServiceClient(context)
+    private val localLlmConfig = LocalLlmPrologConfigStore(prologWorkspace)
     @Volatile private var latestVoiceStreamState: VoiceStreamState? = null
     @Volatile private var latestVoiceStreamFailure: String? = null
     @Volatile private var latestAudioRoute: AudioRouteSnapshot? = null
@@ -116,6 +119,21 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             "prolog_workspace.seeded",
             mapOf("sources" to prologWorkspace.listSources().joinToString(",") { it.name }),
         )
+        runCatching { localLlmConfig.ensureDefaults() }
+            .onSuccess { configuration ->
+                diagnostics.record(
+                    "local_llm.config.ready",
+                    mapOf(
+                        "api_enabled" to configuration.apiEnabled,
+                        "background" to configuration.background,
+                        "api_port" to configuration.apiPort,
+                        "max_output_tokens" to configuration.maxOutputTokens,
+                    ),
+                )
+            }
+            .onFailure { error ->
+                diagnostics.record("local_llm.config.failed", emptyMap(), error)
+            }
         val stagedSemanticAssets = PortableSemanticAssetStager(
             File(context.noBackupFilesDir, "zara/prolog-runtime"),
         ).stageAll(AndroidPortableSemanticAssetSource(context.assets))
@@ -237,6 +255,15 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     }
 
     fun localAiState(): CompletableFuture<LocalAiState> = localAi.state()
+
+    fun localLlmConfiguration(): LocalLlmConfiguration =
+        localLlmConfig.readManaged()
+
+    fun saveLocalLlmConfiguration(
+        configuration: LocalLlmConfiguration,
+    ): CompletableFuture<LocalLlmConfiguration> =
+        mutatePrologWorkspace { localLlmConfig.save(configuration) }
+            .thenApply { localLlmConfig.readManaged() }
 
     fun exportDiagnostics(): String {
         val server = localServer.state()
