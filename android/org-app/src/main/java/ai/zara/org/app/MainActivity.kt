@@ -8,7 +8,6 @@ import ai.zara.org.core.OrgWorkspaceProjection
 import ai.zara.org.core.OrgWorkspaceProjector
 import ai.zara.org.storage.OrgHome
 import ai.zara.org.storage.OrgHomeMode
-import ai.zara.org.storage.OrgRepository
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -22,7 +21,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -276,7 +274,10 @@ private fun RoamDetail(node: OrgRoamNode, graph: OrgRoamGraph, onSelect: (String
         Text("${node.path}:${node.line}", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text("Backlinks", color = MaterialTheme.colorScheme.secondary)
         backlinks.forEach { link ->
-            TextButton(onClick = { onSelect(link.sourceId) }) { Text(link.sourceTitle) }
+            val source = graph.nodes[link.sourceId]
+            TextButton(onClick = { onSelect(link.sourceId) }) {
+                Text(source?.title ?: link.sourceId)
+            }
         }
     }
 }
