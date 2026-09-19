@@ -9,8 +9,11 @@ from zara.runtime.prolog_rlm import PrologRlmRuntimeBackend
     "principal_id",
     (
         "p" * 129,
+        " local",
+        "local ",
         "local\nadmin",
         "local\x00admin",
+        "local\x7fadmin",
     ),
 )
 def test_prolog_rlm_rejects_unbounded_or_controlled_principal_ids(principal_id: str) -> None:
