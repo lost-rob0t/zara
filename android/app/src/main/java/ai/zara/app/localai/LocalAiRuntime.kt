@@ -63,38 +63,38 @@ class LocalAiRuntime(
         onChunk: (String) -> Unit = {},
     ): CompletableFuture<LocalGenerationResult> {
         val result = CompletableFuture<LocalGenerationResult>()
-        if (!enqueueIfOpen {
-                try {
-                    check(current.phase == LocalAiPhase.READY) { "Local model is not ready" }
-                    check(activeFuture == null) { "A local generation is already active" }
-                    val spec = checkNotNull(current.model) { "Local model metadata is missing" }
-                    activeText = StringBuilder()
-                    activeFuture = result
-                    activeChunkObserver = onChunk
-                    update(current.copy(phase = LocalAiPhase.GENERATING, failure = null))
-                    activeSession = backend.generate(
-                        request,
-                        object : LocalGenerationListener {
-                            override fun onChunk(text: String) {
-                                enqueueIfOpen { acceptChunk(text) }
-                            }
+        val accepted = enqueueIfOpen {
+            try {
+                check(current.phase == LocalAiPhase.READY) { "Local model is not ready" }
+                check(activeFuture == null) { "A local generation is already active" }
+                val spec = checkNotNull(current.model) { "Local model metadata is missing" }
+                activeText = StringBuilder()
+                activeFuture = result
+                activeChunkObserver = onChunk
+                update(current.copy(phase = LocalAiPhase.GENERATING, failure = null))
+                activeSession = backend.generate(
+                    request,
+                    object : LocalGenerationListener {
+                        override fun onChunk(text: String) {
+                            enqueueIfOpen { acceptChunk(text) }
+                        }
 
-                            override fun onDone() {
-                                enqueueIfOpen { finishGeneration(spec) }
-                            }
+                        override fun onDone() {
+                            enqueueIfOpen { finishGeneration(spec) }
+                        }
 
-                            override fun onError(error: Throwable) {
-                                enqueueIfOpen { failGeneration(error) }
-                            }
-                        },
-                    )
-                } catch (error: Throwable) {
-                    activeFuture = null
-                    activeChunkObserver = null
-                    result.completeExceptionally(error)
-                }
+                        override fun onError(error: Throwable) {
+                            enqueueIfOpen { failGeneration(error) }
+                        }
+                    },
+                )
+            } catch (error: Throwable) {
+                activeFuture = null
+                activeChunkObserver = null
+                result.completeExceptionally(error)
             }
-        ) {
+        }
+        if (!accepted) {
             result.completeExceptionally(IllegalStateException("Local AI runtime is closed"))
         }
         return result
@@ -185,14 +185,14 @@ class LocalAiRuntime(
 
     private fun <T> submit(block: () -> T): CompletableFuture<T> {
         val future = CompletableFuture<T>()
-        if (!enqueueIfOpen {
-                try {
-                    future.complete(block())
-                } catch (error: Throwable) {
-                    future.completeExceptionally(error)
-                }
+        val accepted = enqueueIfOpen {
+            try {
+                future.complete(block())
+            } catch (error: Throwable) {
+                future.completeExceptionally(error)
             }
-        ) {
+        }
+        if (!accepted) {
             future.completeExceptionally(IllegalStateException("Local AI runtime is closed"))
         }
         return future
@@ -236,7 +236,4 @@ class LocalAiRuntime(
 
     private fun boundedMessage(error: Throwable): String =
         (error.message ?: error::class.java.simpleName).take(256)
-
-    private fun <T> failed(error: Throwable): CompletableFuture<T> =
-        CompletableFuture<T>().also { it.completeExceptionally(error) }
 }
