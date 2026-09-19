@@ -9,6 +9,7 @@ import org.eclipse.jgit.lib.ProgressMonitor
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.revwalk.RevWalk
 import org.eclipse.jgit.revwalk.filter.RevFilter
+import org.eclipse.jgit.transport.RemoteRefUpdate
 import org.eclipse.jgit.transport.URIish
 
 data class GitWorkspaceStatus(
@@ -64,7 +65,9 @@ class GitOrgWorkspace(
             .setDirectory(root)
             .setBranch(branch)
         lease?.let { command.setProgressMonitor(LeaseProgressMonitor(it)) }
-        command.call().close()
+        command.call().use { git ->
+            persistConfiguredBranch(git.repository, branch)
+        }
         require(lease == null || lease.isCurrent()) { "Git clone was cancelled" }
         return status()
     }
@@ -79,6 +82,7 @@ class GitOrgWorkspace(
             config.setString("remote", "origin", "fetch", "+refs/heads/*:refs/remotes/origin/*")
             config.setString("branch", branch, "remote", "origin")
             config.setString("branch", branch, "merge", "refs/heads/$branch")
+            config.setString(CONFIG_SECTION, null, CONFIG_BRANCH_KEY, branch)
             config.save()
         }
     }
@@ -109,6 +113,14 @@ class GitOrgWorkspace(
 
         open().use { git ->
             val repository = git.repository
+            val configuredBranch = configuredBranch(repository)
+            val currentBranch = repository.branch
+            if (configuredBranch != null && currentBranch != configuredBranch) {
+                return GitSyncResult.Failed(
+                    "Configured Org sync branch '$configuredBranch' is not checked out; current branch is '$currentBranch'",
+                )
+            }
+
             var raw = git.status().call()
             if (raw.conflicting.isNotEmpty()) {
                 return GitSyncResult.Conflict(
@@ -139,6 +151,10 @@ class GitOrgWorkspace(
 
             val localBeforePull = repository.resolve(Constants.HEAD)?.name
             val pullCommand = git.pull()
+            configuredBranch?.let { branch ->
+                pullCommand.setRemote("origin")
+                pullCommand.setRemoteBranchName(branch)
+            }
             lease?.let { pullCommand.setProgressMonitor(LeaseProgressMonitor(it)) }
             val pull = pullCommand.call()
 
@@ -167,14 +183,16 @@ class GitOrgWorkspace(
                 return GitSyncResult.Cancelled(lease.generation, "Git sync cancelled during push")
             }
 
-            val rejected = updates.filter { update ->
-                val status = update.status.name
-                status.contains("REJECT", ignoreCase = true) || status.contains("NONFASTFORWARD", ignoreCase = true)
-            }
-            if (rejected.isNotEmpty()) {
-                GitSyncResult.Failed("Push rejected: ${rejected.joinToString { it.status.name }}")
+            val unsuccessful = updates.filterNot { update -> isSuccessfulPushStatus(update.status) }
+            if (unsuccessful.isNotEmpty()) {
+                GitSyncResult.Failed(
+                    "Push did not complete: ${unsuccessful.joinToString { it.status.name }}",
+                )
             } else {
-                GitSyncResult.Synced(pushed = updates.isNotEmpty(), message = "Git sync completed")
+                GitSyncResult.Synced(
+                    pushed = updates.any { update -> update.status == RemoteRefUpdate.Status.OK },
+                    message = "Git sync completed",
+                )
             }
         }
     }.getOrElse { error ->
@@ -183,6 +201,15 @@ class GitOrgWorkspace(
         } else {
             GitSyncResult.Failed(error.message ?: error::class.java.simpleName)
         }
+    }
+
+    private fun configuredBranch(repository: Repository): String? =
+        repository.config.getString(CONFIG_SECTION, null, CONFIG_BRANCH_KEY)
+
+    private fun persistConfiguredBranch(repository: Repository, branch: String) {
+        val config = repository.config
+        config.setString(CONFIG_SECTION, null, CONFIG_BRANCH_KEY, branch)
+        config.save()
     }
 
     private fun revisionEvidence(
@@ -216,6 +243,12 @@ class GitOrgWorkspace(
     private fun open(): Git = Git.open(root)
 
     companion object {
+        private const val CONFIG_SECTION = "zara-org-sync"
+        private const val CONFIG_BRANCH_KEY = "branch"
+
+        internal fun isSuccessfulPushStatus(status: RemoteRefUpdate.Status): Boolean =
+            status == RemoteRefUpdate.Status.OK || status == RemoteRefUpdate.Status.UP_TO_DATE
+
         fun validateRemote(remote: String) {
             require(remote.isNotBlank()) { "Git remote is required" }
             val uri = URIish(remote)
