@@ -131,6 +131,10 @@ class AppPackageProfile:
         package_id = _bounded_id(package_id, label="package_id")
         return package_id in self.enabled_packages
 
+    def pinned_version(self, package_id: str) -> str | None:
+        package_id = _bounded_id(package_id, label="package_id")
+        return dict(self.pins).get(package_id)
+
     def owner_for(self, package_id: str) -> str:
         package_id = _bounded_id(package_id, label="package_id")
         if package_id not in self.enabled_packages:
@@ -145,12 +149,15 @@ def activate_profile_package(
     profile: AppPackageProfile,
     package_id: str,
     specs: Iterable[SymbolSpec],
+    *,
+    package_version: str | None = None,
 ) -> tuple[int, ...]:
     """Replace one package generation in the target app's existing registry.
 
     The caller supplies the registry deliberately. No process-global registry is
     created or consulted here, so sibling apps remain isolated even when they
-    enable the same portable package.
+    enable the same portable package. A profile pin is enforced before any live
+    registry mutation, keeping a failed or mismatched activation failure-atomic.
     """
 
     if not isinstance(registry, ProgrammableSymbolRegistry):
@@ -159,6 +166,22 @@ def activate_profile_package(
         raise PackageProfileError("activation requires an AppPackageProfile")
 
     owner = profile.owner_for(package_id)
+    pinned_version = profile.pinned_version(package_id)
+    if pinned_version is not None:
+        if package_version is None:
+            raise PackageProfileError(
+                f"package {package_id!r} is pinned to {pinned_version!r}; "
+                "activation requires package_version"
+            )
+        normalized_version = _bounded_version(package_version)
+        if normalized_version != pinned_version:
+            raise PackageProfileError(
+                f"package {package_id!r} version {normalized_version!r} "
+                f"does not match pinned version {pinned_version!r}"
+            )
+    elif package_version is not None:
+        _bounded_version(package_version)
+
     return registry.replace_owner(owner, tuple(specs), layer="package")
 
 
