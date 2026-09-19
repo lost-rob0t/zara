@@ -225,9 +225,9 @@ class Device:
         while time.monotonic() < deadline:
             if self.find(label) is not None:
                 return
-            if self.dismiss_release_notes():
-                continue
             if self.dismiss_pixel_launcher_anr():
+                continue
+            if self.dismiss_release_notes():
                 continue
             time.sleep(0.2)
         raise AssertionError(f"Screen did not show {label}")
@@ -289,6 +289,7 @@ class Device:
             "-n",
             component,
         )
+        self.dismiss_pixel_launcher_anr()
         self.dismiss_release_notes()
         self.await_label(label)
 
