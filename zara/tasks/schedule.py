@@ -1,4 +1,4 @@
-"""Persistent cron schedules with Prolog-first execution and LLM escalation."""
+"""Persistent recurring schedules with Prolog-first execution and LLM escalation."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ from ..database import DatabaseManager, get_database
 logger = logging.getLogger(__name__)
 
 _MAX_CRON_SEARCH_MINUTES = 366 * 24 * 60 * 5
+_MAX_INTERVAL_MINUTES = 366 * 24 * 60
+_INTERVAL_RE = re.compile(r"^@every\\s+([1-9][0-9]{0,5})([mhd])$", re.IGNORECASE)
 _SCHEDULE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$")
 _CRON_ALIASES = {
     "@hourly": "0 * * * *",
@@ -101,6 +103,57 @@ class CronExpression:
                 return candidate
             candidate += timedelta(minutes=1)
         raise ValueError("cron expression has no match within five years")
+
+
+@dataclass(frozen=True)
+class IntervalExpression:
+    expression: str
+    interval: timedelta
+
+    @classmethod
+    def parse(cls, expression: str) -> "IntervalExpression":
+        if not isinstance(expression, str):
+            raise ValueError("interval expression must be a string")
+        normalized = expression.strip().lower()
+        match = _INTERVAL_RE.fullmatch(normalized)
+        if match is None:
+            raise ValueError(
+                "interval expression must use '@every <positive integer><m|h|d>'"
+            )
+        amount = int(match.group(1))
+        unit = match.group(2).lower()
+        multiplier = {"m": 1, "h": 60, "d": 24 * 60}[unit]
+        minutes = amount * multiplier
+        if minutes < 1 or minutes > _MAX_INTERVAL_MINUTES:
+            raise ValueError("interval must be between 1 minute and 366 days")
+        return cls(f"@every {amount}{unit}", timedelta(minutes=minutes))
+
+    def next_after(self, value: datetime) -> datetime:
+        return value + self.interval
+
+
+ScheduleExpression = CronExpression | IntervalExpression
+
+
+def parse_schedule_expression(expression: str) -> ScheduleExpression:
+    if isinstance(expression, str) and expression.strip().lower().startswith("@every"):
+        return IntervalExpression.parse(expression)
+    return CronExpression.parse(expression)
+
+
+def _next_future_run(
+    expression: ScheduleExpression,
+    *,
+    due_at: datetime,
+    now: datetime,
+) -> datetime:
+    if isinstance(expression, IntervalExpression):
+        if now < due_at:
+            return due_at
+        elapsed = now - due_at
+        steps = int(elapsed // expression.interval) + 1
+        return due_at + expression.interval * steps
+    return expression.next_after(now)
 
 
 @dataclass(frozen=True)
@@ -191,7 +244,7 @@ class ScheduledTaskStore:
     ) -> ScheduledTask:
         principal = _validate_text(principal_id, "principal")
         clean_goal = _validate_text(goal, "goal", max_chars=2000)
-        parsed = CronExpression.parse(cron)
+        parsed = parse_schedule_expression(cron)
         selected_mode = _coerce_mode(mode)
         identifier = _validate_schedule_id(
             schedule_id or f"schedule-{uuid.uuid4().hex[:12]}"
@@ -231,7 +284,7 @@ class ScheduledTaskStore:
         label: Optional[str] = None,
         now: Optional[datetime] = None,
     ) -> ScheduledTask:
-        parsed = CronExpression.parse(cron)
+        parsed = parse_schedule_expression(cron)
         clean_goal = _validate_text(goal, "goal", max_chars=2000)
         selected_mode = _coerce_mode(mode)
         clean_label = _validate_label(label, clean_goal)
@@ -337,7 +390,7 @@ class ScheduledTaskStore:
             schedule_id,
             principal_id=principal_id,
             state=ScheduleState.ACTIVE,
-            next_run_at=_iso(CronExpression.parse(row.cron).next_after(current)),
+            next_run_at=_iso(parse_schedule_expression(row.cron).next_after(current)),
             now=current,
         )
 
@@ -567,7 +620,8 @@ class ScheduledTaskService:
         started = 0
         for row in rows:
             due = _parse_iso(row.next_run_at)
-            next_run = CronExpression.parse(row.cron).next_after(current)
+            expression = parse_schedule_expression(row.cron)
+            next_run = _next_future_run(expression, due_at=due, now=current)
             if not self._store.claim_run(row, due_at=due, next_run_at=next_run):
                 continue
             started += 1
@@ -766,6 +820,9 @@ def _row_to_schedule(row) -> ScheduledTask:
 
 __all__ = [
     "CronExpression",
+    "IntervalExpression",
+    "ScheduleExpression",
+    "parse_schedule_expression",
     "ScheduleMode",
     "ScheduleState",
     "ScheduledTask",
