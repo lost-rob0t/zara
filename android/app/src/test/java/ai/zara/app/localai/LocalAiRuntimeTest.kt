@@ -97,6 +97,52 @@ class LocalAiRuntimeTest {
         runtime.close()
     }
 
+    @Test
+    fun closeRejectsAllNewModelWorkBeforeBackendShutdownCompletes() {
+        val backend = FakeLlmBackend().apply { blockClose = true }
+        val runtime = LocalAiRuntime(backend)
+        val spec = modelSpec()
+        runtime.load(spec).get(2, TimeUnit.SECONDS)
+        val closeFinished = CountDownLatch(1)
+        val closer = Thread {
+            try {
+                runtime.close()
+            } finally {
+                closeFinished.countDown()
+            }
+        }
+        closer.start()
+
+        try {
+            assertTrue("backend close must be in progress", backend.awaitCloseStarted())
+            val lateGenerate = runtime.generate(LocalGenerationRequest("must reject", 8))
+            val lateLoad = runtime.load(spec)
+            val lateCancel = runtime.cancel()
+            val lateUnload = runtime.unload()
+
+            assertTrue(
+                "new local generations must fail immediately once close begins",
+                lateGenerate.isCompletedExceptionally,
+            )
+            assertTrue(
+                "model loads must fail immediately once close begins",
+                lateLoad.isCompletedExceptionally,
+            )
+            assertTrue(
+                "cancellation requests must fail immediately once close begins",
+                lateCancel.isCompletedExceptionally,
+            )
+            assertTrue(
+                "model unloads must fail immediately once close begins",
+                lateUnload.isCompletedExceptionally,
+            )
+        } finally {
+            backend.releaseClose()
+            assertTrue(closeFinished.await(2, TimeUnit.SECONDS))
+            closer.join(2_000)
+        }
+    }
+
     private fun modelSpec() = LocalModelSpec(
         id = "fixture",
         version = "1",
@@ -109,9 +155,12 @@ class LocalAiRuntimeTest {
 
     private class FakeLlmBackend : LocalLlmBackend {
         private val generationStarted = CountDownLatch(1)
+        private val closeStarted = CountDownLatch(1)
+        private val allowClose = CountDownLatch(1)
         private var listener: LocalGenerationListener? = null
         var cancelled = false
         var unloaded = false
+        var blockClose = false
 
         override fun load(spec: LocalModelSpec) = Unit
 
@@ -132,6 +181,12 @@ class LocalAiRuntimeTest {
 
         fun awaitGenerationStarted(): Boolean = generationStarted.await(2, TimeUnit.SECONDS)
 
+        fun awaitCloseStarted(): Boolean = closeStarted.await(2, TimeUnit.SECONDS)
+
+        fun releaseClose() {
+            allowClose.countDown()
+        }
+
         fun emit(text: String) {
             listener?.onChunk(text)
         }
@@ -144,6 +199,11 @@ class LocalAiRuntimeTest {
             unloaded = true
         }
 
-        override fun close() = Unit
+        override fun close() {
+            closeStarted.countDown()
+            if (blockClose) {
+                check(allowClose.await(2, TimeUnit.SECONDS)) { "Timed out waiting to release fake backend close" }
+            }
+        }
     }
 }

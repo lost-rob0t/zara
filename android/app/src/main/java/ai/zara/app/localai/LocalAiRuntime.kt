@@ -193,8 +193,10 @@ class LocalAiRuntime(
         return future
     }
 
+    @Synchronized
     override fun close() {
         if (closed) return
+        closed = true
         val done = CompletableFuture<Unit>()
         actor.execute {
             try {
@@ -209,7 +211,6 @@ class LocalAiRuntime(
             }
         }
         runCatching { done.get() }
-        closed = true
         actor.shutdownNow()
     }
 
