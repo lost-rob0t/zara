@@ -97,6 +97,136 @@ class LocalAiRuntimeTest {
         runtime.close()
     }
 
+    @Test
+    fun closeRejectsAllNewModelWorkBeforeBackendShutdownCompletes() {
+        val backend = FakeLlmBackend().apply { blockClose = true }
+        val runtime = LocalAiRuntime(backend)
+        val spec = modelSpec()
+        runtime.load(spec).get(2, TimeUnit.SECONDS)
+        val closeFinished = CountDownLatch(1)
+        val closer = Thread {
+            try {
+                runtime.close()
+            } finally {
+                closeFinished.countDown()
+            }
+        }
+        closer.start()
+
+        try {
+            assertTrue("backend close must be in progress", backend.awaitCloseStarted())
+            val lateGenerate = runtime.generate(LocalGenerationRequest("must reject", 8))
+            val lateLoad = runtime.load(spec)
+            val lateCancel = runtime.cancel()
+            val lateUnload = runtime.unload()
+
+            assertTrue(
+                "new local generations must fail immediately once close begins",
+                lateGenerate.isCompletedExceptionally,
+            )
+            assertTrue(
+                "model loads must fail immediately once close begins",
+                lateLoad.isCompletedExceptionally,
+            )
+            assertTrue(
+                "cancellation requests must fail immediately once close begins",
+                lateCancel.isCompletedExceptionally,
+            )
+            assertTrue(
+                "model unloads must fail immediately once close begins",
+                lateUnload.isCompletedExceptionally,
+            )
+        } finally {
+            backend.releaseClose()
+            assertTrue(closeFinished.await(2, TimeUnit.SECONDS))
+            closer.join(2_000)
+        }
+    }
+
+    @Test
+    fun repeatedCloseCallsWaitForTheSameBackendTeardown() {
+        val backend = FakeLlmBackend().apply { blockClose = true }
+        val runtime = LocalAiRuntime(backend)
+        runtime.load(modelSpec()).get(2, TimeUnit.SECONDS)
+        val firstCloseFinished = CountDownLatch(1)
+        val secondCloseFinished = CountDownLatch(1)
+        val firstCloser = Thread {
+            try {
+                runtime.close()
+            } finally {
+                firstCloseFinished.countDown()
+            }
+        }
+        val secondCloser = Thread {
+            try {
+                runtime.close()
+            } finally {
+                secondCloseFinished.countDown()
+            }
+        }
+
+        firstCloser.start()
+        assertTrue("backend close must start before the second close", backend.awaitCloseStarted())
+        secondCloser.start()
+
+        try {
+            assertFalse(
+                "a repeated close must not return before shared teardown completes",
+                secondCloseFinished.await(100, TimeUnit.MILLISECONDS),
+            )
+        } finally {
+            backend.releaseClose()
+        }
+
+        assertTrue(firstCloseFinished.await(2, TimeUnit.SECONDS))
+        assertTrue(secondCloseFinished.await(2, TimeUnit.SECONDS))
+        firstCloser.join(2_000)
+        secondCloser.join(2_000)
+        assertEquals(LocalAiPhase.STOPPED, runtime.state().phase)
+    }
+
+    @Test
+    fun backendCallbacksAfterCloseAreDroppedWithoutRevivingRuntimeState() {
+        val backend = FakeLlmBackend()
+        val runtime = LocalAiRuntime(backend)
+        runtime.load(modelSpec()).get(2, TimeUnit.SECONDS)
+        val future = runtime.generate(LocalGenerationRequest("close me", 16))
+        assertTrue(backend.awaitGenerationStarted())
+
+        runtime.close()
+
+        assertTrue(future.isCompletedExceptionally)
+        assertEquals(LocalAiPhase.STOPPED, runtime.state().phase)
+        backend.emit("late")
+        backend.complete()
+        backend.fail(IllegalStateException("late failure"))
+        assertEquals(LocalAiPhase.STOPPED, runtime.state().phase)
+    }
+
+    @Test
+    fun closeFromStateObserverDoesNotDeadlockActor() {
+        val backend = FakeLlmBackend()
+        val runtime = LocalAiRuntime(backend)
+        val observerCloseReturned = CountDownLatch(1)
+        runtime.setStateObserver { state ->
+            if (state.phase == LocalAiPhase.READY) {
+                runtime.close()
+                observerCloseReturned.countDown()
+            }
+        }
+
+        val loaded = runtime.load(modelSpec())
+
+        assertTrue(
+            "close invoked from the actor-owned observer must return",
+            observerCloseReturned.await(2, TimeUnit.SECONDS),
+        )
+        assertEquals(LocalAiPhase.READY, loaded.get(2, TimeUnit.SECONDS).phase)
+        runtime.close()
+        assertEquals(LocalAiPhase.STOPPED, runtime.state().phase)
+        assertTrue(backend.awaitCloseStarted())
+    }
+
     private fun modelSpec() = LocalModelSpec(
         id = "fixture",
         version = "1",
@@ -109,9 +239,12 @@ class LocalAiRuntimeTest {
 
     private class FakeLlmBackend : LocalLlmBackend {
         private val generationStarted = CountDownLatch(1)
+        private val closeStarted = CountDownLatch(1)
+        private val allowClose = CountDownLatch(1)
         private var listener: LocalGenerationListener? = null
         var cancelled = false
         var unloaded = false
+        var blockClose = false
 
         override fun load(spec: LocalModelSpec) = Unit
 
@@ -132,6 +265,12 @@ class LocalAiRuntimeTest {
 
         fun awaitGenerationStarted(): Boolean = generationStarted.await(2, TimeUnit.SECONDS)
 
+        fun awaitCloseStarted(): Boolean = closeStarted.await(2, TimeUnit.SECONDS)
+
+        fun releaseClose() {
+            allowClose.countDown()
+        }
+
         fun emit(text: String) {
             listener?.onChunk(text)
         }
@@ -140,10 +279,19 @@ class LocalAiRuntimeTest {
             listener?.onDone()
         }
 
+        fun fail(error: Throwable) {
+            listener?.onError(error)
+        }
+
         override fun unload() {
             unloaded = true
         }
 
-        override fun close() = Unit
+        override fun close() {
+            closeStarted.countDown()
+            if (blockClose) {
+                check(allowClose.await(2, TimeUnit.SECONDS)) { "Timed out waiting to release fake backend close" }
+            }
+        }
     }
 }
