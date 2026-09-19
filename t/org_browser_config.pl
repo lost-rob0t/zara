@@ -6,6 +6,7 @@
 :- dynamic seen/1.
 
 record(Event) :- assertz(seen(Event)).
+record(Event, _) :- record(Event).
 reset_seen :- retractall(seen(_)).
 reset_browser :- kb_config:reset_org_browser_config.
 
