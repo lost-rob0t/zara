@@ -432,6 +432,29 @@
                 touch $out
               '';
 
+            # Formally prove the hard AGENTIC-15 fleet invariants and their
+            # negative fixtures. This is intentionally part of nix flake check so
+            # the existing required CI path cannot skip the proof.
+            agentic-verify = pkgs.runCommand "zara-check-agentic-verify"
+              {
+                nativeBuildInputs = [ pkgs.swi-prolog ];
+                src = ./.;
+              }
+              ''
+                cd $src
+                export HOME=$(mktemp -d)
+                export XDG_CONFIG_HOME=$HOME/.config
+                swipl -q \
+                  -s verification/agentic_fleet_verify.pl \
+                  -g "(agentic_fleet_verify:verify -> halt(0); halt(1))" \
+                  -t "halt(1)"
+                swipl -q \
+                  -s t/agentic_fleet_verify.pl \
+                  -g "(run_tests -> halt(0); halt(1))" \
+                  -t "halt(1)"
+                touch $out
+              '';
+
             # Ensure main.pl and its module graph load cleanly in SWI-Prolog.
             # An isolated HOME prevents the user's local config from masking
             # load failures (or causing spurious ones) during the check.

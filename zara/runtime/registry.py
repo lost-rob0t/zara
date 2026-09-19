@@ -150,6 +150,26 @@ class RuntimeDescriptor:
             field="implementation_version",
             limit=64,
         )
+        for field in (
+            "installed",
+            "available",
+            "supports_streaming",
+            "supports_cancel",
+            "supports_context_handles",
+            "supports_host_tools",
+        ):
+            if type(getattr(self, field)) is not bool:
+                raise TypeError(f"{field} must be a boolean")
+        if not isinstance(self.health, RuntimeHealth):
+            raise TypeError("health must be RuntimeHealth")
+        if not isinstance(self.locality, RuntimeLocality):
+            raise TypeError("locality must be RuntimeLocality")
+        if not isinstance(self.transport, RuntimeTransport):
+            raise TypeError("transport must be RuntimeTransport")
+        if not isinstance(self.provider_control, ControlOwner):
+            raise TypeError("provider_control must be ControlOwner")
+        if not isinstance(self.model_control, ControlOwner):
+            raise TypeError("model_control must be ControlOwner")
         provenance = _bounded_text(
             self.provenance,
             field="provenance",
