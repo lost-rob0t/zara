@@ -483,6 +483,17 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         localConversationId: String = "local-device",
         remoteConversationId: String? = null,
     ): CompletableFuture<TextTurnResult> {
+        val query = text.trim()
+        val explicitSymbolic =
+            query.startsWith("?-") || query.startsWith("/prolog ") || query.startsWith("/expert ")
+        if (explicitSymbolic) {
+            diagnostics.record(
+                "auto.local_symbolic",
+                mapOf("remote_connected" to remoteConnected),
+            )
+            return submitLocalText(text, localConversationId)
+        }
+
         if (remoteConnected) {
             diagnostics.record(
                 "auto.remote_preferred",
