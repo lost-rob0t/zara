@@ -70,6 +70,7 @@ class RuntimeDiagnosticsProjectionTest {
     fun `auto mode reports remote only for a canonical authenticated session`() {
         val remote = RuntimeState.initial().copy(
             enrollment = EnrollmentReadiness.Ready,
+            generation = 8,
             server = ServerConnection.Connected(8),
             sessionId = "session-8",
         )
