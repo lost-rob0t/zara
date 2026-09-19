@@ -88,6 +88,24 @@ def test_document_save_preserves_existing_file_mode(tmp_path: Path):
     assert stat.S_IMODE(target.stat().st_mode) == 0o640
 
 
+def test_desktop_editor_restores_source_line_ending_convention_before_save():
+    from zara.desktop.org_app import restore_source_line_endings
+
+    original_crlf = "* TODO one\r\nbody\r\n"
+    edited_from_qt = "* DONE one\nbody\n"
+    assert restore_source_line_endings(original_crlf, edited_from_qt) == (
+        "* DONE one\r\nbody\r\n"
+    )
+
+    original_cr = "* TODO one\rbody\r"
+    assert restore_source_line_endings(original_cr, edited_from_qt) == (
+        "* DONE one\rbody\r"
+    )
+
+    original_lf = "* TODO one\nbody\n"
+    assert restore_source_line_endings(original_lf, edited_from_qt) == edited_from_qt
+
+
 def test_workspace_rejects_escape_paths(tmp_path: Path):
     from zara.desktop.org_app import OrgWorkspace
 
