@@ -4,10 +4,16 @@ import ai.zara.org.sync.core.GitOrgWorkspace
 import ai.zara.org.sync.core.GitSyncResult
 import ai.zara.org.sync.core.OrgWorkspaceDescriptor
 import ai.zara.org.sync.core.OrgWorkspaceMapper
+import ai.zara.org.sync.core.SyncGenerationFence
+import ai.zara.org.sync.core.SyncLease
 import ai.zara.org.sync.core.WorkspaceId
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -22,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import java.util.concurrent.Executors
 
 private val SyncScheme = darkColorScheme(
     primary = Color(0xFFFF4FD8),
@@ -58,38 +66,94 @@ class MainActivity : ComponentActivity() {
 private fun OrgSyncApp() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("org-sync", MODE_PRIVATE) }
-    var activeRootId by rememberSaveable {
-        mutableStateOf(prefs.getString("workspace-root-id", "main") ?: "main")
-    }
-    var rootIdInput by rememberSaveable { mutableStateOf(activeRootId) }
-    val root = remember(activeRootId) {
-        val descriptor = runCatching {
-            OrgWorkspaceDescriptor.AppPrivate(
-                id = WorkspaceId("shared"),
-                displayName = "Shared Org",
-                rootId = activeRootId,
-            )
-        }.getOrElse {
-            OrgWorkspaceDescriptor.AppPrivate(
-                id = WorkspaceId("shared"),
-                displayName = "Shared Org",
-                rootId = "main",
-            )
+    val initialSelection = remember { runCatching { SharedWorkspaceStore.load(context) }.getOrNull() }
+    val initialRootId = remember(initialSelection) {
+        when (initialSelection) {
+            is SharedWorkspaceSelection.AppPrivate -> initialSelection.descriptor.rootId
+            is SharedWorkspaceSelection.Git -> initialSelection.descriptor.localRootId
+            else -> "main"
         }
+    }
+    var activeRootId by rememberSaveable { mutableStateOf(initialRootId) }
+    var rootIdInput by rememberSaveable { mutableStateOf(activeRootId) }
+    var remote by rememberSaveable {
+        mutableStateOf(
+            (initialSelection as? SharedWorkspaceSelection.Git)?.descriptor?.remote
+                ?: prefs.getString("remote", "").orEmpty(),
+        )
+    }
+    var branch by rememberSaveable {
+        mutableStateOf(
+            (initialSelection as? SharedWorkspaceSelection.Git)?.descriptor?.branch
+                ?: prefs.getString("branch", "main").orEmpty(),
+        )
+    }
+
+    val root = remember(activeRootId) {
+        val descriptor = OrgWorkspaceDescriptor.AppPrivate(
+            id = WorkspaceId("shared"),
+            displayName = "Shared Org",
+            rootId = activeRootId,
+        )
         OrgWorkspaceMapper.appPrivateRoot(context.filesDir, descriptor)
     }
     val workspace = remember(root) { GitOrgWorkspace(root) }
-
-    var remote by rememberSaveable { mutableStateOf(prefs.getString("remote", "") ?: "") }
-    var branch by rememberSaveable { mutableStateOf(prefs.getString("branch", "main") ?: "main") }
+    val syncFence = remember { SyncGenerationFence() }
+    val worker = remember { Executors.newSingleThreadExecutor() }
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
+    var activeLease by remember { mutableStateOf<SyncLease?>(null) }
     var status by remember { mutableStateOf(describe(workspace)) }
 
-    fun persistGit() {
-        prefs.edit().putString("remote", remote.trim()).putString("branch", branch.trim()).apply()
+    fun cancelActive(message: String = "Sync cancelled") {
+        val lease = activeLease ?: return
+        syncFence.cancel(lease)
+        activeLease = null
+        status = message
     }
 
-    fun refresh() {
-        status = describe(workspace)
+    fun selectGitWorkspace() {
+        SharedWorkspaceStore.useGit(
+            context = context,
+            localRootId = rootIdInput,
+            remote = remote.trim(),
+            branch = branch.trim(),
+        )
+        activeRootId = rootIdInput
+    }
+
+    fun launchGitOperation(label: String, action: (SyncLease) -> String) {
+        cancelActive("Previous sync cancelled")
+        val lease = syncFence.begin()
+        activeLease = lease
+        status = label
+        val selectedWorkspace = workspace
+        worker.execute {
+            val result = runCatching { action(lease) }
+            mainHandler.post {
+                if (activeLease?.generation != lease.generation) return@post
+                activeLease = null
+                if (!lease.isCurrent()) return@post
+                status = result.fold(
+                    onSuccess = { it },
+                    onFailure = { it.message ?: "$label failed" },
+                )
+            }
+        }
+    }
+
+    val safPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        cancelActive("Sync cancelled for workspace change")
+        runCatching { SharedWorkspaceStore.useSaf(context, uri) }
+            .onSuccess { status = "SAF workspace selected · $uri" }
+            .onFailure { status = it.message ?: "Unable to persist SAF workspace" }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            activeLease?.let(syncFence::cancel)
+            worker.shutdownNow()
+        }
     }
 
     Column(
@@ -111,31 +175,27 @@ private fun OrgSyncApp() {
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Shared workspace root") },
             supportingText = {
-                Text("Logical Zara-owned root. External/custom document trees use persisted SAF selection.")
+                Text("Logical Zara-owned root. External document trees use persisted SAF selection below.")
             },
             singleLine = true,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
-                runCatching {
-                    val descriptor = OrgWorkspaceDescriptor.AppPrivate(
-                        id = WorkspaceId("shared"),
-                        displayName = "Shared Org",
-                        rootId = rootIdInput,
-                    )
-                    OrgWorkspaceMapper.appPrivateRoot(context.filesDir, descriptor)
-                    prefs.edit().putString("workspace-root-id", rootIdInput).apply()
-                    activeRootId = rootIdInput
-                }.onSuccess {
-                    status = "Shared workspace selected · ${rootIdInput}"
-                }.onFailure {
-                    status = it.message ?: "Invalid workspace root"
-                }
+                cancelActive("Sync cancelled for workspace change")
+                runCatching { SharedWorkspaceStore.useAppPrivate(context, rootIdInput) }
+                    .onSuccess {
+                        activeRootId = rootIdInput
+                        status = "Local workspace selected · $rootIdInput"
+                    }
+                    .onFailure { status = it.message ?: "Invalid workspace root" }
             }) {
-                Text("Use workspace")
+                Text("Use local")
             }
-            Text(root.absolutePath, style = MaterialTheme.typography.labelSmall)
+            Button(onClick = { safPicker.launch(null) }) {
+                Text("Choose SAF")
+            }
         }
+        Text(root.absolutePath, style = MaterialTheme.typography.labelSmall)
 
         OutlinedTextField(
             value = remote,
@@ -154,54 +214,77 @@ private fun OrgSyncApp() {
         )
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = {
-                runCatching {
-                    persistGit()
-                    workspace.initialize()
-                    if (remote.isNotBlank()) workspace.configureRemote(remote.trim(), branch.trim())
-                }.onSuccess { refresh() }
-                    .onFailure { status = it.message ?: "Git init failed" }
-            }) {
+            Button(
+                enabled = activeLease == null && remote.isNotBlank() && branch.isNotBlank(),
+                onClick = {
+                    runCatching {
+                        selectGitWorkspace()
+                        workspace.initialize()
+                        workspace.configureRemote(remote.trim(), branch.trim())
+                    }.onSuccess {
+                        status = describe(workspace)
+                    }.onFailure {
+                        status = it.message ?: "Git init failed"
+                    }
+                },
+            ) {
                 Text("Initialize")
             }
 
             Button(
-                enabled = remote.isNotBlank() && branch.isNotBlank(),
+                enabled = activeLease == null && remote.isNotBlank() && branch.isNotBlank(),
                 onClick = {
-                    runCatching {
-                        persistGit()
-                        workspace.clone(remote.trim(), branch.trim())
-                    }.onSuccess { refresh() }
-                        .onFailure { status = it.message ?: "Clone failed" }
+                    runCatching { selectGitWorkspace() }
+                        .onSuccess {
+                            launchGitOperation("Cloning Git workspace…") { lease ->
+                                workspace.clone(remote.trim(), branch.trim(), lease)
+                                describe(workspace)
+                            }
+                        }
+                        .onFailure { status = it.message ?: "Invalid Git workspace" }
                 },
             ) {
                 Text("Clone")
             }
 
-            Button(onClick = {
-                persistGit()
-                status = when (val result = workspace.sync()) {
-                    is GitSyncResult.Synced -> result.message
-                    is GitSyncResult.Conflict -> {
-                        val files = result.files.take(5).joinToString()
-                        if (files.isBlank()) result.message else "${result.message}: $files"
-                    }
-                    is GitSyncResult.Cancelled -> result.message
-                    is GitSyncResult.Failed -> result.message
-                }
-            }) {
+            Button(
+                enabled = activeLease == null && remote.isNotBlank() && branch.isNotBlank(),
+                onClick = {
+                    runCatching { selectGitWorkspace() }
+                        .onSuccess {
+                            launchGitOperation("Syncing Git workspace…") { lease ->
+                                when (val result = workspace.sync(lease)) {
+                                    is GitSyncResult.Synced -> result.message
+                                    is GitSyncResult.Conflict -> {
+                                        val files = result.files.take(5).joinToString()
+                                        if (files.isBlank()) result.message else "${result.message}: $files"
+                                    }
+                                    is GitSyncResult.Cancelled -> result.message
+                                    is GitSyncResult.Failed -> result.message
+                                }
+                            }
+                        }
+                        .onFailure { status = it.message ?: "Invalid Git workspace" }
+                },
+            ) {
                 Text("Sync")
+            }
+
+            if (activeLease != null) {
+                Button(onClick = { cancelActive() }) {
+                    Text("Cancel")
+                }
             }
         }
 
-        TextButton(onClick = { refresh() }) {
+        TextButton(onClick = { status = describe(workspace) }) {
             Text("Refresh status")
         }
 
         Text(status, color = MaterialTheme.colorScheme.secondary)
         Text(
             "Shared home is exposed only to apps signed with the same Zara signing certificate. " +
-                "Individual Org apps can switch independently to a persisted custom SAF directory.",
+                "Git and local workspaces use the configured logical root; SAF grants stay user-selected and revocable.",
             style = MaterialTheme.typography.bodySmall,
         )
     }
