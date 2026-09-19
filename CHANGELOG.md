@@ -4,8 +4,13 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+### Added
+
+- Android chat now keeps durable multi-conversation history with New chat, pin/unpin, rename, move-to-project actions, full turn restoration, and per-chat lifecycle status indicators.
+
 ### Fixed
 
+- Android's embedded Trealla bridge now treats `pl_query`'s return value as an error signal, so valid local Prolog queries are no longer rejected as native query failures.
 - Wear Voice no longer requests direct Internet access; the focused watch voice shell stays network-free and leaves runtime transport to the shared Wear/phone authority path.
 - Wear Voice now uses Zara's canonical version name and Android versionCode instead of shipping stale module-local package metadata.
 - Android strict Local Assistant capture uses Android's on-device speech recognizer and non-network TTS voices without requiring remote enrollment or a remote session.
