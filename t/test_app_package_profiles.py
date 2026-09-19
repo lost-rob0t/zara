@@ -54,6 +54,27 @@ def test_profile_rejects_duplicate_enablement_and_pin_for_disabled_package():
         )
 
 
+def test_direct_constructor_cannot_bypass_profile_validation():
+    with pytest.raises(PackageProfileError, match="app_id"):
+        AppPackageProfile(
+            app_id="../shared",
+            enabled_packages=("org_roam",),
+        )
+
+    with pytest.raises(PackageProfileError, match="package_id"):
+        AppPackageProfile(
+            app_id="org_editor",
+            enabled_packages=("../escape",),
+        )
+
+    with pytest.raises(PackageProfileError, match="pin requires package to be enabled"):
+        AppPackageProfile(
+            app_id="org_editor",
+            enabled_packages=("org_roam",),
+            pins=(("logseq_daily", "1.4.2"),),
+        )
+
+
 def test_activation_reuses_app_registry_and_never_creates_global_package_state():
     editor_profile = AppPackageProfile.from_mapping(
         {
