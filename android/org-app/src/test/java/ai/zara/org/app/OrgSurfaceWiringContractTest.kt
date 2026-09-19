@@ -12,7 +12,7 @@ class OrgSurfaceWiringContractTest {
     @Test fun `flagship surfaces consume one canonical projection`() {
         assertTrue(source.contains("OrgSurface { TODO, ROAM, DAILY }"))
         assertTrue(source.contains("OrgHome.open(context)"))
-        assertTrue(source.contains("OrgWorkspaceProjector.project(documents)"))
+        assertTrue(source.contains("OrgWorkspaceProjector.project(documents, OrgHome.dailySpec(context))"))
         assertTrue(source.contains("OrgSurface.TODO -> TodoSurface(projection.tasks, ::cycle)"))
         assertTrue(source.contains("OrgSurface.ROAM -> RoamSurface(projection.roam)"))
         assertTrue(source.contains("OrgSurface.DAILY -> DailySurface(projection)"))
@@ -32,7 +32,8 @@ class OrgSurfaceWiringContractTest {
         assertFalse(source.contains("roam.db"))
     }
 
-    @Test fun `daily fails closed instead of inventing operator layout`() {
+    @Test fun `daily consumes canonical home config and never invents operator layout`() {
+        assertTrue(source.contains("OrgHome.dailySpec(context)"))
         assertTrue(source.contains("Daily view is not configured"))
         assertTrue(source.contains("No directory, filename pattern, or timezone is guessed"))
         assertFalse(source.contains("Documents/Notes/org"))
