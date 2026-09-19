@@ -169,15 +169,7 @@ def test_video_record_start_stop_owns_one_process_group(tmp_path, monkeypatch):
     assert "started" in started.lower()
     assert "running" in status.lower()
     assert calls["kwargs"]["start_new_session"] is True
-    assert calls["command"][-5:] == [
-        "record",
-        "--geometry",
-        "0,0 1280x720",
-        "--dry-run" if False else "--geometry",
-        "SHOULD-NOT-HAPPEN",
-    ] if False else calls["command"][-3:]
-    assert calls["command"][-3:] == ["--geometry", "0,0 1280x720", "record"] if False else calls["command"][-3:]
-    assert calls["command"][-4:] == ["record", "--geometry", "0,0 1280x720"] 
+    assert calls["command"][-3:] == ["record", "--geometry", "0,0 1280x720"]
     assert calls["signals"] == [(4242, signal.SIGINT)]
     assert "stopped" in stopped.lower()
     assert plugin._record_process is None
