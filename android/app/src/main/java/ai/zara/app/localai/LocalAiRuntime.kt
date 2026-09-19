@@ -11,6 +11,7 @@ class LocalAiRuntime(
     private val actor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-local-ai").apply { isDaemon = true }
     }
+    private val lifecycleLock = Any()
 
     @Volatile
     private var current = LocalAiState()
@@ -27,7 +28,7 @@ class LocalAiRuntime(
     fun state(): LocalAiState = current
 
     fun setStateObserver(observer: ((LocalAiState) -> Unit)?) {
-        actor.execute {
+        enqueueIfOpen {
             stateObserver = observer
             observer?.invoke(current)
         }
@@ -61,38 +62,40 @@ class LocalAiRuntime(
         request: LocalGenerationRequest,
         onChunk: (String) -> Unit = {},
     ): CompletableFuture<LocalGenerationResult> {
-        if (closed) return failed(IllegalStateException("Local AI runtime is closed"))
         val result = CompletableFuture<LocalGenerationResult>()
-        actor.execute {
-            try {
-                check(current.phase == LocalAiPhase.READY) { "Local model is not ready" }
-                check(activeFuture == null) { "A local generation is already active" }
-                val spec = checkNotNull(current.model) { "Local model metadata is missing" }
-                activeText = StringBuilder()
-                activeFuture = result
-                activeChunkObserver = onChunk
-                update(current.copy(phase = LocalAiPhase.GENERATING, failure = null))
-                activeSession = backend.generate(
-                    request,
-                    object : LocalGenerationListener {
-                        override fun onChunk(text: String) {
-                            actor.execute { acceptChunk(text) }
-                        }
+        if (!enqueueIfOpen {
+                try {
+                    check(current.phase == LocalAiPhase.READY) { "Local model is not ready" }
+                    check(activeFuture == null) { "A local generation is already active" }
+                    val spec = checkNotNull(current.model) { "Local model metadata is missing" }
+                    activeText = StringBuilder()
+                    activeFuture = result
+                    activeChunkObserver = onChunk
+                    update(current.copy(phase = LocalAiPhase.GENERATING, failure = null))
+                    activeSession = backend.generate(
+                        request,
+                        object : LocalGenerationListener {
+                            override fun onChunk(text: String) {
+                                enqueueIfOpen { acceptChunk(text) }
+                            }
 
-                        override fun onDone() {
-                            actor.execute { finishGeneration(spec) }
-                        }
+                            override fun onDone() {
+                                enqueueIfOpen { finishGeneration(spec) }
+                            }
 
-                        override fun onError(error: Throwable) {
-                            actor.execute { failGeneration(error) }
-                        }
-                    },
-                )
-            } catch (error: Throwable) {
-                activeFuture = null
-                activeChunkObserver = null
-                result.completeExceptionally(error)
+                            override fun onError(error: Throwable) {
+                                enqueueIfOpen { failGeneration(error) }
+                            }
+                        },
+                    )
+                } catch (error: Throwable) {
+                    activeFuture = null
+                    activeChunkObserver = null
+                    result.completeExceptionally(error)
+                }
             }
+        ) {
+            result.completeExceptionally(IllegalStateException("Local AI runtime is closed"))
         }
         return result
     }
@@ -181,37 +184,54 @@ class LocalAiRuntime(
     }
 
     private fun <T> submit(block: () -> T): CompletableFuture<T> {
-        if (closed) return failed(IllegalStateException("Local AI runtime is closed"))
         val future = CompletableFuture<T>()
-        actor.execute {
-            try {
-                future.complete(block())
-            } catch (error: Throwable) {
-                future.completeExceptionally(error)
+        if (!enqueueIfOpen {
+                try {
+                    future.complete(block())
+                } catch (error: Throwable) {
+                    future.completeExceptionally(error)
+                }
             }
+        ) {
+            future.completeExceptionally(IllegalStateException("Local AI runtime is closed"))
         }
         return future
     }
 
-    @Synchronized
     override fun close() {
-        if (closed) return
-        closed = true
         val done = CompletableFuture<Unit>()
-        actor.execute {
-            try {
-                cancelActive("Local AI runtime closed")
-                unloadBackend()
-                runCatching { backend.close() }
-                update(LocalAiState(LocalAiPhase.STOPPED, current.generation + 1))
-                stateObserver = null
-                done.complete(Unit)
-            } catch (error: Throwable) {
-                done.completeExceptionally(error)
+        val started = synchronized(lifecycleLock) {
+            if (closed) {
+                false
+            } else {
+                closed = true
+                actor.execute {
+                    try {
+                        cancelActive("Local AI runtime closed")
+                        unloadBackend()
+                        runCatching { backend.close() }
+                        update(LocalAiState(LocalAiPhase.STOPPED, current.generation + 1))
+                        stateObserver = null
+                        done.complete(Unit)
+                    } catch (error: Throwable) {
+                        done.completeExceptionally(error)
+                    }
+                }
+                true
             }
         }
+        if (!started) return
         runCatching { done.get() }
         actor.shutdownNow()
+    }
+
+    private fun enqueueIfOpen(block: () -> Unit): Boolean = synchronized(lifecycleLock) {
+        if (closed) {
+            false
+        } else {
+            actor.execute(block)
+            true
+        }
     }
 
     private fun boundedMessage(error: Throwable): String =
