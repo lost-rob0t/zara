@@ -87,11 +87,7 @@ class PrologRlmSidecarClient(
         if (matching.size != 1) {
             throw AssistantRuntimeException("Prolog-RLM discovery identity is missing or duplicated")
         }
-        return matching.single().also {
-            if (!it.selectable) {
-                throw AssistantRuntimeException("Prolog-RLM runtime is not ready")
-            }
-        }
+        return matching.single()
     }
 
     fun generate(
