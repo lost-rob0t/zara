@@ -216,11 +216,12 @@ class PrologRlmRuntimeBackend(RuntimeBackend):
 
         for tool in tools:
             name = getattr(tool, "name", None)
-            if not isinstance(name, str) or not name.strip():
+            if not isinstance(name, str):
                 raise ValueError("registered runtime tools require a bounded name")
-            normalized = name.strip()
-            if len(normalized) > 128:
-                raise ValueError("registered runtime tool name is too long")
+            try:
+                normalized = _bounded_id(name, "registered runtime tool name")
+            except (TypeError, ValueError):
+                raise ValueError("registered runtime tools require a bounded name") from None
             self._registered_tools[normalized] = tool
 
     def unregister_tools(self, names) -> None:
