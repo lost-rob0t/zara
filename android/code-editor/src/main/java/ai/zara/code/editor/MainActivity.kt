@@ -313,17 +313,8 @@ private fun CodeEditorWorkbench() {
                 value = editorValue,
                 onValueChange = { next ->
                     val active = buffer
-                    val oldText = editorValue.text
                     editorValue = next
-                    if (active != null && next.text != oldText) {
-                        val start = min(next.selection.start, next.selection.end).coerceIn(0, next.text.length)
-                        val end = max(next.selection.start, next.selection.end).coerceIn(start, next.text.length)
-                        active.replaceFromUser(
-                            newText = next.text,
-                            newCursor = next.selection.end.coerceIn(0, next.text.length),
-                            newSelection = EditorSelection(start, end),
-                        )
-                    }
+                    syncEditorStateToBuffer(active, next)
                 },
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
@@ -348,6 +339,17 @@ private fun CodeEditorWorkbench() {
             },
         )
     }
+}
+
+internal fun syncEditorStateToBuffer(active: RevisionedEditorBuffer?, next: TextFieldValue) {
+    active ?: return
+    val start = min(next.selection.start, next.selection.end).coerceIn(0, next.text.length)
+    val end = max(next.selection.start, next.selection.end).coerceIn(start, next.text.length)
+    active.replaceFromUser(
+        newText = next.text,
+        newCursor = next.selection.end.coerceIn(0, next.text.length),
+        newSelection = EditorSelection(start, end),
+    )
 }
 
 private fun lineStartOffset(text: String, requestedLine: Int): Int {
