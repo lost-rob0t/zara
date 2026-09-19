@@ -67,11 +67,12 @@ def type_printable_ascii(device: Device, value: str) -> None:
     if not value or any(ord(char) < 0x20 or ord(char) > 0x7E for char in value):
         raise AssertionError("Remote acceptance input must be printable ASCII")
     # Avoid adb-shell metacharacter handling entirely: only a base64 token enters
-    # the command line. Android toybox decodes it inside a quoted substitution and
-    # the framework input command receives exactly one argument.
+    # the remote command. Keep the whole shell pipeline in one adb shell argument;
+    # splitting it through `sh -c` makes adb join the argv before the device shell
+    # sees it, so only `input` becomes the -c program and no text reaches Compose.
     encoded = base64.b64encode(value.encode("ascii")).decode("ascii")
     command = f'input text "$(printf %s \'{encoded}\' | base64 -d)"'
-    device.adb("shell", "sh", "-c", command)
+    device.adb("shell", command)
     time.sleep(0.5)
 
 
