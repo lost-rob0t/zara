@@ -3,7 +3,7 @@ package ai.zara.org.core
 import java.time.LocalDate
 import java.time.LocalTime
 
-/** Native Org semantics derived from Doom-style Org conventions. Org text stays canonical. */
+/** Optional Doom-compatible workflow profile. Ordinary Org text/config remains authoritative. */
 object DoomOrgProfile {
     const val orgRoot = "Configured Org workspace"
     const val agendaDirectory = "agenda"
@@ -122,6 +122,8 @@ object DoomAgenda {
 }
 
 object OrgParser {
+    val defaultTodoStates: List<String> = listOf("TODO", "DONE")
+
     private val heading = Regex("^(\\*+)\\s+(.*)$")
     private val priority = Regex("^\\[#([A-Z])](?:\\s+|$)")
     private val tags = Regex("\\s+:([A-Za-z0-9_@#%:.-]+):\\s*$")
@@ -132,9 +134,38 @@ object OrgParser {
     private val sourceBegin = Regex("(?i)^#\\+begin_src\\s+(\\S+)(.*)$")
     private val sourceEnd = Regex("(?i)^#\\+end_src\\s*$")
     private val titleLine = Regex("(?i)^#\\+title:\\s*(.*)$")
+    private val todoDirective = Regex("(?i)^#\\+(?:TODO|SEQ_TODO):\\s*(.*)$")
+    private val todoKeyword = Regex("^([^\\s(|]+)")
 
-    fun parse(source: String, path: String = ""): OrgDocument {
+    fun todoStates(
+        source: String,
+        fallbackTodoStates: List<String> = defaultTodoStates,
+    ): List<String> {
+        val declared = source.lineSequence()
+            .mapNotNull { line -> todoDirective.matchEntire(line.trim())?.groupValues?.getOrNull(1) }
+            .map(::parseTodoKeywords)
+            .firstOrNull { it.isNotEmpty() }
+        if (declared != null) return declared
+        return fallbackTodoStates.filter { it.isNotBlank() }.distinct().ifEmpty { defaultTodoStates }
+    }
+
+    fun nextTodoState(
+        source: String,
+        current: String?,
+        fallbackTodoStates: List<String> = defaultTodoStates,
+    ): String {
+        val states = todoStates(source, fallbackTodoStates)
+        val index = states.indexOf(current)
+        return if (index < 0) states.first() else states[(index + 1) % states.size]
+    }
+
+    fun parse(
+        source: String,
+        path: String = "",
+        fallbackTodoStates: List<String> = defaultTodoStates,
+    ): OrgDocument {
         val lines = source.lines()
+        val resolvedTodoStates = todoStates(source, fallbackTodoStates)
         val tasks = mutableListOf<OrgTask>()
         val blocks = mutableListOf<OrgSourceBlock>()
         var documentTitle: String? = null
@@ -165,7 +196,7 @@ object OrgParser {
             if (headingMatch != null) {
                 val level = headingMatch.groupValues[1].length
                 var text = headingMatch.groupValues[2].trim()
-                val state = DoomOrgProfile.todoStates.firstOrNull { candidate ->
+                val state = resolvedTodoStates.firstOrNull { candidate ->
                     text == candidate || text.startsWith("$candidate ")
                 }
                 if (state != null) {
@@ -235,6 +266,15 @@ object OrgParser {
         }
         return result
     }
+
+    private fun parseTodoKeywords(raw: String): List<String> =
+        raw.split(Regex("\\s+"))
+            .asSequence()
+            .filter { it.isNotBlank() && it != "|" }
+            .mapNotNull { token -> todoKeyword.find(token)?.groupValues?.getOrNull(1) }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .toList()
 
     private fun parseDate(line: String): LocalDate? =
         timestamp.find(line)?.groupValues?.getOrNull(1)?.let {
