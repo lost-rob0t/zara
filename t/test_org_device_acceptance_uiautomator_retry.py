@@ -102,3 +102,47 @@ def test_org_evidence_does_not_retry_unrelated_acceptance_failures(
         list(device.nodes())
 
     assert calls == 1
+
+
+def test_org_evidence_navigates_to_fixture_root_before_accepting_saf(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_org_device_acceptance_module()
+    events: list[tuple] = []
+
+    class FakeDevice:
+        def adb(self, *arguments, **_kwargs):
+            events.append(("adb", *arguments))
+
+        def launch_surface(self, component, label):
+            events.append(("launch", component, label))
+
+        def await_contains(self, fragment, timeout=20.0):
+            events.append(("await", fragment, timeout))
+
+        def tap(self, label):
+            events.append(("tap", label))
+
+    monkeypatch.setattr(
+        module,
+        "_tap_contains",
+        lambda _device, fragment: events.append(("tap_contains", fragment)),
+    )
+
+    module.connect_fixture_through_saf(FakeDevice())
+
+    assert events == [
+        ("adb", "shell", "am", "force-stop", module.PACKAGE),
+        ("launch", module.COMPONENT, "Org"),
+        ("await", "Shared Org workspace is unavailable", 20.0),
+        ("tap", "Choose Org directory"),
+        ("await", "Documents", 20.0),
+        ("tap_contains", "Documents"),
+        ("await", "ZaraOrgAcceptance", 20.0),
+        ("tap_contains", "ZaraOrgAcceptance"),
+        ("await", module.SAF_PICKER_CONFIRM_LABEL, 20.0),
+        ("tap_contains", module.SAF_PICKER_CONFIRM_LABEL),
+        ("await", module.SAF_PICKER_ALLOW_LABEL, 20.0),
+        ("tap_contains", module.SAF_PICKER_ALLOW_LABEL),
+        ("await", "Acceptance task", 20.0),
+    ]
