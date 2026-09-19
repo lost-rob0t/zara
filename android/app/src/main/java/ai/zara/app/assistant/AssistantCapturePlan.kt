@@ -24,9 +24,10 @@ internal fun planAssistantCapture(
     }
 
     val localReady = localState.phase == LocalServerPhase.READY
+    val connectedGeneration = (runtimeState.server as? ServerConnection.Connected)?.generation
     val remoteReady = runtimeState.enrollment == EnrollmentReadiness.Ready &&
-        runtimeState.server is ServerConnection.Connected &&
-        runtimeState.sessionId != null
+        connectedGeneration == runtimeState.generation &&
+        runtimeState.sessionId?.isNotBlank() == true
 
     return when (mode) {
         RuntimeMode.Local -> if (localReady) {
