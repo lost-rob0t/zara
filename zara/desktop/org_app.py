@@ -50,6 +50,24 @@ def _revision(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def restore_source_line_endings(original: str, edited: str) -> str:
+    """Restore a homogeneous source newline convention after Qt normalization.
+
+    ``QPlainTextEdit.toPlainText()`` exposes paragraph boundaries as ``\n``.
+    Reapply an existing all-CRLF or all-CR convention before saving so a normal
+    Desktop edit does not rewrite every line in an Emacs/Git shared Org file.
+    Mixed-newline files are left alone rather than guessing a canonical style.
+    """
+
+    without_crlf = original.replace("\r\n", "")
+    normalized = edited.replace("\r\n", "\n").replace("\r", "\n")
+    if "\r\n" in original and "\n" not in without_crlf and "\r" not in without_crlf:
+        return normalized.replace("\n", "\r\n")
+    if "\r" in original and "\n" not in original:
+        return normalized.replace("\n", "\r")
+    return edited
+
+
 def resolve_org_root(
     value: str | os.PathLike[str] | None,
     *,
@@ -274,11 +292,15 @@ def build_org_window(mode: OrgLaunchMode, root: Path | None, document: str | Non
                     f"{self.snapshot.document_id} · unchanged; source bytes preserved"
                 )
                 return
+            edited = restore_source_line_endings(
+                self.snapshot.text,
+                self.editor.toPlainText(),
+            )
             try:
                 saved = self.workspace.save_document(
                     self.snapshot.document_id,
                     expected_revision=self.snapshot.revision,
-                    text=self.editor.toPlainText(),
+                    text=edited,
                 )
             except RevisionConflict as exc:
                 QMessageBox.warning(self, "Stale Org edit", str(exc))
@@ -346,4 +368,5 @@ __all__ = [
     "main_sync",
     "main_todo",
     "resolve_org_root",
+    "restore_source_line_endings",
 ]
