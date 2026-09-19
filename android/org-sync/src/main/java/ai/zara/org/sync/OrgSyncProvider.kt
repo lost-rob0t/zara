@@ -34,8 +34,10 @@ class OrgSyncProvider : ContentProvider() {
             ),
         )
         when (val workspace = SharedWorkspaceStore.load(requireNotNull(context))) {
-            is SharedWorkspaceSelection.AppPrivate -> {
-                val root = appPrivateRoot(workspace)
+            is SharedWorkspaceSelection.AppPrivate,
+            is SharedWorkspaceSelection.Git,
+            -> {
+                val root = localRoot(workspace)
                 root.walkTopDown()
                     .filter { it.isFile && it.extension.equals("org", ignoreCase = true) }
                     .sortedBy { it.relativeTo(root).invariantSeparatorsPath.lowercase() }
@@ -56,7 +58,10 @@ class OrgSyncProvider : ContentProvider() {
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
         val relativePath = SharedOrgHomeContract.decodeFileUri(uri)
         return when (val workspace = SharedWorkspaceStore.load(requireNotNull(context))) {
-            is SharedWorkspaceSelection.AppPrivate -> openAppPrivateFile(workspace, relativePath, mode)
+            is SharedWorkspaceSelection.AppPrivate,
+            is SharedWorkspaceSelection.Git,
+            -> openLocalFile(workspace, relativePath, mode)
+
             is SharedWorkspaceSelection.Saf -> {
                 val file = safRepository(workspace).listOrgFiles()
                     .firstOrNull { it.relativePath == relativePath }
@@ -74,16 +79,18 @@ class OrgSyncProvider : ContentProvider() {
             "Org text is required"
         }
         when (val workspace = SharedWorkspaceStore.load(requireNotNull(context))) {
-            is SharedWorkspaceSelection.AppPrivate -> when (method) {
+            is SharedWorkspaceSelection.AppPrivate,
+            is SharedWorkspaceSelection.Git,
+            -> when (method) {
                 SharedOrgHomeContract.METHOD_APPEND_ORG -> {
-                    val file = safeAppPrivateFile(workspace, relativePath)
+                    val file = safeLocalFile(workspace, relativePath)
                     file.parentFile?.mkdirs()
                     if (file.exists() && file.length() > 0L) file.appendText("\n")
                     file.appendText(text.trimEnd() + "\n")
                 }
 
                 SharedOrgHomeContract.METHOD_WRITE_TEXT -> {
-                    val file = safeAppPrivateFile(workspace, relativePath)
+                    val file = safeLocalFile(workspace, relativePath)
                     file.parentFile?.mkdirs()
                     file.writeText(text)
                 }
@@ -141,17 +148,24 @@ class OrgSyncProvider : ContentProvider() {
         return OrgTreeRepository(appContext, treeUri)
     }
 
-    private fun appPrivateRoot(workspace: SharedWorkspaceSelection.AppPrivate): File {
+    private fun localRoot(workspace: SharedWorkspaceSelection): File {
         val appContext = requireNotNull(context)
-        return OrgWorkspaceMapper.appPrivateRoot(appContext.filesDir, workspace.descriptor).also { it.mkdirs() }
+        val root = when (workspace) {
+            is SharedWorkspaceSelection.AppPrivate ->
+                OrgWorkspaceMapper.appPrivateRoot(appContext.filesDir, workspace.descriptor)
+            is SharedWorkspaceSelection.Git ->
+                OrgWorkspaceMapper.gitRoot(appContext.filesDir, workspace.descriptor)
+            is SharedWorkspaceSelection.Saf -> error("SAF workspaces do not have direct filesystem roots")
+        }
+        return root.also { it.mkdirs() }
     }
 
-    private fun openAppPrivateFile(
-        workspace: SharedWorkspaceSelection.AppPrivate,
+    private fun openLocalFile(
+        workspace: SharedWorkspaceSelection,
         relativePath: String,
         mode: String,
     ): ParcelFileDescriptor {
-        val file = safeAppPrivateFile(workspace, relativePath)
+        val file = safeLocalFile(workspace, relativePath)
         val flags = when (mode) {
             "r" -> ParcelFileDescriptor.MODE_READ_ONLY
             "w", "wt" -> ParcelFileDescriptor.MODE_WRITE_ONLY or
@@ -178,8 +192,8 @@ class OrgSyncProvider : ContentProvider() {
         )
     }
 
-    private fun safeAppPrivateFile(
-        workspace: SharedWorkspaceSelection.AppPrivate,
+    private fun safeLocalFile(
+        workspace: SharedWorkspaceSelection,
         relativePath: String,
     ): File {
         val normalized = relativePath.replace('\\', '/').removePrefix("./")
@@ -187,7 +201,7 @@ class OrgSyncProvider : ContentProvider() {
         require(!normalized.startsWith('/')) { "Absolute paths are not allowed" }
         require(normalized.split('/').none { it == ".." }) { "Parent traversal is not allowed" }
 
-        val canonicalRoot = appPrivateRoot(workspace).canonicalFile
+        val canonicalRoot = localRoot(workspace).canonicalFile
         val file = File(canonicalRoot, normalized).canonicalFile
         require(
             file.path == canonicalRoot.path ||
