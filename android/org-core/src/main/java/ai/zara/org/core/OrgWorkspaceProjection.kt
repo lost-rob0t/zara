@@ -57,9 +57,10 @@ data class OrgWorkspaceProjection(
     val dailies: List<OrgDailyEntry>,
     val today: LocalDate?,
     val todayPath: String?,
+    private val doneStatesByPath: Map<String, Set<String>> = emptyMap(),
 ) {
     val openTasks: List<OrgTask>
-        get() = tasks.filter { it.state !in DoomOrgProfile.doneStates }
+        get() = tasks.filter { task -> task.state !in doneStatesByPath[task.path].orEmpty() }
 }
 
 object OrgWorkspaceProjector {
@@ -72,6 +73,9 @@ object OrgWorkspaceProjector {
         val tasks = orderedDocuments.flatMap { (path, source) ->
             OrgParser.parse(source, path).tasks
         }
+        val doneStatesByPath = orderedDocuments.mapValues { (_, source) ->
+            OrgParser.todoWorkflow(source).doneStates
+        }
         val roam = OrgRoam.build(orderedDocuments)
 
         if (dailySpec == null) {
@@ -81,6 +85,7 @@ object OrgWorkspaceProjector {
                 dailies = emptyList(),
                 today = null,
                 todayPath = null,
+                doneStatesByPath = doneStatesByPath,
             )
         }
 
@@ -96,6 +101,7 @@ object OrgWorkspaceProjector {
             dailies = dailies,
             today = today,
             todayPath = dailySpec.pathFor(today),
+            doneStatesByPath = doneStatesByPath,
         )
     }
 }
