@@ -18,6 +18,7 @@ from .symbols import ProgrammableSymbolRegistry, SymbolSpec
 PACKAGE_PROFILE_SCHEMA = 1
 _MAX_ID_LENGTH = 48
 _MAX_VERSION_LENGTH = 128
+_MAX_PACKAGES = 256
 _ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 _PROFILE_FIELDS = frozenset({"schema", "app_id", "enabled_packages", "pins"})
 
