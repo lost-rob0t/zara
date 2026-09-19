@@ -61,7 +61,7 @@ def _manager(tmp_path, registry, publisher, *, allowed=()):
     bus = RuntimeEventBus()
 
     def configuration(plugin_name):
-        config = {"enabled": True}
+        config = {}
         if allowed:
             config["compose_capabilities"] = list(allowed)
         return config
