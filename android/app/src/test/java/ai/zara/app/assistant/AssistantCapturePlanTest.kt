@@ -53,6 +53,7 @@ class AssistantCapturePlanTest {
         val state = RuntimeState.initial().copy(
             enrollment = EnrollmentReadiness.Ready,
             assistantRole = AssistantRole.Held,
+            generation = 7,
             server = ServerConnection.Connected(7),
             sessionId = "session-7",
         )
@@ -72,6 +73,63 @@ class AssistantCapturePlanTest {
         val state = RuntimeState.initial().copy(
             enrollment = EnrollmentReadiness.Unenrolled,
             assistantRole = AssistantRole.Held,
+            generation = 7,
+            server = ServerConnection.Connected(7),
+            sessionId = "session-7",
+        )
+
+        assertEquals(
+            AssistantCapturePlan.Reject("Remote Zara session is not ready"),
+            planAssistantCapture(
+                mode = RuntimeMode.Remote,
+                localState = readyLocalState(),
+                runtimeState = state,
+            ),
+        )
+        assertEquals(
+            AssistantCapturePlan.Local,
+            planAssistantCapture(
+                mode = RuntimeMode.Auto,
+                localState = readyLocalState(),
+                runtimeState = state,
+            ),
+        )
+    }
+
+    @Test
+    fun `remote capture rejects blank authenticated session and auto falls back local`() {
+        val state = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Ready,
+            assistantRole = AssistantRole.Held,
+            generation = 7,
+            server = ServerConnection.Connected(7),
+            sessionId = "   ",
+        )
+
+        assertEquals(
+            AssistantCapturePlan.Reject("Remote Zara session is not ready"),
+            planAssistantCapture(
+                mode = RuntimeMode.Remote,
+                localState = readyLocalState(),
+                runtimeState = state,
+            ),
+        )
+        assertEquals(
+            AssistantCapturePlan.Local,
+            planAssistantCapture(
+                mode = RuntimeMode.Auto,
+                localState = readyLocalState(),
+                runtimeState = state,
+            ),
+        )
+    }
+
+    @Test
+    fun `remote capture rejects stale connected generation and auto falls back local`() {
+        val state = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Ready,
+            assistantRole = AssistantRole.Held,
+            generation = 8,
             server = ServerConnection.Connected(7),
             sessionId = "session-7",
         )
