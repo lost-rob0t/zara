@@ -6,7 +6,7 @@ import socket
 import threading
 from types import SimpleNamespace
 
-from aiohttp import ClientSession
+from aiohttp import ClientSession, WSServerHandshakeError
 
 from zara.plugins.builtin.browser_bridge import (
     BrowserBridgePlugin,
@@ -94,12 +94,21 @@ def test_browser_bridge_validates_urls_and_bind_policy():
             raise AssertionError(f"accepted unsafe browser URL {invalid!r}")
 
     BrowserBridgePlugin._require_safe_bind("127.0.0.1", {})
-    try:
-        BrowserBridgePlugin._require_safe_bind("0.0.0.0", {})
-    except RuntimeError:
-        pass
-    else:
-        raise AssertionError("non-loopback bind must require explicit opt-in")
+    BrowserBridgePlugin._require_safe_bind("::1", {})
+    for unsafe_host, configuration in (
+        ("localhost", {}),
+        ("0.0.0.0", {}),
+        ("0.0.0.0", {"allow_remote": True}),
+        ("192.0.2.10", {"allow_remote": True}),
+    ):
+        try:
+            BrowserBridgePlugin._require_safe_bind(unsafe_host, configuration)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(
+                f"cleartext browser bridge accepted unsafe host {unsafe_host!r}"
+            )
 
 
 def test_browser_bridge_requires_strong_environment_token(monkeypatch):
@@ -130,6 +139,15 @@ def test_browser_bridge_http_to_extension_round_trip(monkeypatch):
 
     async def scenario():
         async with ClientSession() as session:
+            try:
+                await session.ws_connect(
+                    f"http://127.0.0.1:{port}/v1/browser"
+                )
+            except WSServerHandshakeError as error:
+                assert error.status == 403
+            else:
+                raise AssertionError("origin-less browser WebSocket was accepted")
+
             websocket = await session.ws_connect(
                 f"http://127.0.0.1:{port}/v1/browser",
                 headers={"Origin": "moz-extension://zara-test"},
