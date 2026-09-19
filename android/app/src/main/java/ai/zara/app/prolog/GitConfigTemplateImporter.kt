@@ -47,13 +47,22 @@ class GitConfigTemplateImporter(
                 require(name.isNotEmpty() && name.length <= 128) { "Template name is invalid" }
 
                 val imported = mutableListOf<PrologSource>()
-                properties.getProperty("directory")?.trim()?.takeIf(String::isNotEmpty)?.let { directory ->
-                    imported += importDirectory(checkout, directory)
+                val directory = properties.getProperty("directory")?.trim()?.takeIf(String::isNotEmpty)
+                val org = properties.getProperty("org")?.trim()?.takeIf(String::isNotEmpty)
+
+                directory?.let { imported += importDirectory(checkout, it) }
+                org?.let { imported += importOrg(checkout, it) }
+
+                if (directory == null && org == null) {
+                    val conventional = resolveInside(checkout, DEFAULT_ANDROID_DOTFILES_DIRECTORY)
+                    if (conventional.isDirectory && !Files.isSymbolicLink(conventional.toPath())) {
+                        imported += importDirectory(checkout, DEFAULT_ANDROID_DOTFILES_DIRECTORY)
+                    }
                 }
-                properties.getProperty("org")?.trim()?.takeIf(String::isNotEmpty)?.let { org ->
-                    imported += importOrg(checkout, org)
+
+                require(imported.isNotEmpty()) {
+                    "Template declares no Prolog sources and has no canonical Android dotfiles directory"
                 }
-                require(imported.isNotEmpty()) { "Template declares no Prolog sources" }
                 require(imported.size <= MAX_SOURCES) { "Template exceeds source limit" }
                 val duplicate = imported.groupingBy(PrologSource::name).eachCount().entries.firstOrNull { it.value > 1 }
                 require(duplicate == null) { "Template emits duplicate source names" }
@@ -185,6 +194,7 @@ class GitConfigTemplateImporter(
                 "clause|current_predicate|set_prolog_flag|working_directory|directory_files|delete_file|rename_file" +
                 ")\\s*(\\(|$)",
         )
+        const val DEFAULT_ANDROID_DOTFILES_DIRECTORY = ".config/zarathushtra/android"
         const val MAX_SOURCES = 64
         const val MAX_SOURCE_BYTES = 512 * 1024L
         const val MAX_TOTAL_BYTES = 4 * 1024 * 1024L
