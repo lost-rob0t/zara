@@ -86,11 +86,6 @@ def test_descriptor_schema_rejects_text_hosts_reject(
     [
         ("installed", 1),
         ("available", "true"),
-        ("health", "ready"),
-        ("locality", "embedded"),
-        ("transport", "in_process"),
-        ("provider_control", "zara"),
-        ("model_control", "mixed"),
         ("supports_streaming", 1),
         ("supports_cancel", "false"),
         ("supports_context_handles", 0),
@@ -112,3 +107,30 @@ def test_python_descriptor_rejects_scalar_types_shared_schema_rejects(
 
     with pytest.raises(TypeError):
         replace(descriptor, **{field: unsafe_value})
+
+
+@pytest.mark.parametrize(
+    ("field", "wire_value"),
+    [
+        ("health", "ready"),
+        ("locality", "embedded"),
+        ("transport", "in_process"),
+        ("provider_control", "zara"),
+        ("model_control", "mixed"),
+    ],
+)
+def test_python_descriptor_rejects_wire_enum_strings(
+    field: str,
+    wire_value: str,
+) -> None:
+    validator = _validator()
+    descriptor = _valid_descriptor()
+
+    candidate = descriptor.to_wire()
+    candidate[field] = wire_value
+    assert list(validator.iter_errors(candidate)) == [], (
+        f"shared wire schema unexpectedly rejected canonical enum string {field}={wire_value!r}"
+    )
+
+    with pytest.raises(TypeError):
+        replace(descriptor, **{field: wire_value})
