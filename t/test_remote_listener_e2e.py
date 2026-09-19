@@ -135,6 +135,7 @@ def test_running_server_bootstraps_authenticated_listener_and_preserves_identity
 ):
     runtime_dir = tmp_path / "runtime"
     state_home = tmp_path / "state"
+    security_dir = state_home / "zarathushtra" / "security"
     monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
     monkeypatch.delenv("ZARA_SECURITY_DIR", raising=False)
 
@@ -143,46 +144,58 @@ def test_running_server_bootstraps_authenticated_listener_and_preserves_identity
     first = _server(runtime_dir)
     assert first.start() is ServerState.READY
 
-    control_path = runtime_dir / "zara-control.sock"
-    control = SecurityAdminClient(control_path)
-    assert control.request("remote_listener.status") == {
-        "active": False,
-        "endpoint": None,
-        "server_public_key": None,
-    }
+    server_public = None
+    client_public = None
+    client_secret = None
+    try:
+        control_path = runtime_dir / "zara-control.sock"
+        control = SecurityAdminClient(control_path)
+        assert not security_dir.exists()
+        assert control.request("remote_listener.status") == {
+            "active": False,
+            "endpoint": None,
+            "server_public_key": None,
+        }
+        assert not security_dir.exists()
 
-    first_metadata = control.request("remote_listener.ensure")
-    assert first_metadata["active"] is True
-    assert first_metadata["endpoint"] == first_endpoint
-    server_public = first_metadata["server_public_key"]
-    assert isinstance(server_public, str) and len(server_public) == 40
-    assert control.request("remote_listener.ensure") == first_metadata
+        first_metadata = control.request("remote_listener.ensure")
+        assert security_dir.is_dir()
+        assert first_metadata["active"] is True
+        assert first_metadata["endpoint"] == first_endpoint
+        server_public = first_metadata["server_public_key"]
+        assert isinstance(server_public, str) and len(server_public) == 40
+        assert control.request("remote_listener.ensure") == first_metadata
 
-    client_public, client_secret = _keypair()
-    enrolled = control.request(
-        "enroll",
-        public_key=client_public,
-        device_id="bootstrap-e2e-phone",
-    )
-    assert enrolled["active"] is True
-    assert enrolled["public_key"] == client_public
+        client_public, client_secret = _keypair()
+        enrolled = control.request(
+            "enroll",
+            public_key=client_public,
+            device_id="bootstrap-e2e-phone",
+        )
+        assert enrolled["active"] is True
+        assert enrolled["public_key"] == client_public
 
-    hello = _authenticated_hello(
-        endpoint=first_endpoint,
-        client_public=client_public,
-        client_secret=client_secret,
-        server_public=server_public,
-    )
-    assert hello.type == "hello.ok"
-    assert isinstance(hello.session_id, str) and hello.session_id
-    assert first.stop()
+        hello = _authenticated_hello(
+            endpoint=first_endpoint,
+            client_public=client_public,
+            client_secret=client_secret,
+            server_public=server_public,
+        )
+        assert hello.type == "hello.ok"
+        assert isinstance(hello.session_id, str) and hello.session_id
+    finally:
+        assert first.stop()
+
+    assert isinstance(server_public, str)
+    assert isinstance(client_public, str)
+    assert isinstance(client_secret, str)
 
     second_endpoint = _ephemeral_tcp_endpoint()
     monkeypatch.setattr("zara.server._DEFAULT_REMOTE_ENDPOINT", second_endpoint)
     second = _server(runtime_dir)
     assert second.start() is ServerState.READY
     try:
-        control = SecurityAdminClient(control_path)
+        control = SecurityAdminClient(runtime_dir / "zara-control.sock")
         second_metadata = control.request("remote_listener.ensure")
         assert second_metadata["active"] is True
         assert second_metadata["endpoint"] == second_endpoint
