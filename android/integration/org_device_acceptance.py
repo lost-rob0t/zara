@@ -27,6 +27,9 @@ FIXTURE_TREE_URI = (
     "content://com.android.externalstorage.documents/tree/"
     "primary%3ADocuments%2FZaraOrgAcceptance"
 )
+SAF_FIXTURE_PICKER_SEGMENTS = ("Documents", "ZaraOrgAcceptance")
+SAF_PICKER_CONFIRM_LABEL = "USE THIS FOLDER"
+SAF_PICKER_ALLOW_LABEL = "ALLOW"
 UIAUTOMATOR_RETRY_ATTEMPTS = 3
 UIAUTOMATOR_RETRY_DELAY_SECONDS = 0.25
 UIAUTOMATOR_MISSING_HIERARCHY_PREFIX = "UIAutomator did not create "
@@ -224,10 +227,13 @@ def connect_fixture_through_saf(device: Device) -> None:
     device.launch_surface(COMPONENT, "Org")
     device.await_contains("Shared Org workspace is unavailable")
     device.tap("Choose Org directory")
-    device.await_contains("Use this folder")
-    _tap_contains(device, "Use this folder")
-    device.await_contains("Allow")
-    _tap_contains(device, "Allow")
+    for segment in SAF_FIXTURE_PICKER_SEGMENTS:
+        device.await_contains(segment)
+        _tap_contains(device, segment)
+    device.await_contains(SAF_PICKER_CONFIRM_LABEL)
+    _tap_contains(device, SAF_PICKER_CONFIRM_LABEL)
+    device.await_contains(SAF_PICKER_ALLOW_LABEL)
+    _tap_contains(device, SAF_PICKER_ALLOW_LABEL)
     device.await_contains("Acceptance task", timeout=20.0)
 
 
