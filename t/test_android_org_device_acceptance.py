@@ -73,11 +73,20 @@ def test_org_emulator_runner_script_is_posix_sh_compatible():
     assert "set -euo pipefail" not in emulator_block
 
 
-def test_org_emulator_runner_waits_for_boot_and_writable_external_storage():
+def test_org_emulator_runner_creates_fixture_parent_after_boot_before_write_probe():
     text = WORKFLOW.read_text(encoding="utf-8")
     emulator_block = text.split(
         "uses: reactivecircus/android-emulator-runner@v2", 1
     )[1].split("- name: Validate exact-head Org evidence", 1)[0]
     assert "getprop sys.boot_completed" in emulator_block
-    assert "test -d /sdcard/Documents" in emulator_block
+    assert "mkdir -p /sdcard/Documents" in emulator_block
     assert "/sdcard/Documents/.zara-org-storage-ready" in emulator_block
+    assert "test -d /sdcard/Documents" not in emulator_block
+
+
+def test_org_evidence_upload_retains_preflight_diagnostics_even_if_device_capture_fails():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "Prepare exact-head evidence directory" in text
+    assert "preflight.json" in text
+    assert '"source_sha":"$SOURCE_SHA"' in text
+    assert "if-no-files-found: error" in text
