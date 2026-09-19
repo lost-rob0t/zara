@@ -50,7 +50,7 @@ class OrgTreeRepository(
         )
     }
 
-    override fun appendAgendaCapture(text: String, relativePath: String = "agenda/inbox.org"): OrgFileRef {
+    override fun appendAgendaCapture(text: String, relativePath: String): OrgFileRef {
         val target = ensureFile(relativePath, "text/org")
         resolver.openOutputStream(target.uri, "wa")?.bufferedWriter()?.use { writer ->
             if (target.length() > 0) writer.append('\n')
