@@ -208,6 +208,11 @@ class Device:
             return False
         continue_button = self.find("Continue")
         if continue_button is None:
+            # Hosted emulators can surface a Pixel Launcher ANR over Zara after the
+            # release-notes tree was already visible. Clear only that known OS-owned
+            # overlay and make the caller refresh UI state before trying Continue.
+            if self.dismiss_pixel_launcher_anr():
+                return True
             raise AssertionError("Zara release notes did not expose Continue")
         left, top, right, bottom = self.bounds(continue_button)
         self.adb(
