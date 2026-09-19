@@ -64,21 +64,29 @@ def test_org_evidence_workflow_checks_out_and_names_artifact_by_exact_pr_head():
     assert "org-android-ui-evidence-${{ github.event.pull_request.head.sha }}" in text
 
 
-def test_org_emulator_runner_script_is_posix_sh_compatible():
+def test_org_emulator_runner_script_is_posix_sh_compatible_and_line_independent():
     text = WORKFLOW.read_text(encoding="utf-8")
     emulator_block = text.split(
         "uses: reactivecircus/android-emulator-runner@v2", 1
     )[1].split("- name: Validate exact-head Org evidence", 1)[0]
     assert "set -eu\n" in emulator_block
     assert "set -euo pipefail" not in emulator_block
+    # android-emulator-runner invokes each script line as a separate `sh -c`;
+    # shell control structures split across lines can never be valid here.
+    assert "while [" not in emulator_block
+    assert "done\n" not in emulator_block
+    assert "ready=" not in emulator_block
+    assert "attempt=" not in emulator_block
 
 
-def test_org_emulator_runner_creates_fixture_parent_after_boot_before_write_probe():
+def test_org_emulator_runner_creates_fixture_parent_then_write_probes_without_loop_state():
     text = WORKFLOW.read_text(encoding="utf-8")
     emulator_block = text.split(
         "uses: reactivecircus/android-emulator-runner@v2", 1
     )[1].split("- name: Validate exact-head Org evidence", 1)[0]
-    assert "getprop sys.boot_completed" in emulator_block
+    # The action itself waits until the emulator reports boot complete before
+    # executing script lines. The custom script only needs stateless commands.
+    assert "adb -s emulator-5554 wait-for-device" in emulator_block
     assert "mkdir -p /sdcard/Documents" in emulator_block
     assert "/sdcard/Documents/.zara-org-storage-ready" in emulator_block
     assert "test -d /sdcard/Documents" not in emulator_block
