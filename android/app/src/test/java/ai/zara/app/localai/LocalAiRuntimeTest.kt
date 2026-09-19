@@ -144,6 +144,48 @@ class LocalAiRuntimeTest {
     }
 
     @Test
+    fun repeatedCloseCallsWaitForTheSameBackendTeardown() {
+        val backend = FakeLlmBackend().apply { blockClose = true }
+        val runtime = LocalAiRuntime(backend)
+        runtime.load(modelSpec()).get(2, TimeUnit.SECONDS)
+        val firstCloseFinished = CountDownLatch(1)
+        val secondCloseFinished = CountDownLatch(1)
+        val firstCloser = Thread {
+            try {
+                runtime.close()
+            } finally {
+                firstCloseFinished.countDown()
+            }
+        }
+        val secondCloser = Thread {
+            try {
+                runtime.close()
+            } finally {
+                secondCloseFinished.countDown()
+            }
+        }
+
+        firstCloser.start()
+        assertTrue("backend close must start before the second close", backend.awaitCloseStarted())
+        secondCloser.start()
+
+        try {
+            assertFalse(
+                "a repeated close must not return before shared teardown completes",
+                secondCloseFinished.await(100, TimeUnit.MILLISECONDS),
+            )
+        } finally {
+            backend.releaseClose()
+        }
+
+        assertTrue(firstCloseFinished.await(2, TimeUnit.SECONDS))
+        assertTrue(secondCloseFinished.await(2, TimeUnit.SECONDS))
+        firstCloser.join(2_000)
+        secondCloser.join(2_000)
+        assertEquals(LocalAiPhase.STOPPED, runtime.state().phase)
+    }
+
+    @Test
     fun backendCallbacksAfterCloseAreDroppedWithoutRevivingRuntimeState() {
         val backend = FakeLlmBackend()
         val runtime = LocalAiRuntime(backend)
