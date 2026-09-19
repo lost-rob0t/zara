@@ -30,6 +30,7 @@ class ZaraApplication : Application() {
             context = this,
             currentVersion = BuildConfig.VERSION_NAME,
             currentSourceSha = BuildConfig.SOURCE_SHA,
+            currentVersionCode = BuildConfig.VERSION_CODE.toLong(),
         )
     }
 }
