@@ -1,6 +1,7 @@
 package ai.zara.app
 
 import ai.zara.app.runtime.AssistantRuntimeCancelledException
+import ai.zara.app.runtime.AssistantRuntimeStaleGenerationException
 import ai.zara.app.runtime.AssistantRuntimeTurnFailedException
 import ai.zara.app.runtime.AssistantRuntimeUnavailableException
 import java.io.File
@@ -21,6 +22,18 @@ class PrologRlmChatFailureRoutingTest {
         assertFalse(failure.rediscover)
         assertTrue(failure.message.contains("cancelled", ignoreCase = true))
         assertFalse(failure.message.contains("unavailable", ignoreCase = true))
+    }
+
+    @Test
+    fun staleGenerationIsDiscardedWithoutRediscovery() {
+        val failure = classifyPrologRlmChatFailure(
+            CompletionException(AssistantRuntimeStaleGenerationException("stale generation 17")),
+        )
+
+        assertEquals(PrologRlmChatFailureKind.STALE_GENERATION, failure.kind)
+        assertFalse(failure.rediscover)
+        assertTrue(failure.message.contains("discarded", ignoreCase = true))
+        assertFalse(failure.message.contains("stale generation 17"))
     }
 
     @Test
