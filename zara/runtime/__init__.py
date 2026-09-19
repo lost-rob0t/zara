@@ -5,7 +5,7 @@ consumed by headless, desktop, pet, and future remote surfaces. It must not
 import Qt or any other concrete UI implementation.
 """
 
-from . import bridge, events
+from . import bridge, events, registry
 from .package_profiles import (
     PACKAGE_PROFILE_SCHEMA,
     AppPackageProfile,
@@ -34,4 +34,5 @@ __all__ = [
     "activate_profile_package",
     "bridge",
     "events",
+    "registry",
 ]
