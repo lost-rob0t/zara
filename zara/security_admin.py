@@ -10,7 +10,7 @@ import stat
 import struct
 import threading
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from zara.json_limits import require_bounded_json_nesting
 from zara.principals import PrincipalContext
@@ -24,6 +24,7 @@ _MAX_REQUEST_BYTES = 16 * 1024
 _MAX_RESPONSE_BYTES = 64 * 1024
 _SOCKET_TIMEOUT = 1.0
 _UNIX_PATH_SAFE_BYTES = 100
+_MAX_ENDPOINT_BYTES = 512
 
 
 class SecurityAdminError(RuntimeError):
@@ -115,14 +116,59 @@ def _bind_socket(listener: socket.socket, path: Path) -> None:
             os.close(directory_fd)
 
 
+def _listener_metadata(value: object, *, require_active: bool) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != {
+        "active",
+        "endpoint",
+        "server_public_key",
+    }:
+        raise SecurityAdminError("remote listener metadata is malformed")
+    active = value.get("active")
+    endpoint = value.get("endpoint")
+    server_public_key = value.get("server_public_key")
+    if type(active) is not bool:
+        raise SecurityAdminError("remote listener active flag is invalid")
+    if require_active and not active:
+        raise SecurityAdminError("remote listener did not become active")
+    if active:
+        if not isinstance(endpoint, str) or not endpoint.startswith("tcp://"):
+            raise SecurityAdminError("remote listener endpoint is invalid")
+        try:
+            encoded_endpoint = endpoint.encode("utf-8")
+        except UnicodeError as error:
+            raise SecurityAdminError("remote listener endpoint is invalid") from error
+        if not encoded_endpoint or len(encoded_endpoint) > _MAX_ENDPOINT_BYTES:
+            raise SecurityAdminError("remote listener endpoint is invalid")
+        if any(ord(character) < 0x20 for character in endpoint):
+            raise SecurityAdminError("remote listener endpoint is invalid")
+    elif endpoint is not None:
+        raise SecurityAdminError("inactive remote listener must not publish an endpoint")
+    if server_public_key is not None:
+        if not isinstance(server_public_key, str):
+            raise SecurityAdminError("remote listener server key is invalid")
+        try:
+            server_public_key = SecurityRegistry._normalize_public_key(server_public_key)
+        except ValueError as error:
+            raise SecurityAdminError("remote listener server key is invalid") from error
+    if active and server_public_key is None:
+        raise SecurityAdminError("active remote listener must publish a server key")
+    return {
+        "active": active,
+        "endpoint": endpoint,
+        "server_public_key": server_public_key,
+    }
+
+
 class SecurityAdminServer:
-    """Bounded AF_UNIX control plane that mutates one live SecurityRegistry."""
+    """Bounded owner-local control plane for security and listener lifecycle."""
 
     def __init__(
         self,
         state: PersistentSecurityState,
         *,
         capabilities: Iterable[Capability],
+        ensure_remote_listener: Callable[[], object] | None = None,
+        remote_listener_status: Callable[[], object] | None = None,
     ) -> None:
         if not isinstance(state, PersistentSecurityState):
             raise TypeError("state must be PersistentSecurityState")
@@ -131,8 +177,14 @@ class SecurityAdminServer:
             if not isinstance(capability, Capability):
                 raise TypeError("capabilities must contain Capability values")
             normalized.add(capability)
+        if ensure_remote_listener is not None and not callable(ensure_remote_listener):
+            raise TypeError("ensure_remote_listener must be callable")
+        if remote_listener_status is not None and not callable(remote_listener_status):
+            raise TypeError("remote_listener_status must be callable")
         self._state = state
         self._capabilities = frozenset(normalized)
+        self._ensure_remote_listener = ensure_remote_listener
+        self._remote_listener_status = remote_listener_status
         self._registry: SecurityRegistry | None = None
         self._registry_lock = threading.RLock()
         self._listener: socket.socket | None = None
@@ -268,6 +320,18 @@ class SecurityAdminServer:
         action = request.get("action")
         if version != _PROTOCOL_VERSION:
             raise SecurityAdminError("unsupported security admin protocol version")
+        if action == "remote_listener.ensure":
+            if set(request) != {"version", "action"}:
+                raise SecurityAdminError("remote listener ensure request has invalid fields")
+            if self._ensure_remote_listener is None:
+                raise SecurityAdminError("remote listener control is unavailable")
+            return _listener_metadata(self._ensure_remote_listener(), require_active=True)
+        if action == "remote_listener.status":
+            if set(request) != {"version", "action"}:
+                raise SecurityAdminError("remote listener status request has invalid fields")
+            if self._remote_listener_status is None:
+                raise SecurityAdminError("remote listener control is unavailable")
+            return _listener_metadata(self._remote_listener_status(), require_active=False)
         if action == "enroll":
             if set(request) != {"version", "action", "public_key", "device_id"}:
                 raise SecurityAdminError("security enroll request has invalid fields")
