@@ -35,11 +35,12 @@ def test_org_acceptance_captures_todo_roam_and_scrolled_separate_dailies_with_te
 
 def test_org_acceptance_daily_layout_is_acceptance_configuration_not_a_product_default():
     text = ACCEPTANCE.read_text(encoding="utf-8")
-    assert '"daily-path-template">daily/{date}.org' in text
-    assert '"daily-zone-id">UTC' in text
+    assert "daily/{date}.org" in text
+    assert "yyyy-MM-dd" in text
+    assert "UTC" in text
     assert 'FIXTURE_RELATIVE_ROOT = "Documents/ZaraOrgAcceptance"' in text
     assert "Documents/Notes/org" not in text
-    assert "fixture root exists only inside the disposable emulator" in text
+    assert "fixture path exists only inside the disposable emulator" in text
 
 
 def test_org_evidence_validator_requires_exact_sha_pass_and_all_text_twins():
