@@ -191,15 +191,18 @@ class Device:
 
     def dismiss_pixel_launcher_anr(self) -> bool:
         # The hosted Pixel emulator can surface a launcher ANR over an otherwise
-        # healthy Zara activity. Close only that OS-owned launcher process so the
-        # same hung launcher cannot immediately re-present the dialog. Never hide a
-        # Zara crash/ANR or weaken the app assertions below.
+        # healthy Zara activity. Prefer closing only that OS-owned launcher process
+        # so the same hung launcher cannot immediately re-present the dialog. Keep
+        # Wait only as a compatibility fallback for platform variants that do not
+        # expose Close app. Never hide a Zara crash/ANR or weaken app assertions.
         if self.find_contains("Pixel Launcher isn't responding") is None:
             return False
-        close_app = self.find("Close app")
-        if close_app is None:
-            raise AssertionError("Pixel Launcher ANR did not expose a Close app action")
-        left, top, right, bottom = self.bounds(close_app)
+        action = self.find("Close app")
+        if action is None:
+            action = self.find("Wait")
+        if action is None:
+            raise AssertionError("Pixel Launcher ANR did not expose a dismissal action")
+        left, top, right, bottom = self.bounds(action)
         self.adb(
             "shell",
             "input",
