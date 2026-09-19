@@ -21,6 +21,11 @@ intent_fixture(dictation, "search todos milk", python(search_todos), [todos, mil
 intent_fixture(passive, "find tasks", python(search_todos), [tasks]).
 intent_fixture(conversation, "find tasks", python(search_todos), [tasks]).
 intent_fixture(dictation, "find tasks", python(search_todos), [tasks]).
+intent_fixture(passive, "org editor", python(open_org_todos), [editor]).
+intent_fixture(conversation, "org editor", python(open_org_todos), [editor]).
+intent_fixture(dictation, "org editor", python(open_org_todos), [editor]).
+intent_fixture(passive, "agenda 5", python(todo_brief), ['5']).
+intent_fixture(conversation, "prioritize todos", python(todo_brief), [todos]).
 intent_fixture(passive, "open", pending(open), [app]).
 intent_fixture(passive, "text", pending(text), [contact, message]).
 intent_fixture(passive, "text alice", pending(text), [message]).

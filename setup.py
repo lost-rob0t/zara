@@ -135,7 +135,7 @@ setup(
     },
     include_package_data=True,
     package_data={
-        "zara": ["py.typed"],
+        "zara": ["py.typed", "conversation_schema.sql"],
     },
     data_files=_prolog_data_files(),
 )
