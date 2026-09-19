@@ -50,22 +50,44 @@ def _revision(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def restore_source_line_endings(original: str, edited: str) -> str:
-    """Restore a homogeneous source newline convention after Qt normalization.
+def _source_line_endings(text: str) -> list[str]:
+    endings: list[str] = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "\r":
+            if index + 1 < len(text) and text[index + 1] == "\n":
+                endings.append("\r\n")
+                index += 2
+                continue
+            endings.append("\r")
+        elif char == "\n":
+            endings.append("\n")
+        index += 1
+    return endings
 
-    ``QPlainTextEdit.toPlainText()`` exposes paragraph boundaries as ``\n``.
-    Reapply an existing all-CRLF or all-CR convention before saving so a normal
-    Desktop edit does not rewrite every line in an Emacs/Git shared Org file.
-    Mixed-newline files are left alone rather than guessing a canonical style.
+
+def restore_source_line_endings(original: str, edited: str) -> str:
+    """Restore source newline identity after Qt normalizes paragraphs to LF.
+
+    If the edit keeps the same line count, replay each original separator so
+    even mixed-newline Org files round-trip without unrelated Git churn. If the
+    line count changes, preserve a homogeneous existing convention; mixed files
+    then stay normalized because there is no unambiguous separator for new or
+    removed lines.
     """
 
-    without_crlf = original.replace("\r\n", "")
+    endings = _source_line_endings(original)
     normalized = edited.replace("\r\n", "\n").replace("\r", "\n")
-    if "\r\n" in original and "\n" not in without_crlf and "\r" not in without_crlf:
-        return normalized.replace("\n", "\r\n")
-    if "\r" in original and "\n" not in original:
-        return normalized.replace("\n", "\r")
-    return edited
+    parts = normalized.split("\n")
+    if len(parts) - 1 == len(endings):
+        return "".join(
+            part + (endings[index] if index < len(endings) else "")
+            for index, part in enumerate(parts)
+        )
+    if endings and all(ending == endings[0] for ending in endings):
+        return normalized.replace("\n", endings[0])
+    return normalized
 
 
 def resolve_org_root(
