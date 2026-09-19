@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import stat
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,24 @@ def test_document_save_is_revision_fenced_and_source_preserving(tmp_path: Path):
             expected_revision=snapshot.revision,
             text="* DONE stale overwrite\n",
         )
+
+
+def test_document_save_preserves_existing_file_mode(tmp_path: Path):
+    from zara.desktop.org_app import OrgWorkspace
+
+    target = tmp_path / "shared.org"
+    target.write_text("* TODO before\n", encoding="utf-8")
+    target.chmod(0o640)
+    workspace = OrgWorkspace(tmp_path)
+    snapshot = workspace.open_document("shared.org")
+
+    workspace.save_document(
+        "shared.org",
+        expected_revision=snapshot.revision,
+        text="* DONE after\n",
+    )
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o640
 
 
 def test_workspace_rejects_escape_paths(tmp_path: Path):
