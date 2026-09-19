@@ -6,11 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from zara.principals import PrincipalContext
 from zara.security import Capability
 from zara.security_admin import SecurityAdminClient, SecurityAdminError, SecurityAdminServer
 from zara.security_state import PersistentSecurityState
-from zara.server import ServerState, ZaraServer, default_security_state_directory
+from zara.server import (
+    ServerState,
+    ZaraServer,
+    default_control_socket_path,
+    default_security_state_directory,
+)
 
 
 class _StartedGateway:
@@ -46,6 +50,7 @@ def _ready_server(monkeypatch: pytest.MonkeyPatch, *, public_key: str):
     server._state = ServerState.READY
     server._voice_ingress = object()
     server._security_state = _FakeSecurityState(public_key)
+    server._security_registry = object()
     monkeypatch.setattr(server, "_ensure_security_admin", lambda: object())
     return server
 
@@ -61,11 +66,21 @@ def test_default_security_state_directory_is_persistent_and_xdg_scoped(
     monkeypatch.setenv("ZARA_SECURITY_DIR", str(tmp_path / "explicit"))
     assert default_security_state_directory() == tmp_path / "explicit"
 
+    monkeypatch.setenv("ZARA_SECURITY_DIR", "relative/security")
+    with pytest.raises(ValueError, match="absolute"):
+        default_security_state_directory()
+
+
+def test_default_control_socket_path_reuses_canonical_runtime_directory(tmp_path: Path):
+    runtime_dir = tmp_path / "runtime"
+    assert default_control_socket_path(runtime_dir) == runtime_dir / "zara-control.sock"
+
 
 def test_owner_local_control_exposes_only_bounded_listener_actions(tmp_path: Path):
     state = PersistentSecurityState(tmp_path / "security")
     state.initialize()
     registry = state.load_registry()
+    control_path = tmp_path / "runtime" / "zara-control.sock"
     metadata = {
         "active": True,
         "endpoint": "tcp://192.0.2.10:17865",
@@ -81,16 +96,19 @@ def test_owner_local_control_exposes_only_bounded_listener_actions(tmp_path: Pat
     admin = SecurityAdminServer(
         state,
         capabilities={Capability.SESSION_BASIC},
+        control_socket_path=control_path,
         ensure_remote_listener=ensure_listener,
         remote_listener_status=lambda: dict(metadata),
     )
     admin.bind_registry(registry)
     admin.start()
     try:
-        client = SecurityAdminClient(state.control_socket_path)
+        client = SecurityAdminClient(control_path)
         assert client.request("remote_listener.status") == metadata
         assert client.request("remote_listener.ensure") == metadata
         assert ensure_calls == 1
+        assert control_path.exists()
+        assert not state.control_socket_path.exists()
         with pytest.raises(SecurityAdminError, match="invalid fields"):
             client.request("remote_listener.ensure", endpoint="tcp://0.0.0.0:1")
     finally:
@@ -165,7 +183,7 @@ def test_remote_listener_failed_start_is_not_published_and_can_retry(
     assert server.remote_listener_status() == {
         "active": False,
         "endpoint": None,
-        "server_public_key": public_key,
+        "server_public_key": None,
     }
     assert first.close_calls == 1
 
