@@ -62,3 +62,12 @@ def test_org_evidence_workflow_checks_out_and_names_artifact_by_exact_pr_head():
     assert "org_device_acceptance.py" in text
     assert "validate-org-ui-evidence.py" in text
     assert "org-android-ui-evidence-${{ github.event.pull_request.head.sha }}" in text
+
+
+def test_org_emulator_runner_script_is_posix_sh_compatible():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    emulator_block = text.split(
+        "uses: reactivecircus/android-emulator-runner@v2", 1
+    )[1].split("- name: Validate exact-head Org evidence", 1)[0]
+    assert "set -eu\n" in emulator_block
+    assert "set -euo pipefail" not in emulator_block
