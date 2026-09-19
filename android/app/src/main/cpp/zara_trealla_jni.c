@@ -2,7 +2,6 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <stdio.h>
 #include <string.h>
 
 #include "trealla.h"
@@ -19,6 +18,46 @@ static void throw_state(JNIEnv *env, const char *message)
         (*env)->ThrowNew(env, cls, message);
 }
 
+static void append_detail_text(
+    char *buffer,
+    size_t capacity,
+    size_t *length,
+    const char *text)
+{
+    if (capacity == 0 || text == NULL || *length >= capacity)
+        return;
+
+    while (*text != '\0' && *length + 1 < capacity) {
+        buffer[*length] = *text;
+        (*length)++;
+        text++;
+    }
+    buffer[*length] = '\0';
+}
+
+static void append_detail_size(
+    char *buffer,
+    size_t capacity,
+    size_t *length,
+    size_t value)
+{
+    if (capacity == 0 || *length >= capacity)
+        return;
+
+    char digits[sizeof(size_t) * 3];
+    size_t digit_count = 0;
+    do {
+        digits[digit_count++] = (char)('0' + (value % 10));
+        value /= 10;
+    } while (value != 0 && digit_count < sizeof(digits));
+
+    while (digit_count > 0 && *length + 1 < capacity) {
+        buffer[*length] = digits[--digit_count];
+        (*length)++;
+    }
+    buffer[*length] = '\0';
+}
+
 static void throw_query_state(
     JNIEnv *env,
     const char *message,
@@ -28,17 +67,20 @@ static void throw_query_state(
     bool query_handle,
     size_t query_length)
 {
-    char detail[320];
-    snprintf(
-        detail,
-        sizeof(detail),
-        "%s [pl_query_ok=%s runtime_error=%s status=%s query_handle=%s query_length=%zu]",
-        message,
-        query_ok ? "true" : "false",
-        runtime_error ? "true" : "false",
-        status ? "true" : "false",
-        query_handle ? "true" : "false",
-        query_length);
+    char detail[320] = {0};
+    size_t detail_length = 0;
+    append_detail_text(detail, sizeof(detail), &detail_length, message);
+    append_detail_text(detail, sizeof(detail), &detail_length, " [pl_query_ok=");
+    append_detail_text(detail, sizeof(detail), &detail_length, query_ok ? "true" : "false");
+    append_detail_text(detail, sizeof(detail), &detail_length, " runtime_error=");
+    append_detail_text(detail, sizeof(detail), &detail_length, runtime_error ? "true" : "false");
+    append_detail_text(detail, sizeof(detail), &detail_length, " status=");
+    append_detail_text(detail, sizeof(detail), &detail_length, status ? "true" : "false");
+    append_detail_text(detail, sizeof(detail), &detail_length, " query_handle=");
+    append_detail_text(detail, sizeof(detail), &detail_length, query_handle ? "true" : "false");
+    append_detail_text(detail, sizeof(detail), &detail_length, " query_length=");
+    append_detail_size(detail, sizeof(detail), &detail_length, query_length);
+    append_detail_text(detail, sizeof(detail), &detail_length, "]");
     throw_state(env, detail);
 }
 
