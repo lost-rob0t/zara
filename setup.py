@@ -15,7 +15,10 @@ from setuptools import setup, find_packages
 from pathlib import Path
 import os
 
+from zara.version_context import load_version_context
+
 ROOT = Path(__file__).resolve().parent
+VERSION_CONTEXT = load_version_context(ROOT / "version.properties")
 
 readme = ROOT / "README.org"
 long_description = readme.read_text() if readme.exists() else ""
@@ -38,9 +41,10 @@ def _prolog_data_files():
     base = pathlib.PurePosixPath("share/zarathushtra")
     sources: list[str] = []
 
-    main_pl = ROOT / "main.pl"
-    if main_pl.exists():
-        sources.append("main.pl")
+    for root_file in ("main.pl", "version.properties", "CHANGELOG.md"):
+        path = ROOT / root_file
+        if path.exists():
+            sources.append(root_file)
 
     for sub in ("kb", "modules", "assets"):
         sub_root = ROOT / sub
@@ -63,7 +67,7 @@ def _prolog_data_files():
 
 setup(
     name="zara",
-    version="2.0.0",
+    version=VERSION_CONTEXT.python_version,
     author="nsaspy",
     description="Hybrid Python/Prolog voice assistant",
     long_description=long_description,
@@ -127,14 +131,11 @@ setup(
             "zara-agent=zara.agent_cli:main",
             "zara-pets=zara.pets.cli:main",
             "zara-desktop=zara.desktop.app:main",
-            "zara-org=zara.desktop.org_app:main",
-            "zara-org-editor=zara.desktop.org_app:main_editor",
-            "zara-org-todo=zara.desktop.org_app:main_todo",
         ],
     },
     include_package_data=True,
     package_data={
-        "zara": ["py.typed"],
+        "zara": ["py.typed", "conversation_schema.sql"],
     },
     data_files=_prolog_data_files(),
 )

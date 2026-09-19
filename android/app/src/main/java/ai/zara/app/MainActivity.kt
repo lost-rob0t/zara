@@ -1,17 +1,24 @@
 package ai.zara.app
 
-import ai.zara.app.ui.RenderedTextTurn
+import ai.zara.app.conversations.ConversationStore
+import ai.zara.app.projects.ProjectContextStore
 import ai.zara.app.ui.LocalEmbeddingPreferenceStore
 import ai.zara.app.ui.RuntimeModePreferenceStore
 import ai.zara.app.ui.ThemePreferenceStore
 import ai.zara.app.ui.UiOperationFailure
 import ai.zara.app.ui.ZaraApp
+import ai.zara.app.update.Changelog
+import ai.zara.app.update.ChangelogSeenStore
 import ai.zara.app.voice.ManualVoiceState
 import ai.zara.ui.theme.ZaraTheme
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -35,13 +42,17 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         appSession = (application as ZaraApplication).appSession
         val updateManager = (application as ZaraApplication).updateManager
+        val changelogSeenStore = ChangelogSeenStore(this)
+        val currentChangelog = Changelog.load(this, BuildConfig.VERSION_NAME)
+        var showCurrentChangelog by mutableStateOf(
+            changelogSeenStore.shouldShow(BuildConfig.VERSION_NAME, currentChangelog)
+        )
         microphonePermissionGranted = hasMicrophonePermission()
         voiceState = appSession.voiceState()
 
         var runtimeState by mutableStateOf(appSession.state())
         var enrollmentPublicKey by mutableStateOf(appSession.enrollmentPublicKeyZ85())
         var pinnedServerPublicKey by mutableStateOf(appSession.pinnedServerPublicKeyZ85())
-        var lastTurn by mutableStateOf<RenderedTextTurn?>(null)
         var operationBusy by mutableStateOf(false)
         var voiceStreamState by mutableStateOf(appSession.voiceStreamState())
         var voiceStreamFailure by mutableStateOf(appSession.voiceStreamFailure())
@@ -55,6 +66,18 @@ class MainActivity : ComponentActivity() {
         var runtimeMode by mutableStateOf(runtimeModeStore.load())
         val embeddingPreferenceStore = LocalEmbeddingPreferenceStore(File(filesDir, "local-embedding.bin"))
         var localEmbedding by mutableStateOf(embeddingPreferenceStore.load())
+        val projectStore = ProjectContextStore(File(filesDir, "projects.bin"))
+        var projectState by mutableStateOf(projectStore.state())
+        val conversationStore = ConversationStore(File(filesDir, "conversations.bin"))
+        var conversationState by mutableStateOf(conversationStore.state())
+        if (conversationState.loadFailure == null && conversationState.selectedConversation == null) {
+            try {
+                conversationStore.create(projectState.selectedProjectId)
+                conversationState = conversationStore.state()
+            } catch (error: Exception) {
+                operationError = UiOperationFailure.summarize(error)
+            }
+        }
         appSession.setRuntimeMode(runtimeMode)
 
         val microphonePermission = registerForActivityResult(
@@ -111,7 +134,7 @@ class MainActivity : ComponentActivity() {
                 sourceSha = BuildConfig.SOURCE_SHA,
                 enrollmentPublicKey = enrollmentPublicKey,
                 pinnedServerPublicKey = pinnedServerPublicKey,
-                lastTurn = lastTurn,
+                conversationState = conversationState,
                 operationError = operationError,
                 operationBusy = operationBusy,
                 microphonePermissionGranted = microphonePermissionGranted,
@@ -123,8 +146,12 @@ class MainActivity : ComponentActivity() {
                 prologSources = prologSources,
                 prologQueryResult = prologQueryResult,
                 updateState = updateState,
+                changelogVersion = BuildConfig.VERSION_NAME,
+                changelogText = currentChangelog,
+                showChangelog = showCurrentChangelog,
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
+                projectState = projectState,
                 onSelectTheme = { theme ->
                     selectedTheme = theme
                     themePreferenceStore.save(theme)
@@ -180,26 +207,157 @@ class MainActivity : ComponentActivity() {
                         operationError = UiOperationFailure.summarize(error)
                     }
                 },
-                onSendText = { text ->
+                onNewConversation = {
+                    operationError = null
+                    try {
+                        conversationStore.create()
+                        conversationState = conversationStore.state()
+                        if (projectState.loadFailure == null) {
+                            projectState = projectStore.select(null)
+                        }
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onSelectConversation = { conversationId ->
+                    operationError = null
+                    try {
+                        conversationState = conversationStore.select(conversationId)
+                        if (projectState.loadFailure == null) {
+                            projectState = projectStore.select(
+                                conversationState.selectedConversation?.projectId,
+                            )
+                        }
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onToggleConversationPinned = { conversationId, pinned ->
+                    operationError = null
+                    try {
+                        conversationState = conversationStore.setPinned(conversationId, pinned)
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onRenameConversation = { conversationId, title ->
+                    operationError = null
+                    try {
+                        conversationState = conversationStore.rename(conversationId, title)
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onMoveConversationToProject = { conversationId, projectId ->
+                    operationError = null
+                    try {
+                        if (projectId != null) {
+                            require(projectState.project(projectId) != null) { "Unknown project: $projectId" }
+                        }
+                        conversationState = conversationStore.moveToProject(conversationId, projectId)
+                        if (conversationState.selectedConversationId == conversationId &&
+                            projectState.loadFailure == null
+                        ) {
+                            projectState = projectStore.select(projectId)
+                        }
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onSendText = { text, conversation, project ->
                     operationError = null
                     operationBusy = true
+                    val conversationId = conversation.id
                     try {
-                        appSession.submitText(text).whenComplete { result, error ->
+                        conversationState = conversationStore.beginTurn(conversationId, text)
+                        val future = if (project == null) {
+                            appSession.submitText(
+                                text = text,
+                                localConversationId = conversation.localConversationId,
+                                remoteConversationId = conversation.remoteConversationId,
+                            )
+                        } else {
+                            appSession.submitProjectText(
+                                text = text,
+                                projectId = project.id,
+                                conversationId = conversation.remoteConversationId,
+                                localConversationId = conversation.localConversationId,
+                            )
+                        }
+                        future.whenComplete { result, error ->
                             runOnUiThread {
                                 operationBusy = false
                                 if (error != null) {
-                                    operationError = UiOperationFailure.summarize(error)
+                                    val failure = UiOperationFailure.summarize(error)
+                                    operationError = failure
+                                    try {
+                                        conversationState = conversationStore.failTurn(conversationId, failure)
+                                    } catch (storeError: Exception) {
+                                        operationError = UiOperationFailure.summarize(storeError)
+                                    }
                                 } else if (result != null) {
-                                    lastTurn = RenderedTextTurn(
-                                        userText = text,
-                                        assistantText = result.text,
-                                        success = result.success,
-                                    )
+                                    val remoteConversationId = result.conversationId
+                                        ?.takeUnless { it.startsWith("local-") }
+                                    try {
+                                        conversationState = conversationStore.completeTurn(
+                                            conversationId = conversationId,
+                                            assistantText = result.text,
+                                            success = result.success,
+                                            remoteConversationId = remoteConversationId,
+                                        )
+                                        if (project != null && remoteConversationId != null &&
+                                            projectState.loadFailure == null
+                                        ) {
+                                            projectState = projectStore.bindConversation(
+                                                project.id,
+                                                remoteConversationId,
+                                            )
+                                        }
+                                    } catch (storeError: Exception) {
+                                        operationError = UiOperationFailure.summarize(storeError)
+                                    }
                                 }
                             }
                         }
                     } catch (error: Exception) {
                         operationBusy = false
+                        val failure = UiOperationFailure.summarize(error)
+                        operationError = failure
+                        try {
+                            val selected = conversationStore.state().conversation(conversationId)
+                            if (selected?.status == ai.zara.app.conversations.ConversationStatus.Running) {
+                                conversationState = conversationStore.failTurn(conversationId, failure)
+                            }
+                        } catch (_: Exception) {
+                        }
+                    }
+                },
+                onCreateProject = { name ->
+                    operationError = null
+                    try {
+                        val created = projectStore.create(name)
+                        projectState = projectStore.select(created.id)
+                        conversationState.selectedConversation?.let { conversation ->
+                            conversationState = conversationStore.moveToProject(
+                                conversation.id,
+                                created.id,
+                            )
+                        }
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onSelectProject = { projectId ->
+                    operationError = null
+                    try {
+                        projectState = projectStore.select(projectId)
+                        conversationState.selectedConversation?.let { conversation ->
+                            conversationState = conversationStore.moveToProject(
+                                conversation.id,
+                                projectId,
+                            )
+                        }
+                    } catch (error: Exception) {
                         operationError = UiOperationFailure.summarize(error)
                     }
                 },
@@ -324,6 +482,14 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 },
+                onSelectUpdate = { selectionId ->
+                    operationError = null
+                    updateManager.select(selectionId).whenComplete { _, error ->
+                        runOnUiThread {
+                            operationError = error?.let(UiOperationFailure::summarize)
+                        }
+                    }
+                },
                 onDownloadUpdate = {
                     operationError = null
                     updateManager.download().whenComplete { _, error ->
@@ -335,6 +501,13 @@ class MainActivity : ComponentActivity() {
                 onInstallUpdate = {
                     operationError = updateManager.requestInstall().exceptionOrNull()
                         ?.let(UiOperationFailure::summarize)
+                },
+                onCopyDiagnostics = ::copyDiagnostics,
+                onShareDiagnostics = ::shareDiagnostics,
+                onClearDiagnostics = ::clearDiagnostics,
+                onDismissChangelog = {
+                    changelogSeenStore.markShown(BuildConfig.VERSION_NAME)
+                    showCurrentChangelog = false
                 },
             )
         }
@@ -377,6 +550,28 @@ class MainActivity : ComponentActivity() {
                 voiceState = appSession.voiceState()
             }
         }
+    }
+
+    private fun copyDiagnostics() {
+        val text = appSession.exportDiagnostics()
+        val clipboard = getSystemService(ClipboardManager::class.java)
+        clipboard.setPrimaryClip(ClipData.newPlainText("Zara local diagnostics", text))
+        Toast.makeText(this, "Diagnostics copied — paste them into ChatGPT", Toast.LENGTH_LONG).show()
+    }
+
+    private fun shareDiagnostics() {
+        val text = appSession.exportDiagnostics()
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Zara local diagnostics")
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        startActivity(Intent.createChooser(intent, "Share Zara diagnostics"))
+    }
+
+    private fun clearDiagnostics() {
+        appSession.clearDiagnostics()
+        Toast.makeText(this, "Diagnostics cleared", Toast.LENGTH_SHORT).show()
     }
 
     private fun hasMicrophonePermission(): Boolean =

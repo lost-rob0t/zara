@@ -20,6 +20,10 @@ from zara.server import ServerState, ZaraServer
 from zara.zmq_transport import TransportConfig
 
 
+def _trace(phase: str, outcome: str) -> None:
+    print(f"STOCK_INTEROP phase={phase} outcome={outcome}", file=sys.stderr, flush=True)
+
+
 class _AcceptanceBarrier:
     def __init__(self) -> None:
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -33,6 +37,7 @@ class _AcceptanceBarrier:
         if self._started:
             raise RuntimeError("acceptance barrier already armed")
         self._started = True
+        _trace("turn.accepted", "barrier-armed")
 
         def wait_and_publish() -> None:
             try:
@@ -40,6 +45,7 @@ class _AcceptanceBarrier:
                 with connection:
                     if connection.recv(1) != b"A":
                         return
+                _trace("turn.accepted", "client-observed")
                 publish()
             finally:
                 self._socket.close()
@@ -66,7 +72,9 @@ class _ReceiptFuture(concurrent.futures.Future):
 
     def add_done_callback(self, callback, *, context=None) -> None:
         def after_route_registration(done) -> None:
+            _trace("turn.accepted", "callback-enter")
             callback(done)
+            _trace("turn.accepted", "callback-returned")
             self._barrier.publish_after_client_acceptance(self._publish)
 
         if context is None:
@@ -87,21 +95,25 @@ class _Supervisor:
         return object()
 
     def open_principal(self, principal: PrincipalContext):
+        _trace("principal", "opened")
         return object()
 
     def subscribe(self, principal: PrincipalContext, *, maxsize: int = 0):
+        _trace("subscription", "opened")
         return self.bus.subscribe(maxsize=maxsize)
 
     def publish(self, principal: PrincipalContext, event):
         return self.bus.publish(event)
 
     def submit(self, principal: PrincipalContext, command):
+        _trace("turn.submit", "received")
         self._turn += 1
         turn_id = f"android-stock-turn-{self._turn}"
         conversation_id = getattr(command, "conversation_id", None)
         receipt = CommandReceipt(request_id=command.request_id, turn_id=turn_id)
 
         def publish() -> None:
+            _trace("runtime.events", "publishing")
             self.bus.publish(
                 events.TurnStarted(turn_id=turn_id, conversation_id=conversation_id)
             )
@@ -192,6 +204,7 @@ def main() -> int:
             shutdown_timeout=1.0,
         )
         server.start()
+        _trace("server", "ready")
         try:
             _write_fixture(
                 fixture_file,

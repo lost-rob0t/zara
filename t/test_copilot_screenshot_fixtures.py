@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -28,8 +29,6 @@ REQUIRED_SCREENSHOTS = {
     "copilot-expanded.png",
     "copilot-history.png",
     "copilot-smallest-supported.png",
-    "org-editor.png",
-    "org-todo.png",
 }
 
 
@@ -58,8 +57,10 @@ def test_copilot_fixture_renderer_emits_bounded_manifest_and_required_pngs(tmp_p
         assert entry["height"] > 0
         path = output_dir / Path(entry["path"]).name
         assert path.is_file()
-        assert path.stat().st_size > 64
-        assert path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        data = path.read_bytes()
+        assert len(data) > 64
+        assert data.startswith(b"\x89PNG\r\n\x1a\n")
+        assert entry["sha256"] == hashlib.sha256(data).hexdigest()
 
 
 def test_copilot_fixture_renderer_isolated_from_user_state(tmp_path, monkeypatch):

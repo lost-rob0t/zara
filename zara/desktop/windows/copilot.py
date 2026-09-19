@@ -18,14 +18,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from zara.config import get_config
 from zara.desktop.conversation import ConversationService
-from zara.desktop.org_widgets import OrgHelpWindow, OrgWorkspaceWidget
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.windows.quick import QuickCopilotWindow
-from zara.org_browser import OrgBrowserConfig, OrgBrowserHookRegistry, OrgBrowserRuntime, build_org_browser_runtime
-from zara.org_browser_runtime import ConfiguredOrgRoamWorkspace
-from zara.org_roam import OrgRoamIndex
 
 
 class CopilotPresentation(str, Enum):
@@ -41,24 +36,11 @@ _GEOMETRY_KEYS = {
 }
 
 
-def _configured_org_runtime() -> tuple[OrgBrowserRuntime, OrgRoamIndex]:
-    try:
-        runtime = build_org_browser_runtime(get_config())
-        if not runtime.config.enabled or not runtime.config.roots:
-            return runtime, OrgRoamIndex.empty()
-        workspace = ConfiguredOrgRoamWorkspace(runtime.config, runtime.hooks)
-        return runtime, workspace.refresh(force=True).index
-    except Exception:
-        runtime = OrgBrowserRuntime(OrgBrowserConfig(), OrgBrowserHookRegistry())
-        return runtime, OrgRoamIndex.empty()
-
-
 class CopilotWindow(QuickCopilotWindow):
     """One chat renderer that changes presentation without copying state."""
 
     restart_requested = Signal()
     diagnostics_requested = Signal()
-    help_requested = Signal()
 
     def __init__(
         self,
@@ -67,8 +49,6 @@ class CopilotWindow(QuickCopilotWindow):
         *,
         initial_conversation_id: Optional[str] = None,
         settings: Optional[QSettings] = None,
-        org_index: Optional[OrgRoamIndex] = None,
-        org_runtime: Optional[OrgBrowserRuntime] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(
@@ -79,30 +59,12 @@ class CopilotWindow(QuickCopilotWindow):
             parent=parent,
         )
         self._presentation = CopilotPresentation.COMPACT
-        self._org_visible = False
-        self._help_window: Optional[OrgHelpWindow] = None
         self.setObjectName("zaraCopilot")
-
-        if org_runtime is not None:
-            self.org_runtime = org_runtime
-            resolved_index = org_index or OrgRoamIndex.empty()
-        elif org_index is not None:
-            self.org_runtime = OrgBrowserRuntime(OrgBrowserConfig(), OrgBrowserHookRegistry())
-            resolved_index = org_index
-        else:
-            self.org_runtime, resolved_index = _configured_org_runtime()
-
-        self.help_button = QPushButton("Help")
-        self.help_button.setObjectName("zaraSecondaryAction")
-        self.help_button.setAccessibleName("Open Org-rendered help")
-        header_layout = self.header_frame.layout()
-        header_layout.insertWidget(max(0, header_layout.count() - 1), self.help_button)
-        self.help_button.clicked.connect(self.show_help)
 
         self.history_panel = QWidget(self)
         self.history_panel.setObjectName("zaraConversationHistoryPanel")
         self.history_panel.setMinimumWidth(220)
-        self.history_panel.setMaximumWidth(300)
+        self.history_panel.setMaximumWidth(280)
         history_layout = QVBoxLayout(self.history_panel)
         history_layout.setContentsMargins(12, 12, 12, 12)
         history_layout.setSpacing(10)
@@ -114,14 +76,10 @@ class CopilotWindow(QuickCopilotWindow):
         history_header = QHBoxLayout()
         history_label = QLabel("Conversations")
         history_label.setObjectName("zaraSurfaceName")
-        self.org_button = QPushButton("Org")
-        self.org_button.setObjectName("zaraSecondaryAction")
-        self.org_button.setAccessibleName("Toggle Org-roam workspace")
         self.rename_button = QPushButton("Rename")
         self.rename_button.setObjectName("zaraSecondaryAction")
         history_header.addWidget(history_label)
         history_header.addStretch(1)
-        history_header.addWidget(self.org_button)
         history_header.addWidget(self.rename_button)
 
         self.search_edit = QLineEdit()
@@ -152,15 +110,6 @@ class CopilotWindow(QuickCopilotWindow):
             chat_layout.addWidget(widget)
         chat_layout.setStretchFactor(self.message_scroll, 1)
 
-        self.org_workspace = OrgWorkspaceWidget(
-            resolved_index,
-            config=self.org_runtime.config,
-            hooks=self.org_runtime.hooks,
-            parent=self,
-        )
-        self.org_workspace.setMinimumWidth(420)
-        self.org_workspace.hide()
-
         self.copilot_body = QWidget(self)
         self.copilot_body.setObjectName("zaraCopilotBody")
         body_layout = QHBoxLayout(self.copilot_body)
@@ -168,14 +117,12 @@ class CopilotWindow(QuickCopilotWindow):
         body_layout.setSpacing(root_layout.spacing())
         body_layout.addWidget(self.history_panel)
         body_layout.addWidget(self.chat_column, 1)
-        body_layout.addWidget(self.org_workspace, 1)
         root_layout.addWidget(self.copilot_body, 1)
 
         self.search_edit.textChanged.connect(self.refresh_history)
         self.history_list.itemActivated.connect(self._activate_history_item)
         self.rename_button.clicked.connect(lambda _checked=False: self.rename_current())
         self.sidebar_new_chat_button.clicked.connect(self.new_chat)
-        self.org_button.clicked.connect(self.toggle_org_workspace)
 
         self.expand_button.clicked.disconnect()
         self.expand_button.clicked.connect(self.toggle_presentation)
@@ -205,29 +152,6 @@ class CopilotWindow(QuickCopilotWindow):
             else CopilotPresentation.COMPACT
         )
         self.set_presentation(target)
-
-    def toggle_org_workspace(self) -> None:
-        if self._presentation is not CopilotPresentation.EXPANDED:
-            self.set_presentation(CopilotPresentation.EXPANDED)
-        self._org_visible = not self._org_visible
-        self.org_workspace.setVisible(self._org_visible)
-        self.org_button.setText("Hide Org" if self._org_visible else "Org")
-
-    def set_org_index(self, index: OrgRoamIndex) -> None:
-        self.org_workspace.set_index(index)
-
-    def show_help(self) -> None:
-        if self._help_window is None:
-            self._help_window = OrgHelpWindow(
-                config=self.org_runtime.config,
-                hooks=self.org_runtime.hooks,
-                parent=self,
-            )
-            self._help_window.setWindowFlag(Qt.WindowType.Window, True)
-        self.help_requested.emit()
-        self._help_window.show()
-        self._help_window.raise_()
-        self._help_window.activateWindow()
 
     def bind_conversation(self, conversation_id: str) -> None:
         """Rebind the one renderer to durable state without runtime traffic."""
@@ -306,7 +230,6 @@ class CopilotWindow(QuickCopilotWindow):
         self.expand_button.setText("Compact" if expanded else "Expand")
         self.expand_button.setToolTip("Use compact view" if expanded else "Use expanded view")
         self.history_panel.setVisible(expanded)
-        self.org_workspace.setVisible(expanded and self._org_visible)
         self.new_chat_button.setVisible(not expanded)
         self._apply_header_density()
         if expanded:

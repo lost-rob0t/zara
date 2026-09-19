@@ -25,7 +25,20 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
+
+      - name: Verify exact source checkout
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$SOURCE_SHA" || {
+            echo "checkout/source mismatch: expected=$SOURCE_SHA actual=$actual" >&2
+            exit 1
+          }
 
       - name: Check whitespace errors
         shell: bash
@@ -75,6 +88,33 @@ jobs:
           path: artifacts/
           if-no-files-found: warn
 
+  deep-regression:
+    name: deep regression / hash seed ${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        seed:
+          - "1"
+          - "31337"
+    env:
+      PYTHONHASHSEED: ${{ matrix.seed }}
+      PYTHONASYNCIODEBUG: "1"
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Run full Python suite under adversarial runtime settings
+        run: nix develop -c python -m pytest -q -o faulthandler_timeout=15 t/
+
   shared-mic:
     name: shared mic / ${{ matrix.name }}
     runs-on: ubuntu-latest
@@ -87,7 +127,7 @@ jobs:
             image: ubuntu:24.04
             python: python3
           - name: Arch Linux
-            image: archlinux:latest
+            image: ghcr.io/archlinux/archlinux:latest
             python: python
 
     container:
@@ -127,6 +167,8 @@ jobs:
 
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install Python audio dependencies
         shell: bash
@@ -154,11 +196,26 @@ jobs:
   android:
     name: android + wear gate
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Verify exact source checkout
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$SOURCE_SHA" || {
+            echo "checkout/source mismatch: expected=$SOURCE_SHA actual=$actual" >&2
+            exit 1
+          }
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
@@ -179,7 +236,7 @@ jobs:
           chmod 600 "$keystore"
           echo "ZARA_ANDROID_DEBUG_KEYSTORE=$keystore" >> "$GITHUB_ENV"
 
-      - name: Run Android/Wear/Org gate (unit tests + native Trealla + debug APKs + secret inspection)
+      - name: Run Android/Wear gate (unit tests + native Trealla + debug APKs + secret inspection)
         run: nix develop ./android -c bash scripts/test-android.sh
 
       - name: Upload Android parity diagnostics
@@ -189,6 +246,105 @@ jobs:
           name: android-semantic-parity-diagnostics
           path: android/app/build/reports/semantic-parity/
           if-no-files-found: warn
+
+      - name: Enable KVM access for emulator acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install Android emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          apt-cache policy libpulse0
+          sudo apt-get install -y --no-install-recommends libpulse0
+          ldconfig -p | grep -F 'libpulse.so.0' >/dev/null || {
+            echo "required emulator host library libpulse.so.0 is unavailable" >&2
+            exit 1
+          }
+
+      - name: Prime Android emulator SDK with current command-line tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?ANDROID SDK root is unavailable}}"
+          emulator_bin="$sdk_root/emulator/emulator"
+          android_cache="${HOME:?HOME is unavailable}/.android/cache"
+          android_cli_tools_build="15859902"
+          android_cli_tools_sha256="4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583"
+          android_cli_tools_archive="commandlinetools-linux-${android_cli_tools_build}_latest.zip"
+          android_cli_tools_url="https://dl.google.com/android/repository/${android_cli_tools_archive}"
+          android_cli_tools_tmp="$(mktemp -d)"
+          trap 'rm -rf "$android_cli_tools_tmp"' EXIT
+
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "$android_cli_tools_url" \
+            --output "$android_cli_tools_tmp/$android_cli_tools_archive"
+          printf '%s  %s\n' \
+            "$android_cli_tools_sha256" \
+            "$android_cli_tools_tmp/$android_cli_tools_archive" \
+            | sha256sum --check
+          unzip -q \
+            "$android_cli_tools_tmp/$android_cli_tools_archive" \
+            -d "$android_cli_tools_tmp/unpacked"
+
+          rm -rf "$sdk_root/cmdline-tools/latest"
+          mkdir -p "$sdk_root/cmdline-tools/latest"
+          cp -R \
+            "$android_cli_tools_tmp/unpacked/cmdline-tools/." \
+            "$sdk_root/cmdline-tools/latest/"
+
+          sdkmanager_bin="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$sdkmanager_bin" || {
+            echo "current sdkmanager install is unavailable: $sdkmanager_bin" >&2
+            exit 1
+          }
+          "$sdkmanager_bin" --version
+
+          if test -x "$emulator_bin" && "$emulator_bin" -version; then
+            echo "host Android emulator SDK is already healthy"
+            exit 0
+          fi
+
+          for attempt in 1 2 3; do
+            echo "emulator SDK install attempt ${attempt}/3"
+            rm -rf "$sdk_root/emulator" "$sdk_root/.temp" "$sdk_root/.downloadIntermediates" "$android_cache"
+            if "$sdkmanager_bin" --sdk_root="$sdk_root" --install platform-tools --channel=0 \
+              && "$sdkmanager_bin" --sdk_root="$sdk_root" --install emulator --channel=0 \
+              && test -x "$emulator_bin" \
+              && "$emulator_bin" -version; then
+              exit 0
+            fi
+            echo "emulator SDK install failed or verification failed; clearing package state" >&2
+            rm -rf "$sdk_root/emulator" "$sdk_root/.temp" "$sdk_root/.downloadIntermediates" "$android_cache"
+            sleep "$((attempt * 2))"
+          done
+          echo "emulator SDK install failed after 3 attempts" >&2
+          exit 1
+
+      - name: Capture Android screenshot evidence
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: bash -euo pipefail -c 'serial="emulator-5554"; adb -s "$serial" wait-for-device; test "$(adb -s "$serial" get-state)" = "device"; adb -s "$serial" install -r android/app/build/outputs/apk/debug/app-debug.apk; python android/integration/device_acceptance.py --serial "$serial" --source-sha "$SOURCE_SHA" --output android/app/build/reports/device'
+
+      - name: Upload Android UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-ui-evidence
+          path: android/app/build/reports/device/
+          if-no-files-found: error
 
       - name: Prepare exact-SHA phone APK artifact
         shell: bash
@@ -209,65 +365,52 @@ jobs:
           } > "$artifact_dir/manifest.txt"
 
       - name: Upload exact-SHA phone debug APK
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: zara-android-debug-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifacts/android-debug/
           if-no-files-found: warn
 
-      - name: Upload Org workbench debug APK
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zara-org-debug-${{ github.event.pull_request.head.sha || github.sha }}
-          path: android/org-app/build/outputs/apk/debug/org-app-debug.apk
-          if-no-files-found: warn
-
-      - name: Upload Org Todo debug APK
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zara-org-todo-debug-${{ github.event.pull_request.head.sha || github.sha }}
-          path: android/org-todo/build/outputs/apk/debug/org-todo-debug.apk
-          if-no-files-found: warn
-
-      - name: Upload Org Sync debug APK
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zara-org-sync-debug-${{ github.event.pull_request.head.sha || github.sha }}
-          path: android/org-sync/build/outputs/apk/debug/org-sync-debug.apk
-          if-no-files-found: warn
-
-      - name: Upload Org Roam debug APK
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zara-org-roam-debug-${{ github.event.pull_request.head.sha || github.sha }}
-          path: android/org-roam/build/outputs/apk/debug/org-roam-debug.apk
-          if-no-files-found: warn
-
-      - name: Upload Org Reminder debug APK
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zara-org-reminder-debug-${{ github.event.pull_request.head.sha || github.sha }}
-          path: android/org-reminder/build/outputs/apk/debug/org-reminder-debug.apk
-          if-no-files-found: warn
-
-      - name: Upload Org Timer debug APK
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zara-org-timer-debug-${{ github.event.pull_request.head.sha || github.sha }}
-          path: android/org-timer/build/outputs/apk/debug/org-timer-debug.apk
-          if-no-files-found: warn
-
       - name: Upload Wear debug APK
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: zara-wear-debug-${{ github.event.pull_request.head.sha || github.sha }}
           path: android/wear-app/build/outputs/apk/debug/wear-app-debug.apk
           if-no-files-found: warn
+
+  evidence:
+    name: dual-surface screenshot evidence
+    needs:
+      - test
+      - android
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Download desktop screenshot evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: regression-artifacts
+          path: evidence/desktop
+
+      - name: Download Android screenshot evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: android-ui-evidence
+          path: evidence/android
+
+      - name: Validate dual-surface screenshot evidence
+        run: |
+          python scripts/validate-ui-evidence.py \
+            --source-sha "$SOURCE_SHA" \
+            --desktop evidence/desktop/ui/manifest.json \
+            --android evidence/android/manifest.json

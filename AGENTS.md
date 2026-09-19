@@ -68,6 +68,23 @@ Prioritize tests for:
 
 Do not game coverage. Never weaken assertions, add meaningless execution-only tests, exclude relevant code, or preserve untested reachable branches solely to improve a percentage. If changed reachable behavior remains untested, keep adding useful tests until the practical coverage ceiling is reached or document the specific reason a path cannot be deterministically exercised.
 
+## Strict Version Context
+
+- `version.properties` is the canonical Zara product/release version state.
+- Run `python scripts/version-context.py --format json` before consequential version, release, tag, APK-channel, or updater decisions.
+- `zara.version` and `android.versionCode` describe the source being built. `release.target` and `release.targetAndroidVersionCode` describe the active release line. Do not conflate current source, active target, latest immutable release, or mutable `android-latest`.
+- Python packaging, Android phone, Wear, and versioned release CI must consume or validate that canonical context; hard-coded competing product versions are a regression.
+- Immutable versioned publication requires an explicit matching `v*` tag. Master pushes validate context and may update the separate fully-green `android-latest` channel, but do not mint immutable versioned releases.
+
+## Changelog Contract
+
+- `CHANGELOG.md` at the repository root is Zara's canonical user-facing changelog.
+- Every worker that lands a user-visible feature, behavior change, bug fix, compatibility change, packaging change, updater change, or release-facing CI/provenance change on `master` must update `CHANGELOG.md` in the same PR/commit.
+- Add normal merged work to `Unreleased` unless the active release section already exists and the change is explicitly part of that release. Release/promotion workers reconcile `Unreleased` into the exact version section before publication.
+- Keep entries short, concrete, and user-facing. Do not dump commit messages, internal worker coordination, or speculative/unmerged work into the changelog.
+- Re-fetch current `master` before editing the changelog, preserve concurrent entries, and deduplicate semantically equivalent notes rather than overwriting another worker's entry.
+- Desktop and Android surface the matching version section on first launch after a version changes; breaking the changelog parser or omitting the current release section is a release regression.
+
 ## CI/CD Test Gate
 - Always run the focused red/green TDD cycle before the full test suite for behavior changes.
 - Always run the full test suite after any code, configuration, test, or documentation change.

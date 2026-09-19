@@ -1,27 +1,67 @@
 package ai.zara.app.update
 
 import java.io.File
+import java.net.URI
 import java.security.MessageDigest
+
+enum class UpdateChannel(val label: String) {
+    Master("Master (fastest green)"),
+    Versioned("Versioned release"),
+}
 
 data class UpdateRelease(
     val version: String,
     val sourceSha: String,
     val apkUrl: String,
     val sha256: String,
-)
+    val channel: UpdateChannel = UpdateChannel.Versioned,
+) {
+    val selectionId: String
+        get() = "${channel.name.lowercase()}:$sourceSha"
+
+    val displayName: String
+        get() = when (channel) {
+            UpdateChannel.Master -> "Master (fastest green) · ${sourceSha.take(12)}"
+            UpdateChannel.Versioned -> "v$version"
+        }
+}
 
 object UpdateSecurity {
     private val sha = Regex("[0-9a-f]{40}")
     private val digest = Regex("[0-9a-f]{64}")
     private val version = Regex("^v?(\\d+)\\.(\\d+)\\.(\\d+)(?:-([0-9A-Za-z.-]+))?$")
+    private val trustedUpdateHosts = setOf(
+        "api.github.com",
+        "github.com",
+        "release-assets.githubusercontent.com",
+    )
 
     fun validate(release: UpdateRelease): Result<UpdateRelease> = runCatching {
-        require(isVersion(release.version)) { "Release version is invalid" }
+        when (release.channel) {
+            UpdateChannel.Master ->
+                require(release.version == "master") { "Rolling master version marker is invalid" }
+            UpdateChannel.Versioned ->
+                require(isVersion(release.version)) { "Release version is invalid" }
+        }
         require(release.sourceSha.matches(sha)) { "Release source SHA is invalid" }
         require(release.sha256.matches(digest)) { "Release checksum is invalid" }
-        require(release.apkUrl.startsWith("https://")) { "Update URL must use HTTPS" }
+        requireTrustedTransport(release.apkUrl)
         require(release.apkUrl.substringBefore('?').endsWith(".apk")) { "Update asset must be an APK" }
         release
+    }
+
+    fun requireTrustedTransport(value: String): String {
+        val uri = runCatching { URI(value) }
+            .getOrElse { error("Update URL is invalid") }
+        require(uri.scheme.equals("https", ignoreCase = true)) {
+            "Update transport must use HTTPS"
+        }
+        require(uri.rawUserInfo == null) { "Update URL must not contain credentials" }
+        require(uri.port == -1 || uri.port == 443) { "Update URL must use the HTTPS port" }
+        require(uri.host?.lowercase() in trustedUpdateHosts) {
+            "Update host is not trusted"
+        }
+        return uri.toString()
     }
 
     fun isNewer(candidate: String, current: String): Boolean {
@@ -36,6 +76,15 @@ object UpdateSecurity {
         if (next.prerelease == null) return true
         if (installed.prerelease == null) return false
         return comparePrerelease(next.prerelease, installed.prerelease) > 0
+    }
+
+    fun isInstallCandidate(
+        release: UpdateRelease,
+        currentVersion: String,
+        currentSourceSha: String,
+    ): Boolean = when (release.channel) {
+        UpdateChannel.Master -> release.sourceSha != currentSourceSha
+        UpdateChannel.Versioned -> isNewer(release.version, currentVersion)
     }
 
     fun verifySha256(file: File, expected: String): Boolean {
