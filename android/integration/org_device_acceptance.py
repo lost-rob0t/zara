@@ -255,6 +255,33 @@ def _tap_contains(device: Device, fragment: str) -> None:
     time.sleep(0.4)
 
 
+def _tap_app_control_through_launcher_anr(
+    device: Device, label: str, timeout: float = 5.0
+) -> None:
+    """Tap a Zara control without letting a hosted Pixel Launcher ANR mask it."""
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if device.dismiss_pixel_launcher_anr():
+            continue
+        node = device.find(label)
+        if node is not None:
+            left, top, right, bottom = device.bounds(node)
+            if right <= left or bottom <= top:
+                raise AssertionError(f"Control has empty bounds: {label}")
+            device.adb(
+                "shell",
+                "input",
+                "tap",
+                str((left + right) // 2),
+                str((top + bottom) // 2),
+            )
+            time.sleep(0.2)
+            return
+        time.sleep(0.2)
+    raise AssertionError(f"Control is not reachable after launcher ANR recovery: {label}")
+
+
 def _navigate_picker_to_fixture_if_needed(device: Device) -> None:
     """Recover when hosted DocumentsUI ignores the requested initial tree URI."""
 
@@ -299,7 +326,7 @@ def connect_fixture_through_saf(device: Device) -> None:
     device.adb("shell", "am", "force-stop", PACKAGE)
     device.launch_surface(COMPONENT, "Org")
     device.await_contains("Shared Org workspace is unavailable")
-    device.tap("Choose Org directory")
+    _tap_app_control_through_launcher_anr(device, "Choose Org directory")
     _await_picker_action(device, "Use this folder")
     _navigate_picker_to_fixture_if_needed(device)
     _tap_picker_action(device, "Use this folder")
