@@ -20,8 +20,10 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android remote runtime projection now rejects stale connected generations, so an old authenticated socket/session cannot be shown as ready after the canonical runtime generation advances.
 - Android runtime projection now treats blank remote session IDs as unauthenticated, so Remote and Auto cannot advertise a connected backend from an empty session.
 - Android no longer advertises a local model as active while it is still loading or after loading fails; strict-local status stays on the symbolic runtime until a model is actually ready.
+- Android Local AI now rejects new model work as soon as its runtime begins shutting down and drops stale backend callbacks after close, preventing shutdown races from hanging requests or reviving stopped local state.
 - Programmable package symbol, kind, and owner identifiers now reject control characters, whitespace, and non-ASCII tokens before registry mutation, keeping the portable namespace deterministic across Python, Prolog, and native app adapters.
 - Portable package-profile versions now reject path-shaped, control-character, and non-ASCII tokens before any registry mutation, keeping package pins deterministic across host platforms.
 - Org todo discovery now recursively scans configured directory roots, so nested ordinary `.org` files remain visible and editable without flattening a user's workspace or Git layout.
