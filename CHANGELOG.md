@@ -12,6 +12,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android code-editor voice operations now fence cursor and selection changes as editor revisions, so a late transcript cannot apply to a different selection than the one active when listening started.
 - Android code-editor voice dictation now normalizes grouping punctuation without regex crashes, and the editor builds against the current Compose layout API.
 - Android code-editor voice actions now handle backward text selections correctly, so replace, wrap, and explain operations use the selected range instead of rejecting or reversing it.
 - Android voice transcripts no longer accept late updates after a final transcript, preventing stale stream events from overwriting a completed transcript.
