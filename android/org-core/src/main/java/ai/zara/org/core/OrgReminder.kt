@@ -24,42 +24,47 @@ data class OrgReminderSpec(
 object OrgReminders {
     val defaultReminderTime: LocalTime = LocalTime.of(9, 0)
 
-    fun fromTasks(
-        tasks: Iterable<OrgTask>,
+    /**
+     * Derive reminders only from the projection's canonical open-task set.
+     *
+     * Done/open semantics come from each ordinary Org file's own `#+TODO` /
+     * `#+SEQ_TODO` declarations as resolved by [OrgWorkspaceProjector]. This
+     * keeps reminder filtering from silently inheriting DoomOrgProfile states.
+     */
+    fun fromProjection(
+        projection: OrgWorkspaceProjection,
         defaultTime: LocalTime = defaultReminderTime,
     ): List<OrgReminderSpec> = buildList {
-        tasks
-            .filter { task -> task.state !in DoomOrgProfile.doneStates }
-            .forEach { task ->
-                task.scheduled?.let { date ->
-                    val explicit = task.scheduledTime != null
-                    add(
-                        OrgReminderSpec(
-                            taskPath = task.path,
-                            taskLine = task.line,
-                            title = task.title,
-                            taskState = task.state,
-                            kind = OrgReminderKind.SCHEDULED,
-                            whenLocal = date.atTime(task.scheduledTime ?: defaultTime),
-                            explicitTime = explicit,
-                        ),
-                    )
-                }
-                task.deadline?.let { date ->
-                    val explicit = task.deadlineTime != null
-                    add(
-                        OrgReminderSpec(
-                            taskPath = task.path,
-                            taskLine = task.line,
-                            title = task.title,
-                            taskState = task.state,
-                            kind = OrgReminderKind.DEADLINE,
-                            whenLocal = date.atTime(task.deadlineTime ?: defaultTime),
-                            explicitTime = explicit,
-                        ),
-                    )
-                }
+        projection.openTasks.forEach { task ->
+            task.scheduled?.let { date ->
+                val explicit = task.scheduledTime != null
+                add(
+                    OrgReminderSpec(
+                        taskPath = task.path,
+                        taskLine = task.line,
+                        title = task.title,
+                        taskState = task.state,
+                        kind = OrgReminderKind.SCHEDULED,
+                        whenLocal = date.atTime(task.scheduledTime ?: defaultTime),
+                        explicitTime = explicit,
+                    ),
+                )
             }
+            task.deadline?.let { date ->
+                val explicit = task.deadlineTime != null
+                add(
+                    OrgReminderSpec(
+                        taskPath = task.path,
+                        taskLine = task.line,
+                        title = task.title,
+                        taskState = task.state,
+                        kind = OrgReminderKind.DEADLINE,
+                        whenLocal = date.atTime(task.deadlineTime ?: defaultTime),
+                        explicitTime = explicit,
+                    ),
+                )
+            }
+        }
     }.sortedWith(
         compareBy<OrgReminderSpec> { it.whenLocal }
             .thenBy { it.taskPath }
