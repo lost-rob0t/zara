@@ -3,6 +3,12 @@ package ai.zara.org.sync.core
 import java.io.File
 import java.time.Instant
 import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.api.errors.CanceledException
+import org.eclipse.jgit.lib.Constants
+import org.eclipse.jgit.lib.ProgressMonitor
+import org.eclipse.jgit.lib.Repository
+import org.eclipse.jgit.revwalk.RevWalk
+import org.eclipse.jgit.revwalk.filter.RevFilter
 import org.eclipse.jgit.transport.URIish
 
 data class GitWorkspaceStatus(
@@ -15,9 +21,20 @@ data class GitWorkspaceStatus(
     val conflicting: Set<String> = emptySet(),
 )
 
+data class GitRevisionEvidence(
+    val baseRevision: String?,
+    val localRevision: String?,
+    val remoteRevision: String?,
+)
+
 sealed interface GitSyncResult {
     data class Synced(val pushed: Boolean, val message: String) : GitSyncResult
-    data class Conflict(val files: Set<String>, val message: String) : GitSyncResult
+    data class Conflict(
+        val files: Set<String>,
+        val message: String,
+        val revisions: GitRevisionEvidence,
+    ) : GitSyncResult
+    data class Cancelled(val generation: Long?, val message: String) : GitSyncResult
     data class Failed(val message: String) : GitSyncResult
 }
 
@@ -34,19 +51,21 @@ class GitOrgWorkspace(
     }
 
     @Synchronized
-    fun clone(remote: String, branch: String): GitWorkspaceStatus {
+    fun clone(remote: String, branch: String, lease: SyncLease? = null): GitWorkspaceStatus {
         validateRemote(remote)
         require(branch.isNotBlank()) { "Git branch is required" }
+        require(lease == null || lease.isCurrent()) { "Git clone was cancelled before start" }
         require(!root.exists() || root.listFiles().orEmpty().isEmpty()) {
             "Shared Org home is not empty; initialize it instead of cloning over existing files"
         }
         root.parentFile?.mkdirs()
-        Git.cloneRepository()
+        val command = Git.cloneRepository()
             .setURI(remote)
             .setDirectory(root)
             .setBranch(branch)
-            .call()
-            .close()
+        lease?.let { command.setProgressMonitor(LeaseProgressMonitor(it)) }
+        command.call().close()
+        require(lease == null || lease.isCurrent()) { "Git clone was cancelled" }
         return status()
     }
 
@@ -83,14 +102,26 @@ class GitOrgWorkspace(
     }
 
     @Synchronized
-    fun sync(): GitSyncResult = runCatching {
+    fun sync(lease: SyncLease? = null): GitSyncResult = runCatching {
+        if (lease != null && !lease.isCurrent()) {
+            return GitSyncResult.Cancelled(lease.generation, "Git sync cancelled before start")
+        }
+
         open().use { git ->
+            val repository = git.repository
             var raw = git.status().call()
             if (raw.conflicting.isNotEmpty()) {
-                return GitSyncResult.Conflict(raw.conflicting, "Resolve existing Git conflicts before syncing")
+                return GitSyncResult.Conflict(
+                    raw.conflicting,
+                    "Resolve existing Git conflicts before syncing",
+                    revisionEvidence(repository),
+                )
             }
 
             if (raw.hasUncommittedChanges()) {
+                if (lease != null && !lease.isCurrent()) {
+                    return GitSyncResult.Cancelled(lease.generation, "Git sync cancelled before local commit")
+                }
                 git.add().addFilepattern(".").call()
                 git.add().addFilepattern(".").setUpdate(true).call()
                 raw = git.status().call()
@@ -102,16 +133,40 @@ class GitOrgWorkspace(
                 }
             }
 
-            val pull = git.pull().call()
+            if (lease != null && !lease.isCurrent()) {
+                return GitSyncResult.Cancelled(lease.generation, "Git sync cancelled before pull")
+            }
+
+            val localBeforePull = repository.resolve(Constants.HEAD)?.name
+            val pullCommand = git.pull()
+            lease?.let { pullCommand.setProgressMonitor(LeaseProgressMonitor(it)) }
+            val pull = pullCommand.call()
+
+            if (lease != null && !lease.isCurrent()) {
+                return GitSyncResult.Cancelled(lease.generation, "Git sync cancelled during pull")
+            }
+
             val afterPull = git.status().call()
             if (!pull.isSuccessful || afterPull.conflicting.isNotEmpty()) {
                 return GitSyncResult.Conflict(
                     afterPull.conflicting,
                     "Git pull requires conflict resolution; no force reset was attempted",
+                    revisionEvidence(repository, localOverride = localBeforePull),
                 )
             }
 
-            val updates = git.push().call().flatMap { it.remoteUpdates }.toList()
+            if (lease != null && !lease.isCurrent()) {
+                return GitSyncResult.Cancelled(lease.generation, "Git sync cancelled before push")
+            }
+
+            val pushCommand = git.push()
+            lease?.let { pushCommand.setProgressMonitor(LeaseProgressMonitor(it)) }
+            val updates = pushCommand.call().flatMap { it.remoteUpdates }.toList()
+
+            if (lease != null && !lease.isCurrent()) {
+                return GitSyncResult.Cancelled(lease.generation, "Git sync cancelled during push")
+            }
+
             val rejected = updates.filter { update ->
                 val status = update.status.name
                 status.contains("REJECT", ignoreCase = true) || status.contains("NONFASTFORWARD", ignoreCase = true)
@@ -123,7 +178,39 @@ class GitOrgWorkspace(
             }
         }
     }.getOrElse { error ->
-        GitSyncResult.Failed(error.message ?: error::class.java.simpleName)
+        if (error is CanceledException) {
+            GitSyncResult.Cancelled(lease?.generation, "Git sync cancelled")
+        } else {
+            GitSyncResult.Failed(error.message ?: error::class.java.simpleName)
+        }
+    }
+
+    private fun revisionEvidence(
+        repository: Repository,
+        localOverride: String? = null,
+    ): GitRevisionEvidence {
+        val local = localOverride ?: repository.resolve(Constants.HEAD)?.name
+        val branch = runCatching { repository.branch }.getOrNull()
+        val remote = branch
+            ?.takeUnless { it == Constants.HEAD }
+            ?.let { repository.resolve("refs/remotes/origin/$it")?.name }
+        return GitRevisionEvidence(
+            baseRevision = mergeBase(repository, local, remote),
+            localRevision = local,
+            remoteRevision = remote,
+        )
+    }
+
+    private fun mergeBase(repository: Repository, local: String?, remote: String?): String? {
+        if (local == null || remote == null) return null
+        val localObject = repository.resolve(local) ?: return null
+        val remoteObject = repository.resolve(remote) ?: return null
+        return RevWalk(repository).use { walk ->
+            walk.revFilter = RevFilter.MERGE_BASE
+            walk.markStart(walk.parseCommit(localObject))
+            walk.markStart(walk.parseCommit(remoteObject))
+            walk.next()?.name
+        }
     }
 
     private fun open(): Git = Git.open(root)
@@ -137,4 +224,20 @@ class GitOrgWorkspace(
             }
         }
     }
+}
+
+private class LeaseProgressMonitor(
+    private val lease: SyncLease,
+) : ProgressMonitor {
+    override fun start(totalTasks: Int) = Unit
+
+    override fun beginTask(title: String, totalWork: Int) = Unit
+
+    override fun update(completed: Int) = Unit
+
+    override fun endTask() = Unit
+
+    override fun isCancelled(): Boolean = !lease.isCurrent()
+
+    override fun showDuration(enabled: Boolean) = Unit
 }
