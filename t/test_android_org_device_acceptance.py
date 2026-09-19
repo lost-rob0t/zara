@@ -8,7 +8,7 @@ WORKFLOW = Path(".github/workflows/org-android-ui.yml")
 
 def test_org_acceptance_uses_real_saf_ordinary_org_corpus_not_product_store():
     text = ACCEPTANCE.read_text(encoding="utf-8")
-    assert 'corpus_authority": "ordinary Org files through persisted Android SAF"' in text
+    assert 'corpus_authority\": \"ordinary Org files through persisted Android SAF\"' in text
     assert 'ActivityResultContracts.OpenDocumentTree' not in text
     assert 'device.tap("Choose Org directory")' in text
     assert '"Use this folder"' in text
@@ -61,6 +61,16 @@ def test_org_evidence_validator_requires_exact_sha_pass_and_all_text_twins():
     assert 'manifest.get("corpus_authority")' in text
     assert 'manifest.get("fixture_root_is_test_only") is not True' in text
     assert '"text_evidence"' in text
+
+
+def test_org_evidence_validator_pins_safe_state_filenames():
+    text = VALIDATOR.read_text(encoding="utf-8")
+    # Artifact manifests are data, not authority. A passing exact-head manifest
+    # must not redirect validation to a sibling/parent file or alias one state's
+    # evidence as another state's file.
+    assert "EXPECTED_FILES" in text
+    assert "Path(filename).name != filename" in text
+    assert "filename != expected_filename" in text
 
 
 def test_org_evidence_workflow_checks_out_and_names_artifact_by_exact_pr_head():
