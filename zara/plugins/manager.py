@@ -13,6 +13,11 @@ from typing import Callable, Iterable, Optional, Sequence
 
 from langchain_core.tools import BaseTool
 
+from zara.agent.tool_cancellation import (
+    _CancellationSignal,
+    _bind_tool_cancellation_signal,
+    _new_tool_cancellation_signal,
+)
 from zara.runtime import events
 from zara.runtime.turn_context import TurnCapabilityLease, current_turn_capability_lease
 
@@ -70,6 +75,7 @@ class _CapabilityInvocation:
     caller: _PluginRecord
     target: _PluginRecord
     lease: Optional[TurnCapabilityLease]
+    cancellation: _CancellationSignal
     cancelled: bool = False
 
 
@@ -317,6 +323,7 @@ class PluginManager:
                 lease = invocation.lease
                 if lease is not None and lease.turn_id == turn_id:
                     invocation.cancelled = True
+                    invocation.cancellation.cancel()
 
     def _invoke_capability(
         self,
@@ -335,6 +342,7 @@ class PluginManager:
         leased_records: tuple[_PluginRecord, ...] = ()
         invocation_id = 0
         invocation: Optional[_CapabilityInvocation] = None
+        cancellation = _new_tool_cancellation_signal()
 
         def register_invocation() -> None:
             nonlocal caller_record, target, leased_records, invocation_id, invocation
@@ -389,8 +397,10 @@ class PluginManager:
                     caller=caller_record,
                     target=target,
                     lease=lease,
+                    cancellation=cancellation,
                 )
                 self._active_capability_invocations[invocation_id] = invocation
+                self._invocation_condition.notify_all()
 
         if lease is None:
             register_invocation()
@@ -399,7 +409,8 @@ class PluginManager:
                 register_invocation()
 
         try:
-            result = invoker(handle.capability, request)
+            with _bind_tool_cancellation_signal(cancellation):
+                result = invoker(handle.capability, request)
             if lease is not None and not lease.active:
                 raise RuntimeError("composed invocation was cancelled or became stale")
             with self._invocation_condition:
@@ -547,6 +558,7 @@ class PluginManager:
             for invocation in self._active_capability_invocations.values():
                 if invocation.caller is record or invocation.target is record:
                     invocation.cancelled = True
+                    invocation.cancellation.cancel()
             return False
 
     async def _call_plugin(self, method, *args):
