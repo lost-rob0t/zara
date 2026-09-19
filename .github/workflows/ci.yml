@@ -337,7 +337,7 @@ jobs:
           echo "emulator SDK install failed after 3 attempts" >&2
           exit 1
 
-      - name: Capture Android screenshot evidence
+      - name: Capture Android screenshot evidence and verify Zara Code install
         uses: reactivecircus/android-emulator-runner@v2
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -347,7 +347,9 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disable-animations: true
-          script: bash -euo pipefail -c 'serial="emulator-5554"; adb -s "$serial" wait-for-device; test "$(adb -s "$serial" get-state)" = "device"; adb -s "$serial" install -r android/app/build/outputs/apk/debug/app-debug.apk; python android/integration/device_acceptance.py --serial "$serial" --source-sha "$SOURCE_SHA" --output android/app/build/reports/device'
+          script: |
+            serial="emulator-5554"
+            bash scripts/test-android-emulator-install.sh "$serial" "$SOURCE_SHA"
 
       - name: Upload Android UI evidence
         if: always()
