@@ -42,6 +42,21 @@ class OrgWorkspaceProjectionTest {
     }
 
     @Test
+    fun openTasksRespectFileLocalDoneKeywords() {
+        val projection = OrgWorkspaceProjector.project(
+            mapOf(
+                "custom-workflow.org" to """
+                    #+TODO: NEXT BLOCKED | SHIPPED
+                    * NEXT Keep working
+                    * SHIPPED Already delivered
+                """.trimIndent(),
+            ),
+        )
+
+        assertEquals(listOf("Keep working"), projection.openTasks.map { it.title })
+    }
+
+    @Test
     fun dailyProjectionUsesExplicitArbitraryWorkspaceTemplate() {
         val spec = OrgDailySpec(
             relativePathTemplate = "knowledge/journal/{date}.org",
