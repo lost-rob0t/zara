@@ -56,6 +56,14 @@ jobs:
           '
           test -f android/org-app/build/outputs/apk/debug/org-app-debug.apk
 
+      - name: Prepare exact-head evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="android/org-app/build/reports/device"
+          mkdir -p "$evidence_dir"
+          printf '{"source_sha":"%s","phase":"device-preflight"}\n' "$SOURCE_SHA" > "$evidence_dir/preflight.json"
+
       - name: Enable KVM access
         shell: bash
         run: |
@@ -81,15 +89,15 @@ jobs:
           disable-animations: true
           script: |
             set -eu
-            # android-emulator-runner executes script lines independently; keep the target serial explicit.
+            # android-emulator-runner executes this block with POSIX sh; keep the target serial explicit.
             adb -s emulator-5554 wait-for-device
             test "$(adb -s emulator-5554 get-state)" = "device"
             ready=0
             attempt=0
             while [ "$attempt" -lt 60 ]; do
               boot="$(adb -s emulator-5554 shell getprop sys.boot_completed | tr -d '\r')"
-              if [ "$boot" = "1" ] && adb -s emulator-5554 shell test -d /sdcard/Documents; then
-                if adb -s emulator-5554 shell sh -c 'touch /sdcard/Documents/.zara-org-storage-ready && rm -f /sdcard/Documents/.zara-org-storage-ready'; then
+              if [ "$boot" = "1" ]; then
+                if adb -s emulator-5554 shell sh -c 'mkdir -p /sdcard/Documents && touch /sdcard/Documents/.zara-org-storage-ready && rm -f /sdcard/Documents/.zara-org-storage-ready'; then
                   ready=1
                   break
                 fi
@@ -98,7 +106,7 @@ jobs:
               sleep 1
             done
             test "$ready" = "1" || {
-              echo "Android booted without writable external Documents storage" >&2
+              echo "Android booted without writable external storage" >&2
               adb -s emulator-5554 shell getprop sys.boot_completed >&2 || true
               adb -s emulator-5554 shell ls -ld /sdcard /sdcard/Documents >&2 || true
               exit 1
