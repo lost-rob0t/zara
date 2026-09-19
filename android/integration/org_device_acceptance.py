@@ -172,6 +172,20 @@ def _tap_contains(device: Device, fragment: str) -> None:
     time.sleep(0.4)
 
 
+def _navigate_picker_to_fixture_if_needed(device: Device) -> None:
+    """Recover when hosted DocumentsUI ignores the requested initial tree URI."""
+
+    if device.find_contains("Can’t use this folder") is None:
+        return
+
+    _tap_contains(device, "Documents")
+    device.await_contains("ZaraOrgAcceptance")
+    _tap_contains(device, "ZaraOrgAcceptance")
+    device.await_contains("Use this folder")
+    if device.find_contains("Can’t use this folder") is not None:
+        raise AssertionError("SAF picker did not enter the acceptance fixture directory")
+
+
 def _visible_text(device: Device) -> str:
     values: list[str] = []
     seen: set[str] = set()
@@ -204,6 +218,7 @@ def connect_fixture_through_saf(device: Device) -> None:
     device.await_contains("Shared Org workspace is unavailable")
     device.tap("Choose Org directory")
     device.await_contains("Use this folder")
+    _navigate_picker_to_fixture_if_needed(device)
     _tap_contains(device, "Use this folder")
     device.await_contains("Allow")
     _tap_contains(device, "Allow")
