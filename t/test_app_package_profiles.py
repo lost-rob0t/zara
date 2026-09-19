@@ -102,6 +102,42 @@ def test_activation_reuses_app_registry_and_never_creates_global_package_state()
     assert todo_registry.get("org:daily/open") == "todo-daily"
 
 
+def test_activation_enforces_app_local_version_pin_before_registry_mutation():
+    profile = AppPackageProfile.from_mapping(
+        {
+            "schema": PACKAGE_PROFILE_SCHEMA,
+            "app_id": "org_editor",
+            "enabled_packages": ["logseq_daily"],
+            "pins": {"logseq_daily": "1.4.2"},
+        }
+    )
+    registry = ProgrammableSymbolRegistry()
+    specs = (SymbolSpec("org:daily/open", "command", "editor-daily"),)
+
+    with pytest.raises(PackageProfileError, match="requires package_version"):
+        activate_profile_package(registry, profile, "logseq_daily", specs)
+    assert registry.symbols() == ()
+
+    with pytest.raises(PackageProfileError, match="does not match pinned version"):
+        activate_profile_package(
+            registry,
+            profile,
+            "logseq_daily",
+            specs,
+            package_version="1.4.1",
+        )
+    assert registry.symbols() == ()
+
+    activate_profile_package(
+        registry,
+        profile,
+        "logseq_daily",
+        specs,
+        package_version="1.4.2",
+    )
+    assert registry.get("org:daily/open") == "editor-daily"
+
+
 def test_activation_fails_closed_for_package_not_enabled_in_target_app():
     profile = AppPackageProfile.from_mapping(
         {
