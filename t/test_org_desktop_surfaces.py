@@ -106,6 +106,17 @@ def test_desktop_editor_restores_source_line_ending_convention_before_save():
     assert restore_source_line_endings(original_lf, edited_from_qt) == edited_from_qt
 
 
+def test_desktop_editor_preserves_mixed_line_endings_when_line_count_is_unchanged():
+    from zara.desktop.org_app import restore_source_line_endings
+
+    original = "* TODO one\r\nbody\nlast\r"
+    edited_from_qt = "* DONE one\nbody changed\nlast\n"
+
+    assert restore_source_line_endings(original, edited_from_qt) == (
+        "* DONE one\r\nbody changed\nlast\r"
+    )
+
+
 def test_workspace_rejects_escape_paths(tmp_path: Path):
     from zara.desktop.org_app import OrgWorkspace
 
