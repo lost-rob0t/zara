@@ -14,6 +14,27 @@ class OrgCoreTest {
     }
 
     @Test
+    fun parsesFileDeclaredTodoKeywordsWithoutOperatorProfile() {
+        val source = """
+            #+TODO: NEXT(n) BLOCKED(b@/!) | SHIPPED(s!)
+            * NEXT Build arbitrary workflow support
+            * BLOCKED Wait on another task
+            * SHIPPED Release it
+        """.trimIndent()
+
+        val tasks = OrgParser.parse(source, "custom/workflow.org").tasks
+        assertEquals(listOf("NEXT", "BLOCKED", "SHIPPED"), tasks.map { it.state })
+        assertEquals(
+            listOf(
+                "Build arbitrary workflow support",
+                "Wait on another task",
+                "Release it",
+            ),
+            tasks.map { it.title },
+        )
+    }
+
+    @Test
     fun parsesDoomTodoMetadataAndAgendaGroup() {
         val source = """
             * TODO [#A] Ship parser :StarIntel:org_parser:
