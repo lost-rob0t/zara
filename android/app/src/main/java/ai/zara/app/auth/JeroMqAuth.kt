@@ -47,7 +47,23 @@ class JeroMqCurveSocket(
 
     override fun setPublicKey(key: ByteArray): Boolean = socket.setCurvePublicKey(key)
 
-    override fun setSecretKey(key: ByteArray): Boolean = socket.setCurveSecretKey(key)
+    override fun setSecretKey(key: ByteArray): Boolean {
+        // JeroMQ 0.6.0 deliberately retains a caller-supplied 32-byte CURVE key
+        // array instead of copying it. CurveAuthConfigurator zeroizes its
+        // transient secret immediately after this call, so passing that array
+        // through directly silently replaces the socket's secret with zeroes and
+        // makes every production CURVE handshake fail. Give JeroMQ socket-owned
+        // storage while preserving zeroization at the authentication boundary.
+        val socketOwnedKey = key.copyOf()
+        return try {
+            val configured = socket.setCurveSecretKey(socketOwnedKey)
+            if (!configured) socketOwnedKey.fill(0)
+            configured
+        } catch (error: Throwable) {
+            socketOwnedKey.fill(0)
+            throw error
+        }
+    }
 }
 
 class JeroMqCurveDealerFactory(
