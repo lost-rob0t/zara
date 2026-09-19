@@ -9,6 +9,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Android launcher actions now persist launchable apps, typed launch intents, and bounded success/failure observations in Zara's private Prolog workspace; secret memory is fingerprinted instead of copied into model recall.
 - Optional service plugins can now report a canonical "started but unavailable" state when required configuration or credentials are missing; unavailable plugins expose only a bounded reason code in diagnostics, keep no registered tools or capabilities, and no longer fail startup.
 - Android chat now keeps durable multi-conversation history with New chat, pin/unpin, rename, move-to-project actions, full turn restoration, and per-chat lifecycle status indicators.
+- Android now builds a separate Zara Termux Bridge APK that reports whether Termux is installed and whether the supported Run Command permission is granted without claiming the Linux worker runtime is ready before a real integration probe succeeds.
 
 ### Fixed
 
