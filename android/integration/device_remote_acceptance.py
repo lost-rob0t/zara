@@ -48,6 +48,27 @@ def endpoint_port(endpoint: str) -> int:
     return port
 
 
+def require_reverse_mapping(device: Device, port: int) -> str:
+    mappings = device.adb("reverse", "--list")
+    expected = f"tcp:{port} tcp:{port}"
+    if expected not in mappings:
+        raise AssertionError(
+            f"adb reverse does not expose the stock Zara server port: expected {expected!r}, "
+            f"got {mappings!r}"
+        )
+    return mappings
+
+
+def visible_device_text(device: Device) -> list[str]:
+    values: set[str] = set()
+    for node in device.nodes():
+        for attribute in ("text", "content-desc"):
+            value = (node.get(attribute) or "").strip()
+            if value:
+                values.add(value)
+    return sorted(values)
+
+
 def find_curve_public_key(device: Device) -> str:
     for node in device.nodes():
         for attribute in ("text", "content-desc"):
@@ -99,6 +120,7 @@ def enroll_live_server(fixture: dict[str, str], public_key: str) -> None:
 def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[str, object]:
     port = endpoint_port(fixture["endpoint"])
     android_endpoint = f"tcp://127.0.0.1:{port}"
+    reverse_mapping = require_reverse_mapping(device, port)
 
     device.adb("shell", "pm", "clear", "ai.zara.app")
     device.start()
@@ -161,6 +183,7 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
 
     return {
         "endpoint": android_endpoint,
+        "reverse_mapping": reverse_mapping.splitlines(),
         "local_turn_completed": True,
         "client_enrolled": True,
         "connected": True,
@@ -195,6 +218,14 @@ def main() -> None:
         result["passed"] = True
     except BaseException as error:
         result["failure"] = str(error)
+        try:
+            result["reverse_mapping"] = device.adb("reverse", "--list").splitlines()
+        except Exception as reverse_error:
+            result["reverse_mapping_failure"] = str(reverse_error)
+        try:
+            result["visible_device_text"] = visible_device_text(device)
+        except Exception as text_error:
+            result["visible_device_text_failure"] = str(text_error)
         try:
             device.capture("remote-failure")
         except Exception as capture_error:
