@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QCloseEvent, QPainter, QPaintEvent, QPen
+from PySide6.QtGui import QColor, QCloseEvent, QPainter, QPaintEvent, QPen, QStandardItemModel
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -510,9 +510,26 @@ class SettingsWindow(QWidget):
             runtime_choices,
             "zara-python",
         )
+        configured_descriptor = next(
+            (descriptor for descriptor in runtimes if descriptor.id == configured_runtime_id),
+            None,
+        )
+        if configured_descriptor is not None and not configured_descriptor.selectable:
+            runtime.insertItem(
+                0,
+                f"{configured_descriptor.display_name}  ·  configured, unavailable",
+                configured_descriptor.id,
+            )
+            model = runtime.model()
+            if isinstance(model, QStandardItemModel):
+                item = model.item(0)
+                if item is not None:
+                    item.setEnabled(False)
+            runtime.setCurrentIndex(0)
         runtime.setAccessibleName("Installed assistant runtime")
         runtime.setToolTip(
             "Only runtimes discovered as installed and compatible are selectable. "
+            "A configured runtime that is currently unavailable is preserved until explicit reselection. "
             "Prolog-RLM remains optional."
         )
         for descriptor in runtimes:
@@ -543,7 +560,7 @@ class SettingsWindow(QWidget):
         self._double_setting(form, "wake.silence_duration", "Silence duration", 1.5, 0.1, 30.0, 0.1)
         self._combo_setting(form, "stt.provider", "Speech recognition", [("Faster Whisper", "faster-whisper"), ("whisper.cpp", "whisper-cpp"), ("Whisper", "whisper")], "faster-whisper")
         self._line_setting(form, "stt.model", "Speech model", "small")
-        self._combo_setting(form, "stt.device", "Speech device", [("CPU", "cpu"), ("CUDA", "cuda"), ("Vulkan", "vulkan")], "cpu")
+        self._combo_setting(form, "stt.device", "Speech device", [("CPU", "cpu"), ("CUDA", "cuda"), ("Vulkan", "vulkan"), ("AMD", "amd"), ("ROCm", "rocm"), ("HIP", "hip")], "cpu")
         self._combo_setting(form, "tts.provider", "Voice provider", [("Local", "local"), ("ElevenLabs", "11labs"), ("Edge", "edge"), ("Qwen3", "qwen3")], "qwen3")
         self._check_setting(form, "wake.acknowledgement.enabled", "Immediate acknowledgement", True)
         self._line_setting(form, "wake.acknowledgement.voice", "Acknowledgement voice", "en-US-AriaNeural")
