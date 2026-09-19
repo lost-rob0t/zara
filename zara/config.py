@@ -392,14 +392,14 @@ class ZaraConfig:
         parsed_runtime_endpoint = urlsplit(runtime_endpoint)
         if (
             parsed_runtime_endpoint.scheme != "http"
-            or parsed_runtime_endpoint.hostname not in {"127.0.0.1", "localhost", "::1"}
+            or parsed_runtime_endpoint.hostname not in {"127.0.0.1", "::1"}
             or parsed_runtime_endpoint.username is not None
             or parsed_runtime_endpoint.password is not None
             or parsed_runtime_endpoint.query
             or parsed_runtime_endpoint.fragment
         ):
             raise ConfigError(
-                "runtime.prolog_rlm_endpoint must be explicit loopback HTTP without credentials"
+                "runtime.prolog_rlm_endpoint must be explicit literal-loopback HTTP without credentials"
             )
         try:
             runtime_port = parsed_runtime_endpoint.port
