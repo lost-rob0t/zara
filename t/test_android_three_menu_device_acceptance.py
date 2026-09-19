@@ -75,6 +75,7 @@ def test_visual_acceptance_stays_non_mutating_but_dedicated_remote_gate_connects
     assert 'device.tap("Connect")' in remote
     assert 'device.await_label("connected"' in remote
     assert 'device.tap("Remote")' in remote
+    assert 'signal_turn_acceptance(fixture)' in remote
     assert 'device.await_contains("stock server response"' in remote
     assert '"remote_turn_completed": True' in remote
     assert 'adb -s "$serial" reverse "tcp:$reverse_port" "tcp:$reverse_port"' in gate
