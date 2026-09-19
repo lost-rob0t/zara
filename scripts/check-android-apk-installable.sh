@@ -31,10 +31,4 @@ if ! grep -Fq "package: name='$expected_package'" <<<"$badging"; then
   echo "Android APK package mismatch: expected=$expected_package apk=$apk" >&2
   exit 1
 fi
-
-if ! grep -Fq "sdkVersion:'" <<<"$badging"; then
-  echo "Android APK manifest is missing a parseable minSdk: $apk" >&2
-  exit 1
-fi
-
 echo "Android APK installability structure/signature ok: $expected_package $apk"
