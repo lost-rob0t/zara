@@ -121,6 +121,22 @@ val androidNdkVersion = providers.environmentVariable("ZARA_ANDROID_NDK_VERSION"
 val treallaSourceDir = providers.environmentVariable("ZARA_TREALLA_SOURCE_DIR").orNull ?: ""
 val treallaLibraryRoot = providers.environmentVariable("ZARA_TREALLA_LIBRARY_ROOT").orNull ?: ""
 val debugSigningKeystore = providers.environmentVariable("ZARA_ANDROID_DEBUG_KEYSTORE").orNull
+val starIntelMapUrl = providers.environmentVariable("ZARA_STARINTEL_MAP_URL").orNull
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?: "https://maps.starintel.actor/"
+val starIntelMapUri = runCatching { java.net.URI(starIntelMapUrl) }
+    .getOrElse { error("ZARA_STARINTEL_MAP_URL must be a valid HTTPS URL") }
+require(
+    starIntelMapUri.scheme.equals("https", ignoreCase = true) &&
+        !starIntelMapUri.host.isNullOrBlank() &&
+        starIntelMapUri.userInfo == null
+) {
+    "ZARA_STARINTEL_MAP_URL must use HTTPS, include a host, and omit user info"
+}
+val starIntelMapUrlLiteral = "\"" +
+    starIntelMapUrl.replace("\\", "\\\\").replace("\"", "\\\"") +
+    "\""
 val sourceSha = providers.environmentVariable("ZARA_SOURCE_SHA").orNull
     ?: githubPullRequestHeadSha()
     ?: providers.exec {
@@ -142,6 +158,7 @@ android {
         versionCode = zaraAndroidVersionCode
         versionName = zaraVersionName
         buildConfigField("String", "SOURCE_SHA", "\"$sourceSha\"")
+        buildConfigField("String", "STARINTEL_MAP_URL", starIntelMapUrlLiteral)
         buildConfigField("boolean", "HAS_SAMSUNG_HEALTH_SDK", hasSamsungHealthSdk.toString())
 
         ndk {
