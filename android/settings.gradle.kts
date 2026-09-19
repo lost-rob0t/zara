@@ -24,6 +24,9 @@ dependencyResolutionManagement {
 rootProject.name = "zara-android"
 include(":app")
 include(":shared-ui")
+include(":editor-core")
+include(":code-editor")
 include(":wear-app")
+include(":wear-voice")
 include(":zara-store")
 project(":zara-store").projectDir = file("apps/zara-store")
