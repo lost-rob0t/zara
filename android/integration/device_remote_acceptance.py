@@ -16,6 +16,15 @@ from zara.security_admin import SecurityAdminClient
 from zmq.utils import z85
 
 
+APP_PACKAGE = "ai.zara.app"
+APP_DIAGNOSTICS_PATH = "no_backup/zara/diagnostics/local-runtime.log"
+_FATAL_LOG_MARKERS = (
+    "FATAL EXCEPTION",
+    "ANR in ai.zara.app",
+    "Process: ai.zara.app, PID:",
+)
+
+
 def read_fixture(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -117,12 +126,43 @@ def enroll_live_server(fixture: dict[str, str], public_key: str) -> None:
         raise AssertionError("Stock Zara server enrolled a different Android public key")
 
 
+def collect_app_diagnostics(device: Device, output: Path) -> dict[str, object]:
+    evidence: dict[str, object] = {}
+    try:
+        diagnostics = device.adb(
+            "shell",
+            "run-as",
+            APP_PACKAGE,
+            "cat",
+            APP_DIAGNOSTICS_PATH,
+        )
+        path = output / "remote-app-diagnostics.log"
+        path.write_text(diagnostics, encoding="utf-8")
+        evidence["app_diagnostics"] = path.name
+    except Exception as error:
+        evidence["app_diagnostics_failure"] = str(error)
+
+    try:
+        pid = device.adb("shell", "pidof", APP_PACKAGE).strip()
+        if not re.fullmatch(r"\d+", pid):
+            raise AssertionError(f"Zara app pid is unavailable: {pid!r}")
+        logcat = device.adb("logcat", "-d", "--pid", pid, "-v", "threadtime")
+        path = output / "remote-logcat.log"
+        path.write_text(logcat, encoding="utf-8")
+        evidence["logcat"] = path.name
+        fatal_markers = [marker for marker in _FATAL_LOG_MARKERS if marker in logcat]
+        evidence["fatal_log_markers"] = fatal_markers
+    except Exception as error:
+        evidence["logcat_failure"] = str(error)
+    return evidence
+
+
 def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[str, object]:
     port = endpoint_port(fixture["endpoint"])
     android_endpoint = f"tcp://127.0.0.1:{port}"
     reverse_mapping = require_reverse_mapping(device, port)
 
-    device.adb("shell", "pm", "clear", "ai.zara.app")
+    device.adb("shell", "pm", "clear", APP_PACKAGE)
     device.start()
 
     # First prove the embedded Android Local server through the installed UI.
@@ -156,6 +196,8 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.press_back()
     device.tap("Pin server key")
     device.await_contains("Client identity and server pin are ready", timeout=10.0)
+    if fixture["server_public"] not in visible_device_text(device):
+        raise AssertionError("Android UI did not retain the exact stock server CURVE public key")
 
     device.await_label("tcp://host:port")
     device.tap("tcp://host:port")
@@ -186,6 +228,7 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
         "reverse_mapping": reverse_mapping.splitlines(),
         "local_turn_completed": True,
         "client_enrolled": True,
+        "server_pin_verified": True,
         "connected": True,
         "remote_turn_completed": True,
     }
@@ -232,8 +275,9 @@ def main() -> None:
             result["capture_failure"] = str(capture_error)
         raise
     finally:
+        result.update(collect_app_diagnostics(device, args.output))
         try:
-            device.adb("shell", "am", "force-stop", "ai.zara.app")
+            device.adb("shell", "am", "force-stop", APP_PACKAGE)
         finally:
             (args.output / "remote-manifest.json").write_text(
                 json.dumps(result, indent=2) + "\n",
