@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
+- Android Org now includes first-class Todo and Roam surfaces inside the flagship workbench. Both are rebuildable projections over the same configured canonical Org corpus used by Agenda/Files/Editor; Todo mutations write the underlying Org heading and Roam opens the underlying source file rather than creating product-local task or note state.
 - Desktop Org now has separately launchable `zara-org` / `zara-org-editor` and `zara-org-todo` native surfaces. Both consume the configured Org roots and the existing shared Org parser/index/rendering contracts; no operator-specific path or private task database is introduced.
 - Org Sync can now make a configured Git workspace the same shared Org home consumed by first-party Org apps, persist that typed workspace selection, switch to a user-selected SAF tree through the system picker, and cancel in-flight clone/sync work without accepting stale completion updates.
 - Org Sync now accepts a validated logical shared-workspace root instead of hard-coding one app-private checkout, while custom external Org trees remain user-selected SAF roots; Git sync operations gain generation/cancellation fencing and preserve base/local/remote revision evidence when conflicts occur.
