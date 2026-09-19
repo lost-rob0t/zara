@@ -60,7 +60,7 @@ def builtin_runtime_descriptor() -> RuntimeDescriptor:
 
 
 def normalize_loopback_endpoint(value: str) -> str:
-    """Return a canonical loopback-only HTTP endpoint or fail closed."""
+    """Return a canonical literal-loopback HTTP endpoint or fail closed."""
 
     if not isinstance(value, str) or not value.strip():
         raise RuntimeDiscoveryError("runtime endpoint must be a non-empty string")
@@ -71,8 +71,8 @@ def normalize_loopback_endpoint(value: str) -> str:
         raise RuntimeDiscoveryError("runtime endpoint must not contain credentials")
     if parsed.query or parsed.fragment:
         raise RuntimeDiscoveryError("runtime endpoint must not contain query or fragment")
-    if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
-        raise RuntimeDiscoveryError("runtime endpoint must resolve to explicit loopback")
+    if parsed.hostname not in {"127.0.0.1", "::1"}:
+        raise RuntimeDiscoveryError("runtime endpoint must use a literal loopback address")
     try:
         port = parsed.port
     except ValueError as error:
