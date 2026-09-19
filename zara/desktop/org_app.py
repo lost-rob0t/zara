@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import stat
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -129,9 +130,11 @@ class OrgWorkspace:
         if payload == current:
             return OrgDocumentSnapshot(document_id, text, current_revision)
 
+        source_mode = stat.S_IMODE(path.stat().st_mode)
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
         try:
+            os.chmod(temp_name, source_mode)
             with os.fdopen(fd, "wb") as handle:
                 handle.write(payload)
                 handle.flush()
