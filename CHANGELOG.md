@@ -21,6 +21,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android Org Git sync now treats its configured branch as authoritative and fails closed instead of pulling or pushing a different checked-out branch; incomplete JGit push statuses are no longer reported as successful syncs.
 - Android Org Daily now anchors its default continuous stream at the configured logical today, so pre-existing future daily files do not appear ahead of today's real file when scrolling backward through canonical dailies.
 - Desktop Org source saves now preserve each existing file's permission mode across atomic replacement, so editing from Zara does not silently turn a shared Emacs/Git Org file into a `0600` temp-file mode.
 - Org todo discovery now recursively scans configured directory roots, so nested ordinary `.org` files remain visible and editable without flattening a user's workspace or Git layout.
