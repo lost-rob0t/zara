@@ -101,6 +101,17 @@ def test_versioned_release_publication_requires_an_explicit_tag():
     assert "Release tag refused: current source is not promoted to release.target" in workflow
 
 
+def test_promoted_master_publication_does_not_depend_on_push_changed_files():
+    workflow = (ROOT / ".github/workflows/release.yml").read_text()
+
+    assert "publish_needed: ${{ steps.release.outputs.publish_needed }}" in workflow
+    assert 'gh release view "$tag"' in workflow
+    assert '"${GITHUB_REF}" == "refs/heads/master"' in workflow
+    assert '"$release_ready" == "true"' in workflow
+    assert "needs.validate-version-context.outputs.publish_needed == 'true'" in workflow
+    assert "contains(github.event.head_commit.modified, 'version.properties')" not in workflow
+
+
 def test_agent_and_release_skill_require_live_version_context():
     agents = (ROOT / "AGENTS.md").read_text()
     skill = (ROOT / "skills/zara-android-release/SKILL.md").read_text()

@@ -7,6 +7,13 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Android and Desktop now use one chat-first assistant surface: voice is started and stopped from a microphone control inside the message composer instead of a separate Chat/Voice page split.
 - Android hides redundant single-route Chat tabs and uses a compact conversation-first empty state with the composer kept visually primary.
 
+### Fixed
+
+- Android's embedded Trealla bridge now treats `pl_query`'s return value as an error signal, so valid local Prolog queries are no longer rejected as native query failures.
+- Wear Voice no longer requests direct Internet access; the focused watch voice shell stays network-free and leaves runtime transport to the shared Wear/phone authority path.
+- Wear Voice now uses Zara's canonical version name and Android versionCode instead of shipping stale module-local package metadata.
+- Plugin capability compositions now re-check a tool's live approval policy immediately before invocation, preventing approval-policy changes after registration from bypassing approval.
+
 ## 0.2.2-alpha
 
 ### Added
@@ -25,6 +32,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Android Assistant qualification and lifecycle handling were replayed onto the current runtime/navigation foundation.
 - Android emulator release evidence is more deterministic through explicit host-runtime and SDK provisioning checks.
 - Release-note sections render consistently on Desktop and Android without extra blank lines between a subsection heading and its first item.
+- Immutable alpha publication now keys off canonical version readiness plus actual GitHub release absence instead of push-event changed-file metadata, so protected-branch promotion merges cannot silently skip APK publication.
+- The mutable `android-latest` channel now starts a fresh signed Android/Wear build on every `master` push instead of waiting for the entire repository CI workflow, preserving an exact-SHA APK payload for each successful master build and rolling the direct-download release forward promptly.
 
 ### Changed
 
