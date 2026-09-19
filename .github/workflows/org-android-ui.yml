@@ -85,10 +85,7 @@ jobs:
             adb -s "$serial" wait-for-device
             test "$(adb -s "$serial" get-state)" = "device"
             adb -s "$serial" install -r android/org-app/build/outputs/apk/debug/org-app-debug.apk
-            python android/integration/org_device_acceptance.py \
-              --serial "$serial" \
-              --source-sha "$SOURCE_SHA" \
-              --output android/org-app/build/reports/device
+            python android/integration/org_device_acceptance.py --serial "$serial" --source-sha "$SOURCE_SHA" --output android/org-app/build/reports/device
 
       - name: Validate exact-head Org evidence
         if: success()
