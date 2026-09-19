@@ -90,9 +90,26 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
 
     device.adb("shell", "pm", "clear", "ai.zara.app")
     device.start()
+
+    # First prove the embedded Android Local server through the installed UI.
+    open_menu(device, "Settings")
+    device.tap_tab("Runtime")
+    device.await_contains("LOCAL ZARA SERVER", timeout=20.0)
+    device.await_label("ready", timeout=20.0)
+    device.tap("Local")
+    open_menu(device, "Chat")
+    device.await_label("Ask anything…", timeout=20.0)
+    device.tap("Ask anything…")
+    type_printable_ascii(device, "?- Result = zara_ready.")
+    device.press_back()
+    device.tap("↑")
+    device.await_contains("zara_ready", timeout=20.0)
+    device.await_contains("LOCAL", timeout=5.0)
+    device.capture("local-text-turn")
+
+    # Then enroll the same installed app and prove the desktop/server path.
     open_menu(device, "Settings")
     device.tap_tab("Connection")
-
     device.await_label("Create client identity")
     device.tap("Create client identity")
     device.await_label("CLIENT PUBLIC KEY")
@@ -131,6 +148,7 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
 
     return {
         "endpoint": android_endpoint,
+        "local_turn_completed": True,
         "client_enrolled": True,
         "connected": True,
         "remote_turn_completed": True,
