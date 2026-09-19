@@ -7,8 +7,9 @@ import org.junit.Test
 
 class OrgTimerTest {
     @Test
-    fun timerTemplatesComeFromTaggedOrgTasksWithEffort() {
+    fun timerTemplatesComeFromCanonicalOpenTasksWithEffort() {
         val source = """
+            #+TODO: TODO | ARCHIVED
             * TODO Ramen :timer:
             :PROPERTIES:
             :Effort: 0:03
@@ -17,9 +18,16 @@ class OrgTimerTest {
             :PROPERTIES:
             :Effort: 1:00
             :END:
+            * ARCHIVED Old timer :timer:
+            :PROPERTIES:
+            :Effort: 0:10
+            :END:
         """.trimIndent()
+        val projection = OrgWorkspaceProjector.project(
+            mapOf("timers/custom-workflow.org" to source),
+        )
 
-        val timers = OrgTimers.fromTasks(OrgParser.parse(source, "timers.org").tasks)
+        val timers = OrgTimers.fromProjection(projection)
 
         assertEquals(1, timers.size)
         assertEquals("Ramen", timers.single().name)
