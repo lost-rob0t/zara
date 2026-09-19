@@ -190,6 +190,24 @@ def test_music_page_is_bounded_and_snapshot_pinned():
         encode_message(page)
 
 
+def test_incomplete_music_page_requires_continuation_cursor():
+    with pytest.raises(ProtocolValidationError, match="next_cursor"):
+        encode_message(
+            message(
+                "music.library.page",
+                reply_to="music-request-1",
+                body={
+                    "library_id": "main",
+                    "snapshot_id": "snapshot-1",
+                    "generation": 7,
+                    "items": [],
+                    "next_cursor": None,
+                    "complete": False,
+                },
+            )
+        )
+
+
 def test_job_progress_is_an_event_with_sequence_not_a_reply():
     progress = message(
         "music.job.progress",
