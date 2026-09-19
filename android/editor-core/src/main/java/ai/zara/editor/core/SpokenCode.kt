@@ -53,9 +53,13 @@ object SpokenCodeRouter {
 }
 
 object CodeSpeechNormalizer {
+    private val indentedNewline = Regex(
+        "(?i)\\bnew line\\b((?:[ \\t]+\\btab\\b)+)[ \\t]*",
+    )
+    private val tabToken = Regex("(?i)\\btab\\b")
     private val common = listOf(
         Regex("(?i)\\bnew line\\b") to "\n",
-        Regex("(?i)\\btab\\b") to "    ",
+        tabToken to "    ",
         Regex("(?i)\\bopen paren(?:thesis)?\\b") to "(",
         Regex("(?i)\\bclose paren(?:thesis)?\\b") to ")",
         Regex("(?i)\\bopen bracket\\b") to "[",
@@ -76,7 +80,10 @@ object CodeSpeechNormalizer {
     )
 
     fun normalize(spoken: String, languageId: String): String {
-        var text = spoken
+        var text = indentedNewline.replace(spoken) { match ->
+            val tabs = tabToken.findAll(match.groupValues[1]).count()
+            "\n" + "    ".repeat(tabs)
+        }
         common.forEach { (pattern, replacement) -> text = pattern.replace(text, replacement) }
         text = when (languageId.lowercase()) {
             "python", "py" -> text
@@ -87,6 +94,7 @@ object CodeSpeechNormalizer {
             "prolog", "pl" -> text
                 .replace(Regex("(?i)\\bif\\s+"), ":- ")
                 .replace(Regex("(?i)\\bperiod\\b"), ".")
+                .replace(Regex(",[ \\t]+"), ",")
             else -> text
         }
         return cleanupAroundPunctuation(text)
@@ -96,5 +104,9 @@ object CodeSpeechNormalizer {
         .replace(Regex("[ \\t]+([),;:\\]}.])"), "$1")
         .replace(Regex("([({\\[]) +"), "$1")
         .replace(Regex("([A-Za-z0-9_]) +([({\\[])"), "$1$2")
-        .replace(Regex("[ \\t]*\\n[ \\t]*"), "\n")
+        .replace(Regex("\"[ \\t]+"), "\"")
+        .replace(Regex("[ \\t]+\""), "\"")
+        .replace(Regex("'[ \\t]+"), "'")
+        .replace(Regex("[ \\t]+'"), "'")
+        .replace(Regex("[ \\t]*\\n"), "\n")
 }
