@@ -42,6 +42,19 @@ def test_org_acceptance_matches_documentsui_actions_case_insensitively_without_w
     assert 'device.await_contains("Acceptance task", timeout=20.0)' in text
 
 
+def test_org_acceptance_bounds_documentsui_null_root_recovery():
+    text = ACCEPTANCE.read_text(encoding="utf-8")
+    # API-35 DocumentsUI can briefly leave UIAutomator without a root while the
+    # picker window is attaching. Recover only that hierarchy-read failure, with
+    # a tiny fixed budget; never turn the evidence gate into retry-until-green.
+    assert "PICKER_UI_DUMP_ATTEMPTS = 3" in text
+    assert "def _picker_nodes" in text
+    assert "for attempt in range(PICKER_UI_DUMP_ATTEMPTS)" in text
+    assert '"UIAutomator did not create" not in str(error)' in text
+    assert "raise" in text
+    assert "time.sleep(0.2)" in text
+
+
 def test_org_acceptance_captures_todo_roam_and_scrolled_separate_dailies_with_text_twins():
     text = ACCEPTANCE.read_text(encoding="utf-8")
     for state in (
