@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
+- Android's flagship Org shell now exposes Todo, Org-roam, and Daily surfaces over the shared canonical Org repository/projection stack; it supports the shared workspace or an arbitrary SAF-selected directory, keeps ordinary Org files authoritative, and refuses to guess a Daily path, filename pattern, or timezone when canonical Daily configuration is unavailable.
 - Android's shared Org parser/storage/index foundation now honors file-declared `#+TODO` / `#+SEQ_TODO` keywords and allows callers to supply fallback TODO states, so custom Org workflows can parse, cycle, and index the canonical Org corpus without inheriting an operator-specific state machine.
 - Optional service plugins can now report a canonical "started but unavailable" state when required configuration or credentials are missing; unavailable plugins expose only a bounded reason code in diagnostics, keep no registered tools or capabilities, and no longer fail startup.
 - Android chat now keeps durable multi-conversation history with New chat, pin/unpin, rename, move-to-project actions, full turn restoration, and per-chat lifecycle status indicators.
