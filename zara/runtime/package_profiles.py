@@ -18,7 +18,6 @@ from .symbols import ProgrammableSymbolRegistry, SymbolSpec
 PACKAGE_PROFILE_SCHEMA = 1
 _MAX_ID_LENGTH = 48
 _MAX_VERSION_LENGTH = 128
-_MAX_PACKAGES = 256
 _ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 _PROFILE_FIELDS = frozenset({"schema", "app_id", "enabled_packages", "pins"})
 
@@ -46,9 +45,14 @@ def _bounded_version(value: object) -> str:
         or not value
         or len(value) > _MAX_VERSION_LENGTH
         or value != value.strip()
-        or any(character.isspace() for character in value)
+        or any(
+            ord(character) < 0x21
+            or ord(character) > 0x7E
+            or character in "/\\"
+            for character in value
+        )
     ):
-        raise PackageProfileError("package pin version must be a bounded token")
+        raise PackageProfileError("package pin version must be a bounded portable token")
     return value
 
 
