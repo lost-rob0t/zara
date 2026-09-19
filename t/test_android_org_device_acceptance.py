@@ -27,6 +27,21 @@ def test_org_acceptance_navigates_picker_when_root_selection_is_disabled():
     assert '_tap_contains(device, "ZaraOrgAcceptance")' in text
 
 
+def test_org_acceptance_matches_documentsui_actions_case_insensitively_without_weakening_app_assertions():
+    text = ACCEPTANCE.read_text(encoding="utf-8")
+    # AOSP DocumentsUI may expose action labels as USE THIS FOLDER / ALLOW while
+    # other images use title case. Scope normalization to OS-owned picker labels;
+    # app-owned Org assertions must keep the shared exact/case-sensitive helper.
+    assert "def _find_picker_contains" in text
+    assert "fragment.casefold()" in text
+    assert '(node.get(attribute) or "").casefold()' in text
+    assert "def _await_picker_contains" in text
+    assert '_await_picker_contains(device, "Use this folder")' in text
+    assert '_tap_contains(device, "Use this folder")' in text
+    assert '_await_picker_contains(device, "Allow")' in text
+    assert 'device.await_contains("Acceptance task", timeout=20.0)' in text
+
+
 def test_org_acceptance_captures_todo_roam_and_scrolled_separate_dailies_with_text_twins():
     text = ACCEPTANCE.read_text(encoding="utf-8")
     for state in (
