@@ -153,17 +153,35 @@ def test_schedule_conflicts_include_org_repeaters(tmp_path):
     )
 
 
-def test_gpt_todos_checkout_is_zero_config_preferred_root(tmp_path):
+def test_empty_config_does_not_autodiscover_operator_checkout(tmp_path):
     home = tmp_path / "home"
-    agenda = home / "Documents" / "gpt-todos" / "agenda"
-    agenda.mkdir(parents=True)
+    operator_agenda = home / "Documents" / "gpt-todos" / "agenda"
+    operator_agenda.mkdir(parents=True)
 
-    assert resolve_org_todo_root({}, home=home) == agenda
+    assert resolve_org_todo_root({}, home=home) == (
+        home / ".local" / "share" / "zarathushtra" / "todos.org"
+    )
 
 
-def test_configured_org_root_beats_auto_discovery(tmp_path):
+def test_explicit_gpt_todos_repo_remains_supported(tmp_path):
     home = tmp_path / "home"
-    (home / "Documents" / "gpt-todos" / "agenda").mkdir(parents=True)
+    checkout = tmp_path / "gpt-todos"
+
+    assert resolve_org_todo_root(
+        {"gpt_todos_repo": str(checkout)},
+        home=home,
+    ) == checkout / "agenda"
+
+
+def test_configured_org_root_beats_compatibility_repo(tmp_path):
+    home = tmp_path / "home"
     configured = tmp_path / "custom" / "agenda"
+    checkout = tmp_path / "gpt-todos"
 
-    assert resolve_org_todo_root({"org_root": str(configured)}, home=home) == configured
+    assert resolve_org_todo_root(
+        {
+            "org_root": str(configured),
+            "gpt_todos_repo": str(checkout),
+        },
+        home=home,
+    ) == configured
