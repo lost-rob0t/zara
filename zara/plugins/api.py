@@ -170,6 +170,8 @@ class PluginRuntime:
         worker_join_timeout: float = 5.0,
         advice_registrar: Optional[Callable[[str, str, int, Callable[..., Any]], int]] = None,
         advice_unregistrar: Optional[Callable[[int], bool]] = None,
+        symbol_registrar: Optional[Callable[..., int]] = None,
+        symbol_unregistrar: Optional[Callable[..., bool]] = None,
         capability_resolver: Optional[Callable[[str], Optional[CapabilityHandle]]] = None,
         capability_invoker: Optional[Callable[..., Any]] = None,
     ) -> None:
@@ -184,9 +186,12 @@ class PluginRuntime:
         self._worker_join_timeout = worker_join_timeout
         self._advice_registrar = advice_registrar
         self._advice_unregistrar = advice_unregistrar
+        self._symbol_registrar = symbol_registrar
+        self._symbol_unregistrar = symbol_unregistrar
         self._capability_resolver = capability_resolver
         self._capability_invoker = capability_invoker
         self._advice_registration_ids: list[int] = []
+        self._symbol_registration_ids: list[int] = []
         self._subscriptions: set[bridge.RuntimeEventSubscription] = set()
         self._workers: dict[str, ManagedWorker] = {}
         self._closed = False
@@ -315,6 +320,53 @@ class PluginRuntime:
             )
         raise RuntimeError("plugin runtime is closed")
 
+    def register_symbol(
+        self,
+        symbol: str,
+        kind: str,
+        value: Any,
+        *,
+        priority: int = 0,
+        docs: str = "",
+        capabilities: Sequence[str] = (),
+        source: str = "",
+    ) -> int:
+        """Register one package-owned symbol in the canonical runtime namespace."""
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("plugin runtime is closed")
+            registrar = self._symbol_registrar
+            unregistrar = self._symbol_unregistrar
+        if registrar is None or unregistrar is None:
+            raise RuntimeError("programmable symbol registry is not available")
+
+        owner = f"plugin:{self._plugin_name}"
+        registration_id = registrar(
+            symbol=symbol,
+            kind=kind,
+            owner=owner,
+            layer="package",
+            priority=priority,
+            value=value,
+            docs=docs,
+            capabilities=tuple(capabilities),
+            source=source,
+        )
+
+        with self._lock:
+            if not self._closed:
+                self._symbol_registration_ids.append(registration_id)
+                return registration_id
+
+        try:
+            unregistrar(registration_id, owner=owner)
+        except Exception as error:
+            self._failure_callback(
+                f"failed to unregister programmable symbol {registration_id}: {error}"
+            )
+        raise RuntimeError("plugin runtime is closed")
+
     def start_worker(
         self,
         name: str,
@@ -349,9 +401,12 @@ class PluginRuntime:
             workers = tuple(self._workers.values())
             advice_registration_ids = tuple(self._advice_registration_ids)
             advice_unregistrar = self._advice_unregistrar
+            symbol_registration_ids = tuple(self._symbol_registration_ids)
+            symbol_unregistrar = self._symbol_unregistrar
             self._subscriptions.clear()
             self._workers.clear()
             self._advice_registration_ids.clear()
+            self._symbol_registration_ids.clear()
 
         if advice_unregistrar is not None:
             for registration_id in advice_registration_ids:
@@ -360,6 +415,16 @@ class PluginRuntime:
                 except Exception as error:
                     self._failure_callback(
                         f"failed to unregister agent-loop advice {registration_id}: {error}"
+                    )
+
+        if symbol_unregistrar is not None:
+            owner = f"plugin:{self._plugin_name}"
+            for registration_id in symbol_registration_ids:
+                try:
+                    symbol_unregistrar(registration_id, owner=owner)
+                except Exception as error:
+                    self._failure_callback(
+                        f"failed to unregister programmable symbol {registration_id}: {error}"
                     )
 
         for subscription in subscriptions:
