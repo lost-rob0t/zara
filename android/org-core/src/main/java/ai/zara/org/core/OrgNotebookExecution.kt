@@ -1,7 +1,8 @@
 package ai.zara.org.core
 
+import ai.zara.editor.core.OperationFence
+import ai.zara.editor.core.OperationToken
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicLong
 
 enum class OrgExecutionStatus { SUCCEEDED, FAILED, CANCELLED }
 
@@ -90,24 +91,28 @@ class OrgExecutionRegistry(providers: List<OrgExecutionProvider>) {
 }
 
 data class OrgExecutionToken(
-    val generation: Long,
-    val sourceRevision: Long,
+    val editorToken: OperationToken,
     val blockHash: String,
-)
+) {
+    val generation: Long get() = editorToken.generation
+    val sourceRevision: Long get() = editorToken.baseRevision
+}
 
-/** Generation fence for Stop/Cancel and late runtime replies. */
+/**
+ * Org-specific block-hash fence layered on the canonical editor operation fence.
+ * Document revision/generation authority stays in editor-core; this layer only adds
+ * source-block identity so notebook execution cannot invent a second revision model.
+ */
 class OrgExecutionFence {
-    private val generation = AtomicLong(0)
+    private val editorFence = OperationFence()
 
     fun begin(sourceRevision: Long, blockHash: String): OrgExecutionToken =
-        OrgExecutionToken(generation.incrementAndGet(), sourceRevision, blockHash)
+        OrgExecutionToken(editorFence.begin(sourceRevision), blockHash)
 
     fun cancel() {
-        generation.incrementAndGet()
+        editorFence.cancel()
     }
 
     fun accepts(token: OrgExecutionToken, sourceRevision: Long, blockHash: String): Boolean =
-        token.generation == generation.get() &&
-            token.sourceRevision == sourceRevision &&
-            token.blockHash == blockHash
+        editorFence.accepts(token.editorToken, sourceRevision) && token.blockHash == blockHash
 }

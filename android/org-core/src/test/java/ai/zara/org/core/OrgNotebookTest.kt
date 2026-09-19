@@ -1,5 +1,6 @@
 package ai.zara.org.core
 
+import ai.zara.editor.core.RevisionedEditorBuffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -176,5 +177,17 @@ class OrgNotebookTest {
         fence.cancel()
 
         assertFalse(fence.accepts(token, 3, block.hash))
+    }
+
+    @Test
+    fun editorRevisionChangeFencesLateNotebookReply() {
+        val block = OrgNotebookBlocks.scan(source).single()
+        val editor = RevisionedEditorBuffer(initialText = source, languageId = "org")
+        val fence = OrgExecutionFence()
+        val token = fence.begin(editor.snapshot().revision, block.hash)
+
+        editor.replaceFromUser(source, newCursor = 0)
+
+        assertFalse(fence.accepts(token, editor.snapshot().revision, block.hash))
     }
 }

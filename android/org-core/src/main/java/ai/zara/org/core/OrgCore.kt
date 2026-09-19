@@ -1,10 +1,11 @@
 package ai.zara.org.core
 
 import java.time.LocalDate
+import java.time.LocalTime
 
-/** Native Org semantics derived from nsaspy's Doom config. Org text stays canonical. */
+/** Optional Doom-compatible workflow profile. Ordinary Org text/config remains authoritative. */
 object DoomOrgProfile {
-    const val orgRoot = "~/Documents/Notes/org"
+    const val orgRoot = "Configured Org workspace"
     const val agendaDirectory = "agenda"
     const val ideasFile = "ideas.org"
 
@@ -51,7 +52,9 @@ data class OrgTask(
     val priority: Char? = null,
     val tags: Set<String> = emptySet(),
     val scheduled: LocalDate? = null,
+    val scheduledTime: LocalTime? = null,
     val deadline: LocalDate? = null,
+    val deadlineTime: LocalTime? = null,
     val effort: String? = null,
     val category: String? = null,
 )
@@ -119,17 +122,46 @@ object DoomAgenda {
 }
 
 object OrgParser {
+    val defaultTodoStates: List<String> = listOf("TODO", "DONE")
+
     private val heading = Regex("^(\\*+)\\s+(.*)$")
     private val priority = Regex("^\\[#([A-Z])](?:\\s+|$)")
     private val tags = Regex("\\s+:([A-Za-z0-9_@#%:.-]+):\\s*$")
     private val property = Regex("^:([^:]+):\\s*(.*)$")
-    private val timestamp = Regex("(?:<|\\[)([0-9]{4}-[0-9]{2}-[0-9]{2})")
+    private val timestamp = Regex(
+        "(?:<|\\[)([0-9]{4}-[0-9]{2}-[0-9]{2})(?:\\s+[A-Za-z]{3})?(?:\\s+([0-9]{2}:[0-9]{2}))?",
+    )
     private val sourceBegin = Regex("(?i)^#\\+begin_src\\s+(\\S+)(.*)$")
     private val sourceEnd = Regex("(?i)^#\\+end_src\\s*$")
     private val titleLine = Regex("(?i)^#\\+title:\\s*(.*)$")
 
-    fun parse(source: String, path: String = ""): OrgDocument {
+    fun todoStates(
+        source: String,
+        fallbackTodoStates: List<String> = defaultTodoStates,
+    ): List<String> =
+        parseOrgTodoSequences(source, fallbackTodoStates)
+            .flatMap { it.states }
+            .distinct()
+
+    fun nextTodoState(
+        source: String,
+        current: String?,
+        fallbackTodoStates: List<String> = defaultTodoStates,
+    ): String {
+        val sequences = parseOrgTodoSequences(source, fallbackTodoStates)
+        val active = sequences.firstOrNull { sequence -> current in sequence.states }
+            ?: return sequences.first().states.first()
+        val index = active.states.indexOf(current)
+        return active.states[(index + 1) % active.states.size]
+    }
+
+    fun parse(
+        source: String,
+        path: String = "",
+        fallbackTodoStates: List<String> = defaultTodoStates,
+    ): OrgDocument {
         val lines = source.lines()
+        val resolvedTodoStates = todoStates(source, fallbackTodoStates)
         val tasks = mutableListOf<OrgTask>()
         val blocks = mutableListOf<OrgSourceBlock>()
         var documentTitle: String? = null
@@ -160,7 +192,7 @@ object OrgParser {
             if (headingMatch != null) {
                 val level = headingMatch.groupValues[1].length
                 var text = headingMatch.groupValues[2].trim()
-                val state = DoomOrgProfile.todoStates.firstOrNull { candidate ->
+                val state = resolvedTodoStates.firstOrNull { candidate ->
                     text == candidate || text.startsWith("$candidate ")
                 }
                 if (state != null) {
@@ -177,15 +209,23 @@ object OrgParser {
                     }
 
                     var scheduled: LocalDate? = null
+                    var scheduledTime: LocalTime? = null
                     var deadline: LocalDate? = null
+                    var deadlineTime: LocalTime? = null
                     var effort: String? = null
                     var category: String? = null
                     var scan = index + 1
                     while (scan < lines.size && heading.matchEntire(lines[scan]) == null) {
                         val bodyLine = lines[scan].trim()
                         when {
-                            bodyLine.startsWith("SCHEDULED:", ignoreCase = true) -> scheduled = parseDate(bodyLine)
-                            bodyLine.startsWith("DEADLINE:", ignoreCase = true) -> deadline = parseDate(bodyLine)
+                            bodyLine.startsWith("SCHEDULED:", ignoreCase = true) -> {
+                                scheduled = parseDate(bodyLine)
+                                scheduledTime = parseTime(bodyLine)
+                            }
+                            bodyLine.startsWith("DEADLINE:", ignoreCase = true) -> {
+                                deadline = parseDate(bodyLine)
+                                deadlineTime = parseTime(bodyLine)
+                            }
                             bodyLine.startsWith(":Effort:", ignoreCase = true) -> effort = property.matchEntire(bodyLine)?.groupValues?.get(2)?.trim()
                             bodyLine.startsWith(":CATEGORY:", ignoreCase = true) -> category = property.matchEntire(bodyLine)?.groupValues?.get(2)?.trim()
                         }
@@ -200,7 +240,9 @@ object OrgParser {
                         priority = taskPriority,
                         tags = taskTags,
                         scheduled = scheduled,
+                        scheduledTime = scheduledTime,
                         deadline = deadline,
+                        deadlineTime = deadlineTime,
                         effort = effort,
                         category = category,
                     )
@@ -221,9 +263,15 @@ object OrgParser {
         return result
     }
 
-    private fun parseDate(line: String): LocalDate? = timestamp.find(line)?.groupValues?.get(1)?.let {
-        runCatching { LocalDate.parse(it) }.getOrNull()
-    }
+    private fun parseDate(line: String): LocalDate? =
+        timestamp.find(line)?.groupValues?.getOrNull(1)?.let {
+            runCatching { LocalDate.parse(it) }.getOrNull()
+        }
+
+    private fun parseTime(line: String): LocalTime? =
+        timestamp.find(line)?.groupValues?.getOrNull(2)?.takeIf { it.isNotBlank() }?.let {
+            runCatching { LocalTime.parse(it) }.getOrNull()
+        }
 }
 
 data class TangleOutput(val path: String, val language: String, val content: String)

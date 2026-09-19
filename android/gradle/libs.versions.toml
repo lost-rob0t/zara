@@ -13,6 +13,7 @@ conscrypt = "2.5.3"
 bcpkix = "1.81"
 jgit = "7.8.0.202609011348-r"
 litertLm = "0.17.0"
+gson = "2.13.2"
 junit = "4.13.2"
 
 [libraries]
@@ -31,6 +32,7 @@ conscrypt-android = { group = "org.conscrypt", name = "conscrypt-android", versi
 bcpkix = { group = "org.bouncycastle", name = "bcpkix-jdk15to18", version.ref = "bcpkix" }
 jgit = { group = "org.eclipse.jgit", name = "org.eclipse.jgit", version.ref = "jgit" }
 litert-lm-android = { group = "com.google.ai.edge.litertlm", name = "litertlm-android", version.ref = "litertLm" }
+gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
@@ -38,3 +40,4 @@ android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-parcelize = { id = "org.jetbrains.kotlin.plugin.parcelize", version.ref = "kotlin" }

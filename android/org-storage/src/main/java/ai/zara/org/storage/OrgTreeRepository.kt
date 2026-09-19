@@ -1,9 +1,9 @@
 package ai.zara.org.storage
 
-import ai.zara.org.core.DoomOrgProfile
 import ai.zara.org.core.OrgParser
 import ai.zara.org.core.OrgTask
 import ai.zara.org.core.OrgTangler
+import ai.zara.org.core.cycleTodoState
 import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
@@ -18,6 +18,7 @@ data class OrgFileRef(
 class OrgTreeRepository(
     private val context: Context,
     private val treeUri: Uri,
+    private val fallbackTodoStates: List<String> = OrgParser.defaultTodoStates,
 ) : OrgRepository {
     private val resolver: ContentResolver = context.contentResolver
     private val root: DocumentFile = requireNotNull(DocumentFile.fromTreeUri(context, treeUri)) {
@@ -39,7 +40,18 @@ class OrgTreeRepository(
             ?: error("Unable to write ${file.relativePath}")
     }
 
-    override fun appendAgendaCapture(text: String, relativePath: String = "agenda/inbox.org"): OrgFileRef {
+    override fun writeRelative(relativePath: String, text: String): OrgFileRef {
+        val target = ensureFile(relativePath, "text/org")
+        resolver.openOutputStream(target.uri, "wt")?.bufferedWriter()?.use { it.write(text) }
+            ?: error("Unable to write $relativePath")
+        return OrgFileRef(
+            name = target.name ?: relativePath.substringAfterLast('/'),
+            relativePath = relativePath,
+            uri = target.uri,
+        )
+    }
+
+    override fun appendAgendaCapture(text: String, relativePath: String): OrgFileRef {
         val target = ensureFile(relativePath, "text/org")
         resolver.openOutputStream(target.uri, "wa")?.bufferedWriter()?.use { writer ->
             if (target.length() > 0) writer.append('\n')
@@ -49,30 +61,16 @@ class OrgTreeRepository(
     }
 
     override fun allTasks(): List<OrgTask> = listOrgFiles().flatMap { file ->
-        OrgParser.parse(read(file), file.relativePath).tasks
+        OrgParser.parse(read(file), file.relativePath, fallbackTodoStates).tasks
     }
 
     override fun cycleTodo(task: OrgTask): OrgTask {
         val file = listOrgFiles().firstOrNull { it.relativePath == task.path }
             ?: error("Missing task file ${task.path}")
-        val lines = read(file).lines().toMutableList()
-        val index = task.line - 1
-        require(index in lines.indices) { "Task line is out of range" }
-
-        val old = task.state
-        val next = DoomOrgProfile.nextTodoState(old)
-        val line = lines[index]
-        val prefix = "*".repeat(task.level) + " "
-        require(line.startsWith(prefix)) { "Task heading changed; refresh agenda" }
-
-        val afterStars = line.removePrefix(prefix)
-        require(afterStars == old || afterStars.startsWith("$old ")) {
-            "Task state changed; refresh agenda"
-        }
-
-        lines[index] = prefix + next + afterStars.removePrefix(old)
-        write(file, lines.joinToString("\n"))
-        return task.copy(state = next)
+        val source = read(file)
+        val mutation = OrgParser.cycleTodoState(source, task, fallbackTodoStates)
+        write(file, mutation.source)
+        return task.copy(state = mutation.state)
     }
 
     override fun tangle(file: OrgFileRef): List<OrgFileRef> {

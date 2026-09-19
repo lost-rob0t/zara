@@ -9,8 +9,7 @@
     list_hooks/1,
     run_hook/2,
     before_reply/1,
-    after_reply/1,
-    memory_sync/1
+    after_reply/1
 ]).
 
 :- use_module(library(error)).
@@ -24,15 +23,6 @@
 
 hook_stage(before_reply).
 hook_stage(after_reply).
-hook_stage(memory_sync).
-hook_stage(org_browser_before_index).
-hook_stage(org_browser_after_index).
-hook_stage(org_browser_before_render).
-hook_stage(org_browser_after_render).
-hook_stage(org_browser_node_selected).
-hook_stage(org_browser_help_open).
-hook_stage(org_browser_before_memory_sync).
-hook_stage(org_browser_after_memory_sync).
 
 concise_phrase(success, greet, "Hello.").
 concise_phrase(success, open, "Opened ~w.").
@@ -179,9 +169,6 @@ before_reply(Event) :-
 
 after_reply(Event) :-
     run_hook(after_reply, Event).
-
-memory_sync(Event) :-
-    run_hook(memory_sync, Event).
 
 validate_hook_registration(Stage, Owner, Priority, Goal) :-
     validate_hook_stage(Stage),

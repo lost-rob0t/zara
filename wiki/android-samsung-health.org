@@ -1,0 +1,142 @@
+#+title: Zara Android Samsung Health Plugin
+
+* Scope
+
+The Samsung Health plugin is a read-only Android integration driven by Zara's existing local Prolog runtime. It does not create a second Android plugin runtime or a separate policy engine.
+
+The first slice exposes:
+
+- Samsung Health / SDK readiness;
+- current granted read permissions;
+- today's steps;
+- today's sleep duration;
+- today's heart-rate minimum/maximum;
+- today's exercise duration and calories.
+
+Health values are treated as fitness/wellness data. The plugin does not diagnose conditions or provide treatment decisions.
+
+* Architecture
+
+#+begin_src text
+caller
+  -> SamsungHealthAndroidPlugin
+  -> AndroidAppSession.queryLocalProlog
+  -> samsung_health.pl
+  -> samsung_health_action(...)
+  -> SamsungHealthPluginActor
+  -> SamsungHealthGateway
+       |- UnavailableSamsungHealthGateway
+       `- SamsungHealthSdkGateway
+#+end_src
+
+The single-thread =SamsungHealthPluginActor= serializes physical reads. A Prolog turn may emit at most one Samsung Health effect. Unknown or malformed effects are rejected before any gateway call.
+
+* Prolog API
+
+The default editable workspace source is =samsung_health.pl=.
+
+#+begin_src prolog
+samsung_health_status(Result).
+samsung_health_permissions(Result).
+samsung_health_today(steps, Result).
+samsung_health_today(sleep, Result).
+samsung_health_today(heart_rate, Result).
+samsung_health_today(exercise, Result).
+
+samsung_health_steps(Result).
+samsung_health_sleep(Result).
+samsung_health_heart_rate(Result).
+samsung_health_exercise(Result).
+#+end_src
+
+The source is seeded only when it does not already exist. Zara never overwrites the operator's edited =samsung_health.pl= on startup.
+
+The closed effect vocabulary is:
+
+#+begin_src prolog
+samsung_health_action(status)
+samsung_health_action(permissions)
+samsung_health_action(read_today(steps))
+samsung_health_action(read_today(sleep))
+samsung_health_action(read_today(heart_rate))
+samsung_health_action(read_today(exercise))
+samsung_health_action(error(Code, Subject))
+#+end_src
+
+Arbitrary Prolog terms are not translated into Samsung SDK calls.
+
+* Permissions
+
+Samsung Health owns the health-data consent UI. Reading a metric requires that exact metric's =READ= permission.
+
+Availability, authorization, and permission are separate states:
+
+1. the Samsung Health Data SDK may or may not be bundled;
+2. Samsung Health may be missing, old, disabled, or unfinished;
+3. the Zara package/signing identity may or may not be authorized by Samsung;
+4. the user may grant or deny each health data type.
+
+=SamsungHealthAndroidPlugin.requestPermissions(Activity, metrics)= is the only permission-request boundary in this slice. It requires a foreground =Activity=. The plugin never silently requests health permission from a background task or from a normal data read.
+
+* Samsung Health Data SDK
+
+The integration targets Samsung Health Data SDK v1.1.0 rather than the deprecated Samsung Health SDK for Android.
+
+Samsung distributes the Data SDK as a local AAR. Zara intentionally does not commit that binary. See =android/app/libs/README.md=.
+
+Without a matching AAR under =android/app/libs/=:
+
+- =BuildConfig.HAS_SAMSUNG_HEALTH_SDK=false=;
+- =src/samsungHealthSdk/java= is not compiled;
+- =UnavailableSamsungHealthGateway= reports =SDK_MISSING=;
+- ordinary CI/JVM tests remain deterministic.
+
+With exactly one =samsung-health-data-api-*.aar= present, the optional source set compiles =SamsungHealthSdkGateway= and the loader uses that local first-party adapter.
+
+Samsung's current requirements include Android 10/API 29+, Java 17+, Samsung Health 6.30.2+, and a physical device for SDK testing. Public app distribution requires Samsung partner registration for the app package and release-signing SHA-256. Developer mode is a development/testing facility, not an end-user deployment path.
+
+* Read normalization
+
+Vendor objects do not escape the gateway. The gateway returns =SamsungHealthReading= with a small bounded string map.
+
+Current fields are:
+
+| Metric | Fields |
+|-
+| steps | =steps= |
+| sleep | =duration_minutes= |
+| heart_rate | =min_bpm=, =max_bpm= |
+| exercise | =duration_minutes=, =calories_kcal= |
+
+The core enforces bounded field names, field count, individual field length, total payload size, and rejects control characters. Raw health values are not emitted to diagnostic logging by this adapter.
+
+* Failure states
+
+The adapter maps platform failures into typed states rather than leaking Samsung exception bodies through normal replies:
+
+- =SDK_MISSING=
+- =PLATFORM_NOT_INSTALLED=
+- =PLATFORM_TOO_OLD=
+- =PLATFORM_DISABLED=
+- =PLATFORM_NOT_INITIALIZED=
+- =AUTHORIZATION_REQUIRED=
+- =READY=
+- =ERROR=
+
+Reads fail closed when readiness is not =READY= or when the requested data permission is absent.
+
+* Testing
+
+The JVM contract suite uses an injected fake =SamsungHealthGateway= and does not require Samsung Health, an emulator, a Samsung account, or the vendor AAR.
+
+The tests cover closed effect parsing, fan-out rejection, actor serialization, permission gating, Prolog-before-physical execution, normalized payload bounds, source seeding, and Android/build wiring.
+
+Real Samsung Health proof requires a physical Android device with a compatible Samsung Health installation and an official Samsung Health Data SDK AAR. Emulator success must never be reported as Samsung Health SDK acceptance because Samsung explicitly does not support the SDK on emulators.
+
+* Source references
+
+- https://developer.samsung.com/health/data/overview.html
+- https://developer.samsung.com/health/data/release-note.html
+- https://developer.samsung.com/health/data/guide/features/data-permission.html
+- https://developer.samsung.com/health/data/guide/hello-sdk/app-module.html
+- https://developer.samsung.com/health/data/guide/app-verification.html

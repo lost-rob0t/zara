@@ -17,6 +17,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Org Notebook execution now reuses the canonical editor operation fence for document revisions and cancellation, preventing late notebook replies from bypassing the same stale-edit protection used by voice/model editor work.
 - Zara Org Notebook now uses the canonical `0.2.2-alpha` Android package version and versionCode 4 instead of stale module-local `0.1.0-alpha` metadata.
 - Org Editor, Todo, Sync, and Notebook package validation now fails closed when a required APK artifact is missing instead of accepting an incomplete evidence set.
 - Android code-editor voice operations now fence cursor and selection changes as editor revisions, so a late transcript cannot apply to a different selection than the one active when listening started.

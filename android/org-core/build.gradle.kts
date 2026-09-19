@@ -1,21 +1,8 @@
 plugins {
-    alias(libs.plugins.android.library)
-}
-
-android {
-    namespace = "ai.zara.org.core"
-    compileSdk = 37
-
-    defaultConfig {
-        minSdk = 29
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
+    alias(libs.plugins.kotlin.jvm)
 }
 
 dependencies {
+    implementation(project(":editor-core"))
     testImplementation(libs.junit)
 }

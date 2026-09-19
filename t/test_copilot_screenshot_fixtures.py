@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -56,8 +57,10 @@ def test_copilot_fixture_renderer_emits_bounded_manifest_and_required_pngs(tmp_p
         assert entry["height"] > 0
         path = output_dir / Path(entry["path"]).name
         assert path.is_file()
-        assert path.stat().st_size > 64
-        assert path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        data = path.read_bytes()
+        assert len(data) > 64
+        assert data.startswith(b"\x89PNG\r\n\x1a\n")
+        assert entry["sha256"] == hashlib.sha256(data).hexdigest()
 
 
 def test_copilot_fixture_renderer_isolated_from_user_state(tmp_path, monkeypatch):
@@ -69,7 +72,7 @@ def test_copilot_fixture_renderer_isolated_from_user_state(tmp_path, monkeypatch
     render_copilot_fixtures(output_dir, source_commit="test-source")
 
     assert list(forbidden.iterdir()) == []
-    assert set(path.name for path in output_dir.glob("*.png")) == REQUIRED_SCREENSHOTS
+    assert set(path.name for path in output_dir.glob("copilot-*.png")) == REQUIRED_SCREENSHOTS
 
 
 def test_copilot_fixture_renderer_restores_application_theme_state(tmp_path):
