@@ -4,6 +4,9 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+- Android and Desktop now use one chat-first assistant surface: voice is started and stopped from a microphone control inside the message composer instead of a separate Chat/Voice page split.
+- Android hides redundant single-route Chat tabs and uses a compact conversation-first empty state with the composer kept visually primary.
+
 ### Fixed
 
 - Android's embedded Trealla bridge now treats `pl_query`'s return value as an error signal, so valid local Prolog queries are no longer rejected as native query failures.

@@ -93,7 +93,6 @@ import kotlinx.coroutines.launch
 enum class AppSurface(val label: String, val glyph: String, val gatedIssue: String? = null) {
     Chat("Chat", "⌂"),
     Logic("Logic", "λ"),
-    Voice("Voice", "◉"),
     Projects("Projects", "◇", "#653"),
     Remote("Remote", "⇄"),
     Scheduled("Scheduled", "◷", "#654"),
@@ -271,7 +270,15 @@ fun ZaraApp(
                                                 lastTurn = lastTurn,
                                                 operationError = operationError,
                                                 operationBusy = operationBusy,
+                                                microphonePermissionGranted = microphonePermissionGranted,
+                                                voiceState = voiceState,
+                                                voiceStreamState = voiceStreamState,
+                                                voiceStreamFailure = voiceStreamFailure,
                                                 onSendText = onSendText,
+                                                onRequestMicrophonePermission = onRequestMicrophonePermission,
+                                                onStartVoice = onStartVoice,
+                                                onStopVoice = onStopVoice,
+                                                onCancelVoice = onCancelVoice,
                                                 padding = padding,
                                             )
                                             AppSurface.Logic -> PrologStudioSurface(
@@ -287,20 +294,6 @@ fun ZaraApp(
                                                 onDeleteSource = onDeletePrologSource,
                                                 onImportWorkspace = onImportPrologWorkspace,
                                                 onExportWorkspace = onExportPrologWorkspace,
-                                                padding = padding,
-                                            )
-                                            AppSurface.Voice -> VoiceSurface(
-                                                state = runtimeState,
-                                                microphonePermissionGranted = microphonePermissionGranted,
-                                                voiceState = voiceState,
-                                                voiceStreamState = voiceStreamState,
-                                                voiceStreamFailure = voiceStreamFailure,
-                                                operationError = operationError,
-                                                operationBusy = operationBusy,
-                                                onRequestMicrophonePermission = onRequestMicrophonePermission,
-                                                onStartVoice = onStartVoice,
-                                                onStopVoice = onStopVoice,
-                                                onCancelVoice = onCancelVoice,
                                                 padding = padding,
                                             )
                                             AppSurface.Projects -> ProjectsSurface(
@@ -371,7 +364,6 @@ fun ZaraApp(
 
 internal fun AppRoute.surface(): AppSurface = when (this) {
     AppRoute.Chat -> AppSurface.Chat
-    AppRoute.Voice -> AppSurface.Voice
     AppRoute.Logic -> AppSurface.Logic
     AppRoute.Projects -> AppSurface.Projects
     AppRoute.Scheduled -> AppSurface.Scheduled
@@ -551,7 +543,15 @@ private fun ChatSurface(
     lastTurn: RenderedTextTurn?,
     operationError: String?,
     operationBusy: Boolean,
+    microphonePermissionGranted: Boolean,
+    voiceState: ManualVoiceState,
+    voiceStreamState: VoiceStreamState?,
+    voiceStreamFailure: String?,
     onSendText: (String, ProjectContext?) -> Unit,
+    onRequestMicrophonePermission: () -> Unit,
+    onStartVoice: () -> Unit,
+    onStopVoice: () -> Unit,
+    onCancelVoice: () -> Unit,
     padding: PaddingValues,
 ) {
     var input by rememberSaveable { mutableStateOf("") }
@@ -559,6 +559,9 @@ private fun ChatSurface(
         state.enrollment == EnrollmentReadiness.Ready
     val localReady = localServerState.phase == LocalServerPhase.READY
     val ready = remoteReady || localReady
+    val voiceReady = canStartManualVoice(state, microphonePermissionGranted)
+    val capturing = voiceState is ManualVoiceState.Capturing
+    val liveTranscript = voiceStreamState?.transcriptText.orEmpty()
     val tokens = LocalZaraTokens.current
 
     Column(
@@ -576,34 +579,25 @@ private fun ChatSurface(
         ) {
             if (lastTurn == null) {
                 Box(
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 360.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 300.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        ZaraSigil(size = 104.dp)
+                        ZaraSigil(size = 48.dp)
                         Text(
-                            "SYMBOLIC INTELLIGENCE",
-                            modifier = Modifier.padding(top = 20.dp),
+                            "How can I help?",
+                            modifier = Modifier.padding(top = 16.dp),
                             color = tokens.text,
-                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.SemiBold,
-                            letterSpacing = 2.sp,
                         )
                         Text(
-                            "ON YOUR TERMS",
-                            modifier = Modifier.padding(top = 5.dp),
+                            "Type a message or use the mic in the composer.",
+                            modifier = Modifier.padding(top = 6.dp),
                             color = tokens.textMuted,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            letterSpacing = 3.sp,
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center,
                         )
-                        Row(
-                            modifier = Modifier.padding(top = 18.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            StatusPill(enrollmentLabel(state.enrollment))
-                            StatusPill(connectionLabel(state.server))
-                        }
                     }
                 }
             } else {
@@ -613,6 +607,33 @@ private fun ChatSurface(
                 AssistantMessage(lastTurn.assistantText, lastTurn.success)
             }
             operationError?.let { ErrorBanner(it) }
+            voiceStreamFailure?.let { ErrorBanner(it) }
+        }
+
+        if (capturing || liveTranscript.isNotBlank()) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                color = tokens.surface,
+                border = BorderStroke(1.dp, if (capturing) tokens.accentMagenta else tokens.border),
+                shape = MaterialTheme.shapes.large,
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        if (liveTranscript.isNotBlank()) liveTranscript else "Listening…",
+                        modifier = Modifier.weight(1f),
+                        color = tokens.text,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (capturing) {
+                        TextButton(onClick = onCancelVoice, enabled = !operationBusy) {
+                            Text("Cancel", color = tokens.textMuted)
+                        }
+                    }
+                }
+            }
         }
 
         CompactComposer(
@@ -620,6 +641,12 @@ private fun ChatSurface(
             onValueChange = { input = it },
             ready = ready,
             operationBusy = operationBusy,
+            microphonePermissionGranted = microphonePermissionGranted,
+            voiceReady = voiceReady,
+            voiceCapturing = capturing,
+            onRequestMicrophonePermission = onRequestMicrophonePermission,
+            onStartVoice = onStartVoice,
+            onStopVoice = onStopVoice,
             onSend = {
                 val message = input.trim()
                 if (message.isNotEmpty()) {
@@ -650,6 +677,12 @@ private fun CompactComposer(
     onValueChange: (String) -> Unit,
     ready: Boolean,
     operationBusy: Boolean,
+    microphonePermissionGranted: Boolean,
+    voiceReady: Boolean,
+    voiceCapturing: Boolean,
+    onRequestMicrophonePermission: () -> Unit,
+    onStartVoice: () -> Unit,
+    onStopVoice: () -> Unit,
     onSend: () -> Unit,
 ) {
     val tokens = LocalZaraTokens.current
@@ -658,24 +691,73 @@ private fun CompactComposer(
         onValueChange = onValueChange,
         modifier = Modifier.fillMaxWidth(),
         enabled = ready && !operationBusy,
-        singleLine = true,
+        minLines = 1,
+        maxLines = 5,
         placeholder = {
             Text(
-                if (ready) "Ask anything…" else "Open Settings → Connection",
+                if (ready) "Message Zara" else "Open Settings → Connection",
                 color = tokens.textMuted,
             )
         },
         trailingIcon = {
-            TextButton(
-                onClick = onSend,
-                enabled = ready && value.isNotBlank() && !operationBusy,
-            ) {
-                Text(if (operationBusy) "…" else "↑", fontSize = 20.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                VoiceComposerButton(
+                    permissionGranted = microphonePermissionGranted,
+                    available = voiceReady,
+                    capturing = voiceCapturing,
+                    busy = operationBusy,
+                    onRequestPermission = onRequestMicrophonePermission,
+                    onStart = onStartVoice,
+                    onStop = onStopVoice,
+                )
+                TextButton(
+                    onClick = onSend,
+                    enabled = ready && value.isNotBlank() && !operationBusy && !voiceCapturing,
+                    modifier = Modifier.semantics { contentDescription = "Send message" },
+                ) {
+                    Text(if (operationBusy) "…" else "↑", fontSize = 20.sp)
+                }
             }
         },
         shape = MaterialTheme.shapes.extraLarge,
         colors = fieldColors(),
     )
+}
+
+@Composable
+private fun VoiceComposerButton(
+    permissionGranted: Boolean,
+    available: Boolean,
+    capturing: Boolean,
+    busy: Boolean,
+    onRequestPermission: () -> Unit,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+) {
+    val tokens = LocalZaraTokens.current
+    val label = when {
+        !permissionGranted -> "Grant microphone permission"
+        capturing -> "Stop and send voice"
+        available -> "Start voice mode"
+        else -> "Voice unavailable"
+    }
+    TextButton(
+        onClick = {
+            when {
+                !permissionGranted -> onRequestPermission()
+                capturing -> onStop()
+                available -> onStart()
+            }
+        },
+        enabled = !busy && (!permissionGranted || capturing || available),
+        modifier = Modifier.semantics { contentDescription = label },
+    ) {
+        Text(
+            if (capturing) "■" else "🎙",
+            color = if (capturing) tokens.accentMagenta else tokens.textMuted,
+            fontSize = 18.sp,
+        )
+    }
 }
 
 @Composable
@@ -716,61 +798,6 @@ private fun AssistantMessage(text: String, success: Boolean) {
             }
             Text(text, modifier = Modifier.padding(top = 12.dp), color = tokens.text)
         }
-    }
-}
-
-@Composable
-private fun VoiceSurface(
-    state: RuntimeState,
-    microphonePermissionGranted: Boolean,
-    voiceState: ManualVoiceState,
-    voiceStreamState: VoiceStreamState?,
-    voiceStreamFailure: String?,
-    operationError: String?,
-    operationBusy: Boolean,
-    onRequestMicrophonePermission: () -> Unit,
-    onStartVoice: () -> Unit,
-    onStopVoice: () -> Unit,
-    onCancelVoice: () -> Unit,
-    padding: PaddingValues,
-) {
-    val capturing = voiceState is ManualVoiceState.Capturing
-    val tokens = LocalZaraTokens.current
-    ScreenBody(padding) {
-        ScreenTitle("Voice", "Authenticated capture and playback")
-        SectionCard("RUNTIME") {
-            KeyValueRow("connection", connectionLabel(state.server))
-            KeyValueRow("microphone", if (capturing) "capturing" else "idle")
-            KeyValueRow("permission", if (microphonePermissionGranted) "granted" else "required")
-        }
-        voiceStreamState?.let { stream ->
-            SectionCard("STREAM") {
-                if (stream.transcriptStreamId != null) {
-                    Text(
-                        stream.transcriptText,
-                        color = tokens.text,
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                }
-                KeyValueRow("speaker", stream.audio?.let { "${it.sampleRate} Hz mono" } ?: "idle")
-            }
-        }
-        voiceStreamFailure?.let { ErrorBanner(it) }
-        when {
-            !microphonePermissionGranted -> PrimaryAction(
-                "Grant microphone permission",
-                !operationBusy && !capturing,
-                onRequestMicrophonePermission,
-            )
-            !canStartManualVoice(state, microphonePermissionGranted) && !capturing ->
-                MutedNotice("Voice becomes available after an authenticated session connects in Settings → Connection.")
-            capturing -> {
-                PrimaryAction("Stop & send", !operationBusy, onStopVoice)
-                SecondaryAction("Cancel", !operationBusy, onCancelVoice)
-            }
-            else -> PrimaryAction("Start talking", !operationBusy, onStartVoice)
-        }
-        operationError?.let { ErrorBanner(it) }
     }
 }
 

@@ -56,6 +56,7 @@ internal fun ZaraNavigationRail(selected: AppMenu, onSelect: (AppMenu) -> Unit) 
 internal fun ZaraRouteTabs(navigation: AppNavigation, onSelect: (AppRoute) -> Unit) {
     val tokens = LocalZaraTokens.current
     val routes = routesFor(navigation.menu)
+    if (routes.size <= 1) return
     ScrollableTabRow(
         selectedTabIndex = routes.indexOf(navigation.route),
         containerColor = tokens.background,

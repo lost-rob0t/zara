@@ -55,6 +55,17 @@ def dispose(window: CopilotWindow) -> None:
     app().processEvents()
 
 
+def test_canonical_copilot_has_one_chat_composer_with_voice_control(tmp_path):
+    _, _, _, window = make_window(tmp_path)
+    try:
+        assert window.composer_shell.objectName() == "zaraComposerShell"
+        assert window.voice_button.objectName() == "zaraComposerVoice"
+        assert window.voice_button.parentWidget() is not None
+        assert window.voice_button.accessibleName() == "Start voice mode"
+    finally:
+        dispose(window)
+
+
 def test_presentation_transition_preserves_one_renderer_state(tmp_path):
     qt_app, bridge, service, window = make_window(tmp_path)
     try:

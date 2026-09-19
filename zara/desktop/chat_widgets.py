@@ -130,6 +130,27 @@ class ComposerActionButton(QPushButton):
         refresh_dynamic_style(self)
 
 
+class ComposerVoiceButton(QPushButton):
+    """Mic control colocated with the chat composer."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("zaraComposerVoice")
+        self.setFixedSize(36, 36)
+        self.set_voice_state(False, pending=False)
+
+    def set_voice_state(self, active: bool, *, pending: bool) -> None:
+        self.setProperty("voiceActive", active)
+        self.setProperty("voicePending", pending)
+        self.setText("■" if active else "🎙")
+        label = "Stop voice mode" if active else "Start voice mode"
+        if pending:
+            label = "Changing voice mode"
+        self.setToolTip(label)
+        self.setAccessibleName(label)
+        refresh_dynamic_style(self)
+
+
 class MessageWidget(QFrame):
     """Render one message without requiring WebEngine or rebuilding its siblings."""
 
@@ -362,4 +383,4 @@ class MessageWidget(QFrame):
         }[status]
 
 
-__all__ = ["ChatComposer", "ComposerActionButton", "MessageWidget"]
+__all__ = ["ChatComposer", "ComposerActionButton", "ComposerVoiceButton", "MessageWidget"]

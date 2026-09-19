@@ -28,11 +28,25 @@ object AppNavigationWiringContract {
 
     fun tabsAreScrollableAndLabeled() {
         val source = bars()
-        check(source.contains("ScrollableTabRow("))
         check(source.contains("routesFor(navigation.menu)"))
+        check(source.contains("if (routes.size <= 1) return"))
+        check(source.contains("ScrollableTabRow("))
         check(source.contains("selected = route == navigation.route"))
         check(source.contains("Text(route.label"))
         check(source.contains("heightIn(min = 48.dp)"))
+    }
+
+    fun chatOwnsVoiceFromComposer() {
+        val source = app()
+        val chat = source.substringAfter("private fun ChatSurface(")
+            .substringBefore("private fun UserMessage(")
+        check(!source.contains("AppSurface.Voice ->"))
+        check(!source.contains("private fun VoiceSurface("))
+        check(chat.contains("onStartVoice"))
+        check(chat.contains("onStopVoice"))
+        check(chat.contains("onRequestMicrophonePermission"))
+        check(chat.contains("VoiceComposerButton("))
+        check(chat.contains("How can I help?"))
     }
 
     fun settingsSectionsDoNotRemainOneLongForm() {
@@ -74,6 +88,7 @@ object AppNavigationWiringContract {
         tabsAreScrollableAndLabeled()
         settingsSectionsDoNotRemainOneLongForm()
         adaptiveLayoutAndImeInsetsAreWired()
-        println("PASS: 5 source-wiring contracts (not Android rendering tests)")
+        chatOwnsVoiceFromComposer()
+        println("PASS: 6 source-wiring contracts (not Android rendering tests)")
     }
 }

@@ -6,7 +6,7 @@ object AppNavigationContract {
     }
 
     fun completeRouteInventory() {
-        check(routesFor(AppMenu.Chat) == listOf(AppRoute.Chat, AppRoute.Voice))
+        check(routesFor(AppMenu.Chat) == listOf(AppRoute.Chat))
         check(routesFor(AppMenu.Workspace) == listOf(AppRoute.Logic, AppRoute.Projects, AppRoute.Scheduled))
         check(routesFor(AppMenu.Settings) == listOf(
             AppRoute.Runtime, AppRoute.Connection, AppRoute.Permissions, AppRoute.Appearance,
@@ -27,9 +27,9 @@ object AppNavigationContract {
     }
 
     fun menuSelectionsAreIndependent() {
-        val state = AppNavigation().selectRoute(AppRoute.Voice)
+        val state = AppNavigation().selectRoute(AppRoute.Chat)
             .selectRoute(AppRoute.Scheduled).selectRoute(AppRoute.Permissions)
-        check(state.selectMenu(AppMenu.Chat).route == AppRoute.Voice)
+        check(state.selectMenu(AppMenu.Chat).route == AppRoute.Chat)
         check(state.selectMenu(AppMenu.Workspace).route == AppRoute.Scheduled)
         check(state.selectMenu(AppMenu.Settings).route == AppRoute.Permissions)
         check(state.selectMenu(AppMenu.Settings) == state)
@@ -61,13 +61,12 @@ object AppNavigationContract {
 
     fun invalidConstructionIsRejected() {
         check(runCatching { AppNavigation(chat = AppRoute.Logic) }.exceptionOrNull() is IllegalArgumentException)
-        check(runCatching { AppNavigation(workspace = AppRoute.Voice) }.exceptionOrNull() is IllegalArgumentException)
+        check(runCatching { AppNavigation(workspace = AppRoute.Chat) }.exceptionOrNull() is IllegalArgumentException)
         check(runCatching { AppNavigation(settings = AppRoute.Chat) }.exceptionOrNull() is IllegalArgumentException)
     }
 
     fun backReturnsThroughMenuRootThenChat() {
         check(AppNavigation().back() == null)
-        check(AppNavigation().selectRoute(AppRoute.Voice).back()?.route == AppRoute.Chat)
         check(AppNavigation().selectRoute(AppRoute.Updates).back()?.route == AppRoute.Runtime)
         check(AppNavigation().selectRoute(AppRoute.Scheduled).back()?.route == AppRoute.Logic)
         for (route in AppRoute.entries) {
@@ -108,6 +107,6 @@ object AppNavigationContract {
         backReturnsThroughMenuRootThenChat()
         railBreakpointUsesAvailableWindowWidth()
         savedKeysAreStableNames()
-        println("PASS: 10 navigation contracts; 169 route transitions and 144 saved-state combinations")
+        println("PASS: 10 navigation contracts; 144 route transitions and 72 saved-state combinations")
     }
 }
