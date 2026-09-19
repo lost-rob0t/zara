@@ -19,7 +19,10 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Runtime descriptor protocol text is now bounded consistently by the shared schema and host validators, preventing incompatible overlong protocol identifiers from passing wire validation.
 - Android Local AI now rejects new model work as soon as its runtime begins shutting down and drops stale backend callbacks after close, preventing shutdown races from hanging requests or reviving stopped local state.
+- Android strict Local Assistant voice now uses only the on-device recognizer and non-network TTS, and cancels and fences stale local recognition, model, and speech work when the Assistant session is hidden, cancelled, restarted, or shut down.
+- Android Assistant voice now refuses Remote capture unless enrollment is ready, the connected transport belongs to the current runtime generation, and the authenticated session ID is nonblank; Auto falls back to Local when that remote authority is stale or incomplete.
 - Programmable package symbol, kind, and owner identifiers now reject control characters, whitespace, and non-ASCII tokens before registry mutation, keeping the portable namespace deterministic across Python, Prolog, and native app adapters.
 - Portable package-profile versions now reject path-shaped, control-character, and non-ASCII tokens before any registry mutation, keeping package pins deterministic across host platforms.
 - Org todo discovery now recursively scans configured directory roots, so nested ordinary `.org` files remain visible and editable without flattening a user's workspace or Git layout.
