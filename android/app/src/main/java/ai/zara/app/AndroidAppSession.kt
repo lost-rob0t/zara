@@ -698,18 +698,21 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         ).handle { generated, error ->
             if (error != null || generated == null) {
                 val failure = error ?: IllegalStateException("Prolog-RLM returned no result")
+                val handling = classifyPrologRlmChatFailure(failure)
                 diagnostics.record(
                     "prolog_rlm.generate.failed",
-                    mapOf("request_id" to requestId),
-                    failure,
+                    mapOf(
+                        "request_id" to requestId,
+                        "failure_kind" to handling.kind.name.lowercase(),
+                    ),
                 )
-                // Re-probe after a sidecar failure. The registry fails back to the
-                // embedded runtime if Prolog-RLM is no longer installed/reachable.
-                assistantRuntimes.discover()
+                if (handling.rediscover) {
+                    assistantRuntimes.discover()
+                }
                 TextTurnResult(
                     conversationId = conversationId,
                     turnId = requestId,
-                    text = "The selected Prolog-RLM runtime is unavailable. Zara rechecked installed runtimes; choose another runtime in Settings → Runtime.",
+                    text = handling.message,
                     success = false,
                 )
             } else {
