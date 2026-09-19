@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
+- A running local Zara server can now initialize its durable CURVE identity and idempotently activate the authenticated remote ZARA/1 listener through the existing owner-only control socket, without a daemon restart or manual key/device enrollment ceremony.
 - Added an authenticated browser bridge and packaged Chromium/Firefox extension for reading pages and performing approval-gated browser actions from Zara.
 - Portable Zara package profiles can now enable and pin packages independently per app while reusing the same package ABI and each app's existing symbol registry.
 - Service plugins can register owner-scoped programmable symbols with deterministic override precedence, introspection, and automatic restoration of previous definitions when a plugin unloads.
