@@ -62,6 +62,19 @@ class AssistantRuntimeSettingsWiringTest {
     }
 
     @Test
+    fun runtimeRowsPreserveCanonicalDiscoveryOrder() {
+        val installed = runtimeSettings()
+            .substringAfter("INSTALLED ASSISTANT RUNTIMES")
+            .substringBefore("ROUTING POLICY")
+
+        check(installed.contains("installedAssistantRuntimes.forEach { runtime ->"))
+        check(!installed.contains("installedAssistantRuntimes.sorted"))
+        check(!installed.contains("installedAssistantRuntimes.reversed"))
+        check(!installed.contains("installedAssistantRuntimes.distinct"))
+        check(!installed.contains("installedAssistantRuntimes.groupBy"))
+    }
+
+    @Test
     fun selectionUsesStableRuntimeIdAndCurrentSelectability() {
         val rows = runtimeRows()
 
@@ -150,6 +163,20 @@ class AssistantRuntimeSettingsWiringTest {
 
         check(acceptance.contains("\"Runtime\","))
         check(acceptance.contains("device.capture(f\"settings-{tab.lower()}\")"))
+    }
+
+    @Test
+    fun runtimeScreenshotEvidenceIsExactHeadAndFailClosed() {
+        val acceptance = File("../integration/device_acceptance.py").readText()
+        val exerciseIndex = acceptance.indexOf("exercise_three_menu_ui(device)")
+        val passIndex = acceptance.indexOf("result[\"passed\"] = True")
+
+        check(acceptance.contains("source_sha = verified_source_sha(args.source_sha)"))
+        check(acceptance.contains("\"source_sha\": source_sha"))
+        check(acceptance.contains("\"passed\": False"))
+        check(exerciseIndex >= 0)
+        check(passIndex > exerciseIndex)
+        check(acceptance.contains("(args.output / \"manifest.json\").write_text"))
     }
 
     @Test
