@@ -1,0 +1,51 @@
+#+title: Android Model APIs
+
+* Purpose
+Zara Android can keep the symbolic runtime authoritative while using a configured
+generative model server when deterministic resolution and the embedded local model
+do not complete an ordinary conversational turn.
+
+The Auto-mode fallback order is:
+
+1. native Prolog symbolic resolution;
+2. verified embedded local model;
+3. configured Model API.
+
+Strict Local mode remains network-free.
+
+* Providers
+- StarIntel :: OpenAI-compatible =https://llm.starintel.actor/v1=.
+- OpenRouter :: official OpenRouter API base with explicit routing/quantization policy.
+- OpenAI-compatible :: operator-supplied HTTPS API base.
+- Ollama :: =/api/tags= model discovery and =/api/chat= generation.
+- llama.cpp :: OpenAI-compatible =/v1/models= and =/v1/chat/completions=.
+
+Ollama and llama.cpp may use cleartext HTTP only when the configured host is
+localhost or a private IPv4 address. Hosted generic/OpenRouter/StarIntel endpoints
+must use HTTPS.
+
+* Configuration
+Open *Settings -> Model APIs*.
+
+1. Select the provider preset.
+2. Set the endpoint.
+3. Enable the profile.
+4. Use *Discover models* or type an exact model identifier.
+5. For providers that require authentication, paste the API key.
+6. Save the profile.
+7. Use Runtime mode *Auto* for model-server fallback.
+
+Credentials are stored separately from provider properties and sealed with Android
+Keystore. Changing provider or endpoint clears the old credential before accepting
+a replacement.
+
+* Model discovery
+OpenAI-compatible, OpenRouter, StarIntel, and llama.cpp use =GET /models= beneath
+the configured API base. Ollama uses =GET /api/tags=. Discovery never selects a
+different model silently; the operator chooses the model identifier stored in the
+profile.
+
+* Authority
+Model output is conversational data, not an execution grant. Android side effects
+continue to be owned by the symbolic/runtime authority. A model-server failure is
+reported as a typed provider failure and does not mutate the Prolog workspace.
