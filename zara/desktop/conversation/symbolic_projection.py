@@ -14,6 +14,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Optional
 
 _OUTCOMES = frozenset({"unknown", "pending", "success", "cancelled", "interrupted", "error"})
+_TERMINAL_OUTCOMES = frozenset({"success", "cancelled", "interrupted", "error"})
 
 
 def _canonical_object(value: dict[str, Any]) -> str:
@@ -172,8 +173,9 @@ class SymbolicProjectionMixin:
         with self.database.transaction(immediate=True) as conn:
             current = conn.execute(
                 """
-                SELECT projection_generation, runtime_generation, project_id,
-                       project_generation, provider_calls, model_calls
+                SELECT projection_generation, runtime_generation, turn_id,
+                       outcome, project_id, project_generation,
+                       provider_calls, model_calls
                 FROM desktop_symbolic_projections
                 WHERE conversation_id = ? AND principal_id = ?
                 """,
@@ -187,13 +189,28 @@ class SymbolicProjectionMixin:
                     )
             else:
                 current_generation = int(current["projection_generation"])
+                current_runtime_generation = int(current["runtime_generation"])
+                current_turn_id = current["turn_id"]
+                current_outcome = current["outcome"]
                 if current_generation != expected_generation:
                     raise RuntimeError(
                         "stale symbolic projection write: "
                         f"expected generation {expected_generation}, current {current_generation}"
                     )
-                if projection.runtime_generation < int(current["runtime_generation"]):
+                if projection.runtime_generation < current_runtime_generation:
                     raise RuntimeError("runtime_generation regression rejected")
+                if current_turn_id is not None and projection.turn_id is None:
+                    raise RuntimeError("turn_id rewind rejected")
+                if projection.turn_id == current_turn_id:
+                    if current_turn_id is not None and projection.runtime_generation != current_runtime_generation:
+                        raise RuntimeError("same turn must preserve runtime_generation")
+                    if current_outcome in _TERMINAL_OUTCOMES and projection.outcome != current_outcome:
+                        raise RuntimeError(
+                            "terminal turn outcome rewrite rejected: "
+                            f"{current_outcome} -> {projection.outcome}"
+                        )
+                elif projection.runtime_generation <= current_runtime_generation:
+                    raise RuntimeError("new turn must advance runtime_generation")
                 if projection.provider_calls < int(current["provider_calls"]):
                     raise RuntimeError("provider-call ledger rewind rejected")
                 if projection.model_calls < int(current["model_calls"]):
