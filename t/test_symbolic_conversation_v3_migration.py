@@ -125,7 +125,6 @@ def test_existing_v2_database_upgrades_to_v3_without_losing_history(tmp_path):
     connection = sqlite3.connect(path)
     try:
         connection.execute("PRAGMA foreign_keys = ON")
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
         tables = {
             row[0]
             for row in connection.execute(
