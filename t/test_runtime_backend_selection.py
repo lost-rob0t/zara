@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from zara.runtime.backend import (
-    LangGraphRuntimeBackend,
-    PureSymbolicRuntimeBackend,
-    create_runtime_backend,
-)
+from zara.runtime.backend import LangGraphRuntimeBackend, create_runtime_backend
+from zara.runtime.pure_symbolic_backend import PureSymbolicRuntimeBackend
 
 
 class FakeConfig:
