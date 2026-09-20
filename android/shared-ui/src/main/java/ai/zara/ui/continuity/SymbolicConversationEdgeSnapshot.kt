@@ -26,6 +26,8 @@ data class SymbolicConversationEdgeSnapshot(
     val expertEvidenceRefs: List<String> = emptyList(),
     val verifiedOutcomeRefs: List<String> = emptyList(),
     val rendererProvenance: String = "",
+    val providersEnabled: Boolean = false,
+    val maxModelCalls: Long = 0,
     val modelCalls: Long = 0,
     val providerCalls: Long = 0,
 ) {
@@ -48,12 +50,20 @@ data class SymbolicConversationEdgeSnapshot(
             "rendererProvenance",
             allowBlank = true,
         )
+        require(maxModelCalls >= 0) { "max model calls must be >= 0" }
         require(modelCalls >= 0) { "model calls must be >= 0" }
         require(providerCalls >= 0) { "provider calls must be >= 0" }
+        require(modelCalls <= maxModelCalls || maxModelCalls == 0L) {
+            "model calls exceed declared max model calls"
+        }
     }
 
     fun assertPureSymbolic() {
         validate()
+        check(!providersEnabled) { "pure-symbolic edge projection has providers enabled" }
+        check(maxModelCalls == 0L) {
+            "pure-symbolic edge projection max model calls must be 0: $maxModelCalls"
+        }
         check(modelCalls == 0L) { "pure-symbolic edge projection recorded model calls: $modelCalls" }
         check(providerCalls == 0L) {
             "pure-symbolic edge projection recorded provider calls: $providerCalls"
@@ -116,6 +126,8 @@ object SymbolicConversationEdgeCodec {
                 snapshot.rendererProvenance,
                 SymbolicConversationEdgeSnapshot.MAX_RENDERER_CHARS,
             )
+            output.writeBoolean(snapshot.providersEnabled)
+            output.writeLong(snapshot.maxModelCalls)
             output.writeLong(snapshot.modelCalls)
             output.writeLong(snapshot.providerCalls)
         }
@@ -147,6 +159,8 @@ object SymbolicConversationEdgeCodec {
                     expertEvidenceRefs = input.readRefs(),
                     verifiedOutcomeRefs = input.readRefs(),
                     rendererProvenance = input.readString(SymbolicConversationEdgeSnapshot.MAX_RENDERER_CHARS),
+                    providersEnabled = input.readBoolean(),
+                    maxModelCalls = input.readLong(),
                     modelCalls = input.readLong(),
                     providerCalls = input.readLong(),
                 )
