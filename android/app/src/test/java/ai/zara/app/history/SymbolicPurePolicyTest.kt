@@ -45,6 +45,18 @@ class SymbolicPurePolicyTest {
     }
 
     @Test
+    fun `omitted policy defaults fail closed`() {
+        val omitted = SymbolicConversationProjection(
+            conversationId = "conv-policy-omitted",
+            projectionGeneration = 1,
+            runtimeGeneration = 1,
+        )
+        assertFails("providers enabled") {
+            omitted.assertPureSymbolic()
+        }
+    }
+
+    @Test
     fun `policy cannot widen after a zero model symbolic projection`() {
         val current = projection()
         assertFails("provider policy widening") {
