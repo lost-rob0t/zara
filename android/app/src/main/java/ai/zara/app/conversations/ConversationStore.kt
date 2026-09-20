@@ -30,29 +30,46 @@ private data class ConversationStoreLease(
     val generation: Long,
 )
 
+private data class ConversationStoreLeaseEntry(
+    val generation: AtomicLong = AtomicLong(0),
+    val lock: Any = Any(),
+)
+
 private object ConversationStoreLeaseRegistry {
-    private val generations = ConcurrentHashMap<String, AtomicLong>()
+    private val entries = ConcurrentHashMap<String, ConversationStoreLeaseEntry>()
+
+    private fun path(file: File): String = file.absoluteFile.path
+
+    private fun entry(path: String): ConversationStoreLeaseEntry =
+        entries.computeIfAbsent(path) { ConversationStoreLeaseEntry() }
 
     fun observe(file: File): ConversationStoreLease {
-        val path = file.absoluteFile.path
-        val generation = generations
-            .computeIfAbsent(path) { AtomicLong(0) }
-            .get()
-        return ConversationStoreLease(path = path, generation = generation)
+        val path = path(file)
+        val entry = entry(path)
+        return synchronized(entry.lock) {
+            ConversationStoreLease(path = path, generation = entry.generation.get())
+        }
     }
 
     fun advance(file: File): ConversationStoreLease {
-        val path = file.absoluteFile.path
-        val generation = generations
-            .computeIfAbsent(path) { AtomicLong(0) }
-            .incrementAndGet()
-        return ConversationStoreLease(path = path, generation = generation)
+        val path = path(file)
+        val entry = entry(path)
+        return synchronized(entry.lock) {
+            ConversationStoreLease(path = path, generation = entry.generation.incrementAndGet())
+        }
     }
 
     fun requireCurrent(lease: ConversationStoreLease) {
-        val currentGeneration = generations[lease.path]?.get()
-        check(currentGeneration == lease.generation) {
-            "Conversation store instance is stale after lifecycle recreation"
+        withCurrent(lease) { Unit }
+    }
+
+    fun <T> withCurrent(lease: ConversationStoreLease, action: () -> T): T {
+        val entry = entry(lease.path)
+        return synchronized(entry.lock) {
+            check(entry.generation.get() == lease.generation) {
+                "Conversation store instance is stale after lifecycle recreation"
+            }
+            action()
         }
     }
 }
@@ -116,16 +133,23 @@ class ConversationStore(
     private val idFactory: () -> String = { UUID.randomUUID().toString() },
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) {
-    private var lease = ConversationStoreLeaseRegistry.observe(file)
+    private val lease: ConversationStoreLease
 
     @Volatile
     private var current: ConversationState
 
     init {
         val (loaded, recoveredRunningTurn) = load()
-        current = loaded
         if (recoveredRunningTurn) {
             lease = ConversationStoreLeaseRegistry.advance(file)
+            current = ConversationStoreLeaseRegistry.withCurrent(lease) {
+                val (refreshed, stillRecoveredRunningTurn) = load()
+                if (stillRecoveredRunningTurn) persist(refreshed)
+                refreshed
+            }
+        } else {
+            lease = ConversationStoreLeaseRegistry.observe(file)
+            current = loaded
         }
     }
 
@@ -267,12 +291,13 @@ class ConversationStore(
         }
     }
 
-    private fun commit(next: ConversationState): ConversationState {
-        val clean = next.copy(loadFailure = null)
-        persist(clean)
-        current = clean
-        return current
-    }
+    private fun commit(next: ConversationState): ConversationState =
+        ConversationStoreLeaseRegistry.withCurrent(lease) {
+            val clean = next.copy(loadFailure = null)
+            persist(clean)
+            current = clean
+            current
+        }
 
     private fun load(): Pair<ConversationState, Boolean> {
         if (!file.exists()) return ConversationState() to false
@@ -280,38 +305,33 @@ class ConversationStore(
             return degradedState() to false
         }
         return try {
-            val (loaded, recoveredRunningTurn) =
-                DataInputStream(FileInputStream(file).buffered()).use { input ->
-                    require(input.readUTF() == CONVERSATION_STORE_MAGIC)
-                    val selectedConversationId =
-                        input.readBoundedString(MAX_CONVERSATION_ID_CHARS).ifEmpty { null }
-                    val count = input.readInt()
-                    require(count in 0..MAX_CONVERSATIONS)
-                    var recoveredRunningTurn = false
-                    val conversations = buildList(count) {
-                        repeat(count) {
-                            val conversation = input.readConversation()
-                            if (conversation.status == ConversationStatus.Running) {
-                                recoveredRunningTurn = true
-                            }
-                            add(conversation.recoverInterrupted())
+            DataInputStream(FileInputStream(file).buffered()).use { input ->
+                require(input.readUTF() == CONVERSATION_STORE_MAGIC)
+                val selectedConversationId =
+                    input.readBoundedString(MAX_CONVERSATION_ID_CHARS).ifEmpty { null }
+                val count = input.readInt()
+                require(count in 0..MAX_CONVERSATIONS)
+                var recoveredRunningTurn = false
+                val conversations = buildList(count) {
+                    repeat(count) {
+                        val conversation = input.readConversation()
+                        if (conversation.status == ConversationStatus.Running) {
+                            recoveredRunningTurn = true
                         }
+                        add(conversation.recoverInterrupted())
                     }
-                    require(conversations.map { it.id }.toSet().size == conversations.size)
-                    require(
-                        selectedConversationId == null ||
-                            conversations.any { it.id == selectedConversationId }
-                    )
-                    require(input.read() == -1)
-                    ConversationState(
-                        conversations = conversations,
-                        selectedConversationId = selectedConversationId,
-                    ) to recoveredRunningTurn
                 }
-            if (recoveredRunningTurn) {
-                persist(loaded)
+                require(conversations.map { it.id }.toSet().size == conversations.size)
+                require(
+                    selectedConversationId == null ||
+                        conversations.any { it.id == selectedConversationId }
+                )
+                require(input.read() == -1)
+                ConversationState(
+                    conversations = conversations,
+                    selectedConversationId = selectedConversationId,
+                ) to recoveredRunningTurn
             }
-            loaded to recoveredRunningTurn
         } catch (_: Exception) {
             degradedState() to false
         }
