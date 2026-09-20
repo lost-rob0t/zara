@@ -7,6 +7,7 @@ on:
       - "emacs/zara-conversation.el"
       - "emacs/zara-conversation-test.el"
       - "emacs/zara-conversation-recovery-test.el"
+      - "emacs/zara-conversation-strict-test.el"
       - ".github/workflows/emacs-conversation.yml"
   push:
     branches:
@@ -16,6 +17,7 @@ on:
       - "emacs/zara-conversation.el"
       - "emacs/zara-conversation-test.el"
       - "emacs/zara-conversation-recovery-test.el"
+      - "emacs/zara-conversation-strict-test.el"
       - ".github/workflows/emacs-conversation.yml"
 
 permissions:
@@ -37,5 +39,5 @@ jobs:
           set -euo pipefail
           emacs -Q --batch \
             -L emacs \
-            -l emacs/zara-conversation-recovery-test.el \
+            -l emacs/zara-conversation-strict-test.el \
             -f ert-run-tests-batch-and-exit
