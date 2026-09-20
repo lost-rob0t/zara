@@ -89,6 +89,34 @@ sealed interface TextServerMessage {
         val message: String,
         val retryable: Boolean,
     ) : TextServerMessage
+
+    data class TurnCancelled(
+        override val id: String,
+        override val sessionId: String,
+        val conversationId: String?,
+        val turnId: String,
+        val sequence: Long,
+        val reason: String,
+    ) : TextServerMessage
+
+    data class RuntimeError(
+        override val id: String,
+        override val sessionId: String,
+        val conversationId: String?,
+        val turnId: String?,
+        val sequence: Long?,
+        val reason: String,
+        val fatal: Boolean,
+    ) : TextServerMessage
+
+    data class RuntimeStopped(
+        override val id: String,
+        override val sessionId: String,
+        val conversationId: String?,
+        val turnId: String?,
+        val sequence: Long?,
+        val reason: String,
+    ) : TextServerMessage
 }
 
 object ZaraTextCodec {
@@ -255,7 +283,45 @@ object ZaraTextCodec {
                     retryable = requireBoolean(body, "retryable"),
                 )
             }
-            else -> throw ZaraWireException("unsupported server text message type")
+            "turn.cancelled" -> {
+                rejectUnknown(body, setOf("reason"), "turn.cancelled body")
+                TextServerMessage.TurnCancelled(
+                    id = id,
+                    sessionId = wireRequired(sessionId, "turn.cancelled requires session_id"),
+                    conversationId = conversationId,
+                    turnId = wireRequired(turnId, "turn.cancelled requires turn_id"),
+                    sequence = wireRequired(sequence, "turn.cancelled requires seq"),
+                    reason = requireBoundedText(body, "reason"),
+                )
+            }
+            "runtime.error" -> {
+                rejectUnknown(body, setOf("reason", "fatal"), "runtime.error body")
+                TextServerMessage.RuntimeError(
+                    id = id,
+                    sessionId = wireRequired(sessionId, "runtime.error requires session_id"),
+                    conversationId = conversationId,
+                    turnId = turnId,
+                    sequence = sequence,
+                    reason = requireBoundedText(body, "reason"),
+                    fatal = requireBoolean(body, "fatal"),
+                )
+            }
+            "runtime.stopped" -> {
+                if (sequence != null) throw ZaraWireException("runtime.stopped must not carry seq")
+                rejectUnknown(body, setOf("reason"), "runtime.stopped body")
+                TextServerMessage.RuntimeStopped(
+                    id = id,
+                    sessionId = wireRequired(sessionId, "runtime.stopped requires session_id"),
+                    conversationId = conversationId,
+                    turnId = turnId,
+                    sequence = sequence,
+                    reason = requireBoundedText(body, "reason"),
+                )
+            }
+            else -> throw ZaraWireException(
+                "unsupported server text message type",
+                code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_UNSUPPORTED_MESSAGE,
+            )
         }
     }
 

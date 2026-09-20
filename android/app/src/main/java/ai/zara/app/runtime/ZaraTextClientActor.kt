@@ -265,7 +265,41 @@ class ZaraTextClientActor(
                     }
                     is TextServerMessage.ProtocolError -> {
                         verifySession(event.sessionId, sessionId)
-                        throw ZaraWireException("turn failed: ${event.code}")
+                        throw ZaraWireException(
+                            "turn failed: ${event.code}",
+                            code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_SERVER_ERROR,
+                            serverCode = event.code,
+                            retryable = event.retryable,
+                        )
+                    }
+                    is TextServerMessage.TurnCancelled -> {
+                        verifyEvent(
+                            event.sessionId,
+                            event.turnId,
+                            accepted.turnId,
+                            event.conversationId,
+                            accepted.conversationId,
+                        )
+                        throw ZaraWireException(
+                            "turn cancelled: ${event.reason}",
+                            code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_TURN_CANCELLED,
+                        )
+                    }
+                    is TextServerMessage.RuntimeError -> {
+                        verifySession(event.sessionId, sessionId)
+                        throw ZaraWireException(
+                            "server runtime error: ${event.reason}",
+                            code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_RUNTIME_ERROR,
+                            retryable = !event.fatal,
+                        )
+                    }
+                    is TextServerMessage.RuntimeStopped -> {
+                        verifySession(event.sessionId, sessionId)
+                        throw ZaraWireException(
+                            "server runtime stopped: ${event.reason}",
+                            code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_RUNTIME_STOPPED,
+                            retryable = true,
+                        )
                     }
                     is TextServerMessage.HelloOk, is TextServerMessage.TurnAccepted ->
                         throw ZaraWireException("unexpected response during assistant turn")
