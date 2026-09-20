@@ -208,7 +208,7 @@ class SymbolicProjectionMixin:
                     raise RuntimeError("turn_id rewind rejected")
                 if projection.turn_id == current_turn_id:
                     if current_turn_id is not None and projection.runtime_generation != current_runtime_generation:
-                        raise RuntimeError("same turn must preserve runtimeGeneration")
+                        raise RuntimeError("same turn must preserve runtime_generation")
                     if current_outcome in _TERMINAL_OUTCOMES:
                         raise RuntimeError("terminal turn projection is immutable")
                 elif projection.runtime_generation <= current_runtime_generation:
