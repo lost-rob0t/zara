@@ -10,6 +10,7 @@ ledger before accepting a successful result.
 from __future__ import annotations
 
 import inspect
+import threading
 from collections.abc import Mapping
 from typing import Any, Optional
 
@@ -19,6 +20,13 @@ from ._experts_v1 import *  # noqa: F401,F403
 
 class ExpertRegistry(_impl.ExpertRegistry):
     """Canonical registry with non-spoofable operation dispatch and usage fences."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # Canonical expert-to-expert delegation is synchronous and may re-enter
+        # this same registry from a trusted handler. Preserve one state machine
+        # while allowing that same-thread nested admission path to make progress.
+        self._lock = threading.RLock()
 
     @staticmethod
     def _handler_declares_host_operation(handler: Any) -> bool:
