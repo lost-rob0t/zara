@@ -20,6 +20,20 @@ class AndroidPureSymbolicConversationFactoryTest {
     }
 
     @Test
+    fun dialogueTurnQueryDoesNotResetOrDiscardConversationContext() {
+        val query = AndroidPureSymbolicConversationFactory.dialogueTurnQuery("five minutes")
+
+        assertFalse(
+            "natural turns must load canonical persisted Context0 instead of resetting dialogue state",
+            query.contains("conversation, []"),
+        )
+        assertFalse(
+            "natural turns must expose Context1 for generation-fenced persistence instead of discarding it",
+            query.contains("_Context"),
+        )
+    }
+
+    @Test
     fun dialogueTurnQueryRejectsBlankInput() {
         assertThrows(IllegalArgumentException::class.java) {
             AndroidPureSymbolicConversationFactory.dialogueTurnQuery("   ")
