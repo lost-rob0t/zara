@@ -19,8 +19,7 @@ data class PureSymbolicTurnResult(
     val renderer: String = when (route) {
         PureSymbolicRoute.FRAME_RESOLVER -> "symbolic-dcg/v1"
         PureSymbolicRoute.EXPLICIT_QUERY,
-        PureSymbolicRoute.EXPLICIT_COMMAND,
-        -> "symbolic-term/v1"
+        PureSymbolicRoute.EXPLICIT_COMMAND -> "symbolic-term/v1"
     },
     val maxModelCalls: Int = 0,
     val maxProviderCalls: Int = 0,
