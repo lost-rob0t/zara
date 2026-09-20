@@ -266,10 +266,7 @@ class PairingClient(
                 throw PairingException("pairing approval did not match the scanned server")
             }
 
-            synchronized(lifecycleLock) {
-                requireCurrentLocked(pairingGeneration)
-                enrollment.pinServerZ85(payload.serverKey)
-            }
+            requireCurrent(pairingGeneration)
             return PairingOutcome(payload.endpoint, expectedDeviceId)
         } catch (error: PairingException) {
             throw error
