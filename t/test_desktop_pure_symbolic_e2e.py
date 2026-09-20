@@ -100,7 +100,7 @@ def test_real_desktop_surface_runs_symbolic_greeting_without_runtime_errors(tmp_
 
     try:
         controller.start().result(timeout=8.0)
-        _wait_until(qt_app, lambda: controller.status.message == "Zara is ready")
+        _wait_until(qt_app, lambda: controller.status.detail == "Zara is ready")
 
         conversation_id = surface.current_conversation_id
         surface.composer.setPlainText("hello")
