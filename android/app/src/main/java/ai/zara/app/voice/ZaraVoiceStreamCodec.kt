@@ -161,7 +161,6 @@ object ZaraVoiceStreamCodec {
                 requireNoPayloads(frames, payloadCount, type)
                 if (turn != null) throw ZaraWireException("$type must not carry turn_id")
                 if (contentType != null) throw ZaraWireException("$type must not carry content_type")
-                if (sequence != null) throw ZaraWireException("$type must not carry seq")
                 rejectUnknown(body, setOf("pre_speech_samples"), "$type body")
                 VoiceStreamEvent.SpeechStarted(
                     sessionId = session,
@@ -173,7 +172,6 @@ object ZaraVoiceStreamCodec {
                 requireNoPayloads(frames, payloadCount, type)
                 if (turn != null) throw ZaraWireException("$type must not carry turn_id")
                 if (contentType != null) throw ZaraWireException("$type must not carry content_type")
-                if (sequence != null) throw ZaraWireException("$type must not carry seq")
                 rejectUnknown(body, setOf("reason"), "$type body")
                 VoiceStreamEvent.SpeechEnded(
                     sessionId = session,

@@ -9,7 +9,8 @@ socket and can inject one armed failure mode into the next interaction:
   ARM CLOSE             abrupt transport close mid-stream, socket rebinds
   ARM STALE             first post-reconnect frame carries the old session_id
 
-Control protocol (stdin, one command per line): ARM <MODE>, STOP.
+Control: stdin (one command per line) plus the FIFO whose path is published
+in the fixture file as ``control_fifo`` (ARM <MODE>, STOP).
 Trace lines are written to stderr as ``FIXTURE ...`` for evidence bundles.
 """
 
@@ -467,10 +468,19 @@ class RecoveryFixture:
         _trace("voice", "completed", turn=turn_id)
 
 
+def _control_fifo(path: Path) -> None:
+    os.mkfifo(path, 0o600)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--fixture-file", required=True)
+    parser.add_argument("--control-fifo", default=None)
     args = parser.parse_args()
+
+    fixture_path = Path(args.fixture_file).resolve()
+    control_path = Path(args.control_fifo) if args.control_fifo else fixture_path.parent / "control.fifo"
+    _control_fifo(control_path)
 
     server_public, server_secret = zmq.curve_keypair()
     client_public, client_secret = zmq.curve_keypair()
@@ -479,30 +489,43 @@ def main() -> int:
     fixture = RecoveryFixture(endpoint, server_public, server_secret)
 
     _write_fixture(
-        Path(args.fixture_file).resolve(),
+        fixture_path,
         {
             "endpoint": endpoint,
             "server_public": server_public.decode("ascii"),
             "client_public": client_public.decode("ascii"),
             "client_secret": client_secret.decode("ascii"),
+            "control_fifo": os.fspath(control_path),
         },
     )
     print("READY", flush=True)
 
-    def control() -> None:
-        for line in sys.stdin:
-            command = line.strip()
-            if command == "STOP":
-                fixture.stop.set()
-                return
-            if command.startswith("ARM "):
-                mode = command[4:].strip().upper()
-                if mode in VALID_MODES:
-                    fixture.arm(mode)
-                else:
-                    _trace("arm", "rejected", mode=mode)
+    def handle_command(command: str) -> bool:
+        if command == "STOP":
+            fixture.stop.set()
+            return False
+        if command.startswith("ARM "):
+            mode = command[4:].strip().upper()
+            if mode in VALID_MODES:
+                fixture.arm(mode)
+            else:
+                _trace("arm", "rejected", mode=mode)
+        return True
 
-    control_thread = threading.Thread(target=control, name="fixture-control", daemon=True)
+    def control_stdin() -> None:
+        for line in sys.stdin:
+            if not handle_command(line.strip()):
+                return
+
+    def control_fifo() -> None:
+        descriptor = os.open(control_path, os.O_RDWR)
+        with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+            for line in stream:
+                if not handle_command(line.strip()):
+                    return
+
+    threading.Thread(target=control_stdin, name="fixture-stdin", daemon=True).start()
+    control_thread = threading.Thread(target=control_fifo, name="fixture-control", daemon=True)
     control_thread.start()
     try:
         fixture.serve_forever()

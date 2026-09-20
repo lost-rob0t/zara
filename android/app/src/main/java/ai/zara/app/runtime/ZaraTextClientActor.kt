@@ -63,6 +63,7 @@ class ZaraTextClientActor(
     private var voiceStreamObserver: ((VoiceStreamEvent) -> Unit)? = null
     private var voiceStreamFailureObserver: ((Throwable) -> Unit)? = null
     private var connectionFailureObserver: ((ai.zara.app.telemetry.ZaraFailure) -> Unit)? = null
+    private var staleFrameObserver: ((messageType: String, currentGeneration: Long) -> Unit)? = null
     private var voicePumpActive = false
     private var selectedAudioOutputFormat: AudioOutputFormat? = null
     private var closed = false
@@ -85,6 +86,10 @@ class ZaraTextClientActor(
 
     fun setConnectionFailureObserver(observer: ((ai.zara.app.telemetry.ZaraFailure) -> Unit)?) {
         connectionFailureObserver = observer
+    }
+
+    fun setStaleFrameObserver(observer: ((messageType: String, currentGeneration: Long) -> Unit)?) {
+        staleFrameObserver = observer
     }
 
     fun negotiatedAudioOutputFormat(): AudioOutputFormat? = selectedAudioOutputFormat
@@ -609,10 +614,8 @@ class ZaraTextClientActor(
     private fun dispatchVoiceStream(event: VoiceStreamEvent) {
         val current = session ?: throw StaleTextSessionException("voice client is not connected")
         if (event.sessionId != current.sessionId) {
-            throw ZaraWireException(
-                "voice stream event session is stale",
-                code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_STALE_GENERATION,
-            )
+            staleFrameObserver?.invoke(event.javaClass.simpleName, current.generation)
+            return
         }
         val negotiated = selectedAudioOutputFormat
         if (event is VoiceStreamEvent.AudioStarted && negotiated != null) {

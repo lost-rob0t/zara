@@ -199,7 +199,7 @@ object ZaraTextCodec {
                     id = id,
                     replyTo = wireRequired(replyTo, "hello.ok requires reply_to"),
                     sessionId = wireRequired(sessionId, "hello.ok requires session_id"),
-                    version = requireLong(body, "version", exact = 1).toInt(),
+                    version = requireProtocolVersion(body),
                     maxPayloadFrames = requirePositiveInt(body, "max_payload_frames"),
                     maxPayloadFrameBytes = requirePositiveInt(body, "max_payload_frame_bytes"),
                     maxPayloadBytes = requirePositiveInt(body, "max_payload_bytes"),
@@ -323,6 +323,18 @@ object ZaraTextCodec {
                 code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_UNSUPPORTED_MESSAGE,
             )
         }
+    }
+
+    private fun requireProtocolVersion(body: Map<String, Any?>): Int {
+        val raw = body["version"] as? Long
+            ?: throw ZaraWireException("version must be integer", code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_VERSION_MISMATCH)
+        if (raw != 1L) {
+            throw ZaraWireException(
+                "server protocol version $raw is not supported",
+                code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_VERSION_MISMATCH,
+            )
+        }
+        return raw.toInt()
     }
 
     private fun frames(envelope: Map<String, Any?>): List<ByteArray> =

@@ -44,6 +44,7 @@ class FixtureServer:
         for line in self.fixture_file.read_text().splitlines():
             key, _, value = line.partition("=")
             values[key] = value
+        self.values = values
         self.endpoint = values["endpoint"]
         self.server_public = values["server_public"].encode("ascii")
         self.client_public = values["client_public"].encode("ascii")
@@ -51,8 +52,12 @@ class FixtureServer:
         assert os.stat(self.fixture_file).st_mode & 0o777 == 0o600
 
     def arm(self, mode: str) -> None:
-        self.process.stdin.write(f"ARM {mode}\n")
-        self.process.stdin.flush()
+        fifo = self.values["control_fifo"]
+        descriptor = os.open(fifo, os.O_WRONLY)
+        try:
+            os.write(descriptor, f"ARM {mode}\n".encode())
+        finally:
+            os.close(descriptor)
 
     def client(self) -> zmq.Socket:
         dealer = zmq.Context.instance().socket(zmq.DEALER)

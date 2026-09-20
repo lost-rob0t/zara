@@ -51,6 +51,7 @@ import ai.zara.app.telemetry.SessionTelemetry
 import ai.zara.app.telemetry.VoiceStage
 import ai.zara.app.telemetry.VoiceStageProgress
 import ai.zara.app.telemetry.ZaraFailure
+import ai.zara.app.telemetry.ZaraFailureCodes
 import ai.zara.app.telemetry.ZaraFailures
 import ai.zara.app.telemetry.ZaraOperation
 import ai.zara.app.telemetry.ZaraSubsystem
@@ -186,6 +187,23 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             telemetry.onConnectionLost(code, reason)
         }
         actor.setConnectionFailureObserver(::onClientConnectionFailure)
+        actor.setStaleFrameObserver { messageType, generation ->
+            telemetry.journal().recordProtocolMessage(
+                direction = ClientEventJournal.Direction.RX,
+                messageType = messageType,
+                messageSequence = null,
+                messageBytes = 0,
+                connectionGeneration = generation,
+            )
+            telemetry.journal().record(
+                ClientEventNames.PROTOCOL_MESSAGE_REJECTED,
+                subsystem = ZaraSubsystem.PROTOCOL,
+                operation = ZaraOperation.STREAM,
+                connectionGeneration = generation,
+                outcome = ClientEventOutcome.FAILURE,
+                code = ZaraFailureCodes.PROTOCOL_STALE_GENERATION,
+            )
+        }
         voice = ManualVoiceSessionCoordinator(
             PushToTalkController(
                 capture = ManualVoiceCapture(AuthenticatedVoiceIngress(actor)),
