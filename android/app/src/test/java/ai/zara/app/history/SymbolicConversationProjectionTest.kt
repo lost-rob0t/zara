@@ -142,7 +142,7 @@ class SymbolicConversationProjectionTest {
     }
 
     @Test
-    fun `android and desktop both reject malformed json projections`() {
+    fun `android and desktop reject malformed or mistyped json projections`() {
         listOf(
             "{not-json}",
             "{\"ok\":true,}",
@@ -160,6 +160,9 @@ class SymbolicConversationProjectionTest {
             "[1,]",
             "[\"unterminated]",
             "{}",
+            "[null]",
+            "[1]",
+            "[\"scalar\"]",
         ).forEach { invalidArray ->
             assertFailsWithMessage("JSON") {
                 SymbolicProjectionContract.validatePayload(
@@ -171,7 +174,8 @@ class SymbolicConversationProjectionTest {
         SymbolicProjectionContract.validatePayload(
             projection(
                 dialogueStateJson = "{\"nested\":{\"n\":-1.25e+2},\"ok\":true}",
-                discourseEntitiesJson = "[null,false,{\"escaped\":\"line\\nvalue\",\"u\":\"\\u263A\"}]",
+                discourseEntitiesJson =
+                    "[{\"escaped\":\"line\\nvalue\",\"u\":\"\\u263A\"},{\"nested\":[null,false,3]}]",
             )
         )
     }
@@ -194,6 +198,7 @@ class SymbolicConversationProjectionTest {
         assertTrue(source.contains("provider-call ledger rewind rejected"))
         assertTrue(source.contains("model-call ledger rewind rejected"))
         assertTrue(source.contains("PortableJsonValidator"))
+        assertTrue(source.contains("parseObjectArrayDocument"))
     }
 
     private fun assertFailsWithMessage(fragment: String, block: () -> Unit) {
