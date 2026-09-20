@@ -21,7 +21,115 @@ adb -s "$serial" shell pidof ai.zara.code.editor >/dev/null
 adb -s "$serial" shell am force-stop ai.zara.code.editor
 
 adb -s "$serial" install -r "$phone_apk"
+# GitHub's hosted Pixel image can leave its launcher process in an ANR dialog over
+# an otherwise healthy Zara activity. Quiesce only that OS-owned package before
+# acceptance instead of hiding global error dialogs or masking Zara failures.
+if adb -s "$serial" shell pm path com.google.android.apps.nexuslauncher >/dev/null 2>&1; then
+  adb -s "$serial" shell am force-stop com.google.android.apps.nexuslauncher
+fi
 python android/integration/device_acceptance.py \
   --serial "$serial" \
   --source-sha "$source_sha" \
   --output android/app/build/reports/device
+
+# The visual acceptance above is intentionally broad. This second gate proves
+# the installed APK's real Android Keystore -> CURVE -> JeroMQ -> ZARA/1 path
+# against the stock Python Zara server and completes an actual remote text turn.
+interop_dir="$(mktemp -d)"
+interop_fixture="$interop_dir/fixture.env"
+interop_control="$interop_dir/control.fifo"
+interop_log="$interop_dir/server.log"
+interop_pid=""
+reverse_port=""
+mkfifo "$interop_control"
+exec 9<>"$interop_control"
+
+cleanup_remote_acceptance() {
+  status=$?
+  mkdir -p android/app/build/reports/device
+  if [[ -f "$interop_log" ]]; then
+    cp "$interop_log" android/app/build/reports/device/remote-stock-server.log || true
+  fi
+  if [[ -n "$reverse_port" ]]; then
+    adb -s "$serial" reverse --remove "tcp:$reverse_port" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$interop_pid" ]] && kill -0 "$interop_pid" 2>/dev/null; then
+    printf 'STOP\n' >&9 || true
+    wait "$interop_pid" || true
+  fi
+  exec 9>&- || true
+  exec 9<&- || true
+  rm -rf "$interop_dir"
+  exit "$status"
+}
+trap cleanup_remote_acceptance EXIT
+
+nix develop "$repo_root" -c env \
+  PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}" \
+  python3 "$repo_root/android/integration/stock_zara_server_fixture.py" \
+  --fixture-file "$interop_fixture" <&9 >"$interop_log" 2>&1 &
+interop_pid=$!
+
+for _ in $(seq 1 1200); do
+  if [[ -f "$interop_fixture" ]] && grep -qx 'READY' "$interop_log"; then
+    break
+  fi
+  if ! kill -0 "$interop_pid" 2>/dev/null; then
+    cat "$interop_log" >&2
+    echo "stock ZaraServer exited before installed-APK remote acceptance" >&2
+    exit 1
+  fi
+  sleep 0.05
+done
+if [[ ! -f "$interop_fixture" ]] || ! grep -qx 'READY' "$interop_log"; then
+  cat "$interop_log" >&2
+  echo "stock ZaraServer did not become ready for installed-APK remote acceptance" >&2
+  exit 1
+fi
+
+endpoint="$(sed -n 's/^endpoint=//p' "$interop_fixture")"
+reverse_port="${endpoint##*:}"
+if [[ ! "$reverse_port" =~ ^[0-9]+$ ]]; then
+  cat "$interop_fixture" >&2
+  echo "stock ZaraServer fixture did not publish a numeric TCP port" >&2
+  exit 1
+fi
+adb -s "$serial" reverse "tcp:$reverse_port" "tcp:$reverse_port"
+
+nix develop "$repo_root" -c env \
+  PYTHONPATH="$repo_root/android/integration:$repo_root${PYTHONPATH:+:$PYTHONPATH}" \
+  python3 "$repo_root/android/integration/device_remote_acceptance.py" \
+  --serial "$serial" \
+  --fixture-file "$interop_fixture" \
+  --output "$repo_root/android/app/build/reports/device"
+
+# A successful UI path is not enough: the acceptance contract requires current
+# process diagnostics and logcat to be readable and free of Zara crash/ANR
+# markers. Fail closed if evidence collection itself broke so CI cannot silently
+# report green without inspecting the exercised app logs.
+remote_manifest="$repo_root/android/app/build/reports/device/remote-manifest.json"
+python3 - "$remote_manifest" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+if data.get("passed") is not True:
+    raise SystemExit("remote Android acceptance manifest did not report passed=true")
+if data.get("app_diagnostics_failure") or data.get("logcat_failure"):
+    raise SystemExit("remote Android acceptance could not inspect required app diagnostics/logcat")
+if not data.get("app_diagnostics") or not data.get("logcat"):
+    raise SystemExit("remote Android acceptance omitted required app diagnostics/logcat evidence")
+fatal_markers = data.get("fatal_log_markers")
+if not isinstance(fatal_markers, list):
+    raise SystemExit("remote Android acceptance omitted fatal_log_markers inspection result")
+if fatal_markers:
+    raise SystemExit(f"remote Android acceptance found crash/ANR markers: {fatal_markers}")
+PY
+
+printf 'STOP\n' >&9
+wait "$interop_pid"
+interop_pid=""
+adb -s "$serial" reverse --remove "tcp:$reverse_port"
+reverse_port=""
