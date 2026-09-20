@@ -199,7 +199,19 @@ def main() -> int:
 
     base_policy = None
     if args.base_ref:
-        base_policy = load_policy_from_ref(args.base_ref, str(args.policy))
+        policy_ref_path = args.policy
+        if policy_ref_path.is_absolute():
+            try:
+                policy_ref_path = policy_ref_path.relative_to(Path.cwd())
+            except ValueError:
+                fail(
+                    "coverage policy must live inside the repository when "
+                    "comparing against a base ref"
+                )
+        base_policy = load_policy_from_ref(
+            args.base_ref,
+            policy_ref_path.as_posix(),
+        )
 
     product_python_changed, targets = check_ratchet(
         policy,
