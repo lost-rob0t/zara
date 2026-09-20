@@ -17,6 +17,15 @@ _OUTCOMES = frozenset({"unknown", "pending", "success", "cancelled", "interrupte
 _TERMINAL_OUTCOMES = frozenset({"success", "cancelled", "interrupted", "error"})
 
 
+def _require_exact_integer(name: str, value: object, *, minimum: int = 0) -> int:
+    """Reject bool/float coercions at persisted generation/accounting boundaries."""
+    if type(value) is not int:
+        raise TypeError(f"{name} must be an exact integer")
+    if value < minimum:
+        raise ValueError(f"{name} must be >= {minimum}")
+    return value
+
+
 def _canonical_object(value: dict[str, Any]) -> str:
     if not isinstance(value, dict):
         raise TypeError("symbolic object payload must be a dict")
@@ -81,16 +90,11 @@ class SymbolicConversationProjection:
             raise ValueError("turn_id must be null or 1..512 characters")
         if self.outcome not in _OUTCOMES:
             raise ValueError(f"unsupported symbolic outcome: {self.outcome}")
-        if self.projection_generation < 1:
-            raise ValueError("projection_generation must be >= 1")
-        if self.runtime_generation < 0:
-            raise ValueError("runtime_generation must be >= 0")
-        if self.project_generation < 0:
-            raise ValueError("project_generation must be >= 0")
-        if self.provider_calls < 0:
-            raise ValueError("provider_calls must be >= 0")
-        if self.model_calls < 0:
-            raise ValueError("model_calls must be >= 0")
+        _require_exact_integer("projection_generation", self.projection_generation, minimum=1)
+        _require_exact_integer("runtime_generation", self.runtime_generation)
+        _require_exact_integer("project_generation", self.project_generation)
+        _require_exact_integer("provider_calls", self.provider_calls)
+        _require_exact_integer("model_calls", self.model_calls)
         if self.project_id is not None and len(self.project_id) > 512:
             raise ValueError("project_id exceeds 512 characters")
         if len(self.renderer_provenance) > 512:
@@ -102,10 +106,12 @@ class SymbolicConversationProjection:
         _canonical_array(self.verified_facts)
 
     def assert_pure_symbolic(self) -> None:
-        if self.provider_calls != 0 or self.model_calls != 0:
+        provider_exact_zero = type(self.provider_calls) is int and self.provider_calls == 0
+        model_exact_zero = type(self.model_calls) is int and self.model_calls == 0
+        if not provider_exact_zero or not model_exact_zero:
             raise AssertionError(
                 "pure-symbolic conversation recorded "
-                f"provider_calls={self.provider_calls}, model_calls={self.model_calls}"
+                f"provider_calls={self.provider_calls!r}, model_calls={self.model_calls!r}"
             )
 
 
@@ -160,8 +166,7 @@ class SymbolicProjectionMixin:
         expected_generation: int,
     ) -> SymbolicConversationProjection:
         projection.validate()
-        if expected_generation < 0:
-            raise ValueError("expected_generation must be >= 0")
+        _require_exact_integer("expected_generation", expected_generation)
         if projection.projection_generation != expected_generation + 1:
             raise ValueError(
                 "projection_generation must equal expected_generation + 1"
@@ -203,7 +208,7 @@ class SymbolicProjectionMixin:
                     raise RuntimeError("turn_id rewind rejected")
                 if projection.turn_id == current_turn_id:
                     if current_turn_id is not None and projection.runtime_generation != current_runtime_generation:
-                        raise RuntimeError("same turn must preserve runtime_generation")
+                        raise RuntimeError("same turn must preserve runtimeGeneration")
                     if current_outcome in _TERMINAL_OUTCOMES:
                         raise RuntimeError("terminal turn projection is immutable")
                 elif projection.runtime_generation <= current_runtime_generation:
