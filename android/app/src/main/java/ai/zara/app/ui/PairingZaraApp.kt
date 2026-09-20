@@ -16,17 +16,17 @@ import ai.zara.app.voice.ManualVoiceState
 import ai.zara.app.voice.VoiceStreamState
 import ai.zara.ui.theme.ZaraTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
@@ -98,75 +98,76 @@ fun ZaraApp(
     onClearDiagnostics: () -> Unit,
     onDismissChangelog: () -> Unit,
 ) {
-    Box(Modifier.fillMaxSize()) {
-        ZaraApp(
-            runtimeState = runtimeState,
-            sourceSha = sourceSha,
-            enrollmentPublicKey = enrollmentPublicKey,
-            pinnedServerPublicKey = pinnedServerPublicKey,
-            conversationState = conversationState,
-            operationError = operationError,
-            operationBusy = operationBusy,
-            microphonePermissionGranted = microphonePermissionGranted,
-            voiceState = voiceState,
-            voiceStreamState = voiceStreamState,
-            voiceStreamFailure = voiceStreamFailure,
-            selectedTheme = selectedTheme,
-            localServerState = localServerState,
-            prologSources = prologSources,
-            prologQueryResult = prologQueryResult,
-            updateState = updateState,
-            changelogVersion = changelogVersion,
-            changelogText = changelogText,
-            showChangelog = showChangelog,
-            runtimeMode = runtimeMode,
-            localEmbedding = localEmbedding,
-            projectState = projectState,
-            onSelectTheme = onSelectTheme,
-            onSelectRuntimeMode = onSelectRuntimeMode,
-            onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
-            onCreateIdentity = onCreateIdentity,
-            onPinServer = onPinServer,
-            onReplaceServerPin = onReplaceServerPin,
-            onConnect = onConnect,
-            onNewConversation = onNewConversation,
-            onSelectConversation = onSelectConversation,
-            onToggleConversationPinned = onToggleConversationPinned,
-            onRenameConversation = onRenameConversation,
-            onMoveConversationToProject = onMoveConversationToProject,
-            onSendText = onSendText,
-            onCreateProject = onCreateProject,
-            onSelectProject = onSelectProject,
-            onRequestMicrophonePermission = onRequestMicrophonePermission,
-            onRequestAssistantRole = onRequestAssistantRole,
-            onStartVoice = onStartVoice,
-            onStopVoice = onStopVoice,
-            onCancelVoice = onCancelVoice,
-            onSavePrologSource = onSavePrologSource,
-            onReloadLocalServer = onReloadLocalServer,
-            onRunPrologQuery = onRunPrologQuery,
-            onRenamePrologSource = onRenamePrologSource,
-            onDeletePrologSource = onDeletePrologSource,
-            onImportPrologWorkspace = onImportPrologWorkspace,
-            onExportPrologWorkspace = onExportPrologWorkspace,
-            onCheckForUpdate = onCheckForUpdate,
-            onSelectUpdate = onSelectUpdate,
-            onDownloadUpdate = onDownloadUpdate,
-            onInstallUpdate = onInstallUpdate,
-            onCopyDiagnostics = onCopyDiagnostics,
-            onShareDiagnostics = onShareDiagnostics,
-            onClearDiagnostics = onClearDiagnostics,
-            onDismissChangelog = onDismissChangelog,
-        )
+    Column(Modifier.fillMaxSize()) {
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            ZaraApp(
+                runtimeState = runtimeState,
+                sourceSha = sourceSha,
+                enrollmentPublicKey = enrollmentPublicKey,
+                pinnedServerPublicKey = pinnedServerPublicKey,
+                conversationState = conversationState,
+                operationError = operationError,
+                operationBusy = operationBusy,
+                microphonePermissionGranted = microphonePermissionGranted,
+                voiceState = voiceState,
+                voiceStreamState = voiceStreamState,
+                voiceStreamFailure = voiceStreamFailure,
+                selectedTheme = selectedTheme,
+                localServerState = localServerState,
+                prologSources = prologSources,
+                prologQueryResult = prologQueryResult,
+                updateState = updateState,
+                changelogVersion = changelogVersion,
+                changelogText = changelogText,
+                showChangelog = showChangelog,
+                runtimeMode = runtimeMode,
+                localEmbedding = localEmbedding,
+                projectState = projectState,
+                onSelectTheme = onSelectTheme,
+                onSelectRuntimeMode = onSelectRuntimeMode,
+                onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
+                onCreateIdentity = onCreateIdentity,
+                onPinServer = onPinServer,
+                onReplaceServerPin = onReplaceServerPin,
+                onConnect = onConnect,
+                onNewConversation = onNewConversation,
+                onSelectConversation = onSelectConversation,
+                onToggleConversationPinned = onToggleConversationPinned,
+                onRenameConversation = onRenameConversation,
+                onMoveConversationToProject = onMoveConversationToProject,
+                onSendText = onSendText,
+                onCreateProject = onCreateProject,
+                onSelectProject = onSelectProject,
+                onRequestMicrophonePermission = onRequestMicrophonePermission,
+                onRequestAssistantRole = onRequestAssistantRole,
+                onStartVoice = onStartVoice,
+                onStopVoice = onStopVoice,
+                onCancelVoice = onCancelVoice,
+                onSavePrologSource = onSavePrologSource,
+                onReloadLocalServer = onReloadLocalServer,
+                onRunPrologQuery = onRunPrologQuery,
+                onRenamePrologSource = onRenamePrologSource,
+                onDeletePrologSource = onDeletePrologSource,
+                onImportPrologWorkspace = onImportPrologWorkspace,
+                onExportPrologWorkspace = onExportPrologWorkspace,
+                onCheckForUpdate = onCheckForUpdate,
+                onSelectUpdate = onSelectUpdate,
+                onDownloadUpdate = onDownloadUpdate,
+                onInstallUpdate = onInstallUpdate,
+                onCopyDiagnostics = onCopyDiagnostics,
+                onShareDiagnostics = onShareDiagnostics,
+                onClearDiagnostics = onClearDiagnostics,
+                onDismissChangelog = onDismissChangelog,
+            )
+        }
 
         if (runtimeState.enrollment != EnrollmentReadiness.Ready) {
             PairingSetupAction(
                 operationBusy = operationBusy,
                 onScanPairingQr = onScanPairingQr,
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(top = 62.dp, end = 16.dp),
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.navigationBars),
             )
         }
     }
