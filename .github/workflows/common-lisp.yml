@@ -16,7 +16,7 @@ permissions:
 jobs:
   sbcl:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
       - name: Check out exact source
@@ -25,18 +25,49 @@ jobs:
       - name: Install SBCL and ZeroMQ
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends             sbcl             libzmq3-dev             ca-certificates             curl
+          sudo apt-get install --yes --no-install-recommends \
+            sbcl \
+            libzmq3-dev \
+            ca-certificates \
+            curl
 
       - name: Install verified Quicklisp bootstrap
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error             --output /tmp/quicklisp.lisp             https://beta.quicklisp.org/quicklisp.lisp
-          echo "4a7a5c2aebe0716417047854267397e24a44d0cce096127411e9ce9ccfeb2c17  /tmp/quicklisp.lisp"             | sha256sum --check -
-          sbcl --non-interactive             --load /tmp/quicklisp.lisp             --eval '(quicklisp-quickstart:install)'
+          curl --fail --silent --show-error \
+            --output /tmp/quicklisp.lisp \
+            https://beta.quicklisp.org/quicklisp.lisp
+          echo "4a7a5c2aebe0716417047854267397e24a44d0cce096127411e9ce9ccfeb2c17  /tmp/quicklisp.lisp" \
+            | sha256sum --check -
+          sbcl --non-interactive \
+            --load /tmp/quicklisp.lisp \
+            --eval '(quicklisp-quickstart:install)'
 
       - name: Load dependencies and run FiveAM
         shell: bash
         run: |
           set -euo pipefail
-          sbcl --non-interactive             --load "$HOME/quicklisp/setup.lisp"             --eval '(ql:quickload (list :pzmq :com.inuoe.jzon :babel :bordeaux-threads :fiveam))'             --eval '(asdf:load-asd (truename "lisp/zara.asd"))'             --eval '(asdf:test-system :zara)'
+          sbcl --non-interactive \
+            --load "$HOME/quicklisp/setup.lisp" \
+            --eval '(ql:quickload (list :pzmq :com.inuoe.jzon :babel :bordeaux-threads :fiveam))' \
+            --eval '(asdf:load-asd (truename "lisp/zara.asd"))' \
+            --eval '(asdf:test-system :zara)'
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Smoke real Zara server from Lisp
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix develop -c bash -lc '
+            set -euo pipefail
+            command -v zara-server
+            export ZARA_LISP_INTEGRATION=1
+            /usr/bin/sbcl --non-interactive \
+              --load "$HOME/quicklisp/setup.lisp" \
+              --eval "(ql:quickload (list :pzmq :com.inuoe.jzon :babel :bordeaux-threads :fiveam))" \
+              --eval "(asdf:load-asd (truename \"lisp/zara.asd\"))" \
+              --eval "(asdf:test-system :zara)"
+          '
