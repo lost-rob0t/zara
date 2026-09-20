@@ -32,8 +32,10 @@ conversation after Emacs restarts.  Emacs persists no parallel transcript."
   :group 'zara-conversation)
 
 (defconst zara-conversation--identifier-limit 128)
+(defconst zara-conversation--context-limit 32)
 
 (defvar-local zara-conversation-id nil)
+(defvar-local zara-conversation-context-ids nil)
 (defvar-local zara-conversation--generation 0)
 (defvar-local zara-conversation--request-process nil)
 (defvar-local zara-conversation--state 'idle)
@@ -66,6 +68,19 @@ conversation after Emacs restarts.  Emacs persists no parallel transcript."
              (not (string-empty-p (string-trim zara-connect-endpoint))))
     (list "--connect" (string-trim zara-connect-endpoint))))
 
+(defun zara-conversation--context-arguments ()
+  "Return bounded ephemeral context references for the native client."
+  (unless (listp zara-conversation-context-ids)
+    (user-error "context ids must be a list"))
+  (when (> (length zara-conversation-context-ids)
+           zara-conversation--context-limit)
+    (user-error "context ids exceed maximum count %d"
+                zara-conversation--context-limit))
+  (cl-loop for value in zara-conversation-context-ids
+           append
+           (list "--context-id"
+                 (zara-conversation--validate-id value "context id"))))
+
 (defun zara-conversation--turn-arguments (conversation-id prompt)
   "Return native-client arguments for CONVERSATION-ID and PROMPT."
   (unless (and (stringp prompt)
@@ -74,9 +89,9 @@ conversation after Emacs restarts.  Emacs persists no parallel transcript."
   (append
    (zara-conversation--endpoint-arguments)
    (list "--conversation-id"
-         (zara-conversation--validate-id conversation-id "conversation id")
-         "--json-events"
-         prompt)))
+         (zara-conversation--validate-id conversation-id "conversation id"))
+   (zara-conversation--context-arguments)
+   (list "--json-events" prompt)))
 
 (defun zara-conversation--cancel-arguments (turn-id)
   "Return canonical CancelTurn CLI arguments for TURN-ID."
@@ -440,6 +455,9 @@ must emit `turn.accepted' then matching `assistant.complete' NDJSON."
     (user-error "Cancel or finish the active Zara turn before switching"))
   (setq-local zara-conversation-id
               (zara-conversation--validate-id conversation-id "conversation id"))
+  ;; Context refs are ephemeral presentation state.  Never carry refs from one
+  ;; canonical conversation into another implicitly.
+  (setq-local zara-conversation-context-ids nil)
   zara-conversation-id)
 
 ;;;###autoload

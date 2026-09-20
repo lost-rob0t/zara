@@ -168,6 +168,7 @@ def _run_connected_text(
     command_text: str,
     *,
     conversation_id: str | None = None,
+    context_ids=(),
     emit_json: bool = False,
 ) -> int:
     from .daemon_client import create_daemon_client
@@ -186,7 +187,11 @@ def _run_connected_text(
         # cannot publish its terminal event before this CLI is listening.
         subscription = client.subscribe()
         receipt = client.submit(
-            SubmitTurn(text=command_text, conversation_id=conversation_id)
+            SubmitTurn(
+                text=command_text,
+                conversation_id=conversation_id,
+                context_ids=context_ids,
+            )
         ).result()
         turn_id = _validate_cli_identifier(receipt.turn_id, "turn id")
         if emit_json:
@@ -302,7 +307,7 @@ def main():
                "  zara 'open firefox'           # Execute text command\n"
                "  zara --standalone 'hello'     # Explicit private local runtime\n"
                "  zara --connect ipc:///run/user/1000/zara.sock 'hello'\n"
-               "  zara --conversation-id emacs-main --json-events 'continue'\n"
+               "  zara --conversation-id emacs-main --context-id doc:alpha --json-events 'continue'\n"
                "  zara --cancel-turn TURN_ID    # Cancel through ZARA/1\n"
                "  zara --desktop                # Native desktop / Quick Copilot\n"
                "  zara --toggle-desktop         # Toggle the existing desktop\n"
@@ -376,6 +381,13 @@ def main():
     parser.add_argument(
         "--conversation-id",
         help="Reuse one canonical daemon conversation for this text turn"
+    )
+    parser.add_argument(
+        "--context-id",
+        action="append",
+        default=[],
+        metavar="CONTEXT_ID",
+        help="Attach one canonical context reference; repeat for additional refs",
     )
     parser.add_argument(
         "--json-events",
@@ -459,13 +471,19 @@ def main():
             parser.error("--cancel-turn requires the daemon/ZARA/1 path")
         if args.conversation_id:
             parser.error("--conversation-id is not used with --cancel-turn")
+        if args.context_id:
+            parser.error("--context-id is not used with --cancel-turn")
         if args.json_events:
             parser.error("--json-events is not used with --cancel-turn")
-    elif args.conversation_id or args.json_events:
+    elif args.conversation_id or args.context_id or args.json_events:
         if not args.command:
-            parser.error("--conversation-id/--json-events require a text command")
+            parser.error(
+                "--conversation-id/--context-id/--json-events require a text command"
+            )
         if args.standalone:
-            parser.error("--conversation-id/--json-events require the daemon/ZARA/1 path")
+            parser.error(
+                "--conversation-id/--context-id/--json-events require the daemon/ZARA/1 path"
+            )
 
     if args.desktop:
         from .desktop.app import main as desktop_main
@@ -566,13 +584,18 @@ def main():
 
         if not args.standalone:
             endpoint = args.connect or _default_daemon_endpoint()
-            if args.conversation_id is None and not args.json_events:
+            if (
+                args.conversation_id is None
+                and not args.context_id
+                and not args.json_events
+            ):
                 sys.exit(_run_connected_text(endpoint, command_text))
             sys.exit(
                 _run_connected_text(
                     endpoint,
                     command_text,
                     conversation_id=args.conversation_id,
+                    context_ids=args.context_id,
                     emit_json=args.json_events,
                 )
             )
