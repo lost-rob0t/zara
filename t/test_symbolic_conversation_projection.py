@@ -10,6 +10,7 @@ from zara.desktop.conversation.store import ConversationStore as CanonicalConver
 
 
 _VERIFIED_EFFECT_REF = "zara.verified-outcome/v1:effect:fact-1"
+_SYMBOLIC_RENDERER = "symbolic-dcg/v1"
 
 
 def _projection(
@@ -45,7 +46,7 @@ def _projection(
             if verified_outcome_refs is None
             else verified_outcome_refs
         ),
-        renderer_provenance="symbolic-nlg/v1",
+        renderer_provenance=_SYMBOLIC_RENDERER,
         provider_calls=provider_calls,
         model_calls=model_calls,
     )
@@ -106,7 +107,7 @@ def test_symbolic_projection_survives_restart_with_zero_provider_and_model_calls
     assert recovered.expert_evidence == [{"evidence_id": "ev-1", "expert": "DotfilesExpert"}]
     assert recovered.verified_facts == [{"fact_id": "fact-1", "value": "flake.nix"}]
     assert recovered.verified_outcome_refs == [_VERIFIED_EFFECT_REF]
-    assert recovered.renderer_provenance == "symbolic-nlg/v1"
+    assert recovered.renderer_provenance == _SYMBOLIC_RENDERER
     reopened_db.close()
 
 
@@ -183,11 +184,16 @@ def test_symbolic_projection_rejects_stale_runtime_and_usage_rewind(tmp_path):
         )
 
 
-def test_pure_symbolic_assertion_rejects_provider_or_model_use():
+def test_pure_symbolic_assertion_rejects_provider_model_or_renderer_fallback():
     with pytest.raises(AssertionError, match="provider_calls=1"):
         _projection("provider-used", provider_calls=1).assert_pure_symbolic()
     with pytest.raises(AssertionError, match="model_calls=1"):
         _projection("model-used", model_calls=1).assert_pure_symbolic()
+    with pytest.raises(AssertionError, match="non-symbolic renderer"):
+        replace(
+            _projection("renderer-used"),
+            renderer_provenance="model-fallback/v1",
+        ).assert_pure_symbolic()
 
 
 def test_turn_outcome_vocabulary_fails_closed():
@@ -198,7 +204,7 @@ def test_turn_outcome_vocabulary_fails_closed():
         _projection("outcome", outcome="provider_fallback").validate()
 
 
-def test_normalized_dialogue_act_and_verified_outcome_refs_fail_closed():
+def test_normalized_dialogue_act_verified_refs_and_renderer_fail_closed():
     projection = _projection(
         "typed-evidence",
         dialogue_act="dispatch_required",
@@ -218,6 +224,8 @@ def test_normalized_dialogue_act_and_verified_outcome_refs_fail_closed():
             projection,
             verified_outcome_refs=[_VERIFIED_EFFECT_REF, _VERIFIED_EFFECT_REF],
         ).validate()
+    with pytest.raises(ValueError, match="renderer_provenance"):
+        replace(projection, renderer_provenance="model-fallback/v1").validate()
 
 
 def test_cancelled_turn_rejects_late_success_but_new_turn_is_allowed(tmp_path):
