@@ -163,17 +163,18 @@ def test_resolve_wake_words_drops_invalid_config_entries():
     assert resolve_wake_words(config, None) == ["hey zara"]
 
 
-def test_prolog_engine_get_wake_words(tmp_path):
+def test_prolog_engine_get_wake_words_uses_canonical_module_owner():
     pytest.importorskip("pyswip")
-    from zara.prolog_engine import PrologEngine
+    from zara.prolog_engine import PrologEngine, locate_main_pl
 
-    fixture = tmp_path / "kb.pl"
-    fixture.write_text(
-        ":- module(kb_config, [wake_word/1]).\n"
-        ":- dynamic wake_word/1.\n"
-        'wake_word("jarvis").\n'
-        "wake_word(zara).\n",
-        encoding="utf-8",
-    )
-    engine = PrologEngine(fixture)
-    assert engine.get_wake_words() == ["jarvis", "zara"]
+    # PySWIP owns one process-wide SWI runtime. A temporary file must not
+    # re-declare kb_config after another integration test has loaded Zara's
+    # canonical module: SWI rejects that ownership collision and its Python
+    # error path is not safe to recover from. Exercise the real module owner.
+    config_path = locate_main_pl().parent / "kb" / "config.pl"
+    engine = PrologEngine(config_path)
+
+    # Packaged config intentionally has no explicit wake_word/1 facts; normal
+    # defaults are derived from project_name/1, while override behavior has
+    # dedicated config-loader coverage.
+    assert engine.get_wake_words() == []
