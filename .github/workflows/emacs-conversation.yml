@@ -5,6 +5,7 @@ on:
     paths:
       - "emacs/zara.el"
       - "emacs/zara-conversation.el"
+      - "emacs/zara-conversation-symbolic.el"
       - "emacs/zara-conversation-test.el"
       - "emacs/zara-conversation-recovery-test.el"
       - "emacs/zara-conversation-strict-test.el"
@@ -18,6 +19,7 @@ on:
     paths:
       - "emacs/zara.el"
       - "emacs/zara-conversation.el"
+      - "emacs/zara-conversation-symbolic.el"
       - "emacs/zara-conversation-test.el"
       - "emacs/zara-conversation-recovery-test.el"
       - "emacs/zara-conversation-strict-test.el"
