@@ -190,7 +190,9 @@ while assistant output remains generation-fenced."
 (defun zara-conversation--start-cancel (request-process turn-id)
   "Submit canonical CancelTurn for REQUEST-PROCESS and TURN-ID."
   (unless (process-get request-process 'zara-cancel-process)
-    (let* ((stderr (generate-new-buffer " *zara-emacs-cancel-stderr*"))
+    (let* ((zara-connect-endpoint
+            (process-get request-process 'zara-connect-endpoint))
+           (stderr (generate-new-buffer " *zara-emacs-cancel-stderr*"))
            (cancel
             (make-process
              :name "zara-emacs-cancel"
@@ -325,6 +327,13 @@ must emit `turn.accepted' then matching `assistant.complete' NDJSON."
   (when zara-chat--busy
     (user-error "Zara is already handling a request"))
   (let* ((conversation-id (zara-conversation--current-id))
+         (endpoint
+          (and (stringp zara-connect-endpoint)
+               (not (string-empty-p (string-trim zara-connect-endpoint)))
+               (string-trim zara-connect-endpoint)))
+         ;; Freeze endpoint authority for the whole turn.  A later settings
+         ;; change must not redirect CancelTurn to another Zara server.
+         (zara-connect-endpoint endpoint)
          (generation (cl-incf zara-conversation--generation))
          (stderr (generate-new-buffer " *zara-emacs-conversation-stderr*"))
          (process
@@ -343,6 +352,7 @@ must emit `turn.accepted' then matching `assistant.complete' NDJSON."
     (process-put process 'zara-target (current-buffer))
     (process-put process 'zara-generation generation)
     (process-put process 'zara-conversation-id conversation-id)
+    (process-put process 'zara-connect-endpoint endpoint)
     (process-put process 'zara-callback callback)
     (process-put process 'zara-stderr stderr)
     (process-put process 'zara-line-buffer "")
