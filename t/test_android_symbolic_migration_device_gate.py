@@ -30,6 +30,19 @@ V3_MIGRATION_TEST = (
     / "history"
     / "PortableConversationV3MigrationInstrumentedTest.kt"
 )
+RESTART_FENCE_TEST = (
+    ROOT
+    / "android"
+    / "app"
+    / "src"
+    / "androidTest"
+    / "java"
+    / "ai"
+    / "zara"
+    / "app"
+    / "history"
+    / "PortableConversationRestartFenceInstrumentedTest.kt"
+)
 
 
 def test_android_emulator_gate_executes_real_v2_and_v3_to_v4_sqlite_migrations() -> None:
@@ -37,12 +50,14 @@ def test_android_emulator_gate_executes_real_v2_and_v3_to_v4_sqlite_migrations()
     android_build = ANDROID_BUILD.read_text(encoding="utf-8")
     test_source = MIGRATION_TEST.read_text(encoding="utf-8")
     v3_test_source = V3_MIGRATION_TEST.read_text(encoding="utf-8")
+    restart_test_source = RESTART_FENCE_TEST.read_text(encoding="utf-8")
 
     assert ":app:connectedDebugAndroidTest" in gate
     assert (
         "android.testInstrumentationRunnerArguments.class="
         "ai.zara.app.history.PortableConversationMigrationInstrumentedTest,"
-        "ai.zara.app.history.PortableConversationV3MigrationInstrumentedTest"
+        "ai.zara.app.history.PortableConversationV3MigrationInstrumentedTest,"
+        "ai.zara.app.history.PortableConversationRestartFenceInstrumentedTest"
     ) in gate
     assert 'testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"' in android_build
 
@@ -69,3 +84,8 @@ def test_android_emulator_gate_executes_real_v2_and_v3_to_v4_sqlite_migrations()
     assert 'assertEquals("real", storageClass)' in v3_test_source
     assert "persistedTextCounterCannotBecomeExactZeroAfterReopen" in v3_test_source
     assert 'assertEquals("text", storageClass)' in v3_test_source
+
+    assert "processRecreationInterruptsPendingProjectionAndRejectsLateCompletion" in restart_test_source
+    assert "recovered.assertPureSymbolic()" in restart_test_source
+    assert 'assertEquals("interrupted", recovered.outcome)' in restart_test_source
+    assert "late same-turn completion must be rejected after restart interruption" in restart_test_source
