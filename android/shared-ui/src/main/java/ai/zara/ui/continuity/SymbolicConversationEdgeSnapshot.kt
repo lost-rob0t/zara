@@ -27,8 +27,8 @@ data class SymbolicConversationEdgeSnapshot(
     val expertEvidenceRefs: List<String> = emptyList(),
     val verifiedOutcomeRefs: List<String> = emptyList(),
     val rendererProvenance: String = "",
-    val providersEnabled: Boolean = false,
-    val maxModelCalls: Long = 0,
+    val providersEnabled: Boolean = true,
+    val maxModelCalls: Long = 1,
     val modelCalls: Long = 0,
     val providerCalls: Long = 0,
 ) {
