@@ -223,7 +223,7 @@ def _render_one(
             "path": filename,
             "width": pixmap.width(),
             "height": pixmap.height(),
-            "theme": _THEME,
+            "theme": "dotfiles-outrun",
             "source_commit": source_commit,
             "sha256": screenshot_sha256,
         }
@@ -247,7 +247,13 @@ def _render_settings_fixture(
     fixture_root = root / "settings"
     fixture_root.mkdir(parents=True, exist_ok=True)
     config_path = fixture_root / "config.toml"
-    config_path.write_text(DEFAULT_CONFIG_TOML, encoding="utf-8")
+    config_path.write_text(
+        DEFAULT_CONFIG_TOML.replace(
+            'theme = "signal-cabin"',
+            'theme = "dotfiles-outrun"',
+        ),
+        encoding="utf-8",
+    )
 
     repo_root = fixture_root / "repo"
     (repo_root / "kb").mkdir(parents=True)
@@ -270,6 +276,7 @@ def _render_settings_fixture(
     window.category_list.setCurrentRow(appearance_index)
 
     try:
+        apply_desktop_theme(app, "dotfiles-outrun")
         window.show()
         app.processEvents()
         pixmap = window.grab()
