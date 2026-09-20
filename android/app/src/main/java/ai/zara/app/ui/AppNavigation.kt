@@ -9,6 +9,7 @@ enum class AppMenu(val label: String, val glyph: String) {
 enum class AppRoute(val menu: AppMenu, val label: String) {
     Chat(AppMenu.Chat, "Chat"),
     Voice(AppMenu.Chat, "Voice"),
+    Code(AppMenu.Workspace, "Code"),
     Logic(AppMenu.Workspace, "Logic"),
     Projects(AppMenu.Workspace, "Projects"),
     Scheduled(AppMenu.Workspace, "Scheduled"),
@@ -30,7 +31,7 @@ fun usesNavigationRail(availableWidthDp: Float): Boolean =
 data class AppNavigation(
     val menu: AppMenu = AppMenu.Chat,
     val chat: AppRoute = AppRoute.Chat,
-    val workspace: AppRoute = AppRoute.Logic,
+    val workspace: AppRoute = AppRoute.Code,
     val settings: AppRoute = AppRoute.Runtime,
 ) {
     init {
