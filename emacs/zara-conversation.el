@@ -6,12 +6,10 @@
 
 ;;; Commentary:
 
-;; Stream native Zara CLI events into the existing `zara-chat-mode' surface.
-;; Emacs keeps only ephemeral presentation state plus a stable canonical
-;; conversation identifier.  Zara remains the owner of conversation history,
-;; runtime policy, expert dispatch, tools/effects, cancellation, and durable
-;; replay.  This module never talks to a provider and never owns a second
-;; conversation store.
+;; Thin presentation control over Zara's canonical CLI/ZARA/1 conversation
+;; owner.  Emacs keeps only ephemeral process/presentation state plus a stable
+;; conversation id.  It owns no second transcript, provider, expert registry,
+;; planner, permission system, or tool executor.
 
 ;;; Code:
 
@@ -28,14 +26,12 @@
 (defcustom zara-conversation-default-id "emacs-main"
   "Stable canonical Zara conversation id used by new Emacs chat buffers.
 
-Keeping this value stable lets Zara's own durable conversation owner recover the
-same conversation after an Emacs process restart.  Emacs does not persist a
-parallel transcript."
+Keeping this stable lets Zara's durable conversation owner recover the same
+conversation after Emacs restarts.  Emacs persists no parallel transcript."
   :type 'string
   :group 'zara-conversation)
 
-(defconst zara-conversation--identifier-limit 128
-  "Maximum identifier size accepted by the Zara native-client contract.")
+(defconst zara-conversation--identifier-limit 128)
 
 (defvar-local zara-conversation-id nil)
 (defvar-local zara-conversation--generation 0)
@@ -89,25 +85,29 @@ parallel transcript."
    (list "--cancel-turn"
          (zara-conversation--validate-id turn-id "turn id"))))
 
-(defun zara-conversation--current-request-p (process)
-  "Return non-nil when PROCESS still owns the target buffer generation."
+(defun zara-conversation--current-generation-p (process)
+  "Return non-nil when PROCESS still owns the target presentation generation."
   (let ((target (process-get process 'zara-target))
         (generation (process-get process 'zara-generation)))
     (and (buffer-live-p target)
          (with-current-buffer target
            (= generation zara-conversation--generation)))))
 
-(defun zara-conversation--finish-buffer (process state)
-  "Finish PROCESS presentation state as STATE when it is still the active request.
-
-Generation equality is deliberately not required here.  Cancellation increments
-the presentation generation immediately to fence late text, but the canonical
-CancelTurn receipt must still be able to clear busy state.  A superseded process
-cannot clobber a newer request because request identity must still match."
+(defun zara-conversation--active-request-p (process)
+  "Return non-nil when PROCESS is still the target buffer's active request."
   (let ((target (process-get process 'zara-target)))
-    (when (and (buffer-live-p target)
-               (with-current-buffer target
-                 (eq zara-conversation--request-process process)))
+    (and (buffer-live-p target)
+         (with-current-buffer target
+           (eq zara-conversation--request-process process)))))
+
+(defun zara-conversation--finish-buffer (process state)
+  "Finish PROCESS as STATE if it is still the active request.
+
+Cancellation intentionally advances the presentation generation before the
+runtime acknowledges CancelTurn.  Cleanup therefore uses request identity,
+while assistant output remains generation-fenced."
+  (let ((target (process-get process 'zara-target)))
+    (when (zara-conversation--active-request-p process)
       (with-current-buffer target
         (setq zara-chat--busy nil
               zara-conversation--state state
@@ -115,21 +115,31 @@ cannot clobber a newer request because request identity must still match."
         (force-mode-line-update t)))))
 
 (defun zara-conversation--deliver (process response error)
-  "Deliver RESPONSE or ERROR once for PROCESS."
+  "Deliver RESPONSE or ERROR once for PROCESS's current generation."
   (unless (process-get process 'zara-delivered)
     (process-put process 'zara-delivered t)
-    (when (zara-conversation--current-request-p process)
-      (let ((callback (process-get process 'zara-callback)))
-        (when callback
-          (funcall callback response error))))))
+    (when (zara-conversation--current-generation-p process)
+      (when-let ((callback (process-get process 'zara-callback)))
+        (funcall callback response error)))))
 
 (defun zara-conversation--protocol-error (process message)
-  "Fence PROCESS after protocol MESSAGE without accepting late output."
+  "Fail PROCESS closed after native protocol MESSAGE."
   (unless (process-get process 'zara-protocol-error)
     (process-put process 'zara-protocol-error message)
     (zara-conversation--deliver process nil message)
     (zara-conversation--finish-buffer process 'error))
   nil)
+
+(defun zara-conversation--cancel-error (process message)
+  "Surface canonical cancellation MESSAGE for active PROCESS without stale text."
+  (unless (process-get process 'zara-cancel-error)
+    (process-put process 'zara-cancel-error message)
+    (when (zara-conversation--active-request-p process)
+      (unless (process-get process 'zara-delivered)
+        (process-put process 'zara-delivered t)
+        (when-let ((callback (process-get process 'zara-callback)))
+          (funcall callback nil message)))
+      (zara-conversation--finish-buffer process 'error))))
 
 (defun zara-conversation--parse-event (line)
   "Parse one native-client NDJSON LINE or signal an error."
@@ -151,50 +161,59 @@ cannot clobber a newer request because request identity must still match."
       (error "native-client event %s must be a non-empty string" key))
     value))
 
+(defun zara-conversation--cancel-stderr (process)
+  "Return canonical cancel diagnostics for PROCESS."
+  (let ((stderr (process-get process 'zara-stderr)))
+    (if (buffer-live-p stderr)
+        (with-current-buffer stderr (string-trim (buffer-string)))
+      "")))
+
+(defun zara-conversation--cancel-sentinel (process _event)
+  "Finalize canonical CancelTurn PROCESS."
+  (when (memq (process-status process) '(exit signal))
+    (let* ((request (process-get process 'zara-request-process))
+           (status (process-exit-status process))
+           (stderr (process-get process 'zara-stderr))
+           (message (zara-conversation--cancel-stderr process)))
+      (when (buffer-live-p stderr)
+        (kill-buffer stderr))
+      (if (zerop status)
+          (progn
+            (process-put request 'zara-cancel-confirmed t)
+            (zara-conversation--finish-buffer request 'cancelled))
+        (zara-conversation--cancel-error
+         request
+         (if (string-empty-p message)
+             (format "CancelTurn failed with exit status %s" status)
+           message))))))
+
 (defun zara-conversation--start-cancel (request-process turn-id)
   "Submit canonical CancelTurn for REQUEST-PROCESS and TURN-ID."
   (unless (process-get request-process 'zara-cancel-process)
-    (let* ((program (zara--program))
-           (stderr (generate-new-buffer " *zara-emacs-cancel-stderr*"))
+    (let* ((stderr (generate-new-buffer " *zara-emacs-cancel-stderr*"))
            (cancel
             (make-process
              :name "zara-emacs-cancel"
-             :command (cons program (zara-conversation--cancel-arguments turn-id))
+             :command
+             (cons (zara--program)
+                   (zara-conversation--cancel-arguments turn-id))
              :buffer nil
              :stderr stderr
              :connection-type 'pipe
              :noquery t
-             :sentinel
-             (lambda (process _event)
-               (when (memq (process-status process) '(exit signal))
-                 (let* ((request (process-get process 'zara-request-process))
-                        (status (process-exit-status process))
-                        (error-text
-                         (when (buffer-live-p stderr)
-                           (with-current-buffer stderr
-                             (string-trim (buffer-string))))))
-                   (when (buffer-live-p stderr)
-                     (kill-buffer stderr))
-                   (if (zerop status)
-                       (progn
-                         (process-put request 'zara-cancel-confirmed t)
-                         (zara-conversation--finish-buffer request 'cancelled))
-                     (let ((message
-                            (if (string-empty-p (or error-text ""))
-                                (format "CancelTurn failed with exit status %s" status)
-                              error-text)))
-                       (zara-conversation--protocol-error request message))))))))))
+             :sentinel #'zara-conversation--cancel-sentinel)))
       (process-put cancel 'zara-request-process request-process)
+      (process-put cancel 'zara-stderr stderr)
       (process-put request-process 'zara-cancel-process cancel)))
   request-process)
 
 (defun zara-conversation--accept-turn (process event)
   "Handle one turn.accepted EVENT for PROCESS."
-  (let* ((expected-conversation (process-get process 'zara-conversation-id))
+  (let* ((expected (process-get process 'zara-conversation-id))
          (conversation (zara-conversation--event-string event "conversation_id"))
          (turn-id (zara-conversation--event-string event "turn_id"))
          (existing (process-get process 'zara-turn-id)))
-    (unless (string= conversation expected-conversation)
+    (unless (string= conversation expected)
       (error "native-client event conversation_id mismatch"))
     (zara-conversation--validate-id turn-id "turn id")
     (when (and existing (not (string= existing turn-id)))
@@ -205,12 +224,12 @@ cannot clobber a newer request because request identity must still match."
 
 (defun zara-conversation--complete-turn (process event)
   "Handle one assistant.complete EVENT for PROCESS."
-  (let* ((expected-conversation (process-get process 'zara-conversation-id))
+  (let* ((expected (process-get process 'zara-conversation-id))
          (conversation (zara-conversation--event-string event "conversation_id"))
          (turn-id (zara-conversation--event-string event "turn_id"))
          (accepted (process-get process 'zara-turn-id))
          (text (gethash "text" event)))
-    (unless (string= conversation expected-conversation)
+    (unless (string= conversation expected)
       (error "native-client event conversation_id mismatch"))
     (unless (and accepted (string= accepted turn-id))
       (error "assistant.complete does not match accepted turn"))
@@ -247,12 +266,11 @@ cannot clobber a newer request because request identity must still match."
     (dolist (line (butlast lines))
       (zara-conversation--handle-line process line))))
 
-(defun zara-conversation--request-error-text (process)
-  "Return bounded stderr diagnostics for PROCESS."
+(defun zara-conversation--request-stderr (process)
+  "Return request stderr diagnostics for PROCESS."
   (let ((stderr (process-get process 'zara-stderr)))
     (if (buffer-live-p stderr)
-        (with-current-buffer stderr
-          (string-trim (buffer-string)))
+        (with-current-buffer stderr (string-trim (buffer-string)))
       "")))
 
 (defun zara-conversation--process-sentinel (process _event)
@@ -266,13 +284,9 @@ cannot clobber a newer request because request identity must still match."
           (stderr (process-get process 'zara-stderr)))
       (cond
        ((process-get process 'zara-protocol-error) nil)
-       ((process-get process 'zara-cancel-requested)
-        (unless (process-get process 'zara-cancel-confirmed)
-          ;; The canonical cancel subprocess owns terminal cancellation state.
-          ;; Keep late request output fenced while that command is pending.
-          nil))
+       ((process-get process 'zara-cancel-requested) nil)
        ((not (zerop status))
-        (let ((message (zara-conversation--request-error-text process)))
+        (let ((message (zara-conversation--request-stderr process)))
           (zara-conversation--deliver
            process nil
            (if (string-empty-p message)
@@ -290,19 +304,17 @@ cannot clobber a newer request because request identity must still match."
   "Send PROMPT in the current canonical conversation and invoke CALLBACK.
 
 CALLBACK receives RESPONSE and ERROR, matching `zara-request'.  The native CLI
-must emit the canonical `turn.accepted' then `assistant.complete' NDJSON
-sequence.  Malformed, mismatched, duplicate, or incomplete events fail closed."
+must emit `turn.accepted' then matching `assistant.complete' NDJSON."
   (when zara-chat--busy
     (user-error "Zara is already handling a request"))
-  (let* ((program (zara--program))
-         (conversation-id (zara-conversation--current-id))
+  (let* ((conversation-id (zara-conversation--current-id))
          (generation (cl-incf zara-conversation--generation))
          (stderr (generate-new-buffer " *zara-emacs-conversation-stderr*"))
          (process
           (make-process
            :name "zara-emacs-conversation"
            :command
-           (cons program
+           (cons (zara--program)
                  (zara-conversation--turn-arguments conversation-id prompt))
            :buffer nil
            :stderr stderr
@@ -346,9 +358,8 @@ sequence.  Malformed, mismatched, duplicate, or incomplete events fail closed."
     (unless (and process (process-live-p process))
       (user-error "No active Zara turn"))
     (setq zara-conversation--state 'cancelling)
-    ;; Fence presentation immediately.  The request process still parses the
-    ;; eventual turn.accepted receipt so cancellation can target the runtime-
-    ;; minted turn id even when the user cancels before acceptance arrives.
+    ;; Fence assistant presentation immediately.  Keep parsing only enough to
+    ;; obtain the runtime-minted turn id when cancellation beats acceptance.
     (cl-incf zara-conversation--generation)
     (process-put process 'zara-cancel-requested t)
     (when-let ((turn-id (process-get process 'zara-turn-id)))
@@ -359,9 +370,10 @@ sequence.  Malformed, mismatched, duplicate, or incomplete events fail closed."
 ;;;###autoload
 (defun zara-conversation-switch (conversation-id)
   "Switch the Emacs surface to canonical CONVERSATION-ID while idle."
-  (interactive (list (read-string "Zara conversation id: "
-                                  (or zara-conversation-id
-                                      zara-conversation-default-id))))
+  (interactive
+   (list (read-string "Zara conversation id: "
+                      (or zara-conversation-id
+                          zara-conversation-default-id))))
   (when zara-chat--busy
     (user-error "Cancel or finish the active Zara turn before switching"))
   (setq-local zara-conversation-id
@@ -402,8 +414,8 @@ sequence.  Malformed, mismatched, duplicate, or incomplete events fail closed."
 (define-minor-mode zara-conversation-mode
   "Use canonical streaming conversation identity and cancellation in Zara chat.
 
-The mode is presentation-only.  It does not create a provider, model runtime,
-expert registry, planner, tool authority, or conversation-history store."
+This mode is presentation-only and creates no model/provider fallback or second
+conversation owner."
   :lighter " ZaraConv"
   :keymap zara-conversation-mode-map
   (when zara-conversation-mode
