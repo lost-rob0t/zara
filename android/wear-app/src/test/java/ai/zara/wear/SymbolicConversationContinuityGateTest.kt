@@ -1,11 +1,29 @@
 package ai.zara.wear
 
+import ai.zara.ui.continuity.SymbolicConversationEdgeCodec
 import ai.zara.ui.continuity.SymbolicConversationEdgeSnapshot
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SymbolicConversationContinuityGateTest {
+    @Test
+    fun decodesSharedWireAndAcceptsFreshScopedTruth() {
+        val current = fixture(projectionGeneration = 4, runtimeGeneration = 7)
+        val incoming = fixture(projectionGeneration = 5, runtimeGeneration = 8)
+        val encoded = SymbolicConversationEdgeCodec.encode(incoming)
+
+        assertEquals(incoming, SymbolicConversationContinuityGate.decodeAccepted(current, encoded))
+        assertNull(
+            SymbolicConversationContinuityGate.decodeAccepted(
+                current,
+                encoded + byteArrayOf(0x01),
+            ),
+        )
+    }
+
     @Test
     fun acceptsFreshPureSymbolicProjectionForSameScope() {
         val current = fixture(projectionGeneration = 4, runtimeGeneration = 7)
