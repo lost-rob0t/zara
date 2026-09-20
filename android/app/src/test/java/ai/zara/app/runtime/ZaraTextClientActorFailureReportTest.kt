@@ -12,6 +12,41 @@ import org.junit.Test
 
 class ZaraTextClientActorFailureReportTest {
 
+    @Test fun `legal text frames during voice stream do not kill the pump`() {
+        val dealer = QueueingTextDealer(
+            listOf(
+                helloOk("hello-ok-1", "req-1", "session-1", 2),
+                capabilityAck("caps-ok-1", "req-caps-1", "session-1", 3),
+                voiceAck("audio.input.started", "req-v1", "session-1", "mic-1", null),
+                voiceAck("audio.input.committed", "req-v2", "session-1", "mic-1", null),
+                server("{\"body\":{\"success\":true},\"conversation_id\":\"conversation-1\",\"id\":\"turn-done\",\"payload_count\":0,\"seq\":5,\"session_id\":\"session-1\",\"timestamp_ns\":20,\"turn_id\":\"turn-1\",\"type\":\"turn.completed\"}"),
+                server("{\"body\":{\"text\":\"hello from voice\"},\"conversation_id\":\"conversation-1\",\"id\":\"final-1\",\"payload_count\":0,\"seq\":6,\"session_id\":\"session-1\",\"stream_id\":\"mic-1\",\"timestamp_ns\":21,\"type\":\"voice.transcript.final\"}"),
+            )
+        )
+        val client = ZaraTextClientActor(
+            dealerFactory = TextDealerFactory { dealer },
+            requestIds = sequenceOf("req-1", "req-caps-1", "req-v1", "req-v2").iterator(),
+            timestamps = sequenceOf(1L, 2L, 3L, 4L).iterator(),
+        )
+        val failures = TypedFailureRecorder()
+        client.setConnectionFailureObserver(failures::record)
+        val events = mutableListOf<String>()
+        client.setVoiceStreamObserver { events += it.javaClass.simpleName }
+        client.connect(ServerProfile.create("tcp://zara.example:7731"), 1).get()
+
+        val context = VoiceCaptureContext("session-1", "conversation-1", "mic-1")
+        client.startVoice(context).get()
+        client.commitVoice(context).get()
+
+        val deadline = System.currentTimeMillis() + 5_000
+        while (!events.contains("Transcript") && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20)
+        }
+        assertTrue(events.contains("Transcript"))
+        assertTrue(failures.recorded.isEmpty())
+        client.close()
+    }
+
     @Test fun `voice pump death emits typed connection failure`() {
         val dealer = QueueingTextDealer(
             listOf(

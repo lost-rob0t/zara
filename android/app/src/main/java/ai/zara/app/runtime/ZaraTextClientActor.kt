@@ -505,16 +505,65 @@ class ZaraTextClientActor(
             val frames = active.receive(requestTimeoutMillis)
                 ?: throw TextRequestTimeoutException("ZARA/1 voice acknowledgement timed out")
             if (handleDeviceServerMessage(active, frames)) continue
-            when (val inbound = ZaraVoiceInboundCodec.decode(frames)) {
+            val inbound = decodeVoiceInbound(frames)
+            if (inbound == null) continue
+            when (inbound) {
                 is VoiceInboundMessage.Stream -> {
                     if (interleavedEvents >= MAX_INTERLEAVED_VOICE_EVENTS) {
-                        throw ZaraWireException("voice acknowledgement displaced by too many stream events")
+                        throw ZaraWireException(
+                            "voice acknowledgement displaced by too many stream events",
+                            code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_OUT_OF_ORDER,
+                        )
                     }
                     dispatchVoiceStream(inbound.event)
                     interleavedEvents += 1
                 }
                 is VoiceInboundMessage.Reply -> return inbound.reply
             }
+        }
+    }
+
+    private fun decodeVoiceInbound(frames: List<ByteArray>): VoiceInboundMessage? {
+        val voiceError: ZaraWireException
+        try {
+            return ZaraVoiceInboundCodec.decode(frames)
+        } catch (error: ZaraWireException) {
+            voiceError = error
+        }
+        val textMessage = try {
+            ZaraTextCodec.decode(frames)
+        } catch (_: ZaraWireException) {
+            throw voiceError
+        }
+        when (textMessage) {
+            is TextServerMessage.ProtocolError -> throw ZaraWireException(
+                "voice stream failed: ${textMessage.code}",
+                code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_SERVER_ERROR,
+                serverCode = textMessage.code,
+                retryable = textMessage.retryable,
+            )
+            is TextServerMessage.TurnCancelled -> throw ZaraWireException(
+                "voice turn cancelled: ${textMessage.reason}",
+                code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_TURN_CANCELLED,
+            )
+            is TextServerMessage.RuntimeError -> throw ZaraWireException(
+                "server runtime error during voice stream: ${textMessage.reason}",
+                code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_RUNTIME_ERROR,
+                retryable = !textMessage.fatal,
+            )
+            is TextServerMessage.RuntimeStopped -> throw ZaraWireException(
+                "server runtime stopped during voice stream: ${textMessage.reason}",
+                code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_RUNTIME_STOPPED,
+                retryable = true,
+            )
+            is TextServerMessage.HelloOk,
+            is TextServerMessage.TurnAccepted,
+            is TextServerMessage.Progress,
+            is TextServerMessage.AssistantDelta,
+            is TextServerMessage.AssistantCompleted,
+            is TextServerMessage.TurnCompleted,
+            is TextServerMessage.AssistantResponse,
+            -> return null
         }
     }
 
@@ -532,7 +581,8 @@ class ZaraTextClientActor(
             if (frames == null) {
                 Thread.sleep(10)
             } else if (!handleDeviceServerMessage(active, frames)) {
-                when (val inbound = ZaraVoiceInboundCodec.decode(frames)) {
+                when (val inbound = decodeVoiceInbound(frames)) {
+                    null -> Unit
                     is VoiceInboundMessage.Stream -> dispatchVoiceStream(inbound.event)
                     is VoiceInboundMessage.Reply ->
                         throw ZaraWireException(
