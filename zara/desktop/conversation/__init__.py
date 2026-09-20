@@ -14,11 +14,11 @@ from .models import (
     MessageStatus,
 )
 from .store import ConversationStore as _ConversationStore
-from .symbolic_projection import SymbolicConversationProjection, SymbolicProjectionMixin
+from .symbolic_projection import SymbolicConversationProjection
 
 
-class ConversationStore(SymbolicProjectionMixin, _ConversationStore):
-    """Conversation store with compatibility repair and symbolic projections."""
+class ConversationStore(_ConversationStore):
+    """Conversation store with compatibility repair over the canonical store."""
 
     def __init__(
         self,
