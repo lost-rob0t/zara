@@ -119,6 +119,57 @@ class AgentManager:
     def bind_event_publisher(self, publisher) -> None:
         self.approval_controller.bind_event_publisher(publisher)
 
+    def replace_memory_manager(self, memory_manager) -> None:
+        required_methods = (
+            "remember_fact",
+            "retrieve",
+            "list_memories",
+            "forget",
+            "start_session",
+            "add_message",
+            "summarise_session",
+        )
+        missing = [
+            name
+            for name in required_methods
+            if not callable(getattr(memory_manager, name, None))
+        ]
+        if missing:
+            raise TypeError(
+                "memory provider is missing required method(s): "
+                + ", ".join(missing)
+            )
+
+        from .tools.builtin_tools import (
+            build_forget_tool,
+            build_memory_list_tool,
+            build_recall_tool,
+            build_remember_tool,
+        )
+
+        names = ["remember", "recall", "memory_list", "forget"]
+        replacement_tools = [
+            build_remember_tool(memory_manager),
+            build_recall_tool(memory_manager),
+            build_memory_list_tool(memory_manager),
+            build_forget_tool(memory_manager),
+        ]
+        replacement_tools = [tool for tool in replacement_tools if tool is not None]
+        previous_tools = [
+            tool
+            for name in names
+            if (tool := self.tool_registry.get_tool(name)) is not None
+        ]
+
+        self.tool_registry.unregister_tools(names)
+        try:
+            self.tool_registry.register_tools(replacement_tools)
+        except Exception:
+            self.tool_registry.unregister_tools(names)
+            self.tool_registry.register_tools(previous_tools)
+            raise
+        self.memory_manager = memory_manager
+
     def register_agent_loop_backend(self, name: str, owner: str, callback) -> int:
         return self.agent_loop_registry.register(name, owner, callback)
 
