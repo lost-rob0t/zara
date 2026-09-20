@@ -30,6 +30,8 @@ def _projection(
         expert_evidence=[{"evidence_id": "ev-before"}],
         verified_facts=[{"fact_id": "fact-before"}],
         renderer_provenance="symbolic-dcg/v1",
+        providers_enabled=False,
+        max_model_calls=0,
         provider_calls=0,
         model_calls=0,
     )
