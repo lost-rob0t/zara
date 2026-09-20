@@ -34,6 +34,19 @@ class PureSymbolicConfig:
     def get_latency_config(self):
         return {"enabled": False}
 
+    def get_module_search_paths(self):
+        return []
+
+    def get_plugin_runtime_config(self):
+        return {
+            "lifecycle_timeout": 0.2,
+            "event_queue_size": 4,
+            "max_managed_workers": 1,
+        }
+
+    def get_plugin_config(self, _name: str):
+        return {}
+
 
 class FakeAction:
     def setEnabled(self, _enabled: bool) -> None:  # noqa: N802 - Qt API
