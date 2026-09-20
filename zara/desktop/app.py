@@ -61,22 +61,27 @@ def _desktop_control_runtime_dir() -> Path:
     return ServerLease()._runtime_dir()
 
 
-def _configured_agent_backend(config: Optional[ZaraConfig]) -> str:
+def _configured_conversation_policy(config: Optional[ZaraConfig]) -> str:
+    """Read Desktop's conversation execution policy without hijacking agent loops."""
     active_config = config or get_config()
     getter = getattr(active_config, "get", None)
     if not callable(getter):
-        return "langgraph"
-    return str(getter("agent", "backend", "langgraph")).strip().lower()
+        return "standard"
+    return str(
+        getter("conversation", "execution_policy", "standard")
+    ).strip().lower()
 
 
 def _default_desktop_client(config: Optional[ZaraConfig] = None) -> ZaraClient:
     """Construct the configured canonical Desktop client boundary.
 
-    Standard mode remains daemon-backed. ``pure_symbolic`` runs the same
-    RuntimeHost boundary in-process so no daemon/provider runtime has to be
-    initialized before the hard-zero symbolic contract is active.
+    Standard mode remains daemon-backed. A conversation execution policy of
+    ``pure_symbolic`` runs the same RuntimeHost boundary in-process so no
+    daemon/provider runtime has to initialize before the hard-zero symbolic
+    contract is active. This policy is deliberately separate from
+    ``[agent].backend``, which remains the canonical AgentLoopRegistry selector.
     """
-    if _configured_agent_backend(config) == "pure_symbolic":
+    if _configured_conversation_policy(config) == "pure_symbolic":
         return InProcessZaraClient(
             backend_factory=PureSymbolicRuntimeBackend,
             config=config,
