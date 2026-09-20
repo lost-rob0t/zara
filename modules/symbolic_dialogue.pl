@@ -2,7 +2,9 @@
     response_act/2,
     render_response/2,
     resolve_reference/3,
-    symbolic_reply/3
+    resolve_discourse/3,
+    symbolic_reply/3,
+    symbolic_follow_up/4
 ]).
 
 :- use_module('../modules/normalizer', [normalize_string/2]).
@@ -27,12 +29,22 @@ max_summary_codes(1024).
 symbolic_reply(Input, Text, Evidence) :-
     response_act(Input, Act),
     render_response(Act, Text),
-    renderer_id(Renderer),
-    Evidence = evidence(renderer(Renderer), provider_calls(0), model_calls(0)).
+    zero_model_evidence(Evidence).
+
+symbolic_follow_up(Text, PreviousAct, ReplyText, Evidence) :-
+    resolve_discourse(Text, PreviousAct, Act),
+    render_response(Act, ReplyText),
+    zero_model_evidence(Evidence).
+
+zero_model_evidence(evidence(renderer(Renderer), provider_calls(0), model_calls(0))) :-
+    renderer_id(Renderer).
 
 % --- Typed outcome -> response act -----------------------------------------
 
 response_act(frame(frame(intent(ns(conversation), name(greet)), _, complete)), greeting) :- !.
+response_act(frame(frame(intent(ns(conversation), name(help)), _, complete)), help) :- !.
+response_act(frame(frame(intent(ns(conversation), name(thanks)), _, complete)), acknowledgement(thanks)) :- !.
+response_act(frame(frame(intent(ns(conversation), name(acknowledge)), _, complete)), acknowledgement(acknowledged)) :- !.
 response_act(frame(frame(intent(ns(conversation), name(cancel)), _, complete)), cancelled) :- !.
 response_act(frame(frame(_, _, missing([Slot|_]))), clarify(slot(Slot))) :-
     bounded_identifier(Slot),
@@ -106,6 +118,61 @@ resolve_reference_tokens(Tokens, Choices, Result) :-
     ; Result = clarify(ambiguous_reference)
     ).
 
+% Resolve natural discourse follow-ups against a typed prior response act.
+% The caller supplies the prior act from Zara's canonical conversation owner;
+% this module keeps no history of its own.
+resolve_discourse(Text, PreviousAct, Act) :-
+    text_atom(Text, Atom),
+    normalize_string(Atom, Tokens),
+    discourse_act(Tokens, PreviousAct, Act),
+    !.
+resolve_discourse(_, _, clarify(reference_not_found)).
+
+discourse_act(Tokens, PreviousAct, Act) :-
+    why_reference(Tokens),
+    !,
+    ( expert_evidence_act(PreviousAct, EvidenceRef) ->
+        evidence_explanation(EvidenceRef, Explanation),
+        Act = answer(expert, Explanation, evidence(EvidenceRef))
+    ; Act = clarify(reference_not_found)
+    ).
+discourse_act(Tokens, PreviousAct, Act) :-
+    repeat_reference(Tokens),
+    !,
+    ( referenceable_act(PreviousAct) ->
+        Act = PreviousAct
+    ; Act = clarify(reference_not_found)
+    ).
+discourse_act(_, _, unsupported).
+
+why_reference([why]).
+why_reference([why, though]).
+why_reference([why, is, that]).
+why_reference([why, is, it]).
+
+repeat_reference([it]).
+repeat_reference([that]).
+repeat_reference([this]).
+repeat_reference([repeat, that]).
+repeat_reference([say, that, again]).
+
+expert_evidence_act(answer(expert, Summary, evidence(EvidenceRef)), EvidenceRef) :-
+    bounded_text(Summary, max_summary_codes),
+    bounded_text(EvidenceRef, max_choice_codes).
+
+referenceable_act(Act) :-
+    expert_evidence_act(Act, _).
+
+evidence_explanation(EvidenceRef, Explanation) :-
+    text_codes(EvidenceRef, EvidenceCodes),
+    string_codes("I answered from evidence ", PrefixCodes),
+    append(PrefixCodes, EvidenceCodes, PartialCodes),
+    append(PartialCodes, [0'.], Codes),
+    max_summary_codes(Max),
+    length(Codes, Length),
+    Length =< Max,
+    string_codes(Explanation, Codes).
+
 ordinal_reference([first], 1).
 ordinal_reference([the, first, one], 1).
 ordinal_reference([second], 2).
@@ -149,12 +216,22 @@ render_response(Act, Text) :-
 
 response_codes(greeting) -->
     "Hey — what can I help with?".
+response_codes(help) -->
+    "I can help with conversation, device and media actions, search, navigation, and registered experts. What do you want to do?".
+response_codes(acknowledgement(thanks)) -->
+    "You’re welcome.".
+response_codes(acknowledgement(acknowledged)) -->
+    "Got it.".
 response_codes(cancelled) -->
     "Cancelled.".
 response_codes(clarify(slot(duration))) -->
     "How long should I set the timer for?".
 response_codes(clarify(slot(Slot))) -->
     "What should I use for ", value_codes(Slot), "?".
+response_codes(clarify(reference_not_found)) -->
+    "What are you referring to?".
+response_codes(clarify(ambiguous_reference)) -->
+    "Which one do you mean?".
 response_codes(choose(Choices)) -->
     "I found a few matches: ", choice_list_codes(Choices, 1), ". Which one?".
 response_codes(invalid(Slot, Reason)) -->

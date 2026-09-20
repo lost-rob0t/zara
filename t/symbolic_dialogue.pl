@@ -104,6 +104,23 @@ test(expert_summary_preserves_supplied_text_and_evidence) :-
     symbolic_dialogue:render_response(Act, Text),
     assertion(Text == "Timer is already running.").
 
+test(expert_why_follow_up_is_deterministic_and_zero_model) :-
+    Previous = answer(expert, "Timer is already running.", evidence('expert:timer/7')),
+    symbolic_dialogue:symbolic_follow_up("why?", Previous, Text, Evidence),
+    assertion(Text == "I answered from evidence expert:timer/7."),
+    assertion(Evidence == evidence(renderer('symbolic-dcg/v1'), provider_calls(0), model_calls(0))).
+
+test(expert_pronoun_follow_up_repeats_unique_typed_answer) :-
+    Previous = answer(expert, "Timer is already running.", evidence('expert:timer/7')),
+    symbolic_dialogue:symbolic_follow_up("that", Previous, Text, Evidence),
+    assertion(Text == "Timer is already running."),
+    assertion(Evidence == evidence(renderer('symbolic-dcg/v1'), provider_calls(0), model_calls(0))).
+
+test(expert_follow_up_without_referenceable_prior_act_clarifies) :-
+    symbolic_dialogue:symbolic_follow_up("why?", greeting, Text, Evidence),
+    assertion(Text == "What are you referring to?"),
+    assertion(Evidence == evidence(renderer('symbolic-dcg/v1'), provider_calls(0), model_calls(0))).
+
 test(unknown_input_never_escalates) :-
     symbolic_dialogue:symbolic_reply(unsupported("frobnicate quantum socks"), Text, Evidence),
     assertion(Text == "I don’t know how to handle that symbolically yet."),

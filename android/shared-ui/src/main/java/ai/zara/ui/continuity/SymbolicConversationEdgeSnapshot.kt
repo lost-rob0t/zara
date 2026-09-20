@@ -99,6 +99,8 @@ data class SymbolicConversationEdgeSnapshot(
         internal const val ZARA_SYMBOLIC_DIALOGUE_V1_RENDERER = "symbolic-dcg/v1"
         internal val ZARA_SYMBOLIC_DIALOGUE_V1_ACTS = setOf(
             "greeting",
+            "help",
+            "acknowledgement",
             "cancelled",
             "clarify",
             "choose",
