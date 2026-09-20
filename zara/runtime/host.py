@@ -345,6 +345,7 @@ class RuntimeHost:
             if not shutdown_requests:
                 await self._start_api_service()
                 await self._start_plugins()
+                await self._bind_configured_memory_provider()
                 await self._start_task_runner()
 
         if shutdown_requests:
@@ -631,6 +632,40 @@ class RuntimeHost:
                     label="plugin-manager",
                 )
             )
+
+    async def _bind_configured_memory_provider(self) -> None:
+        config = self._config
+        if config is None:
+            from zara.config import get_config
+
+            config = get_config()
+        memory_config = config.get_section("memory")
+        selection = str(memory_config.get("provider", "builtin")).strip()
+        if selection == "builtin":
+            return
+        prefix = "plugin:"
+        if not selection.startswith(prefix) or len(selection) <= len(prefix):
+            raise RuntimeHostError(
+                "memory.provider must be 'builtin' or 'plugin:<name>'"
+            )
+        plugin_name = selection[len(prefix):]
+        expected_owner = f"plugin:{plugin_name}"
+        try:
+            registration = self._symbol_registry.resolve("memory.provider")
+        except LookupError as error:
+            raise RuntimeHostError(
+                f"configured memory provider {plugin_name!r} is unavailable"
+            ) from error
+        if registration.owner != expected_owner:
+            raise RuntimeHostError(
+                "configured memory provider owner mismatch: "
+                f"expected {expected_owner!r}, got {registration.owner!r}"
+            )
+        if registration.kind != "memory-provider":
+            raise RuntimeHostError(
+                "configured memory provider registered the wrong symbol kind"
+            )
+        self._require_backend().bind_memory_provider(registration.value)
 
     async def _stop_plugins(self) -> None:
         manager = self._plugin_manager
