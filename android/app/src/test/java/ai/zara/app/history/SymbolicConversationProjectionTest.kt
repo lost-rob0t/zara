@@ -84,7 +84,7 @@ class SymbolicConversationProjectionTest {
         )
         SymbolicProjectionContract.validateWrite(pending, cancelled, expectedGeneration = 1)
 
-        assertFailsWithMessage("terminal turn outcome rewrite rejected") {
+        assertFailsWithMessage("terminal turn projection is immutable") {
             SymbolicProjectionContract.validateWrite(
                 cancelled,
                 projection(
@@ -248,7 +248,7 @@ class SymbolicConversationProjectionTest {
         assertTrue(schema.contains("FOREIGN KEY(conversation_id)"))
         assertTrue(source.contains("fun PortableConversationStore.saveSymbolicProjection"))
         assertTrue(source.contains("projection_generation = ?"))
-        assertTrue(source.contains("terminal turn outcome rewrite rejected"))
+        assertTrue(source.contains("terminal turn projection is immutable"))
         assertTrue(source.contains("provider-call ledger rewind rejected"))
         assertTrue(source.contains("model-call ledger rewind rejected"))
         assertTrue(source.contains("PortableJsonValidator"))
