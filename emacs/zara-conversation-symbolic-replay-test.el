@@ -1,16 +1,15 @@
 ;;; zara-conversation-symbolic-replay-test.el --- Symbolic replay continuity tests -*- lexical-binding: t; -*-
 
+(require 'cl-lib)
 (require 'ert)
 (require 'json)
 (require 'zara)
 (require 'zara-conversation)
+(require 'zara-conversation-symbolic)
 
 (defconst zara-conversation-symbolic-replay-test--payload
   (concat
-   "{\"conversation\":{\"created_at\":\"2026-09-20T18:00:00\","
-   "\"id\":\"emacs-main\",\"title\":\"Emacs main\","
-   "\"updated_at\":\"2026-09-20T18:05:00\"},"
-   "\"messages\":[],"
+   "{\"conversation_id\":\"emacs-main\","
    "\"symbolic_projection\":{"
    "\"dialogue_act\":\"inform\","
    "\"dialogue_state\":{\"topic\":\"nix-shell\"},"
@@ -25,22 +24,32 @@
    "\"updated_at\":\"2026-09-20T18:05:00\","
    "\"verified_facts\":[{\"fact\":\"project uses flakes\",\"ref\":\"fact:9\"}],"
    "\"verified_outcome_refs\":[\"zara.verified-outcome/v1:outcome:turn-7\"]},"
-   "\"version\":\"ZARA-CONVERSATION-REPLAY/1\"}"))
+   "\"version\":\"ZARA-SYMBOLIC-REPLAY/1\"}"))
 
 (ert-deftest zara-conversation-symbolic-replay-restores-status-view ()
   (with-temp-buffer
     (zara-chat-mode)
     (setq-local zara-conversation-id "emacs-main")
-    (let ((payload
-           (zara-conversation--parse-replay
-            zara-conversation-symbolic-replay-test--payload
-            "emacs-main")))
-      (zara-conversation--render-replay payload))
-    (let ((status (zara-conversation-status)))
+    (let (captured)
+      (cl-letf (((symbol-function 'zara-conversation-symbolic--program)
+                 (lambda () "python3"))
+                ((symbol-function 'process-file)
+                 (lambda (program _infile _destination _display &rest args)
+                   (setq captured (cons program args))
+                   (insert zara-conversation-symbolic-replay-test--payload)
+                   0)))
+        (zara-conversation-symbolic-refresh-status))
+      (should
+       (equal captured
+              '("python3" "-m" "zara.desktop.conversation.replay_status"
+                "--conversation-id" "emacs-main"))))
+    (let ((status (zara-conversation-symbolic-status)))
       (should (equal (plist-get status :project-id) "dotfiles"))
       (should (= (plist-get status :project-generation) 3))
       (should (equal (plist-get status :dialogue-act) "inform"))
       (should (= (plist-get status :unresolved-question-count) 1))
+      (should (= (plist-get status :expert-evidence-count) 1))
+      (should (= (plist-get status :verified-fact-count) 1))
       (should (eq (plist-get status :providers-enabled) :false))
       (should (= (plist-get status :max-model-calls) 0))
       (should (= (plist-get status :provider-calls) 0))
@@ -54,7 +63,7 @@
           zara-conversation-symbolic-replay-test--payload
           t t)))
     (should-error
-     (zara-conversation--parse-replay payload "emacs-main")
+     (zara-conversation-symbolic--parse payload "emacs-main")
      :type 'error)))
 
 (ert-deftest zara-conversation-symbolic-replay-rejects-nonsymbolic-success-renderer ()
@@ -65,8 +74,19 @@
           zara-conversation-symbolic-replay-test--payload
           t t)))
     (should-error
-     (zara-conversation--parse-replay payload "emacs-main")
+     (zara-conversation-symbolic--parse payload "emacs-main")
      :type 'error)))
+
+(ert-deftest zara-conversation-symbolic-switch-fences-stale-project-status ()
+  (with-temp-buffer
+    (zara-chat-mode)
+    (setq-local zara-conversation-id "emacs-main")
+    (setq-local zara-conversation-symbolic-projection
+                (zara-conversation-symbolic--parse
+                 zara-conversation-symbolic-replay-test--payload
+                 "emacs-main"))
+    (zara-conversation-switch "other-project-chat")
+    (should-not zara-conversation-symbolic-projection)))
 
 (provide 'zara-conversation-symbolic-replay-test)
 ;;; zara-conversation-symbolic-replay-test.el ends here
