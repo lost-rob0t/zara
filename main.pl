@@ -8,6 +8,7 @@
 :- use_module('kb/config').          % shared semantic configuration
 :- use_module('kb/device_providers'). % Linux device provider configuration (desktop only)
 :- use_module('kb/intents').
+:- use_module('kb/workflows').       % declarative cross-device default workflows
 :- use_module('modules/config_loader').
 :- use_module('modules/hooks_loader').
 :- discontiguous handle_input/1.
