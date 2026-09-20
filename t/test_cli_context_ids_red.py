@@ -50,6 +50,15 @@ def _install_client(monkeypatch, client: _Client) -> None:
     monkeypatch.setattr(daemon_client, "create_daemon_client", lambda endpoint: client)
 
 
+def _install_config(monkeypatch) -> None:
+    class _Config:
+        @staticmethod
+        def get_section(name):
+            return {}
+
+    monkeypatch.setattr(cli, "init_config", lambda: _Config())
+
+
 def test_connected_text_forwards_context_ids_to_canonical_submit_turn(monkeypatch):
     client = _Client()
     _install_client(monkeypatch, client)
@@ -75,18 +84,13 @@ def test_main_accepts_repeatable_context_id_and_forwards_without_parallel_state(
 ):
     captured = {}
 
-    class _Config:
-        @staticmethod
-        def get_section(name):
-            return {}
-
     def fake_run(endpoint, command_text, **kwargs):
         captured["endpoint"] = endpoint
         captured["command_text"] = command_text
         captured.update(kwargs)
         return 0
 
-    monkeypatch.setattr(cli, "init_config", lambda: _Config())
+    _install_config(monkeypatch)
     monkeypatch.setattr(cli, "_default_daemon_endpoint", lambda: "ipc:///tmp/zara.sock")
     monkeypatch.setattr(cli, "_run_connected_text", fake_run)
     monkeypatch.setattr(
@@ -115,3 +119,21 @@ def test_main_accepts_repeatable_context_id_and_forwards_without_parallel_state(
         "context_ids": [" doc:alpha ", "project:zara"],
         "emit_json": False,
     }
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["zara", "--standalone", "--context-id", "doc:alpha", "continue"],
+        ["zara", "--cancel-turn", "turn-1", "--context-id", "doc:alpha"],
+        ["zara", "--context-id", "doc:alpha"],
+    ],
+)
+def test_main_rejects_context_ids_outside_canonical_turn_path(monkeypatch, argv):
+    _install_config(monkeypatch)
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main()
+
+    assert exit_info.value.code == 2
