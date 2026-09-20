@@ -14,8 +14,10 @@ class SymbolicConversationProjectionTest {
         outcome: String = "pending",
         projectId: String? = "project-a",
         projectGeneration: Long = 1,
+        dialogueAct: String = "clarify",
         dialogueStateJson: String = "{\"act\":\"clarify\"}",
         discourseEntitiesJson: String = "[{\"entity_id\":\"file:flake.nix\"}]",
+        verifiedOutcomeRefs: List<String> = listOf(VERIFIED_EFFECT_REF),
         providerCalls: Long = 0,
         modelCalls: Long = 0,
     ) = SymbolicConversationProjection(
@@ -26,11 +28,13 @@ class SymbolicConversationProjectionTest {
         outcome = outcome,
         projectId = projectId,
         projectGeneration = projectGeneration,
+        dialogueAct = dialogueAct,
         dialogueStateJson = dialogueStateJson,
         discourseEntitiesJson = discourseEntitiesJson,
         unresolvedQuestionsJson = "[{\"slot\":\"target\"}]",
         expertEvidenceJson = "[{\"evidence_id\":\"ev-1\"}]",
         verifiedFactsJson = "[{\"fact_id\":\"fact-1\"}]",
+        verifiedOutcomeRefs = verifiedOutcomeRefs,
         rendererProvenance = "symbolic-nlg/v1",
         providerCalls = providerCalls,
         modelCalls = modelCalls,
@@ -44,6 +48,8 @@ class SymbolicConversationProjectionTest {
         proposed.assertPureSymbolic()
         assertEquals("turn-7", proposed.turnId)
         assertEquals("pending", proposed.outcome)
+        assertEquals("clarify", proposed.dialogueAct)
+        assertEquals(listOf(VERIFIED_EFFECT_REF), proposed.verifiedOutcomeRefs)
         assertEquals(0L, proposed.providerCalls)
         assertEquals(0L, proposed.modelCalls)
     }
@@ -195,6 +201,34 @@ class SymbolicConversationProjectionTest {
     }
 
     @Test
+    fun `normalized dialogue act and verified outcome refs fail closed`() {
+        val proposed = projection(
+            dialogueAct = "dispatch_required",
+            verifiedOutcomeRefs = listOf(
+                "zara.verified-outcome/v1:effect:tool-run-7",
+                "zara.verified-outcome/v1:outcome:postcondition/process-firefox",
+            ),
+        )
+        SymbolicProjectionContract.validatePayload(proposed)
+
+        assertFailsWithMessage("dialogueAct") {
+            SymbolicProjectionContract.validatePayload(
+                proposed.copy(dialogueAct = "Clarify Slot")
+            )
+        }
+        assertFailsWithMessage("invalid verified outcome reference") {
+            SymbolicProjectionContract.validatePayload(
+                proposed.copy(verifiedOutcomeRefs = listOf("effect:unversioned"))
+            )
+        }
+        assertFailsWithMessage("must be unique") {
+            SymbolicProjectionContract.validatePayload(
+                proposed.copy(verifiedOutcomeRefs = listOf(VERIFIED_EFFECT_REF, VERIFIED_EFFECT_REF))
+            )
+        }
+    }
+
+    @Test
     fun `android and desktop reject malformed or mistyped json projections`() {
         listOf(
             "{not-json}",
@@ -243,6 +277,8 @@ class SymbolicConversationProjectionTest {
         assertTrue(schema.contains("CREATE TABLE IF NOT EXISTS desktop_symbolic_projections"))
         assertTrue(schema.contains("turn_id TEXT"))
         assertTrue(schema.contains("'cancelled', 'interrupted', 'error'"))
+        assertTrue(schema.contains("dialogue_act TEXT NOT NULL DEFAULT 'unknown'"))
+        assertTrue(schema.contains("verified_outcome_refs TEXT NOT NULL DEFAULT ''"))
         assertTrue(schema.contains("provider_calls INTEGER NOT NULL DEFAULT 0"))
         assertTrue(schema.contains("model_calls INTEGER NOT NULL DEFAULT 0"))
         assertTrue(schema.contains("FOREIGN KEY(conversation_id)"))
@@ -251,6 +287,7 @@ class SymbolicConversationProjectionTest {
         assertTrue(source.contains("terminal turn projection is immutable"))
         assertTrue(source.contains("provider-call ledger rewind rejected"))
         assertTrue(source.contains("model-call ledger rewind rejected"))
+        assertTrue(source.contains("verifiedOutcomeRefPattern"))
         assertTrue(source.contains("PortableJsonValidator"))
         assertTrue(source.contains("parseObjectArrayDocument"))
     }
@@ -262,5 +299,9 @@ class SymbolicConversationProjectionTest {
         } catch (error: RuntimeException) {
             assertTrue(error.message.orEmpty().contains(fragment))
         }
+    }
+
+    private companion object {
+        const val VERIFIED_EFFECT_REF = "zara.verified-outcome/v1:effect:fact-1"
     }
 }
