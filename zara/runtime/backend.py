@@ -77,6 +77,11 @@ class RuntimeBackend:
     def unregister_tools(self, names) -> None:
         pass
 
+    def bind_memory_provider(self, provider) -> None:
+        raise UnsupportedRuntimeCommand(
+            "memory provider replacement is not available in this runtime backend"
+        )
+
     def requires_composed_tool_approval(self, name: str) -> bool:
         raise UnsupportedRuntimeCommand(
             "composed tool policy is not available in this runtime backend"
@@ -281,6 +286,23 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             cancel = getattr(self._manager, "cancel_turn", None)
             if cancel is not None:
                 await cancel(turn_id)
+
+    def bind_memory_provider(self, provider) -> None:
+        if self._manager is None:
+            raise RuntimeError("runtime backend is not started")
+        bind_principal = getattr(provider, "bind_principal", None)
+        if not callable(bind_principal):
+            raise TypeError("memory provider must implement bind_principal")
+        replace_memory_manager = getattr(
+            self._manager,
+            "replace_memory_manager",
+            None,
+        )
+        if not callable(replace_memory_manager):
+            raise RuntimeError("agent manager cannot replace its memory provider")
+        bind_principal(getattr(self._manager, "principal", None))
+        replace_memory_manager(provider)
+        self._memory_session = None
 
     def _memory_manager(self):
         if self._manager is None:
@@ -553,6 +575,9 @@ class AgentRuntimeBackend(RuntimeBackend):
 
     def unregister_tools(self, names) -> None:
         self._delegate.unregister_tools(names)
+
+    def bind_memory_provider(self, provider) -> None:
+        self._delegate.bind_memory_provider(provider)
 
     def requires_composed_tool_approval(self, name: str) -> bool:
         return self._delegate.requires_composed_tool_approval(name)
