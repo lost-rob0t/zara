@@ -53,9 +53,7 @@ data class SymbolicConversationEdgeSnapshot(
         require(maxModelCalls >= 0) { "max model calls must be >= 0" }
         require(modelCalls >= 0) { "model calls must be >= 0" }
         require(providerCalls >= 0) { "provider calls must be >= 0" }
-        require(modelCalls <= maxModelCalls || maxModelCalls == 0L) {
-            "model calls exceed declared max model calls"
-        }
+        require(modelCalls <= maxModelCalls) { "model calls exceed declared max model calls" }
     }
 
     fun assertPureSymbolic() {
