@@ -4,7 +4,13 @@ import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 
-class ZaraWireException(message: String, cause: Throwable? = null) : IllegalArgumentException(message, cause)
+class ZaraWireException(
+    message: String,
+    cause: Throwable? = null,
+    val code: String = "protocol.malformed",
+    val serverCode: String? = null,
+    val retryable: Boolean? = null,
+) : IllegalArgumentException(message, cause)
 
 sealed interface TextServerMessage {
     val id: String
