@@ -1,0 +1,39 @@
+name: Emacs Conversation
+
+on:
+  pull_request:
+    paths:
+      - "emacs/zara.el"
+      - "emacs/zara-conversation.el"
+      - "emacs/zara-conversation-test.el"
+      - ".github/workflows/emacs-conversation.yml"
+  push:
+    branches:
+      - master
+    paths:
+      - "emacs/zara.el"
+      - "emacs/zara-conversation.el"
+      - "emacs/zara-conversation-test.el"
+      - ".github/workflows/emacs-conversation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  ert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Emacs
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends emacs-nox
+      - name: Run canonical conversation ERT
+        run: |
+          set -euo pipefail
+          emacs -Q --batch \
+            -L emacs \
+            -l emacs/zara-conversation-test.el \
+            -f ert-run-tests-batch-and-exit
