@@ -21,6 +21,16 @@ adb -s "$serial" shell pidof ai.zara.code.editor >/dev/null
 adb -s "$serial" shell am force-stop ai.zara.code.editor
 
 adb -s "$serial" install -r "$phone_apk"
+
+# Exercise the real Android SQLiteOpenHelper migration on the same emulator used
+# for acceptance. This seeds a canonical v2 conversation DB in the target app,
+# opens it through PortableConversationStore v3, writes a zero-call symbolic
+# projection, closes the helper, and reopens it to prove durable preservation.
+ANDROID_SERIAL="$serial" ZARA_SOURCE_SHA="$source_sha" \
+  nix develop ./android -c bash -lc \
+  'cd android && ./gradlew :app:connectedDebugAndroidTest --no-daemon \
+    -Pandroid.testInstrumentationRunnerArguments.class=ai.zara.app.history.PortableConversationMigrationInstrumentedTest'
+
 python android/integration/device_acceptance.py \
   --serial "$serial" \
   --source-sha "$source_sha" \
