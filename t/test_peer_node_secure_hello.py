@@ -152,6 +152,31 @@ def test_secure_hello_binds_node_to_authenticated_principal_and_session(
         transport_config,
     )
     node_mapping = _node_mapping(enrolled)
+    expected_node = ZaraNode.from_mapping(node_mapping)
+    published_before_ack: list[ZaraNode | None] = []
+    original_send = gateway._send
+
+    def send_with_publication_assertion(
+        socket,
+        route,
+        message,
+        payloads=(),
+        *,
+        queue_on_again=True,
+    ):
+        if message.type == "hello.ok":
+            published_before_ack.append(
+                gateway.node_for_session(principal.principal_id, message.session_id)
+            )
+        return original_send(
+            socket,
+            route,
+            message,
+            payloads,
+            queue_on_again=queue_on_again,
+        )
+
+    gateway._send = send_with_publication_assertion
     try:
         hello = _send_hello(
             dealer,
@@ -159,13 +184,15 @@ def test_secure_hello_binds_node_to_authenticated_principal_and_session(
             "peer-hello",
         )
         assert hello.type == "hello.ok"
+        assert published_before_ack == [expected_node]
         assert gateway.node_for_session(
             principal.principal_id,
             hello.session_id,
-        ) == ZaraNode.from_mapping(node_mapping)
+        ) == expected_node
 
         legacy = _send_hello(dealer, {"versions": [1]}, "legacy-reset")
         assert legacy.type == "hello.ok"
+        assert published_before_ack == [expected_node, None]
         assert gateway.node_for_session(principal.principal_id, hello.session_id) is None
         assert gateway.node_for_session(principal.principal_id, legacy.session_id) is None
     finally:
