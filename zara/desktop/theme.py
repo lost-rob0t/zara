@@ -713,6 +713,82 @@ QWidget#zaraKnowledgeStudioRail {{
     border-right: 1px solid {colors["line"]};
 }}
 
+QLabel#zaraSettingsTitle {{
+    color: {colors["text"]};
+    font-size: 24px;
+    font-weight: 700;
+}}
+
+QLabel#zaraSettingsSubtitle {{
+    color: {colors["text_muted"]};
+    font-size: 12px;
+}}
+
+QLineEdit#zaraSettingsSearch {{
+    background: {colors["panel_lift"]};
+    border: 1px solid {colors["line"]};
+    border-radius: 12px;
+    min-height: 38px;
+    padding: 0 12px;
+}}
+
+QLineEdit#zaraSettingsSearch:focus {{
+    border-color: {colors["primary"]};
+}}
+
+QLabel#zaraSettingsBreadcrumb {{
+    color: {colors["primary"]};
+    font-family: "Hack Nerd Font Mono";
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}}
+
+QFrame#zaraSettingsSectionCard {{
+    background: {colors["panel"]};
+    border: 1px solid {colors["line"]};
+    border-radius: 14px;
+}}
+
+QWidget#zaraSettingLabel {{
+    background: transparent;
+}}
+
+QLabel#zaraSettingName {{
+    color: {colors["text"]};
+    font-weight: 650;
+}}
+
+QLabel#zaraSettingDescription {{
+    color: {colors["text_muted"]};
+    font-size: 12px;
+}}
+
+QLabel#zaraSettingBadge {{
+    color: {colors["active"]};
+    background: {colors["panel_lift"]};
+    border: 1px solid {colors["line_strong"]};
+    border-radius: 7px;
+    padding: 2px 6px;
+    font-family: "Hack Nerd Font Mono";
+    font-size: 9px;
+    font-weight: 700;
+}}
+
+QLabel#zaraSettingBadge[applyMode="live"] {{
+    color: {colors["primary"]};
+    background: {colors["primary_deep"]};
+    border-color: {colors["primary"]};
+}}
+
+QLabel#zaraSettingsNotice {{
+    color: {colors["text_muted"]};
+    background: {colors["panel_deep"]};
+    border: 1px solid {colors["line"]};
+    border-radius: 10px;
+    padding: 10px 12px;
+}}
+
 QFrame#zaraSettingsHeader,
 QFrame#zaraSettingsFooter {{
     background: transparent;
