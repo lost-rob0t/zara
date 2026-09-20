@@ -19,11 +19,47 @@ _PROVIDER_CREDENTIALS = (
 )
 
 
-def test_natural_expert_why_phrase_preserves_evidence_with_zero_model_calls() -> None:
+def _provider_free_env() -> dict[str, str]:
     env = os.environ.copy()
     for name in _PROVIDER_CREDENTIALS:
         env.pop(name, None)
+    return env
 
+
+def _run_swipl(module: pathlib.Path, goal: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "swipl",
+            "-q",
+            "-s",
+            str(module),
+            "-g",
+            goal,
+            "-t",
+            "halt(1)",
+        ],
+        cwd=ROOT,
+        env=_provider_free_env(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_normalizer_expands_standalone_u_without_corrupting_you_or_u_words() -> None:
+    goal = (
+        'normalizer:normalize_string("why did you do that?", Why), '
+        "Why = [why,did,you,do,that], "
+        'normalizer:normalize_string("u check ubuntu menu", Tokens), '
+        "Tokens = [you,check,ubuntu,menu], halt(0)"
+    )
+
+    completed = _run_swipl(ROOT / "modules" / "normalizer.pl", goal)
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_natural_expert_why_phrase_preserves_evidence_with_zero_model_calls() -> None:
     goal = (
         'Previous = answer(expert, "Kotlin inspection complete.", '
         "evidence('expert:kotlin/invocation-4')), "
@@ -34,22 +70,6 @@ def test_natural_expert_why_phrase_preserves_evidence_with_zero_model_calls() ->
         "provider_calls(0), model_calls(0)), halt(0)"
     )
 
-    completed = subprocess.run(
-        [
-            "swipl",
-            "-q",
-            "-s",
-            str(ROOT / "modules" / "symbolic_dialogue.pl"),
-            "-g",
-            goal,
-            "-t",
-            "halt(1)",
-        ],
-        cwd=ROOT,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    completed = _run_swipl(ROOT / "modules" / "symbolic_dialogue.pl", goal)
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
