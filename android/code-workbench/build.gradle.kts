@@ -23,6 +23,7 @@ android {
 
 dependencies {
     implementation(project(":editor-core"))
+    implementation(project(":prolog-ipc"))
     implementation(project(":shared-ui"))
     implementation(platform(libs.compose.bom))
     implementation(libs.activity.compose)
