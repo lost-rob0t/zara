@@ -326,13 +326,13 @@ class PortableConversationStore(context: Context) : SQLiteOpenHelper(
                         ),
                     )
                     check(changed == 1) { "Interrupted message recovery lost ownership or terminal fence" }
-                    interruptPendingProjection(db, terminal, recoveredAt)
                     terminal
                 } else {
                     message
                 }
             }
-            if (recovered != storedMessages) {
+            val projectionRecovered = interruptPendingProjection(db, conversationId, recoveredAt)
+            if (recovered != storedMessages || projectionRecovered) {
                 db.update(
                     "desktop_conversations",
                     ContentValues().apply { put("updated_at", recoveredAt) },
@@ -353,12 +353,11 @@ class PortableConversationStore(context: Context) : SQLiteOpenHelper(
 
     private fun interruptPendingProjection(
         db: SQLiteDatabase,
-        message: HistoryMessage,
+        conversationId: String,
         recoveredAt: String,
-    ) {
-        val turnId = message.turnId ?: return
-        val current = loadSymbolicProjection(message.conversationId) ?: return
-        if (current.turnId != turnId || current.outcome != "pending") return
+    ): Boolean {
+        val current = loadSymbolicProjection(conversationId) ?: return false
+        if (current.outcome != "pending") return false
 
         val interrupted = current.copy(
             projectionGeneration = current.projectionGeneration + 1,
@@ -377,17 +376,17 @@ class PortableConversationStore(context: Context) : SQLiteOpenHelper(
                 put("projection_generation", interrupted.projectionGeneration)
                 put("updated_at", recoveredAt)
             },
-            "conversation_id = ? AND principal_id = ? AND turn_id = ? " +
+            "conversation_id = ? AND principal_id = ? " +
                 "AND outcome = ? AND projection_generation = ?",
             arrayOf(
                 interrupted.conversationId,
                 ConversationHistoryContract.localPrincipalId,
-                turnId,
                 "pending",
                 current.projectionGeneration.toString(),
             ),
         )
         check(changed == 1) { "stale symbolic restart recovery rejected" }
+        return true
     }
 
     private fun installSchema(db: SQLiteDatabase) {
