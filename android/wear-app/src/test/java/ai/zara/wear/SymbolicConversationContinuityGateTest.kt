@@ -87,6 +87,17 @@ class SymbolicConversationContinuityGateTest {
         assertFalse(SymbolicConversationContinuityGate.accepts(null, fixture(providerCalls = 1)))
     }
 
+    @Test
+    fun refusesNonCanonicalDialogueOrRendererProvenance() {
+        assertFalse(SymbolicConversationContinuityGate.accepts(null, fixture(dialogueAct = "answer")))
+        assertFalse(
+            SymbolicConversationContinuityGate.accepts(
+                null,
+                fixture(rendererProvenance = "model-fallback/v1"),
+            ),
+        )
+    }
+
     private fun fixture(
         principalId: String = "principal:alice",
         conversationId: String = "chat-1",
@@ -94,6 +105,8 @@ class SymbolicConversationContinuityGateTest {
         runtimeGeneration: Long = 1,
         projectId: String? = "dotfiles",
         projectGeneration: Long = 1,
+        dialogueAct: String = "expert_answer",
+        rendererProvenance: String = "symbolic-dcg/v1",
         providersEnabled: Boolean = false,
         maxModelCalls: Long = 0,
         modelCalls: Long = 0,
@@ -105,12 +118,12 @@ class SymbolicConversationContinuityGateTest {
         runtimeGeneration = runtimeGeneration,
         projectId = projectId,
         projectGeneration = projectGeneration,
-        dialogueAct = "answer",
+        dialogueAct = dialogueAct,
         discourseEntityRefs = listOf("entity:dotfiles"),
         unresolvedQuestionRefs = emptyList(),
         expertEvidenceRefs = listOf("expert:dotfiles:1"),
         verifiedOutcomeRefs = listOf("outcome:verified:1"),
-        rendererProvenance = "symbolic-nlg/v1",
+        rendererProvenance = rendererProvenance,
         providersEnabled = providersEnabled,
         maxModelCalls = maxModelCalls,
         modelCalls = modelCalls,
