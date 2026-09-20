@@ -103,6 +103,31 @@ nix develop "$repo_root" -c env \
   --fixture-file "$interop_fixture" \
   --output "$repo_root/android/app/build/reports/device"
 
+# A successful UI path is not enough: the acceptance contract requires current
+# process diagnostics and logcat to be readable and free of Zara crash/ANR
+# markers. Fail closed if evidence collection itself broke so CI cannot silently
+# report green without inspecting the exercised app logs.
+remote_manifest="$repo_root/android/app/build/reports/device/remote-manifest.json"
+python3 - "$remote_manifest" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+if data.get("passed") is not True:
+    raise SystemExit("remote Android acceptance manifest did not report passed=true")
+if data.get("app_diagnostics_failure") or data.get("logcat_failure"):
+    raise SystemExit("remote Android acceptance could not inspect required app diagnostics/logcat")
+if not data.get("app_diagnostics") or not data.get("logcat"):
+    raise SystemExit("remote Android acceptance omitted required app diagnostics/logcat evidence")
+fatal_markers = data.get("fatal_log_markers")
+if not isinstance(fatal_markers, list):
+    raise SystemExit("remote Android acceptance omitted fatal_log_markers inspection result")
+if fatal_markers:
+    raise SystemExit(f"remote Android acceptance found crash/ANR markers: {fatal_markers}")
+PY
+
 printf 'STOP\n' >&9
 wait "$interop_pid"
 interop_pid=""
