@@ -61,14 +61,31 @@ class AndroidPairingCoordinator private constructor(
             activeFuture = future
         }
 
-        pairingClient.cancelCurrent()
+        val clientGeneration = try {
+            pairingClient.reservePairing()
+        } catch (error: Throwable) {
+            previousFuture?.cancel(true)
+            synchronized(lifecycleLock) {
+                if (isCurrentLocked(pairingGeneration, future)) {
+                    activeFuture = null
+                    future.completeExceptionally(error)
+                }
+            }
+            return future
+        }
         previousFuture?.cancel(true)
 
         try {
             executor.execute {
                 try {
+                    synchronized(lifecycleLock) {
+                        requireCurrentLocked(pairingGeneration, future)
+                    }
                     val payload = PairingPayload.parse(rawPayload)
-                    val outcome = pairingClient.pair(rawPayload) { progress ->
+                    val outcome = pairingClient.pairReserved(
+                        pairingGeneration = clientGeneration,
+                        rawPayload = rawPayload,
+                    ) { progress ->
                         synchronized(lifecycleLock) {
                             if (isCurrentLocked(pairingGeneration, future)) {
                                 onProgress(progress)
@@ -108,6 +125,7 @@ class AndroidPairingCoordinator private constructor(
                 }
             }
         } catch (error: Throwable) {
+            pairingClient.cancelCurrent()
             synchronized(lifecycleLock) {
                 if (isCurrentLocked(pairingGeneration, future)) {
                     activeFuture = null

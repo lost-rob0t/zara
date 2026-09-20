@@ -173,12 +173,32 @@ class PairingClient(
     fun pair(
         rawPayload: String,
         onProgress: (PairingProgress) -> Unit = {},
-    ): PairingOutcome {
-        val pairingGeneration = synchronized(lifecycleLock) {
+    ): PairingOutcome = pairReserved(
+        pairingGeneration = reservePairing(),
+        rawPayload = rawPayload,
+        onProgress = onProgress,
+    )
+
+    internal fun reservePairing(): Long {
+        val previousSocket: Socket?
+        val reservedGeneration: Long
+        synchronized(lifecycleLock) {
             if (closed) throw PairingException("pairing client is closed")
             generation += 1
-            generation
+            reservedGeneration = generation
+            previousSocket = activeSocket
+            activeSocket = null
         }
+        closeQuietly(previousSocket)
+        return reservedGeneration
+    }
+
+    internal fun pairReserved(
+        pairingGeneration: Long,
+        rawPayload: String,
+        onProgress: (PairingProgress) -> Unit = {},
+    ): PairingOutcome {
+        requireCurrent(pairingGeneration)
         val payload = PairingPayload.parse(rawPayload)
         val publicKey = enrollment.identityZ85OrCreate()
         val expectedDeviceId = PairingProtocol.deriveDeviceId(publicKey)
