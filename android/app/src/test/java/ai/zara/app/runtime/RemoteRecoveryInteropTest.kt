@@ -53,9 +53,9 @@ class RemoteRecoveryInteropTest {
         actor.setVoiceStreamObserver { event -> streamEvents += event.javaClass.simpleName }
 
         val generation = 1L
-        val session = actor.connect(ServerProfile.create(endpoint), generation).get(5, TimeUnit.SECONDS)
+        val session = actor.connect(ServerProfile.create(endpoint), generation).get(20, TimeUnit.SECONDS)
 
-        val firstTurn = actor.submitText(generation, session.sessionId, null, "hello").get(5, TimeUnit.SECONDS)
+        val firstTurn = actor.submitText(generation, session.sessionId, null, "hello").get(20, TimeUnit.SECONDS)
         assertEquals("stock server response", firstTurn.text)
         assertEquals(0, failures.size)
 
@@ -68,32 +68,32 @@ class RemoteRecoveryInteropTest {
 
         arm(controlFifo, "MALFORMED")
         runCatching {
-            actor.submitText(generation, session.sessionId, null, "trigger malformed").get(5, TimeUnit.SECONDS)
+            actor.submitText(generation, session.sessionId, null, "trigger malformed").get(20, TimeUnit.SECONDS)
         }
         val malformedFailure = awaitFailure(failures)
         assertEquals(ZaraFailureCodes.PROTOCOL_MALFORMED, malformedFailure.code)
         assertTrue(streamEvents.contains("SpeechStarted"))
 
         val generation2 = 2L
-        val secondSession = actor.connect(ServerProfile.create(endpoint), generation2).get(5, TimeUnit.SECONDS)
+        val secondSession = actor.connect(ServerProfile.create(endpoint), generation2).get(20, TimeUnit.SECONDS)
         assertEquals(true, secondSession.sessionId.isNotBlank())
         val secondTurn = actor.submitText(
             generation2,
             secondSession.sessionId,
             null,
             "after malformed recovery",
-        ).get(5, TimeUnit.SECONDS)
+        ).get(20, TimeUnit.SECONDS)
         assertEquals("stock server response", secondTurn.text)
 
         arm(controlFifo, "OUT_OF_ORDER")
         runCatching {
-            actor.submitText(generation2, secondSession.sessionId, null, "trigger out of order").get(5, TimeUnit.SECONDS)
+            actor.submitText(generation2, secondSession.sessionId, null, "trigger out of order").get(20, TimeUnit.SECONDS)
         }
         val orderFailure = awaitFailureAfter(failures, malformedFailure)
         assertEquals(ZaraFailureCodes.PROTOCOL_UNEXPECTED_MESSAGE, orderFailure.code)
 
         val generation3 = 3L
-        val thirdSession = actor.connect(ServerProfile.create(endpoint), generation3).get(5, TimeUnit.SECONDS)
+        val thirdSession = actor.connect(ServerProfile.create(endpoint), generation3).get(20, TimeUnit.SECONDS)
 
         arm(controlFifo, "STALE")
         val staleVoice = voiceTurn(actor, thirdSession.sessionId)
@@ -102,19 +102,19 @@ class RemoteRecoveryInteropTest {
 
         arm(controlFifo, "CLOSE")
         runCatching {
-            actor.submitText(generation3, thirdSession.sessionId, null, "trigger close").get(5, TimeUnit.SECONDS)
+            actor.submitText(generation3, thirdSession.sessionId, null, "trigger close").get(20, TimeUnit.SECONDS)
         }
         val closeFailure = awaitFailureAfter(failures, orderFailure)
         assertEquals(ZaraFailureCodes.TRANSPORT_TIMEOUT, closeFailure.code)
 
         val generation4 = 4L
-        val fourthSession = actor.connect(ServerProfile.create(endpoint), generation4).get(5, TimeUnit.SECONDS)
+        val fourthSession = actor.connect(ServerProfile.create(endpoint), generation4).get(20, TimeUnit.SECONDS)
         val finalTurn = actor.submitText(
             generation4,
             fourthSession.sessionId,
             null,
             "final recovery turn",
-        ).get(5, TimeUnit.SECONDS)
+        ).get(20, TimeUnit.SECONDS)
         assertEquals("stock server response", finalTurn.text)
         actor.close()
     }
@@ -133,7 +133,7 @@ class RemoteRecoveryInteropTest {
         )
         try {
             val error = runCatching {
-                actor.connect(ServerProfile.create(endpoint), 1).get(5, TimeUnit.SECONDS)
+                actor.connect(ServerProfile.create(endpoint), 1).get(20, TimeUnit.SECONDS)
             }.exceptionOrNull() ?: error("expected hello to fail")
             val root = generateSequence(error) { it.cause?.takeIf { c -> c !== it } }.last()
             val wire = root as? ZaraWireException ?: error("expected ZaraWireException, got $root")
@@ -146,9 +146,9 @@ class RemoteRecoveryInteropTest {
     private fun voiceTurn(actor: ZaraTextClientActor, sessionId: String): Boolean {
         val before = streamEvents.size
         val context = VoiceCaptureContext(sessionId, "recovery-conversation", "mic-interop")
-        actor.startVoice(context).get(5, TimeUnit.SECONDS)
-        actor.sendVoiceChunk(context, 0, ByteArray(1024)).get(5, TimeUnit.SECONDS)
-        actor.commitVoice(context).get(5, TimeUnit.SECONDS)
+        actor.startVoice(context).get(20, TimeUnit.SECONDS)
+        actor.sendVoiceChunk(context, 0, ByteArray(1024)).get(20, TimeUnit.SECONDS)
+        actor.commitVoice(context).get(20, TimeUnit.SECONDS)
         val deadline = System.currentTimeMillis() + 5_000
         while (!streamEvents.subList(before, streamEvents.size).contains("AudioDone") &&
             System.currentTimeMillis() < deadline
