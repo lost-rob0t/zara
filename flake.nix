@@ -261,6 +261,7 @@
             # Testing
             p.pytest
             p.pytest-asyncio
+            p.pytest-cov
             # Packaging metadata sanity checks
             p.setuptools
             p.wheel
