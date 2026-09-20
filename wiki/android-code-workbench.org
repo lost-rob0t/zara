@@ -99,8 +99,18 @@ The existing =PrologQueryPolicy= remains the runtime query authority. The IPC la
 adds transport/lifecycle bounds; it does not grant new Prolog effects or Android
 capabilities.
 
+* Voice ownership
+
+Main Zara embeds the workbench with the platform SpeechRecognizer fallback disabled.
+This preserves #1007's single voice/model-provider authority: opening Workspace -> Code
+must not start a competing microphone/STT runtime. The standalone Zara Code APK
+temporarily retains its previous Android SpeechRecognizer fallback until the canonical
+Zara voice provider is exposed over the reviewed first-party app seam.
+
 * Next slices
 
+- Replace the standalone platform SpeechRecognizer fallback with the canonical Zara
+  voice/model provider seam from #1007.
 - Route code-aware model edits through Zara's canonical coding-agent/model command
   surface instead of leaving =NeedsModel= as presentation-only.
 - Consume the #908 Prolog IDE language service from =:code-workbench= for Prolog
