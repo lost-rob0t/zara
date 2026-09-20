@@ -121,7 +121,7 @@ def test_symbolic_projection_rejects_stale_runtime_and_usage_rewind(tmp_path):
         store.save_symbolic_projection(
             _projection(
                 conversation.id,
-                generation=2,
+                generation=1,
                 runtime_generation=10,
                 provider_calls=2,
                 model_calls=2,
@@ -199,7 +199,7 @@ def test_cancelled_turn_rejects_late_success_but_new_turn_is_allowed(tmp_path):
         expected_generation=pending.projection_generation,
     )
 
-    with pytest.raises(RuntimeError, match="terminal turn outcome rewrite rejected"):
+    with pytest.raises(RuntimeError, match="terminal turn projection is immutable"):
         store.save_symbolic_projection(
             _projection(
                 conversation.id,
