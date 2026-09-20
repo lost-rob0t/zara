@@ -1,0 +1,5 @@
+* Run identity
+- Consumed issues :: #1299, #1300, #1301, #1302, #1303 (one user-authorized end-to-end P0 slice; #1299 is the anchor)
+- Branch :: =rage/1299-1303-remote-protocol-slice=
+- RAGE start commit :: =36e6d48fa750f30b5493f0c2acc789f3e9300e97=
+- Mode :: Auto-RAGE per repo =skills/rage/SKILL.md= (research/design artifacts under =rage/=), user explicitly authorized owning the whole slice through merge and issue closure.
