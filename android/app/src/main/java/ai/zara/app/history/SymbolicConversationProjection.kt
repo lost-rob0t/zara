@@ -13,6 +13,8 @@ data class SymbolicConversationProjection(
     val conversationId: String,
     val projectionGeneration: Long,
     val runtimeGeneration: Long,
+    val turnId: String? = null,
+    val outcome: String = "unknown",
     val projectId: String? = null,
     val projectGeneration: Long = 0,
     val dialogueStateJson: String = "{}",
@@ -33,8 +35,21 @@ data class SymbolicConversationProjection(
 }
 
 internal object SymbolicProjectionContract {
+    private val outcomes = setOf(
+        "unknown",
+        "pending",
+        "success",
+        "cancelled",
+        "interrupted",
+        "error",
+    )
+
     fun validatePayload(projection: SymbolicConversationProjection) {
         require(projection.conversationId.isNotEmpty()) { "conversationId must not be empty" }
+        require(projection.turnId == null || projection.turnId.length in 1..512) {
+            "turnId must be null or 1..512 characters"
+        }
+        require(projection.outcome in outcomes) { "unsupported symbolic outcome: ${projection.outcome}" }
         require(projection.projectionGeneration >= 1L) { "projectionGeneration must be >= 1" }
         require(projection.runtimeGeneration >= 0L) { "runtimeGeneration must be >= 0" }
         require(projection.projectGeneration >= 0L) { "projectGeneration must be >= 0" }
@@ -114,10 +129,12 @@ fun PortableConversationStore.loadSymbolicProjection(
         "1",
     ).use { cursor ->
         if (!cursor.moveToFirst()) return@use null
-        SymbolicConversationProjection(
+        val projection = SymbolicConversationProjection(
             conversationId = cursor.getString(cursor.getColumnIndexOrThrow("conversation_id")),
             projectionGeneration = cursor.getLong(cursor.getColumnIndexOrThrow("projection_generation")),
             runtimeGeneration = cursor.getLong(cursor.getColumnIndexOrThrow("runtime_generation")),
+            turnId = cursor.nullableString("turn_id"),
+            outcome = cursor.getString(cursor.getColumnIndexOrThrow("outcome")),
             projectId = cursor.nullableString("project_id"),
             projectGeneration = cursor.getLong(cursor.getColumnIndexOrThrow("project_generation")),
             dialogueStateJson = cursor.getString(cursor.getColumnIndexOrThrow("dialogue_state_json")),
@@ -130,6 +147,8 @@ fun PortableConversationStore.loadSymbolicProjection(
             modelCalls = cursor.getLong(cursor.getColumnIndexOrThrow("model_calls")),
             updatedAt = cursor.getString(cursor.getColumnIndexOrThrow("updated_at")),
         )
+        SymbolicProjectionContract.validatePayload(projection)
+        projection
     }
 }
 
@@ -147,6 +166,8 @@ fun PortableConversationStore.saveSymbolicProjection(
     val values = ContentValues().apply {
         put("conversation_id", stored.conversationId)
         put("principal_id", ConversationHistoryContract.localPrincipalId)
+        if (stored.turnId == null) putNull("turn_id") else put("turn_id", stored.turnId)
+        put("outcome", stored.outcome)
         put("projection_generation", stored.projectionGeneration)
         put("runtime_generation", stored.runtimeGeneration)
         if (stored.projectId == null) putNull("project_id") else put("project_id", stored.projectId)
