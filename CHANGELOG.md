@@ -30,6 +30,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Native Emacs `zara-chat` now enables the canonical conversation-control minor mode by default once `zara-conversation` is loaded, so ordinary send keys use stable conversation identity, strict native events, and canonical cancellation instead of the legacy one-shot request path.
 - Explicit secure-TCP Zara servers keep their owner-only live security admin socket under the configured security directory, so existing live enroll/revoke commands continue mutating the running registry while the new local-first bootstrap control socket remains runtime-scoped.
 - Zara Code APKs now pass cryptographic/package validation, CI installs and launches the editor on an Android emulator, and rolling `android-latest` publication rechecks the stable signing certificate before publishing.
 - Python runtime descriptors now reject schema-invalid boolean and enum-shaped scalar values at construction, keeping `ZARA-RUNTIME/1` host state aligned with the shared wire contract before discovery or selection.
