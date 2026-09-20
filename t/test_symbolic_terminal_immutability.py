@@ -68,7 +68,6 @@ def test_terminal_same_turn_projection_is_immutable_after_cancellation(tmp_path)
         dialogue_state={"act": "effect_completed", "late": True},
         expert_evidence=[{"evidence_id": "ev-late"}],
         verified_facts=[{"fact_id": "fact-late", "value": "should-not-persist"}],
-        renderer_provenance="late-callback/v1",
         updated_at="",
     )
 
