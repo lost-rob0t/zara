@@ -125,7 +125,6 @@ class AndroidPairingCoordinator private constructor(
                 }
             }
         } catch (error: Throwable) {
-            pairingClient.cancelCurrent()
             synchronized(lifecycleLock) {
                 if (isCurrentLocked(pairingGeneration, future)) {
                     activeFuture = null
