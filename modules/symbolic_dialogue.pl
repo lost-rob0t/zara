@@ -235,7 +235,7 @@ response_codes(clarify(reference_not_found)) -->
 response_codes(clarify(ambiguous_reference)) -->
     "Which one do you mean?".
 response_codes(choose(Choices)) -->
-    "I found a few matches: 1) ", choice_list_codes(Choices, 1), ". Which one?".
+    "I found a few matches: ", choice_list_codes(Choices, 1), ". Which one?".
 response_codes(invalid(Slot, Reason)) -->
     "I couldn’t use ", value_codes(Slot), ": ", value_codes(Reason), ".".
 response_codes(dispatch_required(_Frame)) -->
