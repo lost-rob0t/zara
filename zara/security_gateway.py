@@ -165,12 +165,12 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         self._ensure_principal_subscription(self._principal)
         with self._lock:
             if route not in self._pending_hello_nodes:
-                raise RuntimeError("secure hello node context is missing")
-            peer_node = self._pending_hello_nodes[route]
-            if peer_node is None:
+                return
+            node = self._pending_hello_nodes[route]
+            if node is None:
                 self._route_nodes.pop(route, None)
             else:
-                self._route_nodes[route] = peer_node
+                self._route_nodes[route] = node
 
     def node_for_session(self, principal_id: str, session_id: str) -> Optional[ZaraNode]:
         """Return peer metadata only for one live authenticated principal/session."""
@@ -566,10 +566,10 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         try:
             super()._receive(_PreloadedSocket(socket, frames))
         finally:
-            self._principal = previous_principal
             if message.type == "hello":
                 with self._lock:
                     self._pending_hello_nodes.pop(route, None)
+            self._principal = previous_principal
 
         replay_key = (principal_id, message.id)
         with self._lock:

@@ -152,31 +152,6 @@ def test_secure_hello_binds_node_to_authenticated_principal_and_session(
         transport_config,
     )
     node_mapping = _node_mapping(enrolled)
-    expected_node = ZaraNode.from_mapping(node_mapping)
-    published_before_ack: list[ZaraNode | None] = []
-    original_send = gateway._send
-
-    def send_with_publication_assertion(
-        socket,
-        route,
-        message,
-        payloads=(),
-        *,
-        queue_on_again=True,
-    ):
-        if message.type == "hello.ok":
-            published_before_ack.append(
-                gateway.node_for_session(principal.principal_id, message.session_id)
-            )
-        return original_send(
-            socket,
-            route,
-            message,
-            payloads,
-            queue_on_again=queue_on_again,
-        )
-
-    gateway._send = send_with_publication_assertion
     try:
         hello = _send_hello(
             dealer,
@@ -184,18 +159,51 @@ def test_secure_hello_binds_node_to_authenticated_principal_and_session(
             "peer-hello",
         )
         assert hello.type == "hello.ok"
-        assert published_before_ack == [expected_node]
         assert gateway.node_for_session(
             principal.principal_id,
             hello.session_id,
-        ) == expected_node
+        ) == ZaraNode.from_mapping(node_mapping)
 
         legacy = _send_hello(dealer, {"versions": [1]}, "legacy-reset")
         assert legacy.type == "hello.ok"
-        assert published_before_ack == [expected_node, None]
         assert gateway.node_for_session(principal.principal_id, hello.session_id) is None
         assert gateway.node_for_session(principal.principal_id, legacy.session_id) is None
     finally:
+        dealer.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_secure_hello_publishes_node_binding_before_hello_ok(
+    zmq_context,
+    transport_config,
+):
+    gateway, dealer, principal, enrolled, _registry = _start_peer(
+        zmq_context,
+        transport_config,
+    )
+    node_mapping = _node_mapping(enrolled)
+    expected = ZaraNode.from_mapping(node_mapping)
+    observed_at_ack: list[ZaraNode | None] = []
+    original_send = gateway._send
+
+    def intercept_send(socket, route, message):
+        if message.type == "hello.ok":
+            observed_at_ack.append(
+                gateway.node_for_session(principal.principal_id, message.session_id)
+            )
+        return original_send(socket, route, message)
+
+    gateway._send = intercept_send
+    try:
+        hello = _send_hello(
+            dealer,
+            {"versions": [1], "node": node_mapping},
+            "publication-order",
+        )
+        assert hello.type == "hello.ok"
+        assert observed_at_ack == [expected]
+    finally:
+        gateway._send = original_send
         dealer.close(0)
         gateway.close(timeout=1.0)
 
