@@ -32,13 +32,18 @@ class ConversationExecutionPolicyController(
         current = policy
     }
 
-    fun submit(text: String, conversationId: String): CompletableFuture<TextTurnResult> =
-        submit(text, conversationId) {
-            val fallback = standardSubmit ?: return@submit CompletableFuture.failedFuture(
-                IllegalStateException("STANDARD submit path was not supplied"),
-            )
-            fallback(text, conversationId)
+    fun submit(text: String, conversationId: String): CompletableFuture<TextTurnResult> {
+        val fallback = standardSubmit
+        return submit(text, conversationId) {
+            if (fallback == null) {
+                CompletableFuture.failedFuture(
+                    IllegalStateException("STANDARD submit path was not supplied"),
+                )
+            } else {
+                fallback(text, conversationId)
+            }
         }
+    }
 
     fun submit(
         text: String,
