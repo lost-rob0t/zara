@@ -4,7 +4,7 @@
   :author "lost-rob0t / StarIntel"
   :license "GPL-3.0-or-later"
   :serial t
-  :depends-on (#:pzmq #:jsown #:babel #:bordeaux-threads)
+  :depends-on (#:pzmq #:com.inuoe.jzon #:babel #:bordeaux-threads)
   :components
   ((:module "src" :serial t
     :components
