@@ -40,6 +40,52 @@ class ConversationExecutionPolicyControllerTest {
     }
 
     @Test
+    fun pureSymbolicSelectionNeverEvaluatesPerTurnStandardSupplier() {
+        val directory = createTempDirectory("zara-execution-controller").toFile()
+        val store = ConversationExecutionPolicyStore(File(directory, "conversation-policy.bin"))
+        store.save(ConversationExecutionPolicy.PURE_SYMBOLIC)
+        val providerCalls = AtomicInteger(0)
+        val controller = ConversationExecutionPolicyController(
+            store = store,
+            pureSymbolicSubmit = { _, conversationId ->
+                CompletableFuture.completedFuture(symbolicTurn(conversationId, "symbolic answer"))
+            },
+        )
+
+        val result = controller.submit("hello", "conversation-1") {
+            providerCalls.incrementAndGet()
+            CompletableFuture.completedFuture(turn("conversation-1", "provider answer"))
+        }.join()
+
+        assertEquals("symbolic answer", result.text)
+        assertEquals(0, providerCalls.get())
+    }
+
+    @Test
+    fun standardSelectionUsesCanonicalPerTurnSupplier() {
+        val directory = createTempDirectory("zara-execution-controller").toFile()
+        val store = ConversationExecutionPolicyStore(File(directory, "conversation-policy.bin"))
+        val symbolicCalls = AtomicInteger(0)
+        val standardCalls = AtomicInteger(0)
+        val controller = ConversationExecutionPolicyController(
+            store = store,
+            pureSymbolicSubmit = { _, conversationId ->
+                symbolicCalls.incrementAndGet()
+                CompletableFuture.completedFuture(symbolicTurn(conversationId, "symbolic answer"))
+            },
+        )
+
+        val result = controller.submit("hello", "conversation-1") {
+            standardCalls.incrementAndGet()
+            CompletableFuture.completedFuture(turn("conversation-1", "standard answer"))
+        }.join()
+
+        assertEquals("standard answer", result.text)
+        assertEquals(1, standardCalls.get())
+        assertEquals(0, symbolicCalls.get())
+    }
+
+    @Test
     fun processRecreationRestoresPureSymbolicBeforeFirstSubmit() {
         val directory = createTempDirectory("zara-execution-controller").toFile()
         val file = File(directory, "conversation-policy.bin")
