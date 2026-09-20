@@ -386,6 +386,25 @@ class ExpertRegistry(_impl.ExpertRegistry):
             aggregate_model_calls = model_calls + delegated_model_calls
             charge_model_calls = aggregate_model_calls
 
+        if delegation_parent is not None and charge_model_calls:
+            if charge_model_calls > delegation_parent.remaining_model_calls:
+                # Actual work already happened. Exhaust the inherited allowance and
+                # preserve the full consumed count before failing closed so a caller
+                # cannot catch this error and immediately spend the same budget again.
+                delegation_parent.delegated_model_calls += charge_model_calls
+                delegation_parent.remaining_model_calls = 0
+                self._discard_invalid_success(
+                    result,
+                    handle,
+                    expert_operation,
+                    idempotency_key,
+                )
+                raise ExpertBudgetExceededError(
+                    "delegated expert aggregate usage exceeds parent model-call budget"
+                )
+            delegation_parent.remaining_model_calls -= charge_model_calls
+            delegation_parent.delegated_model_calls += charge_model_calls
+
         if aggregate_model_calls > admitted_limits.max_model_calls:
             self._discard_invalid_success(
                 result,
@@ -405,20 +424,6 @@ class ExpertRegistry(_impl.ExpertRegistry):
             if invocation is not None:
                 invocation.usage = aggregate_usage
                 invocation.result = result
-
-        if delegation_parent is not None and charge_model_calls:
-            if charge_model_calls > delegation_parent.remaining_model_calls:
-                self._discard_invalid_success(
-                    result,
-                    handle,
-                    expert_operation,
-                    idempotency_key,
-                )
-                raise ExpertBudgetExceededError(
-                    "delegated expert aggregate usage exceeds parent model-call budget"
-                )
-            delegation_parent.remaining_model_calls -= charge_model_calls
-            delegation_parent.delegated_model_calls += charge_model_calls
 
         if raw_outcome.get("stale"):
             self._discard_invalid_success(
