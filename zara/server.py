@@ -146,6 +146,8 @@ class ZaraServer(_core.ZaraServer):
     ) -> None:
         secure_tcp = isinstance(endpoint, str) and endpoint.startswith("tcp://")
         if remote_endpoint is not None:
+            if security_state is None:
+                raise ValueError("remote endpoint requires explicit security state")
             if not isinstance(remote_endpoint, str) or not remote_endpoint.startswith("tcp://"):
                 raise ValueError("remote endpoint must use TCP")
             if secure_tcp:
@@ -599,6 +601,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         return management_result
 
     security_state = _security_state(args)
+    if args.remote_endpoint is not None and security_state is None:
+        print("remote endpoint requires --security-dir", file=sys.stderr)
+        return 2
     if isinstance(args.endpoint, str) and args.endpoint.startswith("tcp://"):
         if security_state is None:
             print("TCP endpoint requires --security-dir", file=sys.stderr)
