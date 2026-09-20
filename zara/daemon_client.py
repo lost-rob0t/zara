@@ -30,6 +30,8 @@ def _daemon_section(config: Optional[ZaraConfig] = None) -> dict:
 
 def _paired_profile(config: Optional[ZaraConfig] = None):
     active = config or get_config()
+    if getattr(active, "config_dir", None) is None:
+        return None
     return ClientEnrollmentStore.for_config(active).ready_profile()
 
 
