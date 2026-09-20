@@ -1,7 +1,11 @@
 package ai.zara.app
 
 import ai.zara.app.conversations.ConversationStore
+import ai.zara.app.prolog.AndroidPureSymbolicConversationFactory
 import ai.zara.app.projects.ProjectContextStore
+import ai.zara.app.ui.ConversationExecutionPolicy
+import ai.zara.app.ui.ConversationExecutionPolicyController
+import ai.zara.app.ui.ConversationExecutionPolicyStore
 import ai.zara.app.ui.LocalEmbeddingPreferenceStore
 import ai.zara.app.ui.RuntimeModePreferenceStore
 import ai.zara.app.ui.ThemePreferenceStore
@@ -70,6 +74,12 @@ class MainActivity : ComponentActivity() {
         var projectState by mutableStateOf(projectStore.state())
         val conversationStore = ConversationStore(File(filesDir, "conversations.bin"))
         var conversationState by mutableStateOf(conversationStore.state())
+        val executionPolicyController = ConversationExecutionPolicyController(
+            store = ConversationExecutionPolicyStore(
+                File(filesDir, "conversation-execution-policy.bin"),
+            ),
+            pureSymbolicSubmit = AndroidPureSymbolicConversationFactory.create(appSession)::submit,
+        )
         if (conversationState.loadFailure == null && conversationState.selectedConversation == null) {
             try {
                 conversationStore.create(projectState.selectedProjectId)
@@ -270,51 +280,78 @@ class MainActivity : ComponentActivity() {
                     val conversationId = conversation.id
                     try {
                         conversationState = conversationStore.beginTurn(conversationId, text)
-                        val future = if (project == null) {
-                            appSession.submitText(
-                                text = text,
-                                localConversationId = conversation.localConversationId,
-                                remoteConversationId = conversation.remoteConversationId,
-                            )
-                        } else {
-                            appSession.submitProjectText(
-                                text = text,
-                                projectId = project.id,
-                                conversationId = conversation.remoteConversationId,
-                                localConversationId = conversation.localConversationId,
-                            )
+                        val requestedPolicy = when (text.trim().lowercase()) {
+                            "/symbolic on" -> ConversationExecutionPolicy.PURE_SYMBOLIC
+                            "/symbolic off" -> ConversationExecutionPolicy.STANDARD
+                            else -> null
                         }
-                        future.whenComplete { result, error ->
-                            runOnUiThread {
-                                operationBusy = false
-                                if (error != null) {
-                                    val failure = UiOperationFailure.summarize(error)
-                                    operationError = failure
-                                    try {
-                                        conversationState = conversationStore.failTurn(conversationId, failure)
-                                    } catch (storeError: Exception) {
-                                        operationError = UiOperationFailure.summarize(storeError)
-                                    }
-                                } else if (result != null) {
-                                    val remoteConversationId = result.conversationId
-                                        ?.takeUnless { it.startsWith("local-") }
-                                    try {
-                                        conversationState = conversationStore.completeTurn(
-                                            conversationId = conversationId,
-                                            assistantText = result.text,
-                                            success = result.success,
-                                            remoteConversationId = remoteConversationId,
+                        if (requestedPolicy != null) {
+                            executionPolicyController.select(requestedPolicy)
+                            val enabled = requestedPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC
+                            conversationState = conversationStore.completeTurn(
+                                conversationId = conversationId,
+                                assistantText = if (enabled) {
+                                    "Pure symbolic mode enabled. max_model_calls=0 and max_provider_calls=0."
+                                } else {
+                                    "Pure symbolic mode disabled. Standard execution policy restored."
+                                },
+                                success = true,
+                                remoteConversationId = null,
+                            )
+                            operationBusy = false
+                        } else {
+                            val future = executionPolicyController.submit(
+                                text = text,
+                                conversationId = conversation.localConversationId,
+                                standardTurn = {
+                                    if (project == null) {
+                                        appSession.submitText(
+                                            text = text,
+                                            localConversationId = conversation.localConversationId,
+                                            remoteConversationId = conversation.remoteConversationId,
                                         )
-                                        if (project != null && remoteConversationId != null &&
-                                            projectState.loadFailure == null
-                                        ) {
-                                            projectState = projectStore.bindConversation(
-                                                project.id,
-                                                remoteConversationId,
-                                            )
+                                    } else {
+                                        appSession.submitProjectText(
+                                            text = text,
+                                            projectId = project.id,
+                                            conversationId = conversation.remoteConversationId,
+                                            localConversationId = conversation.localConversationId,
+                                        )
+                                    }
+                                },
+                            )
+                            future.whenComplete { result, error ->
+                                runOnUiThread {
+                                    operationBusy = false
+                                    if (error != null) {
+                                        val failure = UiOperationFailure.summarize(error)
+                                        operationError = failure
+                                        try {
+                                            conversationState = conversationStore.failTurn(conversationId, failure)
+                                        } catch (storeError: Exception) {
+                                            operationError = UiOperationFailure.summarize(storeError)
                                         }
-                                    } catch (storeError: Exception) {
-                                        operationError = UiOperationFailure.summarize(storeError)
+                                    } else if (result != null) {
+                                        val remoteConversationId = result.conversationId
+                                            ?.takeUnless { it.startsWith("local-") }
+                                        try {
+                                            conversationState = conversationStore.completeTurn(
+                                                conversationId = conversationId,
+                                                assistantText = result.text,
+                                                success = result.success,
+                                                remoteConversationId = remoteConversationId,
+                                            )
+                                            if (project != null && remoteConversationId != null &&
+                                                projectState.loadFailure == null
+                                            ) {
+                                                projectState = projectStore.bindConversation(
+                                                    project.id,
+                                                    remoteConversationId,
+                                                )
+                                            }
+                                        } catch (storeError: Exception) {
+                                            operationError = UiOperationFailure.summarize(storeError)
+                                        }
                                     }
                                 }
                             }
