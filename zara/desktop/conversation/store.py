@@ -357,13 +357,15 @@ class ConversationStore(SymbolicProjectionMixin):
     def _recover_interrupted_turns(self, conversation_id: str) -> None:
         """Atomically terminalize process-local work left live across restart.
 
-        A fresh process cannot own an old pending/streaming runtime turn. Keep
-        the canonical message and its matching symbolic projection in lockstep:
-        the message becomes cancelled, while a still-pending projection for
-        that exact turn becomes ``interrupted`` and advances its projection
-        generation. Advancing the generation is the stale-callback fence: a
-        completion from the dead runtime cannot later overwrite recovered
-        dialogue state or evidence.
+        A fresh process cannot own an old pending/streaming runtime turn. Cancel
+        any pending/streaming canonical messages and independently terminalize
+        a still-pending symbolic projection. The projection recovery must not
+        depend on a message row: a process may die after persisting projection
+        state but before the companion message write reaches SQLite.
+
+        Advancing projection_generation is the stale-callback fence: completion
+        from the dead runtime cannot later overwrite recovered dialogue state or
+        evidence, even for that projection-only crash window.
         """
 
         owner = self._storage_principal_id
@@ -384,8 +386,6 @@ class ConversationStore(SymbolicProjectionMixin):
                     MessageStatus.STREAMING.value,
                 ),
             ).fetchall()
-            if not interrupted:
-                return
 
             for row in interrupted:
                 conn.execute(
@@ -405,19 +405,20 @@ class ConversationStore(SymbolicProjectionMixin):
                         owner,
                     ),
                 )
-                turn_id = row["turn_id"]
-                if turn_id is not None:
-                    conn.execute(
-                        """
-                        UPDATE desktop_symbolic_projections
-                        SET outcome = 'interrupted',
-                            projection_generation = projection_generation + 1,
-                            updated_at = ?
-                        WHERE conversation_id = ? AND principal_id = ?
-                          AND turn_id = ? AND outcome = 'pending'
-                        """,
-                        (now, conversation_id, owner, turn_id),
-                    )
+
+            projection_update = conn.execute(
+                """
+                UPDATE desktop_symbolic_projections
+                SET outcome = 'interrupted',
+                    projection_generation = projection_generation + 1,
+                    updated_at = ?
+                WHERE conversation_id = ? AND principal_id = ?
+                  AND outcome = 'pending'
+                """,
+                (now, conversation_id, owner),
+            )
+            if not interrupted and projection_update.rowcount == 0:
+                return
 
             conn.execute(
                 """
@@ -434,9 +435,9 @@ class ConversationStore(SymbolicProjectionMixin):
         Runtime turn ownership is process-local to ``RuntimeHost``. If Zara is
         constructing a fresh ``ConversationState`` from SQLite, a previously
         persisted pending/streaming row cannot represent a live turn in this
-        service instance. Recover the canonical message and matching symbolic
-        projection atomically instead of restoring a phantom ``active_turn_id``
-        that would leave Send disabled forever after a crash or restart.
+        service instance. Recover canonical messages and any pending symbolic
+        projection atomically instead of restoring a phantom active turn or a
+        projection that could still accept a callback from the dead runtime.
         """
         conversation = self.get_conversation(conversation_id)
         if conversation is None:
