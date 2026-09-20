@@ -18,14 +18,15 @@ assert_zero_follow_up(Input, PreviousAct, ExpectedText) :-
     zero_evidence(ExpectedEvidence),
     assertion(Evidence == ExpectedEvidence).
 
-test(multi_turn_clarification_and_verified_result_stay_zero_model) :-
+test(multi_turn_clarification_correction_and_verified_result_stay_zero_model) :-
     symbolic_dialogue_turn:dialogue_turn("timer", passive, [], Turn1),
     Turn1 = turn([Frame1], clarify(slot(duration)), Context1),
     assertion(Context1 == partial_frame(Frame1, [duration])),
     assert_zero_reply(frame(Frame1), "How long should I set the timer for?"),
 
     symbolic_dialogue_turn:dialogue_turn("5 minutes", passive, Context1, Turn2),
-    Turn2 = turn([Frame2], dispatch_required(Frame2), []),
+    Turn2 = turn([Frame2], dispatch_required(Frame2), Context2),
+    assertion(Context2 == completed_frame(Frame2)),
     assertion(Frame2 = frame(intent(ns(device), name('timer.set')),
         [slot(name(duration), value(duration(300)), origin(follow_up))], complete)),
     assert_zero_reply(
@@ -33,8 +34,18 @@ test(multi_turn_clarification_and_verified_result_stay_zero_model) :-
         "That action needs capability-checked execution before I can report success."
     ),
 
+    symbolic_dialogue_turn:dialogue_turn("actually 10 minutes", passive, Context2, Turn3),
+    Turn3 = turn([Frame3], dispatch_required(Frame3), Context3),
+    assertion(Context3 == completed_frame(Frame3)),
+    assertion(Frame3 = frame(intent(ns(device), name('timer.set')),
+        [slot(name(duration), value(duration(600)), origin(correction))], complete)),
     assert_zero_reply(
-        effect_result(verified(timer_set, postcondition('timer:duration=300'))),
+        frame(Frame3),
+        "That action needs capability-checked execution before I can report success."
+    ),
+
+    assert_zero_reply(
+        effect_result(verified(timer_set, postcondition('timer:duration=600'))),
         "Done: timer_set."
     ).
 
