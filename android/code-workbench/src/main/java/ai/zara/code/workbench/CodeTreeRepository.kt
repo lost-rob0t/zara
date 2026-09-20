@@ -84,7 +84,7 @@ class CodeTreeRepository(
     }
 
     companion object {
-        private const val PREFS = "zara-code-workbench"
+        private const val PREFS = "zara-code-editor"
         private const val KEY_TREE = "project-tree-uri"
         private val EDITABLE_EXTENSIONS = setOf(
             "py", "pl", "pro", "kt", "kts", "java", "js", "mjs", "cjs", "ts", "tsx",
