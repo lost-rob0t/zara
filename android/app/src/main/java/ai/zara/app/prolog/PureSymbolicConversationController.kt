@@ -44,14 +44,16 @@ data class PureSymbolicTurnResult(
  * symbolic-term renderer provenance. A miss or runtime error is rendered deterministically and
  * ends the turn; it never escalates to a model/provider path.
  *
- * The controller does not own conversation history or expert registration. Callers persist the
+ * The controller does not own conversation history or expert registration. Natural-turn resolver
+ * calls receive the normalized canonical conversation id so the factory can compose the existing
+ * conversation projection without inventing controller-local dialogue state. Callers persist the
  * returned evidence against Zara's canonical conversation store/projection and keep actual
  * effects behind the existing registered-predicate capability/approval boundary.
  */
 class PureSymbolicConversationController(
     private val catalog: () -> PrologWorkspaceCatalog,
     private val query: (String) -> CompletableFuture<LocalQueryResult>,
-    private val resolve: (String) -> CompletableFuture<LocalQueryResult>,
+    private val resolve: (String, String) -> CompletableFuture<LocalQueryResult>,
     private val turnIds: Iterator<String> = generateSequence {
         UUID.randomUUID().toString()
     }.iterator(),
@@ -75,7 +77,7 @@ class PureSymbolicConversationController(
         }
 
         val routed = try {
-            route(input)
+            route(input, normalizedConversationId)
         } catch (error: CancellationException) {
             return cancelledTurnFuture()
         } catch (error: Exception) {
@@ -127,7 +129,7 @@ class PureSymbolicConversationController(
         return output
     }
 
-    private fun route(input: String): RoutedQuery = when (routeKind(input)) {
+    private fun route(input: String, conversationId: String): RoutedQuery = when (routeKind(input)) {
         PureSymbolicRoute.EXPLICIT_QUERY -> RoutedQuery(
             PureSymbolicRoute.EXPLICIT_QUERY,
             query(input),
@@ -138,7 +140,7 @@ class PureSymbolicConversationController(
         }
         PureSymbolicRoute.FRAME_RESOLVER -> RoutedQuery(
             PureSymbolicRoute.FRAME_RESOLVER,
-            resolve(input),
+            resolve(input, conversationId),
         )
     }
 

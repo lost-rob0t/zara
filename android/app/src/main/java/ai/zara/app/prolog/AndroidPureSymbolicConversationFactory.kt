@@ -8,14 +8,18 @@ import ai.zara.app.AndroidAppSession
  * This does not own a runtime, conversation store, expert registry, or provider client. Explicit
  * queries stay on the bounded local-query path. Natural-language turns execute the canonical
  * symbolic_dialogue_turn -> symbolic_dialogue renderer chain through AndroidAppSession's already
- * started LocalZaraServer via queryLocalProlog().
+ * started LocalZaraServer via queryLocalProlog(). The controller threads the canonical
+ * conversation id into this resolver boundary so the durable projection can be composed here
+ * without adding controller-local dialogue state.
  */
 internal object AndroidPureSymbolicConversationFactory {
     fun create(session: AndroidAppSession): PureSymbolicConversationController =
         PureSymbolicConversationController(
             catalog = { PrologWorkspaceCatalog.from(session.prologSources()) },
             query = session::queryLocalProlog,
-            resolve = { utterance -> session.queryLocalProlog(dialogueTurnQuery(utterance)) },
+            resolve = { utterance, _conversationId ->
+                session.queryLocalProlog(dialogueTurnQuery(utterance))
+            },
         )
 
     internal fun dialogueTurnQuery(utterance: String): String {
