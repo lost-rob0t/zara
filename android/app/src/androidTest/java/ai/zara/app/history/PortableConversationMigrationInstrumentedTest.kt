@@ -93,7 +93,8 @@ class PortableConversationMigrationInstrumentedTest {
 
     private fun seedVersion2Database() {
         val path = context.getDatabasePath(ConversationHistoryContract.databaseName)
-        check(path.parentFile?.mkdirs() != false) { "failed to create database directory" }
+        val parent = requireNotNull(path.parentFile)
+        check(parent.isDirectory || parent.mkdirs()) { "failed to create database directory" }
         val db = SQLiteDatabase.openOrCreateDatabase(path, null)
         try {
             db.execSQL(
