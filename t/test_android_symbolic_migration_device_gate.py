@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EMULATOR_GATE = ROOT / "scripts" / "test-android-emulator-install.sh"
+ANDROID_BUILD = ROOT / "android" / "build.gradle.kts"
 MIGRATION_TEST = (
     ROOT
     / "android"
@@ -20,6 +21,7 @@ MIGRATION_TEST = (
 
 def test_android_emulator_gate_executes_real_v2_to_v4_sqlite_migration() -> None:
     gate = EMULATOR_GATE.read_text(encoding="utf-8")
+    android_build = ANDROID_BUILD.read_text(encoding="utf-8")
     test_source = MIGRATION_TEST.read_text(encoding="utf-8")
 
     assert ":app:connectedDebugAndroidTest" in gate
@@ -27,6 +29,7 @@ def test_android_emulator_gate_executes_real_v2_to_v4_sqlite_migration() -> None
         "android.testInstrumentationRunnerArguments.class="
         "ai.zara.app.history.PortableConversationMigrationInstrumentedTest"
     ) in gate
+    assert 'testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"' in android_build
     assert "db.version = 2" in test_source
     assert "assertEquals(4, first.readableDatabase.version)" in test_source
     assert "idx_desktop_symbolic_project" in test_source
