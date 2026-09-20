@@ -6,6 +6,9 @@ frame_greet(frame(intent(ns(conversation), name(greet)), [], complete)).
 frame_missing_timer(frame(intent(ns(device), name('timer.set')), [], missing([duration]))).
 frame_cancel(frame(intent(ns(conversation), name(cancel)), [], complete)).
 frame_ambiguous(frame(intent(ns(app), name(open)), [], ambiguous([firefox, chromium, emacs]))).
+frame_open_firefox(frame(intent(ns(app), name(open)),
+    [slot(name(target), value(ref(kind(app_alias), id(firefox))), origin(utterance))],
+    complete)).
 
 test(greeting_is_zero_model_symbolic_reply) :-
     frame_greet(Frame),
@@ -48,6 +51,22 @@ test(ambiguous_frame_lists_choices_in_stable_order) :-
     assertion(Act == choose([firefox, chromium, emacs])),
     symbolic_dialogue:render_response(Act, Text),
     assertion(Text == "I found a few matches: 1) firefox; 2) chromium; 3) emacs. Which one?").
+
+test(complete_effect_frame_never_claims_unverified_success) :-
+    frame_open_firefox(Frame),
+    symbolic_dialogue:response_act(frame(Frame), Act),
+    assertion(Act == dispatch_required(Frame)),
+    symbolic_dialogue:symbolic_reply(frame(Frame), Text, Evidence),
+    assertion(Text == "That action needs capability-checked execution before I can report success."),
+    assertion(Evidence == evidence(renderer('symbolic-dcg/v1'), provider_calls(0), model_calls(0))).
+
+test(verified_effect_may_report_success) :-
+    symbolic_dialogue:symbolic_reply(
+        effect_result(verified(opened_firefox, postcondition('process:firefox'))),
+        Text,
+        Evidence),
+    assertion(Text == "Done: opened_firefox."),
+    assertion(Evidence == evidence(renderer('symbolic-dcg/v1'), provider_calls(0), model_calls(0))).
 
 test(denied_plan_is_typed_and_bounded) :-
     symbolic_dialogue:symbolic_reply(plan_status(denied(capability_required)), Text, Evidence),
