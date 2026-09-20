@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 EMULATOR_GATE = ROOT / "scripts" / "test-android-emulator-install.sh"
 ANDROID_BUILD = ROOT / "android" / "build.gradle.kts"
+STOCK_SERVER_FIXTURE = ROOT / "android" / "integration" / "stock_zara_server_fixture.py"
 MIGRATION_TEST = (
     ROOT
     / "android"
@@ -89,3 +90,26 @@ def test_android_emulator_gate_executes_real_v2_and_v3_to_v4_sqlite_migrations()
     assert "recovered.assertPureSymbolic()" in restart_test_source
     assert 'assertEquals("interrupted", recovered.outcome)' in restart_test_source
     assert "late same-turn completion must be rejected after restart interruption" in restart_test_source
+
+
+def test_symbolic_emulator_gate_preserves_current_master_device_acceptance() -> None:
+    gate = EMULATOR_GATE.read_text(encoding="utf-8")
+    fixture = STOCK_SERVER_FIXTURE.read_text(encoding="utf-8")
+
+    # Reconciliation must not trade the current master Android acceptance path
+    # for the symbolic migration/restart suite. Keep both fail-closed gates.
+    assert "com.google.android.apps.nexuslauncher" in gate
+    assert "android/integration/device_acceptance.py" in gate
+    assert "android/integration/stock_zara_server_fixture.py" in gate
+    assert "android/integration/device_remote_acceptance.py" in gate
+    assert 'data.get("passed") is not True' in gate
+    assert 'data.get("app_diagnostics_failure")' in gate
+    assert 'data.get("logcat_failure")' in gate
+    assert "fatal_log_markers" in gate
+
+    # The installed-APK remote acceptance needs the stock server's canonical
+    # security admin socket while the branch readiness probe proves ZARA/1 is
+    # authenticated before publishing the fixture.
+    assert '"security_admin_path": os.fspath(state.control_socket_path)' in fixture
+    assert "_wait_for_transport_ready(" in fixture
+    assert "ZmqZaraClient(" in fixture
