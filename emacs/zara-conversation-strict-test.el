@@ -145,5 +145,13 @@
           (when (process-live-p process)
             (delete-process process)))))))
 
+(ert-deftest zara-chat-defaults-to-canonical-conversation-control ()
+  (with-temp-buffer
+    (zara-chat-mode)
+    (should (bound-and-true-p zara-conversation-mode))
+    (should
+     (eq (command-remapping #'zara-chat-send)
+         #'zara-conversation-chat-send))))
+
 (provide 'zara-conversation-strict-test)
 ;;; zara-conversation-strict-test.el ends here

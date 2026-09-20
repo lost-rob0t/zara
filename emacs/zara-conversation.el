@@ -483,6 +483,12 @@ conversation owner."
   (when zara-conversation-mode
     (zara-conversation--current-id)))
 
+(defun zara-conversation--enable-chat-mode ()
+  "Enable canonical conversation control in a Zara chat buffer."
+  (zara-conversation-mode 1))
+
+(add-hook 'zara-chat-mode-hook #'zara-conversation--enable-chat-mode)
+
 ;;;###autoload
 (defun zara-conversation-chat ()
   "Open `zara-chat' with canonical conversation control enabled."
