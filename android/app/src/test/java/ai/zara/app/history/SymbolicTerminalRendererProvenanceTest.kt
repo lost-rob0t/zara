@@ -18,6 +18,24 @@ class SymbolicTerminalRendererProvenanceTest {
     }
 
     @Test
+    fun `verified pure symbolic projection requires postcondition evidence`() {
+        val missing = projection(
+            outcome = "success",
+            rendererProvenance = "symbolic-dcg/v1",
+        ).copy(
+            dialogueAct = "verified",
+            verifiedOutcomeRefs = emptyList(),
+        )
+
+        assertFailsWithMessage("verified projection requires verified outcome evidence") {
+            SymbolicProjectionContract.validatePayload(missing)
+        }
+        assertFailsWithMessage("verified projection requires verified outcome evidence") {
+            missing.assertPureSymbolic()
+        }
+    }
+
+    @Test
     fun `prerender pending projection may leave renderer empty`() {
         val pending = projection(outcome = "pending", rendererProvenance = "")
 
