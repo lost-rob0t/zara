@@ -7,6 +7,8 @@ from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationStore, SymbolicConversationProjection
 
 
+_VERIFIED_EFFECT_REF = "zara.verified-outcome/v1:effect:migrated-v2-turn"
+
 _V2_SCHEMA = """
 CREATE TABLE desktop_conversations (
     id TEXT PRIMARY KEY,
@@ -113,13 +115,17 @@ def test_existing_v2_database_upgrades_to_v3_without_losing_history(tmp_path):
             runtime_generation=1,
             turn_id="turn-symbolic",
             outcome="pending",
+            dialogue_act="clarify",
             dialogue_state={"act": "clarify"},
+            verified_outcome_refs=[_VERIFIED_EFFECT_REF],
             provider_calls=0,
             model_calls=0,
         ),
         expected_generation=0,
     )
     projection.assert_pure_symbolic()
+    assert projection.dialogue_act == "clarify"
+    assert projection.verified_outcome_refs == [_VERIFIED_EFFECT_REF]
     database.close()
 
     connection = sqlite3.connect(path)
@@ -132,6 +138,12 @@ def test_existing_v2_database_upgrades_to_v3_without_losing_history(tmp_path):
             )
         }
         assert "desktop_symbolic_projections" in tables
+        projection_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(desktop_symbolic_projections)")
+        }
+        assert "dialogue_act" in projection_columns
+        assert "verified_outcome_refs" in projection_columns
         indexes = {
             row[0]
             for row in connection.execute(
@@ -143,6 +155,15 @@ def test_existing_v2_database_upgrades_to_v3_without_losing_history(tmp_path):
         assert connection.execute(
             "SELECT content FROM desktop_messages WHERE id='msg-v2'"
         ).fetchone()[0] == "keep me byte-for-byte"
+        dialogue_act, verified_refs = connection.execute(
+            """
+            SELECT dialogue_act, verified_outcome_refs
+            FROM desktop_symbolic_projections
+            WHERE conversation_id='conv-v2'
+            """
+        ).fetchone()
+        assert dialogue_act == "clarify"
+        assert verified_refs == _VERIFIED_EFFECT_REF
 
         connection.execute("DELETE FROM desktop_conversations WHERE id='conv-v2'")
         connection.commit()
