@@ -298,10 +298,8 @@ internal object SymbolicProjectionContract {
                     "same turn must preserve runtimeGeneration"
                 }
             }
-            if (current.outcome in terminalOutcomes) {
-                check(proposed.outcome == current.outcome) {
-                    "terminal turn outcome rewrite rejected: ${current.outcome} -> ${proposed.outcome}"
-                }
+            check(current.outcome !in terminalOutcomes) {
+                "terminal turn projection is immutable"
             }
         } else {
             check(proposed.runtimeGeneration > current.runtimeGeneration) {
