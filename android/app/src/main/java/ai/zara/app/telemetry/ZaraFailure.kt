@@ -127,6 +127,8 @@ object ZaraFailures {
     fun recoveryFor(code: String, retryable: Boolean?): ZaraRecovery = when {
         code == ZaraFailureCodes.PROTOCOL_SERVER_ERROR && retryable == true -> ZaraRecovery.RETRYABLE
         code == ZaraFailureCodes.PROTOCOL_SERVER_ERROR && retryable == false -> ZaraRecovery.REQUIRES_ACTION
+        code == ZaraFailureCodes.PROTOCOL_TURN_CANCELLED -> ZaraRecovery.RETRYABLE
+        code == ZaraFailureCodes.PROTOCOL_RUNTIME_ERROR -> if (retryable == false) ZaraRecovery.FATAL else ZaraRecovery.RETRYABLE
         code in TRANSPORT_CODES -> ZaraRecovery.RETRYABLE
         code.startsWith("protocol.") -> ZaraRecovery.RETRYABLE
         code == ZaraFailureCodes.AUTH_REJECTED -> ZaraRecovery.REQUIRES_ACTION
@@ -134,6 +136,23 @@ object ZaraFailures {
         code.startsWith("voice.") -> ZaraRecovery.RETRYABLE
         code == ZaraFailureCodes.LIFECYCLE_RESTORE -> ZaraRecovery.RETRYABLE
         else -> ZaraRecovery.UNKNOWN
+    }
+
+    fun isSessionDesyncing(code: String, retryable: Boolean?): Boolean = when (code) {
+        ZaraFailureCodes.TRANSPORT_DNS,
+        ZaraFailureCodes.TRANSPORT_CONNECT,
+        ZaraFailureCodes.TRANSPORT_TIMEOUT,
+        ZaraFailureCodes.TRANSPORT_CLOSED,
+        ZaraFailureCodes.PROTOCOL_VERSION_MISMATCH,
+        ZaraFailureCodes.PROTOCOL_MALFORMED,
+        ZaraFailureCodes.PROTOCOL_UNEXPECTED_MESSAGE,
+        ZaraFailureCodes.PROTOCOL_OUT_OF_ORDER,
+        ZaraFailureCodes.PROTOCOL_STALE_GENERATION,
+        ZaraFailureCodes.PROTOCOL_UNSUPPORTED_MESSAGE,
+        ZaraFailureCodes.PROTOCOL_RUNTIME_STOPPED,
+        -> true
+        ZaraFailureCodes.PROTOCOL_RUNTIME_ERROR -> retryable == false
+        else -> false
     }
 
     fun bounded(text: String): String {
