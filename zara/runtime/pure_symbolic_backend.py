@@ -75,6 +75,10 @@ def _resolve_turn(engine: PrologEngine, text: str) -> PureSymbolicTurn:
     )
 
 
+def _is_exact_zero(value: Any) -> bool:
+    return type(value) is int and value == 0
+
+
 class PureSymbolicRuntimeBackend(RuntimeBackend):
     """Hard-zero model/provider backend under Zara's existing RuntimeHost."""
 
@@ -122,7 +126,9 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
             )
 
         symbolic = await asyncio.to_thread(self._turn_resolver, self._engine, text)
-        if symbolic.provider_calls != 0 or symbolic.model_calls != 0:
+        if not _is_exact_zero(symbolic.provider_calls) or not _is_exact_zero(
+            symbolic.model_calls
+        ):
             raise RuntimeError("pure symbolic resolver violated the zero-call contract")
         if symbolic.renderer != PURE_SYMBOLIC_RENDERER:
             raise RuntimeError(
