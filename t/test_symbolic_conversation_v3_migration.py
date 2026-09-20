@@ -90,11 +90,11 @@ def _create_v2_database(path) -> None:
         connection.close()
 
 
-def test_existing_v2_database_upgrades_to_v3_without_losing_history(tmp_path):
+def test_existing_v2_database_upgrades_to_v4_without_losing_history(tmp_path):
     path = tmp_path / "portable-v2.db"
     _create_v2_database(path)
 
-    assert CONVERSATION_SCHEMA_VERSION == 3
+    assert CONVERSATION_SCHEMA_VERSION == 4
 
     database = DatabaseManager(path)
     store = ConversationStore(database)
@@ -118,12 +118,16 @@ def test_existing_v2_database_upgrades_to_v3_without_losing_history(tmp_path):
             dialogue_act="clarify",
             dialogue_state={"act": "clarify"},
             verified_outcome_refs=[_VERIFIED_EFFECT_REF],
+            providers_enabled=False,
+            max_model_calls=0,
             provider_calls=0,
             model_calls=0,
         ),
         expected_generation=0,
     )
     projection.assert_pure_symbolic()
+    assert projection.providers_enabled is False
+    assert projection.max_model_calls == 0
     assert projection.dialogue_act == "clarify"
     assert projection.verified_outcome_refs == [_VERIFIED_EFFECT_REF]
     database.close()
@@ -144,6 +148,8 @@ def test_existing_v2_database_upgrades_to_v3_without_losing_history(tmp_path):
         }
         assert "dialogue_act" in projection_columns
         assert "verified_outcome_refs" in projection_columns
+        assert "providers_enabled" in projection_columns
+        assert "max_model_calls" in projection_columns
         indexes = {
             row[0]
             for row in connection.execute(
@@ -155,15 +161,17 @@ def test_existing_v2_database_upgrades_to_v3_without_losing_history(tmp_path):
         assert connection.execute(
             "SELECT content FROM desktop_messages WHERE id='msg-v2'"
         ).fetchone()[0] == "keep me byte-for-byte"
-        dialogue_act, verified_refs = connection.execute(
+        dialogue_act, verified_refs, providers_enabled, max_model_calls = connection.execute(
             """
-            SELECT dialogue_act, verified_outcome_refs
+            SELECT dialogue_act, verified_outcome_refs, providers_enabled, max_model_calls
             FROM desktop_symbolic_projections
             WHERE conversation_id='conv-v2'
             """
         ).fetchone()
         assert dialogue_act == "clarify"
         assert verified_refs == _VERIFIED_EFFECT_REF
+        assert providers_enabled == 0
+        assert max_model_calls == 0
 
         connection.execute("DELETE FROM desktop_conversations WHERE id='conv-v2'")
         connection.commit()
