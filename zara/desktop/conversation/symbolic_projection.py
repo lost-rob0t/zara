@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 _OUTCOMES = frozenset({"unknown", "pending", "success", "cancelled", "interrupted", "error"})
 _TERMINAL_OUTCOMES = frozenset({"success", "cancelled", "interrupted", "error"})
+_SYMBOLIC_RENDERER_ID = "symbolic-dcg/v1"
 _DIALOGUE_ACT_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _VERIFIED_OUTCOME_REF_RE = re.compile(
     r"^zara\.verified-outcome/v1:(?:effect|outcome):[A-Za-z0-9][A-Za-z0-9._:/#-]{0,383}$"
@@ -141,8 +142,10 @@ class SymbolicConversationProjection:
             raise ValueError("project_id exceeds 512 characters")
         _validate_dialogue_act(self.dialogue_act)
         _validate_verified_outcome_refs(self.verified_outcome_refs)
-        if len(self.renderer_provenance) > 512:
-            raise ValueError("renderer_provenance exceeds 512 characters")
+        if self.renderer_provenance not in ("", _SYMBOLIC_RENDERER_ID):
+            raise ValueError(
+                "renderer_provenance must be empty or the canonical symbolic renderer"
+            )
         _canonical_object(self.dialogue_state)
         _canonical_array(self.discourse_entities)
         _canonical_array(self.unresolved_questions)
@@ -156,6 +159,11 @@ class SymbolicConversationProjection:
             raise AssertionError(
                 "pure-symbolic conversation recorded "
                 f"provider_calls={self.provider_calls!r}, model_calls={self.model_calls!r}"
+            )
+        if self.renderer_provenance not in ("", _SYMBOLIC_RENDERER_ID):
+            raise AssertionError(
+                "pure-symbolic conversation recorded non-symbolic renderer "
+                f"{self.renderer_provenance!r}"
             )
 
 
