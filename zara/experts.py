@@ -18,14 +18,17 @@ from . import _experts_v1 as _impl
 from ._experts_v1 import *  # noqa: F401,F403
 
 
+_ORIGINAL_HANDLER_ATTR = "__zara_original_expert_handler__"
+
+
 class ExpertRegistry(_impl.ExpertRegistry):
     """Canonical registry with non-spoofable operation dispatch and usage fences."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        # Canonical expert-to-expert delegation is synchronous and may re-enter
-        # this same registry from a trusted handler. Preserve one state machine
-        # while allowing that same-thread nested admission path to make progress.
+        # Expert handlers may synchronously delegate back into this registry.
+        # Reentrancy preserves the one canonical state machine without forcing a
+        # second dispatcher or out-of-band composition path.
         self._lock = threading.RLock()
 
     @staticmethod
@@ -36,6 +39,10 @@ class ExpertRegistry(_impl.ExpertRegistry):
             return False
         return parameter is not None and parameter.kind is not inspect.Parameter.POSITIONAL_ONLY
 
+    @staticmethod
+    def _original_handler(handler: Any) -> Any:
+        return getattr(handler, _ORIGINAL_HANDLER_ATTR, handler)
+
     def _validate_handler(
         self,
         descriptor: ExpertDescriptor,
@@ -45,6 +52,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
             return
         if not callable(handler):
             raise ExpertInvalidInputError("expert handler must be callable")
+        handler = self._original_handler(handler)
         try:
             signature = inspect.signature(handler)
         except (TypeError, ValueError) as error:
@@ -74,33 +82,93 @@ class ExpertRegistry(_impl.ExpertRegistry):
         idempotency_key: Optional[str],
         request_id: Optional[str],
     ) -> ExpertResult:
-        """Invoke through the existing state machine, adding only trusted metadata.
+        """Invoke through the existing state machine with live authority fences.
 
-        ``expert_operation`` never enters the user input mapping. If a trusted
-        adapter explicitly declares the reserved keyword-only parameter, the
-        host injects the selected operation immediately before dispatch. Legacy
-        payload-only handlers keep their existing call shape.
+        ``expert_operation`` stays trusted host metadata. Handler execution does
+        not monopolize the registry lock: cancellation, reload, and generation
+        changes may proceed while user code runs. Late success is then fenced
+        before it can be accepted as current state.
         """
 
-        handler = self._handlers.get(handle.expert_id)
+        admitted_registry_generation = self._registry_generation
+        admitted_runtime_generation = self._runtime_generation
+        registered_handler = self._handlers.get(handle.expert_id)
+        handler = (
+            self._original_handler(registered_handler)
+            if registered_handler is not None
+            else None
+        )
         raw_outcome: dict[str, Any] = {}
         injected = False
+        dispatch: Optional[Any] = None
 
         if handler is not None:
             injected = self._handler_declares_host_operation(handler)
 
-            def dispatch(**payload: Any) -> Any:
-                if injected:
-                    outcome = handler(
-                        expert_operation=expert_operation,
-                        **payload,
+            def dispatch_handler(**payload: Any) -> Any:
+                invocation_id = next(reversed(self._invocations))
+                invocation = self._invocations[invocation_id]
+                if (
+                    invocation.expert_id != handle.expert_id
+                    or invocation.expert_operation != expert_operation
+                    or invocation.state != "dispatching"
+                ):
+                    raise ExpertInvalidInputError(
+                        "expert dispatch lost its canonical invocation record"
                     )
-                else:
-                    outcome = handler(**payload)
+
+                self._lock.release()
+                try:
+                    if injected:
+                        outcome = handler(
+                            expert_operation=expert_operation,
+                            **payload,
+                        )
+                    else:
+                        outcome = handler(**payload)
+                finally:
+                    self._lock.acquire()
+
                 raw_outcome["value"] = outcome
+                current = self._invocations.get(invocation_id)
+                if current is not None and current.state == "cancelled":
+                    raw_outcome["cancelled"] = True
+                    receipts = (
+                        outcome.get("effect_receipts", ())
+                        if isinstance(outcome, Mapping)
+                        else ()
+                    )
+                    return {
+                        "verdict": "cancelled",
+                        "data": {},
+                        "evidence_refs": [],
+                        "usage": {"model_calls": 0},
+                        "effect_receipts": receipts,
+                    }
+
+                if (
+                    self._registry_generation != admitted_registry_generation
+                    or self._runtime_generation != admitted_runtime_generation
+                ):
+                    raw_outcome["stale"] = True
+                    receipts = (
+                        outcome.get("effect_receipts", ())
+                        if isinstance(outcome, Mapping)
+                        else ()
+                    )
+                    return {
+                        "verdict": "error",
+                        "data": {},
+                        "evidence_refs": [],
+                        "usage": {"model_calls": 0},
+                        "effect_receipts": receipts,
+                    }
+
                 return outcome
 
-            self._handlers[handle.expert_id] = dispatch
+            setattr(dispatch_handler, _ORIGINAL_HANDLER_ATTR, handler)
+            dispatch = dispatch_handler
+            self._handlers[handle.expert_id] = dispatch_handler
 
         try:
             result = super()._invoke_unlocked(
@@ -112,8 +180,23 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 request_id,
             )
         finally:
-            if handler is not None:
+            if (
+                handler is not None
+                and dispatch is not None
+                and self._handlers.get(handle.expert_id) is dispatch
+            ):
                 self._handlers[handle.expert_id] = handler
+
+        if raw_outcome.get("stale"):
+            self._discard_invalid_success(
+                result,
+                handle,
+                expert_operation,
+                idempotency_key,
+            )
+            raise ExpertStaleGenerationError(
+                "expert completion crossed a registry/runtime generation change"
+            )
 
         if result.verdict is not ExpertVerdict.SUCCEEDED:
             return result
@@ -168,7 +251,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
         expert_operation: str,
         idempotency_key: Optional[str],
     ) -> None:
-        """Fail closed without leaving a replayable success in the registry."""
+        """Fail closed without leaving a replayable result in the registry."""
 
         if result.replayed:
             return
