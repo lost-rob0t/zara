@@ -64,6 +64,8 @@ class MainActivity : ComponentActivity() {
         var prologSources by mutableStateOf(appSession.prologSources())
         var prologQueryResult by mutableStateOf<ai.zara.app.runtime.LocalQueryResult?>(null)
         var updateState by mutableStateOf(updateManager.state())
+        var modelServerState by mutableStateOf(appSession.modelServerState())
+        var discoveredModelServerModels by mutableStateOf<List<String>>(emptyList())
         val themePreferenceStore = ThemePreferenceStore(File(filesDir, "theme.bin"))
         var selectedTheme by mutableStateOf(themePreferenceStore.load())
         val runtimeModeStore = RuntimeModePreferenceStore(File(filesDir, "runtime-mode.bin"))
@@ -119,6 +121,9 @@ class MainActivity : ComponentActivity() {
         appSession.setLocalServerObserver { state ->
             runOnUiThread { localServerState = state }
         }
+        appSession.setModelServerObserver { state ->
+            runOnUiThread { modelServerState = state }
+        }
         updateManager.setObserver { state ->
             runOnUiThread { updateState = state }
         }
@@ -162,6 +167,8 @@ class MainActivity : ComponentActivity() {
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
                 projectState = projectState,
+                modelServerState = modelServerState,
+                discoveredModelServerModels = discoveredModelServerModels,
                 onSelectTheme = { theme ->
                     selectedTheme = theme
                     themePreferenceStore.save(theme)
@@ -511,6 +518,47 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 onExportPrologWorkspace = appSession::exportPrologWorkspace,
+                onSaveModelServer = { config, apiKey ->
+                    operationError = null
+                    try {
+                        val previous = appSession.modelServerState().config
+                        val credentialScopeChanged =
+                            previous.provider != config.provider || previous.endpoint != config.endpoint
+                        if (credentialScopeChanged) {
+                            appSession.clearModelServerApiKey()
+                        }
+                        var next = appSession.configureModelServer(config)
+                        if (apiKey.isNotBlank()) {
+                            next = appSession.setModelServerApiKey(apiKey)
+                        }
+                        modelServerState = next
+                        discoveredModelServerModels = emptyList()
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onClearModelServerApiKey = {
+                    operationError = null
+                    try {
+                        modelServerState = appSession.clearModelServerApiKey()
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onDiscoverModelServerModels = {
+                    operationError = null
+                    operationBusy = true
+                    appSession.discoverModelServerModels().whenComplete { models, error ->
+                        runOnUiThread {
+                            operationBusy = false
+                            if (error != null) {
+                                operationError = UiOperationFailure.summarize(error)
+                            } else {
+                                discoveredModelServerModels = models ?: emptyList()
+                            }
+                        }
+                    }
+                },
                 onCheckForUpdate = {
                     operationError = null
                     updateManager.check().whenComplete { _, error ->
@@ -574,6 +622,7 @@ class MainActivity : ComponentActivity() {
             appSession.setStateObserver(null)
             appSession.setVoiceStreamObserver(null)
             appSession.setLocalServerObserver(null)
+            appSession.setModelServerObserver(null)
             (application as ZaraApplication).updateManager.setObserver(null)
         }
         super.onDestroy()
