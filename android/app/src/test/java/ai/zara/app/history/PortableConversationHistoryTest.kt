@@ -59,8 +59,26 @@ class PortableConversationHistoryTest {
         )
         assertTrue(
             ConversationHistoryContract.canPersistTransition(
+                HistoryMessageStatus.Streaming,
+                HistoryMessageStatus.Streaming,
+            )
+        )
+        assertFalse(
+            ConversationHistoryContract.canPersistTransition(
                 HistoryMessageStatus.Cancelled,
                 HistoryMessageStatus.Cancelled,
+            )
+        )
+        assertFalse(
+            ConversationHistoryContract.canPersistTransition(
+                HistoryMessageStatus.Complete,
+                HistoryMessageStatus.Complete,
+            )
+        )
+        assertFalse(
+            ConversationHistoryContract.canPersistTransition(
+                HistoryMessageStatus.Error,
+                HistoryMessageStatus.Error,
             )
         )
         assertFalse(
