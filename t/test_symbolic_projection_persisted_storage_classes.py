@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
 import pytest
 
@@ -17,15 +18,16 @@ from zara.desktop.conversation import ConversationStore, SymbolicConversationPro
         ("max_model_calls", 0.5, "real"),
         ("provider_calls", 0.5, "real"),
         ("model_calls", 0.5, "real"),
+        ("max_model_calls", "not-an-integer", "text"),
     ],
 )
 def test_reopen_rejects_non_integer_persisted_numeric_storage(
     tmp_path,
     field: str,
-    raw_value: float,
+    raw_value: Any,
     expected_storage_class: str,
 ) -> None:
-    path = tmp_path / f"corrupt-{field}.db"
+    path = tmp_path / f"corrupt-{field}-{expected_storage_class}.db"
     database = DatabaseManager(path)
     store = ConversationStore(database)
     store.create_conversation("storage-class", conversation_id="conv-storage-class")
