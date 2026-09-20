@@ -1,0 +1,249 @@
+"""Portable symbolic conversation-state projection over canonical history.
+
+The projection lives in Zara's existing conversation SQLite database and is
+keyed by the same conversation/principal identity.  It is deliberately not a
+second history store.  Higher symbolic layers own the meaning of the JSON
+payloads; this module owns persistence, monotonic usage accounting, and stale
+write fencing only.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field, replace
+from typing import Any, Optional
+
+
+def _canonical_object(value: dict[str, Any]) -> str:
+    if not isinstance(value, dict):
+        raise TypeError("symbolic object payload must be a dict")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _canonical_array(value: list[dict[str, Any]]) -> str:
+    if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+        raise TypeError("symbolic array payload must be a list of dicts")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _decode_object(value: str) -> dict[str, Any]:
+    decoded = json.loads(value)
+    if not isinstance(decoded, dict):
+        raise ValueError("stored symbolic object payload is not an object")
+    return decoded
+
+
+def _decode_array(value: str) -> list[dict[str, Any]]:
+    decoded = json.loads(value)
+    if not isinstance(decoded, list) or any(not isinstance(item, dict) for item in decoded):
+        raise ValueError("stored symbolic array payload is not an array of objects")
+    return decoded
+
+
+@dataclass(frozen=True)
+class SymbolicConversationProjection:
+    conversation_id: str
+    projection_generation: int
+    runtime_generation: int
+    project_id: Optional[str] = None
+    project_generation: int = 0
+    dialogue_state: dict[str, Any] = field(default_factory=dict)
+    discourse_entities: list[dict[str, Any]] = field(default_factory=list)
+    unresolved_questions: list[dict[str, Any]] = field(default_factory=list)
+    expert_evidence: list[dict[str, Any]] = field(default_factory=list)
+    verified_facts: list[dict[str, Any]] = field(default_factory=list)
+    renderer_provenance: str = ""
+    model_calls: int = 0
+    updated_at: str = ""
+
+    def validate(self) -> None:
+        if not self.conversation_id:
+            raise ValueError("conversation_id must not be empty")
+        if self.projection_generation < 1:
+            raise ValueError("projection_generation must be >= 1")
+        if self.runtime_generation < 0:
+            raise ValueError("runtime_generation must be >= 0")
+        if self.project_generation < 0:
+            raise ValueError("project_generation must be >= 0")
+        if self.model_calls < 0:
+            raise ValueError("model_calls must be >= 0")
+        if self.project_id is not None and len(self.project_id) > 512:
+            raise ValueError("project_id exceeds 512 characters")
+        if len(self.renderer_provenance) > 512:
+            raise ValueError("renderer_provenance exceeds 512 characters")
+        _canonical_object(self.dialogue_state)
+        _canonical_array(self.discourse_entities)
+        _canonical_array(self.unresolved_questions)
+        _canonical_array(self.expert_evidence)
+        _canonical_array(self.verified_facts)
+
+    def assert_pure_symbolic(self) -> None:
+        if self.model_calls != 0:
+            raise AssertionError(
+                f"pure-symbolic conversation recorded {self.model_calls} model call(s)"
+            )
+
+
+class SymbolicProjectionMixin:
+    """Methods mixed into the canonical desktop ``ConversationStore``.
+
+    The host store supplies ``database``, ``storage_principal_id``, and
+    ``get_conversation``.  Writes use compare-and-swap projection generations
+    so cancelled or stale runtime completions cannot overwrite newer context.
+    """
+
+    def load_symbolic_projection(
+        self,
+        conversation_id: str,
+    ) -> Optional[SymbolicConversationProjection]:
+        if self.get_conversation(conversation_id) is None:
+            return None
+        row = self.database.fetch_one(
+            """
+            SELECT * FROM desktop_symbolic_projections
+            WHERE conversation_id = ? AND principal_id = ?
+            """,
+            (conversation_id, self.storage_principal_id),
+        )
+        if row is None:
+            return None
+        return SymbolicConversationProjection(
+            conversation_id=row["conversation_id"],
+            projection_generation=int(row["projection_generation"]),
+            runtime_generation=int(row["runtime_generation"]),
+            project_id=row["project_id"],
+            project_generation=int(row["project_generation"]),
+            dialogue_state=_decode_object(row["dialogue_state_json"]),
+            discourse_entities=_decode_array(row["discourse_entities_json"]),
+            unresolved_questions=_decode_array(row["unresolved_questions_json"]),
+            expert_evidence=_decode_array(row["expert_evidence_json"]),
+            verified_facts=_decode_array(row["verified_facts_json"]),
+            renderer_provenance=row["renderer_provenance"],
+            model_calls=int(row["model_calls"]),
+            updated_at=row["updated_at"],
+        )
+
+    def save_symbolic_projection(
+        self,
+        projection: SymbolicConversationProjection,
+        *,
+        expected_generation: int,
+    ) -> SymbolicConversationProjection:
+        projection.validate()
+        if expected_generation < 0:
+            raise ValueError("expected_generation must be >= 0")
+        if projection.projection_generation != expected_generation + 1:
+            raise ValueError(
+                "projection_generation must equal expected_generation + 1"
+            )
+        if self.get_conversation(projection.conversation_id) is None:
+            raise KeyError(projection.conversation_id)
+
+        owner = self.storage_principal_id
+        with self.database.transaction(immediate=True) as conn:
+            current = conn.execute(
+                """
+                SELECT projection_generation, runtime_generation, project_id,
+                       project_generation, model_calls
+                FROM desktop_symbolic_projections
+                WHERE conversation_id = ? AND principal_id = ?
+                """,
+                (projection.conversation_id, owner),
+            ).fetchone()
+
+            if current is None:
+                if expected_generation != 0:
+                    raise RuntimeError(
+                        "stale symbolic projection write: projection does not exist"
+                    )
+            else:
+                current_generation = int(current["projection_generation"])
+                if current_generation != expected_generation:
+                    raise RuntimeError(
+                        "stale symbolic projection write: "
+                        f"expected generation {expected_generation}, current {current_generation}"
+                    )
+                if projection.runtime_generation < int(current["runtime_generation"]):
+                    raise RuntimeError("runtime_generation regression rejected")
+                if projection.model_calls < int(current["model_calls"]):
+                    raise RuntimeError("model-call ledger rewind rejected")
+                current_project_id = current["project_id"]
+                current_project_generation = int(current["project_generation"])
+                if projection.project_id == current_project_id:
+                    if projection.project_generation < current_project_generation:
+                        raise RuntimeError("project_generation regression rejected")
+                elif projection.project_generation <= current_project_generation:
+                    raise RuntimeError(
+                        "project switch must advance project_generation"
+                    )
+
+            from .store import _now_iso
+
+            stored = replace(projection, updated_at=_now_iso())
+            parameters = (
+                stored.conversation_id,
+                owner,
+                stored.projection_generation,
+                stored.runtime_generation,
+                stored.project_id,
+                stored.project_generation,
+                _canonical_object(stored.dialogue_state),
+                _canonical_array(stored.discourse_entities),
+                _canonical_array(stored.unresolved_questions),
+                _canonical_array(stored.expert_evidence),
+                _canonical_array(stored.verified_facts),
+                stored.renderer_provenance,
+                stored.model_calls,
+                stored.updated_at,
+            )
+            if current is None:
+                conn.execute(
+                    """
+                    INSERT INTO desktop_symbolic_projections (
+                        conversation_id, principal_id, projection_generation,
+                        runtime_generation, project_id, project_generation,
+                        dialogue_state_json, discourse_entities_json,
+                        unresolved_questions_json, expert_evidence_json,
+                        verified_facts_json, renderer_provenance, model_calls,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    parameters,
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    UPDATE desktop_symbolic_projections
+                    SET projection_generation = ?, runtime_generation = ?,
+                        project_id = ?, project_generation = ?,
+                        dialogue_state_json = ?, discourse_entities_json = ?,
+                        unresolved_questions_json = ?, expert_evidence_json = ?,
+                        verified_facts_json = ?, renderer_provenance = ?,
+                        model_calls = ?, updated_at = ?
+                    WHERE conversation_id = ? AND principal_id = ?
+                      AND projection_generation = ?
+                    """,
+                    (
+                        stored.projection_generation,
+                        stored.runtime_generation,
+                        stored.project_id,
+                        stored.project_generation,
+                        _canonical_object(stored.dialogue_state),
+                        _canonical_array(stored.discourse_entities),
+                        _canonical_array(stored.unresolved_questions),
+                        _canonical_array(stored.expert_evidence),
+                        _canonical_array(stored.verified_facts),
+                        stored.renderer_provenance,
+                        stored.model_calls,
+                        stored.updated_at,
+                        stored.conversation_id,
+                        owner,
+                        expected_generation,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError("stale symbolic projection write rejected")
+        return stored
+
+
+__all__ = ["SymbolicConversationProjection", "SymbolicProjectionMixin"]
