@@ -14,6 +14,7 @@ from typing import Optional
 
 import zmq
 
+from zara.node import NodeAuthorityError, ZaraNode, verify_authenticated_node
 from zara.protocol import ProtocolMessage
 from zara.security import (
     AuthorizationDenied,
@@ -110,6 +111,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         self._audit_log = audit_log or SecurityAuditLog()
         self._route_user_ids: dict[bytes, str] = {}
         self._route_principal_ids: dict[bytes, str] = {}
+        self._route_nodes: dict[bytes, ZaraNode] = {}
         self._runtime_quota_holds: set[tuple[str, str]] = set()
         self._hello_route_resets: set[bytes] = set()
         self._principal_subscriptions = {}
@@ -160,6 +162,37 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
 
     def _route_ready(self, _route, _state) -> None:
         self._ensure_principal_subscription(self._principal)
+
+    def node_for_session(self, principal_id: str, session_id: str) -> Optional[ZaraNode]:
+        """Return peer metadata only for one live authenticated principal/session."""
+
+        with self._lock:
+            match = self._route_for_session_locked(principal_id, session_id)
+            if match is None:
+                return None
+            route, _state = match
+            node = self._route_nodes.get(route)
+            user_id = self._route_user_ids.get(route)
+        if node is None or user_id is None:
+            return None
+
+        try:
+            enrolled = self._security_registry.resolve_user_id(user_id)
+            verify_authenticated_node(node, enrolled)
+        except (KeyNotActive, NodeAuthorityError, TypeError, ValueError):
+            return None
+
+        # Do not hold the gateway lock while resolving the registry: inbound
+        # authentication takes the registry lock before touching route state.
+        # Re-check the route after resolution so a concurrent reconnect cannot
+        # make a formerly valid node record authoritative for a new session.
+        with self._lock:
+            current = self._route_for_session_locked(principal_id, session_id)
+            if current is None or current[0] != route:
+                return None
+            if self._route_nodes.get(route) != node:
+                return None
+        return node
 
     def _audit(
         self,
@@ -251,6 +284,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             self._runtime_quota_holds.clear()
             self._route_user_ids.clear()
             self._route_principal_ids.clear()
+            self._route_nodes.clear()
             self._hello_route_resets.clear()
             for subscription in tuple(self._principal_subscriptions.values()):
                 subscription.close()
@@ -261,6 +295,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
     def _drop_route_locked(self, route: bytes):
         resetting = route in self._hello_route_resets
         principal_id = self._route_principal_ids.get(route)
+        self._route_nodes.pop(route, None)
         if not resetting:
             principal_id = self._route_principal_ids.pop(route, None)
             self._route_user_ids.pop(route, None)
@@ -306,6 +341,16 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         ]
         for candidate in stale_routes:
             self._drop_route(candidate)
+
+    @staticmethod
+    def _node_from_hello(message: ProtocolMessage, enrolled) -> Optional[ZaraNode]:
+        body = message.body or {}
+        if "node" not in body:
+            return None
+        raw_node = body["node"]
+        if not isinstance(raw_node, dict):
+            raise ValueError("peer node descriptor must be an object")
+        return verify_authenticated_node(ZaraNode.from_mapping(raw_node), enrolled)
 
     def _receive(self, socket: zmq.Socket) -> None:
         raw_frames = socket.recv_multipart(copy=False)
@@ -411,6 +456,47 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             )
             return
 
+        peer_node: Optional[ZaraNode] = None
+        if message.type == "hello":
+            try:
+                peer_node = self._node_from_hello(message, enrolled)
+            except NodeAuthorityError:
+                self._audit(
+                    enrolled=enrolled,
+                    message=message,
+                    decision="deny",
+                    error_class="node_authority_mismatch",
+                    started_ns=started_ns,
+                )
+                self._send(
+                    socket,
+                    route,
+                    _security_error(
+                        reply_to=message.id,
+                        code="node_authority_mismatch",
+                        message="peer node does not match authenticated identity",
+                    ),
+                )
+                return
+            except (TypeError, ValueError):
+                self._audit(
+                    enrolled=enrolled,
+                    message=message,
+                    decision="deny",
+                    error_class="invalid_node",
+                    started_ns=started_ns,
+                )
+                self._send(
+                    socket,
+                    route,
+                    _security_error(
+                        reply_to=message.id,
+                        code="invalid_node",
+                        message="peer node descriptor is invalid",
+                    ),
+                )
+                return
+
         if message.type == "hello" and route not in self._route_principal_ids:
             self._replace_prior_credential_routes(route, enrolled.user_id)
             try:
@@ -461,12 +547,32 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
                 )
                 return
 
+        previous_session_id = None
+        if message.type == "hello":
+            with self._lock:
+                previous_state = self._routes.get(route)
+                if previous_state is not None:
+                    previous_session_id = previous_state.session_id
+
         previous_principal = self._principal
         self._principal = enrolled.principal
         try:
             super()._receive(_PreloadedSocket(socket, frames))
         finally:
             self._principal = previous_principal
+
+        if message.type == "hello":
+            with self._lock:
+                current = self._routes.get(route)
+                if (
+                    current is not None
+                    and current.ready
+                    and current.session_id != previous_session_id
+                ):
+                    if peer_node is None:
+                        self._route_nodes.pop(route, None)
+                    else:
+                        self._route_nodes[route] = peer_node
 
         replay_key = (principal_id, message.id)
         with self._lock:
