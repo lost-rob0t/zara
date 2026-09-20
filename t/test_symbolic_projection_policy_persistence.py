@@ -56,6 +56,42 @@ def test_pure_symbolic_assertion_fails_closed_on_policy_not_only_usage():
         _projection("conv-policy", max_model_calls=1).assert_pure_symbolic()
 
 
+def test_zero_model_policy_cannot_widen_in_later_generation(tmp_path):
+    database = DatabaseManager(tmp_path / "zara.db")
+    store = ConversationStore(database)
+    conversation = store.create_conversation("Policy fence", conversation_id="conv-policy-fence")
+    store.save_symbolic_projection(_projection(conversation.id), expected_generation=0)
+
+    with pytest.raises(RuntimeError, match="provider policy widening"):
+        store.save_symbolic_projection(
+            _projection(
+                conversation.id,
+                projection_generation=2,
+                runtime_generation=2,
+                turn_id="turn-policy-2",
+                providers_enabled=True,
+            ),
+            expected_generation=1,
+        )
+    with pytest.raises(RuntimeError, match="model-call budget widening"):
+        store.save_symbolic_projection(
+            _projection(
+                conversation.id,
+                projection_generation=2,
+                runtime_generation=2,
+                turn_id="turn-policy-2",
+                max_model_calls=1,
+            ),
+            expected_generation=1,
+        )
+
+    recovered = store.load_symbolic_projection(conversation.id)
+    assert recovered is not None
+    recovered.assert_pure_symbolic()
+    assert recovered.projection_generation == 1
+    database.close()
+
+
 def test_portable_schema_and_android_projection_persist_same_policy_contract():
     schema = Path("zara/conversation_schema.sql").read_text(encoding="utf-8")
     android = Path(
@@ -73,8 +109,9 @@ def test_portable_schema_and_android_projection_persist_same_policy_contract():
 
 def test_migrated_unknown_policy_must_not_be_manufactured_as_pure_symbolic():
     schema = Path("zara/conversation_schema.sql").read_text(encoding="utf-8")
-    # Existing v3 rows did not record these policy facts. Additive migration must
-    # therefore default them to a non-pure state until a fresh authoritative
-    # projection explicitly records providers disabled and max_model_calls=0.
+    # Existing projection rows without durable policy evidence must not be
+    # retroactively labelled pure-symbolic. Defaults therefore fail closed
+    # until a fresh authoritative projection records disabled providers and a
+    # zero model-call budget explicitly.
     assert "providers_enabled INTEGER NOT NULL DEFAULT 1" in schema
     assert "max_model_calls INTEGER NOT NULL DEFAULT 1" in schema
