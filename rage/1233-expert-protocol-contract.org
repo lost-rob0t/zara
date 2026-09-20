@@ -1,0 +1,35 @@
+#+title: RAGE #1233 — ZARA-EXPERT/1 contract foundation
+
+* Iteration 1 — consume / ARADR
+- Issue :: lost-rob0t/zara#1233 (parent #1232)
+- Immutable start :: 4c3473495f9302f997c7fa922f76e6ceb7592017
+- Branch :: feat/1233-expert-protocol-contract
+- Scope :: executable structural protocol contract, inert JSON fixtures, Prolog vocabulary/validation and regression gates. Not activation-host integration or completion of #1233.
+
+** Analyze
+Existing owners remain #986 (programmable symbols), #897 (activation), #1156 (workspace slash commands), #663 (execution isolation), #1046 (runtime carrier), and upstream prolog-rlm#376 (generic experts). Do not introduce a registry, scheduler, LLM loop, or execution authority here.
+
+** Research
+Read current AGENTS.md, scripts/test-all.sh, zara/runtime/registry.py, t/test_runtime_descriptor_schema_v1.py and .github/workflows/ci.yml at the immutable start. Existing contracts use JSON Schema 2020-12; jsonschema is already used in tests and supplied by the Nix closure. Runtime metadata is observation, not authority. Existing zara-expert callbacks remain can_handle/1, required_tools/2, plan/2 and verify/2; no callback is renamed in this slice.
+
+Primary Prolog references:
+- https://www.swi-prolog.org/pldoc/man?section=DCG
+- https://www.swi-prolog.org/pldoc/man?predicate=ground/1
+
+** Design / proposed decision
+Start with the shared descriptor and invocation schemas, a declarative operation/lifecycle vocabulary, and a pure Prolog validator for normalized invocation data. Schemas and Prolog must agree on protocol identity, integer limits and inert values. Keep validation distinct from authorization and execution. Preserve every existing Prolog source; new files are additive.
+
+An adapter must still check authenticated identity, current activation, schema-specific domain input, deadline/resource budgets and permission immediately before actual dispatch. Passing the structural contract is not an activation receipt or capability grant.
+
+** Adversarial self-review / acceptance plan
+Exercise malformed protocol and identifiers; unsupported operations; extra executable/identity fields; bool-as-integer and numeric limits; duplicate keys/fields where applicable; malformed/cyclic/non-ground Prolog terms; bounded nested data; stale generation binding; and source vocabulary/schema drift. No input is passed to call/1 or consulted. Independent architecture/security review remains pending.
+
+** Environment
+Connected GitHub reads/writes are available. Direct git clone in this working container failed with DNS resolution error. This container has Python/pytest, but no nix or swipl. Local schema tests can run; real Prolog and full Nix gates require the repository CI environment. Missing tools are not skipped or reported green. Work is on a dedicated GitHub branch, not on the operator's local checkout.
+
+** Verification plan
+1. Add tests and record the expected missing-schema RED before implementation.
+2. Add schemas, fixtures and pure Prolog contract; run local schema tests.
+3. Integrate the real SWI suite into normal pytest collection so existing CI runs it and absence of SWI fails explicitly.
+4. Open a draft PR, inspect exact-head CI, and report local/Prolog/full-platform results separately.
+5. Keep #1233 open: activation/invocation adapters, Kotlin parity and full product acceptance remain later slices.
