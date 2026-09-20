@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from zara.runtime.backend import LangGraphRuntimeBackend, create_runtime_backend
+from zara.runtime.backend import (
+    LangGraphRuntimeBackend,
+    PureSymbolicRuntimeBackend,
+    create_runtime_backend,
+)
 
 
 class FakeConfig:
@@ -18,6 +22,11 @@ class FakeConfig:
 def test_runtime_backend_defaults_to_langgraph() -> None:
     backend = create_runtime_backend(FakeConfig())
     assert isinstance(backend, LangGraphRuntimeBackend)
+
+
+def test_runtime_backend_selects_pure_symbolic_without_constructing_agent_manager() -> None:
+    backend = create_runtime_backend(FakeConfig("pure_symbolic"))
+    assert isinstance(backend, PureSymbolicRuntimeBackend)
 
 
 def test_removed_prolog_rlm_backend_fails_closed() -> None:
