@@ -82,3 +82,15 @@ def test_visual_acceptance_stays_non_mutating_but_dedicated_remote_gate_connects
     assert '"remote_turn_completed": True' in remote
     assert 'adb -s "$serial" reverse "tcp:$reverse_port" "tcp:$reverse_port"' in gate
     assert 'device_remote_acceptance.py' in gate
+
+
+def test_remote_gate_fails_closed_when_app_diagnostics_are_missing_or_fatal():
+    gate = EMULATOR_GATE.read_text(encoding="utf-8")
+
+    assert 'remote_manifest="$repo_root/android/app/build/reports/device/remote-manifest.json"' in gate
+    assert 'if data.get("passed") is not True:' in gate
+    assert 'if data.get("app_diagnostics_failure") or data.get("logcat_failure"):' in gate
+    assert 'if not data.get("app_diagnostics") or not data.get("logcat"):' in gate
+    assert 'fatal_markers = data.get("fatal_log_markers")' in gate
+    assert 'if not isinstance(fatal_markers, list):' in gate
+    assert 'if fatal_markers:' in gate
