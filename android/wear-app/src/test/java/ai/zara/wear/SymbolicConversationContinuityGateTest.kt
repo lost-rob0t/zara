@@ -75,11 +75,23 @@ class SymbolicConversationContinuityGateTest {
     }
 
     @Test
-    fun refusesAnyModelOrProviderUsageInPureSymbolicEdgePath() {
+    fun refusesAnyProviderOrModelAuthorityInPureSymbolicEdgePath() {
         assertFalse(
             SymbolicConversationContinuityGate.accepts(
                 null,
-                fixture(modelCalls = 1),
+                fixture(providersEnabled = true),
+            ),
+        )
+        assertFalse(
+            SymbolicConversationContinuityGate.accepts(
+                null,
+                fixture(maxModelCalls = 1),
+            ),
+        )
+        assertFalse(
+            SymbolicConversationContinuityGate.accepts(
+                null,
+                fixture(maxModelCalls = 1, modelCalls = 1),
             ),
         )
         assertFalse(
@@ -96,6 +108,8 @@ class SymbolicConversationContinuityGateTest {
         runtimeGeneration: Long = 1,
         projectId: String? = "dotfiles",
         projectGeneration: Long = 1,
+        providersEnabled: Boolean = false,
+        maxModelCalls: Long = 0,
         modelCalls: Long = 0,
         providerCalls: Long = 0,
     ) = SymbolicConversationEdgeSnapshot(
@@ -110,6 +124,8 @@ class SymbolicConversationContinuityGateTest {
         expertEvidenceRefs = listOf("expert:dotfiles:1"),
         verifiedOutcomeRefs = listOf("outcome:verified:1"),
         rendererProvenance = "symbolic-nlg/v1",
+        providersEnabled = providersEnabled,
+        maxModelCalls = maxModelCalls,
         modelCalls = modelCalls,
         providerCalls = providerCalls,
     )
