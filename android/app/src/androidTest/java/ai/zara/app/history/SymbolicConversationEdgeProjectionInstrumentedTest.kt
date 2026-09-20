@@ -24,16 +24,18 @@ class SymbolicConversationEdgeProjectionInstrumentedTest {
     }
 
     @Test
-    fun canonicalStoreProjectsSameScopedPureSymbolicTruthForEdgeConsumers() {
-        val store = PortableConversationStore(context)
-        try {
-            store.createConversation("Edge continuity", conversationId = CONVERSATION_ID)
-            store.saveSymbolicProjection(
-                projection(),
-                expectedGeneration = 0,
-            )
+    fun canonicalStoreProjectsSameScopedPureSymbolicTruthAfterProcessRecreation() {
+        val first = PortableConversationStore(context)
+        first.createConversation("Edge continuity", conversationId = CONVERSATION_ID)
+        first.saveSymbolicProjection(
+            projection(),
+            expectedGeneration = 0,
+        )
+        first.close()
 
-            val edge = checkNotNull(store.loadSymbolicEdgeSnapshot(CONVERSATION_ID))
+        val reopened = PortableConversationStore(context)
+        try {
+            val edge = checkNotNull(reopened.loadSymbolicEdgeSnapshot(CONVERSATION_ID))
             edge.assertPureSymbolic()
 
             assertEquals(ConversationHistoryContract.localPrincipalId, edge.principalId)
@@ -52,7 +54,7 @@ class SymbolicConversationEdgeProjectionInstrumentedTest {
             assertEquals(0L, edge.providerCalls)
             assertEquals(0L, edge.modelCalls)
         } finally {
-            store.close()
+            reopened.close()
         }
     }
 
