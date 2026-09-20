@@ -181,6 +181,63 @@ def test_turn_outcome_vocabulary_fails_closed():
         _projection("outcome", outcome="provider_fallback").validate()
 
 
+def test_cancelled_turn_rejects_late_success_but_new_turn_is_allowed(tmp_path):
+    store = ConversationStore(DatabaseManager(tmp_path / "cancel-fence.db"))
+    conversation = store.create_conversation("Cancel fence", conversation_id="conv-cancel")
+    pending = store.save_symbolic_projection(
+        _projection(conversation.id, runtime_generation=11, turn_id="turn-old", outcome="pending"),
+        expected_generation=0,
+    )
+    cancelled = store.save_symbolic_projection(
+        _projection(
+            conversation.id,
+            generation=2,
+            runtime_generation=11,
+            turn_id="turn-old",
+            outcome="cancelled",
+        ),
+        expected_generation=pending.projection_generation,
+    )
+
+    with pytest.raises(RuntimeError, match="terminal turn outcome rewrite rejected"):
+        store.save_symbolic_projection(
+            _projection(
+                conversation.id,
+                generation=3,
+                runtime_generation=11,
+                turn_id="turn-old",
+                outcome="success",
+            ),
+            expected_generation=cancelled.projection_generation,
+        )
+
+    with pytest.raises(RuntimeError, match="same turn must preserve runtime_generation"):
+        store.save_symbolic_projection(
+            _projection(
+                conversation.id,
+                generation=3,
+                runtime_generation=12,
+                turn_id="turn-old",
+                outcome="cancelled",
+            ),
+            expected_generation=cancelled.projection_generation,
+        )
+
+    next_turn = store.save_symbolic_projection(
+        _projection(
+            conversation.id,
+            generation=3,
+            runtime_generation=12,
+            turn_id="turn-new",
+            outcome="pending",
+        ),
+        expected_generation=cancelled.projection_generation,
+    )
+    assert next_turn.turn_id == "turn-new"
+    assert next_turn.runtime_generation == 12
+    assert next_turn.outcome == "pending"
+
+
 def test_project_switch_requires_new_generation(tmp_path):
     store = ConversationStore(DatabaseManager(tmp_path / "project-fence.db"))
     conversation = store.create_conversation("Projects", conversation_id="conv-project")
