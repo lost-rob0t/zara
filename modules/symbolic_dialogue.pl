@@ -42,6 +42,9 @@ zero_model_evidence(evidence(renderer(Renderer), provider_calls(0), model_calls(
 % --- Typed outcome -> response act -----------------------------------------
 
 response_act(frame(frame(intent(ns(conversation), name(greet)), _, complete)), greeting) :- !.
+response_act(frame(frame(intent(ns(conversation), name(help)), _, complete)), help) :- !.
+response_act(frame(frame(intent(ns(conversation), name(thanks)), _, complete)), acknowledgement(thanks)) :- !.
+response_act(frame(frame(intent(ns(conversation), name(acknowledge)), _, complete)), acknowledgement(acknowledged)) :- !.
 response_act(frame(frame(intent(ns(conversation), name(cancel)), _, complete)), cancelled) :- !.
 response_act(frame(frame(_, _, missing([Slot|_]))), clarify(slot(Slot))) :-
     bounded_identifier(Slot),
@@ -213,6 +216,12 @@ render_response(Act, Text) :-
 
 response_codes(greeting) -->
     "Hey — what can I help with?".
+response_codes(help) -->
+    "I can help with conversation, device and media actions, search, navigation, and registered experts. What do you want to do?".
+response_codes(acknowledgement(thanks)) -->
+    "You’re welcome.".
+response_codes(acknowledgement(acknowledged)) -->
+    "Got it.".
 response_codes(cancelled) -->
     "Cancelled.".
 response_codes(clarify(slot(duration))) -->

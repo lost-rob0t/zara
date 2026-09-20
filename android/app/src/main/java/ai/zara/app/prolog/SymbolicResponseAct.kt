@@ -20,6 +20,8 @@ private const val MAX_CHOICES = 8
  */
 enum class SymbolicResponseActKind(val wireName: String) {
     GREETING("greeting"),
+    HELP("help"),
+    ACKNOWLEDGEMENT("acknowledgement"),
     CANCELLED("cancelled"),
     CLARIFY("clarify"),
     CHOOSE("choose"),
@@ -39,8 +41,23 @@ enum class SymbolicResponseActKind(val wireName: String) {
     }
 }
 
+enum class SymbolicAcknowledgementKind(val wireName: String) {
+    THANKS("thanks"),
+    ACKNOWLEDGED("acknowledged");
+
+    companion object {
+        fun fromWire(value: String): SymbolicAcknowledgementKind = entries
+            .firstOrNull { it.wireName == value }
+            ?: throw IllegalArgumentException("Unsupported symbolic acknowledgement kind: $value")
+    }
+}
+
 sealed interface SymbolicResponsePayload {
     data object Empty : SymbolicResponsePayload
+
+    data class Acknowledgement(
+        val kind: SymbolicAcknowledgementKind,
+    ) : SymbolicResponsePayload
 
     data class Clarification(
         val slot: String? = null,
@@ -143,11 +160,24 @@ data class SymbolicResponseAct private constructor(
             payload: Map<String, *>,
         ): SymbolicResponsePayload = when (kind) {
             SymbolicResponseActKind.GREETING,
+            SymbolicResponseActKind.HELP,
             SymbolicResponseActKind.CANCELLED,
             SymbolicResponseActKind.UNSUPPORTED,
             -> {
                 requireExactKeys(payload, emptySet(), "${kind.wireName} payload")
                 SymbolicResponsePayload.Empty
+            }
+
+            SymbolicResponseActKind.ACKNOWLEDGEMENT -> {
+                requireExactKeys(payload, setOf("kind"), "acknowledgement payload")
+                val wireKind = requireBoundedString(
+                    payload["kind"],
+                    "acknowledgement.kind",
+                    MAX_SHORT_TEXT_CODE_POINTS,
+                )
+                SymbolicResponsePayload.Acknowledgement(
+                    kind = SymbolicAcknowledgementKind.fromWire(wireKind),
+                )
             }
 
             SymbolicResponseActKind.CLARIFY -> {
