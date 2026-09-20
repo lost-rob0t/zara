@@ -2,7 +2,7 @@
 
 The contract implementation lives in :mod:`zara._experts_v1`; this facade keeps
 ``zara.experts`` as the stable public import while tightening the pure-symbolic
-host boundary.  There is still exactly one registry instance/state machine: the
+host boundary. There is still exactly one registry instance/state machine: the
 subclass only adapts trusted host dispatch and validates the returned usage
 ledger before accepting a successful result.
 """
@@ -68,13 +68,12 @@ class ExpertRegistry(_impl.ExpertRegistry):
     ) -> ExpertResult:
         """Invoke through the existing state machine, adding only trusted metadata.
 
-        ``expert_operation`` never enters the user input mapping.  If a trusted
+        ``expert_operation`` never enters the user input mapping. If a trusted
         adapter explicitly declares the reserved keyword-only parameter, the
-        host injects the selected operation immediately before dispatch.  Legacy
+        host injects the selected operation immediately before dispatch. Legacy
         payload-only handlers keep their existing call shape.
         """
 
-        descriptor = self._descriptors.get(handle.expert_id)
         handler = self._handlers.get(handle.expert_id)
         raw_outcome: dict[str, Any] = {}
         injected = False
@@ -111,8 +110,12 @@ class ExpertRegistry(_impl.ExpertRegistry):
         if result.verdict is not ExpertVerdict.SUCCEEDED:
             return result
 
-        outcome = raw_outcome.get("value")
-        usage = outcome.get("usage") if isinstance(outcome, Mapping) else None
+        if result.replayed:
+            usage: Any = result.usage
+        else:
+            outcome = raw_outcome.get("value")
+            usage = outcome.get("usage") if isinstance(outcome, Mapping) else None
+
         if not isinstance(usage, Mapping) or "model_calls" not in usage:
             self._discard_invalid_success(
                 result,
