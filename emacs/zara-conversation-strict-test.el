@@ -9,6 +9,7 @@
 (ert-deftest zara-conversation-duplicate-turn-accepted-fails-closed ()
   (let ((target (generate-new-buffer " *zara-conversation-target*"))
         error
+        cancelled
         process)
     (unwind-protect
         (progn
@@ -19,11 +20,16 @@
                    (setq error failure))))
           (zara-conversation--handle-line process (zara-conversation-test--accepted))
           (should (equal (process-get process 'zara-turn-id) "turn-1"))
-          (zara-conversation--handle-line process (zara-conversation-test--accepted))
+          (cl-letf (((symbol-function 'zara-conversation--start-cancel)
+                     (lambda (request turn-id)
+                       (setq cancelled (list request turn-id))
+                       request)))
+            (zara-conversation--handle-line process (zara-conversation-test--accepted)))
           (should (string-match-p "duplicate turn.accepted" error))
+          (should (equal cancelled (list process "turn-1")))
           (with-current-buffer target
-            (should-not zara-chat--busy)
-            (should (eq zara-conversation--state 'error))))
+            (should zara-chat--busy)
+            (should (eq zara-conversation--state 'cancelling))))
       (when (and process (process-live-p process))
         (delete-process process))
       (when (buffer-live-p target)
