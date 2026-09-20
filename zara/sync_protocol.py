@@ -200,11 +200,13 @@ class ObjectRevision:
         if content_size > 0 and not self.blocks:
             raise SyncProtocolError("non-empty content requires blocks")
         expected_offset = 0
-        for block in self.blocks:
+        for index, block in enumerate(self.blocks):
             if not isinstance(block, BlockRef):
                 raise SyncProtocolError("blocks must contain BlockRef values")
             if block.offset != expected_offset:
                 raise SyncProtocolError("block manifest must be contiguous and ordered")
+            if index + 1 < len(self.blocks) and block.size < MIN_BLOCK_BYTES:
+                raise SyncProtocolError("non-final block size is below minimum")
             expected_offset += block.size
         if expected_offset != content_size:
             raise SyncProtocolError("block manifest does not cover content size")
