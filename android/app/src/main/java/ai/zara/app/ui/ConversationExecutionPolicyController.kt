@@ -11,11 +11,15 @@ import java.util.concurrent.CompletableFuture
  * existing Android conversation submit path. PURE_SYMBOLIC delegates only to the canonical
  * zero-model symbolic controller and validates its zero-call evidence before exposing a turn.
  * No provider/model fallback is reachable from the pure-symbolic branch.
+ *
+ * The per-submit STANDARD supplier lets the real chat owner preserve its existing project/local/
+ * remote routing without teaching this policy boundary about projects, transports, or provider
+ * runtimes. The supplier is lazy and is never evaluated in PURE_SYMBOLIC mode.
  */
 class ConversationExecutionPolicyController(
     private val store: ConversationExecutionPolicyStore,
     private val pureSymbolicSubmit: (String, String) -> CompletableFuture<PureSymbolicTurnResult>,
-    private val standardSubmit: (String, String) -> CompletableFuture<TextTurnResult>,
+    private val standardSubmit: ((String, String) -> CompletableFuture<TextTurnResult>)? = null,
 ) {
     @Volatile
     private var current: ConversationExecutionPolicy = store.load()
@@ -28,12 +32,22 @@ class ConversationExecutionPolicyController(
         current = policy
     }
 
-    fun submit(text: String, conversationId: String): CompletableFuture<TextTurnResult> =
-        when (current) {
-            ConversationExecutionPolicy.STANDARD -> standardSubmit(text, conversationId)
-            ConversationExecutionPolicy.PURE_SYMBOLIC ->
-                pureSymbolicSubmit(text, conversationId).thenApply(::requireZeroModelEvidence)
-        }
+    fun submit(text: String, conversationId: String): CompletableFuture<TextTurnResult> {
+        val fallback = standardSubmit ?: return CompletableFuture.failedFuture(
+            IllegalStateException("STANDARD submit path was not supplied"),
+        )
+        return submit(text, conversationId) { fallback(text, conversationId) }
+    }
+
+    fun submit(
+        text: String,
+        conversationId: String,
+        standardTurn: () -> CompletableFuture<TextTurnResult>,
+    ): CompletableFuture<TextTurnResult> = when (current) {
+        ConversationExecutionPolicy.STANDARD -> standardTurn()
+        ConversationExecutionPolicy.PURE_SYMBOLIC ->
+            pureSymbolicSubmit(text, conversationId).thenApply(::requireZeroModelEvidence)
+    }
 
     private fun requireZeroModelEvidence(result: PureSymbolicTurnResult): TextTurnResult {
         check(result.maxModelCalls == 0) { "Pure symbolic max_model_calls changed" }
