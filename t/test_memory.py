@@ -336,3 +336,77 @@ async def test_memory_context_is_transient_across_turns(monkeypatch):
         sum(isinstance(message, SystemMessage) for message in call) == 2
         for call in calls
     )
+
+
+def test_agent_manager_replaces_only_builtin_memory_tools():
+    class Registry:
+        def __init__(self):
+            self.unregistered = []
+            self.registered = []
+
+        def unregister_tools(self, names):
+            self.unregistered.extend(names)
+
+        def register_tools(self, tools):
+            self.registered.extend(tools)
+
+    class Provider:
+        current_session_id = None
+
+        def remember_fact(self, *args, **kwargs):
+            return "memory-id"
+
+        def retrieve(self, *args, **kwargs):
+            return []
+
+        def list_memories(self, *args, **kwargs):
+            return []
+
+        def forget(self, *args, **kwargs):
+            return 0
+
+        def start_session(self, *args, **kwargs):
+            return "session"
+
+        def add_message(self, *args, **kwargs):
+            return None
+
+        def summarise_session(self, *args, **kwargs):
+            return None
+
+    manager = AgentManager.__new__(AgentManager)
+    manager.tool_registry = Registry()
+    manager.memory_manager = object()
+    provider = Provider()
+
+    manager.replace_memory_manager(provider)
+
+    assert manager.memory_manager is provider
+    assert manager.tool_registry.unregistered == [
+        "remember",
+        "recall",
+        "memory_list",
+        "forget",
+    ]
+    assert [tool.name for tool in manager.tool_registry.registered] == [
+        "remember",
+        "recall",
+        "memory_list",
+        "forget",
+    ]
+
+
+def test_agent_manager_rejects_incomplete_memory_provider_before_tool_mutation():
+    class Registry:
+        def unregister_tools(self, _names):
+            raise AssertionError("registry must not mutate")
+
+        def register_tools(self, _tools):
+            raise AssertionError("registry must not mutate")
+
+    manager = AgentManager.__new__(AgentManager)
+    manager.tool_registry = Registry()
+    manager.memory_manager = object()
+
+    with pytest.raises(TypeError, match="memory provider"):
+        manager.replace_memory_manager(object())
