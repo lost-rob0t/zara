@@ -33,6 +33,20 @@ def test_successful_pure_symbolic_projection_requires_canonical_renderer_evidenc
         missing.assert_pure_symbolic()
 
 
+def test_verified_pure_symbolic_projection_requires_postcondition_evidence() -> None:
+    missing = replace(
+        _projection(outcome="success", renderer_provenance="symbolic-dcg/v1"),
+        dialogue_act="verified",
+        verified_outcome_refs=[],
+    )
+
+    with pytest.raises(ValueError, match="verified projection requires verified outcome evidence"):
+        missing.validate()
+
+    with pytest.raises(AssertionError, match="verified projection requires verified outcome evidence"):
+        missing.assert_pure_symbolic()
+
+
 def test_prerender_pending_projection_may_leave_renderer_empty() -> None:
     pending = _projection(outcome="pending", renderer_provenance="")
 
