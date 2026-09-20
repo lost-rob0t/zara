@@ -1,4 +1,4 @@
--- Zara portable conversation history schema v2.
+-- Zara portable conversation history schema v3.
 --
 -- Compatibility ABI: the desktop_* table names are intentionally retained so
 -- existing Zara Desktop databases can be opened directly by Android and vice
