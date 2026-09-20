@@ -21,12 +21,13 @@ data class SymbolicConversationProjection(
     val expertEvidenceJson: String = "[]",
     val verifiedFactsJson: String = "[]",
     val rendererProvenance: String = "",
+    val providerCalls: Long = 0,
     val modelCalls: Long = 0,
     val updatedAt: String = "",
 ) {
     fun assertPureSymbolic() {
-        check(modelCalls == 0L) {
-            "pure-symbolic conversation recorded $modelCalls model call(s)"
+        check(providerCalls == 0L && modelCalls == 0L) {
+            "pure-symbolic conversation recorded providerCalls=$providerCalls, modelCalls=$modelCalls"
         }
     }
 }
@@ -37,6 +38,7 @@ internal object SymbolicProjectionContract {
         require(projection.projectionGeneration >= 1L) { "projectionGeneration must be >= 1" }
         require(projection.runtimeGeneration >= 0L) { "runtimeGeneration must be >= 0" }
         require(projection.projectGeneration >= 0L) { "projectGeneration must be >= 0" }
+        require(projection.providerCalls >= 0L) { "providerCalls must be >= 0" }
         require(projection.modelCalls >= 0L) { "modelCalls must be >= 0" }
         require((projection.projectId?.length ?: 0) <= 512) { "projectId exceeds 512 characters" }
         require(projection.rendererProvenance.length <= 512) {
@@ -71,6 +73,9 @@ internal object SymbolicProjectionContract {
         }
         check(proposed.runtimeGeneration >= current.runtimeGeneration) {
             "runtimeGeneration regression rejected"
+        }
+        check(proposed.providerCalls >= current.providerCalls) {
+            "provider-call ledger rewind rejected"
         }
         check(proposed.modelCalls >= current.modelCalls) {
             "model-call ledger rewind rejected"
@@ -121,6 +126,7 @@ fun PortableConversationStore.loadSymbolicProjection(
             expertEvidenceJson = cursor.getString(cursor.getColumnIndexOrThrow("expert_evidence_json")),
             verifiedFactsJson = cursor.getString(cursor.getColumnIndexOrThrow("verified_facts_json")),
             rendererProvenance = cursor.getString(cursor.getColumnIndexOrThrow("renderer_provenance")),
+            providerCalls = cursor.getLong(cursor.getColumnIndexOrThrow("provider_calls")),
             modelCalls = cursor.getLong(cursor.getColumnIndexOrThrow("model_calls")),
             updatedAt = cursor.getString(cursor.getColumnIndexOrThrow("updated_at")),
         )
@@ -151,6 +157,7 @@ fun PortableConversationStore.saveSymbolicProjection(
         put("expert_evidence_json", stored.expertEvidenceJson)
         put("verified_facts_json", stored.verifiedFactsJson)
         put("renderer_provenance", stored.rendererProvenance)
+        put("provider_calls", stored.providerCalls)
         put("model_calls", stored.modelCalls)
         put("updated_at", stored.updatedAt)
     }
