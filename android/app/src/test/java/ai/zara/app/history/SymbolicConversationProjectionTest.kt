@@ -18,6 +18,7 @@ class SymbolicConversationProjectionTest {
         dialogueStateJson: String = "{\"act\":\"clarify\"}",
         discourseEntitiesJson: String = "[{\"entity_id\":\"file:flake.nix\"}]",
         verifiedOutcomeRefs: List<String> = listOf(VERIFIED_EFFECT_REF),
+        rendererProvenance: String = SYMBOLIC_RENDERER,
         providerCalls: Long = 0,
         modelCalls: Long = 0,
     ) = SymbolicConversationProjection(
@@ -35,7 +36,7 @@ class SymbolicConversationProjectionTest {
         expertEvidenceJson = "[{\"evidence_id\":\"ev-1\"}]",
         verifiedFactsJson = "[{\"fact_id\":\"fact-1\"}]",
         verifiedOutcomeRefs = verifiedOutcomeRefs,
-        rendererProvenance = "symbolic-nlg/v1",
+        rendererProvenance = rendererProvenance,
         providerCalls = providerCalls,
         modelCalls = modelCalls,
     )
@@ -50,6 +51,7 @@ class SymbolicConversationProjectionTest {
         assertEquals("pending", proposed.outcome)
         assertEquals("clarify", proposed.dialogueAct)
         assertEquals(listOf(VERIFIED_EFFECT_REF), proposed.verifiedOutcomeRefs)
+        assertEquals(SYMBOLIC_RENDERER, proposed.rendererProvenance)
         assertEquals(0L, proposed.providerCalls)
         assertEquals(0L, proposed.modelCalls)
     }
@@ -181,12 +183,15 @@ class SymbolicConversationProjectionTest {
     }
 
     @Test
-    fun `pure symbolic assertion rejects provider or model use`() {
+    fun `pure symbolic assertion rejects provider model or renderer use`() {
         assertFailsWithMessage("providerCalls=1") {
             projection(providerCalls = 1).assertPureSymbolic()
         }
         assertFailsWithMessage("modelCalls=1") {
             projection(modelCalls = 1).assertPureSymbolic()
+        }
+        assertFailsWithMessage("non-symbolic renderer") {
+            projection(rendererProvenance = "model-fallback/v1").assertPureSymbolic()
         }
     }
 
@@ -201,7 +206,7 @@ class SymbolicConversationProjectionTest {
     }
 
     @Test
-    fun `normalized dialogue act and verified outcome refs fail closed`() {
+    fun `normalized dialogue act verified outcome refs and renderer fail closed`() {
         val proposed = projection(
             dialogueAct = "dispatch_required",
             verifiedOutcomeRefs = listOf(
@@ -224,6 +229,11 @@ class SymbolicConversationProjectionTest {
         assertFailsWithMessage("must be unique") {
             SymbolicProjectionContract.validatePayload(
                 proposed.copy(verifiedOutcomeRefs = listOf(VERIFIED_EFFECT_REF, VERIFIED_EFFECT_REF))
+            )
+        }
+        assertFailsWithMessage("rendererProvenance") {
+            SymbolicProjectionContract.validatePayload(
+                proposed.copy(rendererProvenance = "model-fallback/v1")
             )
         }
     }
@@ -287,6 +297,7 @@ class SymbolicConversationProjectionTest {
         assertTrue(source.contains("terminal turn projection is immutable"))
         assertTrue(source.contains("provider-call ledger rewind rejected"))
         assertTrue(source.contains("model-call ledger rewind rejected"))
+        assertTrue(source.contains("SYMBOLIC_RENDERER_ID = \"symbolic-dcg/v1\""))
         assertTrue(source.contains("verifiedOutcomeRefPattern"))
         assertTrue(source.contains("PortableJsonValidator"))
         assertTrue(source.contains("parseObjectArrayDocument"))
@@ -303,5 +314,6 @@ class SymbolicConversationProjectionTest {
 
     private companion object {
         const val VERIFIED_EFFECT_REF = "zara.verified-outcome/v1:effect:fact-1"
+        const val SYMBOLIC_RENDERER = "symbolic-dcg/v1"
     }
 }
