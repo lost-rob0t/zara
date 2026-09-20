@@ -304,6 +304,7 @@ fun ZaraApp(
                                                 tokens = LocalZaraTokens.current,
                                                 padding = padding,
                                                 title = "Code",
+                                                platformVoiceEnabled = false,
                                             )
                                             AppSurface.Logic -> PrologStudioSurface(
                                                 localState = localServerState,
