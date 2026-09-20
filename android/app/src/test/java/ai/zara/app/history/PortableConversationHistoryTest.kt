@@ -20,14 +20,27 @@ class PortableConversationHistoryTest {
         val schema = File("../../zara/conversation_schema.sql").readText()
         val gradle = File("build.gradle.kts").readText()
 
+        assertTrue(schema.contains("schema v3"))
         assertTrue(schema.contains("CREATE TABLE IF NOT EXISTS desktop_conversations"))
         assertTrue(schema.contains("CREATE TABLE IF NOT EXISTS desktop_messages"))
+        assertTrue(schema.contains("CREATE TABLE IF NOT EXISTS desktop_symbolic_projections"))
         assertTrue(schema.contains("principal_id TEXT NOT NULL DEFAULT 'local:owner'"))
         assertTrue(gradle.contains("../../zara/conversation_schema.sql"))
         assertTrue(gradle.contains("into(output.resolve(\"database\"))"))
         assertTrue(gradle.contains("rename { \"conversation_schema.sql\" }"))
         assertEquals("local:owner", ConversationHistoryContract.localPrincipalId)
-        assertEquals(2, ConversationHistoryContract.schemaVersion)
+        assertEquals(3, ConversationHistoryContract.schemaVersion)
+    }
+
+    @Test
+    fun `v3 upgrade path is additive and non destructive`() {
+        val store = File("src/main/java/ai/zara/app/history/PortableConversationStore.kt").readText()
+
+        assertTrue(store.contains("override fun onUpgrade"))
+        assertTrue(store.contains("installSchema(db)"))
+        assertFalse(store.contains("DROP TABLE"))
+        assertFalse(store.contains("DELETE FROM desktop_conversations"))
+        assertFalse(store.contains("DELETE FROM desktop_messages"))
     }
 
     @Test
