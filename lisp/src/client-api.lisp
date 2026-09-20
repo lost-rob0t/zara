@@ -180,10 +180,13 @@
                   (cdr
                    (client-event-queue client)))
             (return event)))
-        (when (%stop-requested-p client)
+        ;; CLIENT-STOP-P is written under the state lock before close wakes
+        ;; this condition. Reading it here avoids the state-lock -> event-lock /
+        ;; event-lock -> state-lock inversion that would deadlock shutdown.
+        (when (client-stop-p client)
           (error
            'client-not-ready
-           :state (%client-state-value client)))
+           :state (client-state client)))
         (let ((remaining
                 (- deadline
                    (%monotonic-seconds))))
