@@ -35,6 +35,7 @@ data class SymbolicConversationProjection(
     val updatedAt: String = "",
 ) {
     fun assertPureSymbolic() {
+        SymbolicProjectionContract.validatePayload(this)
         check(!providersEnabled) {
             "pure-symbolic conversation has providers enabled"
         }
@@ -282,6 +283,9 @@ internal object SymbolicProjectionContract {
         require(projection.maxModelCalls >= 0L) { "maxModelCalls must be >= 0" }
         require(projection.providerCalls >= 0L) { "providerCalls must be >= 0" }
         require(projection.modelCalls >= 0L) { "modelCalls must be >= 0" }
+        require(projection.modelCalls <= projection.maxModelCalls) {
+            "modelCalls must not exceed maxModelCalls"
+        }
         require((projection.projectId?.length ?: 0) <= 512) { "projectId exceeds 512 characters" }
         require(dialogueActPattern.matches(projection.dialogueAct)) {
             "dialogueAct must be a normalized symbolic act token"
