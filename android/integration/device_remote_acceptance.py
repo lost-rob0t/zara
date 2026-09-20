@@ -24,6 +24,11 @@ _FATAL_LOG_MARKERS = (
     "Process: ai.zara.app, PID:",
 )
 
+_APP_SCOPED_FATAL_LOG_MARKERS = (
+    "ANR in ai.zara.app",
+    "Process: ai.zara.app, PID:",
+)
+
 
 def read_fixture(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
@@ -143,14 +148,24 @@ def collect_app_diagnostics(device: Device, output: Path) -> dict[str, object]:
         evidence["app_diagnostics_failure"] = str(error)
 
     try:
-        pid = device.adb("shell", "pidof", APP_PACKAGE).strip()
-        if not re.fullmatch(r"\d+", pid):
-            raise AssertionError(f"Zara app pid is unavailable: {pid!r}")
-        logcat = device.adb("logcat", "-d", "--pid", pid, "-v", "threadtime")
+        try:
+            pid = device.adb("shell", "pidof", APP_PACKAGE).strip()
+            if not re.fullmatch(r"\d+", pid):
+                raise AssertionError(f"Zara app pid is unavailable: {pid!r}")
+            logcat = device.adb("logcat", "-d", "--pid", pid, "-v", "threadtime")
+            evidence["logcat_pid_filtered"] = True
+        except Exception:
+            logcat = device.adb("logcat", "-d", "-v", "threadtime")
+            evidence["logcat_pid_filtered"] = False
         path = output / "remote-logcat.log"
         path.write_text(logcat, encoding="utf-8")
         evidence["logcat"] = path.name
-        fatal_markers = [marker for marker in _FATAL_LOG_MARKERS if marker in logcat]
+        markers = (
+            _FATAL_LOG_MARKERS
+            if evidence.get("logcat_pid_filtered") is True
+            else _APP_SCOPED_FATAL_LOG_MARKERS
+        )
+        fatal_markers = [marker for marker in markers if marker in logcat]
         evidence["fatal_log_markers"] = fatal_markers
     except Exception as error:
         evidence["logcat_failure"] = str(error)
