@@ -117,3 +117,40 @@ async def test_pure_symbolic_backend_rejects_nonzero_usage_evidence() -> None:
 
     with pytest.raises(RuntimeError, match="zero-call contract"):
         await backend.submit_turn("hello", turn_id="turn-4")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("provider_calls", False),
+        ("provider_calls", 0.0),
+        ("provider_calls", "0"),
+        ("model_calls", False),
+        ("model_calls", 0.0),
+        ("model_calls", "0"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_pure_symbolic_backend_requires_builtin_integer_zero_usage(
+    field: str,
+    value,
+) -> None:
+    engine = FakeEngine()
+
+    def resolve_turn(_engine, _text):
+        kwargs = {field: value}
+        return PureSymbolicTurn(
+            response="bad",
+            act_term="unsupported",
+            context_term="[]",
+            **kwargs,
+        )
+
+    backend = PureSymbolicRuntimeBackend(
+        engine_factory=lambda: engine,
+        turn_resolver=resolve_turn,
+    )
+    await backend.start()
+
+    with pytest.raises(RuntimeError, match="zero-call contract"):
+        await backend.submit_turn("hello", turn_id="turn-5")
