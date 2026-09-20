@@ -1,0 +1,341 @@
+from __future__ import annotations
+
+from dataclasses import replace
+
+import pytest
+
+from zara.database import DatabaseManager
+from zara.desktop.conversation import ConversationStore, SymbolicConversationProjection
+from zara.desktop.conversation.store import ConversationStore as CanonicalConversationStore
+
+
+_VERIFIED_EFFECT_REF = "zara.verified-outcome/v1:effect:fact-1"
+_SYMBOLIC_RENDERER = "symbolic-dcg/v1"
+
+
+def _projection(
+    conversation_id: str,
+    *,
+    generation: int = 1,
+    runtime_generation: int = 7,
+    turn_id: str | None = "turn-7",
+    outcome: str = "pending",
+    project_id: str | None = "project-a",
+    project_generation: int = 1,
+    dialogue_act: str = "clarify",
+    verified_outcome_refs: list[str] | None = None,
+    provider_calls: int = 0,
+    model_calls: int = 0,
+) -> SymbolicConversationProjection:
+    return SymbolicConversationProjection(
+        conversation_id=conversation_id,
+        projection_generation=generation,
+        runtime_generation=runtime_generation,
+        turn_id=turn_id,
+        outcome=outcome,
+        project_id=project_id,
+        project_generation=project_generation,
+        dialogue_act=dialogue_act,
+        dialogue_state={"act": "clarify", "intent": "inspect_project"},
+        discourse_entities=[{"ref": "that", "entity_id": "file:flake.nix"}],
+        unresolved_questions=[{"slot": "target", "prompt": "Which target?"}],
+        expert_evidence=[{"expert": "DotfilesExpert", "evidence_id": "ev-1"}],
+        verified_facts=[{"fact_id": "fact-1", "value": "flake.nix"}],
+        verified_outcome_refs=(
+            [_VERIFIED_EFFECT_REF]
+            if verified_outcome_refs is None
+            else verified_outcome_refs
+        ),
+        renderer_provenance=_SYMBOLIC_RENDERER,
+        provider_calls=provider_calls,
+        model_calls=model_calls,
+    )
+
+
+def test_canonical_store_class_owns_symbolic_projection_api(tmp_path):
+    store = CanonicalConversationStore(DatabaseManager(tmp_path / "canonical.db"))
+    conversation = store.create_conversation("Canonical", conversation_id="conv-canonical")
+
+    stored = store.save_symbolic_projection(
+        _projection(conversation.id),
+        expected_generation=0,
+    )
+
+    stored.assert_pure_symbolic()
+    assert store.load_symbolic_projection(conversation.id) == stored
+
+
+def test_symbolic_projection_survives_restart_with_zero_provider_and_model_calls(tmp_path):
+    path = tmp_path / "symbolic.db"
+    db = DatabaseManager(path)
+    store = ConversationStore(db)
+    conversation = store.create_conversation("Pure symbolic", conversation_id="conv-symbolic")
+
+    stored = store.save_symbolic_projection(
+        _projection(conversation.id),
+        expected_generation=0,
+    )
+    stored.assert_pure_symbolic()
+    assert stored.provider_calls == 0
+    assert stored.model_calls == 0
+    assert stored.turn_id == "turn-7"
+    assert stored.outcome == "pending"
+    assert stored.projection_generation == 1
+    assert stored.dialogue_act == "clarify"
+    assert stored.verified_outcome_refs == [_VERIFIED_EFFECT_REF]
+    assert stored.unresolved_questions[0]["slot"] == "target"
+    assert stored.expert_evidence[0]["evidence_id"] == "ev-1"
+    db.close()
+
+    reopened_db = DatabaseManager(path)
+    reopened = ConversationStore(reopened_db)
+    recovered = reopened.load_symbolic_projection(conversation.id)
+
+    assert recovered is not None
+    recovered.assert_pure_symbolic()
+    assert recovered.provider_calls == 0
+    assert recovered.model_calls == 0
+    assert recovered.turn_id == "turn-7"
+    assert recovered.outcome == "pending"
+    assert recovered.runtime_generation == 7
+    assert recovered.project_id == "project-a"
+    assert recovered.project_generation == 1
+    assert recovered.dialogue_act == "clarify"
+    assert recovered.dialogue_state == {"act": "clarify", "intent": "inspect_project"}
+    assert recovered.discourse_entities == [{"entity_id": "file:flake.nix", "ref": "that"}]
+    assert recovered.unresolved_questions == [{"prompt": "Which target?", "slot": "target"}]
+    assert recovered.expert_evidence == [{"evidence_id": "ev-1", "expert": "DotfilesExpert"}]
+    assert recovered.verified_facts == [{"fact_id": "fact-1", "value": "flake.nix"}]
+    assert recovered.verified_outcome_refs == [_VERIFIED_EFFECT_REF]
+    assert recovered.renderer_provenance == _SYMBOLIC_RENDERER
+    reopened_db.close()
+
+
+def test_symbolic_projection_is_conversation_scoped(tmp_path):
+    store = ConversationStore(DatabaseManager(tmp_path / "isolation.db"))
+    first = store.create_conversation("A", conversation_id="conv-a")
+    second = store.create_conversation("B", conversation_id="conv-b")
+    store.save_symbolic_projection(_projection(first.id), expected_generation=0)
+
+    assert store.load_symbolic_projection(first.id) is not None
+    assert store.load_symbolic_projection(second.id) is None
+    assert store.load_symbolic_projection("missing") is None
+
+
+def test_symbolic_projection_rejects_stale_runtime_and_usage_rewind(tmp_path):
+    store = ConversationStore(DatabaseManager(tmp_path / "fences.db"))
+    conversation = store.create_conversation("Fenced", conversation_id="conv-fenced")
+    first = store.save_symbolic_projection(
+        _projection(
+            conversation.id,
+            runtime_generation=9,
+            provider_calls=2,
+            model_calls=2,
+        ),
+        expected_generation=0,
+    )
+
+    with pytest.raises(RuntimeError, match="stale symbolic projection write"):
+        store.save_symbolic_projection(
+            _projection(
+                conversation.id,
+                generation=1,
+                runtime_generation=10,
+                provider_calls=2,
+                model_calls=2,
+            ),
+            expected_generation=0,
+        )
+
+    with pytest.raises(RuntimeError, match="runtime_generation regression"):
+        store.save_symbolic_projection(
+            _projection(
+                conversation.id,
+                generation=2,
+                runtime_generation=8,
+                provider_calls=2,
+                model_calls=2,
+            ),
+            expected_generation=first.projection_generation,
+        )
+
+    with pytest.raises(RuntimeError, match="provider-call ledger rewind"):
+        store.save_symbolic_projection(
+            _projection(
+                conversation.id,
+                generation=2,
+                runtime_generation=9,
+                provider_calls=1,
+                model_calls=2,
+            ),
+            expected_generation=first.projection_generation,
+        )
+
+    with pytest.raises(RuntimeError, match="model-call ledger rewind"):
+        store.save_symbolic_projection(
+            _projection(
+                conversation.id,
+                generation=2,
+                runtime_generation=9,
+                provider_calls=2,
+                model_calls=1,
+            ),
+            expected_generation=first.projection_generation,
+        )
+
+
+def test_pure_symbolic_assertion_rejects_provider_model_or_renderer_fallback():
+    with pytest.raises(AssertionError, match="provider_calls=1"):
+        _projection("provider-used", provider_calls=1).assert_pure_symbolic()
+    with pytest.raises(AssertionError, match="model_calls=1"):
+        _projection("model-used", model_calls=1).assert_pure_symbolic()
+    with pytest.raises(AssertionError, match="non-symbolic renderer"):
+        replace(
+            _projection("renderer-used"),
+            renderer_provenance="model-fallback/v1",
+        ).assert_pure_symbolic()
+
+
+def test_turn_outcome_vocabulary_fails_closed():
+    for outcome in ("unknown", "pending", "success", "cancelled", "interrupted", "error"):
+        _projection("outcome", outcome=outcome).validate()
+
+    with pytest.raises(ValueError, match="unsupported symbolic outcome"):
+        _projection("outcome", outcome="provider_fallback").validate()
+
+
+def test_normalized_dialogue_act_verified_refs_and_renderer_fail_closed():
+    projection = _projection(
+        "typed-evidence",
+        dialogue_act="dispatch_required",
+        verified_outcome_refs=[
+            "zara.verified-outcome/v1:effect:tool-run-7",
+            "zara.verified-outcome/v1:outcome:postcondition/process-firefox",
+        ],
+    )
+    projection.validate()
+
+    with pytest.raises(ValueError, match="dialogue_act"):
+        replace(projection, dialogue_act="Clarify Slot").validate()
+    with pytest.raises(ValueError, match="invalid verified outcome reference"):
+        replace(projection, verified_outcome_refs=["effect:unversioned"]).validate()
+    with pytest.raises(ValueError, match="must be unique"):
+        replace(
+            projection,
+            verified_outcome_refs=[_VERIFIED_EFFECT_REF, _VERIFIED_EFFECT_REF],
+        ).validate()
+    with pytest.raises(ValueError, match="renderer_provenance"):
+        replace(projection, renderer_provenance="model-fallback/v1").validate()
+
+
+def test_cancelled_turn_rejects_late_success_but_new_turn_is_allowed(tmp_path):
+    store = ConversationStore(DatabaseManager(tmp_path / "cancel-fence.db"))
+    conversation = store.create_conversation("Cancel fence", conversation_id="conv-cancel")
+    pending = store.save_symbolic_projection(
+        _projection(conversation.id, runtime_generation=11, turn_id="turn-old", outcome="pending"),
+        expected_generation=0,
+    )
+    cancelled = store.save_symbolic_projection(
+        _projection(
+            conversation.id,
+            generation=2,
+            runtime_generation=11,
+            turn_id="turn-old",
+            outcome="cancelled",
+        ),
+        expected_generation=pending.projection_generation,
+    )
+
+    with pytest.raises(RuntimeError, match="terminal turn projection is immutable"):
+        store.save_symbolic_projection(
+            _projection(
+                conversation.id,
+                generation=3,
+                runtime_generation=11,
+                turn_id="turn-old",
+                outcome="success",
+            ),
+            expected_generation=cancelled.projection_generation,
+        )
+
+    with pytest.raises(RuntimeError, match="same turn must preserve runtime_generation"):
+        store.save_symbolic_projection(
+            _projection(
+                conversation.id,
+                generation=3,
+                runtime_generation=12,
+                turn_id="turn-old",
+                outcome="cancelled",
+            ),
+            expected_generation=cancelled.projection_generation,
+        )
+
+    next_turn = store.save_symbolic_projection(
+        _projection(
+            conversation.id,
+            generation=3,
+            runtime_generation=12,
+            turn_id="turn-new",
+            outcome="pending",
+        ),
+        expected_generation=cancelled.projection_generation,
+    )
+    assert next_turn.turn_id == "turn-new"
+    assert next_turn.runtime_generation == 12
+    assert next_turn.outcome == "pending"
+
+
+def test_project_switch_requires_new_generation(tmp_path):
+    store = ConversationStore(DatabaseManager(tmp_path / "project-fence.db"))
+    conversation = store.create_conversation("Projects", conversation_id="conv-project")
+    first = store.save_symbolic_projection(
+        _projection(conversation.id, project_id="project-a", project_generation=4),
+        expected_generation=0,
+    )
+
+    with pytest.raises(RuntimeError, match="project switch must advance"):
+        store.save_symbolic_projection(
+            _projection(
+                conversation.id,
+                generation=2,
+                project_id="project-b",
+                project_generation=4,
+            ),
+            expected_generation=first.projection_generation,
+        )
+
+    switched = store.save_symbolic_projection(
+        _projection(
+            conversation.id,
+            generation=2,
+            runtime_generation=8,
+            turn_id="turn-8",
+            outcome="success",
+            project_id="project-b",
+            project_generation=5,
+        ),
+        expected_generation=first.projection_generation,
+    )
+    assert switched.turn_id == "turn-8"
+    assert switched.outcome == "success"
+    assert switched.project_id == "project-b"
+    assert switched.project_generation == 5
+
+
+def test_projection_corruption_fails_explicitly(tmp_path):
+    db = DatabaseManager(tmp_path / "corrupt.db")
+    store = ConversationStore(db)
+    conversation = store.create_conversation("Corrupt", conversation_id="conv-corrupt")
+    store.save_symbolic_projection(_projection(conversation.id), expected_generation=0)
+
+    db.execute(
+        """
+        UPDATE desktop_symbolic_projections
+        SET dialogue_state_json = '[]'
+        WHERE conversation_id = ? AND principal_id = ?
+        """,
+        (conversation.id, store.storage_principal_id),
+    )
+
+    with pytest.raises(ValueError, match="not an object"):
+        store.load_symbolic_projection(conversation.id)

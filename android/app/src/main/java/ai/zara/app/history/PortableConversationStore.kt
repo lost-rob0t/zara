@@ -64,7 +64,7 @@ data class HistoryConversationState(
 )
 
 internal object ConversationHistoryContract {
-    const val schemaVersion = 2
+    const val schemaVersion = 4
     const val localPrincipalId = "local:owner"
     const val legacyLocalPrincipalId = "__zara_legacy_local_owner__"
     const val schemaAsset = "database/conversation_schema.sql"
@@ -81,10 +81,15 @@ internal object ConversationHistoryContract {
     fun canPersistTransition(
         current: HistoryMessageStatus,
         requested: HistoryMessageStatus,
-    ): Boolean =
-        current == HistoryMessageStatus.Pending ||
-            current == HistoryMessageStatus.Streaming ||
-            current == requested
+    ): Boolean = when (current) {
+        HistoryMessageStatus.Pending,
+        HistoryMessageStatus.Streaming,
+        -> true
+        HistoryMessageStatus.Complete,
+        HistoryMessageStatus.Error,
+        HistoryMessageStatus.Cancelled,
+        -> false
+    }
 }
 
 class PortableConversationStore(context: Context) : SQLiteOpenHelper(
