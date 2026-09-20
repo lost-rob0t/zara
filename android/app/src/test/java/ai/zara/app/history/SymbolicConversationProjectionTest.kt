@@ -19,6 +19,7 @@ class SymbolicConversationProjectionTest {
         discourseEntitiesJson: String = "[{\"entity_id\":\"file:flake.nix\"}]",
         verifiedOutcomeRefs: List<String> = listOf(VERIFIED_EFFECT_REF),
         rendererProvenance: String = SYMBOLIC_RENDERER,
+        maxModelCalls: Long = 0,
         providerCalls: Long = 0,
         modelCalls: Long = 0,
     ) = SymbolicConversationProjection(
@@ -38,7 +39,7 @@ class SymbolicConversationProjectionTest {
         verifiedOutcomeRefs = verifiedOutcomeRefs,
         rendererProvenance = rendererProvenance,
         providersEnabled = false,
-        maxModelCalls = 0,
+        maxModelCalls = maxModelCalls,
         providerCalls = providerCalls,
         modelCalls = modelCalls,
     )
@@ -166,19 +167,29 @@ class SymbolicConversationProjectionTest {
 
     @Test
     fun `provider and model call ledgers cannot be rewound to fake zero`() {
-        val current = projection(generation = 1, providerCalls = 1, modelCalls = 1)
+        val current = projection(generation = 1, maxModelCalls = 1, providerCalls = 1, modelCalls = 1)
 
         assertFailsWithMessage("provider-call ledger rewind") {
             SymbolicProjectionContract.validateWrite(
                 current,
-                projection(generation = 2, providerCalls = 0, modelCalls = 1),
+                projection(
+                    generation = 2,
+                    maxModelCalls = 1,
+                    providerCalls = 0,
+                    modelCalls = 1,
+                ),
                 expectedGeneration = 1,
             )
         }
         assertFailsWithMessage("model-call ledger rewind") {
             SymbolicProjectionContract.validateWrite(
                 current,
-                projection(generation = 2, providerCalls = 1, modelCalls = 0),
+                projection(
+                    generation = 2,
+                    maxModelCalls = 1,
+                    providerCalls = 1,
+                    modelCalls = 0,
+                ),
                 expectedGeneration = 1,
             )
         }
@@ -189,10 +200,10 @@ class SymbolicConversationProjectionTest {
         assertFailsWithMessage("providerCalls=1") {
             projection(providerCalls = 1).assertPureSymbolic()
         }
-        assertFailsWithMessage("modelCalls=1") {
+        assertFailsWithMessage("modelCalls must not exceed maxModelCalls") {
             projection(modelCalls = 1).assertPureSymbolic()
         }
-        assertFailsWithMessage("non-symbolic renderer") {
+        assertFailsWithMessage("rendererProvenance") {
             projection(rendererProvenance = "model-fallback/v1").assertPureSymbolic()
         }
     }
