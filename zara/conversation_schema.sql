@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS desktop_messages (
 CREATE TABLE IF NOT EXISTS desktop_symbolic_projections (
     conversation_id TEXT NOT NULL,
     principal_id TEXT NOT NULL DEFAULT 'local:owner',
+    turn_id TEXT,
+    outcome TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (outcome IN ('unknown', 'pending', 'success', 'cancelled', 'interrupted', 'error')),
     projection_generation INTEGER NOT NULL DEFAULT 0 CHECK (projection_generation >= 0),
     runtime_generation INTEGER NOT NULL DEFAULT 0 CHECK (runtime_generation >= 0),
     project_id TEXT,
@@ -72,3 +75,5 @@ CREATE INDEX IF NOT EXISTS idx_desktop_messages_principal_conversation
     ON desktop_messages(principal_id, conversation_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_desktop_symbolic_project
     ON desktop_symbolic_projections(principal_id, project_id, project_generation);
+CREATE INDEX IF NOT EXISTS idx_desktop_symbolic_turn
+    ON desktop_symbolic_projections(principal_id, turn_id);
