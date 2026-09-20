@@ -98,10 +98,16 @@ parallel transcript."
            (= generation zara-conversation--generation)))))
 
 (defun zara-conversation--finish-buffer (process state)
-  "Finish PROCESS presentation state as STATE when it still owns the buffer."
+  "Finish PROCESS presentation state as STATE when it is still the active request.
+
+Generation equality is deliberately not required here.  Cancellation increments
+the presentation generation immediately to fence late text, but the canonical
+CancelTurn receipt must still be able to clear busy state.  A superseded process
+cannot clobber a newer request because request identity must still match."
   (let ((target (process-get process 'zara-target)))
     (when (and (buffer-live-p target)
-               (zara-conversation--current-request-p process))
+               (with-current-buffer target
+                 (eq zara-conversation--request-process process)))
       (with-current-buffer target
         (setq zara-chat--busy nil
               zara-conversation--state state
