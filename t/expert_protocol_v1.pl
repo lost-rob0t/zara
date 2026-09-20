@@ -84,6 +84,13 @@ test(boolean_is_not_generation) :-
     request(Request), replace_field(Request, expected_registry_generation, @(true), Bad),
     validate_invocation(Bad, Result), assertion(Result == invalid_request).
 
+test(integral_json_number_generation) :-
+    request(Request), replace_field(Request, expected_registry_generation, 12.0, Candidate),
+    validate_invocation(Candidate, Result), assertion(Result == valid),
+    binding(Binding), context(Context),
+    activation_matches(Candidate, Binding, Context, Match),
+    assertion(Match == matching_binding).
+
 test(fractional_generation) :-
     request(Request), replace_field(Request, expected_runtime_generation, 1.25, Bad),
     validate_invocation(Bad, Result), assertion(Result == invalid_request).
@@ -188,6 +195,24 @@ test(shared_json_fixture) :-
         json_read(Stream, Request),
         close(Stream)),
     validate_invocation(Request, Result), assertion(Result == valid).
+
+test(schema_limit_vocabulary_matches_prolog) :-
+    setup_call_cleanup(
+        open('contracts/zara-expert-v1/expert-invoke.schema.json', read, Stream, [encoding(utf8)]),
+        json_read(Stream, json(Schema)),
+        close(Stream)),
+    memberchk('$defs'=json(Definitions), Schema),
+    memberchk(limits=json(LimitSchema), Definitions),
+    memberchk(properties=json(Properties), LimitSchema),
+    findall(Key, expert_protocol_limit(Key, _, _), FactKeys),
+    findall(Key, member(Key=_, Properties), SchemaKeys),
+    msort(FactKeys, Sorted), msort(SchemaKeys, Sorted),
+    forall(expert_protocol_limit(Key, Minimum, Maximum),
+        (memberchk(Key=json(Spec), Properties),
+         memberchk(minimum=ActualMinimum, Spec),
+         memberchk(maximum=ActualMaximum, Spec),
+         assertion(ActualMinimum =:= Minimum),
+         assertion(ActualMaximum =:= Maximum))).
 
 nested(0, leaf) :- !.
 nested(Count, [Value]) :- Next is Count - 1, nested(Next, Value).

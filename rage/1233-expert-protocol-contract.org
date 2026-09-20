@@ -33,3 +33,26 @@ Connected GitHub reads/writes are available. Direct git clone in this working co
 3. Integrate the real SWI suite into normal pytest collection so existing CI runs it and absence of SWI fails explicitly.
 4. Open a draft PR, inspect exact-head CI, and report local/Prolog/full-platform results separately.
 5. Keep #1233 open: activation/invocation adapters, Kotlin parity and full product acceptance remain later slices.
+
+** RED / implementation evidence
+- Test-first commit :: 316c220cc21b7303d2a1dec40ebf0903d8a195f4
+- Initial local command :: pytest -q t/test_expert_protocol_schema_v1.py --maxfail=1
+- Initial outcome :: expected failure: expert-descriptor.schema.json did not exist; one test failed before schema implementation.
+- Implementation :: two structural schemas and golden examples; kb/expert_protocol.pl vocabulary; modules/expert_protocol.pl pure validator/limits/binding checks; wiki/expert-protocol.org; no existing Prolog source removed or renamed.
+- Follow-up edge case :: accept mathematically integral JSON numbers such as 12.0 consistently, while rejecting booleans/fractions for integer fields. Added shared primitive-schema equality and Prolog/schema limit-vocabulary checks.
+- Temporary tooling repair :: a local schema-generation helper initially had a mismatched brace; corrected before schema tests passed. The helper is not runtime code or a committed dependency.
+
+** Observed local evaluation
+- Python :: 3.13; pytest 9.0.2; jsonschema 4.26.0. This is not the pinned Nix environment.
+- Schema tests :: pytest -q t/test_expert_protocol_schema_v1.py — 88 passed in 2.11s.
+- Python syntax :: python -m compileall -q t — exit 0 for the local partial workspace.
+- SWI wrapper attempt :: pytest -q t/test_expert_protocol_prolog_v1.py --maxfail=1 — one explicit failure because swipl is absent. None of the 36 plunit cases have been executed locally.
+- Full gate attempt :: nix develop -c bash scripts/test-all.sh — exit 127, nix not found. The working container also contains only this slice, not a full repository checkout; no full-repository result is claimed.
+- Platform acceptance :: no Android/Kotlin/device/voice tests run in this environment.
+
+** Scope and handoff
+Existing pytest CI will collect both test files and invoke the real SWI suite. Exact-head CI and independent review are pending at this commit; draft status must remain until the applicable gates have actual evidence. Do not close #1233 from this foundation alone.
+
+No user-facing behavior changed: the module is not connected to live activation/invocation and no changelog claim of shipped expert support is added. Remaining work includes host admission/domain-schema resolution, real existing expert adapters, activation lifecycle, other operation/result schemas and Kotlin/Android parity. These retain their current owners.
+
+The JSON schemas do not enforce aggregate recursion budgets or duplicate raw JSON keys. The docs explicitly require bounded preparse ingestion and current host authorization; Prolog validation does not create an isolation boundary.

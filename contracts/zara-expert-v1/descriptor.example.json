@@ -1,0 +1,47 @@
+{
+  "protocol": "ZARA-EXPERT/1",
+  "expert_id": "zara:expert/android-troubleshooting",
+  "expert_version": "1.0.0",
+  "package_namespace": "zara-expert",
+  "manifest_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "name": "Android troubleshooting",
+  "description": "Symbolic diagnosis over supplied observations.",
+  "source_reference": "source:fixture-v1",
+  "reasoning_kind": "symbolic",
+  "operations": [
+    {
+      "id": "diagnose",
+      "input_schema": "schema:diagnose-input-v1",
+      "output_schema": "schema:diagnose-output-v1",
+      "effects": [],
+      "required_capabilities": []
+    }
+  ],
+  "applicability_schema": "schema:diagnose-goal-v1",
+  "required_observations": [
+    "adb_state"
+  ],
+  "required_capabilities": [],
+  "possible_effects": [],
+  "supported_engines": [
+    "swi-prolog"
+  ],
+  "supported_platforms": [
+    "desktop"
+  ],
+  "placement": {
+    "node_id": "desktop",
+    "runtime_id": "zara-python"
+  },
+  "fallback_policy": "none",
+  "delegation_policy": "none",
+  "resource_limits": {
+    "timeout_ms": 3000,
+    "max_results": 8,
+    "max_output_bytes": 65536,
+    "max_model_calls": 0
+  },
+  "registry_generation": 12,
+  "availability": "available",
+  "unavailable_reason": null
+}

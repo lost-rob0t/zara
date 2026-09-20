@@ -253,3 +253,16 @@ def test_catalog_limits():
 def test_checked_in_fixtures_are_the_tested_examples():
     assert json.loads((CONTRACT / "descriptor.example.json").read_text()) == descriptor()
     assert json.loads((CONTRACT / "invoke.example.json").read_text()) == invocation()
+
+
+def test_integral_json_number_generation():
+    candidate = invocation()
+    candidate["expected_registry_generation"] = 12.0
+    validator("expert-invoke").validate(candidate)
+
+
+def test_descriptor_and_request_share_primitive_contracts():
+    descriptor_schema = json.loads((CONTRACT / "expert-descriptor.schema.json").read_text())
+    request_schema = json.loads((CONTRACT / "expert-invoke.schema.json").read_text())
+    for name in ("token", "reference", "symbol", "generation", "limits"):
+        assert descriptor_schema["$defs"][name] == request_schema["$defs"][name], name
