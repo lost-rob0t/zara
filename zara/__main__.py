@@ -39,6 +39,7 @@ GPU_ERROR_MARKERS = (
 )
 CLI_TURN_TIMEOUT_SECONDS = 30.0
 CLI_IDENTIFIER_MAX_CHARS = 128
+CLI_REPLAY_VERSION = "ZARA-CONVERSATION-REPLAY/1"
 
 
 def normalize_stt_device(device: str, provider: str | None = None) -> str:
@@ -119,6 +120,49 @@ def _validate_cli_identifier(value: str, label: str) -> str:
             f"{label} exceeds maximum length {CLI_IDENTIFIER_MAX_CHARS}"
         )
     return normalized
+
+
+def _conversation_replay_payload(store, conversation_id: str) -> dict:
+    """Project canonical durable history into a deterministic read surface."""
+    normalized = _validate_cli_identifier(conversation_id, "conversation id")
+    conversation = store.get_conversation(normalized)
+    if conversation is None:
+        raise ValueError(f"unknown conversation {normalized!r}")
+    messages = store.load_messages(normalized)
+    return {
+        "version": CLI_REPLAY_VERSION,
+        "conversation": {
+            "id": conversation.id,
+            "title": conversation.title,
+            "created_at": conversation.created_at,
+            "updated_at": conversation.updated_at,
+        },
+        "messages": [
+            {
+                "sequence": message.sequence,
+                "role": message.role.value,
+                "content": message.content,
+                "status": message.status.value,
+                "turn_id": message.turn_id,
+                "error": message.error,
+                "tool_run_id": message.tool_run_id,
+            }
+            for message in messages
+        ],
+    }
+
+
+def _run_conversation_replay(conversation_id: str) -> int:
+    """Print canonical durable history without entering a provider/runtime path."""
+    from .desktop.conversation import ConversationStore
+
+    try:
+        payload = _conversation_replay_payload(ConversationStore(), conversation_id)
+        print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        return 0
+    except Exception as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 2
 
 
 def _wait_for_daemon_turn(subscription, turn_id: str) -> str:
@@ -308,6 +352,7 @@ def main():
                "  zara --standalone 'hello'     # Explicit private local runtime\n"
                "  zara --connect ipc:///run/user/1000/zara.sock 'hello'\n"
                "  zara --conversation-id emacs-main --context-id doc:alpha --json-events 'continue'\n"
+               "  zara --replay-conversation emacs-main  # Replay durable history\n"
                "  zara --cancel-turn TURN_ID    # Cancel through ZARA/1\n"
                "  zara --desktop                # Native desktop / Quick Copilot\n"
                "  zara --toggle-desktop         # Toggle the existing desktop\n"
@@ -364,6 +409,11 @@ def main():
         "--agent",
         action="store_true",
         help="Direct conversation mode with agent"
+    )
+    mode_group.add_argument(
+        "--replay-conversation",
+        metavar="CONVERSATION_ID",
+        help="Render one canonical durable conversation as strict JSON"
     )
 
     client_group = parser.add_mutually_exclusive_group()
@@ -422,7 +472,6 @@ def main():
         action="store_true",
         help="Enable verbose logging"
     )
-
     parser.add_argument(
         "--stt-provider",
         default=default_stt_provider,
@@ -464,7 +513,22 @@ def main():
 
     args = parser.parse_args()
 
-    if args.cancel_turn:
+    if args.replay_conversation:
+        if args.command:
+            parser.error("--replay-conversation cannot be combined with a text command")
+        if args.connect or args.standalone:
+            parser.error("--replay-conversation reads the local canonical store directly")
+        if args.cancel_turn:
+            parser.error("--cancel-turn is not used with --replay-conversation")
+        if args.conversation_id:
+            parser.error("--conversation-id is not used with --replay-conversation")
+        if args.context_id:
+            parser.error("--context-id is not used with --replay-conversation")
+        if args.json_events:
+            parser.error("--json-events is not used with --replay-conversation")
+        if args.pets or args.pets_settings:
+            parser.error("pet modes are not used with --replay-conversation")
+    elif args.cancel_turn:
         if args.command:
             parser.error("--cancel-turn cannot be combined with a text command")
         if args.standalone:
@@ -566,6 +630,9 @@ def main():
     elif args.agent:
         from .agent_cli import main as agent_main
         sys.exit(agent_main())
+
+    elif args.replay_conversation:
+        sys.exit(_run_conversation_replay(args.replay_conversation))
 
     elif args.pets_settings:
         from .pets.cli import main_settings
