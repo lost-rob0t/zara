@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Zara Android/Wear gate: semantic parity + JVM tests + stock secure-server interop + pinned native build + phone/Code/Termux bridge/Wear debug APKs + secret inspection.
-# Run via: nix develop .#android -c bash scripts/test-android.sh
+# Run via: nix develop ./android -c bash scripts/test-android.sh
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
