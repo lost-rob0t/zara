@@ -19,12 +19,25 @@ class SymbolicConversationEdgeSnapshotTest {
     }
 
     @Test
-    fun pureSymbolicRejectsAnyModelOrProviderCall() {
+    fun pureSymbolicRequiresProvidersDisabledAndZeroModelBudget() {
+        assertFails("providers enabled") {
+            fixture().copy(providersEnabled = true).assertPureSymbolic()
+        }
+        assertFails("max model calls must be 0") {
+            fixture().copy(maxModelCalls = 1).assertPureSymbolic()
+        }
         assertFails("model calls") {
-            fixture().copy(modelCalls = 1).assertPureSymbolic()
+            fixture().copy(maxModelCalls = 1, modelCalls = 1).assertPureSymbolic()
         }
         assertFails("provider calls") {
             fixture().copy(providerCalls = 1).assertPureSymbolic()
+        }
+    }
+
+    @Test
+    fun modelUsageCannotExceedDeclaredBudget() {
+        assertFails("exceed declared max model calls") {
+            fixture().copy(maxModelCalls = 1, modelCalls = 2).validate()
         }
     }
 
@@ -55,6 +68,8 @@ class SymbolicConversationEdgeSnapshotTest {
         expertEvidenceRefs = listOf("expert:dotfiles:invoke:42", "evidence:sha256:abc"),
         verifiedOutcomeRefs = listOf("outcome:postcondition:42"),
         rendererProvenance = "symbolic-nlg/v1",
+        providersEnabled = false,
+        maxModelCalls = 0,
         modelCalls = 0,
         providerCalls = 0,
     )
