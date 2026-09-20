@@ -325,17 +325,6 @@ class ExpertRegistry(_impl.ExpertRegistry):
             ):
                 self._handlers[handle.expert_id] = handler
 
-        if raw_outcome.get("stale"):
-            self._discard_invalid_success(
-                result,
-                handle,
-                expert_operation,
-                idempotency_key,
-            )
-            raise ExpertStaleGenerationError(
-                "expert completion crossed a registry/runtime generation change"
-            )
-
         is_success = result.verdict is ExpertVerdict.SUCCEEDED
         if result.replayed:
             usage: Any = result.usage
@@ -414,6 +403,17 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 )
             delegation_parent.remaining_model_calls -= charge_model_calls
             delegation_parent.delegated_model_calls += charge_model_calls
+
+        if raw_outcome.get("stale"):
+            self._discard_invalid_success(
+                result,
+                handle,
+                expert_operation,
+                idempotency_key,
+            )
+            raise ExpertStaleGenerationError(
+                "expert completion crossed a registry/runtime generation change"
+            )
 
         return result
 
