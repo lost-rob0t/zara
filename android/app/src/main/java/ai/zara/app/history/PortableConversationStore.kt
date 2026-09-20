@@ -297,23 +297,97 @@ class PortableConversationStore(context: Context) : SQLiteOpenHelper(
         val conversation = requireNotNull(getConversation(conversationId)) {
             "Unknown conversation $conversationId"
         }
-        val messages = loadMessages(conversationId).map { message ->
-            if (message.status == HistoryMessageStatus.Pending || message.status == HistoryMessageStatus.Streaming) {
-                val recovered = message.copy(
-                    status = HistoryMessageStatus.Cancelled,
-                    error = message.error.ifEmpty { ConversationHistoryContract.interruptedError },
-                    updatedAt = nowIso(),
-                )
-                saveMessage(recovered)
-                recovered
-            } else {
-                message
+        val storedMessages = loadMessages(conversationId)
+        val recoveredAt = nowIso()
+        val db = writableDatabase
+        db.beginTransaction()
+        val messages = try {
+            val recovered = storedMessages.map { message ->
+                if (message.status == HistoryMessageStatus.Pending || message.status == HistoryMessageStatus.Streaming) {
+                    val terminal = message.copy(
+                        status = HistoryMessageStatus.Cancelled,
+                        error = message.error.ifEmpty { ConversationHistoryContract.interruptedError },
+                        updatedAt = recoveredAt,
+                    )
+                    val changed = db.update(
+                        "desktop_messages",
+                        ContentValues().apply {
+                            put("status", terminal.status.wireName)
+                            put("error", terminal.error)
+                            put("updated_at", recoveredAt)
+                        },
+                        "id = ? AND conversation_id = ? AND principal_id = ? AND status IN (?, ?)",
+                        arrayOf(
+                            terminal.id,
+                            terminal.conversationId,
+                            ConversationHistoryContract.localPrincipalId,
+                            HistoryMessageStatus.Pending.wireName,
+                            HistoryMessageStatus.Streaming.wireName,
+                        ),
+                    )
+                    check(changed == 1) { "Interrupted message recovery lost ownership or terminal fence" }
+                    interruptPendingProjection(db, terminal, recoveredAt)
+                    terminal
+                } else {
+                    message
+                }
             }
+            if (recovered != storedMessages) {
+                db.update(
+                    "desktop_conversations",
+                    ContentValues().apply { put("updated_at", recoveredAt) },
+                    "id = ? AND principal_id = ?",
+                    arrayOf(conversationId, ConversationHistoryContract.localPrincipalId),
+                )
+            }
+            db.setTransactionSuccessful()
+            recovered
+        } finally {
+            db.endTransaction()
         }
         return HistoryConversationState(
             conversation = getConversation(conversationId) ?: conversation,
             messages = messages,
         )
+    }
+
+    private fun interruptPendingProjection(
+        db: SQLiteDatabase,
+        message: HistoryMessage,
+        recoveredAt: String,
+    ) {
+        val turnId = message.turnId ?: return
+        val current = loadSymbolicProjection(message.conversationId) ?: return
+        if (current.turnId != turnId || current.outcome != "pending") return
+
+        val interrupted = current.copy(
+            projectionGeneration = current.projectionGeneration + 1,
+            outcome = "interrupted",
+            updatedAt = recoveredAt,
+        )
+        SymbolicProjectionContract.validateWrite(
+            current = current,
+            proposed = interrupted,
+            expectedGeneration = current.projectionGeneration,
+        )
+        val changed = db.update(
+            "desktop_symbolic_projections",
+            ContentValues().apply {
+                put("outcome", interrupted.outcome)
+                put("projection_generation", interrupted.projectionGeneration)
+                put("updated_at", recoveredAt)
+            },
+            "conversation_id = ? AND principal_id = ? AND turn_id = ? " +
+                "AND outcome = ? AND projection_generation = ?",
+            arrayOf(
+                interrupted.conversationId,
+                ConversationHistoryContract.localPrincipalId,
+                turnId,
+                "pending",
+                current.projectionGeneration.toString(),
+            ),
+        )
+        check(changed == 1) { "stale symbolic restart recovery rejected" }
     }
 
     private fun installSchema(db: SQLiteDatabase) {
