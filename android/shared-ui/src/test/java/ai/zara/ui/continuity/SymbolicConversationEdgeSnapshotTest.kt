@@ -38,6 +38,16 @@ class SymbolicConversationEdgeSnapshotTest {
     }
 
     @Test
+    fun pureSymbolicSuccessActsRequireEvidenceReferences() {
+        assertFails("verified outcome evidence") {
+            fixture().copy(dialogueAct = "verified", verifiedOutcomeRefs = emptyList()).assertPureSymbolic()
+        }
+        assertFails("expert evidence") {
+            fixture().copy(dialogueAct = "expert_answer", expertEvidenceRefs = emptyList()).assertPureSymbolic()
+        }
+    }
+
+    @Test
     fun principalScopeIsRequired() {
         assertFails("principalId must not be blank") { fixture().copy(principalId = "").validate() }
     }
