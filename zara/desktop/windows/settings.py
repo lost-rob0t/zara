@@ -1,11 +1,10 @@
 """Native Zara settings and Prolog source workspace.
 
-THESIS: Configuration is one inspectable route; the surface refuses nested preference cards.
-OWN-WORLD: Signal Cabin rails, open forms, semantic theme swatches, and a real code field.
-STORY: Choose a look, tune Zara, edit source, add validated facts, save with clear restart truth.
-FIRST VIEWPORT: Category rail left, one generous task surface center, save state anchored below.
-FORM: The established Signal Cabin operating surface; seed 35e80c4d.
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+Desktop Settings projects Android's frozen settings hierarchy and compact
+semantic-card vocabulary onto the existing SettingsDocument/ZaraConfig owner.
+It does not create a second settings model, pairing flow, runtime, or provider
+state. Android remains the visual/navigation authority; desktop-specific
+widgets are only projections of the same product language.
 """
 
 from __future__ import annotations
@@ -57,13 +56,58 @@ from zara.desktop.theme import THEME_REGISTRY
 
 
 _CATEGORIES = (
+    "Runtime",
+    "Connection",
+    "Permissions",
     "Appearance",
-    "Assistant",
-    "Voice & Speech",
-    "Tools & Privacy",
-    "Prolog",
-    "Advanced",
+    "Plugins",
+    "Updates",
+    "Diagnostics",
+    "About",
 )
+
+_CATEGORY_SEARCH_TERMS = {
+    "Runtime": "assistant model provider voice speech wake stt tts history agent",
+    "Connection": "remote server endpoint pair pairing trust connection api",
+    "Permissions": "tools privacy memory calculator prolog files telemetry",
+    "Appearance": "theme color outrun starintel midnight terminal light system",
+    "Plugins": "plugin lifecycle workers queue extensions",
+    "Updates": "update version release package channel",
+    "Diagnostics": "diagnostics prolog logic source facts knowledge config debug",
+    "About": "about advanced database config toml paths source",
+}
+
+_SETTING_META = {
+    "desktop.theme": ("Choose the semantic palette used by every Zara desktop surface.", "live"),
+    "llm.provider": ("Default direct-provider backend when that execution target is selected.", "restart"),
+    "llm.model": ("Model identifier used by the selected direct provider.", "restart"),
+    "llm.endpoint": ("Optional provider/API endpoint. Zara node pairing stays on the canonical connection flow.", "restart"),
+    "llm.history_limit": ("Maximum conversation messages retained in provider context.", "restart"),
+    "agent.max_steps": ("Maximum bounded tool/agent steps for one turn.", "restart"),
+    "agent.system_prompt": ("System instructions for provider-backed agent execution.", "restart"),
+    "wake.threshold": ("Wake detector confidence threshold.", "restart"),
+    "wake.silence_duration": ("Trailing silence needed to finish a wake utterance.", "restart"),
+    "wake.acknowledgement.enabled": ("Play an immediate acknowledgement after wake detection.", "restart"),
+    "wake.acknowledgement.voice": ("Voice used for the wake acknowledgement.", "restart"),
+    "stt.provider": ("Speech-recognition backend.", "restart"),
+    "stt.model": ("Speech-recognition model.", "restart"),
+    "stt.device": ("Device used by local speech recognition.", "restart"),
+    "tts.provider": ("Voice output provider.", "restart"),
+    "tools.calculator": ("Allow the bounded calculator tool.", "restart"),
+    "tools.get_current_time": ("Allow Zara to read the current time.", "restart"),
+    "tools.query_prolog": ("Allow read-only symbolic Prolog queries.", "restart"),
+    "tools.remember": ("Allow writes through Zara's canonical memory boundary.", "restart"),
+    "tools.recall": ("Allow reads from Zara's canonical memory boundary.", "restart"),
+    "tools.file_tools": ("Allow file tools through their normal capability/approval boundary.", "restart"),
+    "memory.enabled": ("Enable Zara's long-term memory subsystem.", "restart"),
+    "latency.enabled": ("Record bounded latency metrics.", "restart"),
+    "database.path": ("Canonical Zara database path.", "restart"),
+    "prolog.main_file": ("Primary Prolog entry source.", "restart"),
+    "prolog.load_on_startup": ("Load the configured Prolog source at startup.", "restart"),
+    "plugins.lifecycle_timeout": ("Timeout for plugin lifecycle transitions.", "restart"),
+    "plugins.event_queue_size": ("Bounded plugin event queue size.", "restart"),
+    "plugins.max_managed_workers": ("Maximum managed plugin workers.", "restart"),
+}
 
 _FACT_LABELS = {
     "app_mapping": "App mapping",
@@ -273,29 +317,44 @@ class SettingsWindow(QWidget):
         self.setting_widgets: dict[str, QWidget] = {}
         self.theme_buttons: list[ThemePreviewButton] = []
 
+        self.settings_title = QLabel("Settings")
+        self.settings_title.setObjectName("zaraSettingsTitle")
+        self.settings_subtitle = QLabel("Desktop · same Zara settings language as Android")
+        self.settings_subtitle.setObjectName("zaraSettingsSubtitle")
+        self.settings_subtitle.setWordWrap(True)
+        self.settings_search = QLineEdit()
+        self.settings_search.setObjectName("zaraSettingsSearch")
+        self.settings_search.setPlaceholderText("Search settings")
+        self.settings_search.setClearButtonEnabled(True)
+
         self.category_list = QListWidget()
         self.category_list.setObjectName("zaraSettingsCategories")
         for category in _CATEGORIES:
             self.category_list.addItem(category)
-        self.category_list.setFixedWidth(190)
+        self.category_list.setFixedWidth(220)
 
         rail = QWidget()
         rail.setObjectName("zaraSettingsRail")
         rail_layout = QVBoxLayout(rail)
-        rail_layout.setContentsMargins(14, 18, 14, 18)
-        brand = QLabel("ZARA")
-        brand.setObjectName("zaraBrandName")
-        rail_layout.addWidget(brand)
-        rail_layout.addSpacing(18)
+        rail_layout.setContentsMargins(16, 20, 16, 18)
+        rail_layout.setSpacing(10)
+        rail_layout.addWidget(self.settings_title)
+        rail_layout.addWidget(self.settings_subtitle)
+        rail_layout.addSpacing(6)
+        rail_layout.addWidget(self.settings_search)
+        rail_layout.addSpacing(4)
         rail_layout.addWidget(self.category_list, 1)
 
         self.stack = QStackedWidget()
+        self.stack.setObjectName("zaraSettingsStack")
+        self.stack.addWidget(self._runtime_page())
+        self.stack.addWidget(self._connection_page())
+        self.stack.addWidget(self._permissions_page())
         self.stack.addWidget(self._appearance_page())
-        self.stack.addWidget(self._assistant_page())
-        self.stack.addWidget(self._voice_page())
-        self.stack.addWidget(self._tools_page())
-        self.stack.addWidget(self._prolog_page())
-        self.stack.addWidget(self._advanced_page())
+        self.stack.addWidget(self._plugins_page())
+        self.stack.addWidget(self._updates_page())
+        self.stack.addWidget(self._diagnostics_page())
+        self.stack.addWidget(self._about_page())
 
         self.feedback_label = QLabel("Changes to runtime settings apply after restart.")
         self.feedback_label.setObjectName("zaraSettingsHint")
@@ -325,6 +384,7 @@ class SettingsWindow(QWidget):
         layout.addWidget(content, 1)
 
         self.category_list.currentRowChanged.connect(self.stack.setCurrentIndex)
+        self.settings_search.textChanged.connect(self._filter_categories)
         self.category_list.setCurrentRow(0)
         self.save_button.clicked.connect(self.save_settings)
         self.restart_button.clicked.connect(self.restart_requested.emit)
@@ -332,27 +392,85 @@ class SettingsWindow(QWidget):
     def _page(self, title: str, description: str) -> tuple[QWidget, QFormLayout]:
         body = QWidget()
         body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(28, 24, 34, 30)
-        body_layout.setSpacing(10)
+        body_layout.setContentsMargins(30, 24, 34, 30)
+        body_layout.setSpacing(9)
+
+        breadcrumb = QLabel(f"SETTINGS / {title.upper()}")
+        breadcrumb.setObjectName("zaraSettingsBreadcrumb")
         title_label = QLabel(title)
         title_label.setObjectName("zaraSectionTitle")
         description_label = QLabel(description)
         description_label.setObjectName("zaraSectionDescription")
         description_label.setWordWrap(True)
+        body_layout.addWidget(breadcrumb)
         body_layout.addWidget(title_label)
         body_layout.addWidget(description_label)
-        body_layout.addSpacing(12)
+        body_layout.addSpacing(8)
+
+        card = QFrame()
+        card.setObjectName("zaraSettingsSectionCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(18, 16, 18, 18)
         form = QFormLayout()
-        form.setHorizontalSpacing(24)
-        form.setVerticalSpacing(13)
+        form.setHorizontalSpacing(28)
+        form.setVerticalSpacing(14)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        body_layout.addLayout(form)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        card_layout.addLayout(form)
+        body_layout.addWidget(card)
         body_layout.addStretch(1)
+
         scroll = QScrollArea()
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidgetResizable(True)
         scroll.setWidget(body)
         return scroll, form
+
+    def _filter_categories(self, text: str) -> None:
+        query = str(text).strip().lower()
+        first_visible = -1
+        current_visible = False
+        for index, category in enumerate(_CATEGORIES):
+            item = self.category_list.item(index)
+            haystack = f"{category} {_CATEGORY_SEARCH_TERMS.get(category, '')}".lower()
+            visible = not query or query in haystack
+            item.setHidden(not visible)
+            if visible and first_visible < 0:
+                first_visible = index
+            if visible and self.category_list.currentRow() == index:
+                current_visible = True
+        if not current_visible and first_visible >= 0:
+            self.category_list.setCurrentRow(first_visible)
+
+    def _setting_label(self, key: str, label: str) -> QWidget:
+        description, apply_mode = _SETTING_META.get(
+            key,
+            ("Stored in Zara's canonical config.toml.", "restart"),
+        )
+        shell = QWidget()
+        shell.setObjectName("zaraSettingLabel")
+        layout = QVBoxLayout(shell)
+        layout.setContentsMargins(0, 1, 0, 1)
+        layout.setSpacing(3)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        title = QLabel(label)
+        title.setObjectName("zaraSettingName")
+        badge = QLabel("LIVE" if apply_mode == "live" else "RESTART")
+        badge.setObjectName("zaraSettingBadge")
+        badge.setProperty("applyMode", apply_mode)
+        header.addWidget(title)
+        header.addSpacing(8)
+        header.addWidget(badge)
+        header.addStretch(1)
+
+        detail = QLabel(description)
+        detail.setObjectName("zaraSettingDescription")
+        detail.setWordWrap(True)
+        layout.addLayout(header)
+        layout.addWidget(detail)
+        return shell
 
     def _value(self, dotted_key: str, default: Any) -> Any:
         parts = dotted_key.split(".")
@@ -364,8 +482,14 @@ class SettingsWindow(QWidget):
         return current
 
     def _register(self, form: QFormLayout, key: str, label: str, widget: QWidget) -> QWidget:
+        description, apply_mode = _SETTING_META.get(
+            key,
+            ("Stored in Zara's canonical config.toml.", "restart"),
+        )
+        widget.setProperty("zaraApplyMode", apply_mode)
+        widget.setToolTip(description)
         self.setting_widgets[key] = widget
-        form.addRow(label, widget)
+        form.addRow(self._setting_label(key, label), widget)
         return widget
 
     def _line_setting(self, form: QFormLayout, key: str, label: str, default: str = "") -> QLineEdit:
@@ -452,32 +576,72 @@ class SettingsWindow(QWidget):
         theme.currentIndexChanged.connect(lambda _index: self._preview_theme(str(theme.currentData())))
         return page
 
-    def _assistant_page(self) -> QWidget:
-        page, form = self._page("Assistant", "Provider, model, conversation depth, and agent behavior.")
-        self._combo_setting(form, "llm.provider", "Provider", [("Ollama", "ollama"), ("OpenAI", "openai"), ("Anthropic", "anthropic"), ("OpenRouter", "openrouter")], "ollama")
+    def _runtime_page(self) -> QWidget:
+        page, form = self._page(
+            "Runtime",
+            "Choose the assistant, speech, and bounded agent runtime. Opening this page never starts a provider, microphone, or remote session.",
+        )
+        self._combo_setting(
+            form,
+            "llm.provider",
+            "Provider",
+            [("Ollama", "ollama"), ("OpenAI", "openai"), ("Anthropic", "anthropic"), ("OpenRouter", "openrouter")],
+            "ollama",
+        )
         self._line_setting(form, "llm.model", "Model")
-        self._line_setting(form, "llm.endpoint", "Endpoint")
         self._spin_setting(form, "llm.history_limit", "History messages", 20, 1, 500)
         self._spin_setting(form, "agent.max_steps", "Maximum tool steps", 10, 1, 100)
         prompt = QPlainTextEdit(str(self._value("agent.system_prompt", "")))
         prompt.setMaximumHeight(130)
         self._register(form, "agent.system_prompt", "System prompt", prompt)
-        return page
-
-    def _voice_page(self) -> QWidget:
-        page, form = self._page("Voice & Speech", "Wake sensitivity, speech recognition, and voice output.")
         self._double_setting(form, "wake.threshold", "Wake threshold", 0.5, 0.0, 1.0, 0.05)
         self._double_setting(form, "wake.silence_duration", "Silence duration", 1.5, 0.1, 30.0, 0.1)
-        self._combo_setting(form, "stt.provider", "Speech recognition", [("Faster Whisper", "faster-whisper"), ("whisper.cpp", "whisper-cpp"), ("Whisper", "whisper")], "faster-whisper")
+        self._combo_setting(
+            form,
+            "stt.provider",
+            "Speech recognition",
+            [("Faster Whisper", "faster-whisper"), ("whisper.cpp", "whisper-cpp"), ("Whisper", "whisper")],
+            "faster-whisper",
+        )
         self._line_setting(form, "stt.model", "Speech model", "small")
-        self._combo_setting(form, "stt.device", "Speech device", [("CPU", "cpu"), ("CUDA", "cuda"), ("Vulkan", "vulkan")], "cpu")
-        self._combo_setting(form, "tts.provider", "Voice provider", [("Local", "local"), ("ElevenLabs", "11labs"), ("Edge", "edge"), ("Qwen3", "qwen3")], "qwen3")
+        self._combo_setting(
+            form,
+            "stt.device",
+            "Speech device",
+            [("CPU", "cpu"), ("CUDA", "cuda"), ("Vulkan", "vulkan")],
+            "cpu",
+        )
+        self._combo_setting(
+            form,
+            "tts.provider",
+            "Voice provider",
+            [("Local", "local"), ("ElevenLabs", "11labs"), ("Edge", "edge"), ("Qwen3", "qwen3")],
+            "qwen3",
+        )
         self._check_setting(form, "wake.acknowledgement.enabled", "Immediate acknowledgement", True)
         self._line_setting(form, "wake.acknowledgement.voice", "Acknowledgement voice", "en-US-AriaNeural")
         return page
 
-    def _tools_page(self) -> QWidget:
-        page, form = self._page("Tools & Privacy", "Control local tools, memory, file access, and anonymous latency metrics.")
+    def _connection_page(self) -> QWidget:
+        page, form = self._page(
+            "Connection",
+            "Remote/provider origins live here. Zara node pairing and server trust stay on the canonical Pair Zara flow owned by the connection runtime.",
+        )
+        self._line_setting(form, "llm.endpoint", "Provider/API endpoint")
+        note = QLabel(
+            "Pair Zara is intentionally not reimplemented in Settings. "
+            "Desktop consumes the canonical pairing/session owner when that slice lands."
+        )
+        note.setObjectName("zaraSettingsNotice")
+        note.setWordWrap(True)
+        form.addRow("Zara node pairing", note)
+        return page
+
+    def _permissions_page(self) -> QWidget:
+        page, form = self._page(
+            "Permissions",
+            "Control tools, memory, file access, and bounded telemetry without granting authority merely by opening this tab.",
+        )
         for key, label, default in (
             ("tools.calculator", "Calculator", True),
             ("tools.get_current_time", "Current time", True),
@@ -491,13 +655,13 @@ class SettingsWindow(QWidget):
             self._check_setting(form, key, label, default)
         return page
 
-    def _prolog_page(self) -> QWidget:
+    def _diagnostics_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(28, 24, 30, 28)
-        title = QLabel("Prolog")
+        title = QLabel("Diagnostics")
         title.setObjectName("zaraSectionTitle")
-        description = QLabel("Edit approved source with syntax highlighting, or add validated facts to the actual user config without writing Prolog.")
+        description = QLabel("Inspect and edit approved symbolic sources using the existing Prolog workspace. No second runtime or settings store is created.")
         description.setObjectName("zaraSectionDescription")
         description.setWordWrap(True)
         layout.addWidget(title)
@@ -564,18 +728,43 @@ class SettingsWindow(QWidget):
         self._refresh_facts()
         return page
 
-    def _advanced_page(self) -> QWidget:
-        page, form = self._page("Advanced", "Storage, runtime bounds, and the canonical config.toml source.")
+    def _plugins_page(self) -> QWidget:
+        page, form = self._page(
+            "Plugins",
+            "Lifecycle bounds for Zara's existing plugin runtime. Discovery, capabilities, and install authority remain owned by the canonical plugin system.",
+        )
+        self._double_setting(form, "plugins.lifecycle_timeout", "Lifecycle timeout", 5.0, 0.1, 120.0, 0.5)
+        self._spin_setting(form, "plugins.event_queue_size", "Event queue", 256, 1, 4096)
+        self._spin_setting(form, "plugins.max_managed_workers", "Managed workers", 8, 1, 128)
+        return page
+
+    def _updates_page(self) -> QWidget:
+        page, form = self._page(
+            "Updates",
+            "Desktop update policy follows the installed Zara package/release channel; this page does not create another updater.",
+        )
+        note = QLabel(
+            "Use the canonical package/update path for the current installation. "
+            "The Android APK updater remains Android-owned."
+        )
+        note.setObjectName("zaraSettingsNotice")
+        note.setWordWrap(True)
+        form.addRow("Update authority", note)
+        return page
+
+    def _about_page(self) -> QWidget:
+        page, form = self._page(
+            "About",
+            "Power-user paths and the canonical config source. Raw edits still validate and atomically replace the same config.toml used by simple controls.",
+        )
         self._line_setting(form, "database.path", "Database path", "~/.local/share/zarathushtra/zara.db")
         self._line_setting(form, "prolog.main_file", "Prolog main file", "main.pl")
         self._check_setting(form, "prolog.load_on_startup", "Load Prolog on startup", True)
-        self._double_setting(form, "plugins.lifecycle_timeout", "Plugin lifecycle timeout", 5.0, 0.1, 120.0, 0.5)
-        self._spin_setting(form, "plugins.event_queue_size", "Plugin event queue", 256, 1, 4096)
         self.config_editor = QPlainTextEdit(self.config.config_file.read_text(encoding="utf-8"))
         self.config_editor.setObjectName("zaraConfigEditor")
         self.config_editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.config_editor.setMinimumHeight(260)
-        form.addRow("config.toml", self.config_editor)
+        form.addRow(self._setting_label("config.toml", "config.toml"), self.config_editor)
         self.save_config_button = QPushButton("Validate and save file")
         self.save_config_button.clicked.connect(self.save_config_source)
         form.addRow("", self.save_config_button)
