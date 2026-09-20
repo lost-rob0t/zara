@@ -55,6 +55,12 @@ abstract class GeneratePortableSemanticAssets : DefaultTask() {
         val sources = sourceFiles.files.associateBy { it.name }
         val intentFrames = checkNotNull(sources["intent_frames.pl"]) { "intent_frames.pl input is required" }
         val normalizer = checkNotNull(sources["normalizer.pl"]) { "normalizer.pl input is required" }
+        val symbolicDialogue = checkNotNull(sources["symbolic_dialogue.pl"]) {
+            "symbolic_dialogue.pl input is required"
+        }
+        val symbolicDialogueTurn = checkNotNull(sources["symbolic_dialogue_turn.pl"]) {
+            "symbolic_dialogue_turn.pl input is required"
+        }
         val intents = checkNotNull(sources["intents.pl"]) { "intents.pl input is required" }
         val changelog = checkNotNull(sources["CHANGELOG.md"]) { "CHANGELOG.md input is required" }
         val output = outputDirectory.get().asFile
@@ -65,6 +71,12 @@ abstract class GeneratePortableSemanticAssets : DefaultTask() {
                 into("prolog/shared/modules")
             }
             from(normalizer) {
+                into("prolog/shared/modules")
+            }
+            from(symbolicDialogue) {
+                into("prolog/shared/modules")
+            }
+            from(symbolicDialogueTurn) {
                 into("prolog/shared/modules")
             }
             from(intents) {
@@ -206,6 +218,8 @@ androidComponents {
             sourceFiles.from(
                 layout.projectDirectory.file("../../modules/intent_frames.pl"),
                 layout.projectDirectory.file("../../modules/normalizer.pl"),
+                layout.projectDirectory.file("../../modules/symbolic_dialogue.pl"),
+                layout.projectDirectory.file("../../modules/symbolic_dialogue_turn.pl"),
                 layout.projectDirectory.file("../../kb/intents.pl"),
                 layout.projectDirectory.file("../../CHANGELOG.md")
             )
