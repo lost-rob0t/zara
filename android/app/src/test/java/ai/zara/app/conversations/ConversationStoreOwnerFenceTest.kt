@@ -37,6 +37,21 @@ class ConversationStoreOwnerFenceTest {
     }
 
     @Test
+    fun `non recovery reopen does not revoke the active owner`() {
+        val root = Files.createTempDirectory("zara-conversation-owner-observer").toFile()
+        val file = File(root, "conversations.bin")
+        val active = ConversationStore(file, idFactory = { "chat-a" }, clock = { 100L })
+        val conversation = active.create()
+        active.rename(conversation.id, "before observer")
+
+        val observer = ConversationStore(file)
+        assertEquals("before observer", observer.state().selectedConversation!!.title)
+
+        val state = active.rename(conversation.id, "after observer")
+        assertEquals("after observer", state.selectedConversation!!.title)
+    }
+
+    @Test
     fun `current store owner can still complete its own running turn`() {
         val root = Files.createTempDirectory("zara-conversation-owner-current").toFile()
         val store = ConversationStore(
