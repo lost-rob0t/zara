@@ -216,8 +216,10 @@ while assistant output remains generation-fenced."
     (unless (string= conversation expected)
       (error "native-client event conversation_id mismatch"))
     (zara-conversation--validate-id turn-id "turn id")
-    (when (and existing (not (string= existing turn-id)))
-      (error "native-client emitted conflicting turn ids"))
+    (when existing
+      (if (string= existing turn-id)
+          (error "duplicate turn.accepted")
+        (error "native-client emitted conflicting turn ids")))
     (process-put process 'zara-turn-id turn-id)
     (when (process-get process 'zara-cancel-requested)
       (zara-conversation--start-cancel process turn-id))))
@@ -354,6 +356,8 @@ must emit `turn.accepted' then matching `assistant.complete' NDJSON."
 (defun zara-conversation-chat-send (prompt)
   "Send PROMPT from `zara-chat-mode' using canonical conversation control."
   (interactive (list (read-string "Zara › ")))
+  (when zara-chat--busy
+    (user-error "Zara is already handling a request"))
   (zara-chat--insert "You" prompt)
   (let ((target (current-buffer)))
     (zara-conversation-request
