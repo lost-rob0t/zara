@@ -8,7 +8,7 @@ Tracking epic: [#648](https://github.com/lost-rob0t/zara/issues/648)
 
 This document and the reference image are the Android UI authority. The current plain Material `ZaraApp.kt` is an implementation baseline, **not** the target design.
 
-Navigation revision, 2026-09-17: [#934](https://github.com/lost-rob0t/zara/issues/934) supersedes the reference's flat eleven-destination drawer with three left menus and tab bars. The visual language, real-feature requirement, shared runtime boundaries, and screenshot/CI gates remain unchanged. See [`../wiki/android-navigation.org`](../wiki/android-navigation.org) for the route map and verification matrix.
+Navigation revision, 2026-09-17: [#934](https://github.com/lost-rob0t/zara/issues/934) supersedes the reference's flat eleven-destination drawer with three left menus and tab bars. Operator revision, 2026-09-19: Workspace gains a first-class **Code** tab before Logic, backed by the reusable `:code-workbench` module shared with the standalone Zara Code APK. The visual language, real-feature requirement, shared runtime boundaries, and screenshot/CI gates remain unchanged. See [`../wiki/android-navigation.org`](../wiki/android-navigation.org) for the route map and verification matrix.
 
 ## Product shape
 
@@ -110,7 +110,7 @@ Each primary menu has a horizontally scrollable, labeled tab bar:
 
 ```text
 Chat:      Chat | Voice
-Workspace: Logic | Projects | Scheduled
+Workspace: Code | Logic | Projects | Scheduled
 Settings:  Runtime | Connection | Permissions | Appearance | Plugins | Updates | Diagnostics | About
 ```
 
@@ -172,9 +172,13 @@ Required affordance slots:
 
 Keep it compact. Do not turn it into a thick multi-row slab unless content expansion requires it.
 
+## Code
+
+Code is Workspace's first tab and embeds the same reusable `CodeWorkbenchSurface` used by the standalone Zara Code APK. It owns presentation and scoped SAF project access while `:editor-core` remains the revision/edit authority. Prolog execution remains owned by the canonical local runtime and Logic tools; Code must not instantiate a second symbolic runtime.
+
 ## Logic
 
-Logic is a first-class product surface, directly available as the Workspace menu's first tab. It exposes the symbolic runtime instead of hiding Prolog as an implementation detail.
+Logic is a first-class product surface, directly available beside Code in the Workspace menu. It exposes the symbolic runtime instead of hiding Prolog as an implementation detail.
 
 Minimum views:
 
