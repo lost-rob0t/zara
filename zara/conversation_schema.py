@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from importlib.resources import files
 
-CONVERSATION_SCHEMA_VERSION = 2
+CONVERSATION_SCHEMA_VERSION = 3
 PORTABLE_LOCAL_PRINCIPAL_ID = "local:owner"
 LEGACY_LOCAL_PRINCIPAL_ID = "__zara_legacy_local_owner__"
 _SCHEMA_RESOURCE = "conversation_schema.sql"
@@ -20,7 +20,7 @@ def conversation_schema_sql() -> str:
 
 
 def conversation_schema_statements() -> tuple[str, ...]:
-    """Return the idempotent v2 DDL statements in execution order."""
+    """Return the idempotent v3 DDL statements in execution order."""
 
     without_comments = "\n".join(
         line for line in conversation_schema_sql().splitlines()
