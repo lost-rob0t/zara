@@ -211,6 +211,9 @@ default_duration_minutes = 30
 [memory]
 # Long-term memory settings
 enabled = true
+# "builtin" uses MemoryManager/Chroma; "plugin:<name>" requires that exact
+# service plugin to publish the canonical memory.provider symbol.
+provider = "builtin"
 persist_directory = "~/.local/share/zarathushtra/chroma"
 collection_name = "zara_memory"
 embedding_backend = "onnx"
