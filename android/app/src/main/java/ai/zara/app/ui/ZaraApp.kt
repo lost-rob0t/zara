@@ -712,16 +712,23 @@ private fun ConversationDrawerRow(
                 DropdownMenu(
                     expanded = menuExpanded,
                     onDismissRequest = { menuExpanded = false },
+                    containerColor = tokens.surfaceElevated,
+                    border = BorderStroke(1.dp, tokens.border),
                 ) {
                     DropdownMenuItem(
-                        text = { Text(if (conversation.pinned) "Unpin" else "Pin") },
+                        text = {
+                            Text(
+                                if (conversation.pinned) "Unpin" else "Pin",
+                                color = tokens.text,
+                            )
+                        },
                         onClick = {
                             menuExpanded = false
                             onTogglePinned(conversation.id, !conversation.pinned)
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("Rename") },
+                        text = { Text("Rename", color = tokens.text) },
                         onClick = {
                             menuExpanded = false
                             renameDraft = conversation.title
@@ -729,7 +736,7 @@ private fun ConversationDrawerRow(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("Move to project") },
+                        text = { Text("Move to project", color = tokens.text) },
                         onClick = {
                             menuExpanded = false
                             moveOpen = true
