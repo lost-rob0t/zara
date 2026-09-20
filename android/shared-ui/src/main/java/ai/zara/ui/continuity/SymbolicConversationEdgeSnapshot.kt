@@ -132,18 +132,33 @@ object SymbolicConversationEdgeCodec {
         val bytes = ByteArrayOutputStream()
         DataOutputStream(bytes).use { output ->
             output.writeString(MAGIC, MAGIC.length)
-            output.writeString(snapshot.principalId, SymbolicConversationEdgeSnapshot.MAX_ID_CHARS)
-            output.writeString(snapshot.conversationId, SymbolicConversationEdgeSnapshot.MAX_ID_CHARS)
+            output.writeString(
+                snapshot.principalId,
+                SymbolicConversationEdgeSnapshot.MAX_ID_CHARS,
+            )
+            output.writeString(
+                snapshot.conversationId,
+                SymbolicConversationEdgeSnapshot.MAX_ID_CHARS,
+            )
             output.writeLong(snapshot.projectionGeneration)
             output.writeLong(snapshot.runtimeGeneration)
-            output.writeNullableString(snapshot.projectId, SymbolicConversationEdgeSnapshot.MAX_ID_CHARS)
+            output.writeNullableString(
+                snapshot.projectId,
+                SymbolicConversationEdgeSnapshot.MAX_ID_CHARS,
+            )
             output.writeLong(snapshot.projectGeneration)
-            output.writeString(snapshot.dialogueAct, SymbolicConversationEdgeSnapshot.MAX_ACT_CHARS)
+            output.writeString(
+                snapshot.dialogueAct,
+                SymbolicConversationEdgeSnapshot.MAX_ACT_CHARS,
+            )
             output.writeRefs(snapshot.discourseEntityRefs)
             output.writeRefs(snapshot.unresolvedQuestionRefs)
             output.writeRefs(snapshot.expertEvidenceRefs)
             output.writeRefs(snapshot.verifiedOutcomeRefs)
-            output.writeString(snapshot.rendererProvenance, SymbolicConversationEdgeSnapshot.MAX_RENDERER_CHARS)
+            output.writeString(
+                snapshot.rendererProvenance,
+                SymbolicConversationEdgeSnapshot.MAX_RENDERER_CHARS,
+            )
             output.writeBoolean(snapshot.providersEnabled)
             output.writeLong(snapshot.maxModelCalls)
             output.writeLong(snapshot.modelCalls)
@@ -194,7 +209,9 @@ object SymbolicConversationEdgeCodec {
 
     private fun DataOutputStream.writeRefs(values: List<String>) {
         writeInt(values.size)
-        values.forEach { value -> writeString(value, SymbolicConversationEdgeSnapshot.MAX_REF_CHARS) }
+        values.forEach { value ->
+            writeString(value, SymbolicConversationEdgeSnapshot.MAX_REF_CHARS)
+        }
     }
 
     private fun DataInputStream.readRefs(): List<String> {
@@ -202,7 +219,9 @@ object SymbolicConversationEdgeCodec {
         require(count in 0..SymbolicConversationEdgeSnapshot.MAX_REFS) {
             "symbolic edge reference count is invalid"
         }
-        return List(count) { readString(SymbolicConversationEdgeSnapshot.MAX_REF_CHARS) }
+        return List(count) {
+            readString(SymbolicConversationEdgeSnapshot.MAX_REF_CHARS)
+        }
     }
 
     private fun DataOutputStream.writeNullableString(value: String?, maxChars: Int) {
