@@ -13,6 +13,7 @@ def _projection(
     runtime_generation: int = 7,
     project_id: str | None = "project-a",
     project_generation: int = 1,
+    provider_calls: int = 0,
     model_calls: int = 0,
 ) -> SymbolicConversationProjection:
     return SymbolicConversationProjection(
@@ -27,11 +28,12 @@ def _projection(
         expert_evidence=[{"expert": "DotfilesExpert", "evidence_id": "ev-1"}],
         verified_facts=[{"fact_id": "fact-1", "value": "flake.nix"}],
         renderer_provenance="symbolic-nlg/v1",
+        provider_calls=provider_calls,
         model_calls=model_calls,
     )
 
 
-def test_symbolic_projection_survives_restart_with_zero_model_calls(tmp_path):
+def test_symbolic_projection_survives_restart_with_zero_provider_and_model_calls(tmp_path):
     path = tmp_path / "symbolic.db"
     db = DatabaseManager(path)
     store = ConversationStore(db)
@@ -42,6 +44,8 @@ def test_symbolic_projection_survives_restart_with_zero_model_calls(tmp_path):
         expected_generation=0,
     )
     stored.assert_pure_symbolic()
+    assert stored.provider_calls == 0
+    assert stored.model_calls == 0
     assert stored.projection_generation == 1
     assert stored.unresolved_questions[0]["slot"] == "target"
     assert stored.expert_evidence[0]["evidence_id"] == "ev-1"
@@ -53,6 +57,8 @@ def test_symbolic_projection_survives_restart_with_zero_model_calls(tmp_path):
 
     assert recovered is not None
     recovered.assert_pure_symbolic()
+    assert recovered.provider_calls == 0
+    assert recovered.model_calls == 0
     assert recovered.runtime_generation == 7
     assert recovered.project_id == "project-a"
     assert recovered.project_generation == 1
@@ -80,27 +86,69 @@ def test_symbolic_projection_rejects_stale_runtime_and_usage_rewind(tmp_path):
     store = ConversationStore(DatabaseManager(tmp_path / "fences.db"))
     conversation = store.create_conversation("Fenced", conversation_id="conv-fenced")
     first = store.save_symbolic_projection(
-        _projection(conversation.id, runtime_generation=9, model_calls=2),
+        _projection(
+            conversation.id,
+            runtime_generation=9,
+            provider_calls=2,
+            model_calls=2,
+        ),
         expected_generation=0,
     )
 
     with pytest.raises(RuntimeError, match="stale symbolic projection write"):
         store.save_symbolic_projection(
-            _projection(conversation.id, generation=2, runtime_generation=10, model_calls=2),
+            _projection(
+                conversation.id,
+                generation=2,
+                runtime_generation=10,
+                provider_calls=2,
+                model_calls=2,
+            ),
             expected_generation=0,
         )
 
     with pytest.raises(RuntimeError, match="runtime_generation regression"):
         store.save_symbolic_projection(
-            _projection(conversation.id, generation=2, runtime_generation=8, model_calls=2),
+            _projection(
+                conversation.id,
+                generation=2,
+                runtime_generation=8,
+                provider_calls=2,
+                model_calls=2,
+            ),
+            expected_generation=first.projection_generation,
+        )
+
+    with pytest.raises(RuntimeError, match="provider-call ledger rewind"):
+        store.save_symbolic_projection(
+            _projection(
+                conversation.id,
+                generation=2,
+                runtime_generation=9,
+                provider_calls=1,
+                model_calls=2,
+            ),
             expected_generation=first.projection_generation,
         )
 
     with pytest.raises(RuntimeError, match="model-call ledger rewind"):
         store.save_symbolic_projection(
-            _projection(conversation.id, generation=2, runtime_generation=9, model_calls=1),
+            _projection(
+                conversation.id,
+                generation=2,
+                runtime_generation=9,
+                provider_calls=2,
+                model_calls=1,
+            ),
             expected_generation=first.projection_generation,
         )
+
+
+def test_pure_symbolic_assertion_rejects_provider_or_model_use():
+    with pytest.raises(AssertionError, match="provider_calls=1"):
+        _projection("provider-used", provider_calls=1).assert_pure_symbolic()
+    with pytest.raises(AssertionError, match="model_calls=1"):
+        _projection("model-used", model_calls=1).assert_pure_symbolic()
 
 
 def test_project_switch_requires_new_generation(tmp_path):
