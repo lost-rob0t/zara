@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zara.local/contracts/symbolic-dialogue-v1/response-act.schema.json",
+  "title": "ZARA-SYMBOLIC-DIALOGUE/1 response act",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "act",
+    "payload",
+    "renderer",
+    "providers_enabled",
+    "max_model_calls",
+    "usage"
+  ],
+  "properties": {
+    "protocol": {
+      "const": "ZARA-SYMBOLIC-DIALOGUE/1"
+    },
+    "act": {
+      "enum": [
+        "greeting",
+        "cancelled",
+        "clarify",
+        "choose",
+        "invalid",
+        "dispatch_required",
+        "verified",
+        "denied",
+        "unavailable",
+        "error",
+        "expert_answer",
+        "unsupported"
+      ]
+    },
+    "payload": {
+      "type": "object"
+    },
+    "renderer": {
+      "const": "symbolic-dcg/v1"
+    },
+    "providers_enabled": {
+      "const": false
+    },
+    "max_model_calls": {
+      "type": "integer",
+      "const": 0
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider_calls", "model_calls"],
+      "properties": {
+        "provider_calls": {
+          "type": "integer",
+          "const": 0
+        },
+        "model_calls": {
+          "type": "integer",
+          "const": 0
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "act": {"const": "greeting"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "maxProperties": 0
+        }
+      }
+    },
+    {
+      "properties": {
+        "act": {"const": "cancelled"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "maxProperties": 0
+        }
+      }
+    },
+    {
+      "properties": {
+        "act": {"const": "clarify"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "maxProperties": 1,
+          "properties": {
+            "slot": {"type": "string", "minLength": 1, "maxLength": 256},
+            "reason": {"type": "string", "minLength": 1, "maxLength": 256}
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "act": {"const": "choose"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["choices"],
+          "properties": {
+            "choices": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {"type": "string", "minLength": 1, "maxLength": 256}
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "act": {"const": "invalid"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["slot", "reason"],
+          "properties": {
+            "slot": {"type": "string", "minLength": 1, "maxLength": 256},
+            "reason": {"type": "string", "minLength": 1, "maxLength": 256}
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "act": {"const": "dispatch_required"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["frame_ref"],
+          "properties": {
+            "frame_ref": {"type": "string", "minLength": 1, "maxLength": 256}
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "act": {"const": "verified"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["outcome", "evidence_ref"],
+          "properties": {
+            "outcome": {"type": "string", "minLength": 1, "maxLength": 1024},
+            "evidence_ref": {"type": "string", "minLength": 1, "maxLength": 1024}
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "act": {"const": "denied"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reason"],
+          "properties": {
+            "reason": {"type": "string", "minLength": 1, "maxLength": 256}
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "act": {"const": "unavailable"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reason"],
+          "properties": {
+            "reason": {"type": "string", "minLength": 1, "maxLength": 256}
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "act": {"const": "error"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reason"],
+          "properties": {
+            "reason": {"type": "string", "minLength": 1, "maxLength": 256}
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "act": {"const": "expert_answer"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["summary", "evidence_ref"],
+          "properties": {
+            "summary": {"type": "string", "minLength": 1, "maxLength": 1024},
+            "evidence_ref": {"type": "string", "minLength": 1, "maxLength": 256}
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "act": {"const": "unsupported"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "maxProperties": 0
+        }
+      }
+    }
+  ]
+}
