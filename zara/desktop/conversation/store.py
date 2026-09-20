@@ -29,7 +29,13 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="microseconds")
 
 
-class ConversationStore:
+# Import after _now_iso exists: the projection module intentionally reaches
+# back to this timestamp helper at write time, while the canonical store owns
+# the public persistence API regardless of import path.
+from .symbolic_projection import SymbolicProjectionMixin  # noqa: E402
+
+
+class ConversationStore(SymbolicProjectionMixin):
     """Durable conversation repository bound to exactly one principal.
 
     Local-owner history uses a platform-neutral storage principal so the same
@@ -259,25 +265,9 @@ class ConversationStore:
             for row in rows
         ]
 
-    def next_sequence(self, conversation_id: str) -> int:
-        if self.get_conversation(conversation_id) is None:
-            raise KeyError(conversation_id)
-        row = self._db.fetch_one(
-            """
-            SELECT COALESCE(MAX(sequence), 0) AS max_sequence
-            FROM desktop_messages
-            WHERE conversation_id = ? AND principal_id = ?
-            """,
-            (conversation_id, self._storage_principal_id),
-        )
-        return int(row["max_sequence"] if row is not None else 0) + 1
-
     def save_message(self, message: MessageRecord) -> None:
-        if self.get_conversation(message.conversation_id) is None:
-            raise KeyError(message.conversation_id)
         message.updated_at = _now_iso()
-        owner = self._storage_principal_id
-        cursor = self._db.execute(
+        self._db.execute(
             """
             INSERT INTO desktop_messages (
                 id, conversation_id, sequence, turn_id, role, content, status,
@@ -285,14 +275,13 @@ class ConversationStore:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 turn_id = excluded.turn_id,
-                role = excluded.role,
                 content = excluded.content,
                 status = excluded.status,
                 error = excluded.error,
                 tool_run_id = excluded.tool_run_id,
                 updated_at = excluded.updated_at
-            WHERE desktop_messages.principal_id = excluded.principal_id
-              AND desktop_messages.conversation_id = excluded.conversation_id
+            WHERE desktop_messages.conversation_id = excluded.conversation_id
+              AND desktop_messages.principal_id = excluded.principal_id
             """,
             (
                 message.id,
@@ -306,23 +295,24 @@ class ConversationStore:
                 message.tool_run_id,
                 message.created_at,
                 message.updated_at,
-                owner,
+                self._storage_principal_id,
             ),
         )
-        if cursor.rowcount != 1:
-            raise KeyError(message.id)
-        self._db.execute(
+
+    def next_sequence(self, conversation_id: str) -> int:
+        self._require_owned_conversation(conversation_id)
+        row = self._db.fetch_one(
             """
-            UPDATE desktop_conversations
-            SET updated_at = ?
-            WHERE id = ? AND principal_id = ?
+            SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
+            FROM desktop_messages
+            WHERE conversation_id = ? AND principal_id = ?
             """,
-            (message.updated_at, message.conversation_id, owner),
+            (conversation_id, self._storage_principal_id),
         )
+        return int(row["next_sequence"] if row else 1)
 
     def load_messages(self, conversation_id: str) -> list[MessageRecord]:
-        if self.get_conversation(conversation_id) is None:
-            return []
+        self._require_owned_conversation(conversation_id)
         rows = self._db.fetch_all(
             """
             SELECT * FROM desktop_messages
@@ -331,48 +321,103 @@ class ConversationStore:
             """,
             (conversation_id, self._storage_principal_id),
         )
-        return [
-            MessageRecord(
-                id=row["id"],
-                conversation_id=row["conversation_id"],
-                sequence=int(row["sequence"]),
-                turn_id=row["turn_id"],
-                role=MessageRole(row["role"]),
-                content=row["content"],
-                status=MessageStatus(row["status"]),
-                error=row["error"],
-                tool_run_id=row["tool_run_id"],
-                created_at=row["created_at"],
-                updated_at=row["updated_at"],
-            )
-            for row in rows
-        ]
+        return [self._row_to_message(row) for row in rows]
 
     def load_state(self, conversation_id: str) -> ConversationState:
-        """Load durable history and recover work that cannot still be live.
-
-        Runtime turn ownership is process-local to ``RuntimeHost``. If Zara is
-        constructing a fresh ``ConversationState`` from SQLite, a previously
-        persisted pending/streaming row cannot represent a live turn in this
-        service instance. Mark it interrupted instead of restoring a phantom
-        ``active_turn_id`` that would leave Send disabled forever after a crash
-        or restart.
-        """
         conversation = self.get_conversation(conversation_id)
         if conversation is None:
             raise KeyError(conversation_id)
         messages = self.load_messages(conversation_id)
-        for message in messages:
-            if message.status in {MessageStatus.PENDING, MessageStatus.STREAMING}:
-                message.status = MessageStatus.CANCELLED
-                if not message.error:
-                    message.error = _INTERRUPTED_ERROR
-                self.save_message(message)
+        active_turn_id = next(
+            (
+                message.turn_id
+                for message in reversed(messages)
+                if message.turn_id and message.status in {MessageStatus.PENDING, MessageStatus.STREAMING}
+            ),
+            None,
+        )
         return ConversationState(
             conversation=conversation,
             messages=messages,
-            active_turn_id=None,
+            active_turn_id=active_turn_id,
         )
 
+    def reconcile_interrupted_messages(self) -> list[str]:
+        """Mark stale in-flight messages as interrupted after a process restart."""
+        rows = self._db.fetch_all(
+            """
+            SELECT id, conversation_id FROM desktop_messages
+            WHERE principal_id = ? AND status IN (?, ?)
+            ORDER BY conversation_id, sequence
+            """,
+            (
+                self._storage_principal_id,
+                MessageStatus.PENDING.value,
+                MessageStatus.STREAMING.value,
+            ),
+        )
+        if not rows:
+            return []
 
-__all__ = ["ConversationStore"]
+        affected_conversations = {row["conversation_id"] for row in rows}
+        now = _now_iso()
+        placeholders = ",".join("?" for _ in affected_conversations)
+        with self._db.transaction() as conn:
+            self._db.execute(
+                """
+                UPDATE desktop_messages
+                SET status = ?, error = ?, updated_at = ?
+                WHERE principal_id = ? AND status IN (?, ?)
+                """,
+                (
+                    MessageStatus.ERROR.value,
+                    _INTERRUPTED_ERROR,
+                    now,
+                    self._storage_principal_id,
+                    MessageStatus.PENDING.value,
+                    MessageStatus.STREAMING.value,
+                ),
+            )
+            self._db.execute(
+                f"""
+                UPDATE desktop_conversations
+                SET updated_at = ?
+                WHERE principal_id = ? AND id IN ({placeholders})
+                """,
+                (now, self._storage_principal_id, *affected_conversations),
+            )
+        return sorted(affected_conversations)
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        cursor = self._db.execute(
+            "DELETE FROM desktop_conversations WHERE id = ? AND principal_id = ?",
+            (conversation_id, self._storage_principal_id),
+        )
+        if cursor.rowcount != 1:
+            raise KeyError(conversation_id)
+
+    def clear(self) -> None:
+        self._db.execute(
+            "DELETE FROM desktop_conversations WHERE principal_id = ?",
+            (self._storage_principal_id,),
+        )
+
+    def _require_owned_conversation(self, conversation_id: str) -> None:
+        if self.get_conversation(conversation_id) is None:
+            raise KeyError(conversation_id)
+
+    @staticmethod
+    def _row_to_message(row) -> MessageRecord:
+        return MessageRecord(
+            id=row["id"],
+            conversation_id=row["conversation_id"],
+            sequence=row["sequence"],
+            turn_id=row["turn_id"],
+            role=MessageRole(row["role"]),
+            content=row["content"],
+            status=MessageStatus(row["status"]),
+            error=row["error"],
+            tool_run_id=row["tool_run_id"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
