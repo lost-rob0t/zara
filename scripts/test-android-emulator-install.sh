@@ -26,16 +26,19 @@ adb -s "$serial" install -r "$phone_apk"
 test -f "$trealla_library_root/arm64-v8a/libtrealla.a"
 test -f "$trealla_library_root/x86_64/libtrealla.a"
 
-# Exercise the real Android SQLiteOpenHelper migrations and persisted-type fences
-# on the same emulator used for acceptance. The v2 fixture proves history plus a
-# new zero-call projection survives migration/reopen. The v3 fixture proves
-# fail-closed policy defaults can be replaced only by authoritative false/0
-# policy and that REAL/TEXT counter corruption stays rejected after recreation.
+# Exercise the real Android SQLiteOpenHelper migrations, persisted-type fences,
+# and restart cancellation fencing on the same emulator used for acceptance.
+# The v2 fixture proves history plus a new zero-call projection survives
+# migration/reopen. The v3 fixture proves fail-closed policy defaults can be
+# replaced only by authoritative false/0 policy and that REAL/TEXT counter
+# corruption stays rejected after recreation. The restart fixture proves a
+# recovered streaming turn terminalizes both canonical history and its matching
+# symbolic projection before any late completion/effect callback can land.
 ANDROID_SERIAL="$serial" ZARA_SOURCE_SHA="$source_sha" \
   ZARA_TREALLA_LIBRARY_ROOT="$trealla_library_root" \
   nix develop ./android -c bash -lc \
   'cd android && gradle :app:connectedDebugAndroidTest --no-daemon \
-    -Pandroid.testInstrumentationRunnerArguments.class=ai.zara.app.history.PortableConversationMigrationInstrumentedTest,ai.zara.app.history.PortableConversationV3MigrationInstrumentedTest'
+    -Pandroid.testInstrumentationRunnerArguments.class=ai.zara.app.history.PortableConversationMigrationInstrumentedTest,ai.zara.app.history.PortableConversationV3MigrationInstrumentedTest,ai.zara.app.history.PortableConversationRestartFenceInstrumentedTest'
 
 python android/integration/device_acceptance.py \
   --serial "$serial" \
