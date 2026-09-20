@@ -6,6 +6,8 @@
 ]).
 
 :- use_module('../shared/modules/intent_frames', []).
+:- use_module('../shared/modules/symbolic_dialogue', []).
+:- use_module('../shared/modules/symbolic_dialogue_turn', []).
 
 semantic_contract_version('ZARA-SEMANTIC/1').
 

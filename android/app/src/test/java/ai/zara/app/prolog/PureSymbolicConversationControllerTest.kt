@@ -29,7 +29,7 @@ class PureSymbolicConversationControllerTest {
             resolve = { text ->
                 resolves += text
                 CompletableFuture.completedFuture(
-                    LocalQueryResult("resolve_frames", listOf("response_act(help)"), 4),
+                    LocalQueryResult("symbolic_dialogue_turn", listOf("Hello from symbols."), 4),
                 )
             },
             turnIds = listOf("turn-natural").iterator(),
@@ -44,8 +44,8 @@ class PureSymbolicConversationControllerTest {
         assertEquals(0, result.maxProviderCalls)
         assertEquals(0, result.providerCalls)
         assertEquals(0, result.modelCalls)
-        assertEquals("symbolic-term/v1", result.renderer)
-        assertEquals("response_act(help)", result.turn.text)
+        assertEquals("symbolic-dcg/v1", result.renderer)
+        assertEquals("Hello from symbols.", result.turn.text)
         assertTrue(result.turn.success)
     }
 
@@ -116,7 +116,7 @@ class PureSymbolicConversationControllerTest {
         assertTrue(turnIds.hasNext())
         assertFalse(
             resolver.complete(
-                LocalQueryResult("resolve_frames", listOf("late(response)"), 11),
+                LocalQueryResult("symbolic_dialogue_turn", listOf("late(response)"), 11),
             ),
         )
         assertTrue(result.isCancelled)
@@ -158,6 +158,7 @@ class PureSymbolicConversationControllerTest {
 
         assertEquals(listOf("?- true."), queries)
         assertEquals(PureSymbolicRoute.EXPLICIT_QUERY, result.route)
+        assertEquals("symbolic-term/v1", result.renderer)
         assertEquals("Result = ok", result.turn.text)
         assertEquals(0, result.modelCalls)
     }
