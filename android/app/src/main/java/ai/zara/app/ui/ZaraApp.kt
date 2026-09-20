@@ -4,6 +4,9 @@ import ai.zara.app.BuildConfig
 import ai.zara.app.conversations.ConversationRecord
 import ai.zara.app.conversations.ConversationState
 import ai.zara.app.conversations.ConversationStatus
+import ai.zara.app.model.CloudModelConfig
+import ai.zara.app.model.CloudModelProvider
+import ai.zara.app.model.CloudModelState
 import ai.zara.app.projects.ProjectContext
 import ai.zara.app.projects.ProjectContextState
 import ai.zara.app.runtime.AssistantRole
@@ -89,6 +92,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -152,6 +156,8 @@ fun ZaraApp(
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
     projectState: ProjectContextState,
+    modelServerState: CloudModelState,
+    discoveredModelServerModels: List<String>,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
@@ -179,6 +185,9 @@ fun ZaraApp(
     onDeletePrologSource: (String) -> Unit,
     onImportPrologWorkspace: (String) -> Unit,
     onExportPrologWorkspace: () -> String,
+    onSaveModelServer: (CloudModelConfig, String) -> Unit,
+    onClearModelServerApiKey: () -> Unit,
+    onDiscoverModelServerModels: () -> Unit,
     onCheckForUpdate: () -> Unit,
     onSelectUpdate: (String) -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -364,6 +373,8 @@ fun ZaraApp(
                                                 updateState = updateState,
                                                 runtimeMode = runtimeMode,
                                                 localEmbedding = localEmbedding,
+                                                modelServerState = modelServerState,
+                                                discoveredModelServerModels = discoveredModelServerModels,
                                                 enrollmentPublicKey = enrollmentPublicKey,
                                                 pinnedServerPublicKey = pinnedServerPublicKey,
                                                 operationError = operationError,
@@ -378,6 +389,9 @@ fun ZaraApp(
                                                 onInstallUpdate = onInstallUpdate,
                                                 onSelectRuntimeMode = onSelectRuntimeMode,
                                                 onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
+                                                onSaveModelServer = onSaveModelServer,
+                                                onClearModelServerApiKey = onClearModelServerApiKey,
+                                                onDiscoverModelServerModels = onDiscoverModelServerModels,
                                                 padding = padding,
                                             )
                                             AppSurface.About -> AboutSurface(sourceSha, padding)
@@ -404,7 +418,7 @@ internal fun AppRoute.surface(): AppSurface = when (this) {
     AppRoute.Plugins -> AppSurface.Plugins
     AppRoute.Diagnostics -> AppSurface.Diagnostics
     AppRoute.About -> AppSurface.About
-    AppRoute.Runtime, AppRoute.Permissions, AppRoute.Updates -> AppSurface.Settings
+    AppRoute.Runtime, AppRoute.ModelApis, AppRoute.Permissions, AppRoute.Updates -> AppSurface.Settings
 }
 
 @Composable
@@ -1144,6 +1158,8 @@ private fun SettingsSurface(
     updateState: UpdateState,
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
+    modelServerState: CloudModelState,
+    discoveredModelServerModels: List<String>,
     enrollmentPublicKey: String?,
     pinnedServerPublicKey: String?,
     operationError: String?,
@@ -1158,12 +1174,28 @@ private fun SettingsSurface(
     onInstallUpdate: () -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
+    onSaveModelServer: (CloudModelConfig, String) -> Unit,
+    onClearModelServerApiKey: () -> Unit,
+    onDiscoverModelServerModels: () -> Unit,
     padding: PaddingValues,
 ) {
     var serverPin by rememberSaveable { mutableStateOf("") }
     var replacementServerPin by rememberSaveable { mutableStateOf("") }
     var showServerPinReplacement by rememberSaveable { mutableStateOf(false) }
     var showAssistantHelp by rememberSaveable { mutableStateOf(false) }
+    var modelProvider by rememberSaveable(modelServerState.generation) {
+        mutableStateOf(modelServerState.config.provider)
+    }
+    var modelEndpoint by rememberSaveable(modelServerState.generation) {
+        mutableStateOf(modelServerState.config.endpoint)
+    }
+    var modelName by rememberSaveable(modelServerState.generation) {
+        mutableStateOf(modelServerState.config.model)
+    }
+    var modelEnabled by rememberSaveable(modelServerState.generation) {
+        mutableStateOf(modelServerState.config.enabled)
+    }
+    var modelApiKey by rememberSaveable(modelServerState.generation) { mutableStateOf("") }
     val tokens = LocalZaraTokens.current
 
     ScreenBody(padding) {
@@ -1218,6 +1250,160 @@ private fun SettingsSurface(
                     KeyValueRow("model", localEmbedding.modelVersion)
                     KeyValueRow("dimensions", localEmbedding.dimensions.toString())
                     MutedNotice("Runs fully on-device. Disabling it returns no vectors and prevents local semantic indexing.")
+                }
+            }
+            AppRoute.ModelApis -> {
+                SectionCard("MODEL SERVER") {
+                    KeyValueRow("state", modelServerState.phase.name.lowercase())
+                    KeyValueRow("generation", modelServerState.generation.toString())
+                    KeyValueRow("credential", if (modelServerState.apiKeyConfigured) "configured" else "not configured")
+                    KeyValueRow(
+                        "last failure",
+                        modelServerState.lastFailure?.name?.lowercase() ?: "none",
+                    )
+                    modelServerState.message?.let { MutedNotice(it) }
+
+                    Text(
+                        "PROVIDER",
+                        color = tokens.accentCyan,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    CloudModelProvider.entries.forEach { provider ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = modelProvider == provider,
+                                    onClick = {
+                                        modelProvider = provider
+                                        modelEndpoint = when (provider) {
+                                            CloudModelProvider.OPENROUTER -> CloudModelConfig.OPENROUTER_ENDPOINT
+                                            CloudModelProvider.OLLAMA -> CloudModelConfig.OLLAMA_ENDPOINT
+                                            CloudModelProvider.LLAMA_CPP -> CloudModelConfig.LLAMA_CPP_ENDPOINT
+                                            CloudModelProvider.ZAI_CODING_PLAN -> CloudModelConfig.ZAI_CODING_ENDPOINT
+                                            CloudModelProvider.OPENAI_COMPATIBLE -> CloudModelConfig.DEFAULT_STARINTEL_ENDPOINT
+                                        }
+                                    },
+                                )
+                                .padding(vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            StatusDot(if (modelProvider == provider) tokens.success else tokens.border)
+                            Text(
+                                provider.wireName,
+                                modifier = Modifier.padding(start = 10.dp),
+                                color = if (modelProvider == provider) tokens.text else tokens.textMuted,
+                            )
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = modelEndpoint,
+                        onValueChange = { modelEndpoint = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Model API endpoint") },
+                        enabled = !operationBusy,
+                        singleLine = true,
+                        colors = fieldColors(),
+                    )
+                    OutlinedTextField(
+                        value = modelName,
+                        onValueChange = { modelName = it.take(CloudModelConfig.MAX_MODEL_CHARS) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Model") },
+                        enabled = !operationBusy,
+                        singleLine = true,
+                        colors = fieldColors(),
+                    )
+                    if (modelProvider.requiresApiKey) {
+                        OutlinedTextField(
+                            value = modelApiKey,
+                            onValueChange = { modelApiKey = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = {
+                                Text(
+                                    if (modelServerState.apiKeyConfigured) {
+                                        "API key (blank keeps current)"
+                                    } else {
+                                        "API key"
+                                    }
+                                )
+                            },
+                            enabled = !operationBusy,
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            colors = fieldColors(),
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = modelEnabled,
+                                onClick = { modelEnabled = !modelEnabled },
+                            )
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        StatusDot(if (modelEnabled) tokens.success else tokens.border)
+                        Text(
+                            if (modelEnabled) "Enabled for Auto fallback" else "Disabled",
+                            modifier = Modifier.padding(start = 10.dp),
+                            color = tokens.text,
+                        )
+                    }
+
+                    PrimaryAction(
+                        "Save model API",
+                        !operationBusy && modelEndpoint.isNotBlank() && (!modelEnabled || modelName.isNotBlank()),
+                    ) {
+                        onSaveModelServer(
+                            modelServerState.config.copy(
+                                enabled = modelEnabled,
+                                provider = modelProvider,
+                                endpoint = modelEndpoint,
+                                model = modelName,
+                            ),
+                            modelApiKey,
+                        )
+                        modelApiKey = ""
+                    }
+                    SecondaryAction(
+                        "Discover models",
+                        !operationBusy && modelEndpoint.isNotBlank(),
+                        onDiscoverModelServerModels,
+                    )
+                    if (modelServerState.apiKeyConfigured) {
+                        SecondaryAction(
+                            "Clear API key",
+                            !operationBusy,
+                            onClearModelServerApiKey,
+                        )
+                    }
+
+                    discoveredModelServerModels.forEach { discovered ->
+                        TextButton(
+                            onClick = { modelName = discovered },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                discovered,
+                                modifier = Modifier.fillMaxWidth(),
+                                color = tokens.text,
+                                textAlign = TextAlign.Start,
+                            )
+                        }
+                    }
+
+                    MutedNotice(
+                        "Auto may fall back to this model API only after the authenticated Zara server is unavailable, symbolic resolution has no answer, and the embedded local model cannot complete the turn. Local mode and pure-symbolic mode never send prompts here."
+                    )
+                    if (modelProvider == CloudModelProvider.OPENROUTER) {
+                        MutedNotice(
+                            "OpenRouter routing is restricted to explicit fp16/bf16/fp8 quantizations by default; unknown quantization is rejected."
+                        )
+                    }
                 }
             }
             AppRoute.Permissions -> {
