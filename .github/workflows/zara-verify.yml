@@ -1,0 +1,29 @@
+name: Zara Verifier Contract
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: zara-verifier-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verifier-contract:
+    name: zara verifier contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Confirm exact candidate
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: cachix/install-nix-action@v31
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run runner, canonical expert registry, Prolog and OpenCode contracts
+        run: nix develop -c bash scripts/test-zara-verify.sh
