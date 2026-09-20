@@ -76,5 +76,6 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
     implementation(libs.compose.ui.tooling.preview)
+    testImplementation(project(":editor-core"))
     testImplementation(libs.junit)
 }
