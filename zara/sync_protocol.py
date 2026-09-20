@@ -60,6 +60,13 @@ def _counter(value: int, *, field: str) -> int:
     return value
 
 
+def _version_counter(value: int) -> int:
+    value = _counter(value, field="version counter")
+    if value == 0:
+        raise SyncProtocolError("version counter must be positive")
+    return value
+
+
 @dataclass(frozen=True)
 class VersionVector:
     entries: tuple[tuple[str, int], ...]
@@ -74,7 +81,7 @@ class VersionVector:
             if not isinstance(entry, tuple) or len(entry) != 2:
                 raise SyncProtocolError("version vector entry is malformed")
             node_id = _bounded_identifier(entry[0], field="node_id")
-            _counter(entry[1], field="version counter")
+            _version_counter(entry[1])
             if previous is not None and node_id <= previous:
                 raise SyncProtocolError("version vector entries must be unique and sorted")
             previous = node_id
@@ -90,7 +97,7 @@ class VersionVector:
             normalized.append(
                 (
                     _bounded_identifier(node_id, field="node_id"),
-                    _counter(counter, field="version counter"),
+                    _version_counter(counter),
                 )
             )
         normalized.sort(key=lambda item: item[0])
