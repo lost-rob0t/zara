@@ -19,6 +19,11 @@ import ai.zara.app.localai.LocalAiServiceClient
 import ai.zara.app.localai.LocalAiState
 import ai.zara.app.localai.LocalGenerationRequest
 import ai.zara.app.localai.LocalTtsState
+import ai.zara.app.model.AndroidCloudModelStorage
+import ai.zara.app.model.CloudModelConfig
+import ai.zara.app.model.CloudModelCoordinator
+import ai.zara.app.model.CloudModelPurpose
+import ai.zara.app.model.CloudModelState
 import ai.zara.app.runtime.AndroidTextSessionController
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.AudioOutputFormat
@@ -91,6 +96,9 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     )
     private val localServer: LocalZaraServer
     private val localAi = LocalAiServiceClient(context)
+    private val modelServer: CloudModelCoordinator = AndroidCloudModelStorage.coordinator(
+        File(context.noBackupFilesDir, "zara/model-server"),
+    )
     @Volatile private var latestVoiceStreamState: VoiceStreamState? = null
     @Volatile private var latestVoiceStreamFailure: String? = null
     @Volatile private var latestAudioRoute: AudioRouteSnapshot? = null
@@ -260,6 +268,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 "local_ai_phase" to (aiState?.phase?.name?.lowercase() ?: "unknown"),
             ),
         )
+        val modelServerState = modelServer.state()
         return diagnostics.export(
             mapOf(
                 "version" to BuildConfig.VERSION_NAME,
@@ -274,6 +283,13 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 "local_ai_generation" to (aiState?.generation ?: -1),
                 "local_ai_model" to (aiState?.model?.let { "${it.id}@${it.version}" } ?: "none"),
                 "local_ai_quantization" to (aiState?.model?.quantization?.wireName ?: "none"),
+                "model_server_phase" to modelServerState.phase.name.lowercase(),
+                "model_server_generation" to modelServerState.generation,
+                "model_server_provider" to modelServerState.config.provider.wireName,
+                "model_server_endpoint" to modelServerState.config.endpoint,
+                "model_server_model" to modelServerState.config.model.ifBlank { "none" },
+                "model_server_api_key_configured" to modelServerState.apiKeyConfigured,
+                "model_server_failure" to (modelServerState.lastFailure?.name?.lowercase() ?: "none"),
                 "enrollment" to state().enrollment.toString(),
                 "connection" to state().server::class.java.simpleName,
             )
@@ -282,6 +298,28 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun clearDiagnostics() {
         diagnostics.clear()
+    }
+
+    fun modelServerState(): CloudModelState = modelServer.state()
+
+    fun setModelServerObserver(observer: ((CloudModelState) -> Unit)?) {
+        modelServer.setObserver(observer)
+    }
+
+    fun configureModelServer(config: CloudModelConfig): CloudModelState =
+        modelServer.configure(config)
+
+    fun setModelServerApiKey(apiKey: String): CloudModelState =
+        modelServer.setApiKey(apiKey)
+
+    fun clearModelServerApiKey(): CloudModelState =
+        modelServer.clearApiKey()
+
+    fun discoverModelServerModels(): CompletableFuture<List<String>> =
+        modelServer.discoverModels()
+
+    fun cancelModelServerGeneration() {
+        modelServer.cancelActive()
     }
 
     fun localTtsState(): CompletableFuture<LocalTtsState> = localAi.ttsState()
@@ -666,28 +704,8 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         )
         return localAi.generate(
             LocalGenerationRequest(query, maxOutputTokens = 256),
-        ).handle { generated, error ->
-            if (error != null || generated == null) {
-                val failure = error ?: IllegalStateException("Local model returned no generation result")
-                diagnostics.record(
-                    "local_model.generate.failed",
-                    mapOf(
-                        "symbolic_failure" to (symbolicFailure != null),
-                        "local_server_phase" to localServer.state().phase.name.lowercase(),
-                    ),
-                    failure,
-                )
-                TextTurnResult(
-                    conversationId = conversationId,
-                    turnId = UUID.randomUUID().toString(),
-                    text = if (symbolicFailure != null) {
-                        "The local symbolic runtime failed and no verified local model completed this turn. Diagnostics captured the failure; open Diagnostics and tap Copy diagnostics."
-                    } else {
-                        "No deterministic local rule matched and no verified local model is ready. Open Diagnostics to inspect or share the local runtime log."
-                    },
-                    success = false,
-                )
-            } else {
+        ).handle { generated, error -> generated to error }.thenCompose { (generated, error) ->
+            if (error == null && generated != null) {
                 val answer = generated.text.trim()
                 diagnostics.record(
                     "local_model.generate.complete",
@@ -698,12 +716,101 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                         "output_length" to answer.length,
                     ),
                 )
-                TextTurnResult(
-                    conversationId = conversationId,
-                    turnId = UUID.randomUUID().toString(),
-                    text = answer.ifEmpty { "The local model returned no text." },
-                    success = answer.isNotEmpty(),
+                return@thenCompose CompletableFuture.completedFuture(
+                    TextTurnResult(
+                        conversationId = conversationId,
+                        turnId = UUID.randomUUID().toString(),
+                        text = answer.ifEmpty { "The local model returned no text." },
+                        success = answer.isNotEmpty(),
+                    ),
                 )
+            }
+
+            val localFailure =
+                error ?: IllegalStateException("Local model returned no generation result")
+            diagnostics.record(
+                "local_model.generate.failed",
+                mapOf(
+                    "symbolic_failure" to (symbolicFailure != null),
+                    "local_server_phase" to localServer.state().phase.name.lowercase(),
+                ),
+                localFailure,
+            )
+
+            val serverState = modelServer.state()
+            val cloudFallbackAllowed =
+                runtimeMode == RuntimeMode.Auto && serverState.config.enabled
+            if (!cloudFallbackAllowed) {
+                diagnostics.record(
+                    "model_server.fallback.blocked",
+                    mapOf(
+                        "runtime_mode" to runtimeMode.name.lowercase(),
+                        "enabled" to serverState.config.enabled,
+                        "provider" to serverState.config.provider.wireName,
+                    ),
+                )
+                return@thenCompose CompletableFuture.completedFuture(
+                    TextTurnResult(
+                        conversationId = conversationId,
+                        turnId = UUID.randomUUID().toString(),
+                        text = if (symbolicFailure != null) {
+                            "The local symbolic runtime failed and no verified local model completed this turn. Diagnostics captured the failure; open Diagnostics and tap Copy diagnostics."
+                        } else {
+                            "No deterministic local rule matched and no verified local model is ready. Open Diagnostics to inspect or share the local runtime log."
+                        },
+                        success = false,
+                    ),
+                )
+            }
+
+            diagnostics.record(
+                "model_server.generate.begin",
+                mapOf(
+                    "provider" to serverState.config.provider.wireName,
+                    "model" to serverState.config.model,
+                    "local_model_failed" to true,
+                    "symbolic_failure" to (symbolicFailure != null),
+                ),
+            )
+            modelServer.generate(
+                prompt = query,
+                purpose = CloudModelPurpose.GENERAL,
+            ).handle { remote, remoteError ->
+                if (remoteError != null || remote == null) {
+                    val failure =
+                        remoteError ?: IllegalStateException("Model server returned no generation result")
+                    diagnostics.record(
+                        "model_server.generate.failed",
+                        mapOf(
+                            "provider" to serverState.config.provider.wireName,
+                            "model" to serverState.config.model,
+                        ),
+                        failure,
+                    )
+                    TextTurnResult(
+                        conversationId = conversationId,
+                        turnId = UUID.randomUUID().toString(),
+                        text = "No symbolic rule, verified local model, or configured model server completed this turn. Open Diagnostics for the typed failure.",
+                        success = false,
+                    )
+                } else {
+                    val answer = remote.text.trim()
+                    diagnostics.record(
+                        "model_server.generate.complete",
+                        mapOf(
+                            "provider" to remote.identity.provider.wireName,
+                            "model" to remote.identity.model,
+                            "elapsed_ms" to remote.elapsedMs,
+                            "output_length" to answer.length,
+                        ),
+                    )
+                    TextTurnResult(
+                        conversationId = conversationId,
+                        turnId = UUID.randomUUID().toString(),
+                        text = answer.ifEmpty { "The model server returned no text." },
+                        success = answer.isNotEmpty(),
+                    )
+                }
             }
         }
     }
@@ -869,6 +976,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             }
         }
         localServer.close()
+        modelServer.close()
         localAi.close()
         if (routeFailure != null) throw routeFailure
     }
