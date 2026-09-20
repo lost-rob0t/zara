@@ -39,6 +39,15 @@ def _require_exact_boolean(name: str, value: object) -> bool:
     return value
 
 
+def _decode_sqlite_integer(name: str, value: object, *, minimum: int = 0) -> int:
+    """Require SQLite INTEGER storage instead of coercing REAL/TEXT numerics."""
+    if type(value) is not int:
+        raise ValueError(f"stored {name} must use SQLite integer storage")
+    if value < minimum:
+        raise ValueError(f"stored {name} must be >= {minimum}")
+    return value
+
+
 def _decode_sqlite_boolean(name: str, value: object) -> bool:
     if type(value) is not int or value not in (0, 1):
         raise ValueError(f"stored {name} must be SQLite integer 0 or 1")
@@ -200,12 +209,36 @@ class SymbolicProjectionMixin:
     so cancelled or stale runtime completions cannot overwrite newer context.
     """
 
+    def _ensure_symbolic_policy_columns(self) -> None:
+        """Upgrade the legacy v3 projection in-place with fail-closed policy facts."""
+        columns = {
+            row["name"]
+            for row in self.database.fetch_all("PRAGMA table_info(desktop_symbolic_projections)")
+        }
+        if not columns:
+            return
+        with self.database.transaction(immediate=True) as conn:
+            if "providers_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE desktop_symbolic_projections "
+                    "ADD COLUMN providers_enabled INTEGER NOT NULL DEFAULT 1 "
+                    "CHECK (typeof(providers_enabled) = 'integer' "
+                    "AND providers_enabled IN (0, 1))"
+                )
+            if "max_model_calls" not in columns:
+                conn.execute(
+                    "ALTER TABLE desktop_symbolic_projections "
+                    "ADD COLUMN max_model_calls INTEGER NOT NULL DEFAULT 1 "
+                    "CHECK (typeof(max_model_calls) = 'integer' AND max_model_calls >= 0)"
+                )
+
     def load_symbolic_projection(
         self,
         conversation_id: str,
     ) -> Optional[SymbolicConversationProjection]:
         if self.get_conversation(conversation_id) is None:
             return None
+        self._ensure_symbolic_policy_columns()
         row = self.database.fetch_one(
             """
             SELECT * FROM desktop_symbolic_projections
@@ -217,12 +250,18 @@ class SymbolicProjectionMixin:
             return None
         projection = SymbolicConversationProjection(
             conversation_id=row["conversation_id"],
-            projection_generation=int(row["projection_generation"]),
-            runtime_generation=int(row["runtime_generation"]),
+            projection_generation=_decode_sqlite_integer(
+                "projection_generation", row["projection_generation"], minimum=1
+            ),
+            runtime_generation=_decode_sqlite_integer(
+                "runtime_generation", row["runtime_generation"]
+            ),
             turn_id=row["turn_id"],
             outcome=row["outcome"],
             project_id=row["project_id"],
-            project_generation=int(row["project_generation"]),
+            project_generation=_decode_sqlite_integer(
+                "project_generation", row["project_generation"]
+            ),
             dialogue_act=row["dialogue_act"],
             dialogue_state=_decode_object(row["dialogue_state_json"]),
             discourse_entities=_decode_array(row["discourse_entities_json"]),
@@ -232,9 +271,9 @@ class SymbolicProjectionMixin:
             verified_outcome_refs=_decode_verified_outcome_refs(row["verified_outcome_refs"]),
             renderer_provenance=row["renderer_provenance"],
             providers_enabled=_decode_sqlite_boolean("providers_enabled", row["providers_enabled"]),
-            max_model_calls=int(row["max_model_calls"]),
-            provider_calls=int(row["provider_calls"]),
-            model_calls=int(row["model_calls"]),
+            max_model_calls=_decode_sqlite_integer("max_model_calls", row["max_model_calls"]),
+            provider_calls=_decode_sqlite_integer("provider_calls", row["provider_calls"]),
+            model_calls=_decode_sqlite_integer("model_calls", row["model_calls"]),
             updated_at=row["updated_at"],
         )
         projection.validate()
@@ -255,6 +294,7 @@ class SymbolicProjectionMixin:
         if self.get_conversation(projection.conversation_id) is None:
             raise KeyError(projection.conversation_id)
 
+        self._ensure_symbolic_policy_columns()
         owner = self.storage_principal_id
         with self.database.transaction(immediate=True) as conn:
             current = conn.execute(
@@ -275,8 +315,12 @@ class SymbolicProjectionMixin:
                         "stale symbolic projection write: projection does not exist"
                     )
             else:
-                current_generation = int(current["projection_generation"])
-                current_runtime_generation = int(current["runtime_generation"])
+                current_generation = _decode_sqlite_integer(
+                    "projection_generation", current["projection_generation"], minimum=1
+                )
+                current_runtime_generation = _decode_sqlite_integer(
+                    "runtime_generation", current["runtime_generation"]
+                )
                 current_turn_id = current["turn_id"]
                 current_outcome = current["outcome"]
                 if current_generation != expected_generation:
@@ -298,16 +342,27 @@ class SymbolicProjectionMixin:
                 current_providers_enabled = _decode_sqlite_boolean(
                     "providers_enabled", current["providers_enabled"]
                 )
+                current_max_model_calls = _decode_sqlite_integer(
+                    "max_model_calls", current["max_model_calls"]
+                )
+                current_provider_calls = _decode_sqlite_integer(
+                    "provider_calls", current["provider_calls"]
+                )
+                current_model_calls = _decode_sqlite_integer(
+                    "model_calls", current["model_calls"]
+                )
                 if not current_providers_enabled and projection.providers_enabled:
                     raise RuntimeError("provider policy widening rejected")
-                if projection.max_model_calls > int(current["max_model_calls"]):
+                if projection.max_model_calls > current_max_model_calls:
                     raise RuntimeError("model-call budget widening rejected")
-                if projection.provider_calls < int(current["provider_calls"]):
+                if projection.provider_calls < current_provider_calls:
                     raise RuntimeError("provider-call ledger rewind rejected")
-                if projection.model_calls < int(current["model_calls"]):
+                if projection.model_calls < current_model_calls:
                     raise RuntimeError("model-call ledger rewind rejected")
                 current_project_id = current["project_id"]
-                current_project_generation = int(current["project_generation"])
+                current_project_generation = _decode_sqlite_integer(
+                    "project_generation", current["project_generation"]
+                )
                 if projection.project_id == current_project_id:
                     if projection.project_generation < current_project_generation:
                         raise RuntimeError("project_generation regression rejected")
