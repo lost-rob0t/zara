@@ -1,34 +1,20 @@
 package ai.zara.app.history
 
-import android.content.Context
 import android.database.sqlite.SQLiteDatabase
-import androidx.test.core.app.ApplicationProvider
-import androidx.test.ext.junit.runners.AndroidJUnit4
-import org.junit.After
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertTrue
-import org.junit.Before
-import org.junit.Test
-import org.junit.runner.RunWith
+import android.test.AndroidTestCase
 
-@RunWith(AndroidJUnit4::class)
-class PortableConversationMigrationInstrumentedTest {
-    private lateinit var context: Context
-
-    @Before
-    fun setUp() {
-        context = ApplicationProvider.getApplicationContext()
+class PortableConversationMigrationInstrumentedTest : AndroidTestCase() {
+    override fun setUp() {
+        super.setUp()
         context.deleteDatabase(ConversationHistoryContract.databaseName)
     }
 
-    @After
-    fun tearDown() {
+    override fun tearDown() {
         context.deleteDatabase(ConversationHistoryContract.databaseName)
+        super.tearDown()
     }
 
-    @Test
-    fun version2HistoryUpgradesInPlaceAndSurvivesHelperRecreation() {
+    fun testVersion2HistoryUpgradesInPlaceAndSurvivesHelperRecreation() {
         seedVersion2Database()
 
         val first = PortableConversationStore(context)
@@ -65,9 +51,8 @@ class PortableConversationMigrationInstrumentedTest {
             assertEquals(3, reopened.readableDatabase.version)
             assertEquals("Legacy symbolic chat", reopened.getConversation(CONVERSATION_ID)?.title)
             assertEquals("remember this", reopened.loadMessages(CONVERSATION_ID).single().content)
-            val projection = reopened.loadSymbolicProjection(CONVERSATION_ID)
-            assertNotNull(projection)
-            projection!!.assertPureSymbolic()
+            val projection = checkNotNull(reopened.loadSymbolicProjection(CONVERSATION_ID))
+            projection.assertPureSymbolic()
             assertEquals("turn-v2", projection.turnId)
             assertEquals("success", projection.outcome)
             assertEquals(0L, projection.providerCalls)
