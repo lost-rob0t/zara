@@ -139,8 +139,6 @@ slang_map("won't", "will not").
 slang_map("don't", "do not").
 slang_map("i'm", "i am").
 slang_map("you're", "you are").
-slang_map("u ", "you ").
-slang_map(" u", " you").
 slang_map("pls", "please").
 slang_map("plz", "please").
 slang_map(" gonna ", " going to ").
@@ -213,13 +211,19 @@ normalize_string(Raw, Tokens) :-
     remove_punct(SlangFixed, Clean),
     split_string(Clean, " \t\n", " \t\n", Parts),
     strings_atoms(Parts, Tokens0),
-    exclude(==(''), Tokens0, Tokens).
+    maplist(normalize_token, Tokens0, Tokens1),
+    exclude(==(''), Tokens1, Tokens).
 
 strings_atoms([], []).
 strings_atoms([String|Strings], [Atom|Atoms]) :-
     string_codes(String, Codes),
     atom_codes(Atom, Codes),
     strings_atoms(Strings, Atoms).
+
+% Expand token aliases only after tokenization so a standalone `u` cannot
+% corrupt ordinary words such as `you` or project names beginning with `u`.
+normalize_token(u, you) :- !.
+normalize_token(Token, Token).
 
 % Remove soft fillers using KB
 strip_fillers(Toks, Core) :-
