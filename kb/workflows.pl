@@ -389,7 +389,15 @@ workflow_plan(Id, Actions) :-
 workflow_actions_for_executor(Id, Executor, Actions) :-
     workflow_surface(Executor),
     workflow_plan(Id, Plan),
-    include(action_for_executor(Executor), Plan, Actions).
+    filter_actions_for_executor(Plan, Executor, Actions).
+
+filter_actions_for_executor([], _, []).
+filter_actions_for_executor([Action|Rest], Executor, Actions) :-
+    ( action_for_executor(Executor, Action)
+    -> Actions = [Action|Kept],
+       filter_actions_for_executor(Rest, Executor, Kept)
+    ;  filter_actions_for_executor(Rest, Executor, Actions)
+    ).
 
 action_for_executor(Executor, action(Target, _, _, _)) :-
     ( Target == Executor
