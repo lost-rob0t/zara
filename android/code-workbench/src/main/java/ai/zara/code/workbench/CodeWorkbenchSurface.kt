@@ -73,6 +73,7 @@ fun CodeWorkbenchSurface(
     padding: PaddingValues = PaddingValues(0.dp),
     modifier: Modifier = Modifier,
     title: String = "Code",
+    platformVoiceEnabled: Boolean = false,
 ) {
     val context = LocalContext.current
     var treeUri by remember { mutableStateOf(CodeTreeRepository.remembered(context)) }
@@ -264,15 +265,19 @@ fun CodeWorkbenchSurface(
         }
     }
 
-    val speech = remember {
-        AndroidSpeechInput(
-            context = context.applicationContext,
-            onListening = { listening = it },
-            onTranscript = ::handleTranscript,
-            onError = { status = it },
-        )
+    val speech = remember(platformVoiceEnabled) {
+        if (!platformVoiceEnabled) {
+            null
+        } else {
+            AndroidSpeechInput(
+                context = context.applicationContext,
+                onListening = { listening = it },
+                onTranscript = ::handleTranscript,
+                onError = { status = it },
+            )
+        }
     }
-    DisposableEffect(speech) { onDispose { speech.close() } }
+    DisposableEffect(speech) { onDispose { speech?.close() } }
     DisposableEffect(prologClient) {
         onDispose {
             prologCall?.cancel()
@@ -281,12 +286,16 @@ fun CodeWorkbenchSurface(
     }
 
     fun startVoice() {
+        val activeSpeech = speech ?: run {
+            status = "Voice coding uses Zara's canonical provider; adapter not connected here"
+            return
+        }
         val snapshot = uiSnapshot() ?: run {
             status = "Open a file before voice coding"
             return
         }
         speechToken = speechFence.begin(snapshot.revision)
-        speech.start()
+        activeSpeech.start()
     }
 
     val microphonePermission = rememberLauncherForActivityResult(
@@ -368,6 +377,7 @@ fun CodeWorkbenchSurface(
                             matches = matches,
                             tokens = tokens,
                             listening = listening,
+                            voiceEnabled = platformVoiceEnabled,
                             modifier = Modifier.weight(1f).fillMaxHeight(),
                             onValue = { next ->
                                 editorValue = next
@@ -384,7 +394,7 @@ fun CodeWorkbenchSurface(
                             onCancelVoice = {
                                 speechFence.cancel()
                                 speechToken = null
-                                speech.cancel()
+                                speech?.cancel()
                                 status = "Voice cancelled"
                             },
                             footer = if (language == "prolog") {
@@ -429,6 +439,7 @@ fun CodeWorkbenchSurface(
                         matches = matches,
                         tokens = tokens,
                         listening = listening,
+                        voiceEnabled = platformVoiceEnabled,
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         onValue = { next ->
                             editorValue = next
@@ -445,7 +456,7 @@ fun CodeWorkbenchSurface(
                         onCancelVoice = {
                             speechFence.cancel()
                             speechToken = null
-                            speech.cancel()
+                            speech?.cancel()
                             status = "Voice cancelled"
                         },
                 footer = if (language == "prolog") {
@@ -652,6 +663,7 @@ private fun EditorPanel(
     matches: Int,
     tokens: ZaraSemanticTokens,
     listening: Boolean,
+    voiceEnabled: Boolean,
     modifier: Modifier,
     onValue: (TextFieldValue) -> Unit,
     onFind: (String) -> Unit,
@@ -679,19 +691,21 @@ private fun EditorPanel(
                     colors = fieldColors(tokens),
                     textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                 )
-                Button(
-                    enabled = selected != null && !listening,
-                    onClick = onVoice,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = tokens.secondary,
-                        contentColor = tokens.background,
-                    ),
-                ) {
-                    Text(if (listening) "Listening…" else "Voice")
-                }
-                if (listening) {
-                    TextButton(onClick = onCancelVoice) {
-                        Text("Cancel", color = tokens.error)
+                if (voiceEnabled) {
+                    Button(
+                        enabled = selected != null && !listening,
+                        onClick = onVoice,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = tokens.secondary,
+                            contentColor = tokens.background,
+                        ),
+                    ) {
+                        Text(if (listening) "Listening…" else "Voice")
+                    }
+                    if (listening) {
+                        TextButton(onClick = onCancelVoice) {
+                            Text("Cancel", color = tokens.error)
+                        }
                     }
                 }
             }
