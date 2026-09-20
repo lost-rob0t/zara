@@ -18,6 +18,8 @@ class PrologIpcContractTest {
         assertTrue(manifest.contains(".prolog.ipc.PrologIpcService"))
         assertTrue(manifest.contains("android:exported=\"true\""))
         assertTrue(manifest.contains("android:permission=\"ai.zara.permission.PROLOG\""))
+        val serviceBlock = manifest.substringAfter(".prolog.ipc.PrologIpcService").substringBefore("</service>")
+        assertFalse(serviceBlock.contains("android:process="))
         assertTrue(service.contains("(application as ZaraApplication).appSession"))
         assertTrue(service.contains("queryLocalProlog"))
         assertFalse(service.contains("LocalZaraServer("))
