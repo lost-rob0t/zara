@@ -1,0 +1,112 @@
+#+title: Zara Android Code Workbench and Prolog IPC
+
+* Product contract
+
+Zara has one Android Code Workbench UI implementation.
+
+- =:code-workbench= owns the reusable Compose editor surface, SAF workspace browser,
+  revision-fenced buffer integration, adaptive file rail, buffer inspector, find state,
+  and voice-edit presentation.
+- =:app= embeds that exact surface as =Workspace -> Code=.
+- =:code-editor= remains a separately installable =ai.zara.code.editor= APK, but is a
+  thin host over the same =CodeWorkbenchSurface=.
+- =:editor-core= remains the revision/edit authority. The workbench does not invent a
+  second mutable buffer model.
+- Prolog-specific query, expert, KB, graph and learning tools remain in =Workspace ->
+  Logic=. Code recognizes Prolog files but does not fork the Prolog IDE/runtime.
+
+The default visual language follows the canonical Zara semantic theme tokens. No
+screen-local Outrun palette is allowed in the reusable workbench.
+
+* Layout
+
+Compact phones:
+
+#+begin_example
+Workspace / Code
+  header: project + file + language + dirty state + save
+  horizontally scrollable open-file strip
+  find + voice command row
+  full-height editor
+  line/column/language/modified status
+#+end_example
+
+Wide/foldable/tablet windows:
+
+#+begin_example
++----------------+---------------------------+------------------+
+| Files          | Editor                    | Buffer inspector |
+| filter         | find / voice              | file / language  |
+| project tree   | revision-fenced text      | line / column    |
+| refresh        |                           | revision / state |
++----------------+---------------------------+------------------+
+#+end_example
+
+* Cross-app Prolog contract
+
+=:prolog-ipc= publishes =ZARA-PROLOG/1= for trusted Zara sibling APKs. The host is
+=ai.zara.app.prolog.ipc.PrologIpcService= in the main Zara APK.
+
+The service is exported only behind:
+
+#+begin_example
+ai.zara.permission.PROLOG
+protectionLevel = signature
+#+end_example
+
+This is deliberately a trusted first-party channel. A random third-party app cannot
+bind merely because it knows the action name.
+
+The service forwards requests into =ZaraApplication.appSession.queryLocalProlog=.
+It never creates =LocalZaraServer= or =NativeTreallaBridge=, so Android continues to
+have one canonical serialized Trealla actor.
+
+** Client setup
+
+A sibling APK built by the Zara signer adds:
+
+#+begin_src xml
+<uses-permission android:name="ai.zara.permission.PROLOG" />
+#+end_src
+
+and depends on =:prolog-ipc=. Then:
+
+#+begin_src kotlin
+val prolog = PrologClient(context)
+val call = prolog.query("member(Result,[alpha,beta])")
+call.result.whenComplete { reply, error ->
+    if (error == null) {
+        reply.terms.forEach(::println)
+    }
+}
+#+end_src
+
+=PrologCall.cancel()= fences late delivery for that exact request id.
+
+** Bounds
+
+Version 1 enforces:
+
+- request id: closed ASCII token, at most 96 characters;
+- goal: non-empty, at most 8192 characters;
+- deadline: caller-provided, at most 15 seconds;
+- output: at most 64 terms, 4096 characters per term, and a bounded aggregate;
+- error text: bounded before Binder delivery;
+- duplicate active request ids: rejected;
+- deadline/cancel: stale native results are dropped.
+
+The existing =PrologQueryPolicy= remains the runtime query authority. The IPC layer
+adds transport/lifecycle bounds; it does not grant new Prolog effects or Android
+capabilities.
+
+* Next slices
+
+- Route code-aware model edits through Zara's canonical coding-agent/model command
+  surface instead of leaving =NeedsModel= as presentation-only.
+- Consume the #908 Prolog IDE language service from =:code-workbench= for Prolog
+  diagnostics/completion/navigation without moving Logic ownership.
+- Consume Python language services through the same editor-core interface.
+- Add multi-buffer/splits when the #996 shared buffer/window ABI is ready.
+- Add Pi/tmux terminal, Git diff, tests and durable coding sessions under #1007/#1187.
+- Extend =ZARA-PROLOG/1= from trusted query calls to registry-described expert/app
+  operations under #1001/#1056 without introducing a second capability registry.
