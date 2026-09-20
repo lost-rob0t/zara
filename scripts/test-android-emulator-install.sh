@@ -87,7 +87,7 @@ fi
 python android/integration/device_acceptance.py \
   --serial "$serial" \
   --source-sha "$source_sha" \
-  --output "$evidence_dir"
+  --output android/app/build/reports/device
 
 # The visual acceptance above is intentionally broad. This second gate proves
 # the installed APK's real Android Keystore -> CURVE -> JeroMQ -> ZARA/1 path
@@ -164,7 +164,7 @@ nix develop "$repo_root" -c env \
 # process diagnostics and logcat to be readable and free of Zara crash/ANR
 # markers. Fail closed if evidence collection itself broke so CI cannot silently
 # report green without inspecting the exercised app logs.
-remote_manifest="$repo_root/$evidence_dir/remote-manifest.json"
+remote_manifest="$repo_root/android/app/build/reports/device/remote-manifest.json"
 python3 - "$remote_manifest" <<'PY'
 import json
 from pathlib import Path
