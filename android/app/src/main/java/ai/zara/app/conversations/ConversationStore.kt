@@ -33,7 +33,15 @@ private data class ConversationStoreLease(
 private object ConversationStoreLeaseRegistry {
     private val generations = ConcurrentHashMap<String, AtomicLong>()
 
-    fun acquire(file: File): ConversationStoreLease {
+    fun observe(file: File): ConversationStoreLease {
+        val path = file.absoluteFile.path
+        val generation = generations
+            .computeIfAbsent(path) { AtomicLong(0) }
+            .get()
+        return ConversationStoreLease(path = path, generation = generation)
+    }
+
+    fun advance(file: File): ConversationStoreLease {
         val path = file.absoluteFile.path
         val generation = generations
             .computeIfAbsent(path) { AtomicLong(0) }
@@ -108,10 +116,18 @@ class ConversationStore(
     private val idFactory: () -> String = { UUID.randomUUID().toString() },
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) {
-    private val lease = ConversationStoreLeaseRegistry.acquire(file)
+    private var lease = ConversationStoreLeaseRegistry.observe(file)
 
     @Volatile
-    private var current: ConversationState = load()
+    private var current: ConversationState
+
+    init {
+        val (loaded, recoveredRunningTurn) = load()
+        current = loaded
+        if (recoveredRunningTurn) {
+            lease = ConversationStoreLeaseRegistry.advance(file)
+        }
+    }
 
     @Synchronized
     fun state(): ConversationState = current
@@ -258,10 +274,10 @@ class ConversationStore(
         return current
     }
 
-    private fun load(): ConversationState {
-        if (!file.exists()) return ConversationState()
+    private fun load(): Pair<ConversationState, Boolean> {
+        if (!file.exists()) return ConversationState() to false
         if (!file.isFile || file.length() !in 1..MAX_CONVERSATION_STORE_BYTES.toLong()) {
-            return degradedState()
+            return degradedState() to false
         }
         return try {
             val (loaded, recoveredRunningTurn) =
@@ -295,9 +311,9 @@ class ConversationStore(
             if (recoveredRunningTurn) {
                 persist(loaded)
             }
-            loaded
+            loaded to recoveredRunningTurn
         } catch (_: Exception) {
-            degradedState()
+            degradedState() to false
         }
     }
 
