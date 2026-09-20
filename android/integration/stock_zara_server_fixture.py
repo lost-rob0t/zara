@@ -256,6 +256,7 @@ def main() -> int:
                     "client_secret": client_secret.decode("ascii"),
                     "acceptance_host": barrier.host,
                     "acceptance_port": str(barrier.port),
+                    "security_admin_path": os.fspath(state.control_socket_path),
                 },
             )
             print("READY", flush=True)
