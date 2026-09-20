@@ -14,10 +14,11 @@ from .models import (
     MessageStatus,
 )
 from .store import ConversationStore as _ConversationStore
+from .symbolic_projection import SymbolicConversationProjection, SymbolicProjectionMixin
 
 
-class ConversationStore(_ConversationStore):
-    """Conversation store with compatibility repair for legacy v2 databases."""
+class ConversationStore(SymbolicProjectionMixin, _ConversationStore):
+    """Conversation store with compatibility repair and symbolic projections."""
 
     def __init__(
         self,
@@ -40,4 +41,5 @@ __all__ = [
     "MessageRecord",
     "MessageRole",
     "MessageStatus",
+    "SymbolicConversationProjection",
 ]
