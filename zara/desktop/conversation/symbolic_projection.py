@@ -134,8 +134,8 @@ class SymbolicConversationProjection:
     verified_facts: list[dict[str, Any]] = field(default_factory=list)
     verified_outcome_refs: list[str] = field(default_factory=list)
     renderer_provenance: str = ""
-    providers_enabled: bool = False
-    max_model_calls: int = 0
+    providers_enabled: bool = True
+    max_model_calls: int = 1
     provider_calls: int = 0
     model_calls: int = 0
     updated_at: str = ""
