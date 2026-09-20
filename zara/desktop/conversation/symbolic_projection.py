@@ -33,6 +33,18 @@ def _require_exact_integer(name: str, value: object, *, minimum: int = 0) -> int
     return value
 
 
+def _require_exact_boolean(name: str, value: object) -> bool:
+    if type(value) is not bool:
+        raise TypeError(f"{name} must be an exact boolean")
+    return value
+
+
+def _decode_sqlite_boolean(name: str, value: object) -> bool:
+    if type(value) is not int or value not in (0, 1):
+        raise ValueError(f"stored {name} must be SQLite integer 0 or 1")
+    return bool(value)
+
+
 def _canonical_object(value: dict[str, Any]) -> str:
     if not isinstance(value, dict):
         raise TypeError("symbolic object payload must be a dict")
@@ -122,6 +134,8 @@ class SymbolicConversationProjection:
     verified_facts: list[dict[str, Any]] = field(default_factory=list)
     verified_outcome_refs: list[str] = field(default_factory=list)
     renderer_provenance: str = ""
+    providers_enabled: bool = False
+    max_model_calls: int = 0
     provider_calls: int = 0
     model_calls: int = 0
     updated_at: str = ""
@@ -136,6 +150,8 @@ class SymbolicConversationProjection:
         _require_exact_integer("projection_generation", self.projection_generation, minimum=1)
         _require_exact_integer("runtime_generation", self.runtime_generation)
         _require_exact_integer("project_generation", self.project_generation)
+        _require_exact_boolean("providers_enabled", self.providers_enabled)
+        _require_exact_integer("max_model_calls", self.max_model_calls)
         _require_exact_integer("provider_calls", self.provider_calls)
         _require_exact_integer("model_calls", self.model_calls)
         if self.project_id is not None and len(self.project_id) > 512:
@@ -153,8 +169,17 @@ class SymbolicConversationProjection:
         _canonical_array(self.verified_facts)
 
     def assert_pure_symbolic(self) -> None:
+        providers_disabled = type(self.providers_enabled) is bool and not self.providers_enabled
+        max_model_calls_exact_zero = type(self.max_model_calls) is int and self.max_model_calls == 0
         provider_exact_zero = type(self.provider_calls) is int and self.provider_calls == 0
         model_exact_zero = type(self.model_calls) is int and self.model_calls == 0
+        if not providers_disabled:
+            raise AssertionError("pure-symbolic conversation has providers enabled")
+        if not max_model_calls_exact_zero:
+            raise AssertionError(
+                "pure-symbolic conversation recorded "
+                f"max_model_calls={self.max_model_calls!r}"
+            )
         if not provider_exact_zero or not model_exact_zero:
             raise AssertionError(
                 "pure-symbolic conversation recorded "
@@ -206,6 +231,8 @@ class SymbolicProjectionMixin:
             verified_facts=_decode_array(row["verified_facts_json"]),
             verified_outcome_refs=_decode_verified_outcome_refs(row["verified_outcome_refs"]),
             renderer_provenance=row["renderer_provenance"],
+            providers_enabled=_decode_sqlite_boolean("providers_enabled", row["providers_enabled"]),
+            max_model_calls=int(row["max_model_calls"]),
             provider_calls=int(row["provider_calls"]),
             model_calls=int(row["model_calls"]),
             updated_at=row["updated_at"],
@@ -234,6 +261,7 @@ class SymbolicProjectionMixin:
                 """
                 SELECT projection_generation, runtime_generation, turn_id,
                        outcome, project_id, project_generation,
+                       providers_enabled, max_model_calls,
                        provider_calls, model_calls
                 FROM desktop_symbolic_projections
                 WHERE conversation_id = ? AND principal_id = ?
@@ -267,6 +295,13 @@ class SymbolicProjectionMixin:
                         raise RuntimeError("terminal turn projection is immutable")
                 elif projection.runtime_generation <= current_runtime_generation:
                     raise RuntimeError("new turn must advance runtime_generation")
+                current_providers_enabled = _decode_sqlite_boolean(
+                    "providers_enabled", current["providers_enabled"]
+                )
+                if not current_providers_enabled and projection.providers_enabled:
+                    raise RuntimeError("provider policy widening rejected")
+                if projection.max_model_calls > int(current["max_model_calls"]):
+                    raise RuntimeError("model-call budget widening rejected")
                 if projection.provider_calls < int(current["provider_calls"]):
                     raise RuntimeError("provider-call ledger rewind rejected")
                 if projection.model_calls < int(current["model_calls"]):
@@ -301,6 +336,8 @@ class SymbolicProjectionMixin:
                 _canonical_array(stored.verified_facts),
                 _encode_verified_outcome_refs(stored.verified_outcome_refs),
                 stored.renderer_provenance,
+                int(stored.providers_enabled),
+                stored.max_model_calls,
                 stored.provider_calls,
                 stored.model_calls,
                 stored.updated_at,
@@ -315,8 +352,9 @@ class SymbolicProjectionMixin:
                         discourse_entities_json, unresolved_questions_json,
                         expert_evidence_json, verified_facts_json,
                         verified_outcome_refs, renderer_provenance,
+                        providers_enabled, max_model_calls,
                         provider_calls, model_calls, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     parameters,
                 )
@@ -330,6 +368,7 @@ class SymbolicProjectionMixin:
                         discourse_entities_json = ?, unresolved_questions_json = ?,
                         expert_evidence_json = ?, verified_facts_json = ?,
                         verified_outcome_refs = ?, renderer_provenance = ?,
+                        providers_enabled = ?, max_model_calls = ?,
                         provider_calls = ?, model_calls = ?, updated_at = ?
                     WHERE conversation_id = ? AND principal_id = ?
                       AND projection_generation = ?
@@ -349,6 +388,8 @@ class SymbolicProjectionMixin:
                         _canonical_array(stored.verified_facts),
                         _encode_verified_outcome_refs(stored.verified_outcome_refs),
                         stored.renderer_provenance,
+                        int(stored.providers_enabled),
+                        stored.max_model_calls,
                         stored.provider_calls,
                         stored.model_calls,
                         stored.updated_at,
