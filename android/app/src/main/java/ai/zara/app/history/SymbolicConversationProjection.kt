@@ -34,6 +34,181 @@ data class SymbolicConversationProjection(
     }
 }
 
+private enum class JsonContainerKind {
+    OBJECT,
+    ARRAY,
+    SCALAR,
+}
+
+/** Pure Kotlin JSON grammar validator used by local JVM tests and Android. */
+private object PortableJsonValidator {
+    fun requireObject(value: String, name: String) {
+        require(Parser(value).parseDocument() == JsonContainerKind.OBJECT) {
+            "$name must be a JSON object"
+        }
+    }
+
+    fun requireArray(value: String, name: String) {
+        require(Parser(value).parseDocument() == JsonContainerKind.ARRAY) {
+            "$name must be a JSON array"
+        }
+    }
+
+    private class Parser(private val text: String) {
+        private var index = 0
+
+        fun parseDocument(): JsonContainerKind {
+            skipWhitespace()
+            val kind = parseValue()
+            skipWhitespace()
+            require(index == text.length) { "trailing JSON content" }
+            return kind
+        }
+
+        private fun parseValue(): JsonContainerKind {
+            require(index < text.length) { "unexpected end of JSON" }
+            return when (text[index]) {
+                '{' -> parseObject()
+                '[' -> parseArray()
+                '"' -> {
+                    parseString()
+                    JsonContainerKind.SCALAR
+                }
+                't' -> {
+                    parseLiteral("true")
+                    JsonContainerKind.SCALAR
+                }
+                'f' -> {
+                    parseLiteral("false")
+                    JsonContainerKind.SCALAR
+                }
+                'n' -> {
+                    parseLiteral("null")
+                    JsonContainerKind.SCALAR
+                }
+                '-', in '0'..'9' -> {
+                    parseNumber()
+                    JsonContainerKind.SCALAR
+                }
+                else -> throw IllegalArgumentException("invalid JSON value")
+            }
+        }
+
+        private fun parseObject(): JsonContainerKind {
+            expect('{')
+            skipWhitespace()
+            if (consume('}')) return JsonContainerKind.OBJECT
+            while (true) {
+                require(index < text.length && text[index] == '"') {
+                    "JSON object key must be a string"
+                }
+                parseString()
+                skipWhitespace()
+                expect(':')
+                skipWhitespace()
+                parseValue()
+                skipWhitespace()
+                if (consume('}')) return JsonContainerKind.OBJECT
+                expect(',')
+                skipWhitespace()
+            }
+        }
+
+        private fun parseArray(): JsonContainerKind {
+            expect('[')
+            skipWhitespace()
+            if (consume(']')) return JsonContainerKind.ARRAY
+            while (true) {
+                parseValue()
+                skipWhitespace()
+                if (consume(']')) return JsonContainerKind.ARRAY
+                expect(',')
+                skipWhitespace()
+            }
+        }
+
+        private fun parseString() {
+            expect('"')
+            while (index < text.length) {
+                val char = text[index++]
+                when {
+                    char == '"' -> return
+                    char == '\\' -> parseEscape()
+                    char.code < 0x20 -> throw IllegalArgumentException("control character in JSON string")
+                }
+            }
+            throw IllegalArgumentException("unterminated JSON string")
+        }
+
+        private fun parseEscape() {
+            require(index < text.length) { "unterminated JSON escape" }
+            when (text[index++]) {
+                '"', '\\', '/', 'b', 'f', 'n', 'r', 't' -> Unit
+                'u' -> repeat(4) {
+                    require(index < text.length && text[index].isHexDigit()) {
+                        "invalid JSON unicode escape"
+                    }
+                    index += 1
+                }
+                else -> throw IllegalArgumentException("invalid JSON escape")
+            }
+        }
+
+        private fun parseLiteral(literal: String) {
+            require(text.regionMatches(index, literal, 0, literal.length)) {
+                "invalid JSON literal"
+            }
+            index += literal.length
+        }
+
+        private fun parseNumber() {
+            consume('-')
+            require(index < text.length) { "incomplete JSON number" }
+            if (consume('0')) {
+                require(index >= text.length || text[index] !in '0'..'9') {
+                    "leading zero in JSON number"
+                }
+            } else {
+                require(text[index] in '1'..'9') { "invalid JSON number" }
+                while (index < text.length && text[index] in '0'..'9') index += 1
+            }
+            if (consume('.')) {
+                require(index < text.length && text[index] in '0'..'9') {
+                    "JSON fraction requires digits"
+                }
+                while (index < text.length && text[index] in '0'..'9') index += 1
+            }
+            if (index < text.length && (text[index] == 'e' || text[index] == 'E')) {
+                index += 1
+                if (index < text.length && (text[index] == '+' || text[index] == '-')) index += 1
+                require(index < text.length && text[index] in '0'..'9') {
+                    "JSON exponent requires digits"
+                }
+                while (index < text.length && text[index] in '0'..'9') index += 1
+            }
+        }
+
+        private fun skipWhitespace() {
+            while (index < text.length && text[index] in charArrayOf(' ', '\t', '\n', '\r')) {
+                index += 1
+            }
+        }
+
+        private fun expect(expected: Char) {
+            require(consume(expected)) { "expected '$expected' in JSON" }
+        }
+
+        private fun consume(expected: Char): Boolean {
+            if (index >= text.length || text[index] != expected) return false
+            index += 1
+            return true
+        }
+
+        private fun Char.isHexDigit(): Boolean =
+            this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
+    }
+}
+
 internal object SymbolicProjectionContract {
     private val outcomes = setOf(
         "unknown",
@@ -59,11 +234,11 @@ internal object SymbolicProjectionContract {
         require(projection.rendererProvenance.length <= 512) {
             "rendererProvenance exceeds 512 characters"
         }
-        requireJsonShape(projection.dialogueStateJson, '{', '}', "dialogueStateJson")
-        requireJsonShape(projection.discourseEntitiesJson, '[', ']', "discourseEntitiesJson")
-        requireJsonShape(projection.unresolvedQuestionsJson, '[', ']', "unresolvedQuestionsJson")
-        requireJsonShape(projection.expertEvidenceJson, '[', ']', "expertEvidenceJson")
-        requireJsonShape(projection.verifiedFactsJson, '[', ']', "verifiedFactsJson")
+        PortableJsonValidator.requireObject(projection.dialogueStateJson, "dialogueStateJson")
+        PortableJsonValidator.requireArray(projection.discourseEntitiesJson, "discourseEntitiesJson")
+        PortableJsonValidator.requireArray(projection.unresolvedQuestionsJson, "unresolvedQuestionsJson")
+        PortableJsonValidator.requireArray(projection.expertEvidenceJson, "expertEvidenceJson")
+        PortableJsonValidator.requireArray(projection.verifiedFactsJson, "verifiedFactsJson")
     }
 
     fun validateWrite(
@@ -103,13 +278,6 @@ internal object SymbolicProjectionContract {
             check(proposed.projectGeneration > current.projectGeneration) {
                 "project switch must advance projectGeneration"
             }
-        }
-    }
-
-    private fun requireJsonShape(value: String, open: Char, close: Char, name: String) {
-        val trimmed = value.trim()
-        require(trimmed.length >= 2 && trimmed.first() == open && trimmed.last() == close) {
-            "$name has invalid JSON container shape"
         }
     }
 }
