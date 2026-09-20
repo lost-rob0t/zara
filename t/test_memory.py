@@ -344,6 +344,9 @@ def test_agent_manager_replaces_only_builtin_memory_tools():
             self.unregistered = []
             self.registered = []
 
+        def get_tool(self, _name):
+            return None
+
         def unregister_tools(self, names):
             self.unregistered.extend(names)
 
