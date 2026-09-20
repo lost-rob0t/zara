@@ -96,8 +96,7 @@
         <service
             android:name=".prolog.ipc.PrologIpcService"
             android:exported="true"
-            android:permission="ai.zara.permission.PROLOG"
-            android:process=":voice">
+            android:permission="ai.zara.permission.PROLOG">
             <intent-filter>
                 <action android:name="ai.zara.prolog.BIND" />
             </intent-filter>
