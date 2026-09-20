@@ -64,7 +64,7 @@ data class HistoryConversationState(
 )
 
 internal object ConversationHistoryContract {
-    const val schemaVersion = 2
+    const val schemaVersion = 3
     const val localPrincipalId = "local:owner"
     const val legacyLocalPrincipalId = "__zara_legacy_local_owner__"
     const val schemaAsset = "database/conversation_schema.sql"
