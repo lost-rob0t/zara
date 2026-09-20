@@ -297,8 +297,10 @@ class PortableConversationStore(context: Context) : SQLiteOpenHelper(
         val conversation = requireNotNull(getConversation(conversationId)) {
             "Unknown conversation $conversationId"
         }
+        val interruptedTurnIds = mutableSetOf<String>()
         val messages = loadMessages(conversationId).map { message ->
             if (message.status == HistoryMessageStatus.Pending || message.status == HistoryMessageStatus.Streaming) {
+                message.turnId?.let(interruptedTurnIds::add)
                 val recovered = message.copy(
                     status = HistoryMessageStatus.Cancelled,
                     error = message.error.ifEmpty { ConversationHistoryContract.interruptedError },
@@ -310,6 +312,24 @@ class PortableConversationStore(context: Context) : SQLiteOpenHelper(
                 message
             }
         }
+
+        val projection = loadSymbolicProjection(conversationId)
+        if (
+            projection != null &&
+            projection.turnId != null &&
+            projection.turnId in interruptedTurnIds &&
+            projection.outcome in setOf("unknown", "pending")
+        ) {
+            saveSymbolicProjection(
+                projection.copy(
+                    projectionGeneration = projection.projectionGeneration + 1L,
+                    outcome = "interrupted",
+                    updatedAt = "",
+                ),
+                expectedGeneration = projection.projectionGeneration,
+            )
+        }
+
         return HistoryConversationState(
             conversation = getConversation(conversationId) ?: conversation,
             messages = messages,
