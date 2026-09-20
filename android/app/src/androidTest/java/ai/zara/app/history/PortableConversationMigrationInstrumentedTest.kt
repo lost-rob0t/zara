@@ -39,7 +39,7 @@ class PortableConversationMigrationInstrumentedTest : AndroidTestCase() {
                     dialogueAct = "verified",
                     dialogueStateJson = "{\"act\":\"resume\"}",
                     verifiedOutcomeRefs = listOf(VERIFIED_EFFECT_REF),
-                    rendererProvenance = "symbolic-nlg/v1",
+                    rendererProvenance = "symbolic-dcg/v1",
                     providerCalls = 0,
                     modelCalls = 0,
                 ),
@@ -48,6 +48,7 @@ class PortableConversationMigrationInstrumentedTest : AndroidTestCase() {
             saved.assertPureSymbolic()
             assertEquals("verified", saved.dialogueAct)
             assertEquals(listOf(VERIFIED_EFFECT_REF), saved.verifiedOutcomeRefs)
+            assertEquals("symbolic-dcg/v1", saved.rendererProvenance)
         } finally {
             first.close()
         }
@@ -63,6 +64,7 @@ class PortableConversationMigrationInstrumentedTest : AndroidTestCase() {
             assertEquals("success", projection.outcome)
             assertEquals("verified", projection.dialogueAct)
             assertEquals(listOf(VERIFIED_EFFECT_REF), projection.verifiedOutcomeRefs)
+            assertEquals("symbolic-dcg/v1", projection.rendererProvenance)
             assertEquals(0L, projection.providerCalls)
             assertEquals(0L, projection.modelCalls)
         } finally {
