@@ -19,8 +19,10 @@ from zara.runtime import events
 
 class PureSymbolicConfig:
     def get(self, section: str, key: str, default=None):
-        if section == "agent" and key == "backend":
+        if section == "conversation" and key == "execution_policy":
             return "pure_symbolic"
+        if section == "agent" and key == "backend":
+            return "langgraph"
         return default
 
     def get_api_service_config(self):
@@ -121,6 +123,7 @@ def test_real_desktop_surface_runs_symbolic_greeting_without_runtime_errors(tmp_
             "Hey — what can I help with?",
         ]
         assert state.active_turn_id is None
+        assert config.get("agent", "backend", "missing") == "langgraph"
 
         observed_errors = []
         while True:
