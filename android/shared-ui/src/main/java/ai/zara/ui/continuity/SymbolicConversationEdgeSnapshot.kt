@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets
  * it from the canonical conversation projection owned by the active runtime.
  */
 data class SymbolicConversationEdgeSnapshot(
+    val principalId: String,
     val conversationId: String,
     val projectionGeneration: Long,
     val runtimeGeneration: Long,
@@ -32,6 +33,7 @@ data class SymbolicConversationEdgeSnapshot(
     val providerCalls: Long = 0,
 ) {
     fun validate() {
+        requireBoundedText(principalId, MAX_ID_CHARS, "principalId", allowBlank = false)
         requireBoundedText(conversationId, MAX_ID_CHARS, "conversationId", allowBlank = false)
         require(projectionGeneration >= 1) { "projectionGeneration must be >= 1" }
         require(runtimeGeneration >= 0) { "runtimeGeneration must be >= 0" }
@@ -102,6 +104,10 @@ object SymbolicConversationEdgeCodec {
         DataOutputStream(bytes).use { output ->
             output.writeString(MAGIC, MAGIC.length)
             output.writeString(
+                snapshot.principalId,
+                SymbolicConversationEdgeSnapshot.MAX_ID_CHARS,
+            )
+            output.writeString(
                 snapshot.conversationId,
                 SymbolicConversationEdgeSnapshot.MAX_ID_CHARS,
             )
@@ -146,6 +152,7 @@ object SymbolicConversationEdgeCodec {
                     "symbolic edge snapshot magic is invalid"
                 }
                 val snapshot = SymbolicConversationEdgeSnapshot(
+                    principalId = input.readString(SymbolicConversationEdgeSnapshot.MAX_ID_CHARS),
                     conversationId = input.readString(SymbolicConversationEdgeSnapshot.MAX_ID_CHARS),
                     projectionGeneration = input.readLong(),
                     runtimeGeneration = input.readLong(),
