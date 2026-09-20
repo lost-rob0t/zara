@@ -201,9 +201,9 @@ def test_symbolic_projection_rejects_stale_runtime_and_usage_rewind(tmp_path):
 def test_pure_symbolic_assertion_rejects_provider_model_or_renderer_fallback():
     with pytest.raises(AssertionError, match="provider_calls=1"):
         _projection("provider-used", provider_calls=1).assert_pure_symbolic()
-    with pytest.raises(AssertionError, match="model_calls=1"):
+    with pytest.raises(ValueError, match="model_calls must not exceed max_model_calls"):
         _projection("model-used", model_calls=1).assert_pure_symbolic()
-    with pytest.raises(AssertionError, match="non-symbolic renderer"):
+    with pytest.raises(ValueError, match="renderer_provenance"):
         replace(
             _projection("renderer-used"),
             renderer_provenance="model-fallback/v1",
