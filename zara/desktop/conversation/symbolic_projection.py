@@ -171,6 +171,8 @@ class SymbolicConversationProjection:
             raise ValueError(
                 "renderer_provenance must be empty or the canonical symbolic renderer"
             )
+        if self.outcome == "success" and self.renderer_provenance != _SYMBOLIC_RENDERER_ID:
+            raise ValueError("successful projection requires canonical symbolic renderer")
         _canonical_object(self.dialogue_state)
         _canonical_array(self.discourse_entities)
         _canonical_array(self.unresolved_questions)
@@ -199,6 +201,8 @@ class SymbolicConversationProjection:
                 "pure-symbolic conversation recorded non-symbolic renderer "
                 f"{self.renderer_provenance!r}"
             )
+        if self.outcome == "success" and self.renderer_provenance != _SYMBOLIC_RENDERER_ID:
+            raise AssertionError("successful projection requires canonical symbolic renderer")
 
 
 class SymbolicProjectionMixin:
