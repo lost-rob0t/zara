@@ -1,0 +1,114 @@
+#+title: Default workflows
+#+startup: overview
+
+* Purpose
+
+Zara ships a declarative default workflow KB in =kb/workflows.pl=.  It gives the
+assistant useful multi-step behavior out of the box while keeping authority in
+the existing typed runtime.
+
+The design borrows *interaction patterns* common to mainstream assistants:
+short voice aliases, multi-action routines, time/event/presence triggers, and
+cross-device continuation.  It does not copy proprietary implementations.
+
+* Contract
+
+The KB is data-first.
+
+- =workflow/5= declares a workflow and its activation policy.
+- =workflow_alias/2= provides short spoken names.
+- =workflow_trigger/4= describes voice, schedule, presence, event, or manual
+  triggers.
+- =workflow_condition/4= describes predicates the canonical automation runtime
+  may check.
+- =workflow_action/6= is an ordered typed intent description.
+- =workflow_handoff/4= describes cross-device continuity preferences.
+- =workflow_plan/2= returns the deterministic ordered action list.
+- =workflow_actions_for_executor/3= projects actions relevant to one surface.
+
+Loading this KB never runs an action.  It contains no shell strings, Android raw
+Intents, arbitrary process execution, or hidden scheduler.
+
+* Included workflows
+
+Daily:
+- Morning briefing
+- Bedtime
+- Start/end workday
+- Meeting prep
+- What's next
+
+Capture/memory:
+- Quick capture
+- Remember this
+
+Device:
+- Find phone
+- Find watch
+- Device status
+- Battery sweep
+- Update check
+
+Continuity:
+- Continue on desktop
+- Continue on phone
+- Continue on watch
+- Clipboard to desktop/phone
+- Media follow-me
+- Timer follow-me
+- Resume desktop
+- Phone/watch Linux command centers
+
+Context modes:
+- Focus
+- Reading
+- Driving
+- Commute
+- Leaving/arriving home
+
+* Cross-device target
+
+The intended topology is one Zara runtime authority with multiple device
+surfaces.
+
+#+begin_example
+Wear ----\
+          Android ---- ZARA/1 ---- server/runtime ---- Linux
+Wear -----------------/
+#+end_example
+
+A Wear action may relay through Android when that is the reachable path, or use
+a direct authenticated route when available.  The semantic request stays the
+same typed action either way.  Transport does not change intent identity.
+
+Examples:
+
+- Watch: "continue on desktop" -> compact context checkpoint -> Linux resumes it.
+- Watch: "find my phone" -> typed Android locate/ring capability.
+- Phone: send clipboard/context/task to Linux.
+- Linux: project a timer, media state, or compact task continuation to Wear.
+- Any surface: ask =device_status= and see reachability/capability state.
+
+* Prolog examples
+
+#+begin_src prolog
+?- kb_workflows:resolve_workflow(good_morning, Id).
+Id = morning_briefing.
+
+?- kb_workflows:workflow_plan(continue_on_desktop, Steps).
+Steps = [
+  action(initiator, context, checkpoint, ...),
+  action(linux, handoff, context, ...),
+  action(linux, conversation, resume, ...)
+].
+
+?- kb_workflows:workflow_actions_for_executor(update_check, android, Steps).
+#+end_src
+
+* Runtime follow-through
+
+The next implementation slice should compile these typed workflow actions into
+the existing programmable-symbol / automation runtime and then provide real
+adapters for Android, Wear, Linux, and server capabilities.  The runtime remains
+responsible for principal identity, authorization, capability availability,
+approval policy, cancellation, deadlines, replay fencing, and provenance.
