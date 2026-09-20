@@ -8,8 +8,10 @@ from zara.runtime.pure_symbolic_backend import PureSymbolicRuntimeBackend
 
 class PureSymbolicConfig:
     def get(self, section: str, key: str, default=None):
-        if section == "agent" and key == "backend":
+        if section == "conversation" and key == "execution_policy":
             return "pure_symbolic"
+        if section == "agent" and key == "backend":
+            return "langgraph"
         return default
 
 
@@ -39,3 +41,4 @@ def test_default_desktop_client_selects_in_process_pure_symbolic_backend(monkeyp
         "backend_factory": PureSymbolicRuntimeBackend,
         "config": config,
     }
+    assert config.get("agent", "backend", "missing") == "langgraph"
