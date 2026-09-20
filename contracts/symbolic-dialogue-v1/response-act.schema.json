@@ -20,6 +20,8 @@
     "act": {
       "enum": [
         "greeting",
+        "help",
+        "acknowledgement",
         "cancelled",
         "clarify",
         "choose",
@@ -70,6 +72,29 @@
           "type": "object",
           "additionalProperties": false,
           "maxProperties": 0
+        }
+      }
+    },
+    {
+      "properties": {
+        "act": {"const": "help"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "maxProperties": 0
+        }
+      }
+    },
+    {
+      "properties": {
+        "act": {"const": "acknowledgement"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {"enum": ["thanks", "acknowledged"]}
+          }
         }
       }
     },
