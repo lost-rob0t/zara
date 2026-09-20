@@ -35,7 +35,7 @@ def test_pure_symbolic_zero_ledger_requires_exact_integer_zero(field: str, value
     with pytest.raises(TypeError, match=rf"{field} must be an exact integer"):
         projection.validate()
 
-    with pytest.raises(AssertionError, match=field):
+    with pytest.raises(TypeError, match=rf"{field} must be an exact integer"):
         projection.assert_pure_symbolic()
 
 
