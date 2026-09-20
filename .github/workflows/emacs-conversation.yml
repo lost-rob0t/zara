@@ -12,6 +12,7 @@ on:
       - "emacs/zara-conversation-context-test.el"
       - "emacs/zara-conversation-replay-test.el"
       - "emacs/zara-conversation-symbolic-replay-test.el"
+      - "emacs/zara-conversation-unified-replay-test.el"
       - ".github/workflows/emacs-conversation.yml"
   push:
     branches:
