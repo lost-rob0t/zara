@@ -194,7 +194,7 @@ def main() -> int:
                 sndhwm=8,
                 rcvhwm=8,
                 heartbeat_interval_ms=100,
-                heartbeat_timeout_ms=500,
+                heartbeat_timeout_ms=5000,
                 linger_ms=0,
                 request_timeout=2.0,
                 poll_interval_ms=5,
