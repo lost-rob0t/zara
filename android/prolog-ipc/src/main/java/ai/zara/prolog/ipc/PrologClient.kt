@@ -176,7 +176,15 @@ class PrologClient(
             val intent = Intent(ACTION_BIND).apply {
                 component = ComponentName(SERVICE_PACKAGE, SERVICE_CLASS)
             }
-            val accepted = appContext.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+            val accepted = runCatching {
+                appContext.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+            }.getOrElse { error ->
+                pendingBind = null
+                future.completeExceptionally(
+                    IllegalStateException("Zara Prolog service is unavailable or unauthorized", error)
+                )
+                return future
+            }
             if (!accepted) {
                 pendingBind = null
                 future.completeExceptionally(
