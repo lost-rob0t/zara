@@ -192,6 +192,7 @@ fun ZaraApp(
     onCopyDiagnostics: () -> Unit,
     onShareDiagnostics: () -> Unit,
     onClearDiagnostics: () -> Unit,
+    onExportDiagnostics: () -> String,
     onDismissChangelog: () -> Unit,
 ) {
     var navigation by rememberSaveable(stateSaver = AppNavigationSaver) {
@@ -353,6 +354,7 @@ fun ZaraApp(
                                                 padding = padding,
                                             )
                                             AppSurface.Diagnostics -> DiagnosticsSurface(
+                                                diagnosticsPreview = onExportDiagnostics,
                                                 state = runtimeState,
                                                 sourceSha = sourceSha,
                                                 localServerState = localServerState,
@@ -1482,12 +1484,14 @@ private fun DiagnosticsSurface(
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
     operationError: String?,
+    diagnosticsPreview: () -> String,
     onCopyDiagnostics: () -> Unit,
     onShareDiagnostics: () -> Unit,
     onClearDiagnostics: () -> Unit,
     padding: PaddingValues,
 ) {
     ScreenBody(padding) {
+        val preview = diagnosticsPreview()
         ScreenTitle("Diagnostics", "Bounded runtime state")
         SectionCard("BUILD") {
             KeyValueRow("source", sourceSha.take(12))
@@ -1503,6 +1507,17 @@ private fun DiagnosticsSurface(
             KeyValueRow("conversation", state.selectedConversationId ?: "none")
             KeyValueRow("enrollment", enrollmentLabel(state.enrollment))
             KeyValueRow("assistant role", assistantRoleLabel(state.assistantRole))
+        }
+        if (preview.contains("ZARA-LOCAL-DIAGNOSTICS/2")) {
+            SectionCard("DIAGNOSTICS V2") {
+                Text(
+                    preview.lineSequence().takeWhile { it != "--- timeline ---" }
+                        .take(56).joinToString("\n"),
+                    color = LocalZaraTokens.current.textMuted,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                )
+            }
         }
         SectionCard("LOCAL LOG") {
             MutedNotice(

@@ -553,6 +553,7 @@ class MainActivity : ComponentActivity() {
                 },
                 onOpenDiagnostics = ::copyDiagnostics,
                 onCopyDiagnostics = ::copyDiagnostics,
+                onExportDiagnostics = { appSession.exportDiagnostics() },
                 onShareDiagnostics = ::shareDiagnostics,
                 onClearDiagnostics = ::clearDiagnostics,
                 onDismissChangelog = {
