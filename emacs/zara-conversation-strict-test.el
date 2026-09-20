@@ -6,6 +6,34 @@
   "zara-conversation-recovery-test.el"
   (file-name-directory (or load-file-name buffer-file-name))))
 
+(ert-deftest zara-chat-enables-canonical-conversation-control-by-default ()
+  (let ((zara-chat-buffer-name
+         (generate-new-buffer-name "*Zara canonical conversation test*"))
+        legacy-called
+        canonical-prompt)
+    (unwind-protect
+        (cl-letf (((symbol-function 'pop-to-buffer)
+                   (lambda (buffer &rest _args) buffer))
+                  ((symbol-function 'zara-request)
+                   (lambda (&rest _args) (setq legacy-called t)))
+                  ((symbol-function 'zara-conversation-request)
+                   (lambda (prompt callback)
+                     (setq canonical-prompt prompt)
+                     (funcall callback "symbolic reply" nil)
+                     nil)))
+          (let ((buffer (zara-chat)))
+            (with-current-buffer buffer
+              (should zara-conversation-mode)
+              (should
+               (eq (key-binding (kbd "s"))
+                   #'zara-conversation-chat-send))
+              (funcall (key-binding (kbd "s")) "hello")
+              (should (equal canonical-prompt "hello"))
+              (should-not legacy-called)
+              (should (string-match-p "symbolic reply" (buffer-string))))))
+      (when-let ((buffer (get-buffer zara-chat-buffer-name)))
+        (kill-buffer buffer)))))
+
 (ert-deftest zara-conversation-duplicate-turn-accepted-fails-closed ()
   (let ((target (generate-new-buffer " *zara-conversation-target*"))
         error
