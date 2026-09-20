@@ -13,6 +13,8 @@ class PortableSemanticAssetsTest {
         PortableSemanticCore.fixtureAssetPath -> Path.of("src", "main", "assets", resource)
         "prolog/shared/modules/intent_frames.pl" -> Path.of("..", "..", "modules", "intent_frames.pl")
         "prolog/shared/modules/normalizer.pl" -> Path.of("..", "..", "modules", "normalizer.pl")
+        "prolog/shared/modules/symbolic_dialogue.pl" -> Path.of("..", "..", "modules", "symbolic_dialogue.pl")
+        "prolog/shared/modules/symbolic_dialogue_turn.pl" -> Path.of("..", "..", "modules", "symbolic_dialogue_turn.pl")
         "prolog/shared/kb/intents.pl" -> Path.of("..", "..", "kb", "intents.pl")
         else -> throw AssertionError("unmapped portable semantic resource: $resource")
     }
@@ -31,6 +33,8 @@ class PortableSemanticAssetsTest {
         assertTrue(build.contains("GeneratePortableSemanticAssets"))
         assertTrue(build.contains("modules/intent_frames.pl"))
         assertTrue(build.contains("modules/normalizer.pl"))
+        assertTrue(build.contains("modules/symbolic_dialogue.pl"))
+        assertTrue(build.contains("modules/symbolic_dialogue_turn.pl"))
         assertTrue(build.contains("kb/intents.pl"))
         assertTrue(build.contains("addGeneratedSourceDirectory"))
     }

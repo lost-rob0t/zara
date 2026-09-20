@@ -5,19 +5,20 @@ import ai.zara.app.AndroidAppSession
 /**
  * Binds the zero-model conversation controller to Android's existing Prolog runtime owner.
  *
- * This does not own a runtime, conversation store, expert registry, or provider client. Both
- * explicit queries and natural-language frame resolution execute through AndroidAppSession's
- * already-started LocalZaraServer via queryLocalProlog().
+ * This does not own a runtime, conversation store, expert registry, or provider client. Explicit
+ * queries stay on the bounded local-query path. Natural-language turns execute the canonical
+ * symbolic_dialogue_turn -> symbolic_dialogue renderer chain through AndroidAppSession's already
+ * started LocalZaraServer via queryLocalProlog().
  */
 internal object AndroidPureSymbolicConversationFactory {
     fun create(session: AndroidAppSession): PureSymbolicConversationController =
         PureSymbolicConversationController(
             catalog = { PrologWorkspaceCatalog.from(session.prologSources()) },
             query = session::queryLocalProlog,
-            resolve = { utterance -> session.queryLocalProlog(frameResolverQuery(utterance)) },
+            resolve = { utterance -> session.queryLocalProlog(dialogueTurnQuery(utterance)) },
         )
 
-    internal fun frameResolverQuery(utterance: String): String {
+    internal fun dialogueTurnQuery(utterance: String): String {
         val text = utterance.trim()
         require(text.isNotEmpty()) { "Utterance is required" }
         require(text.length <= MAX_UTTERANCE_CHARS) { "Utterance is too large" }
@@ -25,7 +26,8 @@ internal object AndroidPureSymbolicConversationFactory {
             .replace("\\", "\\\\")
             .replace("\"", "\\\"")
             .replace("\n", "\\n")
-        return "resolve_frames(\"$escaped\", passive, [], Frames), member(Result, Frames)"
+        return "symbolic_dialogue_turn:dialogue_turn(\"$escaped\", conversation, [], " +
+            "turn(_Frames, Act, _Context)), symbolic_dialogue:render_response(Act, Result)"
     }
 
     private const val MAX_UTTERANCE_CHARS = 8_192
