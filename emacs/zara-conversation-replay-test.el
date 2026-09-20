@@ -59,8 +59,10 @@
       (should
        (equal captured '("zara" "--replay-conversation" "emacs-main")))
       (should (string-match-p "Canonical conversation emacs-main" (buffer-string)))
-      (should (string-match-p "You\\nhello" (buffer-string)))
-      (should (string-match-p "Zara\\nhi there" (buffer-string))))))
+      (should
+       (string-match-p (regexp-quote "You\nhello") (buffer-string)))
+      (should
+       (string-match-p (regexp-quote "Zara\nhi there") (buffer-string))))))
 
 (ert-deftest zara-conversation-replay-does-not-clobber-buffer-on-cli-error ()
   (with-temp-buffer
