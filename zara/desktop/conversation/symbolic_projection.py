@@ -167,6 +167,8 @@ class SymbolicConversationProjection:
             raise ValueError("project_id exceeds 512 characters")
         _validate_dialogue_act(self.dialogue_act)
         _validate_verified_outcome_refs(self.verified_outcome_refs)
+        if self.dialogue_act == "verified" and not self.verified_outcome_refs:
+            raise ValueError("verified projection requires verified outcome evidence")
         if self.renderer_provenance not in ("", _SYMBOLIC_RENDERER_ID):
             raise ValueError(
                 "renderer_provenance must be empty or the canonical symbolic renderer"
@@ -203,6 +205,8 @@ class SymbolicConversationProjection:
             )
         if self.outcome == "success" and self.renderer_provenance != _SYMBOLIC_RENDERER_ID:
             raise AssertionError("successful projection requires canonical symbolic renderer")
+        if self.dialogue_act == "verified" and not self.verified_outcome_refs:
+            raise AssertionError("verified projection requires verified outcome evidence")
 
 
 class SymbolicProjectionMixin:
