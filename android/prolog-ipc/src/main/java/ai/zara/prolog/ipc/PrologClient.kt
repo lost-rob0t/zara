@@ -94,10 +94,10 @@ class PrologClient(
 
     fun capabilities(): CompletableFuture<String> =
         service().thenApply { remote ->
-            check(remote.apiVersion == API_VERSION) {
-                "Unsupported Zara Prolog API version: ${remote.apiVersion}"
+            check(remote.getApiVersion() == API_VERSION) {
+                "Unsupported Zara Prolog API version: ${remote.getApiVersion()}"
             }
-            remote.capabilitiesJson
+            remote.getCapabilitiesJson()
         }
 
     fun query(
@@ -117,8 +117,8 @@ class PrologClient(
                 return@whenComplete
             }
             try {
-                check(remote.apiVersion == API_VERSION) {
-                    "Unsupported Zara Prolog API version: ${remote.apiVersion}"
+                check(remote.getApiVersion() == API_VERSION) {
+                    "Unsupported Zara Prolog API version: ${remote.getApiVersion()}"
                 }
                 remote.query(
                     requestId,
