@@ -1,20 +1,31 @@
 package ai.zara.app.history
 
+import android.content.Context
 import android.database.sqlite.SQLiteDatabase
-import android.test.AndroidTestCase
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
 
-class PortableConversationMigrationInstrumentedTest : AndroidTestCase() {
-    override fun setUp() {
-        super.setUp()
+class PortableConversationMigrationInstrumentedTest {
+    private lateinit var context: Context
+
+    @Before
+    fun setUp() {
+        context = InstrumentationRegistry.getInstrumentation().targetContext
         context.deleteDatabase(ConversationHistoryContract.databaseName)
     }
 
-    override fun tearDown() {
+    @After
+    fun tearDown() {
         context.deleteDatabase(ConversationHistoryContract.databaseName)
-        super.tearDown()
     }
 
-    fun testVersion2HistoryUpgradesInPlaceAndSurvivesHelperRecreation() {
+    @Test
+    fun version2HistoryUpgradesInPlaceAndSurvivesHelperRecreation() {
         seedVersion2Database()
 
         val first = PortableConversationStore(context)
