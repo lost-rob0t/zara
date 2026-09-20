@@ -98,6 +98,50 @@ class PureSymbolicConversationControllerTest {
     }
 
     @Test
+    fun `cancelling submitted symbolic turn cancels resolver and fences late output`() {
+        val resolver = CompletableFuture<LocalQueryResult>()
+        val turnIds = listOf("turn-cancelled").iterator()
+        val controller = PureSymbolicConversationController(
+            catalog = { emptyCatalog },
+            query = { error("query path must not run") },
+            resolve = { resolver },
+            turnIds = turnIds,
+        )
+
+        val result = controller.submit("keep thinking", "chat-a")
+
+        assertTrue(result.cancel(true))
+        assertTrue(result.isCancelled)
+        assertTrue(resolver.isCancelled)
+        assertTrue(turnIds.hasNext())
+        assertFalse(
+            resolver.complete(
+                LocalQueryResult("resolve_frames", listOf("late(response)"), 11),
+            ),
+        )
+        assertTrue(result.isCancelled)
+        assertTrue(turnIds.hasNext())
+    }
+
+    @Test
+    fun `upstream symbolic cancellation stays cancelled instead of rendering runtime failure`() {
+        val resolver = CompletableFuture<LocalQueryResult>()
+        val turnIds = listOf("turn-upstream-cancelled").iterator()
+        val controller = PureSymbolicConversationController(
+            catalog = { emptyCatalog },
+            query = { error("query path must not run") },
+            resolve = { resolver },
+            turnIds = turnIds,
+        )
+
+        val result = controller.submit("cancel me", "chat-a")
+        assertTrue(resolver.cancel(true))
+
+        assertTrue(result.isCancelled)
+        assertTrue(turnIds.hasNext())
+    }
+
+    @Test
     fun `explicit prolog stays inside symbolic query boundary`() {
         val queries = mutableListOf<String>()
         val controller = PureSymbolicConversationController(
