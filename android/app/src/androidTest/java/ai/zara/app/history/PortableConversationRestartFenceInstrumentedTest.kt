@@ -93,8 +93,11 @@ class PortableConversationRestartFenceInstrumentedTest {
         projectId = "project-restart",
         projectGeneration = 1,
         dialogueAct = "clarify",
-        dialogueStateJson = "{\"slot\":\"target\"}",
-        unresolvedQuestionsJson = "[{\"slot\":\"target\"}]",
+        dialogueStateJson = "{\"slot\":\"target\",\"intent\":\"timer\"}",
+        discourseEntitiesJson = "[{\"entity_id\":\"timer-1\",\"kind\":\"timer\"}]",
+        unresolvedQuestionsJson = "[{\"slot\":\"target\",\"question\":\"Which timer?\"}]",
+        expertEvidenceJson = "[{\"expert\":\"timer\",\"evidence\":\"deterministic\"}]",
+        verifiedFactsJson = "[{\"fact\":\"timer_requested\",\"value\":true}]",
         rendererProvenance = "symbolic-dcg/v1",
         providersEnabled = false,
         maxModelCalls = 0,
@@ -113,6 +116,30 @@ class PortableConversationRestartFenceInstrumentedTest {
         assertEquals(2L, recovered.projectionGeneration)
         assertEquals(RUNTIME_GENERATION, recovered.runtimeGeneration)
         assertEquals(turnId, recovered.turnId)
+        assertEquals("project-restart", recovered.projectId)
+        assertEquals(1L, recovered.projectGeneration)
+        assertEquals("clarify", recovered.dialogueAct)
+        assertEquals(
+            "{\"slot\":\"target\",\"intent\":\"timer\"}",
+            recovered.dialogueStateJson,
+        )
+        assertEquals(
+            "[{\"entity_id\":\"timer-1\",\"kind\":\"timer\"}]",
+            recovered.discourseEntitiesJson,
+        )
+        assertEquals(
+            "[{\"slot\":\"target\",\"question\":\"Which timer?\"}]",
+            recovered.unresolvedQuestionsJson,
+        )
+        assertEquals(
+            "[{\"expert\":\"timer\",\"evidence\":\"deterministic\"}]",
+            recovered.expertEvidenceJson,
+        )
+        assertEquals(
+            "[{\"fact\":\"timer_requested\",\"value\":true}]",
+            recovered.verifiedFactsJson,
+        )
+        assertEquals("symbolic-dcg/v1", recovered.rendererProvenance)
         assertEquals(0L, recovered.maxModelCalls)
         assertEquals(0L, recovered.providerCalls)
         assertEquals(0L, recovered.modelCalls)
