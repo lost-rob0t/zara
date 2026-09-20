@@ -7,6 +7,8 @@ product/plugin adapters cannot paper over authority or usage gaps downstream.
 
 from __future__ import annotations
 
+import threading
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -214,3 +216,72 @@ def test_zero_model_usage_remains_exact_zero_on_success() -> None:
     assert result.verdict is ExpertVerdict.SUCCEEDED
     assert type(result.usage["model_calls"]) is int
     assert result.usage["model_calls"] == 0
+
+
+def test_nested_symbolic_expert_delegation_does_not_deadlock_registry() -> None:
+    """A handler may synchronously invoke another admitted expert on this registry."""
+
+    registry = ExpertRegistry()
+    child_handler = OperationAwareHandler()
+    child_descriptor = replace(
+        _descriptor(),
+        expert_id="zara:expert/dispatch-child",
+        manifest_digest="sha256:dispatch.child.v1",
+        name="Dispatch Child",
+        applicability_keywords=("child",),
+    )
+    child_handle_box: dict[str, Any] = {}
+
+    class ParentHandler:
+        def __call__(self, *, expert_operation: str, **payload: Any) -> dict[str, Any]:
+            assert expert_operation == "parse"
+            child = registry.invoke(
+                child_handle_box["handle"],
+                "parse",
+                {"text": payload["text"]},
+                limits=ExpertLimits(max_model_calls=0),
+            )
+            return {
+                "verdict": "succeeded",
+                "data": {"child_verdict": child.verdict.value},
+                "evidence_refs": ["ev:delegation"],
+                "usage": {"model_calls": 0},
+                "effect_receipts": [],
+            }
+
+    registry.reload(
+        [
+            (_descriptor(), ParentHandler()),
+            (child_descriptor, child_handler),
+        ]
+    )
+    parent_handle, _ = registry.activate(
+        "user:alice", "ws:main", "zara:expert/dispatch-fixture"
+    )
+    child_handle_box["handle"], _ = registry.activate(
+        "user:alice", "ws:main", "zara:expert/dispatch-child"
+    )
+
+    outcome: dict[str, Any] = {}
+
+    def invoke_parent() -> None:
+        try:
+            outcome["result"] = registry.invoke(
+                parent_handle,
+                "parse",
+                {"text": "delegate"},
+                limits=ExpertLimits(max_model_calls=0),
+            )
+        except BaseException as error:  # pragma: no cover - surfaced below
+            outcome["error"] = error
+
+    worker = threading.Thread(target=invoke_parent, daemon=True)
+    worker.start()
+    worker.join(timeout=2.0)
+
+    assert not worker.is_alive(), "nested expert delegation deadlocked the registry lock"
+    assert "error" not in outcome
+    result = outcome["result"]
+    assert result.verdict is ExpertVerdict.SUCCEEDED
+    assert result.data == {"child_verdict": "succeeded"}
+    assert child_handler.calls == [("parse", {"text": "delegate"})]
