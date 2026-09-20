@@ -37,6 +37,8 @@ class SymbolicConversationProjectionTest {
         verifiedFactsJson = "[{\"fact_id\":\"fact-1\"}]",
         verifiedOutcomeRefs = verifiedOutcomeRefs,
         rendererProvenance = rendererProvenance,
+        providersEnabled = false,
+        maxModelCalls = 0,
         providerCalls = providerCalls,
         modelCalls = modelCalls,
     )
