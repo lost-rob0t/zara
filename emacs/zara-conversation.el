@@ -123,11 +123,27 @@ while assistant output remains generation-fenced."
         (funcall callback response error)))))
 
 (defun zara-conversation--protocol-error (process message)
-  "Fail PROCESS closed after native protocol MESSAGE."
+  "Fail PROCESS closed after native protocol MESSAGE.
+
+Once Zara has admitted a turn, a malformed or unexpected native-client event
+must not merely hide its late output.  Fence presentation immediately and send
+the runtime-minted turn id through canonical CancelTurn so a protocol failure
+cannot leave the admitted turn running behind the Emacs surface.  If the
+failure arrives before the turn receipt, keep parsing only long enough to learn
+the id and cancel it; terminal process cleanup handles the no-receipt case."
   (unless (process-get process 'zara-protocol-error)
     (process-put process 'zara-protocol-error message)
     (zara-conversation--deliver process nil message)
-    (zara-conversation--finish-buffer process 'error))
+    (process-put process 'zara-cancel-requested t)
+    (process-put process 'zara-cancel-final-state 'error)
+    (let ((target (process-get process 'zara-target)))
+      (when (zara-conversation--active-request-p process)
+        (with-current-buffer target
+          (cl-incf zara-conversation--generation)
+          (setq zara-conversation--state 'cancelling)
+          (force-mode-line-update t))))
+    (when-let ((turn-id (process-get process 'zara-turn-id)))
+      (zara-conversation--start-cancel-required process turn-id)))
   nil)
 
 (defun zara-conversation--cancel-error (process message)
@@ -174,13 +190,15 @@ while assistant output remains generation-fenced."
     (let* ((request (process-get process 'zara-request-process))
            (status (process-exit-status process))
            (stderr (process-get process 'zara-stderr))
-           (message (zara-conversation--cancel-stderr process)))
+           (message (zara-conversation--cancel-stderr process))
+           (final-state
+            (or (process-get request 'zara-cancel-final-state) 'cancelled)))
       (when (buffer-live-p stderr)
         (kill-buffer stderr))
       (if (zerop status)
           (progn
             (process-put request 'zara-cancel-confirmed t)
-            (zara-conversation--finish-buffer request 'cancelled))
+            (zara-conversation--finish-buffer request final-state))
         (zara-conversation--cancel-error
          request
          (if (string-empty-p message)
@@ -209,6 +227,16 @@ while assistant output remains generation-fenced."
       (process-put request-process 'zara-cancel-process cancel)))
   request-process)
 
+(defun zara-conversation--start-cancel-required (request-process turn-id)
+  "Start required CancelTurn for REQUEST-PROCESS and TURN-ID or fail closed."
+  (condition-case error-data
+      (zara-conversation--start-cancel request-process turn-id)
+    (error
+     (zara-conversation--cancel-error
+      request-process
+      (format "CancelTurn setup failed: %s" (error-message-string error-data)))
+     nil)))
+
 (defun zara-conversation--accept-turn (process event)
   "Handle one turn.accepted EVENT for PROCESS."
   (let* ((expected (process-get process 'zara-conversation-id))
@@ -224,7 +252,7 @@ while assistant output remains generation-fenced."
         (error "native-client emitted conflicting turn ids")))
     (process-put process 'zara-turn-id turn-id)
     (when (process-get process 'zara-cancel-requested)
-      (zara-conversation--start-cancel process turn-id))))
+      (zara-conversation--start-cancel-required process turn-id))))
 
 (defun zara-conversation--complete-turn (process event)
   "Handle one assistant.complete EVENT for PROCESS."
@@ -299,7 +327,12 @@ while assistant output remains generation-fenced."
     (let ((status (process-exit-status process))
           (stderr (process-get process 'zara-stderr)))
       (cond
-       ((process-get process 'zara-protocol-error) nil)
+       ((process-get process 'zara-protocol-error)
+        (unless (or (process-get process 'zara-cancel-process)
+                    (process-get process 'zara-cancel-confirmed))
+          (if-let ((turn-id (process-get process 'zara-turn-id)))
+              (zara-conversation--start-cancel-required process turn-id)
+            (zara-conversation--finish-buffer process 'error))))
        ((process-get process 'zara-cancel-requested)
         (unless (or (process-get process 'zara-cancel-process)
                     (process-get process 'zara-cancel-confirmed))
@@ -392,7 +425,7 @@ must emit `turn.accepted' then matching `assistant.complete' NDJSON."
     (cl-incf zara-conversation--generation)
     (process-put process 'zara-cancel-requested t)
     (when-let ((turn-id (process-get process 'zara-turn-id)))
-      (zara-conversation--start-cancel process turn-id))
+      (zara-conversation--start-cancel-required process turn-id))
     (force-mode-line-update t)
     process))
 
