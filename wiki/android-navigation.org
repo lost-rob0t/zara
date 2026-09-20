@@ -7,12 +7,12 @@ Issue [[https://github.com/lost-rob0t/zara/issues/934][#934]] reorganizes the ex
 | Left menu | Tabs |
 |-----------+------|
 | Chat | Chat, Voice |
-| Workspace | Logic, Projects, Scheduled |
+| Workspace | Code, Logic, Projects, Scheduled |
 | Settings | Runtime, Connection, Permissions, Appearance, Plugins, Updates, Diagnostics, About |
 
 On a compact window, open the menu button at the upper left. The drawer has exactly three primary entries; conversation-history placeholders and local/remote status remain below them. At an available window width of at least 600dp, the same three entries appear in a persistent left rail. The menu button still opens the history drawer. There is no bottom navigation bar competing with the composer.
 
-Tabs scroll horizontally. Selecting a menu restores that menu's last tab. Logic is Workspace's first tab, not hidden in advanced settings.
+Tabs scroll horizontally. Selecting a menu restores that menu's last tab. Code is Workspace's first tab; Logic stays directly beside it rather than being hidden in advanced settings.
 
 * Settings organization
 
@@ -30,7 +30,7 @@ Appearance uses the existing shared semantic theme previews. Plugins preserves i
 
 The shell's route-keyed =SaveableStateHolder= preserves existing =rememberSaveable= form values, chat drafts, and scroll state while routes are off-screen. This is Android UI saved state, not a new durable conversation database, a promise to retain unbounded documents, or a change to the Prolog editor's persistence contract. Recreation and large-draft behavior still require Android interaction evidence.
 
-Back closes an open drawer before changing routes. Otherwise it returns from a secondary tab to that menu's first tab, then from Workspace/Settings to Chat. Back at the Chat root is handled by Android. Tab changes do not restart or replace the runtime.
+Back closes an open drawer before changing routes. Otherwise it returns from a secondary tab to that menu's first tab (Code for Workspace), then from Workspace/Settings to Chat. Back at the Chat root is handled by Android. Tab changes do not restart or replace the runtime.
 
 * Feature truth
 
@@ -50,6 +50,6 @@ Before merge/release, exact-head repository and Android/Wear/native/APK CI must 
 - Outrun and Light, normal and increased font scale, labeled focus/TalkBack targets;
 - chat draft and connection form switching, rotation/recreation, Back, and IME-visible composer;
 - disconnected local-capable mode, missing permissions, corrupt enrollment, and updater busy state;
-- Logic/editor tab switching without loss of its existing saveable draft state.
+- Code/Logic tab switching without loss of editor or Logic draft state.
 
 No visual or hardware pass is implied by the pure Kotlin tests, source checks, or syntax parsing. The reference's visual language and all runtime/security gates remain authoritative; only its flat drawer inventory is superseded by #934.
