@@ -9,6 +9,36 @@ only registered operations. Request values are never evaluated as Elisp.
 The running Emacs process remains authoritative for buffers, windows, active
 keymaps, remapping, modes, modification ticks and undo history.
 
+* Canonical conversation control
+=emacs/zara-conversation.el= adds continuous native conversation control without
+creating a second conversation runtime or transcript store. Use
+=M-x zara-conversation-chat= to open the existing =*Zara*= chat surface with
+=zara-conversation-mode= enabled.
+
+The mode keeps a stable canonical conversation id (default =emacs-main=) and
+submits through Zara's native client contract with =--conversation-id= and
+=--json-events=. It accepts only the matching =turn.accepted= followed by
+=assistant.complete= for the runtime-minted turn id. Malformed, unknown,
+mismatched, duplicate or incomplete native events fail closed rather than
+falling back to another renderer or provider path.
+
+Cancellation is =C-c C-k=. It fences the local presentation generation first,
+then sends canonical =--cancel-turn TURN_ID= / =CancelTurn= once Zara has minted
+the turn id. Late assistant output from the cancelled generation cannot reach
+the chat callback. If the request terminates before a turn id is ever issued,
+the surface reports the failure and clears busy state instead of hanging.
+
+=C-c C-s= inspects the current conversation/turn state and =C-c C-c= switches
+the canonical conversation id while idle. Conversation content, expert state,
+project/discourse state, provider/model accounting and restart durability remain
+owned by Zara's canonical runtime/database; Emacs persists none of them.
+
+Pure-symbolic execution therefore requires Zara Core's normal
+=conversation.execution_policy=pure_symbolic= configuration and zero-model
+policy. The Emacs layer does not instantiate a provider or manufacture a zero
+usage claim. Durable restart/replay semantics are consumed from Zara's canonical
+conversation projection as that producer lands.
+
 * Core operations
 The initial bridge provides:
 - session description and capability discovery;

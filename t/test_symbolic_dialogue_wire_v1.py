@@ -33,6 +33,9 @@ def envelope(act: str, payload: dict) -> dict:
     ("act", "payload"),
     [
         ("greeting", {}),
+        ("help", {}),
+        ("acknowledgement", {"kind": "thanks"}),
+        ("acknowledgement", {"kind": "acknowledged"}),
         ("cancelled", {}),
         ("clarify", {"slot": "duration"}),
         ("clarify", {"reason": "ambiguous_reference"}),
@@ -69,6 +72,15 @@ def test_pure_symbolic_envelope_rejects_provider_or_model_fallback(validator, mu
         validator.validate(value)
 
 
+def test_acknowledgement_kind_is_closed(validator):
+    validator.validate(envelope("acknowledgement", {"kind": "thanks"}))
+    validator.validate(envelope("acknowledgement", {"kind": "acknowledged"}))
+    with pytest.raises(Exception):
+        validator.validate(envelope("acknowledgement", {"kind": "maybe"}))
+    with pytest.raises(Exception):
+        validator.validate(envelope("acknowledgement", {}))
+
+
 def test_verified_act_requires_fresh_evidence_reference(validator):
     value = envelope("verified", {"outcome": "done"})
     with pytest.raises(Exception):
@@ -98,6 +110,8 @@ def test_wire_act_vocabulary_covers_prolog_response_acts():
     source = PROLOG_PATH.read_text()
     required_terms = {
         "greeting": "response_codes(greeting)",
+        "help": "response_codes(help)",
+        "acknowledgement": "response_codes(acknowledgement(",
         "cancelled": "response_codes(cancelled)",
         "clarify": "response_codes(clarify(",
         "choose": "response_codes(choose(",
