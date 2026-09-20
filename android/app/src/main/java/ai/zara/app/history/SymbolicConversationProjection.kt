@@ -1,6 +1,7 @@
 package ai.zara.app.history
 
 import android.content.ContentValues
+import android.database.Cursor
 
 private const val SYMBOLIC_RENDERER_ID = "symbolic-dcg/v1"
 
@@ -382,18 +383,18 @@ fun PortableConversationStore.loadSymbolicProjection(
         "1",
     ).use { cursor ->
         if (!cursor.moveToFirst()) return@use null
-        val providersEnabledValue = cursor.getLong(cursor.getColumnIndexOrThrow("providers_enabled"))
+        val providersEnabledValue = cursor.exactStoredLong("providers_enabled")
         check(providersEnabledValue == 0L || providersEnabledValue == 1L) {
             "stored providers_enabled must be SQLite integer 0 or 1"
         }
         val projection = SymbolicConversationProjection(
             conversationId = cursor.getString(cursor.getColumnIndexOrThrow("conversation_id")),
-            projectionGeneration = cursor.getLong(cursor.getColumnIndexOrThrow("projection_generation")),
-            runtimeGeneration = cursor.getLong(cursor.getColumnIndexOrThrow("runtime_generation")),
+            projectionGeneration = cursor.exactStoredLong("projection_generation", minimum = 1L),
+            runtimeGeneration = cursor.exactStoredLong("runtime_generation"),
             turnId = cursor.nullableString("turn_id"),
             outcome = cursor.getString(cursor.getColumnIndexOrThrow("outcome")),
             projectId = cursor.nullableString("project_id"),
-            projectGeneration = cursor.getLong(cursor.getColumnIndexOrThrow("project_generation")),
+            projectGeneration = cursor.exactStoredLong("project_generation"),
             dialogueAct = cursor.getString(cursor.getColumnIndexOrThrow("dialogue_act")),
             dialogueStateJson = cursor.getString(cursor.getColumnIndexOrThrow("dialogue_state_json")),
             discourseEntitiesJson = cursor.getString(cursor.getColumnIndexOrThrow("discourse_entities_json")),
@@ -404,9 +405,9 @@ fun PortableConversationStore.loadSymbolicProjection(
                 .decodeVerifiedOutcomeRefs(),
             rendererProvenance = cursor.getString(cursor.getColumnIndexOrThrow("renderer_provenance")),
             providersEnabled = providersEnabledValue == 1L,
-            maxModelCalls = cursor.getLong(cursor.getColumnIndexOrThrow("max_model_calls")),
-            providerCalls = cursor.getLong(cursor.getColumnIndexOrThrow("provider_calls")),
-            modelCalls = cursor.getLong(cursor.getColumnIndexOrThrow("model_calls")),
+            maxModelCalls = cursor.exactStoredLong("max_model_calls"),
+            providerCalls = cursor.exactStoredLong("provider_calls"),
+            modelCalls = cursor.exactStoredLong("model_calls"),
             updatedAt = cursor.getString(cursor.getColumnIndexOrThrow("updated_at")),
         )
         SymbolicProjectionContract.validatePayload(projection)
@@ -477,7 +478,17 @@ fun PortableConversationStore.saveSymbolicProjection(
 private fun String.decodeVerifiedOutcomeRefs(): List<String> =
     if (isEmpty()) emptyList() else split('\n')
 
-private fun android.database.Cursor.nullableString(column: String): String? {
+private fun Cursor.exactStoredLong(column: String, minimum: Long = 0L): Long {
+    val index = getColumnIndexOrThrow(column)
+    check(getType(index) == Cursor.FIELD_TYPE_INTEGER) {
+        "stored $column must use SQLite integer storage"
+    }
+    val value = getLong(index)
+    check(value >= minimum) { "stored $column must be >= $minimum" }
+    return value
+}
+
+private fun Cursor.nullableString(column: String): String? {
     val index = getColumnIndexOrThrow(column)
     return if (isNull(index)) null else getString(index)
 }
