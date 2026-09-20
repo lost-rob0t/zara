@@ -163,6 +163,8 @@ class SymbolicConversationProjection:
         _require_exact_integer("max_model_calls", self.max_model_calls)
         _require_exact_integer("provider_calls", self.provider_calls)
         _require_exact_integer("model_calls", self.model_calls)
+        if self.model_calls > self.max_model_calls:
+            raise ValueError("model_calls must not exceed max_model_calls")
         if self.project_id is not None and len(self.project_id) > 512:
             raise ValueError("project_id exceeds 512 characters")
         _validate_dialogue_act(self.dialogue_act)
@@ -182,6 +184,7 @@ class SymbolicConversationProjection:
         _canonical_array(self.verified_facts)
 
     def assert_pure_symbolic(self) -> None:
+        self.validate()
         providers_disabled = type(self.providers_enabled) is bool and not self.providers_enabled
         max_model_calls_exact_zero = type(self.max_model_calls) is int and self.max_model_calls == 0
         provider_exact_zero = type(self.provider_calls) is int and self.provider_calls == 0
