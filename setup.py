@@ -46,7 +46,7 @@ def _prolog_data_files():
         if path.exists():
             sources.append(root_file)
 
-    for sub in ("kb", "modules", "assets"):
+    for sub in ("kb", "modules", "assets", "browser-addon"):
         sub_root = ROOT / sub
         if not sub_root.is_dir():
             continue
@@ -135,7 +135,7 @@ setup(
     },
     include_package_data=True,
     package_data={
-        "zara": ["py.typed"],
+        "zara": ["py.typed", "conversation_schema.sql"],
     },
     data_files=_prolog_data_files(),
 )

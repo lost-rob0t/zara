@@ -223,6 +223,9 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun setRuntimeMode(mode: RuntimeMode) {
         val previous = runtimeMode
+        if (mode == RuntimeMode.Local && previous != RuntimeMode.Local) {
+            controller.suspendRemoteForLocalMode()
+        }
         runtimeMode = mode
         diagnostics.record(
             "runtime_mode.changed",
@@ -440,7 +443,11 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         return controller.connect(profile)
     }
 
-    fun submitText(text: String): CompletableFuture<TextTurnResult> {
+    fun submitText(
+        text: String,
+        localConversationId: String = "local-device",
+        remoteConversationId: String? = null,
+    ): CompletableFuture<TextTurnResult> {
         val remoteConnected = state().server is ServerConnection.Connected
         diagnostics.record(
             "text.submit",
@@ -452,16 +459,21 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             ),
         )
         when (runtimeMode) {
-            RuntimeMode.Local -> return submitLocalText(text)
+            RuntimeMode.Local -> return submitLocalText(text, localConversationId)
             RuntimeMode.Remote -> {
                 if (!remoteConnected) {
                     return CompletableFuture.failedFuture(
                         IllegalStateException("Remote mode requires an authenticated Zara server"),
                     )
                 }
-                return submitRemoteText(text)
+                return submitRemoteText(text, remoteConversationId)
             }
-            RuntimeMode.Auto -> return submitAutoLocalFirst(text, remoteConnected)
+            RuntimeMode.Auto -> return submitAutoLocalFirst(
+                text = text,
+                remoteConnected = remoteConnected,
+                localConversationId = localConversationId,
+                remoteConversationId = remoteConversationId,
+            )
         }
     }
 
@@ -515,12 +527,12 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         text: String,
         projectId: String,
         conversationId: String?,
+        localConversationId: String = "local-project:$projectId",
     ): CompletableFuture<TextTurnResult> {
         val normalizedProjectId = projectId.trim()
         require(normalizedProjectId.isNotEmpty()) { "Project id is required" }
         require(normalizedProjectId.length <= 128) { "Project id is too long" }
         require(normalizedProjectId.none(Char::isISOControl)) { "Project id contains control characters" }
-        val localConversationId = "local-project:$normalizedProjectId"
         val remoteConnected = state().server is ServerConnection.Connected
         return when (runtimeMode) {
             RuntimeMode.Local -> submitLocalText(text, localConversationId)
@@ -542,7 +554,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         }
     }
 
-    private fun submitLocalText(
+    internal fun submitLocalText(
         text: String,
         conversationId: String = "local-device",
     ): CompletableFuture<TextTurnResult> {

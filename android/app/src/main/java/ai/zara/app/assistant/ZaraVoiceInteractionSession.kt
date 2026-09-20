@@ -19,12 +19,24 @@ import androidx.core.content.ContextCompat
 class ZaraVoiceInteractionSession(
     private val context: Context,
 ) : VoiceInteractionSession(context) {
+    private enum class CaptureBackend { Local, Remote }
+
     private val application = context.applicationContext as ZaraApplication
     private val appSession: AndroidAppSession =
         (context.applicationContext as ZaraApplication).appSession
     private val lifecycleFence = application.assistantLifecycleFence
     private val invocationGate = AssistantInvocationGate()
+    private val localVoice = LocalAssistantVoiceController(
+        context,
+        appSession,
+        lifecycleFence,
+        ::updateStatus,
+    )
+    private val lifecycleInvalidationRegistration = lifecycleFence.onInvalidate {
+        context.mainExecutor.execute(::cancelLocalCaptureForLifecycleInvalidation)
+    }
     private var statusView: TextView? = null
+    private var captureBackend: CaptureBackend? = null
 
     override fun onCreateContentView(): View {
         val density = context.resources.displayMetrics.density
@@ -69,26 +81,69 @@ class ZaraVoiceInteractionSession(
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
         invocationGate.show()
+        appSession.assessAssistantRole()
         updateStatus("Hold to talk to Zara")
     }
 
     override fun onHide() {
         executeFinish(invocationGate.hide())
+        localVoice.cancel(notify = false)
         super.onHide()
     }
 
     override fun onDestroy() {
         executeFinish(invocationGate.hide())
+        lifecycleInvalidationRegistration.close()
+        localVoice.close()
         statusView = null
         super.onDestroy()
     }
 
     private fun beginPushToTalk() {
         if (!invocationGate.beginPress()) return
-        updateStatus("Connecting microphone…")
+        updateStatus("Starting microphone…")
         val permissionGranted =
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED
+        appSession.assessAssistantRole()
+        when (
+            val plan = planAssistantCapture(
+                mode = appSession.runtimeMode(),
+                localState = appSession.localServerState(),
+                runtimeState = appSession.state(),
+            )
+        ) {
+            AssistantCapturePlan.Local -> beginLocalPushToTalk(permissionGranted)
+            AssistantCapturePlan.Remote -> beginRemotePushToTalk(permissionGranted)
+            is AssistantCapturePlan.Reject -> {
+                invocationGate.startFailed()
+                captureBackend = null
+                updateStatus("Voice unavailable: ${plan.reason}")
+            }
+        }
+    }
+
+    private fun beginLocalPushToTalk(permissionGranted: Boolean) {
+        captureBackend = CaptureBackend.Local
+        try {
+            localVoice.start(permissionGranted)
+        } catch (error: Throwable) {
+            localVoice.cancel()
+            captureBackend = null
+            invocationGate.startFailed()
+            updateStatus("Voice unavailable: ${UiOperationFailure.summarize(error)}")
+            return
+        }
+        val finish = invocationGate.startSucceeded()
+        if (finish is AssistantCaptureFinish.None) {
+            updateStatus("Listening locally… release to send")
+        } else {
+            executeFinish(finish)
+        }
+    }
+
+    private fun beginRemotePushToTalk(permissionGranted: Boolean) {
+        captureBackend = CaptureBackend.Remote
         val lifecycleToken = lifecycleFence.beginStart()
         appSession.startAssistantVoice(
             permissionGranted,
@@ -98,6 +153,7 @@ class ZaraVoiceInteractionSession(
             context.mainExecutor.execute {
                 if (error != null) {
                     invocationGate.startFailed()
+                    captureBackend = null
                     updateStatus("Voice unavailable: ${UiOperationFailure.summarize(error)}")
                     return@execute
                 }
@@ -123,27 +179,56 @@ class ZaraVoiceInteractionSession(
     private fun executeFinish(finish: AssistantCaptureFinish) {
         when (finish) {
             AssistantCaptureFinish.None -> Unit
-            AssistantCaptureFinish.Commit -> {
-                updateStatus("Sending to Zara…")
-                appSession.releasePushToTalk().whenComplete { _, error ->
-                    context.mainExecutor.execute {
-                        updateStatus(
-                            if (error == null) "Waiting for Zara…"
-                            else "Voice send failed: ${UiOperationFailure.summarize(error)}"
-                        )
-                    }
+            AssistantCaptureFinish.Commit -> when (captureBackend) {
+                CaptureBackend.Local -> {
+                    captureBackend = null
+                    updateStatus("Transcribing locally…")
+                    localVoice.stop()
                 }
-            }
-            AssistantCaptureFinish.Cancel -> {
-                updateStatus("Voice cancelled")
-                appSession.cancelPushToTalk().whenComplete { _, error ->
-                    if (error != null) {
+                CaptureBackend.Remote -> {
+                    captureBackend = null
+                    updateStatus("Sending to Zara…")
+                    appSession.releasePushToTalk().whenComplete { _, error ->
                         context.mainExecutor.execute {
-                            updateStatus("Voice cancel failed: ${UiOperationFailure.summarize(error)}")
+                            updateStatus(
+                                if (error == null) "Waiting for Zara…"
+                                else "Voice send failed: ${UiOperationFailure.summarize(error)}"
+                            )
                         }
                     }
                 }
+                null -> Unit
             }
+            AssistantCaptureFinish.Cancel -> when (captureBackend) {
+                CaptureBackend.Local -> {
+                    captureBackend = null
+                    localVoice.cancel()
+                }
+                CaptureBackend.Remote -> {
+                    captureBackend = null
+                    updateStatus("Voice cancelled")
+                    appSession.cancelPushToTalk().whenComplete { _, error ->
+                        if (error != null) {
+                            context.mainExecutor.execute {
+                                updateStatus("Voice cancel failed: ${UiOperationFailure.summarize(error)}")
+                            }
+                        }
+                    }
+                }
+                null -> Unit
+            }
+        }
+    }
+
+    private fun cancelLocalCaptureForLifecycleInvalidation() {
+        val wasActiveLocalCapture = captureBackend == CaptureBackend.Local
+        if (wasActiveLocalCapture) {
+            invocationGate.cancelPress()
+            captureBackend = null
+        }
+        localVoice.cancel(notify = false)
+        if (wasActiveLocalCapture) {
+            updateStatus("Voice cancelled because the Android Assistant service stopped")
         }
     }
 

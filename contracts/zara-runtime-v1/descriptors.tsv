@@ -1,0 +1,4 @@
+id	display_name	protocol	runtime_version	implementation_version	installed	available	health	locality	transport	provider_control	model_control	supports_streaming	supports_cancel	supports_context_handles	supports_host_tools	capabilities	profiles	provenance
+zara-python	Zara Python	ZARA-RUNTIME/1	1.0	0.2.2-alpha	true	true	ready	embedded	in_process	zara	zara	true	true	true	true	chat,streaming,cancel,context_handles,host_tools	-	builtin:test-fixture
+prolog-rlm	Prolog-RLM	ZARA-RUNTIME/1	1.0	fixture	false	false	stopped	local_process	stdio	runtime	runtime	true	true	true	true	chat,streaming,cancel,context_handles,host_tools,rlm	agentprolog	absent:test-fixture
+future-runtime	Future Runtime	ZARA-RUNTIME/2	2.0	fixture	true	true	ready	local_sidecar	loopback_http	runtime	runtime	true	true	true	false	chat,streaming,cancel	-	protocol-v2:test-fixture

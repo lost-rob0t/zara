@@ -77,6 +77,21 @@ class RuntimeBackend:
     def unregister_tools(self, names) -> None:
         pass
 
+    def requires_composed_tool_approval(self, name: str) -> bool:
+        raise UnsupportedRuntimeCommand(
+            "composed tool policy is not available in this runtime backend"
+        )
+
+    def invoke_composed_tool(
+        self,
+        principal_id: str,
+        name: str,
+        request: dict[str, Any],
+    ) -> Any:
+        raise UnsupportedRuntimeCommand(
+            "composed tool invocation is not available in this runtime backend"
+        )
+
     def register_agent_loop_advice(
         self,
         kind: str,
@@ -375,6 +390,25 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         if self._manager is not None:
             self._manager.tool_registry.unregister_tools(list(names))
 
+    def requires_composed_tool_approval(self, name: str) -> bool:
+        manager = self._manager
+        if manager is None:
+            raise RuntimeError("runtime backend is not started")
+        return bool(manager.tool_registry.requires_approval(name))
+
+    def invoke_composed_tool(
+        self,
+        principal_id: str,
+        name: str,
+        request: dict[str, Any],
+    ) -> Any:
+        manager = self._manager
+        if manager is None:
+            raise RuntimeError("runtime backend is not started")
+        if principal_id != self.principal_id:
+            raise PermissionError("composed tool invocation principal does not own this runtime")
+        return manager.tool_registry.invoke_composed_tool(name, request)
+
     def register_agent_loop_advice(
         self,
         kind: str,
@@ -519,6 +553,17 @@ class AgentRuntimeBackend(RuntimeBackend):
 
     def unregister_tools(self, names) -> None:
         self._delegate.unregister_tools(names)
+
+    def requires_composed_tool_approval(self, name: str) -> bool:
+        return self._delegate.requires_composed_tool_approval(name)
+
+    def invoke_composed_tool(
+        self,
+        principal_id: str,
+        name: str,
+        request: dict[str, Any],
+    ) -> Any:
+        return self._delegate.invoke_composed_tool(principal_id, name, request)
 
     def register_agent_loop_advice(
         self,

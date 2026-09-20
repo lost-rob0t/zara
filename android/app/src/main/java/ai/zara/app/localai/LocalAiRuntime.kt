@@ -8,9 +8,17 @@ import java.util.concurrent.Executors
 class LocalAiRuntime(
     private val backend: LocalLlmBackend,
 ) : AutoCloseable {
+    @Volatile
+    private var actorThread: Thread? = null
+
     private val actor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "zara-local-ai").apply { isDaemon = true }
+        Thread(runnable, "zara-local-ai").apply {
+            isDaemon = true
+            actorThread = this
+        }
     }
+    private val lifecycleLock = Any()
+    private val closeDone = CompletableFuture<Unit>()
 
     @Volatile
     private var current = LocalAiState()
@@ -27,7 +35,7 @@ class LocalAiRuntime(
     fun state(): LocalAiState = current
 
     fun setStateObserver(observer: ((LocalAiState) -> Unit)?) {
-        actor.execute {
+        enqueueIfOpen {
             stateObserver = observer
             observer?.invoke(current)
         }
@@ -61,9 +69,8 @@ class LocalAiRuntime(
         request: LocalGenerationRequest,
         onChunk: (String) -> Unit = {},
     ): CompletableFuture<LocalGenerationResult> {
-        if (closed) return failed(IllegalStateException("Local AI runtime is closed"))
         val result = CompletableFuture<LocalGenerationResult>()
-        actor.execute {
+        val accepted = enqueueIfOpen {
             try {
                 check(current.phase == LocalAiPhase.READY) { "Local model is not ready" }
                 check(activeFuture == null) { "A local generation is already active" }
@@ -76,15 +83,15 @@ class LocalAiRuntime(
                     request,
                     object : LocalGenerationListener {
                         override fun onChunk(text: String) {
-                            actor.execute { acceptChunk(text) }
+                            enqueueIfOpen { acceptChunk(text) }
                         }
 
                         override fun onDone() {
-                            actor.execute { finishGeneration(spec) }
+                            enqueueIfOpen { finishGeneration(spec) }
                         }
 
                         override fun onError(error: Throwable) {
-                            actor.execute { failGeneration(error) }
+                            enqueueIfOpen { failGeneration(error) }
                         }
                     },
                 )
@@ -93,6 +100,9 @@ class LocalAiRuntime(
                 activeChunkObserver = null
                 result.completeExceptionally(error)
             }
+        }
+        if (!accepted) {
+            result.completeExceptionally(IllegalStateException("Local AI runtime is closed"))
         }
         return result
     }
@@ -181,41 +191,53 @@ class LocalAiRuntime(
     }
 
     private fun <T> submit(block: () -> T): CompletableFuture<T> {
-        if (closed) return failed(IllegalStateException("Local AI runtime is closed"))
         val future = CompletableFuture<T>()
-        actor.execute {
+        val accepted = enqueueIfOpen {
             try {
                 future.complete(block())
             } catch (error: Throwable) {
                 future.completeExceptionally(error)
             }
         }
+        if (!accepted) {
+            future.completeExceptionally(IllegalStateException("Local AI runtime is closed"))
+        }
         return future
     }
 
     override fun close() {
-        if (closed) return
-        val done = CompletableFuture<Unit>()
-        actor.execute {
-            try {
-                cancelActive("Local AI runtime closed")
-                unloadBackend()
-                runCatching { backend.close() }
-                update(LocalAiState(LocalAiPhase.STOPPED, current.generation + 1))
-                stateObserver = null
-                done.complete(Unit)
-            } catch (error: Throwable) {
-                done.completeExceptionally(error)
+        synchronized(lifecycleLock) {
+            if (!closed) {
+                closed = true
+                actor.execute {
+                    try {
+                        cancelActive("Local AI runtime closed")
+                        unloadBackend()
+                        runCatching { backend.close() }
+                        update(LocalAiState(LocalAiPhase.STOPPED, current.generation + 1))
+                        stateObserver = null
+                        actor.shutdown()
+                        closeDone.complete(Unit)
+                    } catch (error: Throwable) {
+                        actor.shutdown()
+                        closeDone.completeExceptionally(error)
+                    }
+                }
             }
         }
-        runCatching { done.get() }
-        closed = true
-        actor.shutdownNow()
+        if (Thread.currentThread() === actorThread) return
+        runCatching { closeDone.get() }
+    }
+
+    private fun enqueueIfOpen(block: () -> Unit): Boolean = synchronized(lifecycleLock) {
+        if (closed) {
+            false
+        } else {
+            actor.execute(block)
+            true
+        }
     }
 
     private fun boundedMessage(error: Throwable): String =
         (error.message ?: error::class.java.simpleName).take(256)
-
-    private fun <T> failed(error: Throwable): CompletableFuture<T> =
-        CompletableFuture<T>().also { it.completeExceptionally(error) }
 }

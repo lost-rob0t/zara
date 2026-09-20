@@ -31,8 +31,33 @@ class LocalZaraServerTest {
         assertEquals(listOf("bob"), result.terms)
         assertEquals(listOf("/private/semantic_core.pl"), bridge.initialized)
         assertEquals(listOf("family.pl"), bridge.consulted.map { it.substringAfterLast('/') })
+        assertEquals(listOf("Result = zara_ready", "parent(alice, Result)"), bridge.queries)
         assertEquals(1, bridge.threadNames.distinct().size)
         assertTrue(bridge.threadNames.distinct().single().contains("zara-local-server"))
+        server.close()
+    }
+
+    @Test
+    fun readinessProbeFailureFailsBootAndEmitsDiagnostic() {
+        val bridge = RecordingTreallaBridge().apply {
+            readinessResult = emptyList()
+        }
+        val events = mutableListOf<String>()
+        val server = LocalZaraServer(
+            bridge = bridge,
+            corePath = "/private/core.pl",
+            workspace = PrologWorkspace(temporary.newFolder("readiness-failure")),
+            diagnostics = { event, _, _ -> events += event },
+        )
+
+        val state = server.start().get(2, TimeUnit.SECONDS)
+
+        assertEquals(LocalServerPhase.FAILED, state.phase)
+        assertTrue(state.failure?.contains("readiness", ignoreCase = true) == true)
+        assertTrue(events.contains("local_server.self_test.begin"))
+        assertTrue(events.contains("local_server.self_test.failed"))
+        assertTrue(events.contains("local_server.boot.failed"))
+        assertTrue(!events.contains("local_server.ready"))
         server.close()
     }
 
@@ -50,6 +75,10 @@ class LocalZaraServerTest {
         assertEquals(2, bridge.initialized.size)
         assertEquals(1, bridge.shutdownCount)
         assertEquals(2, bridge.consulted.size)
+        assertEquals(
+            listOf("Result = zara_ready", "Result = zara_ready"),
+            bridge.queries,
+        )
         server.close()
     }
 
@@ -68,7 +97,7 @@ class LocalZaraServerTest {
         }.exceptionOrNull()
 
         assertTrue(failure != null)
-        assertTrue(bridge.queries.isEmpty())
+        assertEquals(listOf("Result = zara_ready"), bridge.queries)
         server.close()
     }
 
@@ -96,6 +125,7 @@ class LocalZaraServerTest {
         val threadNames = mutableListOf<String>()
         var shutdownCount = 0
         var failNextConsult = false
+        var readinessResult = listOf("zara_ready")
 
         override fun initialize(coreAssetPath: String) {
             initialized += coreAssetPath
@@ -114,7 +144,7 @@ class LocalZaraServerTest {
         override fun evaluate(query: String): List<String> {
             queries += query
             threadNames += Thread.currentThread().name
-            return listOf("bob")
+            return if (query == "Result = zara_ready") readinessResult else listOf("bob")
         }
 
         override fun shutdown() {
