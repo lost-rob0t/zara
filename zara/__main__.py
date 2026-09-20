@@ -566,6 +566,8 @@ def main():
 
         if not args.standalone:
             endpoint = args.connect or _default_daemon_endpoint()
+            if args.conversation_id is None and not args.json_events:
+                sys.exit(_run_connected_text(endpoint, command_text))
             sys.exit(
                 _run_connected_text(
                     endpoint,
