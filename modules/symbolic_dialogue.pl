@@ -13,6 +13,10 @@
 % permission state, provider runtime, or effect execution. It consumes typed
 % outcomes from those canonical owners and produces deterministic response acts.
 % Every public reply carries explicit zero-provider/zero-model evidence.
+%
+% A complete effect-shaped frame is never rendered as success. It remains a
+% dispatch_required/1 act until the canonical capability/tool owner returns a
+% verified effect_result with fresh postcondition evidence.
 
 renderer_id('symbolic-dcg/v1').
 max_render_codes(2048).
@@ -40,7 +44,14 @@ response_act(frame(frame(_, _, invalid(value(Slot), Reason))), invalid(Slot, Rea
     bounded_identifier(Slot),
     bounded_identifier(Reason),
     !.
-response_act(frame(frame(intent(ns(_), name(_)), _, complete)), acknowledged) :- !.
+response_act(frame(Frame), dispatch_required(Frame)) :-
+    Frame = frame(intent(ns(_), name(_)), _, complete),
+    !.
+response_act(effect_result(verified(Outcome, postcondition(EvidenceRef))),
+        verified(Outcome, EvidenceRef)) :-
+    bounded_text(Outcome, max_summary_codes),
+    bounded_text(EvidenceRef, max_summary_codes),
+    !.
 response_act(plan_status(denied(Reason)), denied(Reason)) :-
     bounded_identifier(Reason),
     !.
@@ -140,8 +151,6 @@ response_codes(greeting) -->
     "Hey — what can I help with?".
 response_codes(cancelled) -->
     "Cancelled.".
-response_codes(acknowledged) -->
-    "Okay.".
 response_codes(clarify(slot(duration))) -->
     "How long should I set the timer for?".
 response_codes(clarify(slot(Slot))) -->
@@ -150,6 +159,10 @@ response_codes(choose(Choices)) -->
     "I found a few matches: ", choice_list_codes(Choices, 1), ". Which one?".
 response_codes(invalid(Slot, Reason)) -->
     "I couldn’t use ", value_codes(Slot), ": ", value_codes(Reason), ".".
+response_codes(dispatch_required(_Frame)) -->
+    "That action needs capability-checked execution before I can report success.".
+response_codes(verified(Outcome, _EvidenceRef)) -->
+    "Done: ", value_codes(Outcome), ".".
 response_codes(denied(Reason)) -->
     "I can’t do that: ", value_codes(Reason), ".".
 response_codes(unavailable(Reason)) -->
