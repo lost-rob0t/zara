@@ -468,7 +468,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 }
                 return submitRemoteText(text, remoteConversationId)
             }
-            RuntimeMode.Auto -> return submitAutoLocalFirst(
+            RuntimeMode.Auto -> return submitAutoRemoteFirst(
                 text = text,
                 remoteConnected = remoteConnected,
                 localConversationId = localConversationId,
@@ -477,7 +477,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         }
     }
 
-    private fun submitAutoLocalFirst(
+    private fun submitAutoRemoteFirst(
         text: String,
         remoteConnected: Boolean,
         localConversationId: String = "local-device",
@@ -486,24 +486,27 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         val query = text.trim()
         val explicitSymbolic =
             query.startsWith("?-") || query.startsWith("/prolog ") || query.startsWith("/expert ")
-        val local = submitLocalText(text, localConversationId)
-        if (explicitSymbolic || !remoteConnected) return local
-
-        return local.handle { result, error -> result to error }.thenCompose { (result, error) ->
-            if (error == null && result?.success == true) {
-                CompletableFuture.completedFuture(result)
-            } else {
-                diagnostics.record(
-                    "auto.remote_fallback",
-                    mapOf(
-                        "local_success" to (result?.success == true),
-                        "local_error" to (error != null),
-                    ),
-                    error,
-                )
-                submitRemoteText(text, remoteConversationId)
-            }
+        if (explicitSymbolic) {
+            diagnostics.record(
+                "auto.local_symbolic",
+                mapOf("remote_connected" to remoteConnected),
+            )
+            return submitLocalText(text, localConversationId)
         }
+
+        if (remoteConnected) {
+            diagnostics.record(
+                "auto.remote_preferred",
+                mapOf("remote_connected" to true),
+            )
+            return submitRemoteText(text, remoteConversationId)
+        }
+
+        diagnostics.record(
+            "auto.local_fallback",
+            mapOf("remote_connected" to false),
+        )
+        return submitLocalText(text, localConversationId)
     }
 
     private fun submitRemoteText(
@@ -545,7 +548,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                     submitRemoteText(text, conversationId)
                 }
             }
-            RuntimeMode.Auto -> submitAutoLocalFirst(
+            RuntimeMode.Auto -> submitAutoRemoteFirst(
                 text = text,
                 remoteConnected = remoteConnected,
                 localConversationId = localConversationId,

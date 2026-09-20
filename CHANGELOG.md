@@ -30,6 +30,9 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android Auto chat now prefers an authenticated desktop/server session when one is connected instead of silently answering locally first.
+- Android emulator CI now proves the installed APK can complete both a real embedded Local Prolog turn and an authenticated CURVE/ZARA/1 text turn against the stock Zara server.
+- Android remote connections now retain the client CURVE secret for the lifetime of the authenticated socket and deliver the first ZARA/1 hello after the asynchronous CURVE handshake completes, so an enrolled device connects to a secure Zara server over real networks instead of silently failing.
 - Native Emacs `zara-chat` now enables the canonical conversation-control minor mode by default once `zara-conversation` is loaded, so ordinary send keys use stable conversation identity, strict native events, and canonical cancellation instead of the legacy one-shot request path.
 - Explicit secure-TCP Zara servers keep their owner-only live security admin socket under the configured security directory, so existing live enroll/revoke commands continue mutating the running registry while the new local-first bootstrap control socket remains runtime-scoped.
 - Zara Code APKs now pass cryptographic/package validation, CI installs and launches the editor on an Android emulator, and rolling `android-latest` publication rechecks the stable signing certificate before publishing.
