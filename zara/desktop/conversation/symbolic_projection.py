@@ -312,6 +312,7 @@ class SymbolicProjectionMixin:
                 """
                 SELECT projection_generation, runtime_generation, turn_id,
                        outcome, project_id, project_generation,
+                       verified_outcome_refs,
                        providers_enabled, max_model_calls,
                        provider_calls, model_calls
                 FROM desktop_symbolic_projections
@@ -348,8 +349,19 @@ class SymbolicProjectionMixin:
                         raise RuntimeError("same turn must preserve runtime_generation")
                     if current_outcome in _TERMINAL_OUTCOMES:
                         raise RuntimeError("terminal turn projection is immutable")
-                elif projection.runtime_generation <= current_runtime_generation:
-                    raise RuntimeError("new turn must advance runtime_generation")
+                else:
+                    if projection.runtime_generation <= current_runtime_generation:
+                        raise RuntimeError("new turn must advance runtime_generation")
+                    if projection.dialogue_act == "verified":
+                        current_verified_outcome_refs = set(
+                            _decode_verified_outcome_refs(current["verified_outcome_refs"])
+                        )
+                        if not set(projection.verified_outcome_refs).difference(
+                            current_verified_outcome_refs
+                        ):
+                            raise RuntimeError(
+                                "verified projection requires fresh outcome evidence"
+                            )
                 current_providers_enabled = _decode_sqlite_boolean(
                     "providers_enabled", current["providers_enabled"]
                 )
