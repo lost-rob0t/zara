@@ -41,23 +41,7 @@ class PortableConversationRestartFenceInstrumentedTest {
             )
         )
         first.saveSymbolicProjection(
-            SymbolicConversationProjection(
-                conversationId = CONVERSATION_ID,
-                projectionGeneration = 1,
-                runtimeGeneration = RUNTIME_GENERATION,
-                turnId = TURN_ID,
-                outcome = "pending",
-                projectId = "project-restart",
-                projectGeneration = 1,
-                dialogueAct = "clarify",
-                dialogueStateJson = "{\"slot\":\"target\"}",
-                unresolvedQuestionsJson = "[{\"slot\":\"target\"}]",
-                rendererProvenance = "symbolic-dcg/v1",
-                providersEnabled = false,
-                maxModelCalls = 0,
-                providerCalls = 0,
-                modelCalls = 0,
-            ),
+            pendingProjection(CONVERSATION_ID, TURN_ID),
             expectedGeneration = 0,
         ).assertPureSymbolic()
         first.close()
@@ -69,39 +53,92 @@ class PortableConversationRestartFenceInstrumentedTest {
             assertEquals(HistoryMessageStatus.Cancelled, message.status)
             assertEquals(ConversationHistoryContract.interruptedError, message.error)
 
-            val recovered = checkNotNull(reopened.loadSymbolicProjection(CONVERSATION_ID))
-            recovered.assertPureSymbolic()
-            assertEquals("interrupted", recovered.outcome)
-            assertEquals(2L, recovered.projectionGeneration)
-            assertEquals(RUNTIME_GENERATION, recovered.runtimeGeneration)
-            assertEquals(TURN_ID, recovered.turnId)
-            assertEquals(0L, recovered.maxModelCalls)
-            assertEquals(0L, recovered.providerCalls)
-            assertEquals(0L, recovered.modelCalls)
-
-            val lateCompletion = recovered.copy(
-                projectionGeneration = recovered.projectionGeneration + 1,
-                outcome = "success",
-                verifiedFactsJson = "[{\"fact_id\":\"late\"}]",
-            )
-            val rejected = runCatching {
-                reopened.saveSymbolicProjection(
-                    lateCompletion,
-                    expectedGeneration = recovered.projectionGeneration,
-                )
-            }
-            assertTrue(
-                "late same-turn completion must be rejected after restart interruption",
-                rejected.isFailure,
-            )
+            assertRestartFenced(reopened, CONVERSATION_ID, TURN_ID)
         } finally {
             reopened.close()
         }
     }
 
+    @Test
+    fun processRecreationInterruptsOrphanPendingProjectionWithoutMessage() {
+        val first = PortableConversationStore(context)
+        first.createConversation("restart orphan", conversationId = ORPHAN_CONVERSATION_ID)
+        first.saveSymbolicProjection(
+            pendingProjection(ORPHAN_CONVERSATION_ID, ORPHAN_TURN_ID),
+            expectedGeneration = 0,
+        ).assertPureSymbolic()
+        assertTrue(first.loadMessages(ORPHAN_CONVERSATION_ID).isEmpty())
+        first.close()
+
+        val reopened = PortableConversationStore(context)
+        try {
+            val state = reopened.loadState(ORPHAN_CONVERSATION_ID)
+            assertTrue(state.messages.isEmpty())
+
+            assertRestartFenced(reopened, ORPHAN_CONVERSATION_ID, ORPHAN_TURN_ID)
+        } finally {
+            reopened.close()
+        }
+    }
+
+    private fun pendingProjection(
+        conversationId: String,
+        turnId: String,
+    ): SymbolicConversationProjection = SymbolicConversationProjection(
+        conversationId = conversationId,
+        projectionGeneration = 1,
+        runtimeGeneration = RUNTIME_GENERATION,
+        turnId = turnId,
+        outcome = "pending",
+        projectId = "project-restart",
+        projectGeneration = 1,
+        dialogueAct = "clarify",
+        dialogueStateJson = "{\"slot\":\"target\"}",
+        unresolvedQuestionsJson = "[{\"slot\":\"target\"}]",
+        rendererProvenance = "symbolic-dcg/v1",
+        providersEnabled = false,
+        maxModelCalls = 0,
+        providerCalls = 0,
+        modelCalls = 0,
+    )
+
+    private fun assertRestartFenced(
+        store: PortableConversationStore,
+        conversationId: String,
+        turnId: String,
+    ) {
+        val recovered = checkNotNull(store.loadSymbolicProjection(conversationId))
+        recovered.assertPureSymbolic()
+        assertEquals("interrupted", recovered.outcome)
+        assertEquals(2L, recovered.projectionGeneration)
+        assertEquals(RUNTIME_GENERATION, recovered.runtimeGeneration)
+        assertEquals(turnId, recovered.turnId)
+        assertEquals(0L, recovered.maxModelCalls)
+        assertEquals(0L, recovered.providerCalls)
+        assertEquals(0L, recovered.modelCalls)
+
+        val lateCompletion = recovered.copy(
+            projectionGeneration = recovered.projectionGeneration + 1,
+            outcome = "success",
+            verifiedFactsJson = "[{\"fact_id\":\"late\"}]",
+        )
+        val rejected = runCatching {
+            store.saveSymbolicProjection(
+                lateCompletion,
+                expectedGeneration = recovered.projectionGeneration,
+            )
+        }
+        assertTrue(
+            "late same-turn completion must be rejected after restart interruption",
+            rejected.isFailure,
+        )
+    }
+
     private companion object {
         const val CONVERSATION_ID = "restart-fence-conversation"
         const val TURN_ID = "turn-restart-fence"
+        const val ORPHAN_CONVERSATION_ID = "restart-fence-orphan-conversation"
+        const val ORPHAN_TURN_ID = "turn-restart-fence-orphan"
         const val RUNTIME_GENERATION = 23L
     }
 }
