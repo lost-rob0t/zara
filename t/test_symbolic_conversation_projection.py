@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationStore, SymbolicConversationProjection
 from zara.desktop.conversation.store import ConversationStore as CanonicalConversationStore
+
+
+_VERIFIED_EFFECT_REF = "zara.verified-outcome/v1:effect:fact-1"
 
 
 def _projection(
@@ -16,6 +21,8 @@ def _projection(
     outcome: str = "pending",
     project_id: str | None = "project-a",
     project_generation: int = 1,
+    dialogue_act: str = "clarify",
+    verified_outcome_refs: list[str] | None = None,
     provider_calls: int = 0,
     model_calls: int = 0,
 ) -> SymbolicConversationProjection:
@@ -27,11 +34,17 @@ def _projection(
         outcome=outcome,
         project_id=project_id,
         project_generation=project_generation,
+        dialogue_act=dialogue_act,
         dialogue_state={"act": "clarify", "intent": "inspect_project"},
         discourse_entities=[{"ref": "that", "entity_id": "file:flake.nix"}],
         unresolved_questions=[{"slot": "target", "prompt": "Which target?"}],
         expert_evidence=[{"expert": "DotfilesExpert", "evidence_id": "ev-1"}],
         verified_facts=[{"fact_id": "fact-1", "value": "flake.nix"}],
+        verified_outcome_refs=(
+            [_VERIFIED_EFFECT_REF]
+            if verified_outcome_refs is None
+            else verified_outcome_refs
+        ),
         renderer_provenance="symbolic-nlg/v1",
         provider_calls=provider_calls,
         model_calls=model_calls,
@@ -67,6 +80,8 @@ def test_symbolic_projection_survives_restart_with_zero_provider_and_model_calls
     assert stored.turn_id == "turn-7"
     assert stored.outcome == "pending"
     assert stored.projection_generation == 1
+    assert stored.dialogue_act == "clarify"
+    assert stored.verified_outcome_refs == [_VERIFIED_EFFECT_REF]
     assert stored.unresolved_questions[0]["slot"] == "target"
     assert stored.expert_evidence[0]["evidence_id"] == "ev-1"
     db.close()
@@ -84,11 +99,13 @@ def test_symbolic_projection_survives_restart_with_zero_provider_and_model_calls
     assert recovered.runtime_generation == 7
     assert recovered.project_id == "project-a"
     assert recovered.project_generation == 1
+    assert recovered.dialogue_act == "clarify"
     assert recovered.dialogue_state == {"act": "clarify", "intent": "inspect_project"}
     assert recovered.discourse_entities == [{"entity_id": "file:flake.nix", "ref": "that"}]
     assert recovered.unresolved_questions == [{"prompt": "Which target?", "slot": "target"}]
     assert recovered.expert_evidence == [{"evidence_id": "ev-1", "expert": "DotfilesExpert"}]
     assert recovered.verified_facts == [{"fact_id": "fact-1", "value": "flake.nix"}]
+    assert recovered.verified_outcome_refs == [_VERIFIED_EFFECT_REF]
     assert recovered.renderer_provenance == "symbolic-nlg/v1"
     reopened_db.close()
 
@@ -179,6 +196,28 @@ def test_turn_outcome_vocabulary_fails_closed():
 
     with pytest.raises(ValueError, match="unsupported symbolic outcome"):
         _projection("outcome", outcome="provider_fallback").validate()
+
+
+def test_normalized_dialogue_act_and_verified_outcome_refs_fail_closed():
+    projection = _projection(
+        "typed-evidence",
+        dialogue_act="dispatch_required",
+        verified_outcome_refs=[
+            "zara.verified-outcome/v1:effect:tool-run-7",
+            "zara.verified-outcome/v1:outcome:postcondition/process-firefox",
+        ],
+    )
+    projection.validate()
+
+    with pytest.raises(ValueError, match="dialogue_act"):
+        replace(projection, dialogue_act="Clarify Slot").validate()
+    with pytest.raises(ValueError, match="invalid verified outcome reference"):
+        replace(projection, verified_outcome_refs=["effect:unversioned"]).validate()
+    with pytest.raises(ValueError, match="must be unique"):
+        replace(
+            projection,
+            verified_outcome_refs=[_VERIFIED_EFFECT_REF, _VERIFIED_EFFECT_REF],
+        ).validate()
 
 
 def test_cancelled_turn_rejects_late_success_but_new_turn_is_allowed(tmp_path):
