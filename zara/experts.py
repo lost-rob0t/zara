@@ -73,6 +73,38 @@ class ExpertRegistry(_impl.ExpertRegistry):
                     f"the declared input fields of {operation.operation_id!r}: {error}"
                 ) from error
 
+    def _admit_limits_unlocked(
+        self,
+        handle: ActivationHandle,
+        limits: Optional[ExpertLimits],
+    ) -> ExpertLimits:
+        """Return the intersection of caller limits and descriptor ceilings."""
+
+        if limits is None:
+            requested = ExpertLimits()
+        elif isinstance(limits, ExpertLimits):
+            requested = limits
+        else:
+            raise ExpertInvalidInputError("limits must be an ExpertLimits instance")
+
+        descriptor = self._descriptors.get(handle.expert_id)
+        descriptor_limits = descriptor.resource_limits if descriptor is not None else None
+        if descriptor_limits is None:
+            return requested
+
+        return ExpertLimits(
+            timeout_ms=min(requested.timeout_ms, descriptor_limits.timeout_ms),
+            max_results=min(requested.max_results, descriptor_limits.max_results),
+            max_output_bytes=min(
+                requested.max_output_bytes,
+                descriptor_limits.max_output_bytes,
+            ),
+            max_model_calls=min(
+                requested.max_model_calls,
+                descriptor_limits.max_model_calls,
+            ),
+        )
+
     def _invoke_unlocked(
         self,
         handle: ActivationHandle,
@@ -92,6 +124,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
 
         admitted_registry_generation = self._registry_generation
         admitted_runtime_generation = self._runtime_generation
+        admitted_limits = self._admit_limits_unlocked(handle, limits)
         registered_handler = self._handlers.get(handle.expert_id)
         handler = (
             self._original_handler(registered_handler)
@@ -175,7 +208,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 handle,
                 expert_operation,
                 input,
-                limits,
+                admitted_limits,
                 idempotency_key,
                 request_id,
             )
@@ -230,7 +263,6 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 "successful expert usage.model_calls must be a non-negative built-in integer"
             )
 
-        admitted_limits = limits if isinstance(limits, ExpertLimits) else ExpertLimits()
         if model_calls > admitted_limits.max_model_calls:
             self._discard_invalid_success(
                 result,
