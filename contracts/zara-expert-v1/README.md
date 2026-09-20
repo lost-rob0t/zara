@@ -49,9 +49,12 @@ Requests carry `protocol`, `request_id`, `operation`, `activation_id`,
 `expert_id`, `expert_operation`, `expected_registry_generation`,
 `expected_runtime_generation`, `input`, `limits` (`timeout_ms`,
 `max_results`, `max_output_bytes`, `max_model_calls`), and an optional
-idempotency key. Limits are validated against host ceilings before
-admission; `max_model_calls = 0` with a `model_inference` effect fails with
-`budget_exceeded` before dispatch. Results carry resolved identities,
+idempotency key. Limits are validated against host ceilings and intersected
+with the selected descriptor's `resource_limits` before admission: caller
+limits may narrow descriptor limits but can never widen them. In particular,
+a descriptor with `max_model_calls = 0` remains zero-model even when a caller
+requests a larger value; any declared `model_inference` requirement then fails
+with `budget_exceeded` before dispatch. Results carry resolved identities,
 versions and generations, a domain verdict, bounded typed data, evidence
 refs, usage, and effect receipts. Execution completion is distinct from the
 domain verdict: a completed invocation may still report verdict `unknown`.
