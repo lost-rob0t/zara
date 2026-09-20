@@ -12,6 +12,12 @@ assert_zero_reply(Input, ExpectedText) :-
     zero_evidence(ExpectedEvidence),
     assertion(Evidence == ExpectedEvidence).
 
+assert_zero_follow_up(Input, PreviousAct, ExpectedText) :-
+    symbolic_dialogue:symbolic_follow_up(Input, PreviousAct, Text, Evidence),
+    assertion(Text == ExpectedText),
+    zero_evidence(ExpectedEvidence),
+    assertion(Evidence == ExpectedEvidence).
+
 test(multi_turn_clarification_and_verified_result_stay_zero_model) :-
     symbolic_dialogue_turn:dialogue_turn("timer", passive, [], Turn1),
     Turn1 = turn([Frame1], clarify(slot(duration)), Context1),
@@ -30,6 +36,22 @@ test(multi_turn_clarification_and_verified_result_stay_zero_model) :-
     assert_zero_reply(
         effect_result(verified(timer_set, postcondition('timer:duration=300'))),
         "Done: timer_set."
+    ).
+
+test(expert_result_follow_ups_stay_zero_model_without_fallback) :-
+    symbolic_dialogue:response_act(
+        expert_result(summary("Timer is already running."), evidence('expert:timer/7')),
+        PreviousAct
+    ),
+    assert_zero_follow_up(
+        "why?",
+        PreviousAct,
+        "I answered from evidence expert:timer/7."
+    ),
+    assert_zero_follow_up(
+        "that",
+        PreviousAct,
+        "Timer is already running."
     ).
 
 test(parse_miss_is_terminal_symbolic_unsupported_without_fallback) :-
