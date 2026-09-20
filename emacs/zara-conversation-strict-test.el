@@ -39,5 +39,43 @@
        :type 'user-error)
       (should (equal (buffer-string) before)))))
 
+(ert-deftest zara-conversation-cancel-stays-on-request-endpoint ()
+  (with-temp-buffer
+    (zara-chat-mode)
+    (let ((zara-connect-endpoint "ipc:///tmp/zara-a.sock")
+          commands
+          processes)
+      (unwind-protect
+          (cl-letf (((symbol-function 'zara--program) (lambda () "zara"))
+                    ((symbol-function 'make-process)
+                     (lambda (&rest args)
+                       (push (plist-get args :command) commands)
+                       (let ((process
+                              (make-pipe-process
+                               :name (generate-new-buffer-name "zara-endpoint-test")
+                               :buffer nil
+                               :noquery t)))
+                         (push process processes)
+                         process))))
+            (let ((request (zara-conversation-request "hello" #'ignore)))
+              ;; Reconfiguration after admission must not redirect cancellation
+              ;; to a different Zara server than the one that owns the turn.
+              (setq zara-connect-endpoint "ipc:///tmp/zara-b.sock")
+              (zara-conversation--start-cancel request "turn-1")
+              (should
+               (equal
+                (car commands)
+                '("zara" "--connect" "ipc:///tmp/zara-a.sock"
+                  "--cancel-turn" "turn-1")))
+              (should
+               (equal
+                (cadr commands)
+                '("zara" "--connect" "ipc:///tmp/zara-a.sock"
+                  "--conversation-id" "emacs-main"
+                  "--json-events" "hello")))))
+        (dolist (process processes)
+          (when (process-live-p process)
+            (delete-process process)))))))
+
 (provide 'zara-conversation-strict-test)
 ;;; zara-conversation-strict-test.el ends here
