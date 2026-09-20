@@ -69,6 +69,59 @@ class SymbolicConversationProjectionTest {
     }
 
     @Test
+    fun `cancelled turn rejects late success while next runtime turn is allowed`() {
+        val pending = projection(
+            generation = 1,
+            runtimeGeneration = 11,
+            turnId = "turn-old",
+            outcome = "pending",
+        )
+        val cancelled = projection(
+            generation = 2,
+            runtimeGeneration = 11,
+            turnId = "turn-old",
+            outcome = "cancelled",
+        )
+        SymbolicProjectionContract.validateWrite(pending, cancelled, expectedGeneration = 1)
+
+        assertFailsWithMessage("terminal turn outcome rewrite rejected") {
+            SymbolicProjectionContract.validateWrite(
+                cancelled,
+                projection(
+                    generation = 3,
+                    runtimeGeneration = 11,
+                    turnId = "turn-old",
+                    outcome = "success",
+                ),
+                expectedGeneration = 2,
+            )
+        }
+        assertFailsWithMessage("same turn must preserve runtimeGeneration") {
+            SymbolicProjectionContract.validateWrite(
+                cancelled,
+                projection(
+                    generation = 3,
+                    runtimeGeneration = 12,
+                    turnId = "turn-old",
+                    outcome = "cancelled",
+                ),
+                expectedGeneration = 2,
+            )
+        }
+
+        SymbolicProjectionContract.validateWrite(
+            cancelled,
+            projection(
+                generation = 3,
+                runtimeGeneration = 12,
+                turnId = "turn-new",
+                outcome = "pending",
+            ),
+            expectedGeneration = 2,
+        )
+    }
+
+    @Test
     fun `project switch must advance project generation`() {
         val current = projection(generation = 1, projectId = "project-a", projectGeneration = 4)
 
@@ -195,6 +248,7 @@ class SymbolicConversationProjectionTest {
         assertTrue(schema.contains("FOREIGN KEY(conversation_id)"))
         assertTrue(source.contains("fun PortableConversationStore.saveSymbolicProjection"))
         assertTrue(source.contains("projection_generation = ?"))
+        assertTrue(source.contains("terminal turn outcome rewrite rejected"))
         assertTrue(source.contains("provider-call ledger rewind rejected"))
         assertTrue(source.contains("model-call ledger rewind rejected"))
         assertTrue(source.contains("PortableJsonValidator"))
