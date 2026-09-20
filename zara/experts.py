@@ -4,7 +4,7 @@ The contract implementation lives in :mod:`zara._experts_v1`; this facade keeps
 ``zara.experts`` as the stable public import while tightening the pure-symbolic
 host boundary. There is still exactly one registry instance/state machine: the
 subclass only adapts trusted host dispatch, enforces nested delegation authority,
-and validates the shared usage ledger before accepting a successful result.
+and validates the shared usage ledger before accepting a terminal result.
 """
 
 from __future__ import annotations
@@ -336,9 +336,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 "expert completion crossed a registry/runtime generation change"
             )
 
-        if result.verdict is not ExpertVerdict.SUCCEEDED:
-            return result
-
+        is_success = result.verdict is ExpertVerdict.SUCCEEDED
         if result.replayed:
             usage: Any = result.usage
         else:
@@ -346,6 +344,8 @@ class ExpertRegistry(_impl.ExpertRegistry):
             usage = outcome.get("usage") if isinstance(outcome, Mapping) else None
 
         if not isinstance(usage, Mapping) or "model_calls" not in usage:
+            if not is_success:
+                return result
             self._discard_invalid_success(
                 result,
                 handle,
@@ -365,7 +365,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 idempotency_key,
             )
             raise ExpertInvalidInputError(
-                "successful expert usage.model_calls must be a non-negative built-in integer"
+                "reported expert usage.model_calls must be a non-negative built-in integer"
             )
 
         if result.replayed:
@@ -389,7 +389,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 idempotency_key,
             )
             raise ExpertBudgetExceededError(
-                "successful expert aggregate usage.model_calls exceeds admitted max_model_calls"
+                "expert aggregate usage.model_calls exceeds admitted max_model_calls"
             )
 
         if not result.replayed and aggregate_model_calls != result.usage.get("model_calls"):
