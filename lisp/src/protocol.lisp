@@ -104,20 +104,18 @@
             (random #x100000000))))
 
 (defun %json-object-p (value)
-  (and (consp value) (eq (car value) :obj)))
+  (hash-table-p value))
 
 (defun %json-object (&rest pairs)
-  (let ((object (list :obj)))
+  (let ((object (make-hash-table :test #'equal)))
     (loop for (key value) on pairs by #'cddr
-          do (setf (jsown:val object key) value))
+          do (setf (gethash key object) value))
     object))
 
 (defun %json-value (object key &optional default)
   (if (%json-object-p object)
-      (handler-case
-          (let ((value (jsown:val-safe object key)))
-            (if (null value) default value))
-        (error () default))
+      (multiple-value-bind (value present-p) (gethash key object)
+        (if present-p value default))
       default))
 
 (defun message-body-value (message key &optional default)
@@ -125,7 +123,7 @@
 
 (defun %put-optional (object key value)
   (when value
-    (setf (jsown:val object key) value))
+    (setf (gethash key object) value))
   object)
 
 (defun %encode-envelope (message payload-count)
@@ -142,7 +140,7 @@
     (%put-optional object "turn_id" (protocol-message-turn-id message))
     (%put-optional object "stream_id" (protocol-message-stream-id message))
     (when (integerp (protocol-message-seq message))
-      (setf (jsown:val object "seq") (protocol-message-seq message)))
+      (setf (gethash "seq" object) (protocol-message-seq message)))
     (%put-optional object "trace_id" (protocol-message-trace-id message))
     (%put-optional object "content_type" (protocol-message-content-type message))
     (%put-optional object "body" (protocol-message-body message))
@@ -157,7 +155,7 @@
                     (protocol-message-type message)))
   (let* ((payloads (protocol-message-payloads message))
          (payload-count (length payloads))
-         (json (jsown:to-json (%encode-envelope message payload-count)))
+         (json (com.inuoe.jzon:stringify (%encode-envelope message payload-count)))
          (envelope (babel:string-to-octets json :encoding :utf-8)))
     (when (> (length envelope) +max-envelope-bytes+)
       (%protocol-fail "envelope exceeds ~d bytes" +max-envelope-bytes+))
@@ -177,12 +175,9 @@
                  payloads)))
 
 (defun %validate-envelope-keys (object)
-  (let ((keys (jsown:keywords object)))
-    (when (/= (length keys) (length (remove-duplicates keys :test #'string=)))
-      (%protocol-fail "duplicate JSON envelope key"))
-    (dolist (key keys)
-      (unless (member key +allowed-envelope-keys+ :test #'string=)
-        (%protocol-fail "unknown JSON envelope key ~s" key)))))
+  (loop for key being the hash-keys of object
+        do (unless (member key +allowed-envelope-keys+ :test #'string=)
+             (%protocol-fail "unknown JSON envelope key ~s" key))))
 
 (defun %required-string (object key)
   (let ((value (%json-value object key nil)))
@@ -207,11 +202,13 @@
       (%protocol-fail "envelope frame must be octets"))
     (when (> (length envelope-frame) +max-envelope-bytes+)
       (%protocol-fail "envelope exceeds byte limit"))
-    (let* ((json (handler-case
-                     (babel:octets-to-string envelope-frame :encoding :utf-8)
-                   (error () (%protocol-fail "envelope is not valid UTF-8"))))
-           (object (handler-case (jsown:parse json)
-                     (error () (%protocol-fail "envelope is not valid JSON")))))
+    (let* ((object (handler-case
+                       (com.inuoe.jzon:parse
+                        envelope-frame
+                        :max-depth 64
+                        :max-string-length +max-envelope-bytes+)
+                     (error ()
+                       (%protocol-fail "envelope is not strict UTF-8 JSON")))))
       (unless (%json-object-p object)
         (%protocol-fail "envelope must be a JSON object"))
       (%validate-envelope-keys object)
