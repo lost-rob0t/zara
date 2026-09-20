@@ -5,6 +5,7 @@ import pytest
 from zara.sync_protocol import (
     MAX_BLOCK_BYTES,
     MAX_COUNTER,
+    MIN_BLOCK_BYTES,
     BlockRef,
     IndexCursor,
     ObjectRevision,
@@ -99,6 +100,26 @@ def test_block_manifest_is_contiguous_ordered_and_bounded():
 
     with pytest.raises(SyncProtocolError, match="canonical lowercase"):
         BlockRef("A" * 64, offset=0, size=4096)
+
+
+def test_non_final_blocks_respect_minimum_size_but_final_tail_may_be_short():
+    short_tail = revision(
+        blocks=(
+            BlockRef(A_HASH, offset=0, size=MIN_BLOCK_BYTES),
+            BlockRef(B_HASH, offset=MIN_BLOCK_BYTES, size=1),
+        ),
+        size=MIN_BLOCK_BYTES + 1,
+    )
+    assert short_tail.blocks[-1].size == 1
+
+    with pytest.raises(SyncProtocolError, match="non-final block size"):
+        revision(
+            blocks=(
+                BlockRef(A_HASH, offset=0, size=MIN_BLOCK_BYTES - 1),
+                BlockRef(B_HASH, offset=MIN_BLOCK_BYTES - 1, size=2),
+            ),
+            size=MIN_BLOCK_BYTES + 1,
+        )
 
 
 def test_nonempty_revision_requires_exact_manifest_coverage():
