@@ -50,6 +50,9 @@ data class SymbolicConversationProjection(
         check(outcome != "success" || rendererProvenance == SYMBOLIC_RENDERER_ID) {
             "successful projection requires canonical symbolic renderer"
         }
+        check(dialogueAct != "verified" || verifiedOutcomeRefs.isNotEmpty()) {
+            "verified projection requires verified outcome evidence"
+        }
     }
 }
 
@@ -293,6 +296,9 @@ internal object SymbolicProjectionContract {
             require(verifiedOutcomeRefPattern.matches(ref)) {
                 "invalid verified outcome reference: $ref"
             }
+        }
+        require(projection.dialogueAct != "verified" || projection.verifiedOutcomeRefs.isNotEmpty()) {
+            "verified projection requires verified outcome evidence"
         }
         require(
             projection.rendererProvenance.isEmpty() ||
