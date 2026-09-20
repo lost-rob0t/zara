@@ -273,6 +273,18 @@ while assistant output remains generation-fenced."
         (with-current-buffer stderr (string-trim (buffer-string)))
       "")))
 
+(defun zara-conversation--cancel-before-acceptance-error (process status)
+  "Finish cancelled PROCESS that exited with STATUS before any turn receipt."
+  (let ((message (zara-conversation--request-stderr process)))
+    (zara-conversation--cancel-error
+     process
+     (if (string-empty-p message)
+         (if (zerop status)
+             "Zara request ended before cancellation received a turn id"
+           (format "Zara request failed before cancellation received a turn id (exit %s)"
+                   status))
+       message))))
+
 (defun zara-conversation--process-sentinel (process _event)
   "Finalize native-client PROCESS without accepting incomplete output."
   (when (memq (process-status process) '(exit signal))
@@ -284,7 +296,10 @@ while assistant output remains generation-fenced."
           (stderr (process-get process 'zara-stderr)))
       (cond
        ((process-get process 'zara-protocol-error) nil)
-       ((process-get process 'zara-cancel-requested) nil)
+       ((process-get process 'zara-cancel-requested)
+        (unless (or (process-get process 'zara-cancel-process)
+                    (process-get process 'zara-cancel-confirmed))
+          (zara-conversation--cancel-before-acceptance-error process status)))
        ((not (zerop status))
         (let ((message (zara-conversation--request-stderr process)))
           (zara-conversation--deliver
