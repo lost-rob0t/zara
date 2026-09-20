@@ -13,6 +13,8 @@ import json
 from dataclasses import dataclass, field, replace
 from typing import Any, Optional
 
+_OUTCOMES = frozenset({"unknown", "pending", "success", "cancelled", "interrupted", "error"})
+
 
 def _canonical_object(value: dict[str, Any]) -> str:
     if not isinstance(value, dict):
@@ -57,6 +59,8 @@ class SymbolicConversationProjection:
     conversation_id: str
     projection_generation: int
     runtime_generation: int
+    turn_id: Optional[str] = None
+    outcome: str = "unknown"
     project_id: Optional[str] = None
     project_generation: int = 0
     dialogue_state: dict[str, Any] = field(default_factory=dict)
@@ -72,6 +76,10 @@ class SymbolicConversationProjection:
     def validate(self) -> None:
         if not self.conversation_id:
             raise ValueError("conversation_id must not be empty")
+        if self.turn_id is not None and (not self.turn_id or len(self.turn_id) > 512):
+            raise ValueError("turn_id must be null or 1..512 characters")
+        if self.outcome not in _OUTCOMES:
+            raise ValueError(f"unsupported symbolic outcome: {self.outcome}")
         if self.projection_generation < 1:
             raise ValueError("projection_generation must be >= 1")
         if self.runtime_generation < 0:
@@ -123,10 +131,12 @@ class SymbolicProjectionMixin:
         )
         if row is None:
             return None
-        return SymbolicConversationProjection(
+        projection = SymbolicConversationProjection(
             conversation_id=row["conversation_id"],
             projection_generation=int(row["projection_generation"]),
             runtime_generation=int(row["runtime_generation"]),
+            turn_id=row["turn_id"],
+            outcome=row["outcome"],
             project_id=row["project_id"],
             project_generation=int(row["project_generation"]),
             dialogue_state=_decode_object(row["dialogue_state_json"]),
@@ -139,6 +149,8 @@ class SymbolicProjectionMixin:
             model_calls=int(row["model_calls"]),
             updated_at=row["updated_at"],
         )
+        projection.validate()
+        return projection
 
     def save_symbolic_projection(
         self,
@@ -202,6 +214,8 @@ class SymbolicProjectionMixin:
             parameters = (
                 stored.conversation_id,
                 owner,
+                stored.turn_id,
+                stored.outcome,
                 stored.projection_generation,
                 stored.runtime_generation,
                 stored.project_id,
@@ -220,13 +234,14 @@ class SymbolicProjectionMixin:
                 conn.execute(
                     """
                     INSERT INTO desktop_symbolic_projections (
-                        conversation_id, principal_id, projection_generation,
-                        runtime_generation, project_id, project_generation,
-                        dialogue_state_json, discourse_entities_json,
-                        unresolved_questions_json, expert_evidence_json,
-                        verified_facts_json, renderer_provenance, provider_calls,
-                        model_calls, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        conversation_id, principal_id, turn_id, outcome,
+                        projection_generation, runtime_generation, project_id,
+                        project_generation, dialogue_state_json,
+                        discourse_entities_json, unresolved_questions_json,
+                        expert_evidence_json, verified_facts_json,
+                        renderer_provenance, provider_calls, model_calls,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     parameters,
                 )
@@ -234,16 +249,19 @@ class SymbolicProjectionMixin:
                 cursor = conn.execute(
                     """
                     UPDATE desktop_symbolic_projections
-                    SET projection_generation = ?, runtime_generation = ?,
-                        project_id = ?, project_generation = ?,
-                        dialogue_state_json = ?, discourse_entities_json = ?,
-                        unresolved_questions_json = ?, expert_evidence_json = ?,
-                        verified_facts_json = ?, renderer_provenance = ?,
-                        provider_calls = ?, model_calls = ?, updated_at = ?
+                    SET turn_id = ?, outcome = ?, projection_generation = ?,
+                        runtime_generation = ?, project_id = ?,
+                        project_generation = ?, dialogue_state_json = ?,
+                        discourse_entities_json = ?, unresolved_questions_json = ?,
+                        expert_evidence_json = ?, verified_facts_json = ?,
+                        renderer_provenance = ?, provider_calls = ?, model_calls = ?,
+                        updated_at = ?
                     WHERE conversation_id = ? AND principal_id = ?
                       AND projection_generation = ?
                     """,
                     (
+                        stored.turn_id,
+                        stored.outcome,
                         stored.projection_generation,
                         stored.runtime_generation,
                         stored.project_id,
