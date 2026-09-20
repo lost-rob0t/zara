@@ -29,4 +29,5 @@
   :perform
   (test-op (operation component)
     (declare (ignore operation component))
-    (uiop:symbol-call :zara/tests :run-tests)))
+    (unless (uiop:symbol-call :zara/tests :run-tests)
+      (error "Zara Common Lisp tests failed"))))
