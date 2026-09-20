@@ -344,7 +344,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
             usage = outcome.get("usage") if isinstance(outcome, Mapping) else None
 
         if not isinstance(usage, Mapping) or "model_calls" not in usage:
-            if not is_success:
+            if not is_success and not result.replayed and "value" not in raw_outcome:
                 return result
             self._discard_invalid_success(
                 result,
@@ -353,7 +353,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 idempotency_key,
             )
             raise ExpertInvalidInputError(
-                "successful expert outcome must explicitly report usage.model_calls"
+                "terminal expert outcome must explicitly report usage.model_calls"
             )
 
         model_calls = usage["model_calls"]
