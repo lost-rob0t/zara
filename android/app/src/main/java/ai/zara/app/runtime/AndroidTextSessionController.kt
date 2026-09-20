@@ -186,6 +186,26 @@ class AndroidTextSessionController(
         }
     }
 
+    fun clientReportedFailure(failure: ai.zara.app.telemetry.ZaraFailure) {
+        val shouldReconnect = synchronized(lock) {
+            if (closed) return
+            val connected = runtimeState.server as? ServerConnection.Connected ?: return
+            if (failure.connectionGeneration != null && failure.connectionGeneration != connected.generation) return
+            val previousGeneration = runtimeState.generation
+            runtimeState = reduce(
+                runtimeState,
+                RuntimeEvent.ConnectionLost(previousGeneration, failure.code),
+            )
+            runtimeState.server is ServerConnection.Reconnecting &&
+                runtimeState.generation != previousGeneration
+        }
+        publishState()
+        if (shouldReconnect) {
+            client.disconnect()
+            scheduleReconnect()
+        }
+    }
+
     fun observeEnrollment(readiness: EnrollmentReadiness) {
         val shouldDisconnect = synchronized(lock) {
             if (closed) return
