@@ -5,11 +5,12 @@
 - Desktop submits canonical SubmitTurn commands through QtRuntimeBridge and keeps history in ConversationService/ConversationStore.
 - LangGraphRuntimeBackend constructs AgentManager, whose normal path owns provider/model setup; it cannot be the hard-zero provider-disabled boundary.
 - modules/symbolic_dialogue_turn.pl composes canonical intent_frames + symbolic_dialogue and explicitly leaves persistence to the canonical conversation projection.
-- Android already has a provider-free PureSymbolicConversationController; Desktop needs equivalent runtime semantics without a second history store or planner.
+- Android already has a provider-free PureSymbolicConversationController and a conversation execution-policy boundary; Desktop needs equivalent runtime semantics without a second history store or planner.
+- [agent].backend is already the canonical AgentLoopRegistry selector. Pure-symbolic conversation policy must stay orthogonal to it rather than hijacking that key.
 
 * Design
 - Add a thin PureSymbolicRuntimeBackend under the existing RuntimeBackend/RuntimeHost boundary.
-- Select it explicitly with agent.backend = pure_symbolic before AgentManager is constructed.
+- Select the Desktop boundary with conversation.execution_policy = pure_symbolic before AgentManager or daemon/provider startup; leave agent.backend untouched.
 - The backend owns no conversation history, expert registry, planner, tool executor, or provider client.
 - All language semantics/rendering stay in canonical Prolog through PrologEngine and symbolic_dialogue_turn.pl.
 - Return hard-zero provider/model budget and usage metadata on every successful symbolic turn.
@@ -17,12 +18,16 @@
 - Effects remain dispatch_required/verified response acts. This slice must not claim effect success or bypass RuntimeHost capability/approval/tool boundaries.
 
 * TDD
-- RED: selecting pure_symbolic must produce a provider-free backend rather than constructing AgentManager.
+- RED: selecting pure_symbolic conversation policy must produce a provider-free client before AgentManager/daemon construction while agent.backend remains langgraph.
 - RED: a pure-symbolic turn must consult the canonical dialogue module and emit exact-zero usage/budget metadata.
 - RED: unsupported context inputs must fail closed before invoking symbolic or provider execution.
+- RED: a real offscreen QApplication/CopilotWindow path must start the real in-process RuntimeHost, submit a greeting through the canonical conversation service, render the symbolic reply, and observe no RuntimeError event.
 
 * Evaluate
-- Pending implementation and exact-head CI.
+- Provider-free unit/contract coverage and a real Prolog greeting/parse-miss path are implemented.
+- Desktop now has an offscreen affected-flow application test using the real Qt bridge, RuntimeHost, canonical ConversationService/ConversationStore, and symbolic Prolog backend.
+- Self-review caught an architectural error in the first draft: it reused [agent].backend. The branch now uses the separate conversation execution-policy key and pins agent.backend as unchanged in regression coverage.
+- Exact-head CI remains required before this slice is considered green.
 
 * Outcome
-- Pending.
+- Draft integration slice. Durable projected context, expert/effect composition, restart/replay, project switching, and Android parity remain owned by the active canonical #1264/#1254 integration path; this branch intentionally does not fork those stores/contracts.
