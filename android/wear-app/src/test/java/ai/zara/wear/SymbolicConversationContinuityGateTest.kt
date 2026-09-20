@@ -28,14 +28,19 @@ class SymbolicConversationContinuityGateTest {
     fun acceptsFreshPureSymbolicProjectionForSameScope() {
         val current = fixture(projectionGeneration = 4, runtimeGeneration = 7)
         val incoming = fixture(projectionGeneration = 5, runtimeGeneration = 8)
-
         assertTrue(SymbolicConversationContinuityGate.accepts(current, incoming))
     }
 
     @Test
-    fun rejectsWrongConversationAndStaleGenerations() {
+    fun rejectsWrongPrincipalConversationAndStaleGenerations() {
         val current = fixture(projectionGeneration = 4, runtimeGeneration = 7)
 
+        assertFalse(
+            SymbolicConversationContinuityGate.accepts(
+                current,
+                fixture(principalId = "principal:bob", projectionGeneration = 5, runtimeGeneration = 8),
+            ),
+        )
         assertFalse(
             SymbolicConversationContinuityGate.accepts(
                 current,
@@ -76,33 +81,14 @@ class SymbolicConversationContinuityGateTest {
 
     @Test
     fun refusesAnyProviderOrModelAuthorityInPureSymbolicEdgePath() {
-        assertFalse(
-            SymbolicConversationContinuityGate.accepts(
-                null,
-                fixture(providersEnabled = true),
-            ),
-        )
-        assertFalse(
-            SymbolicConversationContinuityGate.accepts(
-                null,
-                fixture(maxModelCalls = 1),
-            ),
-        )
-        assertFalse(
-            SymbolicConversationContinuityGate.accepts(
-                null,
-                fixture(maxModelCalls = 1, modelCalls = 1),
-            ),
-        )
-        assertFalse(
-            SymbolicConversationContinuityGate.accepts(
-                null,
-                fixture(providerCalls = 1),
-            ),
-        )
+        assertFalse(SymbolicConversationContinuityGate.accepts(null, fixture(providersEnabled = true)))
+        assertFalse(SymbolicConversationContinuityGate.accepts(null, fixture(maxModelCalls = 1)))
+        assertFalse(SymbolicConversationContinuityGate.accepts(null, fixture(maxModelCalls = 1, modelCalls = 1)))
+        assertFalse(SymbolicConversationContinuityGate.accepts(null, fixture(providerCalls = 1)))
     }
 
     private fun fixture(
+        principalId: String = "principal:alice",
         conversationId: String = "chat-1",
         projectionGeneration: Long = 1,
         runtimeGeneration: Long = 1,
@@ -113,6 +99,7 @@ class SymbolicConversationContinuityGateTest {
         modelCalls: Long = 0,
         providerCalls: Long = 0,
     ) = SymbolicConversationEdgeSnapshot(
+        principalId = principalId,
         conversationId = conversationId,
         projectionGeneration = projectionGeneration,
         runtimeGeneration = runtimeGeneration,
