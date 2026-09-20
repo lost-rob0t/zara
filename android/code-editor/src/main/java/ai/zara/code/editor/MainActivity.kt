@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity() {
                 CodeWorkbenchSurface(
                     tokens = tokens,
                     title = "Zara Code",
+                    platformVoiceEnabled = true,
                 )
             }
         }
