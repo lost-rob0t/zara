@@ -56,6 +56,16 @@ def test_increment_is_immutable_and_overflow_fails_closed():
         vector(phone=MAX_COUNTER).increment("phone")
 
 
+def test_version_vectors_reject_explicit_zero_counters_to_keep_one_canonical_form():
+    with pytest.raises(SyncProtocolError, match="must be positive"):
+        vector(phone=0)
+
+    with pytest.raises(SyncProtocolError, match="must be positive"):
+        VersionVector((("phone", 0),))
+
+    assert VersionVector(()).compare(vector(phone=1)) is VectorRelation.DOMINATED_BY
+
+
 def test_direct_version_vector_construction_cannot_bypass_canonical_validation():
     with pytest.raises(SyncProtocolError, match="unique and sorted"):
         VersionVector((("phone", 1), ("desktop", 1)))
