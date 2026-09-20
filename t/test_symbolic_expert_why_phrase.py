@@ -1,0 +1,55 @@
+from __future__ import annotations
+
+import os
+import pathlib
+import subprocess
+
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+_PROVIDER_CREDENTIALS = (
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GOOGLE_API_KEY",
+    "GEMINI_API_KEY",
+    "GROQ_API_KEY",
+    "ZAI_API_KEY",
+    "AZURE_OPENAI_API_KEY",
+    "HF_TOKEN",
+)
+
+
+def test_natural_expert_why_phrase_preserves_evidence_with_zero_model_calls() -> None:
+    env = os.environ.copy()
+    for name in _PROVIDER_CREDENTIALS:
+        env.pop(name, None)
+
+    goal = (
+        'Previous = answer(expert, "Kotlin inspection complete.", '
+        "evidence('expert:kotlin/invocation-4')), "
+        'symbolic_dialogue:symbolic_follow_up("why did you do that?", '
+        "Previous, Text, Evidence), "
+        'Text = "I answered from evidence expert:kotlin/invocation-4.", '
+        "Evidence = evidence(renderer('symbolic-dcg/v1'), "
+        "provider_calls(0), model_calls(0)), halt(0)"
+    )
+
+    completed = subprocess.run(
+        [
+            "swipl",
+            "-q",
+            "-s",
+            str(ROOT / "modules" / "symbolic_dialogue.pl"),
+            "-g",
+            goal,
+            "-t",
+            "halt(1)",
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
