@@ -83,13 +83,17 @@ class RecoveryFixture:
 
     def _bind(self) -> zmq.Socket:
         server = self.context.socket(zmq.ROUTER)
-        server.curve_secretkey = self.server_secret
-        server.curve_publickey = self.server_public
-        server.curve_server = True
-        server.set(zmq.SNDHWM, 64)
-        server.set(zmq.RCVHWM, 64)
-        server.set(zmq.LINGER, 0)
-        server.bind(self.endpoint)
+        try:
+            server.curve_secretkey = self.server_secret
+            server.curve_publickey = self.server_public
+            server.curve_server = True
+            server.set(zmq.SNDHWM, 64)
+            server.set(zmq.RCVHWM, 64)
+            server.set(zmq.LINGER, 0)
+            server.bind(self.endpoint)
+        except BaseException:
+            server.close(0)
+            raise
         return server
 
     def arm(self, mode: str) -> None:
@@ -106,7 +110,16 @@ class RecoveryFixture:
     def abrupt_close(self) -> None:
         _trace("transport", "close")
         self.socket.close(0)
-        self.socket = self._bind()
+        deadline = time.monotonic() + 5.0
+        while True:
+            try:
+                self.socket = self._bind()
+                return
+            except zmq.ZMQError as error:
+                if time.monotonic() >= deadline:
+                    _trace("transport", "rebind_failed", error=str(error))
+                    raise
+                time.sleep(0.1)
 
     def _send(self, identity: bytes, message: ProtocolMessage, payloads=()) -> None:
         frames = encode_message(message, payloads=payloads)
