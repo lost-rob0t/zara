@@ -9,6 +9,7 @@
 (ert-deftest zara-conversation-duplicate-turn-accepted-fails-closed ()
   (let ((target (generate-new-buffer " *zara-conversation-target*"))
         error
+        cancelled
         process)
     (unwind-protect
         (progn
@@ -19,8 +20,75 @@
                    (setq error failure))))
           (zara-conversation--handle-line process (zara-conversation-test--accepted))
           (should (equal (process-get process 'zara-turn-id) "turn-1"))
-          (zara-conversation--handle-line process (zara-conversation-test--accepted))
+          (cl-letf (((symbol-function 'zara-conversation--start-cancel)
+                     (lambda (request turn-id)
+                       (setq cancelled (list request turn-id))
+                       request)))
+            (zara-conversation--handle-line process (zara-conversation-test--accepted)))
           (should (string-match-p "duplicate turn.accepted" error))
+          (should (equal cancelled (list process "turn-1")))
+          (with-current-buffer target
+            (should zara-chat--busy)
+            (should (eq zara-conversation--state 'cancelling))))
+      (when (and process (process-live-p process))
+        (delete-process process))
+      (when (buffer-live-p target)
+        (kill-buffer target)))))
+
+(ert-deftest zara-conversation-protocol-error-after-acceptance-cancels-turn ()
+  (let ((target (generate-new-buffer " *zara-conversation-target*"))
+        error
+        cancelled
+        process)
+    (unwind-protect
+        (progn
+          (setq process
+                (zara-conversation-test--process
+                 target
+                 (lambda (_value failure)
+                   (setq error failure))))
+          (zara-conversation--handle-line process (zara-conversation-test--accepted))
+          (cl-letf (((symbol-function 'zara-conversation--start-cancel)
+                     (lambda (request turn-id)
+                       (setq cancelled (list request turn-id))
+                       request)))
+            (zara-conversation--handle-line
+             process
+             "{\"type\":\"provider.fallback\",\"conversation_id\":\"emacs-main\",\"turn_id\":\"turn-1\"}"))
+          (should (string-match-p "unknown native-client event type" error))
+          (should (equal cancelled (list process "turn-1")))
+          (should (process-get process 'zara-cancel-requested))
+          (should (eq (process-get process 'zara-cancel-final-state) 'error))
+          (with-current-buffer target
+            (should zara-chat--busy)
+            (should (eq zara-conversation--state 'cancelling))
+            (should (= zara-conversation--generation 2))))
+      (when (and process (process-live-p process))
+        (delete-process process))
+      (when (buffer-live-p target)
+        (kill-buffer target)))))
+
+(ert-deftest zara-conversation-protocol-error-before-turn-receipt-recovers-on-exit ()
+  (let ((target (generate-new-buffer " *zara-conversation-target*"))
+        error
+        process)
+    (unwind-protect
+        (progn
+          (setq process
+                (zara-conversation-test--process
+                 target
+                 (lambda (_value failure)
+                   (setq error failure))))
+          (zara-conversation--handle-line process "not-json")
+          (should error)
+          (should (process-get process 'zara-cancel-requested))
+          (should-not (process-get process 'zara-turn-id))
+          (with-current-buffer target
+            (should zara-chat--busy)
+            (should (eq zara-conversation--state 'cancelling)))
+          (cl-letf (((symbol-function 'process-status) (lambda (_process) 'exit))
+                    ((symbol-function 'process-exit-status) (lambda (_process) 2)))
+            (zara-conversation--process-sentinel process "finished"))
           (with-current-buffer target
             (should-not zara-chat--busy)
             (should (eq zara-conversation--state 'error))))
@@ -76,6 +144,14 @@
         (dolist (process processes)
           (when (process-live-p process)
             (delete-process process)))))))
+
+(ert-deftest zara-chat-defaults-to-canonical-conversation-control ()
+  (with-temp-buffer
+    (zara-chat-mode)
+    (should (bound-and-true-p zara-conversation-mode))
+    (should
+     (eq (command-remapping #'zara-chat-send)
+         #'zara-conversation-chat-send))))
 
 (provide 'zara-conversation-strict-test)
 ;;; zara-conversation-strict-test.el ends here
