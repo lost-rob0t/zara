@@ -41,7 +41,8 @@
         android:label="Zara"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
-        android:allowBackup="false">
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true">
 
         <uses-native-library
             android:name="libvndksupport.so"
