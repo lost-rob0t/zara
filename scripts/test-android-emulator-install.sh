@@ -28,7 +28,7 @@ adb -s "$serial" install -r "$phone_apk"
 # projection, closes the helper, and reopens it to prove durable preservation.
 ANDROID_SERIAL="$serial" ZARA_SOURCE_SHA="$source_sha" \
   nix develop ./android -c bash -lc \
-  'cd android && ./gradlew :app:connectedDebugAndroidTest --no-daemon \
+  'cd android && gradle :app:connectedDebugAndroidTest --no-daemon \
     -Pandroid.testInstrumentationRunnerArguments.class=ai.zara.app.history.PortableConversationMigrationInstrumentedTest'
 
 python android/integration/device_acceptance.py \
