@@ -180,3 +180,122 @@ async def test_runtime_host_keeps_plugins_available_when_composition_is_unsuppor
     assert captured["started"] is True
     assert captured["kwargs"].get("capability_approval_provider") is None
     assert captured["kwargs"].get("capability_invoker") is None
+
+
+class _MemoryProvider:
+    def __init__(self):
+        self.bound = []
+
+    def bind_principal(self, principal):
+        self.bound.append(principal)
+
+
+@pytest.mark.asyncio
+async def test_langgraph_backend_binds_memory_provider_to_manager_principal():
+    manager = _Manager()
+    manager.memory_manager = object()
+    manager.replace_memory_manager = lambda provider: setattr(manager, "memory_manager", provider)
+    provider = _MemoryProvider()
+    backend = LangGraphRuntimeBackend(lambda: manager)
+    await backend.start()
+
+    backend.bind_memory_provider(provider)
+
+    assert provider.bound == [manager.principal]
+    assert manager.memory_manager is provider
+
+
+@pytest.mark.asyncio
+async def test_runtime_host_binds_only_exact_configured_memory_plugin_owner():
+    provider = _MemoryProvider()
+
+    class _Config(_PluginConfig):
+        def get_section(self, name):
+            if name == "memory":
+                return {"provider": "plugin:zara-symbolic-memory"}
+            return {}
+
+    class _Backend:
+        def __init__(self):
+            self.bound = []
+
+        def bind_memory_provider(self, value):
+            self.bound.append(value)
+
+    backend = _Backend()
+    host = RuntimeHost(
+        backend_factory=lambda: backend,
+        plugin_paths=(),
+        config=_Config(),
+        publisher=lambda _event: None,
+        subscriber=lambda **_kwargs: None,
+    )
+    host._backend = backend
+    host._symbol_registry.register(
+        symbol="memory.provider",
+        kind="memory-provider",
+        owner="plugin:zara-symbolic-memory",
+        value=provider,
+    )
+
+    await host._bind_configured_memory_provider()
+
+    assert backend.bound == [provider]
+
+
+@pytest.mark.asyncio
+async def test_runtime_host_fails_closed_when_configured_memory_plugin_is_missing():
+    class _Config(_PluginConfig):
+        def get_section(self, name):
+            if name == "memory":
+                return {"provider": "plugin:zara-symbolic-memory"}
+            return {}
+
+    class _Backend:
+        def bind_memory_provider(self, _value):
+            raise AssertionError("missing provider must not be bound")
+
+    host = RuntimeHost(
+        backend_factory=lambda: _Backend(),
+        plugin_paths=(),
+        config=_Config(),
+        publisher=lambda _event: None,
+        subscriber=lambda **_kwargs: None,
+    )
+    host._backend = _Backend()
+
+    with pytest.raises(Exception, match="zara-symbolic-memory"):
+        await host._bind_configured_memory_provider()
+
+
+@pytest.mark.asyncio
+async def test_runtime_host_rejects_memory_provider_from_wrong_plugin_owner():
+    provider = _MemoryProvider()
+
+    class _Config(_PluginConfig):
+        def get_section(self, name):
+            if name == "memory":
+                return {"provider": "plugin:zara-symbolic-memory"}
+            return {}
+
+    class _Backend:
+        def bind_memory_provider(self, _value):
+            raise AssertionError("wrong owner must not be bound")
+
+    host = RuntimeHost(
+        backend_factory=lambda: _Backend(),
+        plugin_paths=(),
+        config=_Config(),
+        publisher=lambda _event: None,
+        subscriber=lambda **_kwargs: None,
+    )
+    host._backend = _Backend()
+    host._symbol_registry.register(
+        symbol="memory.provider",
+        kind="memory-provider",
+        owner="plugin:other-memory",
+        value=provider,
+    )
+
+    with pytest.raises(Exception, match="owner"):
+        await host._bind_configured_memory_provider()
