@@ -29,7 +29,12 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="microseconds")
 
 
-class ConversationStore:
+# Import after _now_iso exists: the projection module reaches back to this
+# timestamp helper at write time while the canonical store owns the API.
+from .symbolic_projection import SymbolicProjectionMixin  # noqa: E402
+
+
+class ConversationStore(SymbolicProjectionMixin):
     """Durable conversation repository bound to exactly one principal.
 
     Local-owner history uses a platform-neutral storage principal so the same
@@ -54,6 +59,7 @@ class ConversationStore:
             else self._principal.principal_id
         )
         self._ensure_schema()
+        self._ensure_symbolic_policy_columns()
         self._claim_legacy_rows_for_local_owner()
 
     @property

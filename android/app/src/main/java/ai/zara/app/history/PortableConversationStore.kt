@@ -64,7 +64,7 @@ data class HistoryConversationState(
 )
 
 internal object ConversationHistoryContract {
-    const val schemaVersion = 2
+    const val schemaVersion = 4
     const val localPrincipalId = "local:owner"
     const val legacyLocalPrincipalId = "__zara_legacy_local_owner__"
     const val schemaAsset = "database/conversation_schema.sql"
@@ -81,10 +81,15 @@ internal object ConversationHistoryContract {
     fun canPersistTransition(
         current: HistoryMessageStatus,
         requested: HistoryMessageStatus,
-    ): Boolean =
-        current == HistoryMessageStatus.Pending ||
-            current == HistoryMessageStatus.Streaming ||
-            current == requested
+    ): Boolean = when (current) {
+        HistoryMessageStatus.Pending,
+        HistoryMessageStatus.Streaming,
+        -> true
+        HistoryMessageStatus.Complete,
+        HistoryMessageStatus.Error,
+        HistoryMessageStatus.Cancelled,
+        -> false
+    }
 }
 
 class PortableConversationStore(context: Context) : SQLiteOpenHelper(
@@ -318,6 +323,7 @@ class PortableConversationStore(context: Context) : SQLiteOpenHelper(
         // SQLiteOpenHelper owns user_version instead.
         repairPrincipalColumn(db, "desktop_conversations")
         repairPrincipalColumn(db, "desktop_messages")
+        repairSymbolicPolicyColumns(db)
         schemaStatements().forEach(db::execSQL)
     }
 
@@ -333,12 +339,7 @@ class PortableConversationStore(context: Context) : SQLiteOpenHelper(
 
     private fun repairPrincipalColumn(db: SQLiteDatabase, table: String) {
         if (!tableExists(db, table)) return
-        val columns = db.rawQuery("PRAGMA table_info($table)", null).use { cursor ->
-            buildSet {
-                val nameIndex = cursor.getColumnIndexOrThrow("name")
-                while (cursor.moveToNext()) add(cursor.getString(nameIndex))
-            }
-        }
+        val columns = tableColumns(db, table)
         if ("principal_id" !in columns) {
             db.execSQL(
                 "ALTER TABLE $table ADD COLUMN principal_id TEXT NOT NULL " +
@@ -346,6 +347,32 @@ class PortableConversationStore(context: Context) : SQLiteOpenHelper(
             )
         }
     }
+
+    private fun repairSymbolicPolicyColumns(db: SQLiteDatabase) {
+        val table = "desktop_symbolic_projections"
+        if (!tableExists(db, table)) return
+        val columns = tableColumns(db, table)
+        if ("providers_enabled" !in columns) {
+            db.execSQL(
+                "ALTER TABLE $table ADD COLUMN providers_enabled INTEGER NOT NULL DEFAULT 1 " +
+                    "CHECK (typeof(providers_enabled) = 'integer' AND providers_enabled IN (0, 1))"
+            )
+        }
+        if ("max_model_calls" !in columns) {
+            db.execSQL(
+                "ALTER TABLE $table ADD COLUMN max_model_calls INTEGER NOT NULL DEFAULT 1 " +
+                    "CHECK (typeof(max_model_calls) = 'integer' AND max_model_calls >= 0)"
+            )
+        }
+    }
+
+    private fun tableColumns(db: SQLiteDatabase, table: String): Set<String> =
+        db.rawQuery("PRAGMA table_info($table)", null).use { cursor ->
+            buildSet {
+                val nameIndex = cursor.getColumnIndexOrThrow("name")
+                while (cursor.moveToNext()) add(cursor.getString(nameIndex))
+            }
+        }
 
     private fun migrateLegacyLocalRows(db: SQLiteDatabase) {
         val legacyLocalPredicate = """
