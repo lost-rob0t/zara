@@ -57,8 +57,9 @@ protectionLevel = signature
 This is deliberately a trusted first-party channel. A random third-party app cannot
 bind merely because it knows the action name.
 
-The service forwards requests into =ZaraApplication.appSession.queryLocalProlog=.
-It never creates =LocalZaraServer= or =NativeTreallaBridge=, so Android continues to
+The service forwards requests into =ZaraApplication.appSession.queryLocalProlog= and
+runs in Zara's main application process. It never declares a private Android process
+and never creates =LocalZaraServer= or =NativeTreallaBridge=, so Android continues to
 have one canonical serialized Trealla actor.
 
 ** Client setup
