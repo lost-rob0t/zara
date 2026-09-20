@@ -29,7 +29,7 @@ def test_successful_pure_symbolic_projection_requires_canonical_renderer_evidenc
     with pytest.raises(ValueError, match="successful projection requires canonical symbolic renderer"):
         missing.validate()
 
-    with pytest.raises(AssertionError, match="successful projection requires canonical symbolic renderer"):
+    with pytest.raises(ValueError, match="successful projection requires canonical symbolic renderer"):
         missing.assert_pure_symbolic()
 
 
@@ -43,7 +43,7 @@ def test_verified_pure_symbolic_projection_requires_postcondition_evidence() -> 
     with pytest.raises(ValueError, match="verified projection requires verified outcome evidence"):
         missing.validate()
 
-    with pytest.raises(AssertionError, match="verified projection requires verified outcome evidence"):
+    with pytest.raises(ValueError, match="verified projection requires verified outcome evidence"):
         missing.assert_pure_symbolic()
 
 
