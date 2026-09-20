@@ -84,6 +84,13 @@ if (( instrumentation_status != 0 )); then
   exit "$instrumentation_status"
 fi
 
+# Gradle's connected-test lifecycle owns the target package installation and may
+# leave it removed after the instrumentation runner exits. Reinstall the exact
+# already-built candidate before UI acceptance, then prove PackageManager sees
+# that package. This is deterministic test setup, not a runtime fallback.
+adb -s "$serial" install -r "$phone_apk"
+adb -s "$serial" shell cmd package path ai.zara.app | grep -Fq "package:"
+
 python android/integration/device_acceptance.py \
   --serial "$serial" \
   --source-sha "$source_sha" \
