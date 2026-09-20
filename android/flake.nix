@@ -96,6 +96,7 @@
               pkgs.gnumake
               pkgs.gcc
               pkgs.python3
+              pkgs.python3Packages.pillow
               pkgs.swi-prolog
               androidSdk
             ];
