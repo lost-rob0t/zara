@@ -126,6 +126,55 @@ class PortableConversationV3MigrationInstrumentedTest {
         }
     }
 
+    @Test
+    fun persistedTextCounterCannotBecomeExactZeroAfterReopen() {
+        val first = PortableConversationStore(context)
+        first.createConversation("storage class text", conversationId = CONVERSATION_ID)
+        first.saveSymbolicProjection(
+            SymbolicConversationProjection(
+                conversationId = CONVERSATION_ID,
+                projectionGeneration = 1,
+                runtimeGeneration = 1,
+                turnId = "turn-storage-class-text",
+                outcome = "pending",
+                projectId = "project-storage-class",
+                projectGeneration = 1,
+                dialogueAct = "clarify",
+                dialogueStateJson = "{\"act\":\"clarify\"}",
+                providersEnabled = false,
+                maxModelCalls = 0,
+                providerCalls = 0,
+                modelCalls = 0,
+            ),
+            expectedGeneration = 0,
+        ).assertPureSymbolic()
+
+        first.writableDatabase.execSQL("PRAGMA ignore_check_constraints = ON")
+        first.writableDatabase.execSQL(
+            "UPDATE desktop_symbolic_projections SET max_model_calls = 'not-an-integer' WHERE conversation_id = ?",
+            arrayOf(CONVERSATION_ID),
+        )
+        val storageClass = first.readableDatabase.rawQuery(
+            "SELECT typeof(max_model_calls) FROM desktop_symbolic_projections WHERE conversation_id = ?",
+            arrayOf(CONVERSATION_ID),
+        ).use { cursor ->
+            check(cursor.moveToFirst())
+            cursor.getString(0)
+        }
+        assertEquals("text", storageClass)
+        first.close()
+
+        val reopened = PortableConversationStore(context)
+        try {
+            assertTrue(
+                "TEXT max_model_calls must fail closed instead of Cursor.getLong() -> 0",
+                runCatching { reopened.loadSymbolicProjection(CONVERSATION_ID) }.isFailure,
+            )
+        } finally {
+            reopened.close()
+        }
+    }
+
     private fun seedVersion3Database() {
         val path = context.getDatabasePath(ConversationHistoryContract.databaseName)
         check(path.parentFile?.mkdirs() != false) { "failed to create database directory" }
