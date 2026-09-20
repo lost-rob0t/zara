@@ -8,6 +8,7 @@ on:
       - "emacs/zara-conversation-test.el"
       - "emacs/zara-conversation-recovery-test.el"
       - "emacs/zara-conversation-strict-test.el"
+      - "emacs/zara-conversation-context-test.el"
       - ".github/workflows/emacs-conversation.yml"
   push:
     branches:
@@ -18,6 +19,7 @@ on:
       - "emacs/zara-conversation-test.el"
       - "emacs/zara-conversation-recovery-test.el"
       - "emacs/zara-conversation-strict-test.el"
+      - "emacs/zara-conversation-context-test.el"
       - ".github/workflows/emacs-conversation.yml"
 
 permissions:
@@ -40,4 +42,5 @@ jobs:
           emacs -Q --batch \
             -L emacs \
             -l emacs/zara-conversation-strict-test.el \
+            -l emacs/zara-conversation-context-test.el \
             -f ert-run-tests-batch-and-exit
