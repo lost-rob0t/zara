@@ -241,10 +241,10 @@ class PortableConversationV3MigrationInstrumentedTest {
                     verified_outcome_refs, renderer_provenance,
                     provider_calls, model_calls, updated_at
                 ) VALUES (?, 'local:owner', 'turn-v3', 'pending', 3, 7, 'project-v3', 2,
-                    'clarify', '{\"topic\":\"migration\"}', '[]',
-                    '[{\"question\":\"which one?\"}]',
-                    '[{\"expert\":\"dotfiles\"}]',
-                    '[{\"fact\":\"history survives\"}]',
+                    'clarify', '{"topic":"migration"}', '[]',
+                    '[{"question":"which one?"}]',
+                    '[{"expert":"dotfiles"}]',
+                    '[{"fact":"history survives"}]',
                     'zara.verified-outcome/v1:effect:v3-existing-effect',
                     'symbolic-dcg/v1', 0, 0, ?)
                 """.trimIndent(),
