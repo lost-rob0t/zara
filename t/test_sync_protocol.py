@@ -57,13 +57,13 @@ def test_increment_is_immutable_and_overflow_fails_closed():
 
 def test_direct_version_vector_construction_cannot_bypass_canonical_validation():
     with pytest.raises(SyncProtocolError, match="unique and sorted"):
-        VersionVector((('phone', 1), ('desktop', 1)))
+        VersionVector((("phone", 1), ("desktop", 1)))
 
     with pytest.raises(SyncProtocolError, match="unique and sorted"):
-        VersionVector((('phone', 1), ('phone', 2)))
+        VersionVector((("phone", 1), ("phone", 2)))
 
     with pytest.raises(SyncProtocolError, match="invalid characters"):
-        VersionVector((('phone secret', 1),))
+        VersionVector((("phone secret", 1),))
 
 
 def test_index_delta_requires_exact_generation_and_sequence_baseline():

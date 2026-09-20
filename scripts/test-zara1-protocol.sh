@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-# Keep protocol deadlocks diagnostic instead of letting the repository gate
+# Keep transport/protocol deadlocks diagnostic instead of letting the repository gate
 # burn until the outer CI timeout. -vv prints the active test, faulthandler
 # dumps Python thread stacks, and timeout guarantees a bounded failure.
 #
