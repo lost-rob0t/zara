@@ -1,0 +1,56 @@
+#+title: Zara Common Lisp SDK
+
+This ASDF system is the Common Lisp boundary for Zara. It speaks the existing
+closed =ZARA/1= ZeroMQ protocol; it does not embed Python or invent a parallel
+assistant protocol.
+
+* Load
+
+#+begin_src lisp
+(asdf:load-asd #P"/path/to/zara/lisp/zara.asd")
+(asdf:load-system :zara)
+#+end_src
+
+Dependencies are =pzmq=, =jsown=, =babel=, and =bordeaux-threads=.
+
+* Connect to an existing Zara daemon
+
+#+begin_src lisp
+(zara:with-client (client :endpoint "ipc:///run/user/1000/zarathushtra/zara-server.sock")
+  (zara:open-conversation client)
+  (zara:ask client "summarize my current Zara runtime"))
+#+end_src
+
+The ZeroMQ DEALER socket is owned by one dedicated Lisp thread. Public callers
+use bounded request and event queues, so Sento actors and other threaded Lisp
+programs never pass the socket between threads.
+
+* Start Zara from Lisp
+
+#+begin_src lisp
+(zara:with-server (server)
+  (zara:with-client (client :endpoint (zara:server-endpoint server))
+    (zara:open-conversation client)
+    (multiple-value-bind (text event)
+        (zara:ask client "hello from Common Lisp")
+      (declare (ignore event))
+      (format t "~a~%" text))))
+#+end_src
+
+=start-server= launches the packaged =zara-server= executable, waits for a real
+ZARA/1 hello + ping, and returns only after the daemon is ready. =stop-server=
+is idempotent. This initial SDK deliberately starts/connects only owner-local
+=ipc://= endpoints; remote TCP must reuse Zara's existing CURVE/ZAP identity
+contract rather than weakening it.
+
+* Lower-level operations
+
+- =ping= and =runtime-status=
+- =open-conversation=
+- =submit-turn= and =cancel-turn=
+- =approve-tool= and =reject-tool=
+- =next-event= for unsolicited runtime events
+- =ask= as the convenience request/final-response API
+
+The protocol codec validates the marker, envelope allowlist, known server
+message types, payload counts, and size limits before surfacing a message.
