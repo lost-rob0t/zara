@@ -1,0 +1,39 @@
+#+title: Native Emacs integration
+
+* Contract
+Zara's native Emacs package lives at =emacs/zara.el=. Conversation requests use
+the canonical =zara= client/runtime. Editor control uses the versioned
+=ZARA-EMACS/1= semantic bridge; the bridge decodes base64 JSON and dispatches
+only registered operations. Request values are never evaluated as Elisp.
+
+The running Emacs process remains authoritative for buffers, windows, active
+keymaps, remapping, modes, modification ticks and undo history.
+
+* Core operations
+The initial bridge provides:
+- session description and capability discovery;
+- bounded buffer list/context/read/open/switch operations using opaque IDs;
+- selected-frame window list/select/split/delete operations;
+- live command discovery, documentation, where-is and key lookup;
+- edit preview/apply/cancel/status with the captured buffer modification tick;
+- explicit buffer save;
+- typed compatibility adapters for scratch, Zara chat, the AI dashboard,
+  Org-roam dailies and Magit projects.
+
+Edits never save implicitly. =edit.apply= rechecks the buffer revision and uses
+an atomic Emacs change group, so stale edits fail and successful edits remain in
+ordinary undo history.
+
+* Trusted extensions
+Trusted operator Elisp can extend the bridge with
+=zara-bridge-register-handler=. Generic command execution is not exposed.
+=zara-register-command-adapter= registers a named trusted adapter, and
+=command.invoke= can call only those registered adapter names.
+
+* Native mode
+=zara-native-mode= is a global minor mode for native Zara commands and bridge
+availability. It does not start Zara, a microphone, STT/TTS, an LLM, or another
+agent loop. The canonical Zara runtime continues to own those systems.
+
+The package also exposes =zara-gptel-register-tools= for =ZaraAsk= and bounded
+current-buffer context.
