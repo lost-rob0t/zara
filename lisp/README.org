@@ -11,7 +11,9 @@ assistant protocol.
 (asdf:load-system :zara)
 #+end_src
 
-Dependencies are =pzmq=, =jsown=, =babel=, and =bordeaux-threads=.
+Dependencies are =pzmq=, =com.inuoe.jzon=, =babel=, and =bordeaux-threads=.
+Jzon is used deliberately at the protocol boundary so malformed and
+duplicate-key JSON fails closed instead of being normalized permissively.
 
 * Connect to an existing Zara daemon
 
@@ -52,5 +54,6 @@ contract rather than weakening it.
 - =next-event= for unsolicited runtime events
 - =ask= as the convenience request/final-response API
 
-The protocol codec validates the marker, envelope allowlist, known server
-message types, payload counts, and size limits before surfacing a message.
+The protocol codec validates the marker, envelope allowlist, strict JSON,
+known server message types, payload counts, and size limits before surfacing a
+message.
