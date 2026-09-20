@@ -237,6 +237,8 @@ class ZaraServer(_core.ZaraServer):
         return state
 
     def _control_socket_path(self) -> Path:
+        if self._secure_tcp and self._security_state is not None:
+            return self._security_state.control_socket_path
         lease_path = self._lease.path
         if lease_path is not None:
             return Path(lease_path).parent / "zara-control.sock"
