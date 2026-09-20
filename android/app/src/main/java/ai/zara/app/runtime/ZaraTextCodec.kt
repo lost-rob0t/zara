@@ -376,7 +376,7 @@ object ZaraTextCodec {
         value ?: throw ZaraWireException(message)
 }
 
-private class StrictJsonParser(private val source: String) {
+internal class StrictJsonParser(private val source: String) {
     private var index = 0
     private var containerDepth = 0
 

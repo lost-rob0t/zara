@@ -1,0 +1,125 @@
+* Run identity
+- Consumed issue :: #1220
+- Branch :: =feat/1220-android-peer-service-20260920=
+- RAGE start commit :: =31f70010f7580e46462532b4e583944585aee138=
+
+* Recovery
+- Fresh master at start (=31f70010=) already contains #1224 (node descriptor authority),
+  #1228 (#1129 ChatExecutionTarget contract), #1229 (authenticated node hello), #1230
+  (Android peer-listener lifecycle substrate). No open PR owns =android/app/src/main/java/ai/zara/app/peer/**=
+  or an Android peer listener. In-flight drafts #1226 (#1221 sync core) and #1223 (#1059 bootstrap)
+  are Python-side and do not overlap this slice.
+
+* Research
+- Issue #1220 requires Android to host a bounded ZARA/1 listener as a real peer node; PR #1230
+  deliberately shipped only the lifecycle state machine and names this wiring as the next slice.
+- Canonical server semantics live in Python: =SecureZaraZmqGateway= (CURVE/ZAP ROUTER, per-message
+  user-id re-resolution, one-credential-one-route, quota, =node_authority_mismatch= /=invalid_node=
+  error bodies), =ZaraNode= exact 9-field wire contract, =verify_authenticated_node= binding to the
+  enrolled registry key. Pinned by =t/test_peer_node_secure_hello.py=, =t/test_daemon_security_gateway.py=,
+  =t/test_production_secure_listener.py=.
+- Android today: full ZARA/1 *client* codecs (=ZaraTextCodec=, =JeroMqTextDealer=, DEALER+CURVE only);
+  zero listener/server code; no nodeId/enrollmentGeneration producer; =PeerNodeListenerLifecycle= unwired.
+- JeroMQ 0.6.0 (already a dependency) verified from v0.6.0 sources: =ZAuth(ctx, actorName, Map<String,Auth>)=
+  accepts a custom CURVE =Auth= whose =authorize(ZapRequest)= can default-deny unknown keys and set
+  =request.userId=; =zmq.io.Metadata.USER_ID= ("User-Id") ZAP metadata is attached to *every* received
+  application message (=StreamEngine.pushMsgToSession= -> =msg.setMetadata=) and readable via
+  =ZMQ.Socket.recvMsg().getMetadata()=. Per-message authenticated attribution therefore has exact
+  parity with pyzmq's =authenticated_user_id= — routing-id spoofing between enrolled peers cannot
+  misattribute messages.
+- Android 14+ foreground-service =connectedDevice= type requires =FOREGROUND_SERVICE= +
+  =FOREGROUND_SERVICE_CONNECTED_DEVICE= (all-of) and any-of the connected-device permissions; the app
+  already declares =CHANGE_WIFI_MULTICAST_STATE= (and =BLUETOOTH_CONNECT=), so the type is compliant.
+  Brave evidence recorded in the Prolog verification facts.
+- Reuse decisions: the phone's existing Keystore-wrapped CURVE credential (=EnrollmentRepository=)
+  becomes the listener's CURVE server keypair (one stable node identity per #1220); =StrictJsonParser=
+  (currently file-private in =ZaraTextCodec.kt=) becomes =internal= so the server codec shares the
+  exact strict JSON grammar instead of a second parser.
+
+* Design / adversarial review
+Boundary: Android hosts a bounded authenticated ZARA/1 ROUTER peer listener as a real Android
+foreground service, generation-fenced by the landed lifecycle, with a peer enrollment authority and
+proven wire interop against the canonical Python client. NOT in this slice: turn execution on the
+phone runtime, pairing ceremony/QR (#666/#1059 in flight), discovery/relay, sync (#1221 in flight),
+UI toggle.
+
+New components (=android/app/src/main/java/ai/zara/app/peer/=):
+1. =PeerEnrollmentRegistry= — in-memory enrolled-peer authority, default-deny. =EnrolledPeer(deviceId,
+   publicKeyZ85, generation, active)=; bounded to 256; duplicate active key/device rejected; =revoke=
+   fences lookups immediately; =resolve(publicKeyZ85)= returns null for unknown/inactive. Identity for
+   authorization comes only from here + ZAP, never from payload.
+2. =PeerNodeWire= — server-side strict ZARA/1 codec: same envelope key set/grammar/64 KiB cap as
+   Python =protocol.py=; decodes =hello= (versions must contain 1) and =ping=; validates the node
+   document exactly like =ZaraNode.from_mapping= (9 fields, device-class enum, Z85 key, bounded
+   tcp:// endpoints, capabilities ⊆ {open_app, open_uri}, =ZARA/\d+= versions, positive generation);
+   encodes =hello.ok=/=pong=/=protocol.error= with the verbatim Python error codes
+   (=authentication_required=, =invalid_message=, =unsupported_version=, =node_authority_mismatch=,
+   =invalid_node=, =quota_exceeded=, =authorization_denied=).
+3. =PeerNodeGateway= — the listener: single poll thread; =ZAuth= custom CURVE auth backed by the
+   registry (deny => no ZMTP handshake, no application reply oracle), =zapDomain("zara")=, phone
+   keypair as CURVE server keys, ROUTER with bounded options (linger 0, HWM 256, handshake ivl 5s);
+   binds =tcp://= endpoints; per message: route frame + ZAP =User-Id= metadata -> registry resolve
+   (revocation fences the *next* message) -> strict decode -> hello node binding compared against the
+   *authenticated* enrollment (payload identity never wins) -> one-credential-one-route on hello ->
+   bounded route table (32) and per-peer rate window -> replies; turn/runtime types fail closed with
+   =authorization_denied= until the runtime-host slice. Lifecycle integration: =requestStart= ->
+   bind -> =listenerStarted=; bind failure -> =listenerFailed= (truthful, generation-fenced, no
+   leaked context); =requestStop= -> close -> =listenerStopped=; =networkChanged= re-advertises
+   endpoints without changing identity. Stale callbacks cannot resurrect a listener (lifecycle
+   already pins this; gateway must route every transition through it).
+4. =PeerNodeIdentityStore= — durable node id + enrollment generation (atomic temp+replace,
+   =noBackupFilesDir/zara/peer/peer-node.bin=, magic header, 64 KiB cap); rotation only through the
+   explicit enrollment-authority replace API; combined with the Keystore-wrapped CURVE credential it
+   produces =PeerNodeIdentity=; process recreation restores identity and starts truthfully STOPPED.
+5. =PeerNodeListenerService= + =PeerNodeServiceController= — the repo's first foreground service:
+   =:voice= process, =exported="false"=, =foregroundServiceType="connectedDevice"=,
+   =startForeground= before any socket work, low-priority notification channel, no wake lock;
+   controller is a pure JVM-testable seam binding service callbacks to gateway+lifecycle; the
+   manifest/wiring is pinned by a source-contract test.
+6. Interop evidence: =android/integration/zara_peer_client_fixture.py= — canonical Python CURVE DEALER
+   client (reusing =zara.protocol= encode/decode) driven by env/argv, emitting machine-readable
+   result lines; proven against the real Python =SecureZaraZmqGateway= by a new pytest
+   (=t/test_zara_peer_client_fixture.py=) and against the Kotlin listener by an env-gated JVM test
+   (=PythonPeerClientInteropTest=, wired in =scripts/test-android.sh= like =ZARA_STOCK_FIXTURE=).
+
+Adversarial cases that must have tests before implementation is trusted:
+- enrolled peer presenting another peer's node doc -> =node_authority_mismatch= (compare against
+  ZAP-authenticated key, not payload);
+- revoke mid-session -> next message =authentication_required=, no restart;
+- unenrolled key -> silence at ZMTP level (client timeout, no oracle);
+- malformed/oversized envelope -> =invalid_message= with bounded memory;
+- stale =listenerStarted= after stop -> rejected by lifecycle, no resurrection;
+- bind failure -> FAILED phase truthful, resources released, new generation retry works;
+- second connection with same enrolled key -> prior route dropped (one-credential-one-route);
+- route-table/rate bound -> =quota_exceeded=;
+- process recreation -> identity restored, phase STOPPED, no fabricated session;
+- payload node identity escalation -> never authoritative;
+- no HTTP fallback, no second transport, no discovery trust.
+
+* Planned gate
+- Focused: new JVM tests (=:app:testDebugUnitTest=) red-first per behavior; new pytest
+  =t/test_zara_peer_client_fixture.py= via =nix develop -c pytest=.
+- Full: =nix develop -c bash scripts/test-all.sh= + =nix flake check= (locally where the connector
+  environment supports it; Android/Gradle gate delegated to exact-head GitHub Actions per rage/172
+  precedent when local Android toolchain is unavailable).
+- CI: exact candidate SHA must show all 8 jobs green including android+wear, dual-surface evidence,
+  and agentic formal + live app gate; missing/pending/skipped/stale checks are not green.
+
+* TDD evidence (gateway core)
+- RED =PeerEnrollmentRegistryTest= :: unresolved =PeerEnrollmentRegistry= at compile
+  (gradle =:app:compileDebugUnitTestKotlin= failed with the expected missing symbol), then GREEN 8/8.
+- RED =PeerNodeWireTest= :: compile failure on missing =PeerNodeWire=; GREEN after codec + making
+  =StrictJsonParser= internal (shared strict JSON grammar, no second parser). One genuine defect
+  surfaced red: node counter violations must report =invalid_node=, not =invalid_message=; fixed by
+  parameterizing the error code. GREEN 15/15.
+- RED =PeerNodeGatewayTest= :: real CURVE/ZAP ROUTER over loopback TCP; GREEN after gateway. Three
+  real defects the tests forced out:
+  1. ZAP =User-Id= metadata is attached to the *wire* frames, not the ROUTER-synthesized route frame;
+     attribution now reads it from the received wire parts.
+  2. Route keys decoded binary routing ids as UTF-8; distinct ids with invalid-UTF-8 bytes collapsed
+     to the same replacement string, conflating two peers' routes (misattribution between enrolled
+     peers). Fixed with a lossless hex route key; pinned by
+     =secondConnectionWithSameCredentialDropsPriorRoute=.
+  3. Rate-window check/charge ordering allowed an off-by-one; now exactly =rateMaxMessages= messages
+     per window, then =quota_exceeded=.
+- GREEN totals :: registry 8/8, wire 15/15, gateway 16/16 (39 JVM tests).
