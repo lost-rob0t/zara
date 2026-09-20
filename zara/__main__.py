@@ -5,6 +5,7 @@ Wraps console (text), voice, and dictate modes
 """
 
 import argparse
+import json
 import queue
 import sys
 import time
@@ -37,6 +38,7 @@ GPU_ERROR_MARKERS = (
     "gfx",
 )
 CLI_TURN_TIMEOUT_SECONDS = 30.0
+CLI_IDENTIFIER_MAX_CHARS = 128
 
 
 def normalize_stt_device(device: str, provider: str | None = None) -> str:
@@ -103,6 +105,22 @@ def _resolve_stt_runtime(args):
     return stt_provider, stt_device, stt_model
 
 
+def _validate_cli_identifier(value: str, label: str) -> str:
+    """Return a bounded opaque CLI identifier or fail closed."""
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{label} must not be empty")
+    if "\x00" in normalized:
+        raise ValueError(f"{label} must not contain NUL")
+    if len(normalized) > CLI_IDENTIFIER_MAX_CHARS:
+        raise ValueError(
+            f"{label} exceeds maximum length {CLI_IDENTIFIER_MAX_CHARS}"
+        )
+    return normalized
+
+
 def _wait_for_daemon_turn(subscription, turn_id: str) -> str:
     from .runtime import events
 
@@ -134,9 +152,29 @@ def _wait_for_daemon_turn(subscription, turn_id: str) -> str:
             raise RuntimeError(event.reason or "daemon turn cancelled")
 
 
-def _run_connected_text(endpoint: str, command_text: str) -> int:
+def _emit_cli_event(event_type: str, *, turn_id: str, conversation_id, **body) -> None:
+    """Emit one deterministic JSON event for native clients such as Emacs."""
+    payload = {
+        "type": event_type,
+        "turn_id": turn_id,
+        "conversation_id": conversation_id,
+        **body,
+    }
+    print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+
+
+def _run_connected_text(
+    endpoint: str,
+    command_text: str,
+    *,
+    conversation_id: str | None = None,
+    emit_json: bool = False,
+) -> int:
     from .daemon_client import create_daemon_client
     from .runtime.commands import SubmitTurn
+
+    if conversation_id is not None:
+        conversation_id = _validate_cli_identifier(conversation_id, "conversation id")
 
     client = None
     subscription = None
@@ -147,9 +185,25 @@ def _run_connected_text(endpoint: str, command_text: str) -> int:
         # Subscribe before submit so an immediately-completing daemon turn
         # cannot publish its terminal event before this CLI is listening.
         subscription = client.subscribe()
-        receipt = client.submit(SubmitTurn(text=command_text)).result()
-        response = _wait_for_daemon_turn(subscription, receipt.turn_id)
-        if response:
+        receipt = client.submit(
+            SubmitTurn(text=command_text, conversation_id=conversation_id)
+        ).result()
+        turn_id = _validate_cli_identifier(receipt.turn_id, "turn id")
+        if emit_json:
+            _emit_cli_event(
+                "turn.accepted",
+                turn_id=turn_id,
+                conversation_id=conversation_id,
+            )
+        response = _wait_for_daemon_turn(subscription, turn_id)
+        if emit_json:
+            _emit_cli_event(
+                "assistant.complete",
+                turn_id=turn_id,
+                conversation_id=conversation_id,
+                text=response,
+            )
+        elif response:
             print(response)
     except Exception as error:
         print(f"Error: {error}", file=sys.stderr)
@@ -162,6 +216,32 @@ def _run_connected_text(endpoint: str, command_text: str) -> int:
                 if exit_code == 0:
                     print(f"Error: {error}", file=sys.stderr)
                     exit_code = 2
+        if client is not None:
+            try:
+                client.close()
+            except Exception as error:
+                if exit_code == 0:
+                    print(f"Error: {error}", file=sys.stderr)
+                    exit_code = 2
+    return exit_code
+
+
+def _run_connected_cancel(endpoint: str, turn_id: str) -> int:
+    """Cancel TURN_ID through Zara's canonical runtime command boundary."""
+    from .daemon_client import create_daemon_client
+    from .runtime.commands import CancelTurn
+
+    normalized_turn_id = _validate_cli_identifier(turn_id, "turn id")
+    client = None
+    exit_code = 0
+    try:
+        client = create_daemon_client(endpoint)
+        client.start().result()
+        client.submit(CancelTurn(turn_id=normalized_turn_id)).result()
+    except Exception as error:
+        print(f"Error: {error}", file=sys.stderr)
+        exit_code = 2
+    finally:
         if client is not None:
             try:
                 client.close()
@@ -222,6 +302,8 @@ def main():
                "  zara 'open firefox'           # Execute text command\n"
                "  zara --standalone 'hello'     # Explicit private local runtime\n"
                "  zara --connect ipc:///run/user/1000/zara.sock 'hello'\n"
+               "  zara --conversation-id emacs-main --json-events 'continue'\n"
+               "  zara --cancel-turn TURN_ID    # Cancel through ZARA/1\n"
                "  zara --desktop                # Native desktop / Quick Copilot\n"
                "  zara --toggle-desktop         # Toggle the existing desktop\n"
                "  zara --console                # Interactive REPL\n"
@@ -292,6 +374,21 @@ def main():
     )
 
     parser.add_argument(
+        "--conversation-id",
+        help="Reuse one canonical daemon conversation for this text turn"
+    )
+    parser.add_argument(
+        "--json-events",
+        action="store_true",
+        help="Emit bounded turn.accepted/assistant.complete JSON events"
+    )
+    parser.add_argument(
+        "--cancel-turn",
+        metavar="TURN_ID",
+        help="Cancel one daemon turn through the canonical runtime boundary"
+    )
+
+    parser.add_argument(
         "--pets",
         action="store_true",
         help="Launch the desktop pet overlay (companion flag; use with --wake)"
@@ -354,6 +451,21 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.cancel_turn:
+        if args.command:
+            parser.error("--cancel-turn cannot be combined with a text command")
+        if args.standalone:
+            parser.error("--cancel-turn requires the daemon/ZARA/1 path")
+        if args.conversation_id:
+            parser.error("--conversation-id is not used with --cancel-turn")
+        if args.json_events:
+            parser.error("--json-events is not used with --cancel-turn")
+    elif args.conversation_id or args.json_events:
+        if not args.command:
+            parser.error("--conversation-id/--json-events require a text command")
+        if args.standalone:
+            parser.error("--conversation-id/--json-events require the daemon/ZARA/1 path")
 
     if args.desktop:
         from .desktop.app import main as desktop_main
@@ -445,12 +557,25 @@ def main():
         from .pets.cli import main_overlay
         sys.exit(main_overlay())
 
+    elif args.cancel_turn:
+        endpoint = args.connect or _default_daemon_endpoint()
+        sys.exit(_run_connected_cancel(endpoint, args.cancel_turn))
+
     elif args.command:
         command_text = " ".join(args.command)
 
         if not args.standalone:
             endpoint = args.connect or _default_daemon_endpoint()
-            sys.exit(_run_connected_text(endpoint, command_text))
+            if args.conversation_id is None and not args.json_events:
+                sys.exit(_run_connected_text(endpoint, command_text))
+            sys.exit(
+                _run_connected_text(
+                    endpoint,
+                    command_text,
+                    conversation_id=args.conversation_id,
+                    emit_json=args.json_events,
+                )
+            )
 
         from .console import ZaraConsole
 

@@ -115,6 +115,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         self._route_user_ids: dict[bytes, str] = {}
         self._route_principal_ids: dict[bytes, str] = {}
         self._route_nodes: dict[bytes, ZaraNode] = {}
+        self._pending_hello_nodes: dict[bytes, Optional[ZaraNode]] = {}
         self._runtime_quota_holds: set[tuple[str, str]] = set()
         self._hello_route_resets: set[bytes] = set()
         self._principal_subscriptions = {}
@@ -163,8 +164,16 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             )
         self._principal_subscriptions[principal_id] = subscription
 
-    def _route_ready(self, _route, _state) -> None:
+    def _route_ready(self, route, _state) -> None:
         self._ensure_principal_subscription(self._principal)
+        with self._lock:
+            if route not in self._pending_hello_nodes:
+                return
+            node = self._pending_hello_nodes[route]
+            if node is None:
+                self._route_nodes.pop(route, None)
+            else:
+                self._route_nodes[route] = node
 
     def node_for_session(self, principal_id: str, session_id: str) -> Optional[ZaraNode]:
         """Return peer metadata only for one live authenticated principal/session."""
@@ -288,6 +297,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             self._route_user_ids.clear()
             self._route_principal_ids.clear()
             self._route_nodes.clear()
+            self._pending_hello_nodes.clear()
             self._hello_route_resets.clear()
             for subscription in tuple(self._principal_subscriptions.values()):
                 subscription.close()
@@ -557,6 +567,10 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
                 if previous_state is not None:
                     previous_session_id = previous_state.session_id
 
+        if message.type == "hello":
+            with self._lock:
+                self._pending_hello_nodes[route] = peer_node
+
         def commit_peer_node() -> None:
             if message.type != "hello":
                 return
@@ -584,6 +598,9 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
                 )
             )
         finally:
+            if message.type == "hello":
+                with self._lock:
+                    self._pending_hello_nodes.pop(route, None)
             self._principal = previous_principal
 
         replay_key = (principal_id, message.id)
