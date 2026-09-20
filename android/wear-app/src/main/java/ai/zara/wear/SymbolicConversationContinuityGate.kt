@@ -1,5 +1,6 @@
 package ai.zara.wear
 
+import ai.zara.ui.continuity.SymbolicConversationEdgeCodec
 import ai.zara.ui.continuity.SymbolicConversationEdgeSnapshot
 
 /**
@@ -10,6 +11,20 @@ import ai.zara.ui.continuity.SymbolicConversationEdgeSnapshot
  * canonical projection is safe to display over the current one.
  */
 object SymbolicConversationContinuityGate {
+    fun decodeAccepted(
+        current: SymbolicConversationEdgeSnapshot?,
+        encoded: ByteArray,
+    ): SymbolicConversationEdgeSnapshot? {
+        val incoming = try {
+            SymbolicConversationEdgeCodec.decode(encoded)
+        } catch (_: IllegalArgumentException) {
+            return null
+        } catch (_: IllegalStateException) {
+            return null
+        }
+        return incoming.takeIf { accepts(current, it) }
+    }
+
     fun accepts(
         current: SymbolicConversationEdgeSnapshot?,
         incoming: SymbolicConversationEdgeSnapshot,
