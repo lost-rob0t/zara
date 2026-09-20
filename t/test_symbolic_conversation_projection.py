@@ -11,6 +11,8 @@ def _projection(
     *,
     generation: int = 1,
     runtime_generation: int = 7,
+    turn_id: str | None = "turn-7",
+    outcome: str = "pending",
     project_id: str | None = "project-a",
     project_generation: int = 1,
     provider_calls: int = 0,
@@ -20,6 +22,8 @@ def _projection(
         conversation_id=conversation_id,
         projection_generation=generation,
         runtime_generation=runtime_generation,
+        turn_id=turn_id,
+        outcome=outcome,
         project_id=project_id,
         project_generation=project_generation,
         dialogue_state={"act": "clarify", "intent": "inspect_project"},
@@ -46,6 +50,8 @@ def test_symbolic_projection_survives_restart_with_zero_provider_and_model_calls
     stored.assert_pure_symbolic()
     assert stored.provider_calls == 0
     assert stored.model_calls == 0
+    assert stored.turn_id == "turn-7"
+    assert stored.outcome == "pending"
     assert stored.projection_generation == 1
     assert stored.unresolved_questions[0]["slot"] == "target"
     assert stored.expert_evidence[0]["evidence_id"] == "ev-1"
@@ -59,6 +65,8 @@ def test_symbolic_projection_survives_restart_with_zero_provider_and_model_calls
     recovered.assert_pure_symbolic()
     assert recovered.provider_calls == 0
     assert recovered.model_calls == 0
+    assert recovered.turn_id == "turn-7"
+    assert recovered.outcome == "pending"
     assert recovered.runtime_generation == 7
     assert recovered.project_id == "project-a"
     assert recovered.project_generation == 1
@@ -151,6 +159,14 @@ def test_pure_symbolic_assertion_rejects_provider_or_model_use():
         _projection("model-used", model_calls=1).assert_pure_symbolic()
 
 
+def test_turn_outcome_vocabulary_fails_closed():
+    for outcome in ("unknown", "pending", "success", "cancelled", "interrupted", "error"):
+        _projection("outcome", outcome=outcome).validate()
+
+    with pytest.raises(ValueError, match="unsupported symbolic outcome"):
+        _projection("outcome", outcome="provider_fallback").validate()
+
+
 def test_project_switch_requires_new_generation(tmp_path):
     store = ConversationStore(DatabaseManager(tmp_path / "project-fence.db"))
     conversation = store.create_conversation("Projects", conversation_id="conv-project")
@@ -175,11 +191,15 @@ def test_project_switch_requires_new_generation(tmp_path):
             conversation.id,
             generation=2,
             runtime_generation=8,
+            turn_id="turn-8",
+            outcome="success",
             project_id="project-b",
             project_generation=5,
         ),
         expected_generation=first.projection_generation,
     )
+    assert switched.turn_id == "turn-8"
+    assert switched.outcome == "success"
     assert switched.project_id == "project-b"
     assert switched.project_generation == 5
 
