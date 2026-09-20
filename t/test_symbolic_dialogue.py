@@ -13,7 +13,7 @@ def test_symbolic_dialogue_prolog_contract() -> None:
             "swipl",
             "-q",
             "-g",
-            "run_tests(symbolic_dialogue)",
+            "run_tests(symbolic_dialogue),halt(0)",
             "-t",
             "halt(1)",
             "-s",
