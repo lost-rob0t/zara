@@ -242,6 +242,7 @@ internal object SymbolicProjectionContract {
         "interrupted",
         "error",
     )
+    private val terminalOutcomes = setOf("success", "cancelled", "interrupted", "error")
 
     fun validatePayload(projection: SymbolicConversationProjection) {
         require(projection.conversationId.isNotEmpty()) { "conversationId must not be empty" }
@@ -287,6 +288,25 @@ internal object SymbolicProjectionContract {
         }
         check(proposed.runtimeGeneration >= current.runtimeGeneration) {
             "runtimeGeneration regression rejected"
+        }
+        check(!(current.turnId != null && proposed.turnId == null)) {
+            "turnId rewind rejected"
+        }
+        if (proposed.turnId == current.turnId) {
+            if (current.turnId != null) {
+                check(proposed.runtimeGeneration == current.runtimeGeneration) {
+                    "same turn must preserve runtimeGeneration"
+                }
+            }
+            if (current.outcome in terminalOutcomes) {
+                check(proposed.outcome == current.outcome) {
+                    "terminal turn outcome rewrite rejected: ${current.outcome} -> ${proposed.outcome}"
+                }
+            }
+        } else {
+            check(proposed.runtimeGeneration > current.runtimeGeneration) {
+                "new turn must advance runtimeGeneration"
+            }
         }
         check(proposed.providerCalls >= current.providerCalls) {
             "provider-call ledger rewind rejected"
