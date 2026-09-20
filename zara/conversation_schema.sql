@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS desktop_symbolic_projections (
     expert_evidence_json TEXT NOT NULL DEFAULT '[]',
     verified_facts_json TEXT NOT NULL DEFAULT '[]',
     renderer_provenance TEXT NOT NULL DEFAULT '',
+    provider_calls INTEGER NOT NULL DEFAULT 0 CHECK (provider_calls >= 0),
     model_calls INTEGER NOT NULL DEFAULT 0 CHECK (model_calls >= 0),
     updated_at TEXT NOT NULL,
     PRIMARY KEY(conversation_id, principal_id),
