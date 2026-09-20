@@ -295,8 +295,8 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
     def _drop_route_locked(self, route: bytes):
         resetting = route in self._hello_route_resets
         principal_id = self._route_principal_ids.get(route)
-        self._route_nodes.pop(route, None)
         if not resetting:
+            self._route_nodes.pop(route, None)
             principal_id = self._route_principal_ids.pop(route, None)
             self._route_user_ids.pop(route, None)
             if principal_id is not None:
@@ -548,11 +548,20 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
                 return
 
         previous_session_id = None
+        previous_node = None
         if message.type == "hello":
             with self._lock:
                 previous_state = self._routes.get(route)
                 if previous_state is not None:
                     previous_session_id = previous_state.session_id
+                previous_node = self._route_nodes.get(route)
+                # Publish the authenticated peer descriptor before the base
+                # handshake can emit hello.ok. A client observing the ACK must
+                # never race the server's session->node authority lookup.
+                if peer_node is None:
+                    self._route_nodes.pop(route, None)
+                else:
+                    self._route_nodes[route] = peer_node
 
         previous_principal = self._principal
         self._principal = enrolled.principal
@@ -564,15 +573,19 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         if message.type == "hello":
             with self._lock:
                 current = self._routes.get(route)
-                if (
+                accepted = (
                     current is not None
                     and current.ready
                     and current.session_id != previous_session_id
-                ):
-                    if peer_node is None:
+                )
+                if not accepted:
+                    # Invalid/version/runtime-rejected hellos must not leave a
+                    # staged descriptor authoritative. Restore it only when the
+                    # previous route/session itself survived the rejected hello.
+                    if current is None or previous_node is None:
                         self._route_nodes.pop(route, None)
                     else:
-                        self._route_nodes[route] = peer_node
+                        self._route_nodes[route] = previous_node
 
         replay_key = (principal_id, message.id)
         with self._lock:
