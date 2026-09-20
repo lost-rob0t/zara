@@ -120,6 +120,28 @@ class AuthenticationTest {
         credential.destroy()
     }
 
+    @Test fun `server curve keys expose the node identity without requiring a server pin`() {
+        val directory = Files.createTempDirectory("zara-server-keys").toFile()
+        val publicKey = ByteArray(32) { (it + 4).toByte() }
+        val secretKey = ByteArray(32) { (it + 44).toByte() }
+        val repository = EnrollmentRepository(
+            credentials = WrappedCredentialStore(
+                File(directory, "credential.bin"),
+                TaggedCipher(0x17),
+            ),
+            serverPins = ServerPinStore(File(directory, "server-pin.bin")),
+            generator = FixedGenerator(publicKey, secretKey),
+        )
+
+        assertNull(repository.serverCurveKeysZ85())
+
+        repository.createIdentity()
+        val serverKeys = requireNotNull(repository.serverCurveKeysZ85())
+
+        assertEquals(JeroMqCurveKeyCodec.encode(publicKey), serverKeys.publicKeyZ85)
+        assertEquals(JeroMqCurveKeyCodec.encode(secretKey), serverKeys.secretKeyZ85)
+    }
+
     @Test fun `enrollment is explicit and requires a server pin before socket auth`() {
         val directory = Files.createTempDirectory("zara-enrollment").toFile()
         val publicKey = ByteArray(32) { (it + 4).toByte() }

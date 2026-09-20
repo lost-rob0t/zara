@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="accessibility_service_description">Zara deterministic Prolog automations. Rules may inspect the active UI and perform only typed actions you explicitly enable.</string>
+    <string name="peer_listener_channel_name">Zara peer listener</string>
+    <string name="peer_listener_notification_title">Zara peer node active</string>
+    <string name="peer_listener_notification_text">Authenticated ZARA/1 peers can reach this device.</string>
 </resources>

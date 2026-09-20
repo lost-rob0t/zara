@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
+- Android can now host an authenticated ZARA/1 peer listener as a real foreground service: the generation-fenced listener lifecycle drives a bounded CURVE/ZAP ROUTER gateway that authenticates enrolled peers per message, binds hello node documents to the enrolled registry identity, revokes live sessions on the next message, and stays silent toward unenrolled keys, with wire interop proven against the canonical Python peer client.
 - Authenticated ZARA/1 peers can now attach a bounded `ZaraNode` descriptor to the secure hello handshake; Zara binds that metadata to the existing CURVE/ZAP enrollment and exact principal/session, rejects identity/generation mismatches, and never treats advertised device features as authorization grants.
 - The daemon now logs a warning for every denied CURVE/ZAP client authentication, including the presented public key, so unenrolled or mistyped client keys are diagnosable server-side instead of failing silently.
 - Added an authenticated browser bridge and packaged Chromium/Firefox extension for reading pages and performing approval-gated browser actions from Zara.

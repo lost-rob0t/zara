@@ -58,6 +58,14 @@ if [[ ! -f "$interop_fixture" ]] || ! grep -qx 'READY' "$interop_log"; then
 fi
 chmod 600 "$interop_fixture"
 export ZARA_STOCK_FIXTURE="$interop_fixture"
+export ZARA_PEER_CLIENT_FIXTURE="$repo_root/android/integration/zara_peer_client_fixture.py"
+peer_python_wrapper="$interop_dir/peer-python.sh"
+cat >"$peer_python_wrapper" <<PYWRAPPER
+#!/usr/bin/env bash
+exec nix develop "$repo_root" -c env PYTHONPATH="$repo_root"\${PYTHONPATH:+:\$PYTHONPATH} python3 "\$@"
+PYWRAPPER
+chmod 700 "$peer_python_wrapper"
+export ZARA_PEER_PYTHON="$peer_python_wrapper"
 
 gradle_log="$(mktemp)"
 if ! gradle --no-daemon \
@@ -87,6 +95,8 @@ printf 'STOP\n' >&9
 wait "$interop_pid"
 interop_pid=""
 unset ZARA_STOCK_FIXTURE
+unset ZARA_PEER_CLIENT_FIXTURE
+unset ZARA_PEER_PYTHON
 
 phone_apk="app/build/outputs/apk/debug/app-debug.apk"
 code_apk="code-editor/build/outputs/apk/debug/code-editor-debug.apk"

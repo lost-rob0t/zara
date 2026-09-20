@@ -203,6 +203,44 @@ contain no credentials or raw exception messages.
 
 Issue #173 remains reopened because the full client acceptance is larger than the merged auth primitives. Remaining/continuing work includes complete authenticated connect/hello behavior, reconnect, durable session/conversation continuity, stale-session rejection, and ordinary typed turn/event integration across lifecycle changes.
 
+* Peer node listener
+
+Android is becoming a real ZARA/1 peer node (#1220), not only a client. The
+peer listener stack under =ai.zara.app.peer= is merged in dependency order:
+
+- =PeerNodeListenerLifecycle= is the pure generation-fenced authority
+  (=STOPPED|STARTING|ACTIVE|STOPPING|FAILED=); restarts preserve node identity
+  while stale start/stop/network callbacks can never resurrect a listener.
+- =PeerNodeIdentityStore= durably stores the node id and enrollment generation
+  under =noBackupFilesDir/zara/peer/=; identity rotation only happens through
+  the explicit enrollment-replace seam.
+- =PeerEnrollmentRegistry= is the bounded in-memory authority for peers that
+  may open authenticated sessions with this phone; unknown keys are denied by
+  default and revocation fences the next message. The pairing ceremony
+  (#666/#1059) will own enrollment UX.
+- =PeerNodeGateway= hosts the authenticated CURVE/ZAP ROUTER listener
+  (=ZAP domain "zara"=) using the phone's Keystore-wrapped CURVE credential as
+  its server identity. Authentication is resolved per message from ZAP
+  metadata against the live registry; hello node documents must match the
+  enrolled key/device/generation exactly (=node_authority_mismatch=,
+  =invalid_node=); one enrolled credential owns exactly one live route; the
+  route table and per-peer message rate are bounded (=quota_exceeded=);
+  turn/runtime message types fail closed with =authorization_denied= until the
+  phone runtime host slice lands.
+- =PeerNodeListenerService= is the repo's first foreground service
+  (=connectedDevice= type, =:voice= process). It enters the typed foreground
+  before any socket work, starts truthfully stopped after process recreation,
+  and owns no wake lock, discovery, or second transport.
+
+Wire interop is proven in both directions: the canonical Python peer client
+fixture (=android/integration/zara_peer_client_fixture.py=, validated against
+the real Python =SecureZaraZmqGateway= by =t/test_zara_peer_client_fixture.py=)
+completes authenticated hello against the Kotlin listener in the JVM suite
+(=PythonPeerClientInteropTest=). Remaining #1220 acceptance — mutual typed
+turns with the desktop/server runtime, restart/reconnect E2E on emulator and
+physical devices, network-change endpoint advertisement, and the pairing
+ceremony — lands in the follow-up slices.
+
 * Runtime state
 
 Android client state should remain typed and reducer-driven rather than letting Activities/Composables each invent their own connection/assistant truth.

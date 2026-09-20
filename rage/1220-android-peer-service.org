@@ -123,3 +123,45 @@ Adversarial cases that must have tests before implementation is trusted:
   3. Rate-window check/charge ordering allowed an off-by-one; now exactly =rateMaxMessages= messages
      per window, then =quota_exceeded=.
 - GREEN totals :: registry 8/8, wire 15/15, gateway 16/16 (39 JVM tests).
+
+* TDD evidence (identity, service, interop)
+- =PeerNodeIdentityStore= (4/4) :: durable node id + generation; rotation only via the explicit
+  =replace= seam; corrupt/absent loads return null; atomic temp+replace+fsync with the
+  =ClientStateStore= idiom. Implemented as a pattern-clone of that proven persistence idiom, so the
+  red step was the store test failing against a missing class rather than a separately recorded
+  red run.
+- =EnrollmentRepository.serverCurveKeysZ85= (:: =AuthenticationTest= extended red-first in the auth
+  house style: unenrolled → null; identity present → Z85 pair without requiring a server pin,
+  because a peer listener is the server side of its own keypair. 14/14 green.
+- =PeerNodeServiceController= (4/4) :: foreground strictly precedes gateway creation; missing
+  identity refuses to start truthfully; process recreation restores identity but starts STOPPED;
+  bind failure leaves a FAILED snapshot that an explicit stop returns to STOPPED (the first cut
+  dropped the failed candidate and stranded the lifecycle in FAILED — the test forced the fix).
+- =PeerNodeListenerService= + manifest :: the repo's first foreground service
+  (=connectedDevice=, =:voice= process, typed =startForeground=, =START_NOT_STICKY=, Keystore-backed
+  identity + identity store + in-memory peer registry), pinned by a 3-test manifest/wiring
+  source-contract test following the =NativeTreallaSourceContractTest= precedent. Phone-APK
+  permission additions (=FOREGROUND_SERVICE=, =FOREGROUND_SERVICE_CONNECTED_DEVICE=,
+  =POST_NOTIFICATIONS=) pass the pinned aapt2 gates (termux-bridge/wear-voice INTERNET bans
+  untouched).
+- Python fixture (:: =android/integration/zara_peer_client_fixture.py= is the canonical Python
+  CURVE DEALER peer client; =t/test_zara_peer_client_fixture.py= (3/3) proves it against the real
+  Python =SecureZaraZmqGateway=: authenticated hello.ok with a bound node, exact
+  =node_authority_mismatch= body, and ZAP silence (timeout) for an unenrolled key.
+- Cross-language interop (:: =PythonPeerClientInteropTest= (3/3, env-gated like
+  =ZARA_STOCK_FIXTURE=) hosts the Kotlin gateway and drives the Python client against it:
+  hello.ok, =node_authority_mismatch=, unenrolled timeout. Wired into =scripts/test-android.sh=
+  with a root-devshell python wrapper (the android toolchain python has no pyzmq; the wrapper
+  mirrors how the stock fixture already invokes the root devshell).
+
+* Gate evidence (exact candidate worktree)
+- Focused JVM :: 53 new peer tests + 1 auth test green (registry 8, wire 15, gateway 16, identity
+  store 4, controller 4, service contract 3, python interop 3; auth suite 14/14).
+- =t/test_zara_peer_client_fixture.py= :: 3/3 via the devshell python.
+- Full Android gate :: =nix develop ./android -c bash scripts/test-android.sh= exit 0 through
+  =prolog-verify observe= (parity scripts, Trealla native build, stock-server interop, 622 app JVM
+  tests incl. the new interop, 5 debug APKs, installability + secret-marker + aapt2 permission
+  gates).
+- Full repository gate :: =nix develop -c bash scripts/test-all.sh= exit 0 (observed);
+  =nix flake check --no-build= exit 0 (observed).
+

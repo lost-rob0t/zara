@@ -57,6 +57,36 @@ class EnrollmentRepository(
 
     fun createIdentityZ85(): String = JeroMqCurveKeyCodec.encode(createIdentity())
 
+    data class ServerCurveKeys(
+        val publicKeyZ85: String,
+        val secretKeyZ85: String,
+    )
+
+    /**
+     * The node's own CURVE keypair in Z85 form for hosting an authenticated
+     * listener. It is available as soon as the identity exists and never
+     * depends on a pinned remote server, because a peer listener is the server
+     * side of its own keypair rather than a client session.
+     */
+    fun serverCurveKeysZ85(): ServerCurveKeys? {
+        return when (val loaded = credentials.load()) {
+            CredentialLoadResult.Unenrolled,
+            is CredentialLoadResult.Corrupt,
+            -> null
+            is CredentialLoadResult.Ready -> {
+                val credential = loaded.credential
+                try {
+                    ServerCurveKeys(
+                        publicKeyZ85 = JeroMqCurveKeyCodec.encode(credential.publicKey),
+                        secretKeyZ85 = JeroMqCurveKeyCodec.encode(credential.secretKey),
+                    )
+                } finally {
+                    credential.destroy()
+                }
+            }
+        }
+    }
+
     fun pinServer(publicKey: ByteArray) {
         val candidate = ServerPin(publicKey)
         when (val existing = serverPins.load()) {
