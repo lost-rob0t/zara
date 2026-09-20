@@ -10,6 +10,9 @@ frame_ambiguous(frame(intent(ns(app), name(open)), [], ambiguous([firefox, chrom
 frame_open_firefox(frame(intent(ns(app), name(open)),
     [slot(name(target), value(ref(kind(app_alias), id(firefox))), origin(utterance))],
     complete)).
+frame_timer_5m(frame(intent(ns(device), name('timer.set')),
+    [slot(name(duration), value(duration(300)), origin(utterance))],
+    complete)).
 
 test(greeting_is_zero_model_symbolic_reply) :-
     frame_greet(Frame),
@@ -29,15 +32,62 @@ test(canonical_timer_clarification_carries_context_across_turns) :-
     Turn1 = turn([Frame1], clarify(slot(duration)), Context1),
     assertion(Context1 == partial_frame(Frame1, [duration])),
     symbolic_dialogue_turn:dialogue_turn("5 minutes", passive, Context1, Turn2),
-    Turn2 = turn([Frame2], dispatch_required(Frame2), []),
+    Turn2 = turn([Frame2], dispatch_required(Frame2), Context2),
+    assertion(Context2 == completed_frame(Frame2)),
     assertion(Frame2 = frame(intent(ns(device), name('timer.set')),
         [slot(name(duration), value(duration(300)), origin(follow_up))], complete)).
+
+test(completed_prior_frame_correction_is_deterministic) :-
+    frame_timer_5m(Frame0),
+    symbolic_dialogue_turn:dialogue_turn(
+        "actually 10 minutes",
+        passive,
+        completed_frame(Frame0),
+        Turn
+    ),
+    Turn = turn([Frame], dispatch_required(Frame), completed_frame(Frame)),
+    assertion(Frame = frame(intent(ns(device), name('timer.set')),
+        [slot(name(duration), value(duration(600)), origin(correction))], complete)).
+
+test(completed_prior_frame_non_correction_resolves_fresh) :-
+    frame_timer_5m(Frame0),
+    symbolic_dialogue_turn:dialogue_turn(
+        "open firefox",
+        passive,
+        completed_frame(Frame0),
+        Turn
+    ),
+    Turn = turn([Frame], dispatch_required(Frame), completed_frame(Frame)),
+    assertion(Frame = frame(intent(ns(app), name(open)),
+        [slot(name(target), value(ref(kind(app_alias), id(firefox))), origin(utterance))],
+        complete)).
+
+test(cancel_clears_completed_prior_frame_context) :-
+    frame_timer_5m(Frame0),
+    symbolic_dialogue_turn:dialogue_turn(
+        "cancel",
+        passive,
+        completed_frame(Frame0),
+        turn([Frame], cancelled, [])
+    ),
+    assertion(Frame == frame(intent(ns(conversation), name(cancel)), [], complete)).
+
+test(social_turn_preserves_completed_prior_frame_context) :-
+    frame_timer_5m(Frame0),
+    symbolic_dialogue_turn:dialogue_turn(
+        "thanks",
+        passive,
+        completed_frame(Frame0),
+        turn([Frame], acknowledgement(thanks), Context1)
+    ),
+    assertion(Frame == frame(intent(ns(conversation), name(thanks)), [], complete)),
+    assertion(Context1 == completed_frame(Frame0)).
 
 test(ordinal_follow_up_reuses_canonical_ambiguous_frame) :-
     frame_ambiguous(Frame0),
     Context0 = partial_frame(Frame0, [firefox, chromium, emacs]),
     symbolic_dialogue_turn:dialogue_turn("the second one", passive, Context0, Turn),
-    Turn = turn([Frame], dispatch_required(Frame), []),
+    Turn = turn([Frame], dispatch_required(Frame), completed_frame(Frame)),
     assertion(Frame = frame(intent(ns(app), name(open)),
         [slot(name(target), value(ref(kind(app_alias), id(chromium))), origin(follow_up))],
         complete)).
