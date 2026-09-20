@@ -10,6 +10,8 @@ class SymbolicConversationProjectionTest {
     private fun projection(
         generation: Long = 1,
         runtimeGeneration: Long = 7,
+        turnId: String? = "turn-7",
+        outcome: String = "pending",
         projectId: String? = "project-a",
         projectGeneration: Long = 1,
         providerCalls: Long = 0,
@@ -18,6 +20,8 @@ class SymbolicConversationProjectionTest {
         conversationId = "conv-symbolic",
         projectionGeneration = generation,
         runtimeGeneration = runtimeGeneration,
+        turnId = turnId,
+        outcome = outcome,
         projectId = projectId,
         projectGeneration = projectGeneration,
         dialogueStateJson = "{\"act\":\"clarify\"}",
@@ -36,6 +40,8 @@ class SymbolicConversationProjectionTest {
 
         SymbolicProjectionContract.validateWrite(null, proposed, expectedGeneration = 0)
         proposed.assertPureSymbolic()
+        assertEquals("turn-7", proposed.turnId)
+        assertEquals("pending", proposed.outcome)
         assertEquals(0L, proposed.providerCalls)
         assertEquals(0L, proposed.modelCalls)
     }
@@ -70,6 +76,8 @@ class SymbolicConversationProjectionTest {
                 projection(
                     generation = 2,
                     runtimeGeneration = 8,
+                    turnId = "turn-8",
+                    outcome = "success",
                     projectId = "project-b",
                     projectGeneration = 4,
                 ),
@@ -82,6 +90,8 @@ class SymbolicConversationProjectionTest {
             projection(
                 generation = 2,
                 runtimeGeneration = 8,
+                turnId = "turn-8",
+                outcome = "success",
                 projectId = "project-b",
                 projectGeneration = 5,
             ),
@@ -120,6 +130,16 @@ class SymbolicConversationProjectionTest {
     }
 
     @Test
+    fun `turn outcome vocabulary fails closed`() {
+        listOf("unknown", "pending", "success", "cancelled", "interrupted", "error").forEach { outcome ->
+            SymbolicProjectionContract.validatePayload(projection(outcome = outcome))
+        }
+        assertFailsWithMessage("unsupported symbolic outcome") {
+            SymbolicProjectionContract.validatePayload(projection(outcome = "provider_fallback"))
+        }
+    }
+
+    @Test
     fun `android projection uses canonical portable conversation schema`() {
         val schema = File("../../zara/conversation_schema.sql").readText()
         val source = File(
@@ -127,6 +147,8 @@ class SymbolicConversationProjectionTest {
         ).readText()
 
         assertTrue(schema.contains("CREATE TABLE IF NOT EXISTS desktop_symbolic_projections"))
+        assertTrue(schema.contains("turn_id TEXT"))
+        assertTrue(schema.contains("'cancelled', 'interrupted', 'error'"))
         assertTrue(schema.contains("provider_calls INTEGER NOT NULL DEFAULT 0"))
         assertTrue(schema.contains("model_calls INTEGER NOT NULL DEFAULT 0"))
         assertTrue(schema.contains("FOREIGN KEY(conversation_id)"))
@@ -140,7 +162,7 @@ class SymbolicConversationProjectionTest {
         try {
             block()
             fail("expected failure containing: $fragment")
-        } catch (error: IllegalStateException) {
+        } catch (error: RuntimeException) {
             assertTrue(error.message.orEmpty().contains(fragment))
         }
     }
