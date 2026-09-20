@@ -23,6 +23,8 @@ class SymbolicTerminalImmutabilityTest {
         expertEvidenceJson = "[{\"evidence_id\":\"ev-before\"}]",
         verifiedFactsJson = "[{\"fact_id\":\"fact-before\"}]",
         rendererProvenance = "symbolic-dcg/v1",
+        providersEnabled = false,
+        maxModelCalls = 0,
         providerCalls = 0,
         modelCalls = 0,
     )
