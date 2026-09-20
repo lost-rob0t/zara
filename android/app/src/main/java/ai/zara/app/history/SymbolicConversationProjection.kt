@@ -47,6 +47,9 @@ data class SymbolicConversationProjection(
         check(rendererProvenance.isEmpty() || rendererProvenance == SYMBOLIC_RENDERER_ID) {
             "pure-symbolic conversation recorded non-symbolic renderer $rendererProvenance"
         }
+        check(outcome != "success" || rendererProvenance == SYMBOLIC_RENDERER_ID) {
+            "successful projection requires canonical symbolic renderer"
+        }
     }
 }
 
@@ -296,6 +299,9 @@ internal object SymbolicProjectionContract {
                 projection.rendererProvenance == SYMBOLIC_RENDERER_ID
         ) {
             "rendererProvenance must be empty or the canonical symbolic renderer"
+        }
+        require(projection.outcome != "success" || projection.rendererProvenance == SYMBOLIC_RENDERER_ID) {
+            "successful projection requires canonical symbolic renderer"
         }
         PortableJsonValidator.requireObject(projection.dialogueStateJson, "dialogueStateJson")
         PortableJsonValidator.requireObjectArray(projection.discourseEntitiesJson, "discourseEntitiesJson")
