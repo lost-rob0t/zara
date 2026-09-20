@@ -4,6 +4,7 @@ import pytest
 
 from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationStore, SymbolicConversationProjection
+from zara.desktop.conversation.store import ConversationStore as CanonicalConversationStore
 
 
 def _projection(
@@ -35,6 +36,19 @@ def _projection(
         provider_calls=provider_calls,
         model_calls=model_calls,
     )
+
+
+def test_canonical_store_class_owns_symbolic_projection_api(tmp_path):
+    store = CanonicalConversationStore(DatabaseManager(tmp_path / "canonical.db"))
+    conversation = store.create_conversation("Canonical", conversation_id="conv-canonical")
+
+    stored = store.save_symbolic_projection(
+        _projection(conversation.id),
+        expected_generation=0,
+    )
+
+    stored.assert_pure_symbolic()
+    assert store.load_symbolic_projection(conversation.id) == stored
 
 
 def test_symbolic_projection_survives_restart_with_zero_provider_and_model_calls(tmp_path):
