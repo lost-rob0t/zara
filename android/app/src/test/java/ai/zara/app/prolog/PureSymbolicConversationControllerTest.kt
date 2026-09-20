@@ -41,9 +41,10 @@ class PureSymbolicConversationControllerTest {
         assertEquals(listOf("help me"), resolves)
         assertEquals(PureSymbolicRoute.FRAME_RESOLVER, result.route)
         assertEquals(0, result.maxModelCalls)
+        assertEquals(0, result.maxProviderCalls)
         assertEquals(0, result.providerCalls)
         assertEquals(0, result.modelCalls)
-        assertEquals("symbolic-nlg/v1", result.renderer)
+        assertEquals("symbolic-term/v1", result.renderer)
         assertEquals("response_act(help)", result.turn.text)
         assertTrue(result.turn.success)
     }
