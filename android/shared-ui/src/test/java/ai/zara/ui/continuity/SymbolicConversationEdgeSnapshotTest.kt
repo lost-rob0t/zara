@@ -25,6 +25,20 @@ class SymbolicConversationEdgeSnapshotTest {
     }
 
     @Test
+    fun omittedPolicyDefaultsFailClosed() {
+        val snapshot = SymbolicConversationEdgeSnapshot(
+            principalId = "principal:alice",
+            conversationId = "chat-7",
+            projectionGeneration = 1,
+            runtimeGeneration = 1,
+            dialogueAct = "greeting",
+            rendererProvenance = "symbolic-dcg/v1",
+        )
+
+        assertFails("providers enabled") { snapshot.assertPureSymbolic() }
+    }
+
+    @Test
     fun pureSymbolicRequiresCanonicalDialogueActAndRenderer() {
         assertFails("dialogueAct is not a ZARA-SYMBOLIC-DIALOGUE/1 act") {
             fixture().copy(dialogueAct = "explain").assertPureSymbolic()
