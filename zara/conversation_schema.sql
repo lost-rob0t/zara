@@ -1,4 +1,4 @@
--- Zara portable conversation history schema v3.
+-- Zara portable conversation history schema v4.
 --
 -- Compatibility ABI: the desktop_* table names are intentionally retained so
 -- existing Zara Desktop databases can be opened directly by Android and vice
@@ -55,6 +55,9 @@ CREATE TABLE IF NOT EXISTS desktop_symbolic_projections (
     verified_facts_json TEXT NOT NULL DEFAULT '[]',
     verified_outcome_refs TEXT NOT NULL DEFAULT '',
     renderer_provenance TEXT NOT NULL DEFAULT '',
+    providers_enabled INTEGER NOT NULL DEFAULT 1
+        CHECK (providers_enabled IN (0, 1)),
+    max_model_calls INTEGER NOT NULL DEFAULT 1 CHECK (max_model_calls >= 0),
     provider_calls INTEGER NOT NULL DEFAULT 0 CHECK (provider_calls >= 0),
     model_calls INTEGER NOT NULL DEFAULT 0 CHECK (model_calls >= 0),
     updated_at TEXT NOT NULL,
