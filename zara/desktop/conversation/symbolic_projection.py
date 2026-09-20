@@ -1,8 +1,8 @@
 """Portable symbolic conversation-state projection over canonical history.
 
 The projection lives in Zara's existing conversation SQLite database and is
-keyed by the same conversation/principal identity.  It is deliberately not a
-second history store.  Higher symbolic layers own the meaning of the JSON
+keyed by the same conversation/principal identity. It is deliberately not a
+second history store. Higher symbolic layers own the meaning of the JSON
 payloads; this module owns persistence, monotonic usage accounting, and stale
 write fencing only.
 """
@@ -17,13 +17,25 @@ from typing import Any, Optional
 def _canonical_object(value: dict[str, Any]) -> str:
     if not isinstance(value, dict):
         raise TypeError("symbolic object payload must be a dict")
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
 
 
 def _canonical_array(value: list[dict[str, Any]]) -> str:
     if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
         raise TypeError("symbolic array payload must be a list of dicts")
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
 
 
 def _decode_object(value: str) -> dict[str, Any]:
@@ -53,6 +65,7 @@ class SymbolicConversationProjection:
     expert_evidence: list[dict[str, Any]] = field(default_factory=list)
     verified_facts: list[dict[str, Any]] = field(default_factory=list)
     renderer_provenance: str = ""
+    provider_calls: int = 0
     model_calls: int = 0
     updated_at: str = ""
 
@@ -65,6 +78,8 @@ class SymbolicConversationProjection:
             raise ValueError("runtime_generation must be >= 0")
         if self.project_generation < 0:
             raise ValueError("project_generation must be >= 0")
+        if self.provider_calls < 0:
+            raise ValueError("provider_calls must be >= 0")
         if self.model_calls < 0:
             raise ValueError("model_calls must be >= 0")
         if self.project_id is not None and len(self.project_id) > 512:
@@ -78,9 +93,10 @@ class SymbolicConversationProjection:
         _canonical_array(self.verified_facts)
 
     def assert_pure_symbolic(self) -> None:
-        if self.model_calls != 0:
+        if self.provider_calls != 0 or self.model_calls != 0:
             raise AssertionError(
-                f"pure-symbolic conversation recorded {self.model_calls} model call(s)"
+                "pure-symbolic conversation recorded "
+                f"provider_calls={self.provider_calls}, model_calls={self.model_calls}"
             )
 
 
@@ -88,7 +104,7 @@ class SymbolicProjectionMixin:
     """Methods mixed into the canonical desktop ``ConversationStore``.
 
     The host store supplies ``database``, ``storage_principal_id``, and
-    ``get_conversation``.  Writes use compare-and-swap projection generations
+    ``get_conversation``. Writes use compare-and-swap projection generations
     so cancelled or stale runtime completions cannot overwrite newer context.
     """
 
@@ -119,6 +135,7 @@ class SymbolicProjectionMixin:
             expert_evidence=_decode_array(row["expert_evidence_json"]),
             verified_facts=_decode_array(row["verified_facts_json"]),
             renderer_provenance=row["renderer_provenance"],
+            provider_calls=int(row["provider_calls"]),
             model_calls=int(row["model_calls"]),
             updated_at=row["updated_at"],
         )
@@ -144,7 +161,7 @@ class SymbolicProjectionMixin:
             current = conn.execute(
                 """
                 SELECT projection_generation, runtime_generation, project_id,
-                       project_generation, model_calls
+                       project_generation, provider_calls, model_calls
                 FROM desktop_symbolic_projections
                 WHERE conversation_id = ? AND principal_id = ?
                 """,
@@ -165,6 +182,8 @@ class SymbolicProjectionMixin:
                     )
                 if projection.runtime_generation < int(current["runtime_generation"]):
                     raise RuntimeError("runtime_generation regression rejected")
+                if projection.provider_calls < int(current["provider_calls"]):
+                    raise RuntimeError("provider-call ledger rewind rejected")
                 if projection.model_calls < int(current["model_calls"]):
                     raise RuntimeError("model-call ledger rewind rejected")
                 current_project_id = current["project_id"]
@@ -193,6 +212,7 @@ class SymbolicProjectionMixin:
                 _canonical_array(stored.expert_evidence),
                 _canonical_array(stored.verified_facts),
                 stored.renderer_provenance,
+                stored.provider_calls,
                 stored.model_calls,
                 stored.updated_at,
             )
@@ -204,9 +224,9 @@ class SymbolicProjectionMixin:
                         runtime_generation, project_id, project_generation,
                         dialogue_state_json, discourse_entities_json,
                         unresolved_questions_json, expert_evidence_json,
-                        verified_facts_json, renderer_provenance, model_calls,
-                        updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        verified_facts_json, renderer_provenance, provider_calls,
+                        model_calls, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     parameters,
                 )
@@ -219,7 +239,7 @@ class SymbolicProjectionMixin:
                         dialogue_state_json = ?, discourse_entities_json = ?,
                         unresolved_questions_json = ?, expert_evidence_json = ?,
                         verified_facts_json = ?, renderer_provenance = ?,
-                        model_calls = ?, updated_at = ?
+                        provider_calls = ?, model_calls = ?, updated_at = ?
                     WHERE conversation_id = ? AND principal_id = ?
                       AND projection_generation = ?
                     """,
@@ -234,6 +254,7 @@ class SymbolicProjectionMixin:
                         _canonical_array(stored.expert_evidence),
                         _canonical_array(stored.verified_facts),
                         stored.renderer_provenance,
+                        stored.provider_calls,
                         stored.model_calls,
                         stored.updated_at,
                         stored.conversation_id,
