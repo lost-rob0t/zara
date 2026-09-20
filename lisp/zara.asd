@@ -25,6 +25,7 @@
     :components
     ((:file "package")
      (:file "protocol-test")
+     (:file "client-test")
      (:file "server-test"))))
   :perform
   (test-op (operation component)
