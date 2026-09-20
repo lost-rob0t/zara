@@ -146,6 +146,22 @@
     (%put-optional object "body" (protocol-message-body message))
     object))
 
+(defun %validate-payloads (payloads)
+  (unless (vectorp payloads)
+    (%protocol-fail "payloads must be a vector"))
+  (when (> (length payloads) +max-payload-frames+)
+    (%protocol-fail "payload frame count exceeds ~d" +max-payload-frames+))
+  (let ((total 0))
+    (loop for payload across payloads
+          do (unless (typep payload '(vector (unsigned-byte 8)))
+               (%protocol-fail "payload frames must be octet vectors"))
+             (when (> (length payload) +max-payload-frame-bytes+)
+               (%protocol-fail "payload frame exceeds byte limit"))
+             (incf total (length payload)))
+    (when (> total +max-payload-bytes+)
+      (%protocol-fail "payload bytes exceed total byte limit")))
+  payloads)
+
 (defun encode-message (message)
   "Encode MESSAGE into the exact multipart frame vector used by ZARA/1."
   (check-type message protocol-message)
@@ -153,23 +169,12 @@
                   :test #'string=)
     (%protocol-fail "unsupported client message type ~s"
                     (protocol-message-type message)))
-  (let* ((payloads (protocol-message-payloads message))
+  (let* ((payloads (%validate-payloads (protocol-message-payloads message)))
          (payload-count (length payloads))
          (json (com.inuoe.jzon:stringify (%encode-envelope message payload-count)))
          (envelope (babel:string-to-octets json :encoding :utf-8)))
     (when (> (length envelope) +max-envelope-bytes+)
       (%protocol-fail "envelope exceeds ~d bytes" +max-envelope-bytes+))
-    (when (> payload-count +max-payload-frames+)
-      (%protocol-fail "payload frame count exceeds ~d" +max-payload-frames+))
-    (let ((total 0))
-      (loop for payload across payloads
-            do (unless (typep payload '(vector (unsigned-byte 8)))
-                 (%protocol-fail "payload frames must be octet vectors"))
-               (when (> (length payload) +max-payload-frame-bytes+)
-                 (%protocol-fail "payload frame exceeds byte limit"))
-               (incf total (length payload)))
-      (when (> total +max-payload-bytes+)
-        (%protocol-fail "payload bytes exceed total byte limit")))
     (concatenate 'vector
                  (vector +protocol-marker+ envelope)
                  payloads)))
@@ -202,13 +207,14 @@
       (%protocol-fail "envelope frame must be octets"))
     (when (> (length envelope-frame) +max-envelope-bytes+)
       (%protocol-fail "envelope exceeds byte limit"))
-    (let* ((object (handler-case
-                       (com.inuoe.jzon:parse
-                        envelope-frame
-                        :max-depth 64
-                        :max-string-length +max-envelope-bytes+)
-                     (error ()
-                       (%protocol-fail "envelope is not strict UTF-8 JSON")))))
+    (let ((object
+            (handler-case
+                (com.inuoe.jzon:parse
+                 envelope-frame
+                 :max-depth 64
+                 :max-string-length +max-envelope-bytes+)
+              (error ()
+                (%protocol-fail "envelope is not strict UTF-8 JSON")))))
       (unless (%json-object-p object)
         (%protocol-fail "envelope must be a JSON object"))
       (%validate-envelope-keys object)
@@ -216,7 +222,7 @@
              (id (%required-string object "id"))
              (timestamp (%json-value object "timestamp_ns" nil))
              (payload-count (%json-value object "payload_count" nil))
-             (payloads (subseq frames 2)))
+             (payloads (%validate-payloads (subseq frames 2))))
         (unless (member type +server-message-types+ :test #'string=)
           (%protocol-fail "unsupported server message type ~s" type))
         (unless (and (integerp timestamp) (>= timestamp 0))
