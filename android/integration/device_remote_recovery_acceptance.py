@@ -78,6 +78,9 @@ def connect_recovery_fixture(device: Device, fixture: dict[str, str]) -> dict[st
     device.adb("reverse", f"tcp:{port}", f"tcp:{port}")
 
     device.adb("shell", "pm", "clear", APP_PACKAGE)
+    device.adb(
+        "shell", "pm", "grant", APP_PACKAGE, "android.permission.RECORD_AUDIO",
+    )
     device.start()
 
     open_menu(device, "Settings")
@@ -109,7 +112,8 @@ def connect_recovery_fixture(device: Device, fixture: dict[str, str]) -> dict[st
 
 
 def complete_voice_turn(device: Device, expect_transcript: str) -> None:
-    open_menu(device, "Voice")
+    open_menu(device, "Chat")
+    device.tap_tab("Voice")
     device.await_label("Start talking", timeout=15.0)
     device.tap("Start talking")
     device.await_label("Stop & send", timeout=10.0)
@@ -135,7 +139,8 @@ def assert_typed_error_card(device: Device, expected_code: str) -> None:
 
 
 def assert_diagnostics_names_primary_failure(device: Device, expected_code: str) -> None:
-    open_menu(device, "Diagnostics")
+    open_menu(device, "Settings")
+    device.tap_tab("Diagnostics")
     device.await_contains("ZARA-LOCAL-DIAGNOSTICS/2", timeout=10.0)
     device.await_contains(f"primary_failure.code={expected_code}", timeout=10.0)
     device.await_contains("primary_failure.subsystem=protocol", timeout=10.0)
