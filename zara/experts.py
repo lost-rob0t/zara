@@ -3,8 +3,8 @@
 The contract implementation lives in :mod:`zara._experts_v1`; this facade keeps
 ``zara.experts`` as the stable public import while tightening the pure-symbolic
 host boundary. There is still exactly one registry instance/state machine: the
-subclass only adapts trusted host dispatch and validates the returned usage
-ledger before accepting a successful result.
+subclass only adapts trusted host dispatch, enforces nested delegation authority,
+and validates the shared usage ledger before accepting a terminal result.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from __future__ import annotations
 import inspect
 import threading
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any, Optional
 
 from . import _experts_v1 as _impl
@@ -22,8 +23,43 @@ _ORIGINAL_HANDLER_ATTR = "__zara_original_expert_handler__"
 _RESERVED_HOST_INPUTS = frozenset({"expert_operation"})
 
 
+class _DelegationFrame:
+    """Thread-local authority and budget inherited by nested expert calls."""
+
+    __slots__ = (
+        "delegated_model_calls",
+        "delegation_policy",
+        "expert_id",
+        "max_output_bytes",
+        "max_results",
+        "principal",
+        "remaining_model_calls",
+        "timeout_ms",
+        "workspace",
+    )
+
+    def __init__(
+        self,
+        *,
+        expert_id: str,
+        principal: str,
+        workspace: str,
+        delegation_policy: DelegationPolicy,
+        limits: ExpertLimits,
+    ) -> None:
+        self.expert_id = expert_id
+        self.principal = principal
+        self.workspace = workspace
+        self.delegation_policy = delegation_policy
+        self.timeout_ms = limits.timeout_ms
+        self.max_results = limits.max_results
+        self.max_output_bytes = limits.max_output_bytes
+        self.remaining_model_calls = limits.max_model_calls
+        self.delegated_model_calls = 0
+
+
 class ExpertRegistry(_impl.ExpertRegistry):
-    """Canonical registry with non-spoofable operation dispatch and usage fences."""
+    """Canonical registry with dispatch, delegation, generation and usage fences."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -31,6 +67,18 @@ class ExpertRegistry(_impl.ExpertRegistry):
         # Reentrancy preserves the one canonical state machine without forcing a
         # second dispatcher or out-of-band composition path.
         self._lock = threading.RLock()
+        self._delegation_state = threading.local()
+
+    def _delegation_stack(self) -> list[_DelegationFrame]:
+        stack = getattr(self._delegation_state, "stack", None)
+        if stack is None:
+            stack = []
+            self._delegation_state.stack = stack
+        return stack
+
+    def _delegation_parent(self) -> Optional[_DelegationFrame]:
+        stack = self._delegation_stack()
+        return stack[-1] if stack else None
 
     @staticmethod
     def _handler_declares_host_operation(handler: Any) -> bool:
@@ -89,7 +137,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
         handle: ActivationHandle,
         limits: Optional[ExpertLimits],
     ) -> ExpertLimits:
-        """Return the intersection of caller limits and descriptor ceilings."""
+        """Intersect caller, descriptor and active parent-delegation ceilings."""
 
         if limits is None:
             requested = ExpertLimits()
@@ -101,18 +149,40 @@ class ExpertRegistry(_impl.ExpertRegistry):
         descriptor = self._descriptors.get(handle.expert_id)
         descriptor_limits = descriptor.resource_limits if descriptor is not None else None
         if descriptor_limits is None:
-            return requested
+            admitted = requested
+        else:
+            admitted = ExpertLimits(
+                timeout_ms=min(requested.timeout_ms, descriptor_limits.timeout_ms),
+                max_results=min(requested.max_results, descriptor_limits.max_results),
+                max_output_bytes=min(
+                    requested.max_output_bytes,
+                    descriptor_limits.max_output_bytes,
+                ),
+                max_model_calls=min(
+                    requested.max_model_calls,
+                    descriptor_limits.max_model_calls,
+                ),
+            )
+
+        parent = self._delegation_parent()
+        if parent is None:
+            return admitted
+        if parent.delegation_policy is DelegationPolicy.NEVER:
+            raise ExpertDeniedError(
+                f"expert {parent.expert_id!r} does not permit expert delegation"
+            )
+        if handle.principal != parent.principal or handle.workspace != parent.workspace:
+            raise ExpertDeniedError(
+                "nested expert delegation cannot cross principal/workspace identity"
+            )
 
         return ExpertLimits(
-            timeout_ms=min(requested.timeout_ms, descriptor_limits.timeout_ms),
-            max_results=min(requested.max_results, descriptor_limits.max_results),
-            max_output_bytes=min(
-                requested.max_output_bytes,
-                descriptor_limits.max_output_bytes,
-            ),
+            timeout_ms=min(admitted.timeout_ms, parent.timeout_ms),
+            max_results=min(admitted.max_results, parent.max_results),
+            max_output_bytes=min(admitted.max_output_bytes, parent.max_output_bytes),
             max_model_calls=min(
-                requested.max_model_calls,
-                descriptor_limits.max_model_calls,
+                admitted.max_model_calls,
+                parent.remaining_model_calls,
             ),
         )
 
@@ -130,11 +200,13 @@ class ExpertRegistry(_impl.ExpertRegistry):
         ``expert_operation`` stays trusted host metadata. Handler execution does
         not monopolize the registry lock: cancellation, reload, and generation
         changes may proceed while user code runs. Late success is then fenced
-        before it can be accepted as current state.
+        before it can be accepted as current state. Nested calls inherit the
+        parent's authority and remaining model-call budget automatically.
         """
 
         admitted_registry_generation = self._registry_generation
         admitted_runtime_generation = self._runtime_generation
+        delegation_parent = self._delegation_parent()
         admitted_limits = self._admit_limits_unlocked(handle, limits)
         registered_handler = self._handlers.get(handle.expert_id)
         handler = (
@@ -161,6 +233,22 @@ class ExpertRegistry(_impl.ExpertRegistry):
                         "expert dispatch lost its canonical invocation record"
                     )
 
+                descriptor = self._descriptors.get(handle.expert_id)
+                if descriptor is None:
+                    raise ExpertDeniedError(
+                        "expert dispatch lost its canonical descriptor"
+                    )
+                frame = _DelegationFrame(
+                    expert_id=handle.expert_id,
+                    principal=handle.principal,
+                    workspace=handle.workspace,
+                    delegation_policy=descriptor.delegation_policy,
+                    limits=admitted_limits,
+                )
+                raw_outcome["delegation_frame"] = frame
+                stack = self._delegation_stack()
+                stack.append(frame)
+
                 self._lock.release()
                 try:
                     if injected:
@@ -172,6 +260,12 @@ class ExpertRegistry(_impl.ExpertRegistry):
                         outcome = handler(**payload)
                 finally:
                     self._lock.acquire()
+                    popped = stack.pop()
+                    if popped is not frame:
+                        stack.clear()
+                        raise ExpertDeniedError(
+                            "expert delegation stack lost canonical invocation order"
+                        )
 
                 raw_outcome["value"] = outcome
                 current = self._invocations.get(invocation_id)
@@ -242,9 +336,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 "expert completion crossed a registry/runtime generation change"
             )
 
-        if result.verdict is not ExpertVerdict.SUCCEEDED:
-            return result
-
+        is_success = result.verdict is ExpertVerdict.SUCCEEDED
         if result.replayed:
             usage: Any = result.usage
         else:
@@ -252,6 +344,8 @@ class ExpertRegistry(_impl.ExpertRegistry):
             usage = outcome.get("usage") if isinstance(outcome, Mapping) else None
 
         if not isinstance(usage, Mapping) or "model_calls" not in usage:
+            if not is_success:
+                return result
             self._discard_invalid_success(
                 result,
                 handle,
@@ -271,10 +365,23 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 idempotency_key,
             )
             raise ExpertInvalidInputError(
-                "successful expert usage.model_calls must be a non-negative built-in integer"
+                "reported expert usage.model_calls must be a non-negative built-in integer"
             )
 
-        if model_calls > admitted_limits.max_model_calls:
+        if result.replayed:
+            aggregate_model_calls = model_calls
+            charge_model_calls = 0
+        else:
+            frame = raw_outcome.get("delegation_frame")
+            delegated_model_calls = (
+                frame.delegated_model_calls
+                if isinstance(frame, _DelegationFrame)
+                else 0
+            )
+            aggregate_model_calls = model_calls + delegated_model_calls
+            charge_model_calls = aggregate_model_calls
+
+        if aggregate_model_calls > admitted_limits.max_model_calls:
             self._discard_invalid_success(
                 result,
                 handle,
@@ -282,8 +389,31 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 idempotency_key,
             )
             raise ExpertBudgetExceededError(
-                "successful expert usage.model_calls exceeds admitted max_model_calls"
+                "expert aggregate usage.model_calls exceeds admitted max_model_calls"
             )
+
+        if not result.replayed and aggregate_model_calls != result.usage.get("model_calls"):
+            aggregate_usage = dict(result.usage)
+            aggregate_usage["model_calls"] = aggregate_model_calls
+            result = replace(result, usage=aggregate_usage)
+            invocation = self._invocations.get(result.invocation_id)
+            if invocation is not None:
+                invocation.usage = aggregate_usage
+                invocation.result = result
+
+        if delegation_parent is not None and charge_model_calls:
+            if charge_model_calls > delegation_parent.remaining_model_calls:
+                self._discard_invalid_success(
+                    result,
+                    handle,
+                    expert_operation,
+                    idempotency_key,
+                )
+                raise ExpertBudgetExceededError(
+                    "delegated expert aggregate usage exceeds parent model-call budget"
+                )
+            delegation_parent.remaining_model_calls -= charge_model_calls
+            delegation_parent.delegated_model_calls += charge_model_calls
 
         return result
 
