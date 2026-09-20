@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
+- Zara now has a versioned ZARA-EXPERT/1 expert contract: bounded descriptors with reasoning kinds (symbolic experts are auditable to zero model calls), a pure catalog/match projection, an exact activation lifecycle, generation-fenced invocation envelopes with host-ceiling limits, the prolog-rlm verdict taxonomy, and a closed error-code set — mirrored across Python, portable Prolog, and Android with one shared conformance fixture (#1233).
 - The repository now ships direnv integration: entering the root loads the pinned Python dev shell and entering `android/` loads the pinned Android toolchain shell automatically, with no secrets in any tracked env file (#1267).
 - Authenticated ZARA/1 peers can now attach a bounded `ZaraNode` descriptor to the secure hello handshake; Zara binds that metadata to the existing CURVE/ZAP enrollment and exact principal/session, rejects identity/generation mismatches, and never treats advertised device features as authorization grants.
 - The daemon now logs a warning for every denied CURVE/ZAP client authentication, including the presented public key, so unenrolled or mistyped client keys are diagnosable server-side instead of failing silently.
