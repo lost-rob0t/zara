@@ -39,6 +39,18 @@ sealed interface VoiceStreamEvent {
         val turnId: String,
         override val streamId: String,
     ) : VoiceStreamEvent
+
+    data class SpeechStarted(
+        override val sessionId: String,
+        override val streamId: String,
+        val preSpeechSamples: Long,
+    ) : VoiceStreamEvent
+
+    data class SpeechEnded(
+        override val sessionId: String,
+        override val streamId: String,
+        val reason: String,
+    ) : VoiceStreamEvent
 }
 
 object ZaraVoiceStreamCodec {
@@ -145,7 +157,34 @@ object ZaraVoiceStreamCodec {
                     streamId = stream,
                 )
             }
-            else -> throw ZaraWireException("unsupported voice stream event type")
+            "voice.speech.started" -> {
+                requireNoPayloads(frames, payloadCount, type)
+                if (turn != null) throw ZaraWireException("$type must not carry turn_id")
+                if (contentType != null) throw ZaraWireException("$type must not carry content_type")
+                if (sequence != null) throw ZaraWireException("$type must not carry seq")
+                rejectUnknown(body, setOf("pre_speech_samples"), "$type body")
+                VoiceStreamEvent.SpeechStarted(
+                    sessionId = session,
+                    streamId = stream,
+                    preSpeechSamples = requireLong(body, "pre_speech_samples", minimum = 0),
+                )
+            }
+            "voice.speech.ended" -> {
+                requireNoPayloads(frames, payloadCount, type)
+                if (turn != null) throw ZaraWireException("$type must not carry turn_id")
+                if (contentType != null) throw ZaraWireException("$type must not carry content_type")
+                if (sequence != null) throw ZaraWireException("$type must not carry seq")
+                rejectUnknown(body, setOf("reason"), "$type body")
+                VoiceStreamEvent.SpeechEnded(
+                    sessionId = session,
+                    streamId = stream,
+                    reason = requireString(body, "reason", maxTextBytes),
+                )
+            }
+            else -> throw ZaraWireException(
+                "unsupported voice stream event type",
+                code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_UNSUPPORTED_MESSAGE,
+            )
         }
     }
 
