@@ -14,6 +14,8 @@ class SymbolicConversationProjectionTest {
         outcome: String = "pending",
         projectId: String? = "project-a",
         projectGeneration: Long = 1,
+        dialogueStateJson: String = "{\"act\":\"clarify\"}",
+        discourseEntitiesJson: String = "[{\"entity_id\":\"file:flake.nix\"}]",
         providerCalls: Long = 0,
         modelCalls: Long = 0,
     ) = SymbolicConversationProjection(
@@ -24,8 +26,8 @@ class SymbolicConversationProjectionTest {
         outcome = outcome,
         projectId = projectId,
         projectGeneration = projectGeneration,
-        dialogueStateJson = "{\"act\":\"clarify\"}",
-        discourseEntitiesJson = "[{\"entity_id\":\"file:flake.nix\"}]",
+        dialogueStateJson = dialogueStateJson,
+        discourseEntitiesJson = discourseEntitiesJson,
         unresolvedQuestionsJson = "[{\"slot\":\"target\"}]",
         expertEvidenceJson = "[{\"evidence_id\":\"ev-1\"}]",
         verifiedFactsJson = "[{\"fact_id\":\"fact-1\"}]",
@@ -140,6 +142,41 @@ class SymbolicConversationProjectionTest {
     }
 
     @Test
+    fun `android and desktop both reject malformed json projections`() {
+        listOf(
+            "{not-json}",
+            "{\"ok\":true,}",
+            "{\"unterminated\":\"x}",
+            "[]",
+        ).forEach { invalidObject ->
+            assertFailsWithMessage("JSON") {
+                SymbolicProjectionContract.validatePayload(
+                    projection(dialogueStateJson = invalidObject)
+                )
+            }
+        }
+        listOf(
+            "[}]",
+            "[1,]",
+            "[\"unterminated]",
+            "{}",
+        ).forEach { invalidArray ->
+            assertFailsWithMessage("JSON") {
+                SymbolicProjectionContract.validatePayload(
+                    projection(discourseEntitiesJson = invalidArray)
+                )
+            }
+        }
+
+        SymbolicProjectionContract.validatePayload(
+            projection(
+                dialogueStateJson = "{\"nested\":{\"n\":-1.25e+2},\"ok\":true}",
+                discourseEntitiesJson = "[null,false,{\"escaped\":\"line\\nvalue\",\"u\":\"\\u263A\"}]",
+            )
+        )
+    }
+
+    @Test
     fun `android projection uses canonical portable conversation schema`() {
         val schema = File("../../zara/conversation_schema.sql").readText()
         val source = File(
@@ -156,6 +193,7 @@ class SymbolicConversationProjectionTest {
         assertTrue(source.contains("projection_generation = ?"))
         assertTrue(source.contains("provider-call ledger rewind rejected"))
         assertTrue(source.contains("model-call ledger rewind rejected"))
+        assertTrue(source.contains("PortableJsonValidator"))
     }
 
     private fun assertFailsWithMessage(fragment: String, block: () -> Unit) {
