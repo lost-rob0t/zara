@@ -56,13 +56,19 @@ def test_settings_has_complete_navigation_and_many_real_controls(tmp_path):
     try:
         assert window.objectName() == "zaraSettings"
         assert [window.category_list.item(index).text() for index in range(window.category_list.count())] == [
+            "Runtime",
+            "Connection",
+            "Permissions",
             "Appearance",
-            "Assistant",
-            "Voice & Speech",
-            "Tools & Privacy",
-            "Prolog",
-            "Advanced",
+            "Plugins",
+            "Updates",
+            "Diagnostics",
+            "About",
         ]
+        assert window.settings_search.objectName() == "zaraSettingsSearch"
+        assert window.settings_search.placeholderText() == "Search settings"
+        assert window.settings_title.text() == "Settings"
+        assert window.settings_subtitle.text() == "Desktop · same Zara settings language as Android"
         assert {
             "desktop.theme",
             "llm.provider",
@@ -96,6 +102,55 @@ def test_settings_has_complete_navigation_and_many_real_controls(tmp_path):
     finally:
         dispose(window)
 
+
+
+def test_settings_search_filters_mobile_parity_sections_without_new_state(tmp_path):
+    window, _, _, _ = make_window(tmp_path)
+    try:
+        window.settings_search.setText("theme")
+        app().processEvents()
+        visible = [
+            window.category_list.item(index).text()
+            for index in range(window.category_list.count())
+            if not window.category_list.item(index).isHidden()
+        ]
+        assert visible == ["Appearance"]
+        assert window.category_list.currentItem().text() == "Appearance"
+
+        window.settings_search.setText("plugin")
+        app().processEvents()
+        visible = [
+            window.category_list.item(index).text()
+            for index in range(window.category_list.count())
+            if not window.category_list.item(index).isHidden()
+        ]
+        assert visible == ["Plugins"]
+
+        window.settings_search.clear()
+        app().processEvents()
+        assert all(
+            not window.category_list.item(index).isHidden()
+            for index in range(window.category_list.count())
+        )
+    finally:
+        dispose(window)
+
+
+def test_settings_rows_expose_mobile_style_description_and_restart_semantics(tmp_path):
+    window, _, _, _ = make_window(tmp_path)
+    try:
+        theme = window.setting_widgets["desktop.theme"]
+        assert theme.property("zaraApplyMode") == "live"
+        assert "theme" in theme.toolTip().lower()
+
+        model = window.setting_widgets["llm.model"]
+        assert model.property("zaraApplyMode") == "restart"
+        assert model.toolTip()
+
+        assert window.stack.count() == 8
+        assert window.category_list.currentItem().text() == "Runtime"
+    finally:
+        dispose(window)
 
 def test_theme_previews_live_and_save_persists_all_changed_settings(tmp_path):
     qt_app = app()
