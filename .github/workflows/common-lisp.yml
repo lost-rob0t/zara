@@ -57,17 +57,16 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v31
 
-      - name: Smoke real Zara server from Lisp
+      - name: Smoke packaged Zara server from Lisp
         shell: bash
         run: |
           set -euo pipefail
-          nix develop -c bash -lc '
-            set -euo pipefail
-            command -v zara-server
-            export ZARA_LISP_INTEGRATION=1
-            /usr/bin/sbcl --non-interactive \
-              --load "$HOME/quicklisp/setup.lisp" \
-              --eval "(ql:quickload (list :pzmq :com.inuoe.jzon :babel :bordeaux-threads :fiveam))" \
-              --eval "(asdf:load-asd (truename \"lisp/zara.asd\"))" \
-              --eval "(asdf:test-system :zara)"
-          '
+          server_out="$(nix build .#zara-server --no-link --print-out-paths)"
+          test -x "$server_out/bin/zara-server"
+          export PATH="$server_out/bin:$PATH"
+          export ZARA_LISP_INTEGRATION=1
+          sbcl --non-interactive \
+            --load "$HOME/quicklisp/setup.lisp" \
+            --eval '(ql:quickload (list :pzmq :com.inuoe.jzon :babel :bordeaux-threads :fiveam))' \
+            --eval '(asdf:load-asd (truename "lisp/zara.asd"))' \
+            --eval '(asdf:test-system :zara)'
