@@ -13,6 +13,7 @@ enum class AppRoute(val menu: AppMenu, val label: String) {
     Projects(AppMenu.Workspace, "Projects"),
     Scheduled(AppMenu.Workspace, "Scheduled"),
     Runtime(AppMenu.Settings, "Runtime"),
+    ModelApis(AppMenu.Settings, "Model APIs"),
     Connection(AppMenu.Settings, "Connection"),
     Permissions(AppMenu.Settings, "Permissions"),
     Appearance(AppMenu.Settings, "Appearance"),
