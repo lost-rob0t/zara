@@ -359,6 +359,11 @@ internal object SymbolicProjectionContract {
             check(proposed.runtimeGeneration > current.runtimeGeneration) {
                 "new turn must advance runtimeGeneration"
             }
+            if (proposed.dialogueAct == "verified") {
+                check(proposed.verifiedOutcomeRefs.any { it !in current.verifiedOutcomeRefs }) {
+                    "verified projection requires fresh outcome evidence"
+                }
+            }
         }
         check(current.providersEnabled || !proposed.providersEnabled) {
             "provider policy widening rejected"
