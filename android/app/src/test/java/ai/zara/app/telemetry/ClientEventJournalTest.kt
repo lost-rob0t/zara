@@ -8,10 +8,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class ClientEventLogTest {
+class ClientEventJournalTest {
 
     @Test fun `events receive strictly monotonic sequences and ordered snapshots`() {
-        val log = ClientEventLog()
+        val log = ClientEventJournal()
         log.record(ClientEventNames.REMOTE_CONNECT_BEGIN, operation = ZaraOperation.CONNECT)
         log.record(ClientEventNames.REMOTE_CONNECT_READY, operation = ZaraOperation.CONNECT)
         log.record(ClientEventNames.REMOTE_DISCONNECTED, code = ZaraFailureCodes.TRANSPORT_CLOSED)
@@ -27,10 +27,10 @@ class ClientEventLogTest {
     }
 
     @Test fun `ring keeps only the newest bounded window`() {
-        val log = ClientEventLog(capacity = 8)
+        val log = ClientEventJournal(capacity = 8)
         repeat(20) { index ->
             log.recordProtocolMessage(
-                direction = ClientEventLog.Direction.RX,
+                direction = ClientEventJournal.Direction.RX,
                 messageType = "assistant.delta",
                 messageSequence = null,
                 messageBytes = index.toLong(),
@@ -44,7 +44,7 @@ class ClientEventLogTest {
     }
 
     @Test fun `messages are bounded and secrets are redacted`() {
-        val log = ClientEventLog()
+        val log = ClientEventJournal()
         log.record(
             ClientEventNames.PROTOCOL_FAILED,
             code = ZaraFailureCodes.PROTOCOL_MALFORMED,
@@ -57,9 +57,9 @@ class ClientEventLogTest {
     }
 
     @Test fun `protocol message events carry metadata only without content`() {
-        val log = ClientEventLog()
+        val log = ClientEventJournal()
         log.recordProtocolMessage(
-            direction = ClientEventLog.Direction.RX,
+            direction = ClientEventJournal.Direction.RX,
             messageType = "assistant.delta",
             messageSequence = 4,
             messageBytes = 128,
@@ -75,13 +75,13 @@ class ClientEventLogTest {
     }
 
     @Test fun `unknown event names are rejected`() {
-        val log = ClientEventLog()
+        val log = ClientEventJournal()
         val error = runCatching { log.record("totally.made.up") }.exceptionOrNull()
         assertTrue(error is IllegalArgumentException)
     }
 
     @Test fun `concurrent recording never duplicates or reorders sequences`() {
-        val log = ClientEventLog(capacity = 64)
+        val log = ClientEventJournal(capacity = 64)
         val threads = 4
         val perThread = 100
         val ready = CountDownLatch(threads)

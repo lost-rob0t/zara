@@ -77,7 +77,7 @@ data class ClientEvent(
     val messageBytes: Long?,
 )
 
-class ClientEventLog(
+class ClientEventJournal(
     private val capacity: Int = 512,
     private val wallClock: () -> Long = System::currentTimeMillis,
     private val monotonicClock: () -> Long = System::nanoTime,
