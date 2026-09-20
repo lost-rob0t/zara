@@ -115,3 +115,24 @@ def test_migrated_unknown_policy_must_not_be_manufactured_as_pure_symbolic():
     # zero model-call budget explicitly.
     assert "providers_enabled INTEGER NOT NULL DEFAULT 1" in schema
     assert "max_model_calls INTEGER NOT NULL DEFAULT 1" in schema
+
+
+def test_omitted_policy_cannot_manufacture_pure_symbolic_state(tmp_path):
+    database = DatabaseManager(tmp_path / "zara.db")
+    store = ConversationStore(database)
+    conversation = store.create_conversation(
+        "Omitted policy must fail closed",
+        conversation_id="conv-policy-omitted",
+    )
+
+    omitted = SymbolicConversationProjection(
+        conversation_id=conversation.id,
+        projection_generation=1,
+        runtime_generation=1,
+    )
+    stored = store.save_symbolic_projection(omitted, expected_generation=0)
+
+    with pytest.raises(AssertionError, match="providers|max_model_calls"):
+        stored.assert_pure_symbolic()
+
+    database.close()
