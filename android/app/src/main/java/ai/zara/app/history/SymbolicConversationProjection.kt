@@ -2,6 +2,8 @@ package ai.zara.app.history
 
 import android.content.ContentValues
 
+private const val SYMBOLIC_RENDERER_ID = "symbolic-dcg/v1"
+
 /**
  * Portable symbolic context projected over the canonical conversation history.
  *
@@ -32,6 +34,9 @@ data class SymbolicConversationProjection(
     fun assertPureSymbolic() {
         check(providerCalls == 0L && modelCalls == 0L) {
             "pure-symbolic conversation recorded providerCalls=$providerCalls, modelCalls=$modelCalls"
+        }
+        check(rendererProvenance.isEmpty() || rendererProvenance == SYMBOLIC_RENDERER_ID) {
+            "pure-symbolic conversation recorded non-symbolic renderer $rendererProvenance"
         }
     }
 }
@@ -276,8 +281,11 @@ internal object SymbolicProjectionContract {
                 "invalid verified outcome reference: $ref"
             }
         }
-        require(projection.rendererProvenance.length <= 512) {
-            "rendererProvenance exceeds 512 characters"
+        require(
+            projection.rendererProvenance.isEmpty() ||
+                projection.rendererProvenance == SYMBOLIC_RENDERER_ID
+        ) {
+            "rendererProvenance must be empty or the canonical symbolic renderer"
         }
         PortableJsonValidator.requireObject(projection.dialogueStateJson, "dialogueStateJson")
         PortableJsonValidator.requireObjectArray(projection.discourseEntitiesJson, "discourseEntitiesJson")
