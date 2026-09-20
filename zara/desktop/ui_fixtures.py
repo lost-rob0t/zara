@@ -17,10 +17,11 @@ from PySide6.QtCore import QSettings
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication
 
+from zara.config import DEFAULT_CONFIG_TOML, ZaraConfig
 from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationService, ConversationStore
 from zara.desktop.theme import apply_desktop_theme
-from zara.desktop.windows import CopilotPresentation, CopilotWindow
+from zara.desktop.windows import CopilotPresentation, CopilotWindow, SettingsWindow
 from zara.runtime import events
 
 _COMPACT_SIZE = (680, 460)
@@ -234,6 +235,66 @@ def _render_one(
         settings.sync()
 
 
+def _render_settings_fixture(
+    output_dir: Path,
+    *,
+    source_commit: str,
+    root: Path,
+) -> dict[str, object]:
+    """Render Desktop Settings through its real canonical config/source owners."""
+
+    app = _application()
+    fixture_root = root / "settings"
+    fixture_root.mkdir(parents=True, exist_ok=True)
+    config_path = fixture_root / "config.toml"
+    config_path.write_text(DEFAULT_CONFIG_TOML, encoding="utf-8")
+
+    repo_root = fixture_root / "repo"
+    (repo_root / "kb").mkdir(parents=True)
+    (repo_root / "modules").mkdir()
+    (repo_root / "main.pl").write_text("main :- true.\n", encoding="utf-8")
+    (repo_root / "kb" / "intents.pl").write_text("intent(ok).\n", encoding="utf-8")
+    (repo_root / "modules" / "logic.pl").write_text("logic(ok).\n", encoding="utf-8")
+
+    window = SettingsWindow(
+        ZaraConfig(str(config_path)),
+        repo_root=repo_root,
+        prolog_reload=lambda: True,
+    )
+    window.resize(1120, 760)
+    appearance_index = next(
+        index
+        for index in range(window.category_list.count())
+        if window.category_list.item(index).text() == "Appearance"
+    )
+    window.category_list.setCurrentRow(appearance_index)
+
+    try:
+        window.show()
+        app.processEvents()
+        pixmap = window.grab()
+        if pixmap.isNull():
+            raise RuntimeError("failed to render Settings fixture")
+        filename = "settings-appearance.png"
+        target = output_dir / filename
+        if not pixmap.save(str(target), "PNG"):
+            raise RuntimeError(f"failed to save Settings fixture: {target}")
+        return {
+            "state": "settings-appearance",
+            "path": filename,
+            "width": pixmap.width(),
+            "height": pixmap.height(),
+            "theme": _THEME,
+            "source_commit": source_commit,
+            "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        }
+    finally:
+        window.prepare_for_quit()
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def render_copilot_fixtures(output_dir: Path | str, *, source_commit: str) -> dict[str, object]:
     """Render the closed #324 fixture matrix without touching user state or I/O.
 
@@ -264,6 +325,13 @@ def render_copilot_fixtures(output_dir: Path | str, *, source_commit: str) -> di
                 )
                 for state, filename in _FIXTURES
             ]
+            fixtures.append(
+                _render_settings_fixture(
+                    target,
+                    source_commit=source_commit,
+                    root=root,
+                )
+            )
     finally:
         app.setStyle(previous_style_name)
         app.setPalette(previous_palette)
