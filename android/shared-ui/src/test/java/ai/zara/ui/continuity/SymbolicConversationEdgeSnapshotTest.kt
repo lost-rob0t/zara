@@ -1,0 +1,72 @@
+package ai.zara.ui.continuity
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Test
+
+class SymbolicConversationEdgeSnapshotTest {
+    @Test
+    fun roundTripsPureSymbolicProjectionAndEvidenceReferences() {
+        val snapshot = fixture()
+
+        val encoded = SymbolicConversationEdgeCodec.encode(snapshot)
+        val decoded = SymbolicConversationEdgeCodec.decode(encoded)
+
+        assertEquals(snapshot, decoded)
+        decoded.assertPureSymbolic()
+        assertTrue(encoded.size <= SymbolicConversationEdgeCodec.MAX_WIRE_BYTES)
+    }
+
+    @Test
+    fun pureSymbolicRejectsAnyModelOrProviderCall() {
+        assertFails("model calls") {
+            fixture().copy(modelCalls = 1).assertPureSymbolic()
+        }
+        assertFails("provider calls") {
+            fixture().copy(providerCalls = 1).assertPureSymbolic()
+        }
+    }
+
+    @Test
+    fun codecRejectsTrailingBytesAndUnboundedEvidence() {
+        val encoded = SymbolicConversationEdgeCodec.encode(fixture())
+        assertFails("trailing bytes") {
+            SymbolicConversationEdgeCodec.decode(encoded + byteArrayOf(0x01))
+        }
+        assertFails("expertEvidenceRefs") {
+            SymbolicConversationEdgeCodec.encode(
+                fixture().copy(
+                    expertEvidenceRefs = List(SymbolicConversationEdgeSnapshot.MAX_REFS + 1) { "e:$it" },
+                ),
+            )
+        }
+    }
+
+    private fun fixture() = SymbolicConversationEdgeSnapshot(
+        conversationId = "chat-7",
+        projectionGeneration = 4,
+        runtimeGeneration = 9,
+        projectId = "dotfiles",
+        projectGeneration = 3,
+        dialogueAct = "explain",
+        discourseEntityRefs = listOf("entity:dotfiles", "entity:emacs"),
+        unresolvedQuestionRefs = listOf("question:q1"),
+        expertEvidenceRefs = listOf("expert:dotfiles:invoke:42", "evidence:sha256:abc"),
+        verifiedOutcomeRefs = listOf("outcome:postcondition:42"),
+        rendererProvenance = "symbolic-nlg/v1",
+        modelCalls = 0,
+        providerCalls = 0,
+    )
+
+    private fun assertFails(expectedMessage: String, block: () -> Unit) {
+        try {
+            block()
+            fail("expected failure containing: $expectedMessage")
+        } catch (error: IllegalArgumentException) {
+            assertTrue(error.message.orEmpty().contains(expectedMessage))
+        } catch (error: IllegalStateException) {
+            assertTrue(error.message.orEmpty().contains(expectedMessage))
+        }
+    }
+}
