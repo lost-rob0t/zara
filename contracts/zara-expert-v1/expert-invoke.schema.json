@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zara.ai/contracts/zara-expert-v1/expert-invoke.schema.json",
+  "title": "ZARA-EXPERT/1 invocation request",
+  "description": "An inert request, not permission to execute. Host must validate activation, domain schema and current authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "request_id",
+    "operation",
+    "activation_id",
+    "expert_id",
+    "expert_operation",
+    "expected_registry_generation",
+    "expected_runtime_generation",
+    "input",
+    "limits"
+  ],
+  "properties": {
+    "protocol": {
+      "const": "ZARA-EXPERT/1"
+    },
+    "request_id": {
+      "$ref": "#/$defs/reference"
+    },
+    "operation": {
+      "const": "expert.invoke"
+    },
+    "activation_id": {
+      "$ref": "#/$defs/reference"
+    },
+    "expert_id": {
+      "$ref": "#/$defs/symbol"
+    },
+    "expert_operation": {
+      "$ref": "#/$defs/token"
+    },
+    "expected_registry_generation": {
+      "$ref": "#/$defs/generation"
+    },
+    "expected_runtime_generation": {
+      "$ref": "#/$defs/generation"
+    },
+    "input": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": {
+        "maxLength": 128
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/json_value"
+      }
+    },
+    "limits": {
+      "$ref": "#/$defs/limits"
+    }
+  },
+  "$defs": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}(?![\\s\\S])"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}(?![\\s\\S])"
+    },
+    "symbol": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 256,
+      "pattern": "^[a-z][a-z0-9._-]{0,63}:[a-z][a-z0-9._-]{0,63}(?:/[a-z0-9][a-z0-9._-]{0,63}){0,7}(?![\\s\\S])"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeout_ms",
+        "max_results",
+        "max_output_bytes",
+        "max_model_calls"
+      ],
+      "properties": {
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600000
+        },
+        "max_results": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576
+        },
+        "max_model_calls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1024
+        }
+      }
+    },
+    "json_value": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "maxLength": 4096
+        },
+        {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/json_value"
+          }
+        },
+        {
+          "type": "object",
+          "maxProperties": 128,
+          "propertyNames": {
+            "maxLength": 128
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/json_value"
+          }
+        }
+      ]
+    }
+  },
+  "x-zara-ingress-limits": {
+    "max_wire_bytes": 262144,
+    "max_json_depth": 16,
+    "max_json_nodes": 4096
+  }
+}

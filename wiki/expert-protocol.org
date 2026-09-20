@@ -1,0 +1,123 @@
+#+title: ZARA-EXPERT/1 — structural contract foundation
+
+* Status and ownership
+This is the first executable contract slice of #1233, under #1232. It does
+not make expert activation available in the application. Existing expert
+handlers, registries, actors, approved tools and runtime carriers remain their
+owners. No existing expert callback or Prolog source is replaced.
+
+Implemented here:
+- descriptor and invocation-request JSON Schema 2020-12 definitions;
+- matching example payloads;
+- a Prolog operation/lifecycle vocabulary;
+- pure Prolog invocation, limits and activation-snapshot checks;
+- schema tests and a real-SWI pytest integration gate.
+
+Pending: activation host/adapters, per-operation domain schema resolution,
+remaining operation/result schemas, live dispatch, Kotlin/Android conformance,
+MCP/A2A bindings and full zero-model application acceptance. #897 owns
+activation, #1156 existing slash commands, #986 canonical symbols, #663 the
+execution-isolation boundary, and #1238 adapter integration. Generic expert
+coordination remains upstream in prolog-rlm#376.
+
+* Wire contracts
+=contracts/zara-expert-v1/expert-descriptor.schema.json= describes versioned
+expert metadata. =expert-invoke.schema.json= describes only =expert.invoke=.
+The other operation names in the Prolog vocabulary are not implemented RPCs.
+Unknown major versions and extra top-level fields are rejected. Identifiers
+use the proposed #986-compatible symbol vocabulary; this slice does not add
+an independent symbol registry or URI scheme.
+
+Operation input/output schemas are opaque =schema:= references. The existing
+trusted host must resolve those references without arbitrary URL fetching.
+=source:= references identify source records; digests identify exact manifests.
+These references are metadata, not executable paths.
+
+Descriptor structural validation does not prove registration, availability,
+engine support, authorization or that a remote service is model-free. A
+=symbolic= descriptor cannot declare model calls or model fallback. Execution
+must still enforce that claim. The host must reject duplicate operation IDs,
+even when differing descriptors pass JSON Schema's whole-item uniqueness test.
+It must also check operation effects/requirements against package declarations.
+
+The example fixtures are fictional metadata for contract testing, not evidence
+that Android troubleshooting is installed or any device is connected.
+
+* Symbolic surface
+#+begin_src prolog
+:- use_module('modules/expert_protocol').
+
+validate_invocation(Request, Result).
+limits_within(RequestedLimits, HostCeilings).
+activation_matches(Request, HostBinding, HostContext, Result).
+#+end_src
+
+=validate_invocation/2= returns =valid= or =invalid_request=. It validates
+structure, not whether the named expert or domain operation exists. Domain
+input validation, actual dispatch and current capability/approval decisions
+remain mandatory after this check.
+
+=limits_within/2= succeeds only when every requested finite bound is within
+the supplied ceiling. It never reserves resources, grants authority, clamps
+values, refreshes a deadline or resets a parent's budget. An actor/runtime
+must account for consumed resources separately.
+
+=activation_matches/4= returns =matching_binding= or =invalid_binding=:
+#+begin_src prolog
+activation('act-7', 'zara:expert/android-troubleshooting',
+           operator, workspace, 12, 4, active).
+context(operator, workspace, 12, 4).
+#+end_src
+
+These are host-supplied snapshot shapes, not new public endpoint payloads.
+A binding compares activation ID, expert ID, principal, scope and both
+generations. The actual host handle must additionally retain/respect pinned
+versions/digests, current revocation, permissions and deadlines. A matching
+snapshot is not an authorization decision. The caller must recheck current
+state at effect admission; stale snapshots are not made trustworthy by Prolog.
+
+* JSON representation and bounds
+The SWI boundary uses =json_read/3='s ordinary representation:
+objects are =json([Key=Value,...])=; arrays are proper lists; strings are atoms;
+booleans/null are =@(true)=, =@(false)= and =@(null)=. The validator accepts no
+unbound variables, cycles or other callable compound terms as JSON values.
+Code-looking strings stay inert; no input is consulted or passed to =call/1=.
+
+Integer fields follow mathematical JSON Schema semantics: =12= and =12.0=
+are equivalent integers. Strings and booleans are not coerced. Non-finite
+numbers are rejected by the Prolog check. Generation bounds stop at
+=9007199254740991= so adapters can use the interoperable safe-integer range.
+
+The Prolog checker bounds depth (root depth zero) to 16, value nodes to 4096,
+object members to 128, arrays to 256, strings to 4096 characters and keys to
+128 characters. It rejects duplicate object keys. Per-field resource maxima
+are transport admission ceilings, not recommended operating defaults.
+
+JSON Schema validates structural/per-container limits, not total recursive
+work, duplicate wire keys or pre-decoding allocation. Its
+=x-zara-ingress-limits= field is an annotation, not executable enforcement.
+The transport/decoder MUST cap requests at 262144 bytes before decoding,
+reject duplicate keys/non-finite numbers, enforce bounded decoding, and check
+aggregate depth/node limits before exposing data to other recursive handlers.
+The pure Prolog checks cannot undo memory allocation that already happened.
+No production network decoder is integrated by this slice.
+
+* Verification
+Run the focused tests in the repository's normal development shell:
+#+begin_src sh
+nix develop -c python -m pytest -q \
+  t/test_expert_protocol_schema_v1.py \
+  t/test_expert_protocol_prolog_v1.py
+
+nix develop -c swipl -q -s t/expert_protocol_v1.pl \
+  -g '(run_tests(expert_protocol_v1) -> halt(0); halt(1))' -t 'halt(1)'
+#+end_src
+
+The pytest wrapper invokes real SWI and fails explicitly when SWI is absent;
+it does not skip the symbolic gate. Existing full pytest collection discovers
+both test files. Full repository/Nix and platform gates remain required.
+
+This is a SWI normalization/check implementation, not proof of Android/Trealla
+portability. Shared examples are a starting point for that future comparison.
+Tests demonstrate only exercised behavior, not a proof of all arbitrary expert
+programs. See =rage/1233-expert-protocol-contract.org= for observed results.
