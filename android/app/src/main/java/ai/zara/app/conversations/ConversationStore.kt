@@ -10,6 +10,8 @@ import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 private const val CONVERSATION_STORE_MAGIC = "ZARA-CONVERSATIONS/1"
 private const val MAX_CONVERSATION_STORE_BYTES = 4 * 1024 * 1024
@@ -22,6 +24,30 @@ private const val MAX_REMOTE_CONVERSATION_ID_CHARS = 256
 private const val MAX_TEXT_CHARS = 64 * 1024
 private const val DEFAULT_TITLE = "New chat"
 private const val INTERRUPTED_MESSAGE = "Interrupted before completion."
+
+private data class ConversationStoreLease(
+    val path: String,
+    val generation: Long,
+)
+
+private object ConversationStoreLeaseRegistry {
+    private val generations = ConcurrentHashMap<String, AtomicLong>()
+
+    fun acquire(file: File): ConversationStoreLease {
+        val path = file.absoluteFile.path
+        val generation = generations
+            .computeIfAbsent(path) { AtomicLong(0) }
+            .incrementAndGet()
+        return ConversationStoreLease(path = path, generation = generation)
+    }
+
+    fun requireCurrent(lease: ConversationStoreLease) {
+        val currentGeneration = generations[lease.path]?.get()
+        check(currentGeneration == lease.generation) {
+            "Conversation store instance is stale after lifecycle recreation"
+        }
+    }
+}
 
 enum class ConversationStatus {
     Empty,
@@ -82,6 +108,8 @@ class ConversationStore(
     private val idFactory: () -> String = { UUID.randomUUID().toString() },
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) {
+    private val lease = ConversationStoreLeaseRegistry.acquire(file)
+
     @Volatile
     private var current: ConversationState = load()
 
@@ -217,6 +245,7 @@ class ConversationStore(
     }
 
     private fun ensureHealthy() {
+        ConversationStoreLeaseRegistry.requireCurrent(lease)
         check(current.loadFailure == null) {
             "Conversation history is degraded; preserve the file for recovery before changing chats"
         }
