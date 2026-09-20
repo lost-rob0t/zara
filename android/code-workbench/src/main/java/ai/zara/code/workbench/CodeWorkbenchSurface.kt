@@ -11,9 +11,13 @@ import ai.zara.editor.core.SpokenCodeResolution
 import ai.zara.editor.core.SpokenCodeRouter
 import ai.zara.editor.core.VoiceAction
 import ai.zara.editor.core.VoiceCodePlanner
+import ai.zara.prolog.ipc.PrologCall
+import ai.zara.prolog.ipc.PrologClient
 import ai.zara.ui.theme.ZaraSemanticTokens
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -84,7 +88,13 @@ fun CodeWorkbenchSurface(
     var speechToken by remember { mutableStateOf<OperationToken?>(null) }
     var fileFilter by remember { mutableStateOf("") }
     var findQuery by remember { mutableStateOf("") }
+    var prologGoal by remember { mutableStateOf("member(Result, [alpha, beta])") }
+    var prologOutput by remember { mutableStateOf("ZARA-PROLOG/1 ready when main Zara is installed") }
+    var prologBusy by remember { mutableStateOf(false) }
+    var prologCall by remember { mutableStateOf<PrologCall?>(null) }
     val speechFence = remember { OperationFence() }
+    val prologClient = remember { PrologClient(context.applicationContext) }
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
     val repository = remember(treeUri) {
         treeUri?.let { uri -> runCatching { CodeTreeRepository(context, uri) }.getOrNull() }
@@ -92,6 +102,49 @@ fun CodeWorkbenchSurface(
     val currentBuffer = rememberUpdatedState(buffer)
     val currentEditor = rememberUpdatedState(editorValue)
     val currentToken = rememberUpdatedState(speechToken)
+
+    fun cancelProlog(message: String = "Cancelled") {
+        prologCall?.cancel()
+        prologCall = null
+        prologBusy = false
+        prologOutput = message
+    }
+
+    fun runProlog() {
+        if (prologBusy) return
+        val goal = prologGoal.trim()
+        if (goal.isEmpty()) {
+            prologOutput = "Enter a Prolog goal"
+            return
+        }
+        val call = runCatching { prologClient.query(goal) }
+            .getOrElse { error ->
+                prologOutput = error.message ?: "Unable to start Prolog query"
+                return
+            }
+        prologCall = call
+        prologBusy = true
+        prologOutput = "Running via ZARA-PROLOG/1…"
+        call.result.whenComplete { reply, error ->
+            mainHandler.post {
+                if (prologCall !== call) return@post
+                prologCall = null
+                prologBusy = false
+                prologOutput = when {
+                    error != null -> error.message ?: "Prolog query failed"
+                    reply == null -> "Prolog returned no result"
+                    reply.terms.isEmpty() -> "No solutions"
+                    else -> buildString {
+                        append(reply.terms.joinToString("\n"))
+                        if (reply.truncated) append("\n… truncated")
+                        append("\n[generation ")
+                        append(reply.generation)
+                        append("]")
+                    }
+                }
+            }
+        }
+    }
 
     fun refresh() {
         val repo = repository ?: return
@@ -107,6 +160,7 @@ fun CodeWorkbenchSurface(
         val repo = repository ?: return
         runCatching { repo.read(file) }
             .onSuccess { source ->
+                cancelProlog("ZARA-PROLOG/1 ready when main Zara is installed")
                 selected = file
                 savedText = source
                 editorValue = TextFieldValue(source, TextRange(source.length))
@@ -220,6 +274,12 @@ fun CodeWorkbenchSurface(
         )
     }
     DisposableEffect(speech) { onDispose { speech.close() } }
+    DisposableEffect(prologClient) {
+        onDispose {
+            prologCall?.cancel()
+            prologClient.close()
+        }
+    }
 
     fun startVoice() {
         val snapshot = uiSnapshot() ?: run {
@@ -328,6 +388,21 @@ fun CodeWorkbenchSurface(
                                 speech.cancel()
                                 status = "Voice cancelled"
                             },
+                            footer = if (language == "prolog") {
+                                {
+                                    PrologConsole(
+                                        goal = prologGoal,
+                                        output = prologOutput,
+                                        busy = prologBusy,
+                                        tokens = tokens,
+                                        onGoal = { prologGoal = it },
+                                        onRun = ::runProlog,
+                                        onCancel = { cancelProlog() },
+                                    )
+                                }
+                            } else {
+                                null
+                            },
                         )
                         Inspector(
                             selected = selected,
@@ -374,6 +449,21 @@ fun CodeWorkbenchSurface(
                             speech.cancel()
                             status = "Voice cancelled"
                         },
+                footer = if (language == "prolog") {
+                    {
+                        PrologConsole(
+                            goal = prologGoal,
+                            output = prologOutput,
+                            busy = prologBusy,
+                            tokens = tokens,
+                            onGoal = { prologGoal = it },
+                            onRun = ::runProlog,
+                            onCancel = { cancelProlog() },
+                        )
+                    }
+                } else {
+                    null
+                },
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         StatusPill("Ln $line : Col $column", tokens)
@@ -568,6 +658,7 @@ private fun EditorPanel(
     onFind: (String) -> Unit,
     onVoice: () -> Unit,
     onCancelVoice: () -> Unit,
+    footer: (@Composable () -> Unit)? = null,
 ) {
     Surface(
         modifier = modifier,
@@ -627,13 +718,84 @@ private fun EditorPanel(
                 OutlinedTextField(
                     value = value,
                     onValueChange = onValue,
-                    modifier = Modifier.fillMaxSize().heightIn(min = 260.dp),
+                    modifier = Modifier.weight(1f).fillMaxWidth().heightIn(min = 180.dp),
                     textStyle = MaterialTheme.typography.bodyMedium.copy(
                         color = tokens.text,
                         fontFamily = FontFamily.Monospace,
                     ),
                     label = { Text(selected.name) },
                     colors = fieldColors(tokens),
+                )
+                footer?.invoke()
+            }
+        }
+    }
+}
+
+@Composable
+private fun PrologConsole(
+    goal: String,
+    output: String,
+    busy: Boolean,
+    tokens: ZaraSemanticTokens,
+    onGoal: (String) -> Unit,
+    onRun: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = tokens.surfaceInput,
+        border = BorderStroke(1.dp, tokens.borderActive),
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "PROLOG QUERY",
+                    modifier = Modifier.weight(1f),
+                    color = tokens.accentMagenta,
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                StatusPill("ZARA-PROLOG/1", tokens, active = true)
+            }
+            OutlinedTextField(
+                value = goal,
+                onValueChange = onGoal,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !busy,
+                singleLine = true,
+                label = { Text("Goal") },
+                colors = fieldColors(tokens),
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    enabled = !busy && goal.isNotBlank(),
+                    onClick = onRun,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = tokens.primary,
+                        contentColor = tokens.background,
+                    ),
+                ) {
+                    Text(if (busy) "Running…" else "Run")
+                }
+                if (busy) {
+                    TextButton(onClick = onCancel) {
+                        Text("Cancel", color = tokens.error)
+                    }
+                }
+            }
+            SelectionContainer {
+                Text(
+                    output,
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 120.dp),
+                    color = tokens.textMuted,
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall,
                 )
             }
         }
