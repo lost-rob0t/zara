@@ -9,7 +9,7 @@ private const val MAX_PROTOCOL_VERSIONS = 16
 private val PROTOCOL_VERSION = Regex("ZARA/[1-9][0-9]*")
 private val DEVICE_CAPABILITIES = setOf("open_app", "open_uri")
 private const val Z85_ALPHABET =
-    "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#"
+    "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%\$#"
 
 /**
  * Canonical Android projection of ZaraNode for authenticated ZARA/1 peer sessions.
