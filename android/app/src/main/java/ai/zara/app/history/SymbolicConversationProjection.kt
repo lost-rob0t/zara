@@ -17,11 +17,13 @@ data class SymbolicConversationProjection(
     val outcome: String = "unknown",
     val projectId: String? = null,
     val projectGeneration: Long = 0,
+    val dialogueAct: String = "unknown",
     val dialogueStateJson: String = "{}",
     val discourseEntitiesJson: String = "[]",
     val unresolvedQuestionsJson: String = "[]",
     val expertEvidenceJson: String = "[]",
     val verifiedFactsJson: String = "[]",
+    val verifiedOutcomeRefs: List<String> = emptyList(),
     val rendererProvenance: String = "",
     val providerCalls: Long = 0,
     val modelCalls: Long = 0,
@@ -243,6 +245,10 @@ internal object SymbolicProjectionContract {
         "error",
     )
     private val terminalOutcomes = setOf("success", "cancelled", "interrupted", "error")
+    private val dialogueActPattern = Regex("^[a-z][a-z0-9_.-]{0,127}$")
+    private val verifiedOutcomeRefPattern = Regex(
+        "^zara\\.verified-outcome/v1:(effect|outcome):[A-Za-z0-9][A-Za-z0-9._:/#-]{0,383}$"
+    )
 
     fun validatePayload(projection: SymbolicConversationProjection) {
         require(projection.conversationId.isNotEmpty()) { "conversationId must not be empty" }
@@ -256,6 +262,20 @@ internal object SymbolicProjectionContract {
         require(projection.providerCalls >= 0L) { "providerCalls must be >= 0" }
         require(projection.modelCalls >= 0L) { "modelCalls must be >= 0" }
         require((projection.projectId?.length ?: 0) <= 512) { "projectId exceeds 512 characters" }
+        require(dialogueActPattern.matches(projection.dialogueAct)) {
+            "dialogueAct must be a normalized symbolic act token"
+        }
+        require(projection.verifiedOutcomeRefs.size <= 64) {
+            "verifiedOutcomeRefs exceeds 64 entries"
+        }
+        require(projection.verifiedOutcomeRefs.distinct().size == projection.verifiedOutcomeRefs.size) {
+            "verifiedOutcomeRefs must be unique"
+        }
+        projection.verifiedOutcomeRefs.forEach { ref ->
+            require(verifiedOutcomeRefPattern.matches(ref)) {
+                "invalid verified outcome reference: $ref"
+            }
+        }
         require(projection.rendererProvenance.length <= 512) {
             "rendererProvenance exceeds 512 characters"
         }
@@ -347,11 +367,14 @@ fun PortableConversationStore.loadSymbolicProjection(
             outcome = cursor.getString(cursor.getColumnIndexOrThrow("outcome")),
             projectId = cursor.nullableString("project_id"),
             projectGeneration = cursor.getLong(cursor.getColumnIndexOrThrow("project_generation")),
+            dialogueAct = cursor.getString(cursor.getColumnIndexOrThrow("dialogue_act")),
             dialogueStateJson = cursor.getString(cursor.getColumnIndexOrThrow("dialogue_state_json")),
             discourseEntitiesJson = cursor.getString(cursor.getColumnIndexOrThrow("discourse_entities_json")),
             unresolvedQuestionsJson = cursor.getString(cursor.getColumnIndexOrThrow("unresolved_questions_json")),
             expertEvidenceJson = cursor.getString(cursor.getColumnIndexOrThrow("expert_evidence_json")),
             verifiedFactsJson = cursor.getString(cursor.getColumnIndexOrThrow("verified_facts_json")),
+            verifiedOutcomeRefs = cursor.getString(cursor.getColumnIndexOrThrow("verified_outcome_refs"))
+                .decodeVerifiedOutcomeRefs(),
             rendererProvenance = cursor.getString(cursor.getColumnIndexOrThrow("renderer_provenance")),
             providerCalls = cursor.getLong(cursor.getColumnIndexOrThrow("provider_calls")),
             modelCalls = cursor.getLong(cursor.getColumnIndexOrThrow("model_calls")),
@@ -382,11 +405,13 @@ fun PortableConversationStore.saveSymbolicProjection(
         put("runtime_generation", stored.runtimeGeneration)
         if (stored.projectId == null) putNull("project_id") else put("project_id", stored.projectId)
         put("project_generation", stored.projectGeneration)
+        put("dialogue_act", stored.dialogueAct)
         put("dialogue_state_json", stored.dialogueStateJson)
         put("discourse_entities_json", stored.discourseEntitiesJson)
         put("unresolved_questions_json", stored.unresolvedQuestionsJson)
         put("expert_evidence_json", stored.expertEvidenceJson)
         put("verified_facts_json", stored.verifiedFactsJson)
+        put("verified_outcome_refs", stored.verifiedOutcomeRefs.joinToString("\n"))
         put("renderer_provenance", stored.rendererProvenance)
         put("provider_calls", stored.providerCalls)
         put("model_calls", stored.modelCalls)
@@ -417,6 +442,9 @@ fun PortableConversationStore.saveSymbolicProjection(
     }
     stored
 }
+
+private fun String.decodeVerifiedOutcomeRefs(): List<String> =
+    if (isEmpty()) emptyList() else split('\n')
 
 private fun android.database.Cursor.nullableString(column: String): String? {
     val index = getColumnIndexOrThrow(column)
