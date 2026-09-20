@@ -81,10 +81,15 @@ internal object ConversationHistoryContract {
     fun canPersistTransition(
         current: HistoryMessageStatus,
         requested: HistoryMessageStatus,
-    ): Boolean =
-        current == HistoryMessageStatus.Pending ||
-            current == HistoryMessageStatus.Streaming ||
-            current == requested
+    ): Boolean = when (current) {
+        HistoryMessageStatus.Pending,
+        HistoryMessageStatus.Streaming,
+        -> true
+        HistoryMessageStatus.Complete,
+        HistoryMessageStatus.Error,
+        HistoryMessageStatus.Cancelled,
+        -> false
+    }
 }
 
 class PortableConversationStore(context: Context) : SQLiteOpenHelper(
