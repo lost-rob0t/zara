@@ -32,6 +32,7 @@ object SymbolicConversationContinuityGate {
         if (!isPureSymbolic(incoming)) return false
         if (current == null) return true
         if (!isPureSymbolic(current)) return false
+        if (incoming.principalId != current.principalId) return false
         if (incoming.conversationId != current.conversationId) return false
         if (incoming.projectionGeneration <= current.projectionGeneration) return false
         if (incoming.runtimeGeneration < current.runtimeGeneration) return false
