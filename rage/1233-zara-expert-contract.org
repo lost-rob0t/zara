@@ -1,0 +1,36 @@
+* Run identity
+- Consumed issue :: #1233
+- Branch :: =rage/1233-zara-expert-contract=
+- RAGE start commit :: =31f70010f7580e46462532b4e583944585aee138=
+
+* Iteration 1 — 2026-09-20
+
+** Research (evidence)
+- zara-expert plugin host pinned 2a3d8f6 == origin/main: can_handle/required_tools/plan/verify are README *conventions* only; host API = status/query/explain/assert_fact/retract_fact; namespace isolation + session/persistent split + forbidden-token term validation + subprocess swipl backend with bounded I/O ({ok, results, trace}).
+- prolog-rlm#376 verdict taxonomy adopted verbatim: succeeded/failed/unknown/blocked/unsupported/cancelled/error + registered != applicable != selected != available != possessed != granted != admitted.
+- #986 symbol registry merged on master (zara/runtime/symbols.py:91, _is_portable_identifier :40) — expert identity rides it; NO zara: URI grammar exists (risk: do not invent one).
+- #897 activation: no desktop machinery; Android LogicLanguage.kt:120-178 has expert_activation/2 + collision check + approval-gated drafts.
+- #1156 PR 1157 OPEN/CONFLICTING — legacy slash grammar on master only.
+- #1046: RuntimeRegistry generation fencing on master (zara/runtime/registry.py:285-438) + Kotlin mirror RuntimeRegistry.kt — the model for expert registry generations.
+- #663: no out-of-interpreter seam merged; contract must NOT claim execution isolation.
+- contracts/zara-runtime-v1 = directory/fixture/schema/twin-test template (t/test_runtime_registry_v1.py, RuntimeRegistryV1Test.kt walk-up fixture load).
+- expert_descriptor/operation/placement/alias predicates: greenfield (zero matches repo-wide).
+- ADB evidence (side quest, feeds #1241): adb absent from default dev shell (by design, .#android provides); mDNS list stale until kill-server/start-server, then _adb-tls-connect discovered; pair-android.sh --connect worked; phone SM-G991U1 Android 15, ai.zara.app installed.
+
+** Design (decided)
+- contracts/zara-expert-v1/{README.md, expert-descriptor.schema.json, descriptors.tsv} per runtime-v1 template; fixture rows: symbolic (todo), hybrid service (zara-expert swipl), absent (prolog-rlm), incompatible-major (ZARA-EXPERT/2).
+- Python owner zara/experts.py: ExpertDescriptor manual validation mirroring schema; ExpertRegistry generation-fenced + alias-collision typed error + unknown-major fail-closed; lifecycle state machine (inactive→activating→active→draining→inactive, →failed, active→unavailable); 9 v1 operations; ExpertVerdict + closed ExpertErrorCode superset; request/result envelopes with limits (timeout_ms, max_results, max_output_bytes, max_model_calls) + idempotency-key conflict rule; opaque activation handles bound to principal+workspace+generations; list/describe/match pure.
+- Prolog codec modules/expert_contract.pl: portable projections expert_descriptor/5, expert_operation/5, expert_placement/5, expert_alias/3, expert_verdict/1, expert_error_code/1, expert_activation_transition/2 + corpus emit for golden parity with TSV; plunit t/expert_contract.pl + scripts/test-expert-contract.sh wired into test-all.sh phase 6.
+- Kotlin codec ai.zara.expert.ExpertContract: fail-closed fromWire enums + descriptor validation + ExpertContractV1Test consuming the shared TSV (walk-up pattern), mirroring Python cases.
+- Docs: contract README authority rules, wiki/expert-protocol.org, CHANGELOG Unreleased.
+- Rejected: unrestricted goal endpoint; universal magic adapter; reusing zara-expert plugin tool names; new URI grammar beyond #986 portable ids; any claim of #663 execution isolation in v1.
+
+** Adversarial review
+- Issue RED cases mapped to tests: forged handle (principal mismatch → denied), alias collision (typed), replay after reload (generation fence), schema bomb (bounded sizes), backend loss (unavailable), model expert under max_model_calls=0 (admission error), discovery purity, concurrent activate/deactivate (locked atomic transitions), cancel-after-commit (receipt, no reversal), stale completion (generation check), nested budgets (monotone), wrong handler arity (registration-time), hostile descriptor (closed schema), catalog leak (projection whitelist).
+- Compat traps honored: three existing generation vocabularies kept distinct (registry_generation vs runtime_generation vs package/enrollment); additive-only within /1; Kotlin hand-mirror required for every enum.
+
+** Decision (Auto-RAGE, user-authorized)
+- Ship contract + cross-language codecs + reference registry semantics; adapters land under #1238; activation/entry-point implementations stay owned by #897/#1156.
+- Gate: focused red/green per behavior, then nix develop -c bash scripts/test-all.sh at exact head, nix flake check, PR + CI green.
+
+** Implementation log
