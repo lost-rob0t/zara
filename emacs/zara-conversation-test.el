@@ -112,6 +112,13 @@
            process (zara-conversation-test--accepted "other-conversation"))
           (should-not response)
           (should (string-match-p "conversation_id mismatch" error))
+          (should (process-get process 'zara-cancel-requested))
+          (with-current-buffer target
+            (should zara-chat--busy)
+            (should (eq zara-conversation--state 'cancelling)))
+          (cl-letf (((symbol-function 'process-status) (lambda (_process) 'exit))
+                    ((symbol-function 'process-exit-status) (lambda (_process) 2)))
+            (zara-conversation--process-sentinel process "finished"))
           (with-current-buffer target
             (should-not zara-chat--busy)
             (should (eq zara-conversation--state 'error))))
@@ -214,6 +221,13 @@
               (conversation_id . "emacs-main")
               (turn_id . "turn-1"))))
           (should (string-match-p "unknown native-client event type" error))
+          (should (process-get process 'zara-cancel-requested))
+          (with-current-buffer target
+            (should zara-chat--busy)
+            (should (eq zara-conversation--state 'cancelling)))
+          (cl-letf (((symbol-function 'process-status) (lambda (_process) 'exit))
+                    ((symbol-function 'process-exit-status) (lambda (_process) 2)))
+            (zara-conversation--process-sentinel process "finished"))
           (with-current-buffer target
             (should-not zara-chat--busy)
             (should (eq zara-conversation--state 'error))))
