@@ -68,6 +68,12 @@ data class SymbolicConversationEdgeSnapshot(
         check(providerCalls == 0L) {
             "pure-symbolic edge projection recorded provider calls: $providerCalls"
         }
+        check(dialogueAct in ZARA_SYMBOLIC_DIALOGUE_V1_ACTS) {
+            "pure-symbolic edge projection dialogueAct is not a ZARA-SYMBOLIC-DIALOGUE/1 act: $dialogueAct"
+        }
+        check(rendererProvenance == ZARA_SYMBOLIC_DIALOGUE_V1_RENDERER) {
+            "pure-symbolic edge projection rendererProvenance must be $ZARA_SYMBOLIC_DIALOGUE_V1_RENDERER: $rendererProvenance"
+        }
     }
 
     private fun validateRefs(values: List<String>, label: String) {
@@ -90,6 +96,21 @@ data class SymbolicConversationEdgeSnapshot(
         internal const val MAX_ACT_CHARS = 96
         internal const val MAX_REF_CHARS = 128
         internal const val MAX_RENDERER_CHARS = 256
+        internal const val ZARA_SYMBOLIC_DIALOGUE_V1_RENDERER = "symbolic-dcg/v1"
+        internal val ZARA_SYMBOLIC_DIALOGUE_V1_ACTS = setOf(
+            "greeting",
+            "cancelled",
+            "clarify",
+            "choose",
+            "invalid",
+            "dispatch_required",
+            "verified",
+            "denied",
+            "unavailable",
+            "error",
+            "expert_answer",
+            "unsupported",
+        )
     }
 }
 
