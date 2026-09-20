@@ -1,4 +1,4 @@
-package ai.zara.code.editor
+package ai.zara.code.workbench
 
 import android.content.Context
 import android.content.Intent
@@ -25,6 +25,14 @@ object CodeLanguage {
         "json" -> "json"
         "toml" -> "toml"
         "yaml", "yml" -> "yaml"
+        "md" -> "markdown"
+        "c", "h", "cc", "cpp", "hpp" -> "c-cpp"
+        "rs" -> "rust"
+        "go" -> "go"
+        "nim" -> "nim"
+        "sql" -> "sql"
+        "html" -> "html"
+        "css" -> "css"
         else -> "text"
     }
 }

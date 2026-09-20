@@ -234,6 +234,8 @@ androidComponents {
 
 dependencies {
     implementation(project(":shared-ui"))
+    implementation(project(":code-workbench"))
+    implementation(project(":prolog-ipc"))
     implementation(platform(libs.compose.bom))
     implementation(libs.activity.compose)
     implementation(libs.compose.ui)

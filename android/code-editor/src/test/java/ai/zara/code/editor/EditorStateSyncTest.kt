@@ -1,5 +1,6 @@
 package ai.zara.code.editor
 
+import ai.zara.code.workbench.syncEditorStateToBuffer
 import ai.zara.editor.core.EditorSelection
 import ai.zara.editor.core.OperationFence
 import ai.zara.editor.core.RevisionedEditorBuffer

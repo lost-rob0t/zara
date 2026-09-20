@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <permission
+        android:name="ai.zara.permission.PROLOG"
+        android:protectionLevel="signature" />
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -88,6 +92,15 @@
             android:name=".localai.LocalAiService"
             android:exported="false"
             android:process=":voice" />
+
+        <service
+            android:name=".prolog.ipc.PrologIpcService"
+            android:exported="true"
+            android:permission="ai.zara.permission.PROLOG">
+            <intent-filter>
+                <action android:name="ai.zara.prolog.BIND" />
+            </intent-filter>
+        </service>
 
         <service
             android:name=".assistant.ZaraVoiceInteractionService"

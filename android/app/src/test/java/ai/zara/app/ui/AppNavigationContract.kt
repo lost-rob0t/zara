@@ -7,7 +7,7 @@ object AppNavigationContract {
 
     fun completeRouteInventory() {
         check(routesFor(AppMenu.Chat) == listOf(AppRoute.Chat, AppRoute.Voice))
-        check(routesFor(AppMenu.Workspace) == listOf(AppRoute.Logic, AppRoute.Projects, AppRoute.Scheduled))
+        check(routesFor(AppMenu.Workspace) == listOf(AppRoute.Code, AppRoute.Logic, AppRoute.Projects, AppRoute.Scheduled))
         check(routesFor(AppMenu.Settings) == listOf(
             AppRoute.Runtime, AppRoute.Connection, AppRoute.Permissions, AppRoute.Appearance,
             AppRoute.Plugins, AppRoute.Updates, AppRoute.Diagnostics, AppRoute.About,
@@ -54,7 +54,7 @@ object AppNavigationContract {
         val restored = AppNavigation.restore(listOf("Settings", "Updates", "Chat", "Voice"))
         check(restored.menu == AppMenu.Settings)
         check(restored.chat == AppRoute.Chat)
-        check(restored.workspace == AppRoute.Logic)
+        check(restored.workspace == AppRoute.Code)
         check(restored.settings == AppRoute.Runtime)
         check(AppNavigation.restore(listOf("Settings", "Voice", "Scheduled", "Updates")).route == AppRoute.Updates)
     }
@@ -69,7 +69,7 @@ object AppNavigationContract {
         check(AppNavigation().back() == null)
         check(AppNavigation().selectRoute(AppRoute.Voice).back()?.route == AppRoute.Chat)
         check(AppNavigation().selectRoute(AppRoute.Updates).back()?.route == AppRoute.Runtime)
-        check(AppNavigation().selectRoute(AppRoute.Scheduled).back()?.route == AppRoute.Logic)
+        check(AppNavigation().selectRoute(AppRoute.Scheduled).back()?.route == AppRoute.Code)
         for (route in AppRoute.entries) {
             var state: AppNavigation? = AppNavigation().selectRoute(route)
             var steps = 0
@@ -93,7 +93,7 @@ object AppNavigationContract {
 
     fun savedKeysAreStableNames() {
         val state = AppNavigation().selectRoute(AppRoute.Permissions)
-        check(state.save() == listOf("Settings", "Chat", "Logic", "Permissions"))
+        check(state.save() == listOf("Settings", "Chat", "Code", "Permissions"))
     }
 
     @JvmStatic
@@ -108,6 +108,6 @@ object AppNavigationContract {
         backReturnsThroughMenuRootThenChat()
         railBreakpointUsesAvailableWindowWidth()
         savedKeysAreStableNames()
-        println("PASS: 10 navigation contracts; 169 route transitions and 144 saved-state combinations")
+        println("PASS: navigation contracts include embedded Code workspace")
     }
 }

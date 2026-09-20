@@ -1,4 +1,4 @@
-package ai.zara.code.editor
+package ai.zara.code.workbench
 
 import android.content.Context
 import android.content.Intent

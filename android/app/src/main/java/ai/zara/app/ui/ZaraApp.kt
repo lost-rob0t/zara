@@ -1,6 +1,7 @@
 package ai.zara.app.ui
 
 import ai.zara.app.BuildConfig
+import ai.zara.code.workbench.CodeWorkbenchSurface
 import ai.zara.app.conversations.ConversationRecord
 import ai.zara.app.conversations.ConversationState
 import ai.zara.app.conversations.ConversationStatus
@@ -98,6 +99,7 @@ import kotlinx.coroutines.launch
 
 enum class AppSurface(val label: String, val glyph: String, val gatedIssue: String? = null) {
     Chat("Chat", "⌂"),
+    Code("Code", "⌘"),
     Logic("Logic", "λ"),
     Voice("Voice", "◉"),
     Projects("Projects", "◇", "#653"),
@@ -298,6 +300,12 @@ fun ZaraApp(
                                                     padding = padding,
                                                 )
                                             }
+                                            AppSurface.Code -> CodeWorkbenchSurface(
+                                                tokens = LocalZaraTokens.current,
+                                                padding = padding,
+                                                title = "Code",
+                                                platformVoiceEnabled = false,
+                                            )
                                             AppSurface.Logic -> PrologStudioSurface(
                                                 localState = localServerState,
                                                 sources = prologSources,
@@ -396,6 +404,7 @@ fun ZaraApp(
 internal fun AppRoute.surface(): AppSurface = when (this) {
     AppRoute.Chat -> AppSurface.Chat
     AppRoute.Voice -> AppSurface.Voice
+    AppRoute.Code -> AppSurface.Code
     AppRoute.Logic -> AppSurface.Logic
     AppRoute.Projects -> AppSurface.Projects
     AppRoute.Scheduled -> AppSurface.Scheduled
