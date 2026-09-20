@@ -16,7 +16,12 @@ enum class PureSymbolicRoute {
 data class PureSymbolicTurnResult(
     val turn: TextTurnResult,
     val route: PureSymbolicRoute,
-    val renderer: String = "symbolic-dcg/v1",
+    val renderer: String = when (route) {
+        PureSymbolicRoute.FRAME_RESOLVER -> "symbolic-dcg/v1"
+        PureSymbolicRoute.EXPLICIT_QUERY,
+        PureSymbolicRoute.EXPLICIT_COMMAND,
+        -> "symbolic-term/v1"
+    },
     val maxModelCalls: Int = 0,
     val maxProviderCalls: Int = 0,
     val modelCalls: Int = 0,
@@ -36,9 +41,9 @@ data class PureSymbolicTurnResult(
  * This controller intentionally has no model client, provider client, socket fallback, or
  * alternate natural-language router dependency. Natural text goes through the canonical
  * Prolog dialogue-turn + deterministic renderer path supplied by the factory. Explicit
- * Prolog/expert commands remain inside the existing bounded Prolog command contract. A miss or
- * runtime error is rendered deterministically and ends the turn; it never escalates to a
- * model/provider path.
+ * Prolog/expert commands remain inside the existing bounded Prolog command contract and retain
+ * symbolic-term renderer provenance. A miss or runtime error is rendered deterministically and
+ * ends the turn; it never escalates to a model/provider path.
  *
  * The controller does not own conversation history or expert registration. Callers persist the
  * returned evidence against Zara's canonical conversation store/projection and keep actual
