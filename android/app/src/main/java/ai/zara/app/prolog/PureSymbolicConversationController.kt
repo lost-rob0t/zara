@@ -3,7 +3,9 @@ package ai.zara.app.prolog
 import ai.zara.app.runtime.LocalQueryResult
 import ai.zara.app.runtime.TextTurnResult
 import java.util.UUID
+import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CompletionException
 
 enum class PureSymbolicRoute {
     EXPLICIT_QUERY,
@@ -69,7 +71,9 @@ class PureSymbolicConversationController(
 
         val routed = try {
             route(input)
-        } catch (error: Throwable) {
+        } catch (error: CancellationException) {
+            return cancelledTurnFuture()
+        } catch (error: Exception) {
             return CompletableFuture.completedFuture(
                 failure(
                     conversationId = normalizedConversationId,
@@ -79,29 +83,43 @@ class PureSymbolicConversationController(
             )
         }
 
-        return routed.future.handle { result, error ->
-            when {
-                error != null || result == null -> failure(
-                    conversationId = normalizedConversationId,
-                    route = routed.route,
-                    runtimeFailure = true,
-                )
-                result.terms.isEmpty() -> failure(
-                    conversationId = normalizedConversationId,
-                    route = routed.route,
-                    runtimeFailure = false,
-                )
-                else -> PureSymbolicTurnResult(
-                    turn = TextTurnResult(
+        val output = LinkedTurnFuture<PureSymbolicTurnResult>(routed.future)
+        routed.future.whenComplete { result, error ->
+            if (output.isDone) {
+                return@whenComplete
+            }
+            if (routed.future.isCancelled || isCancellation(error)) {
+                output.cancel(false)
+                return@whenComplete
+            }
+            try {
+                val completed = when {
+                    error != null || result == null -> failure(
                         conversationId = normalizedConversationId,
-                        turnId = nextTurnId(),
-                        text = result.terms.joinToString("\n"),
-                        success = true,
-                    ),
-                    route = routed.route,
-                )
+                        route = routed.route,
+                        runtimeFailure = true,
+                    )
+                    result.terms.isEmpty() -> failure(
+                        conversationId = normalizedConversationId,
+                        route = routed.route,
+                        runtimeFailure = false,
+                    )
+                    else -> PureSymbolicTurnResult(
+                        turn = TextTurnResult(
+                            conversationId = normalizedConversationId,
+                            turnId = nextTurnId(),
+                            text = result.terms.joinToString("\n"),
+                            success = true,
+                        ),
+                        route = routed.route,
+                    )
+                }
+                output.complete(completed)
+            } catch (completionError: Throwable) {
+                output.completeExceptionally(completionError)
             }
         }
+        return output
     }
 
     private fun route(input: String): RoutedQuery = when (routeKind(input)) {
@@ -149,10 +167,33 @@ class PureSymbolicConversationController(
         turnIds.next()
     }
 
+    private fun cancelledTurnFuture(): CompletableFuture<PureSymbolicTurnResult> =
+        CompletableFuture<PureSymbolicTurnResult>().also { it.cancel(false) }
+
+    private fun isCancellation(error: Throwable?): Boolean {
+        var current = error
+        while (current is CompletionException && current.cause != null) {
+            current = current.cause
+        }
+        return current is CancellationException
+    }
+
     private data class RoutedQuery(
         val route: PureSymbolicRoute,
         val future: CompletableFuture<LocalQueryResult>,
     )
+
+    private class LinkedTurnFuture<T>(
+        private val upstream: CompletableFuture<*>,
+    ) : CompletableFuture<T>() {
+        override fun cancel(mayInterruptIfRunning: Boolean): Boolean {
+            val cancelled = super.cancel(mayInterruptIfRunning)
+            if (cancelled) {
+                upstream.cancel(mayInterruptIfRunning)
+            }
+            return cancelled
+        }
+    }
 
     companion object {
         private const val MAX_INPUT_CHARS = 32 * 1024
