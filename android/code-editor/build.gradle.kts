@@ -69,12 +69,12 @@ android {
 }
 
 dependencies {
-    implementation(project(":editor-core"))
+    implementation(project(":code-workbench"))
+    implementation(project(":shared-ui"))
     implementation(platform(libs.compose.bom))
     implementation(libs.activity.compose)
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
     implementation(libs.compose.ui.tooling.preview)
-    implementation(libs.documentfile)
     testImplementation(libs.junit)
 }
