@@ -39,7 +39,6 @@ class SymbolicTerminalImmutabilityTest {
             dialogueStateJson = "{\"act\":\"effect_completed\",\"late\":true}",
             expertEvidenceJson = "[{\"evidence_id\":\"ev-late\"}]",
             verifiedFactsJson = "[{\"fact_id\":\"fact-late\",\"value\":\"should-not-persist\"}]",
-            rendererProvenance = "late-callback/v1",
         )
 
         try {
