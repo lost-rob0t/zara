@@ -25,6 +25,19 @@ class SymbolicConversationEdgeSnapshotTest {
     }
 
     @Test
+    fun pureSymbolicRequiresCanonicalDialogueActAndRenderer() {
+        assertFails("dialogueAct is not a ZARA-SYMBOLIC-DIALOGUE/1 act") {
+            fixture().copy(dialogueAct = "explain").assertPureSymbolic()
+        }
+        assertFails("rendererProvenance must be symbolic-dcg/v1") {
+            fixture().copy(rendererProvenance = "model-fallback/v1").assertPureSymbolic()
+        }
+        assertFails("rendererProvenance must be symbolic-dcg/v1") {
+            fixture().copy(rendererProvenance = "").assertPureSymbolic()
+        }
+    }
+
+    @Test
     fun principalScopeIsRequired() {
         assertFails("principalId must not be blank") { fixture().copy(principalId = "").validate() }
     }
@@ -52,12 +65,12 @@ class SymbolicConversationEdgeSnapshotTest {
         runtimeGeneration = 9,
         projectId = "dotfiles",
         projectGeneration = 3,
-        dialogueAct = "explain",
+        dialogueAct = "expert_answer",
         discourseEntityRefs = listOf("entity:dotfiles", "entity:emacs"),
         unresolvedQuestionRefs = listOf("question:q1"),
         expertEvidenceRefs = listOf("expert:dotfiles:invoke:42", "evidence:sha256:abc"),
         verifiedOutcomeRefs = listOf("outcome:postcondition:42"),
-        rendererProvenance = "symbolic-nlg/v1",
+        rendererProvenance = "symbolic-dcg/v1",
         providersEnabled = false,
         maxModelCalls = 0,
         modelCalls = 0,
