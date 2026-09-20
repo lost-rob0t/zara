@@ -19,13 +19,15 @@ class PortableConversationMigrationInstrumentedTest : AndroidTestCase() {
 
         val first = PortableConversationStore(context)
         try {
-            assertEquals(3, first.readableDatabase.version)
+            assertEquals(4, first.readableDatabase.version)
             assertEquals("Legacy symbolic chat", first.getConversation(CONVERSATION_ID)?.title)
             assertEquals(listOf("remember this"), first.loadMessages(CONVERSATION_ID).map { it.content })
             assertTrue(indexExists(first.readableDatabase, "idx_desktop_symbolic_project"))
             assertTrue(indexExists(first.readableDatabase, "idx_desktop_symbolic_turn"))
             assertTrue(columnExists(first.readableDatabase, "desktop_symbolic_projections", "dialogue_act"))
             assertTrue(columnExists(first.readableDatabase, "desktop_symbolic_projections", "verified_outcome_refs"))
+            assertTrue(columnExists(first.readableDatabase, "desktop_symbolic_projections", "providers_enabled"))
+            assertTrue(columnExists(first.readableDatabase, "desktop_symbolic_projections", "max_model_calls"))
 
             val saved = first.saveSymbolicProjection(
                 SymbolicConversationProjection(
@@ -40,12 +42,16 @@ class PortableConversationMigrationInstrumentedTest : AndroidTestCase() {
                     dialogueStateJson = "{\"act\":\"resume\"}",
                     verifiedOutcomeRefs = listOf(VERIFIED_EFFECT_REF),
                     rendererProvenance = "symbolic-dcg/v1",
+                    providersEnabled = false,
+                    maxModelCalls = 0,
                     providerCalls = 0,
                     modelCalls = 0,
                 ),
                 expectedGeneration = 0,
             )
             saved.assertPureSymbolic()
+            assertFalse(saved.providersEnabled)
+            assertEquals(0L, saved.maxModelCalls)
             assertEquals("verified", saved.dialogueAct)
             assertEquals(listOf(VERIFIED_EFFECT_REF), saved.verifiedOutcomeRefs)
             assertEquals("symbolic-dcg/v1", saved.rendererProvenance)
@@ -55,7 +61,7 @@ class PortableConversationMigrationInstrumentedTest : AndroidTestCase() {
 
         val reopened = PortableConversationStore(context)
         try {
-            assertEquals(3, reopened.readableDatabase.version)
+            assertEquals(4, reopened.readableDatabase.version)
             assertEquals("Legacy symbolic chat", reopened.getConversation(CONVERSATION_ID)?.title)
             assertEquals("remember this", reopened.loadMessages(CONVERSATION_ID).single().content)
             val projection = checkNotNull(reopened.loadSymbolicProjection(CONVERSATION_ID))
@@ -65,6 +71,8 @@ class PortableConversationMigrationInstrumentedTest : AndroidTestCase() {
             assertEquals("verified", projection.dialogueAct)
             assertEquals(listOf(VERIFIED_EFFECT_REF), projection.verifiedOutcomeRefs)
             assertEquals("symbolic-dcg/v1", projection.rendererProvenance)
+            assertFalse(projection.providersEnabled)
+            assertEquals(0L, projection.maxModelCalls)
             assertEquals(0L, projection.providerCalls)
             assertEquals(0L, projection.modelCalls)
         } finally {
