@@ -13,6 +13,8 @@ def _projection() -> SymbolicConversationProjection:
         projection_generation=1,
         runtime_generation=1,
         project_generation=1,
+        providers_enabled=False,
+        max_model_calls=0,
         provider_calls=0,
         model_calls=0,
     )
