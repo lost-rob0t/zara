@@ -27,11 +27,19 @@ data class SymbolicConversationProjection(
     val verifiedFactsJson: String = "[]",
     val verifiedOutcomeRefs: List<String> = emptyList(),
     val rendererProvenance: String = "",
+    val providersEnabled: Boolean = false,
+    val maxModelCalls: Long = 0,
     val providerCalls: Long = 0,
     val modelCalls: Long = 0,
     val updatedAt: String = "",
 ) {
     fun assertPureSymbolic() {
+        check(!providersEnabled) {
+            "pure-symbolic conversation has providers enabled"
+        }
+        check(maxModelCalls == 0L) {
+            "pure-symbolic conversation recorded maxModelCalls=$maxModelCalls"
+        }
         check(providerCalls == 0L && modelCalls == 0L) {
             "pure-symbolic conversation recorded providerCalls=$providerCalls, modelCalls=$modelCalls"
         }
@@ -264,6 +272,7 @@ internal object SymbolicProjectionContract {
         require(projection.projectionGeneration >= 1L) { "projectionGeneration must be >= 1" }
         require(projection.runtimeGeneration >= 0L) { "runtimeGeneration must be >= 0" }
         require(projection.projectGeneration >= 0L) { "projectGeneration must be >= 0" }
+        require(projection.maxModelCalls >= 0L) { "maxModelCalls must be >= 0" }
         require(projection.providerCalls >= 0L) { "providerCalls must be >= 0" }
         require(projection.modelCalls >= 0L) { "modelCalls must be >= 0" }
         require((projection.projectId?.length ?: 0) <= 512) { "projectId exceeds 512 characters" }
@@ -334,6 +343,12 @@ internal object SymbolicProjectionContract {
                 "new turn must advance runtimeGeneration"
             }
         }
+        check(current.providersEnabled || !proposed.providersEnabled) {
+            "provider policy widening rejected"
+        }
+        check(proposed.maxModelCalls <= current.maxModelCalls) {
+            "model-call budget widening rejected"
+        }
         check(proposed.providerCalls >= current.providerCalls) {
             "provider-call ledger rewind rejected"
         }
@@ -367,6 +382,10 @@ fun PortableConversationStore.loadSymbolicProjection(
         "1",
     ).use { cursor ->
         if (!cursor.moveToFirst()) return@use null
+        val providersEnabledValue = cursor.getLong(cursor.getColumnIndexOrThrow("providers_enabled"))
+        check(providersEnabledValue == 0L || providersEnabledValue == 1L) {
+            "stored providers_enabled must be SQLite integer 0 or 1"
+        }
         val projection = SymbolicConversationProjection(
             conversationId = cursor.getString(cursor.getColumnIndexOrThrow("conversation_id")),
             projectionGeneration = cursor.getLong(cursor.getColumnIndexOrThrow("projection_generation")),
@@ -384,6 +403,8 @@ fun PortableConversationStore.loadSymbolicProjection(
             verifiedOutcomeRefs = cursor.getString(cursor.getColumnIndexOrThrow("verified_outcome_refs"))
                 .decodeVerifiedOutcomeRefs(),
             rendererProvenance = cursor.getString(cursor.getColumnIndexOrThrow("renderer_provenance")),
+            providersEnabled = providersEnabledValue == 1L,
+            maxModelCalls = cursor.getLong(cursor.getColumnIndexOrThrow("max_model_calls")),
             providerCalls = cursor.getLong(cursor.getColumnIndexOrThrow("provider_calls")),
             modelCalls = cursor.getLong(cursor.getColumnIndexOrThrow("model_calls")),
             updatedAt = cursor.getString(cursor.getColumnIndexOrThrow("updated_at")),
@@ -421,6 +442,8 @@ fun PortableConversationStore.saveSymbolicProjection(
         put("verified_facts_json", stored.verifiedFactsJson)
         put("verified_outcome_refs", stored.verifiedOutcomeRefs.joinToString("\n"))
         put("renderer_provenance", stored.rendererProvenance)
+        put("providers_enabled", if (stored.providersEnabled) 1 else 0)
+        put("max_model_calls", stored.maxModelCalls)
         put("provider_calls", stored.providerCalls)
         put("model_calls", stored.modelCalls)
         put("updated_at", stored.updatedAt)
