@@ -39,7 +39,7 @@ class SymbolicPurePolicyTest {
         assertFails("providerCalls=1") {
             projection(providerCalls = 1).assertPureSymbolic()
         }
-        assertFails("modelCalls=1") {
+        assertFails("modelCalls must not exceed maxModelCalls") {
             projection(modelCalls = 1).assertPureSymbolic()
         }
     }
