@@ -70,6 +70,9 @@ data class DiagnosticsSnapshot(
     val localAiNote: String?,
     val localAiGeneration: Long?,
     val localAiModel: String?,
+    val localServerPhase: String,
+    val localServerGeneration: Long,
+    val localServerFailure: String?,
     val events: List<ClientEvent>,
     val diagnosticId: String,
     val capturedAtMillis: Long,
@@ -171,6 +174,9 @@ object DiagnosticsV2 {
         if (snapshot.localAiNote != null) facts["local_ai_note"] = sanitize(snapshot.localAiNote)
         facts["local_ai_generation"] = snapshot.localAiGeneration?.toString() ?: "not_applicable"
         facts["local_ai_model"] = snapshot.localAiModel ?: "not_applicable"
+        facts["local_server_phase"] = snapshot.localServerPhase
+        facts["local_server_generation"] = snapshot.localServerGeneration.toString()
+        facts["local_server_failure"] = snapshot.localServerFailure ?: "none"
 
         return facts
     }

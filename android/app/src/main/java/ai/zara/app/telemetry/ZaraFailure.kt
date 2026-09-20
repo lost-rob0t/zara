@@ -13,8 +13,9 @@ enum class ZaraOperation { CONNECT, HANDSHAKE, VOICE_TURN, SUBMIT, STREAM, SPEAK
 
 enum class ZaraRecovery { RETRYING, RETRYABLE, REQUIRES_ACTION, FATAL, UNKNOWN }
 
-class RemoteUnavailableException(message: String = "remote runtime is not connected") :
-    IllegalStateException(message)
+class RemoteUnavailableException(
+    message: String = "Remote mode requires an authenticated Zara server",
+) : IllegalStateException(message)
 
 object ZaraFailureCodes {
     const val TRANSPORT_DNS = "transport.dns"

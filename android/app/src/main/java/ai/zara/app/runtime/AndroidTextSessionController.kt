@@ -49,6 +49,14 @@ class AndroidTextSessionController(
     private var runtimeState = initialState
     private var closed = false
     private var stateObserver: ((RuntimeState) -> Unit)? = null
+    private var connectionLossListener: ((code: String, reason: String) -> Unit)? = null
+
+    fun setConnectionLossListener(listener: ((code: String, reason: String) -> Unit)?) {
+        synchronized(lock) {
+            check(!closed) { "Android text session controller is closed" }
+            connectionLossListener = listener
+        }
+    }
 
     fun state(): RuntimeState = synchronized(lock) { runtimeState }
 
@@ -169,6 +177,16 @@ class AndroidTextSessionController(
 
     fun connectionLost(reason: String) {
         require(reason.isNotBlank()) { "connection loss reason is required" }
+        val listener = synchronized(lock) {
+            if (closed) return
+            connectionLossListener
+        }
+        val code = if (reason.contains("timed out", ignoreCase = true)) {
+            ai.zara.app.telemetry.ZaraFailureCodes.TRANSPORT_TIMEOUT
+        } else {
+            ai.zara.app.telemetry.ZaraFailureCodes.TRANSPORT_CLOSED
+        }
+        listener?.invoke(code, reason)
         val shouldReconnect = synchronized(lock) {
             if (closed) return
             val previousGeneration = runtimeState.generation
@@ -187,6 +205,11 @@ class AndroidTextSessionController(
     }
 
     fun clientReportedFailure(failure: ai.zara.app.telemetry.ZaraFailure) {
+        val listener = synchronized(lock) {
+            if (closed) return
+            connectionLossListener
+        }
+        listener?.invoke(failure.code, failure.message)
         val shouldReconnect = synchronized(lock) {
             if (closed) return
             val connected = runtimeState.server as? ServerConnection.Connected ?: return

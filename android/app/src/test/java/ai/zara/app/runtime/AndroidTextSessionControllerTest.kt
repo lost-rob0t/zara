@@ -71,6 +71,30 @@ class AndroidTextSessionControllerTest {
     }
 
     @Test
+    fun connection_loss_listener_receives_typed_codes_from_both_paths() {
+        val timeoutClient = FakeTextSessionClient()
+        val timeoutController = connectedController(timeoutClient)
+        val losses = mutableListOf<String>()
+        timeoutController.setConnectionLossListener { code, _ -> losses += code }
+
+        timeoutController.submitText("hello")
+        timeoutClient.turnFuture.completeExceptionally(TextRequestTimeoutException("timed out"))
+        assertEquals(listOf(ai.zara.app.telemetry.ZaraFailureCodes.TRANSPORT_TIMEOUT), losses)
+
+        val failureClient = FakeTextSessionClient()
+        val failureController = connectedController(failureClient)
+        failureController.setConnectionLossListener { code, _ -> losses += code }
+        failureController.clientReportedFailure(protocolMalformed(generation = 1))
+        assertEquals(
+            listOf(
+                ai.zara.app.telemetry.ZaraFailureCodes.TRANSPORT_TIMEOUT,
+                ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_MALFORMED,
+            ),
+            losses,
+        )
+    }
+
+    @Test
     fun typed_client_failure_collapses_connection_and_schedules_bounded_reconnect() {
         val client = FakeTextSessionClient()
         val scheduler = FakeReconnectScheduler()

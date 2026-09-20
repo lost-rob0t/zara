@@ -35,7 +35,9 @@ class AndroidPrologStudioContractTest {
         assertTrue(submit.contains("remoteConversationId = remoteConversationId"))
         assertTrue(session.contains("private fun submitAutoRemoteFirst("))
         assertTrue(submit.contains("RuntimeMode.Remote ->"))
-        assertTrue(submit.contains("Remote mode requires an authenticated Zara server"))
+        assertTrue(submit.contains("RemoteUnavailableException"))
+        val failure = File("src/main/java/ai/zara/app/telemetry/ZaraFailure.kt").readText()
+        assertTrue(failure.contains("Remote mode requires an authenticated Zara server"))
         assertTrue(activity.contains("RuntimeModePreferenceStore"))
     }
 
