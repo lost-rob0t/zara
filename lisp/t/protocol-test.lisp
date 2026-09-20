@@ -10,14 +10,13 @@
     (is (= 2 (length frames)))
     (is (equalp (babel:string-to-octets "ZARA/1" :encoding :utf-8)
                 (aref frames 0)))
-    (let ((json (jsown:parse (babel:octets-to-string (aref frames 1)
-                                                     :encoding :utf-8))))
-      (is (string= "hello" (jsown:val json "type")))
-      (is (string= "hello-1" (jsown:val json "id")))
-      (is (= 0 (jsown:val json "payload_count"))))))
+    (let ((json (com.inuoe.jzon:parse (aref frames 1))))
+      (is (string= "hello" (gethash "type" json)))
+      (is (string= "hello-1" (gethash "id" json)))
+      (is (= 0 (gethash "payload_count" json))))))
 
 (test decode-hello-ok
-  (let* ((envelope (jsown:to-json
+  (let* ((envelope (com.inuoe.jzon:stringify
                     (zara::%json-object
                      "type" "hello.ok"
                      "id" "server-1"
@@ -45,15 +44,14 @@
                           "text" "hello"
                           "context_ids" (vector "ctx-a"))))
          (frames (zara:encode-message message))
-         (json (jsown:parse (babel:octets-to-string (aref frames 1)
-                                                    :encoding :utf-8))))
-    (is (string= "turn.submit" (jsown:val json "type")))
-    (is (string= "session-1" (jsown:val json "session_id")))
-    (is (string= "conversation-1" (jsown:val json "conversation_id")))
-    (is (string= "hello" (jsown:val (jsown:val json "body") "text")))))
+         (json (com.inuoe.jzon:parse (aref frames 1))))
+    (is (string= "turn.submit" (gethash "type" json)))
+    (is (string= "session-1" (gethash "session_id" json)))
+    (is (string= "conversation-1" (gethash "conversation_id" json)))
+    (is (string= "hello" (gethash "text" (gethash "body" json))))))
 
 (test unknown-server-type-fails-closed
-  (let* ((envelope (jsown:to-json
+  (let* ((envelope (com.inuoe.jzon:stringify
                     (zara::%json-object
                      "type" "future.magic"
                      "id" "server-1"
@@ -62,5 +60,15 @@
          (frames (vector
                   (babel:string-to-octets "ZARA/1" :encoding :utf-8)
                   (babel:string-to-octets envelope :encoding :utf-8))))
+    (signals zara:protocol-error
+      (zara:decode-message frames))))
+
+(test duplicate-envelope-key-fails-closed
+  (let ((frames
+          (vector
+           (babel:string-to-octets "ZARA/1" :encoding :utf-8)
+           (babel:string-to-octets
+            "{\"type\":\"pong\",\"type\":\"hello.ok\",\"id\":\"x\",\"timestamp_ns\":1,\"payload_count\":0}"
+            :encoding :utf-8))))
     (signals zara:protocol-error
       (zara:decode-message frames))))
