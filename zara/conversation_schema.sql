@@ -72,6 +72,20 @@ CREATE TABLE IF NOT EXISTS desktop_symbolic_projections (
         REFERENCES desktop_conversations(id) ON DELETE CASCADE
 );
 
+-- Legacy Desktop v3 could persist the symbolic projection under the host's
+-- numeric uid before local history moved to the portable local-owner key.
+-- Claim that projection before the platform-specific conversation/message
+-- migration runs so the durable dialogue state does not disappear on reopen.
+-- Nonnumeric uid:* and authenticated principals remain untouched.
+UPDATE desktop_symbolic_projections
+SET principal_id = 'local:owner'
+WHERE principal_id = '__zara_legacy_local_owner__'
+   OR (
+       substr(principal_id, 1, 4) = 'uid:'
+       AND length(substr(principal_id, 5)) > 0
+       AND substr(principal_id, 5) NOT GLOB '*[^0-9]*'
+   );
+
 CREATE INDEX IF NOT EXISTS idx_desktop_conversations_updated
     ON desktop_conversations(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_desktop_messages_conversation
