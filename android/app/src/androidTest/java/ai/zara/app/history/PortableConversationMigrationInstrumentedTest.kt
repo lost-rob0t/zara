@@ -24,6 +24,8 @@ class PortableConversationMigrationInstrumentedTest : AndroidTestCase() {
             assertEquals(listOf("remember this"), first.loadMessages(CONVERSATION_ID).map { it.content })
             assertTrue(indexExists(first.readableDatabase, "idx_desktop_symbolic_project"))
             assertTrue(indexExists(first.readableDatabase, "idx_desktop_symbolic_turn"))
+            assertTrue(columnExists(first.readableDatabase, "desktop_symbolic_projections", "dialogue_act"))
+            assertTrue(columnExists(first.readableDatabase, "desktop_symbolic_projections", "verified_outcome_refs"))
 
             val saved = first.saveSymbolicProjection(
                 SymbolicConversationProjection(
@@ -34,7 +36,9 @@ class PortableConversationMigrationInstrumentedTest : AndroidTestCase() {
                     outcome = "success",
                     projectId = "project-v2",
                     projectGeneration = 1,
+                    dialogueAct = "verified",
                     dialogueStateJson = "{\"act\":\"resume\"}",
+                    verifiedOutcomeRefs = listOf(VERIFIED_EFFECT_REF),
                     rendererProvenance = "symbolic-nlg/v1",
                     providerCalls = 0,
                     modelCalls = 0,
@@ -42,6 +46,8 @@ class PortableConversationMigrationInstrumentedTest : AndroidTestCase() {
                 expectedGeneration = 0,
             )
             saved.assertPureSymbolic()
+            assertEquals("verified", saved.dialogueAct)
+            assertEquals(listOf(VERIFIED_EFFECT_REF), saved.verifiedOutcomeRefs)
         } finally {
             first.close()
         }
@@ -55,6 +61,8 @@ class PortableConversationMigrationInstrumentedTest : AndroidTestCase() {
             projection.assertPureSymbolic()
             assertEquals("turn-v2", projection.turnId)
             assertEquals("success", projection.outcome)
+            assertEquals("verified", projection.dialogueAct)
+            assertEquals(listOf(VERIFIED_EFFECT_REF), projection.verifiedOutcomeRefs)
             assertEquals(0L, projection.providerCalls)
             assertEquals(0L, projection.modelCalls)
         } finally {
@@ -130,8 +138,18 @@ class PortableConversationMigrationInstrumentedTest : AndroidTestCase() {
             arrayOf(name),
         ).use { it.moveToFirst() }
 
+    private fun columnExists(db: SQLiteDatabase, table: String, name: String): Boolean =
+        db.rawQuery("PRAGMA table_info($table)", null).use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            while (cursor.moveToNext()) {
+                if (cursor.getString(nameIndex) == name) return@use true
+            }
+            false
+        }
+
     private companion object {
         const val CONVERSATION_ID = "legacy-v2-conversation"
         const val STAMP = "2026-09-20T00:00:00.000000"
+        const val VERIFIED_EFFECT_REF = "zara.verified-outcome/v1:effect:migrated-v2-turn"
     }
 }
