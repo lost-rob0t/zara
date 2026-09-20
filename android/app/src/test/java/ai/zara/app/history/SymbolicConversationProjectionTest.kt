@@ -12,6 +12,7 @@ class SymbolicConversationProjectionTest {
         runtimeGeneration: Long = 7,
         projectId: String? = "project-a",
         projectGeneration: Long = 1,
+        providerCalls: Long = 0,
         modelCalls: Long = 0,
     ) = SymbolicConversationProjection(
         conversationId = "conv-symbolic",
@@ -25,15 +26,17 @@ class SymbolicConversationProjectionTest {
         expertEvidenceJson = "[{\"evidence_id\":\"ev-1\"}]",
         verifiedFactsJson = "[{\"fact_id\":\"fact-1\"}]",
         rendererProvenance = "symbolic-nlg/v1",
+        providerCalls = providerCalls,
         modelCalls = modelCalls,
     )
 
     @Test
-    fun `initial pure symbolic projection is accepted with zero model calls`() {
+    fun `initial pure symbolic projection is accepted with zero provider and model calls`() {
         val proposed = projection()
 
         SymbolicProjectionContract.validateWrite(null, proposed, expectedGeneration = 0)
         proposed.assertPureSymbolic()
+        assertEquals(0L, proposed.providerCalls)
         assertEquals(0L, proposed.modelCalls)
     }
 
@@ -87,15 +90,32 @@ class SymbolicConversationProjectionTest {
     }
 
     @Test
-    fun `model call ledger cannot be rewound to fake zero`() {
-        val current = projection(generation = 1, modelCalls = 1)
+    fun `provider and model call ledgers cannot be rewound to fake zero`() {
+        val current = projection(generation = 1, providerCalls = 1, modelCalls = 1)
 
+        assertFailsWithMessage("provider-call ledger rewind") {
+            SymbolicProjectionContract.validateWrite(
+                current,
+                projection(generation = 2, providerCalls = 0, modelCalls = 1),
+                expectedGeneration = 1,
+            )
+        }
         assertFailsWithMessage("model-call ledger rewind") {
             SymbolicProjectionContract.validateWrite(
                 current,
-                projection(generation = 2, modelCalls = 0),
+                projection(generation = 2, providerCalls = 1, modelCalls = 0),
                 expectedGeneration = 1,
             )
+        }
+    }
+
+    @Test
+    fun `pure symbolic assertion rejects provider or model use`() {
+        assertFailsWithMessage("providerCalls=1") {
+            projection(providerCalls = 1).assertPureSymbolic()
+        }
+        assertFailsWithMessage("modelCalls=1") {
+            projection(modelCalls = 1).assertPureSymbolic()
         }
     }
 
@@ -107,10 +127,12 @@ class SymbolicConversationProjectionTest {
         ).readText()
 
         assertTrue(schema.contains("CREATE TABLE IF NOT EXISTS desktop_symbolic_projections"))
+        assertTrue(schema.contains("provider_calls INTEGER NOT NULL DEFAULT 0"))
         assertTrue(schema.contains("model_calls INTEGER NOT NULL DEFAULT 0"))
         assertTrue(schema.contains("FOREIGN KEY(conversation_id)"))
         assertTrue(source.contains("fun PortableConversationStore.saveSymbolicProjection"))
         assertTrue(source.contains("projection_generation = ?"))
+        assertTrue(source.contains("provider-call ledger rewind rejected"))
         assertTrue(source.contains("model-call ledger rewind rejected"))
     }
 
