@@ -48,9 +48,11 @@ private object PortableJsonValidator {
         }
     }
 
-    fun requireArray(value: String, name: String) {
-        require(Parser(value).parseDocument() == JsonContainerKind.ARRAY) {
-            "$name must be a JSON array"
+    fun requireObjectArray(value: String, name: String) {
+        try {
+            Parser(value).parseObjectArrayDocument()
+        } catch (error: IllegalArgumentException) {
+            throw IllegalArgumentException("$name must be a JSON array of objects: ${error.message}", error)
         }
     }
 
@@ -63,6 +65,28 @@ private object PortableJsonValidator {
             skipWhitespace()
             require(index == text.length) { "trailing JSON content" }
             return kind
+        }
+
+        fun parseObjectArrayDocument() {
+            skipWhitespace()
+            expect('[')
+            skipWhitespace()
+            if (consume(']')) {
+                skipWhitespace()
+                require(index == text.length) { "trailing JSON content" }
+                return
+            }
+            while (true) {
+                require(parseValue() == JsonContainerKind.OBJECT) {
+                    "top-level array item must be an object"
+                }
+                skipWhitespace()
+                if (consume(']')) break
+                expect(',')
+                skipWhitespace()
+            }
+            skipWhitespace()
+            require(index == text.length) { "trailing JSON content" }
         }
 
         private fun parseValue(): JsonContainerKind {
@@ -235,10 +259,10 @@ internal object SymbolicProjectionContract {
             "rendererProvenance exceeds 512 characters"
         }
         PortableJsonValidator.requireObject(projection.dialogueStateJson, "dialogueStateJson")
-        PortableJsonValidator.requireArray(projection.discourseEntitiesJson, "discourseEntitiesJson")
-        PortableJsonValidator.requireArray(projection.unresolvedQuestionsJson, "unresolvedQuestionsJson")
-        PortableJsonValidator.requireArray(projection.expertEvidenceJson, "expertEvidenceJson")
-        PortableJsonValidator.requireArray(projection.verifiedFactsJson, "verifiedFactsJson")
+        PortableJsonValidator.requireObjectArray(projection.discourseEntitiesJson, "discourseEntitiesJson")
+        PortableJsonValidator.requireObjectArray(projection.unresolvedQuestionsJson, "unresolvedQuestionsJson")
+        PortableJsonValidator.requireObjectArray(projection.expertEvidenceJson, "expertEvidenceJson")
+        PortableJsonValidator.requireObjectArray(projection.verifiedFactsJson, "verifiedFactsJson")
     }
 
     fun validateWrite(
