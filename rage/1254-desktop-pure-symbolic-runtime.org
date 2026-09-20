@@ -1,0 +1,28 @@
+#+title: RAGE 1254 Desktop Pure-Symbolic Runtime
+
+* Research
+- RuntimeHost already owns lifecycle, cancellation, stale-turn fencing, capability leases, plugin coordination, and canonical turn events.
+- Desktop submits canonical SubmitTurn commands through QtRuntimeBridge and keeps history in ConversationService/ConversationStore.
+- LangGraphRuntimeBackend constructs AgentManager, whose normal path owns provider/model setup; it cannot be the hard-zero provider-disabled boundary.
+- modules/symbolic_dialogue_turn.pl composes canonical intent_frames + symbolic_dialogue and explicitly leaves persistence to the canonical conversation projection.
+- Android already has a provider-free PureSymbolicConversationController; Desktop needs equivalent runtime semantics without a second history store or planner.
+
+* Design
+- Add a thin PureSymbolicRuntimeBackend under the existing RuntimeBackend/RuntimeHost boundary.
+- Select it explicitly with agent.backend = pure_symbolic before AgentManager is constructed.
+- The backend owns no conversation history, expert registry, planner, tool executor, or provider client.
+- All language semantics/rendering stay in canonical Prolog through PrologEngine and symbolic_dialogue_turn.pl.
+- Return hard-zero provider/model budget and usage metadata on every successful symbolic turn.
+- Fail closed on attachment/task-prompt inputs that do not yet have canonical pure-symbolic projection semantics; never delegate them to LangGraph/provider code.
+- Effects remain dispatch_required/verified response acts. This slice must not claim effect success or bypass RuntimeHost capability/approval/tool boundaries.
+
+* TDD
+- RED: selecting pure_symbolic must produce a provider-free backend rather than constructing AgentManager.
+- RED: a pure-symbolic turn must consult the canonical dialogue module and emit exact-zero usage/budget metadata.
+- RED: unsupported context inputs must fail closed before invoking symbolic or provider execution.
+
+* Evaluate
+- Pending implementation and exact-head CI.
+
+* Outcome
+- Pending.
