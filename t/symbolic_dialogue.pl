@@ -37,6 +37,26 @@ test(canonical_timer_clarification_carries_context_across_turns) :-
     assertion(Frame2 = frame(intent(ns(device), name('timer.set')),
         [slot(name(duration), value(duration(300)), origin(follow_up))], complete)).
 
+test(shared_context_validator_accepts_emitted_partial_and_completed_contexts) :-
+    symbolic_dialogue_turn:dialogue_turn("timer", passive, [], Turn1),
+    Turn1 = turn(_, _, Context1),
+    assertion(symbolic_dialogue_turn:valid_dialogue_context(Context1)),
+    symbolic_dialogue_turn:dialogue_turn("5 minutes", passive, Context1, Turn2),
+    Turn2 = turn(_, _, Context2),
+    assertion(symbolic_dialogue_turn:valid_dialogue_context(Context2)).
+
+test(shared_context_validator_accepts_ambiguous_context) :-
+    frame_ambiguous(Frame),
+    Context = partial_frame(Frame, [firefox, chromium, emacs]),
+    assertion(symbolic_dialogue_turn:valid_dialogue_context(Context)).
+
+test(shared_context_validator_rejects_mismatched_open_slots, [fail]) :-
+    frame_missing_timer(Frame),
+    symbolic_dialogue_turn:valid_dialogue_context(partial_frame(Frame, [target])).
+
+test(shared_context_validator_rejects_future_shape, [fail]) :-
+    symbolic_dialogue_turn:valid_dialogue_context(future_context(foo)).
+
 test(completed_prior_frame_correction_is_deterministic) :-
     frame_timer_5m(Frame0),
     symbolic_dialogue_turn:dialogue_turn(
