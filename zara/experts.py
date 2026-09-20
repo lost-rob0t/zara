@@ -325,15 +325,31 @@ class ExpertRegistry(_impl.ExpertRegistry):
             ):
                 self._handlers[handle.expert_id] = handler
 
-        is_success = result.verdict is ExpertVerdict.SUCCEEDED
         if result.replayed:
             usage: Any = result.usage
+            handler_terminal = True
         else:
             outcome = raw_outcome.get("value")
             usage = outcome.get("usage") if isinstance(outcome, Mapping) else None
+            handler_terminal = False
+            if isinstance(outcome, Mapping):
+                raw_verdict = outcome.get("verdict")
+                if isinstance(raw_verdict, str):
+                    try:
+                        ExpertVerdict(raw_verdict)
+                    except ValueError:
+                        pass
+                    else:
+                        handler_terminal = True
 
+        require_actual_usage = (
+            result.replayed
+            or handler_terminal
+            or bool(raw_outcome.get("cancelled"))
+            or bool(raw_outcome.get("stale"))
+        )
         if not isinstance(usage, Mapping) or "model_calls" not in usage:
-            if not is_success and not result.replayed and "value" not in raw_outcome:
+            if not require_actual_usage:
                 return result
             self._discard_invalid_success(
                 result,
