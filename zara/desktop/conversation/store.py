@@ -354,26 +354,97 @@ class ConversationStore(SymbolicProjectionMixin):
             for row in rows
         ]
 
+    def _recover_interrupted_turns(self, conversation_id: str) -> None:
+        """Atomically terminalize process-local work left live across restart.
+
+        A fresh process cannot own an old pending/streaming runtime turn. Keep
+        the canonical message and its matching symbolic projection in lockstep:
+        the message becomes cancelled, while a still-pending projection for
+        that exact turn becomes ``interrupted`` and advances its projection
+        generation. Advancing the generation is the stale-callback fence: a
+        completion from the dead runtime cannot later overwrite recovered
+        dialogue state or evidence.
+        """
+
+        owner = self._storage_principal_id
+        now = _now_iso()
+        with self._db.transaction(immediate=True) as conn:
+            interrupted = conn.execute(
+                """
+                SELECT id, turn_id
+                FROM desktop_messages
+                WHERE conversation_id = ? AND principal_id = ?
+                  AND status IN (?, ?)
+                ORDER BY sequence ASC
+                """,
+                (
+                    conversation_id,
+                    owner,
+                    MessageStatus.PENDING.value,
+                    MessageStatus.STREAMING.value,
+                ),
+            ).fetchall()
+            if not interrupted:
+                return
+
+            for row in interrupted:
+                conn.execute(
+                    """
+                    UPDATE desktop_messages
+                    SET status = ?,
+                        error = CASE WHEN error = '' THEN ? ELSE error END,
+                        updated_at = ?
+                    WHERE id = ? AND conversation_id = ? AND principal_id = ?
+                    """,
+                    (
+                        MessageStatus.CANCELLED.value,
+                        _INTERRUPTED_ERROR,
+                        now,
+                        row["id"],
+                        conversation_id,
+                        owner,
+                    ),
+                )
+                turn_id = row["turn_id"]
+                if turn_id is not None:
+                    conn.execute(
+                        """
+                        UPDATE desktop_symbolic_projections
+                        SET outcome = 'interrupted',
+                            projection_generation = projection_generation + 1,
+                            updated_at = ?
+                        WHERE conversation_id = ? AND principal_id = ?
+                          AND turn_id = ? AND outcome = 'pending'
+                        """,
+                        (now, conversation_id, owner, turn_id),
+                    )
+
+            conn.execute(
+                """
+                UPDATE desktop_conversations
+                SET updated_at = ?
+                WHERE id = ? AND principal_id = ?
+                """,
+                (now, conversation_id, owner),
+            )
+
     def load_state(self, conversation_id: str) -> ConversationState:
         """Load durable history and recover work that cannot still be live.
 
         Runtime turn ownership is process-local to ``RuntimeHost``. If Zara is
         constructing a fresh ``ConversationState`` from SQLite, a previously
         persisted pending/streaming row cannot represent a live turn in this
-        service instance. Mark it interrupted instead of restoring a phantom
-        ``active_turn_id`` that would leave Send disabled forever after a crash
-        or restart.
+        service instance. Recover the canonical message and matching symbolic
+        projection atomically instead of restoring a phantom ``active_turn_id``
+        that would leave Send disabled forever after a crash or restart.
         """
         conversation = self.get_conversation(conversation_id)
         if conversation is None:
             raise KeyError(conversation_id)
+        self._recover_interrupted_turns(conversation_id)
         messages = self.load_messages(conversation_id)
-        for message in messages:
-            if message.status in {MessageStatus.PENDING, MessageStatus.STREAMING}:
-                message.status = MessageStatus.CANCELLED
-                if not message.error:
-                    message.error = _INTERRUPTED_ERROR
-                self.save_message(message)
+        conversation = self.get_conversation(conversation_id)
+        assert conversation is not None
         return ConversationState(
             conversation=conversation,
             messages=messages,
