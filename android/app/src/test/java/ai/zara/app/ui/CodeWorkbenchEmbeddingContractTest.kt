@@ -15,5 +15,8 @@ class CodeWorkbenchEmbeddingContractTest {
         assertTrue(app.contains("AppSurface.Code -> CodeWorkbenchSurface("))
         assertTrue(editor.contains("CodeWorkbenchSurface("))
         assertTrue(editor.contains("themeTokens(ZaraTheme.Outrun"))
+        val workbench = File("../code-workbench/src/main/java/ai/zara/code/workbench/CodeWorkbenchSurface.kt").readText()
+        assertTrue(workbench.contains("PrologClient("))
+        assertTrue(workbench.contains("PROLOG QUERY"))
     }
 }
