@@ -19,6 +19,7 @@ from ._experts_v1 import *  # noqa: F401,F403
 
 
 _ORIGINAL_HANDLER_ATTR = "__zara_original_expert_handler__"
+_RESERVED_HOST_INPUTS = frozenset({"expert_operation"})
 
 
 class ExpertRegistry(_impl.ExpertRegistry):
@@ -48,6 +49,16 @@ class ExpertRegistry(_impl.ExpertRegistry):
         descriptor: ExpertDescriptor,
         handler: Optional[Any],
     ) -> None:
+        for operation in descriptor.operations:
+            reserved = _RESERVED_HOST_INPUTS.intersection(
+                spec.name for spec in operation.input_fields
+            )
+            if reserved:
+                field_name = sorted(reserved)[0]
+                raise ExpertInvalidInputError(
+                    f"operation input field {field_name!r} is reserved host metadata"
+                )
+
         if handler is None:
             return
         if not callable(handler):
