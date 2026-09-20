@@ -158,6 +158,7 @@ class PureSymbolicConversationControllerTest {
 
         assertEquals(listOf("?- true."), queries)
         assertEquals(PureSymbolicRoute.EXPLICIT_QUERY, result.route)
+        assertEquals("symbolic-term/v1", result.renderer)
         assertEquals("Result = ok", result.turn.text)
         assertEquals(0, result.modelCalls)
     }
