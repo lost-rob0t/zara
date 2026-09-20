@@ -3,18 +3,24 @@
 The projection lives in Zara's existing conversation SQLite database and is
 keyed by the same conversation/principal identity. It is deliberately not a
 second history store. Higher symbolic layers own the meaning of the JSON
-payloads; this module owns persistence, monotonic usage accounting, and stale
-write fencing only.
+payloads; this module owns persistence, monotonic usage accounting, stale
+write fencing, and the bounded cross-platform dialogue/evidence references
+required to rebuild natural symbolic conversation after restart.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Optional
 
 _OUTCOMES = frozenset({"unknown", "pending", "success", "cancelled", "interrupted", "error"})
 _TERMINAL_OUTCOMES = frozenset({"success", "cancelled", "interrupted", "error"})
+_DIALOGUE_ACT_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_VERIFIED_OUTCOME_REF_RE = re.compile(
+    r"^zara\.verified-outcome/v1:(?:effect|outcome):[A-Za-z0-9][A-Za-z0-9._:/#-]{0,383}$"
+)
 
 
 def _require_exact_integer(name: str, value: object, *, minimum: int = 0) -> int:
@@ -64,6 +70,40 @@ def _decode_array(value: str) -> list[dict[str, Any]]:
     return decoded
 
 
+def _validate_dialogue_act(value: str) -> str:
+    if not isinstance(value, str) or _DIALOGUE_ACT_RE.fullmatch(value) is None:
+        raise ValueError("dialogue_act must be a normalized symbolic act token")
+    return value
+
+
+def _validate_verified_outcome_refs(value: list[str]) -> list[str]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise TypeError("verified_outcome_refs must be a list of strings")
+    if len(value) > 64:
+        raise ValueError("verified_outcome_refs exceeds 64 entries")
+    if len(set(value)) != len(value):
+        raise ValueError("verified_outcome_refs must be unique")
+    for item in value:
+        if _VERIFIED_OUTCOME_REF_RE.fullmatch(item) is None:
+            raise ValueError(f"invalid verified outcome reference: {item!r}")
+    return value
+
+
+def _encode_verified_outcome_refs(value: list[str]) -> str:
+    _validate_verified_outcome_refs(value)
+    return "\n".join(value)
+
+
+def _decode_verified_outcome_refs(value: str) -> list[str]:
+    if not isinstance(value, str):
+        raise ValueError("stored verified outcome references are not text")
+    refs = [] if value == "" else value.split("\n")
+    try:
+        return _validate_verified_outcome_refs(refs)
+    except (TypeError, ValueError) as error:
+        raise ValueError("stored verified outcome references are invalid") from error
+
+
 @dataclass(frozen=True)
 class SymbolicConversationProjection:
     conversation_id: str
@@ -73,11 +113,13 @@ class SymbolicConversationProjection:
     outcome: str = "unknown"
     project_id: Optional[str] = None
     project_generation: int = 0
+    dialogue_act: str = "unknown"
     dialogue_state: dict[str, Any] = field(default_factory=dict)
     discourse_entities: list[dict[str, Any]] = field(default_factory=list)
     unresolved_questions: list[dict[str, Any]] = field(default_factory=list)
     expert_evidence: list[dict[str, Any]] = field(default_factory=list)
     verified_facts: list[dict[str, Any]] = field(default_factory=list)
+    verified_outcome_refs: list[str] = field(default_factory=list)
     renderer_provenance: str = ""
     provider_calls: int = 0
     model_calls: int = 0
@@ -97,6 +139,8 @@ class SymbolicConversationProjection:
         _require_exact_integer("model_calls", self.model_calls)
         if self.project_id is not None and len(self.project_id) > 512:
             raise ValueError("project_id exceeds 512 characters")
+        _validate_dialogue_act(self.dialogue_act)
+        _validate_verified_outcome_refs(self.verified_outcome_refs)
         if len(self.renderer_provenance) > 512:
             raise ValueError("renderer_provenance exceeds 512 characters")
         _canonical_object(self.dialogue_state)
@@ -146,11 +190,13 @@ class SymbolicProjectionMixin:
             outcome=row["outcome"],
             project_id=row["project_id"],
             project_generation=int(row["project_generation"]),
+            dialogue_act=row["dialogue_act"],
             dialogue_state=_decode_object(row["dialogue_state_json"]),
             discourse_entities=_decode_array(row["discourse_entities_json"]),
             unresolved_questions=_decode_array(row["unresolved_questions_json"]),
             expert_evidence=_decode_array(row["expert_evidence_json"]),
             verified_facts=_decode_array(row["verified_facts_json"]),
+            verified_outcome_refs=_decode_verified_outcome_refs(row["verified_outcome_refs"]),
             renderer_provenance=row["renderer_provenance"],
             provider_calls=int(row["provider_calls"]),
             model_calls=int(row["model_calls"]),
@@ -239,11 +285,13 @@ class SymbolicProjectionMixin:
                 stored.runtime_generation,
                 stored.project_id,
                 stored.project_generation,
+                stored.dialogue_act,
                 _canonical_object(stored.dialogue_state),
                 _canonical_array(stored.discourse_entities),
                 _canonical_array(stored.unresolved_questions),
                 _canonical_array(stored.expert_evidence),
                 _canonical_array(stored.verified_facts),
+                _encode_verified_outcome_refs(stored.verified_outcome_refs),
                 stored.renderer_provenance,
                 stored.provider_calls,
                 stored.model_calls,
@@ -255,12 +303,12 @@ class SymbolicProjectionMixin:
                     INSERT INTO desktop_symbolic_projections (
                         conversation_id, principal_id, turn_id, outcome,
                         projection_generation, runtime_generation, project_id,
-                        project_generation, dialogue_state_json,
+                        project_generation, dialogue_act, dialogue_state_json,
                         discourse_entities_json, unresolved_questions_json,
                         expert_evidence_json, verified_facts_json,
-                        renderer_provenance, provider_calls, model_calls,
-                        updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        verified_outcome_refs, renderer_provenance,
+                        provider_calls, model_calls, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     parameters,
                 )
@@ -270,11 +318,11 @@ class SymbolicProjectionMixin:
                     UPDATE desktop_symbolic_projections
                     SET turn_id = ?, outcome = ?, projection_generation = ?,
                         runtime_generation = ?, project_id = ?,
-                        project_generation = ?, dialogue_state_json = ?,
+                        project_generation = ?, dialogue_act = ?, dialogue_state_json = ?,
                         discourse_entities_json = ?, unresolved_questions_json = ?,
                         expert_evidence_json = ?, verified_facts_json = ?,
-                        renderer_provenance = ?, provider_calls = ?, model_calls = ?,
-                        updated_at = ?
+                        verified_outcome_refs = ?, renderer_provenance = ?,
+                        provider_calls = ?, model_calls = ?, updated_at = ?
                     WHERE conversation_id = ? AND principal_id = ?
                       AND projection_generation = ?
                     """,
@@ -285,11 +333,13 @@ class SymbolicProjectionMixin:
                         stored.runtime_generation,
                         stored.project_id,
                         stored.project_generation,
+                        stored.dialogue_act,
                         _canonical_object(stored.dialogue_state),
                         _canonical_array(stored.discourse_entities),
                         _canonical_array(stored.unresolved_questions),
                         _canonical_array(stored.expert_evidence),
                         _canonical_array(stored.verified_facts),
+                        _encode_verified_outcome_refs(stored.verified_outcome_refs),
                         stored.renderer_provenance,
                         stored.provider_calls,
                         stored.model_calls,
