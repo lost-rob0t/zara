@@ -59,6 +59,7 @@ class ConversationStore(SymbolicProjectionMixin):
             else self._principal.principal_id
         )
         self._ensure_schema()
+        self._ensure_symbolic_policy_columns()
         self._claim_legacy_rows_for_local_owner()
 
     @property
