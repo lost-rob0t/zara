@@ -43,10 +43,13 @@ CREATE TABLE IF NOT EXISTS desktop_symbolic_projections (
     turn_id TEXT,
     outcome TEXT NOT NULL DEFAULT 'unknown'
         CHECK (outcome IN ('unknown', 'pending', 'success', 'cancelled', 'interrupted', 'error')),
-    projection_generation INTEGER NOT NULL DEFAULT 0 CHECK (projection_generation >= 0),
-    runtime_generation INTEGER NOT NULL DEFAULT 0 CHECK (runtime_generation >= 0),
+    projection_generation INTEGER NOT NULL DEFAULT 0
+        CHECK (typeof(projection_generation) = 'integer' AND projection_generation >= 0),
+    runtime_generation INTEGER NOT NULL DEFAULT 0
+        CHECK (typeof(runtime_generation) = 'integer' AND runtime_generation >= 0),
     project_id TEXT,
-    project_generation INTEGER NOT NULL DEFAULT 0 CHECK (project_generation >= 0),
+    project_generation INTEGER NOT NULL DEFAULT 0
+        CHECK (typeof(project_generation) = 'integer' AND project_generation >= 0),
     dialogue_act TEXT NOT NULL DEFAULT 'unknown',
     dialogue_state_json TEXT NOT NULL DEFAULT '{}',
     discourse_entities_json TEXT NOT NULL DEFAULT '[]',
@@ -56,10 +59,13 @@ CREATE TABLE IF NOT EXISTS desktop_symbolic_projections (
     verified_outcome_refs TEXT NOT NULL DEFAULT '',
     renderer_provenance TEXT NOT NULL DEFAULT '',
     providers_enabled INTEGER NOT NULL DEFAULT 1
-        CHECK (providers_enabled IN (0, 1)),
-    max_model_calls INTEGER NOT NULL DEFAULT 1 CHECK (max_model_calls >= 0),
-    provider_calls INTEGER NOT NULL DEFAULT 0 CHECK (provider_calls >= 0),
-    model_calls INTEGER NOT NULL DEFAULT 0 CHECK (model_calls >= 0),
+        CHECK (typeof(providers_enabled) = 'integer' AND providers_enabled IN (0, 1)),
+    max_model_calls INTEGER NOT NULL DEFAULT 1
+        CHECK (typeof(max_model_calls) = 'integer' AND max_model_calls >= 0),
+    provider_calls INTEGER NOT NULL DEFAULT 0
+        CHECK (typeof(provider_calls) = 'integer' AND provider_calls >= 0),
+    model_calls INTEGER NOT NULL DEFAULT 0
+        CHECK (typeof(model_calls) = 'integer' AND model_calls >= 0),
     updated_at TEXT NOT NULL,
     PRIMARY KEY(conversation_id, principal_id),
     FOREIGN KEY(conversation_id)
