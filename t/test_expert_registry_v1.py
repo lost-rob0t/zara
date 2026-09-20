@@ -37,6 +37,8 @@ from zara.experts import (
 
 FIXTURE = Path(__file__).resolve().parents[1] / "contracts" / "zara-expert-v1" / "descriptors.tsv"
 
+_UNSET = object()
+
 
 def _items(value: str) -> tuple[str, ...]:
     if not value or value == "-":
@@ -155,7 +157,7 @@ class RecordingHandler:
         *,
         effect_receipts: tuple[dict[str, Any], ...] = (),
         raises: bool = False,
-        returns: Any = None,
+        returns: Any = _UNSET,
     ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.effect_receipts = effect_receipts
@@ -166,7 +168,7 @@ class RecordingHandler:
         self.calls.append(kwargs)
         if self.raises:
             raise RuntimeError("expert handler exploded")
-        if self.returns is not None:
+        if self.returns is not _UNSET:
             return self.returns
         return {
             "verdict": "succeeded",
@@ -515,10 +517,10 @@ def test_deactivate_drains_and_fences_handle() -> None:
 def test_backend_loss_marks_unavailable_and_recovery_restores_activation() -> None:
     registry, _, handle = todo_registry()
 
-    registry.mark_backend_unavailable("zara:expert/todo", "swipl crashed")
+    registry.mark_backend_unavailable("zara:expert/todo", "swipl-crashed")
 
     assert registry.describe("zara:expert/todo")["availability"] == "unavailable"
-    with pytest.raises(ExpertUnavailableError, match="swipl crashed") as excinfo:
+    with pytest.raises(ExpertUnavailableError, match="swipl-crashed") as excinfo:
         registry.invoke(handle, "route.explain", {})
     assert excinfo.value.code is ExpertErrorCode.UNAVAILABLE
     with pytest.raises(ExpertContractError, match="transition"):
@@ -666,7 +668,7 @@ def test_match_ambiguity_is_typed_error_with_sorted_candidates() -> None:
         registry.match("todo tasks planning")
 
     assert excinfo.value.code is ExpertErrorCode.AMBIGUITY
-    assert excinfo.value.candidates == [
+    assert list(excinfo.value.candidates) == [
         "zara:expert/todo",
         "zara:expert/todo-clone",
     ]
@@ -794,10 +796,16 @@ def test_activation_gates_availability_backend_and_protocol() -> None:
         registry.activate("user:alice", "ws:main", "zara:expert/prolog-rlm")
     assert absent_error.value.code is ExpertErrorCode.UNAVAILABLE
 
-    unavailable = descriptor(availability="unavailable", unavailable_reason="fixture down")
+    unavailable = descriptor(
+        expert_id="zara:expert/moody",
+        manifest_digest="sha256:moody.expert.v1",
+        name="Moody Expert",
+        availability="unavailable",
+        unavailable_reason="fixture-down",
+    )
     registry.register(unavailable, RecordingHandler())
-    with pytest.raises(ExpertUnavailableError, match="fixture down"):
-        registry.activate("user:alice", "ws:main", "zara:expert/todo")
+    with pytest.raises(ExpertUnavailableError, match="fixture-down"):
+        registry.activate("user:alice", "ws:main", "zara:expert/moody")
 
     future_descriptor = replace(
         ExpertDescriptor.from_wire(
