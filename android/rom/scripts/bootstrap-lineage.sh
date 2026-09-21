@@ -24,9 +24,13 @@ fi
 mkdir -p .repo/local_manifests
 cp "$rom_dir/local_manifests/zara.xml" .repo/local_manifests/zara.xml
 
+if [[ -f vendor/lineage/config/common.mk ]]; then
+    "$rom_dir/scripts/apply-product-hook.sh" "$dest" --remove
+fi
+
 repo sync
 
-vendor/zara/android/rom/scripts/apply-product-hook.sh "$dest"
+vendor/zara/android/rom/scripts/apply-product-hook.sh "$dest" --apply
 
 printf 'LineageOS %s synced at %s\n' "$branch" "$dest"
 printf 'Next: vendor/zara/android/rom/scripts/stage-apks.sh\n'
