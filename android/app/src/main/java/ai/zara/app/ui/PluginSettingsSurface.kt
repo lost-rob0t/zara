@@ -79,7 +79,7 @@ internal fun PluginSettingsSurface(padding: PaddingValues) {
                     )
                 }
             }
-            visible.forEach(::PluginCatalogCard)
+            visible.forEach { plugin -> PluginCatalogCard(plugin) }
         } else {
             SectionCard("CATALOG UNAVAILABLE") {
                 MutedNotice(
