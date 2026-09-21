@@ -15,11 +15,53 @@ class SymbolicConversationContinuityGateTest {
         val incoming = fixture(projectionGeneration = 5, runtimeGeneration = 8)
         val encoded = SymbolicConversationEdgeCodec.encode(incoming)
 
-        assertEquals(incoming, SymbolicConversationContinuityGate.decodeAccepted(current, encoded))
+        assertEquals(incoming, decodeAccepted(current, encoded))
         assertNull(
-            SymbolicConversationContinuityGate.decodeAccepted(
+            decodeAccepted(
                 current,
                 encoded + byteArrayOf(0x01),
+            ),
+        )
+    }
+
+    @Test
+    fun initialProjectionRequiresExplicitSelectedScope() {
+        val incoming = fixture()
+        assertTrue(accepts(null, incoming))
+
+        val wrongPrincipal = fixture(principalId = "principal:bob")
+        assertFalse(
+            SymbolicConversationContinuityGate.accepts(
+                EXPECTED_PRINCIPAL_ID,
+                EXPECTED_CONVERSATION_ID,
+                null,
+                wrongPrincipal,
+            ),
+        )
+        assertNull(
+            SymbolicConversationContinuityGate.decodeAccepted(
+                EXPECTED_PRINCIPAL_ID,
+                EXPECTED_CONVERSATION_ID,
+                null,
+                SymbolicConversationEdgeCodec.encode(wrongPrincipal),
+            ),
+        )
+
+        val wrongConversation = fixture(conversationId = "chat-other")
+        assertFalse(
+            SymbolicConversationContinuityGate.accepts(
+                EXPECTED_PRINCIPAL_ID,
+                EXPECTED_CONVERSATION_ID,
+                null,
+                wrongConversation,
+            ),
+        )
+        assertNull(
+            SymbolicConversationContinuityGate.decodeAccepted(
+                EXPECTED_PRINCIPAL_ID,
+                EXPECTED_CONVERSATION_ID,
+                null,
+                SymbolicConversationEdgeCodec.encode(wrongConversation),
             ),
         )
     }
@@ -28,7 +70,7 @@ class SymbolicConversationContinuityGateTest {
     fun acceptsFreshPureSymbolicProjectionForSameScope() {
         val current = fixture(projectionGeneration = 4, runtimeGeneration = 7)
         val incoming = fixture(projectionGeneration = 5, runtimeGeneration = 8)
-        assertTrue(SymbolicConversationContinuityGate.accepts(current, incoming))
+        assertTrue(accepts(current, incoming))
     }
 
     @Test
@@ -36,27 +78,48 @@ class SymbolicConversationContinuityGateTest {
         val current = fixture(projectionGeneration = 4, runtimeGeneration = 7)
 
         assertFalse(
-            SymbolicConversationContinuityGate.accepts(
+            accepts(
                 current,
                 fixture(principalId = "principal:bob", projectionGeneration = 5, runtimeGeneration = 8),
             ),
         )
         assertFalse(
-            SymbolicConversationContinuityGate.accepts(
+            accepts(
                 current,
                 fixture(conversationId = "chat-other", projectionGeneration = 5, runtimeGeneration = 8),
             ),
         )
         assertFalse(
-            SymbolicConversationContinuityGate.accepts(
+            accepts(
                 current,
                 fixture(projectionGeneration = 4, runtimeGeneration = 8),
             ),
         )
         assertFalse(
-            SymbolicConversationContinuityGate.accepts(
+            accepts(
                 current,
                 fixture(projectionGeneration = 5, runtimeGeneration = 6),
+            ),
+        )
+    }
+
+    @Test
+    fun rejectsCurrentProjectionOutsideSelectedScope() {
+        val incoming = fixture(projectionGeneration = 5, runtimeGeneration = 8)
+        assertFalse(
+            SymbolicConversationContinuityGate.accepts(
+                EXPECTED_PRINCIPAL_ID,
+                EXPECTED_CONVERSATION_ID,
+                fixture(principalId = "principal:bob", projectionGeneration = 4, runtimeGeneration = 7),
+                incoming,
+            ),
+        )
+        assertFalse(
+            SymbolicConversationContinuityGate.accepts(
+                EXPECTED_PRINCIPAL_ID,
+                EXPECTED_CONVERSATION_ID,
+                fixture(conversationId = "chat-other", projectionGeneration = 4, runtimeGeneration = 7),
+                incoming,
             ),
         )
     }
@@ -66,13 +129,13 @@ class SymbolicConversationContinuityGateTest {
         val current = fixture(projectId = "one", projectGeneration = 3, projectionGeneration = 4)
 
         assertFalse(
-            SymbolicConversationContinuityGate.accepts(
+            accepts(
                 current,
                 fixture(projectId = "two", projectGeneration = 3, projectionGeneration = 5),
             ),
         )
         assertTrue(
-            SymbolicConversationContinuityGate.accepts(
+            accepts(
                 current,
                 fixture(projectId = "two", projectGeneration = 4, projectionGeneration = 5),
             ),
@@ -81,26 +144,46 @@ class SymbolicConversationContinuityGateTest {
 
     @Test
     fun refusesAnyProviderOrModelAuthorityInPureSymbolicEdgePath() {
-        assertFalse(SymbolicConversationContinuityGate.accepts(null, fixture(providersEnabled = true)))
-        assertFalse(SymbolicConversationContinuityGate.accepts(null, fixture(maxModelCalls = 1)))
-        assertFalse(SymbolicConversationContinuityGate.accepts(null, fixture(maxModelCalls = 1, modelCalls = 1)))
-        assertFalse(SymbolicConversationContinuityGate.accepts(null, fixture(providerCalls = 1)))
+        assertFalse(accepts(null, fixture(providersEnabled = true)))
+        assertFalse(accepts(null, fixture(maxModelCalls = 1)))
+        assertFalse(accepts(null, fixture(maxModelCalls = 1, modelCalls = 1)))
+        assertFalse(accepts(null, fixture(providerCalls = 1)))
     }
 
     @Test
     fun refusesNonCanonicalDialogueOrRendererProvenance() {
-        assertFalse(SymbolicConversationContinuityGate.accepts(null, fixture(dialogueAct = "answer")))
+        assertFalse(accepts(null, fixture(dialogueAct = "answer")))
         assertFalse(
-            SymbolicConversationContinuityGate.accepts(
+            accepts(
                 null,
                 fixture(rendererProvenance = "model-fallback/v1"),
             ),
         )
     }
 
+    private fun accepts(
+        current: SymbolicConversationEdgeSnapshot?,
+        incoming: SymbolicConversationEdgeSnapshot,
+    ): Boolean = SymbolicConversationContinuityGate.accepts(
+        EXPECTED_PRINCIPAL_ID,
+        EXPECTED_CONVERSATION_ID,
+        current,
+        incoming,
+    )
+
+    private fun decodeAccepted(
+        current: SymbolicConversationEdgeSnapshot?,
+        encoded: ByteArray,
+    ): SymbolicConversationEdgeSnapshot? = SymbolicConversationContinuityGate.decodeAccepted(
+        EXPECTED_PRINCIPAL_ID,
+        EXPECTED_CONVERSATION_ID,
+        current,
+        encoded,
+    )
+
     private fun fixture(
-        principalId: String = "principal:alice",
-        conversationId: String = "chat-1",
+        principalId: String = EXPECTED_PRINCIPAL_ID,
+        conversationId: String = EXPECTED_CONVERSATION_ID,
         projectionGeneration: Long = 1,
         runtimeGeneration: Long = 1,
         projectId: String? = "dotfiles",
@@ -129,4 +212,9 @@ class SymbolicConversationContinuityGateTest {
         modelCalls = modelCalls,
         providerCalls = providerCalls,
     )
+
+    private companion object {
+        const val EXPECTED_PRINCIPAL_ID = "principal:alice"
+        const val EXPECTED_CONVERSATION_ID = "chat-1"
+    }
 }
