@@ -378,15 +378,15 @@ internal object AndroidPureSymbolicConversationFactory {
      *
      * The first solution is exactly the renderer result used by the existing UI contract. The
      * second wraps Context1 so Kotlin can distinguish continuation state without replaying the
-     * dialogue turn. `once/1` commits the router+renderer to one deterministic solution before the
-     * two Result alternatives are enumerated, preventing a backtracking runtime from re-entering
-     * expert/effectful dialogue work while the JNI bridge drains Result solutions.
+     * dialogue turn. ISO if-then-else commits the router+renderer condition to one deterministic
+     * solution before the two Result alternatives are enumerated. Unlike once/1, this form crosses
+     * the existing bounded mobile Prolog query policy without widening that policy.
      */
     internal fun dialogueTurnEnvelopeQuery(
         utterance: String,
         contextTerm: String,
-    ): String = "once((" + dialogueTurnPrelude(utterance, contextTerm) +
-        ", symbolic_dialogue:render_response(Act, Response))), " +
+    ): String = "((" + dialogueTurnPrelude(utterance, contextTerm) +
+        ", symbolic_dialogue:render_response(Act, Response)) -> true ; fail), " +
         "(Result = Response ; Result = dialogue_context(Context1))"
 
     private fun dialogueTurnPrelude(utterance: String, contextTerm: String): String {
