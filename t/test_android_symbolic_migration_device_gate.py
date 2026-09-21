@@ -173,3 +173,20 @@ def test_symbolic_emulator_gate_preserves_current_master_device_acceptance() -> 
     assert '"security_admin_path": os.fspath(state.control_socket_path)' in fixture
     assert "_wait_for_transport_ready(" in fixture
     assert "ZmqZaraClient(" in fixture
+
+
+def test_emulator_gate_executes_every_pure_symbolic_android_contract() -> None:
+    gate = EMULATOR_GATE.read_text(encoding="utf-8")
+
+    # connectedDebugAndroidTest is run with an explicit class filter. Keep every
+    # pure-symbolic acceptance class in that filter so a new androidTest cannot
+    # silently compile without ever executing on the emulator.
+    required_classes = (
+        "ai.zara.app.prolog.NativeTreallaResultBindingInstrumentedTest",
+        "ai.zara.app.prolog.AndroidPureSymbolicContextRoundTripInstrumentedTest",
+        "ai.zara.app.prolog.AndroidPureSymbolicPersistenceBoundaryInstrumentedTest",
+        "ai.zara.app.conversations.CanonicalConversationProjectSwitchFenceInstrumentedTest",
+        "ai.zara.app.prolog.AndroidPureSymbolicConversationInstrumentedTest",
+    )
+    for class_name in required_classes:
+        assert class_name in gate
