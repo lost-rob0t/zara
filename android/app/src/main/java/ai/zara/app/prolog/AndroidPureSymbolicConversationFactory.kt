@@ -257,7 +257,7 @@ internal object AndroidPureSymbolicConversationFactory {
         context0: String,
         turnId: String,
     ): SymbolicConversationProjection {
-        val runtimeGeneration = current?.runtimeGeneration?.let(Math::incrementExact) ?: 1L
+        val runtimeGeneration = current?.runtimeGeneration?.let { Math.addExact(it, 1L) } ?: 1L
         val base = current ?: SymbolicConversationProjection(
             conversationId = conversationId,
             projectionGeneration = expectedGeneration + 1L,
@@ -284,7 +284,7 @@ internal object AndroidPureSymbolicConversationFactory {
         contextTerm: String,
         outcome: String,
     ): SymbolicConversationProjection = pending.copy(
-        projectionGeneration = Math.incrementExact(pending.projectionGeneration),
+        projectionGeneration = Math.addExact(pending.projectionGeneration, 1L),
         outcome = outcome,
         dialogueStateJson = SymbolicDialogueContextCodec.encode(contextTerm),
         rendererProvenance = if (outcome == "success") "symbolic-dcg/v1" else "",
@@ -396,8 +396,6 @@ internal object AndroidPureSymbolicConversationFactory {
             }
         }
     }
-
-    private fun Math.incrementExact(value: Long): Long = addExact(value, 1L)
 
     private const val DIALOGUE_CONTEXT_PREFIX = "dialogue_context("
     private const val MAX_UTTERANCE_CHARS = 8_192
