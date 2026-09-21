@@ -75,7 +75,8 @@ parity_main :-
 % is committed once, and response + Context1 are then exposed as the two
 % Result solutions consumed by the bounded native adapter.
 parity_dialogue_envelope :-
-    atom_string(Context0Atom, "[]"),
+    string_codes("[]", Context0Codes),
+    atom_codes(Context0Atom, Context0Codes),
     read_term_from_atom(Context0Atom, Context0, []),
     findall(Result,
         ( ( ( symbolic_dialogue_turn:valid_dialogue_context(Context0),

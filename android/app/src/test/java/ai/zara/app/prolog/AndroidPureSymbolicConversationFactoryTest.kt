@@ -13,7 +13,10 @@ class AndroidPureSymbolicConversationFactoryTest {
             "  set a timer for \"five\"\\minutes\nplease  ",
         )
 
-        assertTrue(query.contains("read_term_from_atom(\"[]\", Context0, [])"))
+        assertTrue(query.contains("string_codes(\"[]\", Context0Codes)"))
+        assertTrue(query.contains("atom_codes(Context0Atom, Context0Codes)"))
+        assertTrue(query.contains("read_term_from_atom(Context0Atom, Context0, [])"))
+        assertFalse(query.contains("atom_string("))
         assertFalse(query.contains("term_string("))
         assertTrue(query.contains("symbolic_dialogue_turn:valid_dialogue_context(Context0)"))
         assertTrue(query.contains("symbolic_dialogue_turn:dialogue_turn("))
@@ -57,6 +60,10 @@ class AndroidPureSymbolicConversationFactoryTest {
             "Android's pinned Trealla runtime does not provide term_string/2",
             query.contains("term_string("),
         )
+        assertFalse(
+            "Android's pinned Trealla runtime does not provide atom_string/2",
+            query.contains("atom_string("),
+        )
         assertTrue(
             "persisted Context0 must cross the SWI/Trealla read_term_from_atom/3 boundary",
             query.contains("read_term_from_atom("),
@@ -66,8 +73,9 @@ class AndroidPureSymbolicConversationFactoryTest {
             query.contains("term_to_atom(Context1, ContextAtom)"),
         )
         assertTrue(
-            "canonical Context1 must cross JNI as a real string so Trealla's display printer cannot drop required atom quotes",
-            query.contains("atom_string(ContextTagged, ContextWire)"),
+            "canonical Context1 must cross JNI as a real string through portable code-list conversion",
+            query.contains("atom_codes(ContextTagged, ContextWireCodes)") &&
+                query.contains("string_codes(ContextWire, ContextWireCodes)"),
         )
         assertTrue(
             "the dedicated wire tag must distinguish continuation state from the rendered response without a second dialogue turn",

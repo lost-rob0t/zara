@@ -446,7 +446,8 @@ internal object AndroidPureSymbolicConversationFactory {
         ", symbolic_dialogue:render_response(Act, Response), " +
         "term_to_atom(Context1, ContextAtom), " +
         "atom_concat('$DIALOGUE_CONTEXT_WIRE_PREFIX', ContextAtom, ContextTagged), " +
-        "atom_string(ContextTagged, ContextWire)) -> true ; fail), " +
+        "atom_codes(ContextTagged, ContextWireCodes), " +
+        "string_codes(ContextWire, ContextWireCodes)) -> true ; fail), " +
         "(Result = Response ; Result = ContextWire)"
 
     private fun dialogueTurnPrelude(utterance: String, contextTerm: String): String {
@@ -456,7 +457,8 @@ internal object AndroidPureSymbolicConversationFactory {
         val escapedText = prologString(text)
         val canonicalContext = SymbolicDialogueContextCodec.requireContextTerm(contextTerm)
         val escapedContext = SymbolicDialogueContextCodec.prologString(canonicalContext)
-        return "atom_string(Context0Atom, \"$escapedContext\"), " +
+        return "string_codes(\"$escapedContext\", Context0Codes), " +
+            "atom_codes(Context0Atom, Context0Codes), " +
             "read_term_from_atom(Context0Atom, Context0, []), " +
             "symbolic_dialogue_turn:valid_dialogue_context(Context0), " +
             "symbolic_dialogue_turn:dialogue_turn(\"$escapedText\", conversation, Context0, " +

@@ -44,6 +44,8 @@ def test_emulator_gate_executes_zero_model_and_verified_receipt_fences() -> None
 def test_semantic_parity_gate_uses_pinned_trealla_atom_input_contract() -> None:
     source = SEMANTIC_PARITY_GATE.read_text(encoding="utf-8")
 
-    assert 'atom_string(Context0Atom, "[]")' in source
+    assert 'string_codes("[]", Context0Codes)' in source
+    assert "atom_codes(Context0Atom, Context0Codes)" in source
     assert "read_term_from_atom(Context0Atom, Context0, [])" in source
+    assert "atom_string(" not in source
     assert 'read_term_from_atom("[]", Context0, [])' not in source
