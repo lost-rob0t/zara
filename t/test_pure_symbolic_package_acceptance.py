@@ -165,7 +165,13 @@ assert package_path.is_relative_to(wheel_root), (
     f"loaded Zara from source/site-packages instead of candidate wheel: {package_path}"
 )
 
+from zara.conversation_schema import CONVERSATION_SCHEMA_VERSION, conversation_schema_sql
 from zara.runtime.pure_symbolic_backend import PureSymbolicRuntimeBackend
+
+assert CONVERSATION_SCHEMA_VERSION == 4
+schema = conversation_schema_sql()
+assert "CREATE TABLE IF NOT EXISTS desktop_symbolic_projections" in schema
+assert "max_model_calls INTEGER NOT NULL DEFAULT 1" in schema
 
 
 async def main():
