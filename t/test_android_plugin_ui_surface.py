@@ -78,3 +78,10 @@ def test_device_evidence_matrix_already_captures_plugins_settings_tab():
     assert 'device.capture("settings-plugins-narrow-large-font")' in acceptance
     assert '"plugins-narrow-large-font", target_width_dp=320, font_scale=2.00' in acceptance
     assert 'device.capture("settings-plugins-install-narrow-large-font")' in acceptance
+
+
+def test_top_bar_runtime_status_is_not_color_only():
+    shell = (KOTLIN / "ui/ZaraApp.kt").read_text()
+    assert '"Local server status: ${localState.phase.name.lowercase()}"' in shell
+    assert '"Remote connection status: ${connectionLabel(state.server)}"' in shell
+    assert "semantics { contentDescription = description }" in shell
