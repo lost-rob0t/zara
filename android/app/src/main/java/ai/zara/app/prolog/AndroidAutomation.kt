@@ -4,6 +4,8 @@ import ai.zara.app.accessibility.AccessibilityAutomationAction
 import ai.zara.app.accessibility.AccessibilityAutomationAdapter
 import ai.zara.app.accessibility.AccessibilityGlobalAction
 import ai.zara.app.accessibility.AccessibilitySelector
+import ai.zara.app.automation.AdbAutomationKey
+import ai.zara.app.automation.AdbAutomationPort
 import ai.zara.app.control.AndroidControlAccess
 import ai.zara.app.device.AppSearchAdapter
 import ai.zara.app.device.DeviceActionArguments
@@ -22,6 +24,17 @@ sealed interface AndroidAutomationAction {
     data class UiSetText(val selector: AccessibilitySelector, val text: String) : AndroidAutomationAction
     data class UiScrollForward(val selector: AccessibilitySelector) : AndroidAutomationAction
     data class GlobalAction(val action: AccessibilityGlobalAction) : AndroidAutomationAction
+    data class AdbTap(val x: Int, val y: Int) : AndroidAutomationAction
+    data class AdbSwipe(
+        val x1: Int,
+        val y1: Int,
+        val x2: Int,
+        val y2: Int,
+        val durationMs: Int,
+    ) : AndroidAutomationAction
+    data class AdbText(val text: String) : AndroidAutomationAction
+    data class AdbKey(val key: AdbAutomationKey) : AndroidAutomationAction
+    data class AdbWait(val durationMs: Int) : AndroidAutomationAction
 }
 
 data class AndroidAutomationPlan(
@@ -70,6 +83,34 @@ object AndroidAutomationPlanParser {
             return AndroidAutomationAction.SearchApp(
                 alias = parseAtom(args[0], "app alias"),
                 query = parseText(args[1]),
+            )
+        }
+        parseCall(term, "adb_tap", 2)?.let { args ->
+            return AndroidAutomationAction.AdbTap(
+                x = parseInt(args[0], "ADB x", 0, 16_384),
+                y = parseInt(args[1], "ADB y", 0, 16_384),
+            )
+        }
+        parseCall(term, "adb_swipe", 5)?.let { args ->
+            return AndroidAutomationAction.AdbSwipe(
+                x1 = parseInt(args[0], "ADB x1", 0, 16_384),
+                y1 = parseInt(args[1], "ADB y1", 0, 16_384),
+                x2 = parseInt(args[2], "ADB x2", 0, 16_384),
+                y2 = parseInt(args[3], "ADB y2", 0, 16_384),
+                durationMs = parseInt(args[4], "ADB swipe duration", 1, 5_000),
+            )
+        }
+        parseCall(term, "adb_text", 1)?.let { args ->
+            return AndroidAutomationAction.AdbText(parseText(args.single(), maxBytes = 512))
+        }
+        parseCall(term, "adb_key", 1)?.let { args ->
+            return AndroidAutomationAction.AdbKey(
+                AdbAutomationKey.fromAtom(parseAtom(args.single(), "ADB key"))
+            )
+        }
+        parseCall(term, "adb_wait", 1)?.let { args ->
+            return AndroidAutomationAction.AdbWait(
+                parseInt(args.single(), "ADB wait duration", 0, 5_000)
             )
         }
         parseCall(term, "ui_click", 1)?.let { args ->
@@ -121,6 +162,18 @@ object AndroidAutomationPlanParser {
     private fun parseAtom(raw: String, label: String): String {
         val value = raw.trim()
         require(atom.matches(value)) { "$label must be a bounded atom" }
+        return value
+    }
+
+    private fun parseInt(
+        raw: String,
+        label: String,
+        minimum: Int,
+        maximum: Int,
+    ): Int {
+        val value = raw.trim().toIntOrNull()
+            ?: throw IllegalArgumentException("$label must be an integer")
+        require(value in minimum..maximum) { "$label is out of range" }
         return value
     }
 
@@ -229,6 +282,7 @@ class AndroidAutomationRunner(
     private val openUri: OpenUriAdapter,
     private val appSearch: AppSearchAdapter,
     private val accessibility: AccessibilityAutomationAdapter,
+    private val adb: AdbAutomationPort,
     private val accessGranted: (AndroidControlAccess) -> Boolean,
 ) {
     fun run(name: String): CompletableFuture<AndroidAutomationResult> {
@@ -268,6 +322,17 @@ class AndroidAutomationRunner(
                 is AndroidAutomationAction.GlobalAction -> accessibility.execute(
                     AccessibilityAutomationAction.Global(action.action),
                 )
+                is AndroidAutomationAction.AdbTap -> adb.tap(action.x, action.y)
+                is AndroidAutomationAction.AdbSwipe -> adb.swipe(
+                    action.x1,
+                    action.y1,
+                    action.x2,
+                    action.y2,
+                    action.durationMs,
+                )
+                is AndroidAutomationAction.AdbText -> adb.typeText(action.text)
+                is AndroidAutomationAction.AdbKey -> adb.key(action.key)
+                is AndroidAutomationAction.AdbWait -> adb.wait(action.durationMs)
             }
             if (outcome is DeviceActionResult.Error) {
                 return AndroidAutomationResult.Failed(plan, index, outcome.code)
@@ -283,6 +348,11 @@ class AndroidAutomationRunner(
         is AndroidAutomationAction.GlobalAction -> true
         is AndroidAutomationAction.OpenApp,
         is AndroidAutomationAction.OpenUri,
-        is AndroidAutomationAction.SearchApp -> false
+        is AndroidAutomationAction.SearchApp,
+        is AndroidAutomationAction.AdbTap,
+        is AndroidAutomationAction.AdbSwipe,
+        is AndroidAutomationAction.AdbText,
+        is AndroidAutomationAction.AdbKey,
+        is AndroidAutomationAction.AdbWait -> false
     }
 }
