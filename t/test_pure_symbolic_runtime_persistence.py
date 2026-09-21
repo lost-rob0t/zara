@@ -127,6 +127,9 @@ async def test_project_switch_fences_stale_pure_symbolic_dialogue_context(tmp_pa
             discourse_entities=[{"ref": "that", "entity_id": "file:project-a.nix"}],
             expert_evidence=[{"expert": "DotfilesExpert", "evidence_id": "project-a"}],
             verified_facts=[{"fact_id": "project-a", "value": "project-a.nix"}],
+            verified_outcome_refs=[
+                "zara.verified-outcome/v2:2:outcome:project-switch-receipt"
+            ],
         ),
         expected_generation=project_a.projection_generation,
     )
@@ -165,5 +168,7 @@ async def test_project_switch_fences_stale_pure_symbolic_dialogue_context(tmp_pa
     assert project_b.project_generation == switched.project_generation
     assert "project_fact" not in project_b.dialogue_state
     assert project_b.discourse_entities == []
+    assert project_b.unresolved_questions == []
     assert project_b.expert_evidence == []
     assert project_b.verified_facts == []
+    assert project_b.verified_outcome_refs == switched.verified_outcome_refs
