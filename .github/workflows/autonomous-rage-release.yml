@@ -29,6 +29,7 @@ jobs:
           fetch-depth: 0
 
       - name: Reject stale master evidence
+        id: freshness
         shell: bash
         env:
           CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -38,13 +39,17 @@ jobs:
           current_master="$(git rev-parse origin/master)"
           if [[ "$current_master" != "$CANDIDATE_SHA" ]]; then
             echo "Candidate is stale: candidate=$CANDIDATE_SHA master=$current_master"
-            exit 0
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install Nix
+        if: steps.freshness.outputs.current == 'true'
         uses: cachix/install-nix-action@v31
 
       - name: Download exact-run release evidence
+        if: steps.freshness.outputs.current == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -58,6 +63,7 @@ jobs:
             --dir artifacts
 
       - name: Generate exact candidate Prolog facts
+        if: steps.freshness.outputs.current == 'true'
         shell: bash
         env:
           CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -70,6 +76,7 @@ jobs:
             --output artifacts/autonomous-release-facts.pl
 
       - name: Prove release readiness
+        if: steps.freshness.outputs.current == 'true'
         id: proof
         shell: bash
         run: |
@@ -85,7 +92,7 @@ jobs:
           fi
 
       - name: Freeze deterministic release branch
-        if: steps.proof.outputs.ready == 'true'
+        if: steps.freshness.outputs.current == 'true' && steps.proof.outputs.ready == 'true'
         id: freeze
         shell: bash
         env:
@@ -101,17 +108,36 @@ jobs:
           )"
           branch="release/autonomous-v${target_version}-${CANDIDATE_SHA:0:12}"
 
-          nix develop -c python scripts/promote-autonomous-release.py \
-            --plan release/autonomous-plan.json \
-            --version-file version.properties \
-            --changelog CHANGELOG.md
+          existing_pr="$(gh pr list --head "$branch" --base master --state all --json url,state,mergedAt --jq '.[0] // empty')"
+          if [[ -n "$existing_pr" ]]; then
+            pr_url="$(printf '%s' "$existing_pr" | jq -r '.url')"
+            merged_at="$(printf '%s' "$existing_pr" | jq -r '.mergedAt // empty')"
+            echo "branch=$branch" >> "$GITHUB_OUTPUT"
+            echo "pr_url=$pr_url" >> "$GITHUB_OUTPUT"
+            if [[ -n "$merged_at" ]]; then
+              echo "already_merged=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "already_merged=false" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
 
-          git config user.name "zara-release-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git checkout -b "$branch"
-          git add version.properties CHANGELOG.md
-          git commit -m "chore(release): promote Zara ${target_version}"
-          git push origin "$branch"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            git fetch origin "$branch"
+            git checkout -b "$branch" "origin/$branch"
+          else
+            nix develop -c python scripts/promote-autonomous-release.py \
+              --plan release/autonomous-plan.json \
+              --version-file version.properties \
+              --changelog CHANGELOG.md
+
+            git config user.name "zara-release-bot"
+            git config user.email "actions@users.noreply.github.com"
+            git checkout -b "$branch"
+            git add version.properties CHANGELOG.md
+            git commit -m "chore(release): promote Zara ${target_version}"
+            git push origin "$branch"
+          fi
 
           pr_url="$(gh pr list --head "$branch" --base master --state open --json url --jq '.[0].url')"
           if [[ -z "$pr_url" ]]; then
@@ -124,9 +150,10 @@ jobs:
 
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
           echo "pr_url=$pr_url" >> "$GITHUB_OUTPUT"
+          echo "already_merged=false" >> "$GITHUB_OUTPUT"
 
       - name: Enable protected auto-merge
-        if: steps.proof.outputs.ready == 'true'
+        if: steps.freshness.outputs.current == 'true' && steps.proof.outputs.ready == 'true' && steps.freeze.outputs.already_merged != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
