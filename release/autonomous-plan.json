@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "program_issue": 1357,
+  "fork_base_sha": "dc74a41b216388662e55412e1e09a1c8c2fad5a7",
+  "target_version": "0.3.0",
+  "target_android_version_code": 6,
+  "slices": [
+    {"id": "pairing-e2e", "issue": 1358, "required": true},
+    {"id": "prolog-rlm-coder", "issue": 1359, "required": true},
+    {"id": "mara-mother", "issue": 1360, "required": true},
+    {"id": "symbolic-jev-local-ai", "issue": 1327, "required": true},
+    {"id": "kb-factory", "issue": 1362, "required": true},
+    {"id": "expert-repair", "issue": 1363, "required": true},
+    {"id": "deterministic-release", "issue": 1361, "required": true}
+  ],
+  "required_gates": [
+    "core_tests",
+    "prolog_verify",
+    "desktop_e2e",
+    "android_apk_e2e",
+    "pairing_e2e",
+    "strict_symbolic",
+    "on_device_jev",
+    "on_device_llm",
+    "provider_contract",
+    "coder_e2e",
+    "mara_e2e",
+    "kb_fact_safety",
+    "visual_regression",
+    "security_authority"
+  ]
+}
