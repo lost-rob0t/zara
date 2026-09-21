@@ -4,6 +4,7 @@ import ai.zara.app.history.HistoryMessage
 import ai.zara.app.history.HistoryMessageRole
 import ai.zara.app.history.HistoryMessageStatus
 import ai.zara.app.history.PortableConversationStore
+import ai.zara.app.history.fencePendingSymbolicProject
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
@@ -115,6 +116,7 @@ class CanonicalConversationStore(
     fun moveToProject(conversationId: String, projectId: String?): ConversationState {
         val id = requireConversation(conversationId)
         val cleanProjectId = normalizeOptionalId(projectId, MAX_PROJECT_ID_CHARS, "Project id")
+        history.fencePendingSymbolicProject(id, cleanProjectId)
         updateMetadata(id) { it.copy(projectId = cleanProjectId) }
         return snapshot()
     }
