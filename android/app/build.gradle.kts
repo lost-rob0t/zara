@@ -255,6 +255,7 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.jeromq)
     implementation(libs.play.services.wearable)
+    implementation(libs.play.services.code.scanner)
     implementation(libs.libadb.android)
     implementation(libs.conscrypt.android)
     implementation(libs.bcpkix)
@@ -265,4 +266,5 @@ dependencies {
         implementation(samsungHealthAars)
     }
     testImplementation(libs.junit)
+    testImplementation(libs.org.json)
 }
