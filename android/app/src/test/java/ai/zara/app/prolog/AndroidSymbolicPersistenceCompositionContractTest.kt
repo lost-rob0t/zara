@@ -64,6 +64,35 @@ class AndroidSymbolicPersistenceCompositionContractTest {
     }
 
     @Test
+    fun `natural symbolic turns derive project scope from the canonical conversation binding`() {
+        val activity = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+        val factory = File(
+            "src/main/java/ai/zara/app/prolog/AndroidPureSymbolicConversationFactory.kt"
+        ).readText()
+
+        assertTrue(
+            "MainActivity must pass the selected conversation project binding into pure-symbolic execution",
+            activity.contains("projectIdForConversation"),
+        )
+        assertTrue(
+            "the symbolic factory must consume the existing conversation project binding, not invent a project store",
+            factory.contains("projectIdForConversation"),
+        )
+        assertTrue(
+            "each pending symbolic turn must derive project id/generation through the canonical project-scope contract",
+            factory.contains("SymbolicProjectScopeContract.next("),
+        )
+        assertTrue(
+            "the pending canonical projection must carry the derived project id",
+            factory.contains("projectId = projectScope.projectId"),
+        )
+        assertTrue(
+            "the pending canonical projection must carry the derived stale-project generation fence",
+            factory.contains("projectGeneration = projectScope.projectGeneration"),
+        )
+    }
+
+    @Test
     fun `one natural turn executes canonical dialogue exactly once`() {
         val factory = File(
             "src/main/java/ai/zara/app/prolog/AndroidPureSymbolicConversationFactory.kt"
