@@ -78,6 +78,12 @@ def scroll_chat_to_bottom(device: Device, swipes: int = 6) -> None:
 
 
 def send_chat_turn(device: Device, text: str, expect: str, timeout: float = 25.0) -> None:
+    open_chat_and_submit(device, text)
+    scroll_chat_to_bottom(device)
+    device.await_contains(expect, timeout=timeout)
+
+
+def open_chat_and_submit(device: Device, text: str) -> None:
     open_menu(device, "Chat")
     device.tap_tab("Chat")
     device.await_label("Ask anything…", timeout=10.0)
@@ -85,9 +91,6 @@ def send_chat_turn(device: Device, text: str, expect: str, timeout: float = 25.0
     type_printable_ascii(device, text)
     device.press_back()
     device.tap("↑")
-    device.await_contains(text, timeout=10.0)
-    scroll_chat_to_bottom(device)
-    device.await_contains(expect, timeout=timeout)
 
 
 def diagnostics_preview_text(device: Device) -> str:
@@ -217,7 +220,8 @@ def exercise_recovery(device: Device, fixture: dict[str, str]) -> dict[str, obje
     assert_footer_truth(device, "CONNECTED")
 
     arm_fixture(fixture, "CLOSE")
-    send_chat_turn(device, "trigger close", "trigger close")
+    open_chat_and_submit(device, "trigger close")
+    time.sleep(9.0)
     assert_footer_truth(device, "REMOTE")
     assert_diagnostics_names_primary_failure(device, "transport.timeout")
     evidence["close_typed_error"] = True
