@@ -22,7 +22,7 @@ for apk in Zara.apk StarIntelCompanion.apk StarIntelQuasar.apk; do
     [[ -f "$prebuilts/$apk" ]] || die "missing prebuilt: $prebuilts/$apk"
 done
 
-"$rom_root/vendor/zara-fork/rom/scripts/apply-patches.sh" "$rom_root"
+bash "$rom_root/vendor/zara-fork/rom/scripts/apply-patches.sh" "$rom_root"
 
 cd "$rom_root"
 # shellcheck disable=SC1091
