@@ -71,13 +71,15 @@ test -f "$trealla_library_root/x86_64/libtrealla.a"
 # reject retired/stale replay with exact zero provider/model accounting. The
 # edge duplicate-reference fixture proves repeated canonical references remain
 # readable by the edge/Wear projection after process recreation with the same
-# hard-zero provider/model accounting.
+# hard-zero provider/model accounting. The expert-evidence fixture proves typed
+# symbolic evidence remains trusted across canonical store recreation while
+# provider-shaped nested metadata fails closed with the same exact-zero ledger.
 set +e
 ANDROID_SERIAL="$serial" ZARA_SOURCE_SHA="$source_sha" \
   ZARA_TREALLA_LIBRARY_ROOT="$trealla_library_root" \
   nix develop ./android -c bash -lc \
   'cd android && gradle :app:connectedDebugAndroidTest --no-daemon \
-    -Pandroid.testInstrumentationRunnerArguments.class=ai.zara.app.history.PortableConversationMigrationInstrumentedTest,ai.zara.app.history.PortableConversationV3MigrationInstrumentedTest,ai.zara.app.history.PortableConversationRestartFenceInstrumentedTest,ai.zara.app.history.PortableConversationLegacyPrincipalInstrumentedTest,ai.zara.app.history.SymbolicVerifiedOutcomeV2RestartInstrumentedTest,ai.zara.app.history.SymbolicConversationEdgeDuplicateReferenceInstrumentedTest' \
+    -Pandroid.testInstrumentationRunnerArguments.class=ai.zara.app.history.PortableConversationMigrationInstrumentedTest,ai.zara.app.history.PortableConversationV3MigrationInstrumentedTest,ai.zara.app.history.PortableConversationRestartFenceInstrumentedTest,ai.zara.app.history.PortableConversationLegacyPrincipalInstrumentedTest,ai.zara.app.history.SymbolicVerifiedOutcomeV2RestartInstrumentedTest,ai.zara.app.history.SymbolicConversationEdgeDuplicateReferenceInstrumentedTest,ai.zara.app.history.SymbolicExpertEvidenceTrustEnvelopeInstrumentedTest' \
   2>&1 | tee "$instrumentation_log"
 instrumentation_status=${PIPESTATUS[0]}
 set -e
