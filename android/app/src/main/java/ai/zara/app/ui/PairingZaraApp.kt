@@ -45,6 +45,7 @@ fun ZaraApp(
     pinnedServerPublicKey: String?,
     conversationState: ConversationState,
     operationError: String?,
+    turnFailure: TurnFailure?,
     operationBusy: Boolean,
     microphonePermissionGranted: Boolean,
     voiceState: ManualVoiceState,
@@ -75,6 +76,9 @@ fun ZaraApp(
     onRenameConversation: (String, String) -> Unit,
     onMoveConversationToProject: (String, String?) -> Unit,
     onSendText: (String, ConversationRecord, ProjectContext?) -> Unit,
+    onRetryTurn: (String) -> Unit,
+    onReconnectRemote: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
     onCreateProject: (String) -> Unit,
     onSelectProject: (String?) -> Unit,
     onRequestMicrophonePermission: () -> Unit,
@@ -96,6 +100,7 @@ fun ZaraApp(
     onCopyDiagnostics: () -> Unit,
     onShareDiagnostics: () -> Unit,
     onClearDiagnostics: () -> Unit,
+    onExportDiagnostics: () -> String,
     onDismissChangelog: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
@@ -107,6 +112,7 @@ fun ZaraApp(
                 pinnedServerPublicKey = pinnedServerPublicKey,
                 conversationState = conversationState,
                 operationError = operationError,
+                turnFailure = turnFailure,
                 operationBusy = operationBusy,
                 microphonePermissionGranted = microphonePermissionGranted,
                 voiceState = voiceState,
@@ -136,6 +142,9 @@ fun ZaraApp(
                 onRenameConversation = onRenameConversation,
                 onMoveConversationToProject = onMoveConversationToProject,
                 onSendText = onSendText,
+                onRetryTurn = onRetryTurn,
+                onReconnectRemote = onReconnectRemote,
+                onOpenDiagnostics = onOpenDiagnostics,
                 onCreateProject = onCreateProject,
                 onSelectProject = onSelectProject,
                 onRequestMicrophonePermission = onRequestMicrophonePermission,
@@ -157,6 +166,7 @@ fun ZaraApp(
                 onCopyDiagnostics = onCopyDiagnostics,
                 onShareDiagnostics = onShareDiagnostics,
                 onClearDiagnostics = onClearDiagnostics,
+                onExportDiagnostics = onExportDiagnostics,
                 onDismissChangelog = onDismissChangelog,
             )
         }
