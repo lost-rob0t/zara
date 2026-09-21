@@ -412,6 +412,15 @@ internal object SymbolicProjectionContract {
         PortableJsonValidator.requireObjectArray(projection.discourseEntitiesJson, "discourseEntitiesJson")
         PortableJsonValidator.requireObjectArray(projection.unresolvedQuestionsJson, "unresolvedQuestionsJson")
         PortableJsonValidator.requireObjectArray(projection.expertEvidenceJson, "expertEvidenceJson")
+        require(
+            projection.dialogueAct != "expert_answer" ||
+                PortableJsonValidator.objectArrayHasEntries(
+                    projection.expertEvidenceJson,
+                    "expertEvidenceJson",
+                )
+        ) {
+            "expert_answer projection requires expert evidence"
+        }
         if (!projection.providersEnabled && projection.maxModelCalls == 0L) {
             PureSymbolicExpertEvidenceValidator.requireTrusted(
                 projection.expertEvidenceJson,
