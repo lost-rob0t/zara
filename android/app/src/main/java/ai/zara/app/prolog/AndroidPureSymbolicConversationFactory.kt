@@ -13,32 +13,7 @@ import ai.zara.app.history.saveSymbolicProjection
 import ai.zara.app.runtime.LocalQueryResult
 import java.util.concurrent.CompletableFuture
 
-/**
- * Binds the zero-model conversation controller to Android's existing Prolog runtime owner.
- *
- * This does not own a runtime, conversation store, expert registry, or provider client. Explicit
- * queries stay on the bounded local-query path. Natural-language turns execute the canonical
- * symbolic_dialogue_turn -> symbolic_dialogue renderer chain through AndroidAppSession's already
- * started LocalZaraServer via queryLocalProlog(). A durable [PortableConversationStore] is
- * mandatory so there is no stateless factory path that can silently reset Context0 between turns.
- */
 internal object AndroidPureSymbolicConversationFactory {
-    /**
-     * Compose natural turns with the canonical durable conversation projection.
-     *
-     * The supplied [projectionStore] remains the sole persistence authority. This factory adds no
-     * Android-local context cache: every natural turn loads Context0 from the existing
-     * SymbolicConversationProjection, installs a pending CAS fence bound to the already-persisted
-     * canonical message turn id, derives project scope from the existing conversation binding,
-     * executes the canonical dialogue turn exactly once, receives both the rendered response and
-     * Context1 through the existing Trealla Result-binding ABI, and persists Context1 through the
-     * same pending generation.
-     *
-     * Persisting the pending projection before local evaluation is what lets
-     * PortableConversationStore.loadState() interrupt an in-flight turn during Activity/process
-     * recreation and advance the generation. A late callback from the old turn then loses its CAS
-     * and cannot publish stale Context1. Cancellation is serialized with the same terminal commit.
-     */
     fun create(
         session: AndroidAppSession,
         projectionStore: PortableConversationStore,
@@ -439,15 +414,6 @@ internal object AndroidPureSymbolicConversationFactory {
         return renderedResponse to SymbolicDialogueContextCodec.requireContextTerm(contextTerm)
     }
 
-    /**
-     * Serialize cancellation against the canonical projection terminal commit.
-     *
-     * Cancellation and completion hold the same monitor. If cancellation wins, it durably records
-     * a terminal cancelled projection and canonical assistant row before publishing Future
-     * cancellation. If restart recovery already advanced ownership, the cancellation helper proves
-     * that loss from the canonical projection and treats the old future as stale. Arbitrary
-     * persistence failures are not swallowed.
-     */
     private class PersistenceFencedFuture(
         private val upstream: CompletableFuture<*>,
         private val onCancel: () -> Unit,
@@ -467,30 +433,12 @@ internal object AndroidPureSymbolicConversationFactory {
         }
     }
 
-    /**
-     * Render one canonical dialogue turn from an explicitly supplied continuation term.
-     *
-     * The term is data, not executable query text: it is quoted as a Prolog string, decoded by
-     * read_term_from_atom/3 (supported by both pinned Trealla and SWI), and must pass the shared
-     * valid_dialogue_context/1 shape fence before the canonical router sees it. Context1 is also
-     * validated before a response can escape.
-     */
     internal fun dialogueTurnQuery(
         utterance: String,
         contextTerm: String = SymbolicDialogueContextCodec.emptyContextTerm,
     ): String = dialogueTurnPrelude(utterance, contextTerm) +
         ", symbolic_dialogue:render_response(Act, Result)"
 
-    /**
-     * Execute one canonical dialogue turn and return both outputs as ordered Result solutions.
-     *
-     * The first solution is exactly the renderer result used by the existing UI contract. Context1
-     * is canonicalized with term_to_atom/2 while it is still a Prolog term, tagged, then converted
-     * to a Prolog string. JNI returns Result strings through pl_atom_text rather than Trealla's
-     * display printer, so atoms such as 'timer.set' keep the quotes needed for restart-safe
-     * read_term_from_atom/3 round trips. ISO if-then-else still commits one deterministic turn
-     * before the two Result alternatives are enumerated.
-     */
     internal fun dialogueTurnEnvelopeQuery(
         utterance: String,
         contextTerm: String,
@@ -508,7 +456,8 @@ internal object AndroidPureSymbolicConversationFactory {
         val escapedText = prologString(text)
         val canonicalContext = SymbolicDialogueContextCodec.requireContextTerm(contextTerm)
         val escapedContext = SymbolicDialogueContextCodec.prologString(canonicalContext)
-        return "read_term_from_atom(\"$escapedContext\", Context0, []), " +
+        return "atom_string(Context0Atom, \"$escapedContext\"), " +
+            "read_term_from_atom(Context0Atom, Context0, []), " +
             "symbolic_dialogue_turn:valid_dialogue_context(Context0), " +
             "symbolic_dialogue_turn:dialogue_turn(\"$escapedText\", conversation, Context0, " +
             "turn(_Frames, Act, Context1)), " +
