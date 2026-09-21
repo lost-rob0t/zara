@@ -101,6 +101,20 @@ class SymbolicVerifiedOutcomeV2CutoverTest {
     }
 
     @Test
+    fun `first verified v2 projection requires current generation evidence`() {
+        val proposed = projection(
+            generation = 1,
+            runtimeGeneration = 8,
+            turnId = "turn-8",
+            receipts = listOf(v2Receipt(7, 7)),
+        )
+
+        assertRejected("verified projection requires fresh outcome evidence") {
+            SymbolicProjectionContract.validateWrite(null, proposed, expectedGeneration = 0)
+        }
+    }
+
+    @Test
     fun `new v2 receipt must bind to new runtime generation`() {
         val current = projection(
             generation = 1,
