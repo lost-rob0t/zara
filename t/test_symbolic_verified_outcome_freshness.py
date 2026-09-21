@@ -15,7 +15,7 @@ def _verified_projection(
     generation: int,
     runtime_generation: int,
     turn_id: str,
-    receipt: str,
+    receipts: list[str],
 ) -> SymbolicConversationProjection:
     return SymbolicConversationProjection(
         conversation_id=conversation_id,
@@ -25,7 +25,7 @@ def _verified_projection(
         outcome="success",
         dialogue_act="verified",
         dialogue_state={"act": "verified"},
-        verified_outcome_refs=[receipt],
+        verified_outcome_refs=receipts,
         renderer_provenance=_SYMBOLIC_RENDERER,
         providers_enabled=False,
         max_model_calls=0,
@@ -46,7 +46,7 @@ def test_new_verified_turn_rejects_reused_postcondition_receipt(tmp_path):
             generation=1,
             runtime_generation=7,
             turn_id="turn-7",
-            receipt=_STALE_RECEIPT,
+            receipts=[_STALE_RECEIPT],
         ),
         expected_generation=0,
     )
@@ -58,7 +58,7 @@ def test_new_verified_turn_rejects_reused_postcondition_receipt(tmp_path):
                 generation=2,
                 runtime_generation=8,
                 turn_id="turn-8",
-                receipt=_STALE_RECEIPT,
+                receipts=[_STALE_RECEIPT],
             ),
             expected_generation=first.projection_generation,
         )
@@ -68,7 +68,7 @@ def test_new_verified_turn_rejects_reused_postcondition_receipt(tmp_path):
         raise AssertionError("new verified turn reused a stale postcondition receipt")
 
 
-def test_new_verified_turn_accepts_fresh_postcondition_receipt(tmp_path):
+def test_new_verified_turn_accepts_fresh_postcondition_receipt_without_dropping_history(tmp_path):
     store = ConversationStore(DatabaseManager(tmp_path / "verified-freshness-ok.db"))
     conversation = store.create_conversation(
         "Verified freshness",
@@ -80,7 +80,7 @@ def test_new_verified_turn_accepts_fresh_postcondition_receipt(tmp_path):
             generation=1,
             runtime_generation=7,
             turn_id="turn-7",
-            receipt=_STALE_RECEIPT,
+            receipts=[_STALE_RECEIPT],
         ),
         expected_generation=0,
     )
@@ -91,12 +91,12 @@ def test_new_verified_turn_accepts_fresh_postcondition_receipt(tmp_path):
             generation=2,
             runtime_generation=8,
             turn_id="turn-8",
-            receipt=_FRESH_RECEIPT,
+            receipts=[_STALE_RECEIPT, _FRESH_RECEIPT],
         ),
         expected_generation=first.projection_generation,
     )
 
     second.assert_pure_symbolic()
-    assert second.verified_outcome_refs == [_FRESH_RECEIPT]
+    assert second.verified_outcome_refs == [_STALE_RECEIPT, _FRESH_RECEIPT]
     assert second.provider_calls == 0
     assert second.model_calls == 0
