@@ -133,6 +133,8 @@ class ComposerActionButton(QPushButton):
 class MessageWidget(QFrame):
     """Render one message without requiring WebEngine or rebuilding its siblings."""
 
+    tool_action_requested = Signal(str, str)
+
     def __init__(self, message: MessageRecord, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setObjectName("zaraMessage")
@@ -245,7 +247,10 @@ class MessageWidget(QFrame):
             "failed",
             "cancelled",
         }:
-            self.content_widget.hide()
+            if content.lower() == "waiting for approval" and message.tool_run_id:
+                self._add_tool_approval_actions(message.tool_run_id)
+            else:
+                self.content_widget.hide()
             return
 
         if message.role is MessageRole.ASSISTANT:
@@ -258,6 +263,33 @@ class MessageWidget(QFrame):
         else:
             text.setMarkdown(content)
         self.content_layout.addWidget(text)
+
+    def _add_tool_approval_actions(self, tool_run_id: str) -> None:
+        actions = QWidget()
+        actions.setObjectName("zaraToolApprovalActions")
+        row = QHBoxLayout(actions)
+        row.setContentsMargins(0, 2, 0, 0)
+        row.setSpacing(8)
+        row.addStretch(1)
+
+        reject = QPushButton("Reject")
+        reject.setObjectName("zaraToolReject")
+        reject.setAccessibleName("Reject tool request")
+        approve = QPushButton("Approve")
+        approve.setObjectName("zaraToolApprove")
+        approve.setAccessibleName("Approve tool request")
+
+        reject.clicked.connect(
+            lambda _checked=False, run_id=tool_run_id:
+                self.tool_action_requested.emit(run_id, "reject")
+        )
+        approve.clicked.connect(
+            lambda _checked=False, run_id=tool_run_id:
+                self.tool_action_requested.emit(run_id, "approve")
+        )
+        row.addWidget(reject)
+        row.addWidget(approve)
+        self.content_layout.addWidget(actions)
 
     def _render_markdown_with_code(self, content: str) -> None:
         cursor = 0
