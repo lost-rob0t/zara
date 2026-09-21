@@ -1,6 +1,8 @@
 package ai.zara.app.history
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class SymbolicVerifiedOutcomeBoundedWindowTest {
@@ -29,6 +31,42 @@ class SymbolicVerifiedOutcomeBoundedWindowTest {
         assertEquals(0L, proposed.maxModelCalls)
         assertEquals(0L, proposed.providerCalls)
         assertEquals(0L, proposed.modelCalls)
+    }
+
+    @Test
+    fun `retired receipt cannot reenter as fresh after window compaction`() {
+        val initialReceipts = (1..WINDOW).map(::receipt)
+        val current = projection(
+            generation = 1,
+            runtimeGeneration = 1,
+            turnId = "turn-64",
+            receipts = initialReceipts,
+        )
+        val compactedReceipts = initialReceipts.drop(1) + receipt(WINDOW + 1)
+        val compacted = projection(
+            generation = 2,
+            runtimeGeneration = 2,
+            turnId = "turn-65",
+            receipts = compactedReceipts,
+        )
+
+        SymbolicProjectionContract.validateWrite(current, compacted, expectedGeneration = 1)
+
+        val replayedReceipts = compactedReceipts.drop(1) + initialReceipts.first()
+        val replayed = projection(
+            generation = 3,
+            runtimeGeneration = 3,
+            turnId = "turn-66",
+            receipts = replayedReceipts,
+        )
+        try {
+            SymbolicProjectionContract.validateWrite(compacted, replayed, expectedGeneration = 2)
+            fail("retired verified outcome receipt reentered the bounded window as fresh evidence")
+        } catch (error: RuntimeException) {
+            assertTrue(
+                error.message.orEmpty().contains("retired verified outcome replay rejected")
+            )
+        }
     }
 
     private fun projection(
