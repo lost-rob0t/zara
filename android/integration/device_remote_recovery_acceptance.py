@@ -62,6 +62,21 @@ def endpoint_port(endpoint: str) -> int:
     return int(match.group(1))
 
 
+def scroll_chat_to_bottom(device: Device, swipes: int = 6) -> None:
+    size = device.adb("shell", "wm", "size").strip()
+    match = re.search(r"(\d+)x(\d+)", size)
+    if match is None:
+        raise AssertionError(f"Emulator did not report its size: {size!r}")
+    width, height = int(match.group(1)), int(match.group(2))
+    center_x, lower_y, upper_y = width // 2, int(height * 0.72), int(height * 0.28)
+    for _ in range(swipes):
+        device.adb(
+            "shell", "input", "swipe", str(center_x), str(lower_y),
+            str(center_x), str(upper_y), "250",
+        )
+    time.sleep(0.5)
+
+
 def send_chat_turn(device: Device, text: str, expect: str, timeout: float = 25.0) -> None:
     open_menu(device, "Chat")
     device.tap_tab("Chat")
@@ -71,6 +86,7 @@ def send_chat_turn(device: Device, text: str, expect: str, timeout: float = 25.0
     device.press_back()
     device.tap("↑")
     device.await_contains(text, timeout=10.0)
+    scroll_chat_to_bottom(device)
     device.await_contains(expect, timeout=timeout)
 
 
