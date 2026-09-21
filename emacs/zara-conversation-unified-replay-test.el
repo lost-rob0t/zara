@@ -31,6 +31,14 @@
    "\"verified_outcome_refs\":[\"zara.verified-outcome/v1:outcome:turn-7\"]},"
    "\"version\":\"ZARA-CONVERSATION-REPLAY/1\"}"))
 
+(defconst zara-conversation-unified-replay-test--null-projection-payload
+  (concat
+   "{\"conversation\":{\"created_at\":\"2026-09-20T18:00:00\","
+   "\"id\":\"emacs-main\",\"title\":\"Emacs main\","
+   "\"updated_at\":\"2026-09-20T18:05:00\"},"
+   "\"messages\":[],\"symbolic_projection\":null,"
+   "\"version\":\"ZARA-CONVERSATION-REPLAY/1\"}"))
+
 (ert-deftest zara-conversation-replay-restores-transcript-and-symbolic-state-from-one-read ()
   (with-temp-buffer
     (zara-chat-mode)
@@ -52,6 +60,20 @@
       (should (= (plist-get status :model-calls) 0))
       (should (= (plist-get status :max-model-calls) 0))
       (should (eq (plist-get status :providers-enabled) :false)))))
+
+(ert-deftest zara-conversation-replay-null-projection-clears-stale-symbolic-state ()
+  (with-temp-buffer
+    (zara-chat-mode)
+    (setq-local zara-conversation-id "emacs-main")
+    (setq-local zara-conversation-symbolic-projection (make-hash-table :test 'equal))
+    (cl-letf (((symbol-function 'zara--program) (lambda () "zara"))
+              ((symbol-function 'process-file)
+               (lambda (_program _infile _destination _display &rest _args)
+                 (insert zara-conversation-unified-replay-test--null-projection-payload)
+                 0)))
+      (zara-conversation-replay))
+    (should-not zara-conversation-symbolic-projection)
+    (should (string-match-p "Canonical conversation emacs-main" (buffer-string)))))
 
 (provide 'zara-conversation-unified-replay-test)
 ;;; zara-conversation-unified-replay-test.el ends here
