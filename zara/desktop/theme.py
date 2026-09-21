@@ -178,12 +178,47 @@ ANDROID_THEME_TOKENS: Mapping[str, Mapping[str, str]] = MappingProxyType(
 )
 
 
+def _hex_rgb(value: str) -> tuple[int, int, int]:
+    clean = value.lstrip("#")
+    if len(clean) != 6:
+        raise ValueError(f"expected #RRGGBB color, got {value!r}")
+    return tuple(int(clean[index:index + 2], 16) for index in (0, 2, 4))  # type: ignore[return-value]
+
+
+def _hex_luminance(value: str) -> float:
+    channels = tuple(channel / 255.0 for channel in _hex_rgb(value))
+    linear = tuple(
+        channel / 12.92
+        if channel <= 0.04045
+        else ((channel + 0.055) / 1.055) ** 2.4
+        for channel in channels
+    )
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def _contrast_text_hex(background: str) -> str:
+    luminance = _hex_luminance(background)
+    black_ratio = (luminance + 0.05) / 0.05
+    white_ratio = 1.05 / (luminance + 0.05)
+    return "#000000" if black_ratio >= white_ratio else "#FFFFFF"
+
+
+def _mix_hex(background: str, foreground: str, foreground_weight: float) -> str:
+    if not 0.0 <= foreground_weight <= 1.0:
+        raise ValueError("foreground_weight must be between 0 and 1")
+    bg = _hex_rgb(background)
+    fg = _hex_rgb(foreground)
+    channels = tuple(
+        round(base * (1.0 - foreground_weight) + accent * foreground_weight)
+        for base, accent in zip(bg, fg)
+    )
+    return "#" + "".join(f"{channel:02X}" for channel in channels)
+
+
 def _android_theme(
     key: str,
     label: str,
     description: str,
-    *,
-    on_primary: str,
 ) -> ThemeDefinition:
     tokens = ANDROID_THEME_TOKENS[key]
     return _theme(
@@ -201,10 +236,10 @@ def _android_theme(
         primary=tokens["primary"],
         primary_hover=tokens["focus"],
         primary_deep=tokens["ambientGlow"],
-        on_primary=on_primary,
+        on_primary=_contrast_text_hex(tokens["primary"]),
         active=tokens["warning"],
         danger=tokens["error"],
-        danger_deep=tokens["surfaceInput"],
+        danger_deep=_mix_hex(tokens["surfaceInput"], tokens["error"], 0.18),
     )
 
 
@@ -214,31 +249,26 @@ THEME_REGISTRY: Mapping[str, ThemeDefinition] = MappingProxyType(
             "outrun",
             "Outrun",
             "Canonical Zara neon-night theme shared with Android.",
-            on_primary="#160018",
         ),
         "starintel": _android_theme(
             "starintel",
             "StarIntel",
             "Warm gold-on-charcoal Zara theme shared with Android.",
-            on_primary="#181306",
         ),
         "midnight": _android_theme(
             "midnight",
             "Midnight",
             "Cool violet-blue Zara theme shared with Android.",
-            on_primary="#101020",
         ),
         "terminal": _android_theme(
             "terminal",
             "Terminal",
             "Green terminal Zara theme shared with Android.",
-            on_primary="#031006",
         ),
         "light": _android_theme(
             "light",
             "Light",
             "Accessible light Zara theme shared with Android.",
-            on_primary="#FFFFFF",
         ),
         "signal-cabin": _theme(
             "signal-cabin",
