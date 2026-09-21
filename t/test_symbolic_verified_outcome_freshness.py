@@ -127,6 +127,27 @@ def test_migrated_legacy_v1_projection_remains_readable_and_continuable(tmp_path
     assert second.model_calls == 0
 
 
+def test_migrated_legacy_v1_projection_rejects_new_generation_unbound_v1_evidence(tmp_path):
+    store = ConversationStore(DatabaseManager(tmp_path / "verified-freshness-legacy-v1-reject.db"))
+    conversation = store.create_conversation(
+        "Migrated legacy verified state v1 rejection",
+        conversation_id="conv-verified-freshness-legacy-v1-reject",
+    )
+    current = _seed_legacy_verified_projection(store, conversation.id)
+
+    with pytest.raises(RuntimeError, match="verified projection requires fresh outcome evidence"):
+        store.save_symbolic_projection(
+            _projection(
+                conversation.id,
+                generation=2,
+                runtime_generation=8,
+                turn_id="turn-8",
+                receipts=[_STALE_RECEIPT, _FRESH_RECEIPT],
+            ),
+            expected_generation=current.projection_generation,
+        )
+
+
 def test_new_verified_turn_rejects_reused_postcondition_receipt(tmp_path):
     store = ConversationStore(DatabaseManager(tmp_path / "verified-freshness.db"))
     conversation = store.create_conversation(
