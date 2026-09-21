@@ -90,8 +90,8 @@ class SymbolicVerifiedOutcomeAbaReplayTest {
     )
 
     private companion object {
-        const val R1 = "zara.verified-outcome/v1:effect:tool-run-1"
-        const val R2 = "zara.verified-outcome/v1:outcome:postcondition/tool-run-2"
-        const val R3 = "zara.verified-outcome/v1:outcome:postcondition/tool-run-3"
+        const val R1 = "zara.verified-outcome/v2:1:effect:tool-run-1"
+        const val R2 = "zara.verified-outcome/v2:2:outcome:postcondition/tool-run-2"
+        const val R3 = "zara.verified-outcome/v2:3:outcome:postcondition/tool-run-3"
     }
 }
