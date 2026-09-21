@@ -388,7 +388,11 @@ class ConversationService:
             message.content = f"{name}: {detail}" if detail else f"{name}: running"
             message.status = MessageStatus.STREAMING
         elif isinstance(event, events.ToolWaitingForUser):
-            message.content = f"{name}: waiting for approval"
+            prompt = event.prompt.strip()
+            detail = "waiting for approval"
+            if prompt:
+                detail += f"\n{prompt}"
+            message.content = f"{name}: {detail}"
             message.status = MessageStatus.PENDING
         elif isinstance(event, events.ToolCompleted):
             message.content = f"{name}: completed"
