@@ -52,6 +52,7 @@ def test_voice_plan_is_prolog_authoritative_per_new_speaker():
     assert [row["voice"] for row in plan] == ["zara", "alice", "alice"]
     assert len(prolog.goals) == 2
     assert all("kb_voice_expert:resolve_voice(" in goal for goal in prolog.goals)
+    assert '"a","dialogue"' in prolog.goals[1]
 
 
 def test_voice_plan_never_invents_python_fallback():
@@ -114,6 +115,13 @@ def test_youtube_search_routes_through_delayed_wrapper(monkeypatch):
     assert command[-1] == "ytsearch1:authorized sample"
 
 
+def test_packaged_ytdlp_wrapper_enforces_delays():
+    text = (Path(__file__).resolve().parents[1] / "scripts" / "zara-ytdlp").read_text()
+    assert "--sleep-requests 1" in text
+    assert "--sleep-interval 1" in text
+    assert "--max-sleep-interval 3" in text
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -122,13 +130,6 @@ def test_youtube_search_routes_through_delayed_wrapper(monkeypatch):
         "javascript:alert(1)",
     ],
 )
-def test_packaged_ytdlp_wrapper_enforces_delays():
-    text = (Path(__file__).resolve().parents[1] / "scripts" / "zara-ytdlp").read_text()
-    assert "--sleep-requests 1" in text
-    assert "--sleep-interval 1" in text
-    assert "--max-sleep-interval 3" in text
-
-
 def test_clone_rejects_non_youtube_sources_before_download(url):
     value = expert()
 
@@ -175,6 +176,7 @@ def test_tool_surface_marks_voice_mutations_for_approval(monkeypatch):
         "voice_plan",
         "voice_speak",
         "voice_narrate",
+        "voice_analyze_youtube",
         "voice_clone_from_youtube",
         "voice_delete",
     }.issubset(by_name)
@@ -187,7 +189,10 @@ def test_packaged_prolog_voice_policy_defaults_and_distinct_dialogue():
         'kb_voice_expert:resolve_voice("narrator","",["zara","alice"],[],V1),'
         'V1="zara",'
         'kb_voice_expert:resolve_voice("dialogue","",["zara","alice"],["zara"],V2),'
-        'V2="alice"'
+        'V2="alice",'
+        'asserta(kb_voice_expert:voice_speaker("speaker_00","alice"),Ref),'
+        'kb_voice_expert:resolve_voice("speaker_00","narrator","",["zara","alice"],[],V3),'
+        'V3="alice",erase(Ref)'
     )
     result = subprocess.run(
         ["swipl", "-q", "-s", "main.pl", "-g", goal, "-t", "halt"],
