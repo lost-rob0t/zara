@@ -25,12 +25,13 @@ def test_installed_pure_symbolic_transcript_is_forced_offline_and_restored() -> 
     assert source.index("set_airplane_mode(device, True)") < source.index("device.start()")
 
 
-def test_emulator_gate_executes_stale_and_preflight_zero_model_fences() -> None:
+def test_emulator_gate_executes_zero_model_and_verified_receipt_fences() -> None:
     source = EMULATOR_GATE.read_text(encoding="utf-8")
 
     required_classes = (
         "ai.zara.app.conversations.CanonicalConversationStaleUiCompletionFenceInstrumentedTest",
         "ai.zara.app.prolog.AndroidPureSymbolicPreflightFailureInstrumentedTest",
+        "ai.zara.app.conversations.CanonicalConversationProjectSwitchVerifiedReceiptEdgeInstrumentedTest",
     )
     for class_name in required_classes:
         assert class_name in source, (
