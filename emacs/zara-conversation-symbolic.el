@@ -68,6 +68,8 @@
           (dialogue-state (gethash "dialogue_state" projection :missing)))
       (unless (memq providers-enabled '(t :false))
         (error "symbolic replay providers_enabled must be boolean"))
+      (unless (eq providers-enabled :false)
+        (error "pure-symbolic replay requires providers_enabled=false"))
       (unless (or (eq turn-id :null) (stringp turn-id))
         (error "symbolic replay turn_id must be null or a string"))
       (unless (or (eq project-id :null) (stringp project-id))
@@ -88,10 +90,19 @@
       (zara-conversation-symbolic--array projection key))
     (unless (stringp (gethash "updated_at" projection :missing))
       (error "symbolic replay updated_at must be a string"))
-    (let ((model-calls (gethash "model_calls" projection))
-          (max-model-calls (gethash "max_model_calls" projection)))
-      (when (> model-calls max-model-calls)
-        (error "symbolic replay model_calls exceeds max_model_calls"))))
+    ;; This Emacs surface is specifically the pure-symbolic projection view.
+    ;; Never launder provider-assisted state as symbolic status: all provider
+    ;; authority and accounting must be hard-zero before the projection is
+    ;; admitted for inspection or replay adoption.
+    (let ((max-model-calls (gethash "max_model_calls" projection))
+          (provider-calls (gethash "provider_calls" projection))
+          (model-calls (gethash "model_calls" projection)))
+      (unless (zerop max-model-calls)
+        (error "pure-symbolic replay requires max_model_calls=0"))
+      (unless (zerop provider-calls)
+        (error "pure-symbolic replay requires provider_calls=0"))
+      (unless (zerop model-calls)
+        (error "pure-symbolic replay requires model_calls=0"))))
   projection)
 
 (defun zara-conversation-symbolic--parse (text expected-conversation-id)
