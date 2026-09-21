@@ -176,7 +176,8 @@ def _validate_pure_symbolic_expert_evidence(value: list[dict[str, Any]]) -> None
     _canonical_array(value)
     for index, entry in enumerate(value):
         path = f"expert_evidence[{index}]"
-        if "expert_id" in entry:
+        typed_entry = "expert_id" in entry
+        if typed_entry:
             expert_id = entry["expert_id"]
             if not isinstance(expert_id, str) or not expert_id:
                 raise ValueError(f"{path}.expert_id must be a non-empty string")
@@ -185,7 +186,7 @@ def _validate_pure_symbolic_expert_evidence(value: list[dict[str, Any]]) -> None
         _validate_expert_metadata_tree(
             entry,
             path=path,
-            allow_model_calls=True,
+            allow_model_calls=typed_entry,
         )
 
 
