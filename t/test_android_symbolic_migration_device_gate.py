@@ -112,8 +112,8 @@ def test_android_emulator_gate_executes_real_v2_and_v3_to_v4_sqlite_migrations()
     assert "first.close()" in verified_v2_restart_source
     assert "val reopened = PortableConversationStore(context)" in verified_v2_restart_source
     assert "recovered.assertPureSymbolic()" in verified_v2_restart_source
-    assert 'contains("retired verified outcome replay rejected")' in verified_v2_restart_source
-    assert 'contains("stale symbolic projection write")' in verified_v2_restart_source
+    assert '"retired verified outcome replay rejected"' in verified_v2_restart_source
+    assert '"stale symbolic projection write"' in verified_v2_restart_source
     assert "assertEquals(0L, recovered.maxModelCalls)" in verified_v2_restart_source
     assert "assertEquals(0L, recovered.providerCalls)" in verified_v2_restart_source
     assert "assertEquals(0L, recovered.modelCalls)" in verified_v2_restart_source
