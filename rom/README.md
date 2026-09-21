@@ -49,8 +49,8 @@ git switch fork/android-rom
 export ROM_ROOT="$HOME/android/zara-rom"
 export GAPPS_VENDOR_DIR="$HOME/.local/share/zara-rom/gapps-vendor"
 
-rom/scripts/bootstrap.sh
-rom/scripts/build.sh <device-codename>
+bash rom/scripts/bootstrap.sh
+bash rom/scripts/build.sh <device-codename>
 ```
 
 Use `REPO_JOBS`, `BUILD_JOBS`, `STARINTEL_TAG`, and `GITHUB_TOKEN` as environment
@@ -67,9 +67,9 @@ frameworks/base patches/frameworks-base/0001-example.patch
 kernel/google/gs-common patches/kernel-google-gs-common/0001-example.patch
 ```
 
-`apply-patches.sh` applies patches with `git am --3way`, skips patches whose commit is
-already present, and aborts on drift. Rebase the patch itself when upstream changes rather
-than adding shell mutations to the build.
+`apply-patches.sh` applies patches with `git am --3way`, skips patches that are already
+present, and aborts on drift. Rebase the patch itself when upstream changes rather than
+adding shell mutations to the build.
 
 ## Device policy
 
