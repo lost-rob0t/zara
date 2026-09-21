@@ -31,6 +31,10 @@ FACT_TYPES = (
     "llm_endpoint",
     "todo_destination",
     "todo_context_mode",
+    "voice_default",
+    "voice_role",
+    "voice_speaker",
+    "voice_policy",
     "verb_intent",
 )
 
@@ -115,6 +119,24 @@ def _normalized_fields(kind: str, fields: Mapping[str, Any]) -> dict[str, Any]:
         if value not in {"infer", "infer_with_llm", "llm_only"}:
             raise PrologStudioError("TODO context mode is not supported")
         return {"value": value}
+    if kind == "voice_default":
+        return {"value": _string(fields.get("value"), "default voice")}
+    if kind == "voice_role":
+        return {
+            "role": _atom(fields.get("role"), "voice role"),
+            "voice": _string(fields.get("voice"), "voice"),
+        }
+    if kind == "voice_speaker":
+        return {
+            "speaker": _string(fields.get("speaker"), "speaker label"),
+            "voice": _string(fields.get("voice"), "voice"),
+        }
+    if kind == "voice_policy":
+        role = _atom(fields.get("role"), "voice role")
+        policy = _atom(fields.get("policy"), "voice policy")
+        if policy not in {"prefer_default", "distinct_if_available"}:
+            raise PrologStudioError("voice policy is not supported")
+        return {"role": role, "policy": policy}
     phrase = _atom(fields.get("phrase"), "intent phrase")
     intent = _atom(fields.get("intent"), "intent action")
     arity = fields.get("arity")
@@ -146,6 +168,17 @@ def _render_fact(fact: ManagedFact) -> str:
         return f"{kind}({fields['value']})."
     if kind in {"llm_model", "llm_endpoint", "todo_destination"}:
         return f"{kind}({_prolog_string(fields['value'])})."
+    if kind == "voice_default":
+        return f"voice_default({_prolog_string(fields['value'])})."
+    if kind == "voice_role":
+        return f"voice_role({fields['role']}, {_prolog_string(fields['voice'])})."
+    if kind == "voice_speaker":
+        return (
+            f"voice_speaker({_prolog_string(fields['speaker'])}, "
+            f"{_prolog_string(fields['voice'])})."
+        )
+    if kind == "voice_policy":
+        return f"voice_policy({fields['role']}, {fields['policy']})."
     return f"verb_intent({fields['phrase']}, {fields['intent']}, {fields['arity']})."
 
 
