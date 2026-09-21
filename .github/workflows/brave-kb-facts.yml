@@ -1,0 +1,80 @@
+name: Brave KB evidence facts
+
+on:
+  workflow_dispatch:
+    inputs:
+      query:
+        description: Brave Search query to compile into untrusted Prolog evidence
+        required: true
+        type: string
+      limit:
+        description: Maximum results
+        required: false
+        default: "20"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  brave-facts:
+    name: Brave search -> Prolog evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Require Brave credential
+        shell: bash
+        env:
+          BRAVE_SEARCH_API_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$BRAVE_SEARCH_API_KEY"
+
+      - name: Fetch bounded Brave Search JSON
+        shell: bash
+        env:
+          BRAVE_SEARCH_API_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
+          QUERY: ${{ inputs.query }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          curl --fail --silent --show-error --get \
+            'https://api.search.brave.com/res/v1/web/search' \
+            --header "Accept: application/json" \
+            --header "X-Subscription-Token: $BRAVE_SEARCH_API_KEY" \
+            --data-urlencode "q=$QUERY" \
+            --data-urlencode "count=$LIMIT" \
+            > artifacts/brave.json
+
+      - name: Compile search results into Prolog evidence facts
+        shell: bash
+        env:
+          QUERY: ${{ inputs.query }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          set -euo pipefail
+          retrieved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          nix develop -c python scripts/brave-results-to-prolog.py \
+            --input artifacts/brave.json \
+            --query "$QUERY" \
+            --retrieved-at "$retrieved_at" \
+            --limit "$LIMIT" \
+            --output artifacts/brave-search-facts.pl
+
+      - name: Parse generated facts with SWI-Prolog
+        run: nix develop -c swipl -q -s artifacts/brave-search-facts.pl -g halt
+
+      - name: Upload evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: brave-kb-facts-${{ github.run_id }}
+          path: |
+            artifacts/brave-search-facts.pl
