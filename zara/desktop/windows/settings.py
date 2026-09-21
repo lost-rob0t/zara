@@ -77,6 +77,10 @@ _FACT_LABELS = {
     "llm_endpoint": "LLM endpoint",
     "todo_destination": "TODO destination",
     "todo_context_mode": "TODO context mode",
+    "voice_default": "Default voice",
+    "voice_role": "Role → voice",
+    "voice_speaker": "Speaker → voice",
+    "voice_policy": "Voice policy",
     "verb_intent": "Intent mapping",
 }
 
@@ -220,6 +224,24 @@ class FactEditorDialog(QDialog):
                     ("Infer", "infer"),
                     ("Infer with LLM", "infer_with_llm"),
                     ("LLM only", "llm_only"),
+                ],
+            )
+        elif kind == "voice_default":
+            self._line("value", "Voice", "zara")
+        elif kind == "voice_role":
+            self._line("role", "Role", "character")
+            self._line("voice", "Voice", "reader_alice")
+        elif kind == "voice_speaker":
+            self._line("speaker", "Speaker label", "speaker_00")
+            self._line("voice", "Voice", "reader_alice")
+        elif kind == "voice_policy":
+            self._line("role", "Role", "dialogue")
+            self._choice(
+                "policy",
+                "Policy",
+                [
+                    ("Prefer default", "prefer_default"),
+                    ("Distinct if available", "distinct_if_available"),
                 ],
             )
         else:
