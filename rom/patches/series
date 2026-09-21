@@ -1,0 +1,7 @@
+# Format:
+# <repo-project-path> <patch-path-relative-to-rom/>
+#
+# Example:
+# frameworks/base patches/frameworks-base/0001-zara-system-hook.patch
+#
+# Keep this file deterministic. One patch per line, in apply order.
