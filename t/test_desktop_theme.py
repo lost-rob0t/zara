@@ -128,6 +128,11 @@ def test_signal_cabin_palette_uses_semantic_colors_with_readable_text():
 
 def test_theme_registry_contains_requested_complete_themes():
     assert list(THEME_REGISTRY) == [
+        "outrun",
+        "starintel",
+        "midnight",
+        "terminal",
+        "light",
         "signal-cabin",
         "dotfiles-outrun",
         "nord",
@@ -152,12 +157,12 @@ def test_every_theme_builds_a_readable_palette_and_scoped_stylesheet():
         assert 'QPushButton#zaraComposerAction[actionMode="stop"]' in stylesheet
 
 
-def test_unknown_theme_falls_back_to_signal_cabin():
-    assert build_theme_palette("missing") == build_theme_palette("signal-cabin")
-    assert desktop_stylesheet("missing") == desktop_stylesheet("signal-cabin")
+def test_unknown_theme_falls_back_to_outrun():
+    assert build_theme_palette("missing") == build_theme_palette("outrun")
+    assert desktop_stylesheet("missing") == desktop_stylesheet("outrun")
 
 
-def test_signal_cabin_stylesheet_covers_the_complete_copilot_surface():
+def test_default_stylesheet_covers_the_complete_copilot_surface():
     stylesheet = desktop_stylesheet()
 
     for selector in (
