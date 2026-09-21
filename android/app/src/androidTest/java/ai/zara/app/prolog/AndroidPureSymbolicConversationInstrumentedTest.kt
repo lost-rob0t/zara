@@ -48,11 +48,43 @@ class AndroidPureSymbolicConversationInstrumentedTest {
     }
 
     @Test
+    fun canonicalDialogueEnvelopeEvaluatesThroughNativeTrealla() {
+        val query = AndroidPureSymbolicConversationFactory.dialogueTurnEnvelopeQuery(
+            utterance = "timer",
+            contextTerm = SymbolicDialogueContextCodec.emptyContextTerm,
+        )
+        val result = try {
+            session.queryLocalProlog(query).get(TURN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        } catch (error: Throwable) {
+            throw AssertionError(
+                "canonical dialogue envelope failed through the real native Trealla bridge\n" +
+                    session.exportDiagnostics(),
+                error,
+            )
+        }
+
+        val evidence = "raw_terms=${result.terms}\n${session.exportDiagnostics()}"
+        assertEquals(evidence, 2, result.terms.size)
+        assertTrue(
+            evidence,
+            result.terms.first().contains("How long should I set the timer for?"),
+        )
+        assertTrue(
+            evidence,
+            result.terms.last().startsWith("dialogue_context(partial_frame("),
+        )
+    }
+
+    @Test
     fun clarificationFollowUpAndProcessRecreationStayPureSymbolicAndDurable() {
         var history = reopenHistory(createConversation = true)
 
         val clarification = runNaturalTurn(history, "timer")
-        assertEquals("How long should I set the timer for?", clarification.turn.text)
+        assertEquals(
+            session.exportDiagnostics(),
+            "How long should I set the timer for?",
+            clarification.turn.text,
+        )
         assertZeroModel(clarification)
         val clarificationProjection = checkNotNull(store).loadSymbolicProjection(CONVERSATION_ID)
         assertNotNull(clarificationProjection)
@@ -120,7 +152,11 @@ class AndroidPureSymbolicConversationInstrumentedTest {
 
         val result = controller.submit("timer", CONVERSATION_ID)
             .get(TURN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        assertEquals("How long should I set the timer for?", result.turn.text)
+        assertEquals(
+            session.exportDiagnostics(),
+            "How long should I set the timer for?",
+            result.turn.text,
+        )
         assertZeroModel(result)
 
         // Deliberately do not call CanonicalConversationStore.completeTurn(). This models process
